@@ -1,0 +1,20 @@
+# Gitleaks config: default rules plus an allowlist for known-benign test
+# fixtures that pattern-match as secrets.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Known benign test fixtures"
+regexes = [
+  # RFC 6455's literal example Sec-WebSocket-Key ("the sample nonce").
+  '''dGhlIHNhbXBsZSBub25jZQ==''',
+  # Throwaway contract credential of the mock-backed local dev environment
+  # (scripts/devenv) — printed by up.sh, valid only against the mock stack.
+  '''test-api-key-e2e''',
+  # *_TOKEN_URL env vars are endpoint locations (httptest servers in tests),
+  # not credentials.
+  '''[A-Z_]+_TOKEN_URL=''',
+  # Boot-script test env flag; the generic-api-key rule mistakes the
+  # preceding *_TOKEN_URL line's context for a credential assignment.
+  '''SKIP_CLAUDE_LAUNCH''',
+]
