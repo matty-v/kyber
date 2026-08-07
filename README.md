@@ -1,12 +1,15 @@
-<p align="center"><img src="docs/assets/kyber-logo.svg" width="96" alt="Kyber logo"></p>
-
-# Kyber
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/kyber-lockup-dark.svg">
+  <img src="docs/assets/kyber-lockup-light.svg" alt="Kyber" height="56">
+</picture>
 
 [![test](https://github.com/matty-v/kyber/actions/workflows/test.yml/badge.svg)](https://github.com/matty-v/kyber/actions/workflows/test.yml)
 [![release](https://img.shields.io/github/v/release/matty-v/kyber)](https://github.com/matty-v/kyber/releases)
 [![license](https://img.shields.io/github/license/matty-v/kyber)](LICENSE)
 
 **Kyber runs long-lived AI coding agents as Kubernetes pods with whole-disk persistence.** An agent keeps its entire filesystem — installed packages, working repos, memory, credentials — across pod restarts, platform upgrades, and spot-VM preemption. Agents and machines are declared as two CRDs, a controller-runtime control plane reconciles them, and you operate the fleet from a PWA or straight from Telegram and Discord.
+
+![The Kyber fleet console: dashboard with agent status, per-agent context pressure, and a live terminal peek](docs/assets/pwa-dashboard.png)
 
 ## Features
 
@@ -43,34 +46,43 @@ scripts/devenv/down.sh    # tear down, no orphans
 <details>
 <summary><b>Installing with an AI assistant</b> (recommended for non-developers) — click to expand</summary>
 
-Open your AI assistant of choice (Claude Code, Cursor, ChatGPT, etc.), give it the prompt below, and follow its instructions.
+Open your AI assistant of choice (Claude Code, Cursor, ChatGPT, etc.), fill in the install target on the second line, give it the whole prompt, and follow its instructions.
 
 ```
-You're helping me install Kyber on my Windows laptop. Kyber is a self-hosted AI
-agent fleet platform. Repo: https://github.com/matty-v/kyber.
+You're helping me install Kyber. Kyber is a self-hosted AI agent fleet
+platform. Repo: https://github.com/matty-v/kyber.
+My install target: <one of: WSL2 on my Windows laptop / a GCP project /
+my Mac or Linux machine, locally on k3d>
 
-Read `docs/installation-wsl2.md` end-to-end before starting. It's a numbered
-runbook with explicit verify steps and recovery paths — your job is to drive
-the install.
+Read the guide for my target end-to-end before starting — your job is to
+drive the install, not improvise one:
+- WSL2 (Windows laptop): docs/installation-wsl2.md — a numbered runbook
+  with explicit verify steps and recovery paths. Start at § 0, proceed
+  sequentially.
+- GCP: docs/installation.md — numbered steps from image availability
+  through Terraform provisioning to first agent. Where a step involves a
+  private deploy repo or GitOps tooling, prefer the plain helm-install
+  route and confirm the choice with me.
+- Mac/Linux local: scripts/devenv/full-local.md — a one-command full
+  stack on k3d (Docker required). Shorter and with fewer verify gates
+  than the other guides; good for evaluating Kyber before a real install.
 
 Operating principles:
 1. I'm not a developer. Before each step, tell me in one plain-language
    sentence what you're about to do.
-2. Don't proceed past a step until its verify command produces the expected
-   output. If it fails, follow the recovery pointer in the doc — don't
-   improvise.
+2. Where the guide gives a verify command, don't proceed until it produces
+   the expected output. If it fails, follow the guide's recovery pointer —
+   don't improvise.
 3. Some steps need me (browser flows, PAT generation, OAuth approval). When
    you hit one, pause, tell me exactly what to do with the URL, and wait for
    me to come back with the value. Never invent a credential.
 4. Don't paste secrets into our chat or commit them. They go into shell
-   variables or files at paths the doc specifies.
-5. Anything destructive (rm -rf, wsl --unregister, terraform destroy),
-   confirm with me first.
-6. If this is a resumed session and you've lost context, run each step's
-   verify command starting at § 0 — your starting point is the first one
+   variables or files at paths the guide specifies.
+5. Anything destructive (rm -rf, wsl --unregister, terraform destroy,
+   k3d cluster delete), confirm with me first.
+6. If this is a resumed session and you've lost context, re-run the guide's
+   verify commands from the top — your starting point is the first one
    that fails.
-
-Start at § 0 (Bring up WSL2). Proceed sequentially.
 ```
 
 </details>

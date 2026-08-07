@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.20.1 — 2026-08-07
+
+### Fixed
+- MSW mock handlers now cover `/api/v1/cluster-info` and `/api/v1/version`.
+  cluster-info is the embedded app's bootstrap gate, so without it every
+  mock-backed page (dev:mocks and the whole Playwright screenshot suite)
+  rendered the "Could not reach the kyber control plane" error instead of
+  the UI. The version handler stops the sidebar showing "version
+  unavailable" under mocks.
+
 ## 0.20.0 — 2026-08-06
 
 ### Added
