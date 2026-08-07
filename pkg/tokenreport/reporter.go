@@ -33,6 +33,14 @@ type Reporter struct {
 
 	// HTTPClient is optional; defaults to http.Client with a 5s timeout.
 	HTTPClient *http.Client
+
+	// output accumulates finalized assistant output tokens across ticks —
+	// cumulative "since reporter start" (see outputTracker). Lazily
+	// initialized on the first tick. A reporter restart resets the total;
+	// the control plane's safeDelta treats the rollback as a fresh
+	// increment, undercounting only the restart gap (honest, never
+	// double-counted).
+	output *outputTracker
 }
 
 // reporterURL is the resolved POST target — either the configured override
@@ -96,6 +104,12 @@ func (r *Reporter) tick(ctx context.Context, client *http.Client) error {
 	if err != nil {
 		return nil
 	}
+	// Advance the cumulative output total every tick — even when no snapshot
+	// is POSTed — so offsets stay warm and no appended message is missed.
+	if r.output == nil {
+		r.output = newOutputTracker()
+	}
+	outputTotal := r.output.advance(latest)
 	// ParseLatest takes dir + file separately; split latest.
 	snap, err := ParseLatest(dirOf(latest), baseOf(latest))
 	if err != nil {
@@ -104,6 +118,9 @@ func (r *Reporter) tick(ctx context.Context, client *http.Client) error {
 	if snap == nil {
 		return nil // no finalized message yet
 	}
+	// ParseLatest leaves Output zero (a single latest message can't represent
+	// spend); the reporter owns the cumulative total.
+	snap.Tokens.Output = outputTotal
 	body, err := json.Marshal(snap)
 	if err != nil {
 		return fmt.Errorf("marshal: %w", err)

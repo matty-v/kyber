@@ -48,50 +48,12 @@ describe('formatAge', () => {
   })
 })
 
-// ---- ComputeCostUSD helper ----
-
-type RateTable = Record<
-  string,
-  { input: number; output: number; cache_read: number; cache_creation: number }
->
-
-function computeCostUSD(table: RateTable, model: string, tokens: Record<string, number>): number {
-  const rates = table[model]
-  if (!rates) return 0
-  const cost =
-    (tokens['input'] ?? 0) * rates.input / 1_000_000 +
-    (tokens['output'] ?? 0) * rates.output / 1_000_000 +
-    (tokens['cache_read'] ?? 0) * rates.cache_read / 1_000_000 +
-    (tokens['cache_creation'] ?? 0) * rates.cache_creation / 1_000_000
-  return Math.round(cost * 10000) / 10000
-}
-
-describe('computeCostUSD', () => {
-  const table: RateTable = {
-    'claude-sonnet-4-6': { input: 3.0, output: 15.0, cache_read: 0.3, cache_creation: 3.75 },
-  }
-
-  it('computes cost correctly', () => {
-    const tokens = {
-      input: 1_000_000,
-      output: 500_000,
-      cache_read: 2_000_000,
-      cache_creation: 1_000_000,
-    }
-    // 3.0 + 7.5 + 0.6 + 3.75 = 14.85
-    expect(computeCostUSD(table, 'claude-sonnet-4-6', tokens)).toBe(14.85)
-  })
-
-  it('returns 0 for unknown model', () => {
-    expect(computeCostUSD(table, 'unknown', { input: 1000 })).toBe(0)
-  })
-
-  it('handles missing token types gracefully', () => {
-    expect(computeCostUSD(table, 'claude-sonnet-4-6', { input: 1_000_000 })).toBe(3.0)
-  })
-})
-
 // ---- Stale detection logic ----
+
+// NOTE: cost math is server-side (pkg/metrics ComputeCostKnown, covered by Go
+// tests); the panel only renders the server-supplied costUsd. A local
+// re-implementation of the pricing formula used to live here but only tested
+// itself, so it was removed.
 
 describe('stale detection', () => {
   it('marks agent with no heartbeat as stale', () => {

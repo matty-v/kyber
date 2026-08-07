@@ -107,7 +107,7 @@ func registerAll(m metric.Meter) error {
 
 	if AgentTokensTotal, err = m.Int64Counter(
 		"kyber_agent_tokens_total",
-		metric.WithDescription("Total Claude API tokens consumed per agent. Labels: agent, model, token_type (input|cache_creation|cache_read)."),
+		metric.WithDescription("Total Claude API tokens consumed per agent. Labels: agent, model, token_type (input|cache_creation|cache_read|output)."),
 	); err != nil {
 		return fmt.Errorf("registering kyber_agent_tokens_total: %w", err)
 	}

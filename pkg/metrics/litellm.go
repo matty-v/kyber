@@ -64,25 +64,18 @@ func ProjectLiteLLM(raw []byte, providers map[string]bool, bounds RateBounds) (R
 			rejected = append(rejected, id)
 			continue
 		}
-		// cache_read is optional; default 0, but if present it must be a sane
-		// non-negative value within the ceiling.
-		var cacheRead float64
-		if e.CacheReadInputTokenCost != nil {
-			cacheRead = round4(*e.CacheReadInputTokenCost * perMTok)
-			if cacheRead < 0 || cacheRead > bounds.MaxPerMTok {
-				rejected = append(rejected, id)
-				continue
-			}
+		// cache_read and cache_creation are optional; absent → 0. A present
+		// value must be a sane non-negative rate within the ceiling or the
+		// whole model is rejected.
+		cacheRead, ok := optionalRate(e.CacheReadInputTokenCost, bounds)
+		if !ok {
+			rejected = append(rejected, id)
+			continue
 		}
-		// cache_creation mirrors cache_read: optional, default 0, and a present
-		// value must be a sane non-negative rate within the ceiling.
-		var cacheCreation float64
-		if e.CacheCreationInputTokenCost != nil {
-			cacheCreation = round4(*e.CacheCreationInputTokenCost * perMTok)
-			if cacheCreation < 0 || cacheCreation > bounds.MaxPerMTok {
-				rejected = append(rejected, id)
-				continue
-			}
+		cacheCreation, ok := optionalRate(e.CacheCreationInputTokenCost, bounds)
+		if !ok {
+			rejected = append(rejected, id)
+			continue
 		}
 		table[id] = ProviderRates{Input: input, Output: output, CacheRead: cacheRead, CacheCreation: cacheCreation}
 	}
@@ -93,6 +86,22 @@ func ProjectLiteLLM(raw []byte, providers map[string]bool, bounds RateBounds) (R
 // ok reports whether a per-MTok rate is within (Min, Max].
 func (b RateBounds) ok(rate float64) bool {
 	return rate > b.MinPerMTok && rate <= b.MaxPerMTok
+}
+
+// optionalRate projects an optional per-token feed cost to a per-MTok rate.
+// nil (absent from the feed) is a valid 0. A present value must satisfy
+// 0 <= rate <= ceiling — an explicit 0 is accepted, which is why this cannot
+// reuse RateBounds.ok (its lower bound is exclusive). ok=false means the
+// value is malformed/poisoned and the caller must reject the whole model.
+func optionalRate(v *float64, bounds RateBounds) (float64, bool) {
+	if v == nil {
+		return 0, true
+	}
+	rate := round4(*v * perMTok)
+	if rate < 0 || rate > bounds.MaxPerMTok {
+		return 0, false
+	}
+	return rate, true
 }
 
 // RenderRatesYAML marshals a RateTable to the provider-rates.yaml format the

@@ -9,7 +9,7 @@ import (
 
 func TestParseCodexLatest(t *testing.T) {
 	p := filepath.Join(t.TempDir(), "rollout.jsonl")
-	data := `{"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":4,"output_tokens":30,"reasoning_output_tokens":12},"model_context_window":258400}}}` + "\n"
+	data := `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":900,"cached_input_tokens":500,"output_tokens":750,"reasoning_output_tokens":200},"last_token_usage":{"input_tokens":100,"cached_input_tokens":60,"cache_write_input_tokens":4,"output_tokens":30,"reasoning_output_tokens":12},"model_context_window":258400}}}` + "\n"
 	if err := os.WriteFile(p, []byte(data), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -17,9 +17,11 @@ func TestParseCodexLatest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Output must be output_tokens (30), NOT plus reasoning_output_tokens —
-	// reasoning is a subset of output_tokens and would double-count.
-	if s == nil || s.Tokens.Used != 100 || s.Tokens.Input != 40 || s.Tokens.CacheRead != 60 || s.Tokens.Output != 30 || s.Tokens.Limit != 258400 {
+	// Output must be the CUMULATIVE total_token_usage.output_tokens (750) —
+	// not last_token_usage's 30 (which loses intermediate messages between
+	// polls) and not plus reasoning_output_tokens (a subset of output_tokens
+	// that would double-count).
+	if s == nil || s.Tokens.Used != 100 || s.Tokens.Input != 40 || s.Tokens.CacheRead != 60 || s.Tokens.Output != 750 || s.Tokens.Limit != 258400 {
 		t.Fatalf("snapshot = %+v", s)
 	}
 	if !s.ContextWindowKnown || s.Percentage <= 0 {

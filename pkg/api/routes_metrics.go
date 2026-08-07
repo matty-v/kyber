@@ -344,8 +344,8 @@ func (s *Server) handleMetricsTokens(w http.ResponseWriter, r *http.Request) {
 // tokenUsageWindowedFromMetricsStore returns per-(agent,model) token usage and
 // cost scoped to [start, end] by summing the per-type Redis token time series.
 // The accumulator enumerates which (agent, model) pairs exist; for each pair we
-// RangeQuery the three per-type series and sum the points in the window — a
-// near-mirror of activityFromMetricsStore.
+// RangeQuery the per-type series (one per tokenTypes entry) and sum the points
+// in the window — a near-mirror of activityFromMetricsStore.
 //
 // Unlike activityFromMetricsStore (which returns (nil,false) on empty so the
 // caller falls back to Prometheus), this path is AUTHORITATIVE once the

@@ -19,6 +19,10 @@ import (
 type rawEntry struct {
 	Type    string `json:"type"`
 	Message struct {
+		// ID is the API message id (msg_…). Multiple JSONL lines can carry
+		// the same message id (one per content block), each repeating the
+		// message's usage — the outputTracker dedups on it.
+		ID    string `json:"id"`
 		Model string `json:"model"`
 		Role  string `json:"role"`
 		Usage struct {
@@ -33,6 +37,10 @@ type rawEntry struct {
 	// EffortLevel is written at the top level of the JSONL line for models
 	// that support extended thinking (Opus/Sonnet). Absent on Haiku.
 	EffortLevel string `json:"effortLevel"`
+	// UUID / LeafUUID are transcript-line identifiers used as dedup-key
+	// fallbacks (message.id → uuid → leafUuid) by the outputTracker.
+	UUID     string `json:"uuid"`
+	LeafUUID string `json:"leafUuid"`
 }
 
 // FindLatestSessionFile returns the path to the *.jsonl file in dir with
@@ -126,7 +134,11 @@ func ParseLatest(dir, file string) (*Snapshot, error) {
 				Input:         e.Message.Usage.InputTokens,
 				CacheCreation: e.Message.Usage.CacheCreationInputTokens,
 				CacheRead:     e.Message.Usage.CacheReadInputTokens,
-				Output:        e.Message.Usage.OutputTokens,
+				// Output is deliberately NOT taken from this single latest
+				// message: with several assistant messages per reporter tick
+				// that would drop every intermediate message's spend. The
+				// Reporter overwrites Tokens.Output with the outputTracker's
+				// cumulative total before POSTing.
 			},
 			Percentage:  0,
 			EffortLevel: e.EffortLevel,
