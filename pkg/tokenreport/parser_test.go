@@ -38,6 +38,18 @@ func TestParseLatest_FinalizedMessage(t *testing.T) {
 	if snap.Tokens.CacheRead != 25231 {
 		t.Errorf("Tokens.CacheRead=%d want 25231", snap.Tokens.CacheRead)
 	}
+	// ParseLatest deliberately leaves Output at 0: a single latest message
+	// cannot represent cumulative spend (intermediate messages between
+	// reporter ticks would be lost). The Reporter's outputTracker owns the
+	// cumulative total and overwrites Tokens.Output before POSTing.
+	if snap.Tokens.Output != 0 {
+		t.Errorf("Tokens.Output=%d want 0 (cumulative output is the reporter's outputTracker's job)", snap.Tokens.Output)
+	}
+	// Output is billed spend, NOT part of the context window: Used must
+	// stay Input + CacheCreation + CacheRead and never include Output.
+	if snap.Tokens.Used != snap.Tokens.Input+snap.Tokens.CacheCreation+snap.Tokens.CacheRead {
+		t.Errorf("Tokens.Used=%d must equal Input+CacheCreation+CacheRead (Output excluded)", snap.Tokens.Used)
+	}
 	if snap.EffortLevel != "medium" {
 		t.Errorf("EffortLevel=%q want medium", snap.EffortLevel)
 	}

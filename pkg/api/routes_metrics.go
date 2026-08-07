@@ -269,8 +269,8 @@ type TokenUsageResponse struct {
 // tokenTypes is the set of token-delta components the read path sums per
 // (agent, model) pair and the write path records as separate time series.
 // Must stay aligned with tokenstore.TokenDelta's fields and the accumulator's
-// hash fields (input/cache_creation/cache_read).
-var tokenTypes = []string{"input", "cache_creation", "cache_read"}
+// hash fields (input/cache_creation/cache_read/output).
+var tokenTypes = []string{"input", "cache_creation", "cache_read", "output"}
 
 // handleMetricsTokens serves GET /api/v1/metrics/tokens?start=&end=
 // Returns per-agent/model token usage and estimated cost, scoped to the window.
@@ -344,8 +344,8 @@ func (s *Server) handleMetricsTokens(w http.ResponseWriter, r *http.Request) {
 // tokenUsageWindowedFromMetricsStore returns per-(agent,model) token usage and
 // cost scoped to [start, end] by summing the per-type Redis token time series.
 // The accumulator enumerates which (agent, model) pairs exist; for each pair we
-// RangeQuery the three per-type series and sum the points in the window — a
-// near-mirror of activityFromMetricsStore.
+// RangeQuery the per-type series (one per tokenTypes entry) and sum the points
+// in the window — a near-mirror of activityFromMetricsStore.
 //
 // Unlike activityFromMetricsStore (which returns (nil,false) on empty so the
 // caller falls back to Prometheus), this path is AUTHORITATIVE once the
@@ -431,6 +431,7 @@ func tokenCountsToMap(c tokenstore.AgentModelCounts) map[string]float64 {
 		"input":          float64(c.Input),
 		"cache_creation": float64(c.CacheCreation),
 		"cache_read":     float64(c.CacheRead),
+		"output":         float64(c.Output),
 	}
 }
 

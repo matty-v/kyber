@@ -14,10 +14,11 @@ import (
 // per-token; pointers distinguish "absent" from a genuine 0. Unknown fields are
 // ignored (the upstream entry carries dozens of capability flags we don't use).
 type litellmEntry struct {
-	InputCostPerToken       *float64 `json:"input_cost_per_token"`
-	OutputCostPerToken      *float64 `json:"output_cost_per_token"`
-	CacheReadInputTokenCost *float64 `json:"cache_read_input_token_cost"`
-	LiteLLMProvider         string   `json:"litellm_provider"`
+	InputCostPerToken           *float64 `json:"input_cost_per_token"`
+	OutputCostPerToken          *float64 `json:"output_cost_per_token"`
+	CacheReadInputTokenCost     *float64 `json:"cache_read_input_token_cost"`
+	CacheCreationInputTokenCost *float64 `json:"cache_creation_input_token_cost"`
+	LiteLLMProvider             string   `json:"litellm_provider"`
 }
 
 // RateBounds gates adopted per-MTok rates. A value must satisfy
@@ -63,17 +64,20 @@ func ProjectLiteLLM(raw []byte, providers map[string]bool, bounds RateBounds) (R
 			rejected = append(rejected, id)
 			continue
 		}
-		// cache_read is optional; default 0, but if present it must be a sane
-		// non-negative value within the ceiling.
-		var cacheRead float64
-		if e.CacheReadInputTokenCost != nil {
-			cacheRead = round4(*e.CacheReadInputTokenCost * perMTok)
-			if cacheRead < 0 || cacheRead > bounds.MaxPerMTok {
-				rejected = append(rejected, id)
-				continue
-			}
+		// cache_read and cache_creation are optional; absent → 0. A present
+		// value must be a sane non-negative rate within the ceiling or the
+		// whole model is rejected.
+		cacheRead, ok := optionalRate(e.CacheReadInputTokenCost, bounds)
+		if !ok {
+			rejected = append(rejected, id)
+			continue
 		}
-		table[id] = ProviderRates{Input: input, Output: output, CacheRead: cacheRead}
+		cacheCreation, ok := optionalRate(e.CacheCreationInputTokenCost, bounds)
+		if !ok {
+			rejected = append(rejected, id)
+			continue
+		}
+		table[id] = ProviderRates{Input: input, Output: output, CacheRead: cacheRead, CacheCreation: cacheCreation}
 	}
 	sort.Strings(rejected)
 	return table, rejected, nil
@@ -82,6 +86,22 @@ func ProjectLiteLLM(raw []byte, providers map[string]bool, bounds RateBounds) (R
 // ok reports whether a per-MTok rate is within (Min, Max].
 func (b RateBounds) ok(rate float64) bool {
 	return rate > b.MinPerMTok && rate <= b.MaxPerMTok
+}
+
+// optionalRate projects an optional per-token feed cost to a per-MTok rate.
+// nil (absent from the feed) is a valid 0. A present value must satisfy
+// 0 <= rate <= ceiling — an explicit 0 is accepted, which is why this cannot
+// reuse RateBounds.ok (its lower bound is exclusive). ok=false means the
+// value is malformed/poisoned and the caller must reject the whole model.
+func optionalRate(v *float64, bounds RateBounds) (float64, bool) {
+	if v == nil {
+		return 0, true
+	}
+	rate := round4(*v * perMTok)
+	if rate < 0 || rate > bounds.MaxPerMTok {
+		return 0, false
+	}
+	return rate, true
 }
 
 // RenderRatesYAML marshals a RateTable to the provider-rates.yaml format the

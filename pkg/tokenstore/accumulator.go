@@ -16,11 +16,12 @@ type TokenDelta struct {
 	Input         int64
 	CacheCreation int64
 	CacheRead     int64
+	Output        int64
 }
 
 // IsZero reports whether all token counts in the delta are zero.
 func (d TokenDelta) IsZero() bool {
-	return d.Input == 0 && d.CacheCreation == 0 && d.CacheRead == 0
+	return d.Input == 0 && d.CacheCreation == 0 && d.CacheRead == 0 && d.Output == 0
 }
 
 // AgentModelCounts holds accumulated token counts for one (agent, model) pair.
@@ -30,6 +31,7 @@ type AgentModelCounts struct {
 	Input         int64
 	CacheCreation int64
 	CacheRead     int64
+	Output        int64
 }
 
 // Accumulator accumulates per-agent/model token counts so the Token Usage
@@ -49,7 +51,7 @@ type Accumulator interface {
 
 // RedisAccumulator is a Redis-backed Accumulator. Each (namespace, agent, model)
 // triple is stored as a Redis hash at key accum:token_usage:{namespace}:{agent}:{model}
-// with fields input, cache_creation, cache_read. Counts are incremented with HINCRBY
+// with fields input, cache_creation, cache_read, output. Counts are incremented with HINCRBY
 // so concurrent writers are safe without application-level locking.
 // No TTL is applied — counts are permanent and accumulate across agent restarts.
 type RedisAccumulator struct {
@@ -76,6 +78,9 @@ func (a *RedisAccumulator) IncrBy(ctx context.Context, namespace, agentName, mod
 	}
 	if delta.CacheRead > 0 {
 		pipe.HIncrBy(ctx, key, "cache_read", delta.CacheRead)
+	}
+	if delta.Output > 0 {
+		pipe.HIncrBy(ctx, key, "output", delta.Output)
 	}
 	_, err := pipe.Exec(ctx)
 	return err
@@ -110,6 +115,11 @@ func (a *RedisAccumulator) GetAll(ctx context.Context, namespace string) ([]Agen
 		counts.Input, _ = strconv.ParseInt(fields["input"], 10, 64)
 		counts.CacheCreation, _ = strconv.ParseInt(fields["cache_creation"], 10, 64)
 		counts.CacheRead, _ = strconv.ParseInt(fields["cache_read"], 10, 64)
+		// The output field is intentionally read as 0 when absent: hashes
+		// written before the output field existed simply lack it, and ParseInt
+		// of the missing-key empty string yields 0 — the correct back-compat
+		// value for a pre-upgrade hash.
+		counts.Output, _ = strconv.ParseInt(fields["output"], 10, 64)
 		out = append(out, counts)
 	}
 	return out, nil

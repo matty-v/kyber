@@ -19,6 +19,15 @@ type codexEntry struct {
 				Cached     int64 `json:"cached_input_tokens"`
 				CacheWrite int64 `json:"cache_write_input_tokens"`
 			} `json:"last_token_usage"`
+			// Total is the rollout's CUMULATIVE counter, carried alongside
+			// last_token_usage in every token_count event. Output spend is
+			// read from here (not from Last) so no intermediate message
+			// between reporter polls is ever lost. output_tokens covers all
+			// generated tokens; reasoning_output_tokens is a subset of it and
+			// is deliberately not tracked separately.
+			Total struct {
+				Output int64 `json:"output_tokens"`
+			} `json:"total_token_usage"`
 			ContextWindow int64 `json:"model_context_window"`
 		} `json:"info"`
 	} `json:"payload"`
@@ -90,6 +99,9 @@ func DetectCodexActivityFile(path string) (state string, at time.Time, err error
 // ParseCodexLatest returns the latest token-count observation in a Codex
 // rollout JSONL. Cached input is a subset of input, so Used is Input rather
 // than Input+Cached; CacheRead is retained as a useful breakdown.
+// Tokens.Output is the rollout's cumulative total_token_usage counter
+// (spend since rollout-session start); a rollout rotation resets it and the
+// control plane's safeDelta treats the rollback as a fresh increment.
 func ParseCodexLatest(path, model string) (*Snapshot, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -118,5 +130,5 @@ func ParseCodexLatest(path, model string) (*Snapshot, error) {
 	if limit > 0 {
 		percentage = 100 * float64(u.Input) / float64(limit)
 	}
-	return &Snapshot{Model: model, Tokens: Tokens{Used: u.Input, Limit: limit, Input: u.Input - u.Cached, CacheCreation: u.CacheWrite, CacheRead: u.Cached}, Percentage: percentage, ContextWindowKnown: limit > 0, UpdatedAt: time.Now().UTC()}, nil
+	return &Snapshot{Model: model, Tokens: Tokens{Used: u.Input, Limit: limit, Input: u.Input - u.Cached, CacheCreation: u.CacheWrite, CacheRead: u.Cached, Output: latest.Payload.Info.Total.Output}, Percentage: percentage, ContextWindowKnown: limit > 0, UpdatedAt: time.Now().UTC()}, nil
 }

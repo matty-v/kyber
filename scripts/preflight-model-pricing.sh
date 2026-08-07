@@ -40,14 +40,15 @@ fail() { echo "::error::preflight-model-pricing: $*" >&2; exit 1; }
 model_count=$(grep -cE '^[a-zA-Z0-9][a-zA-Z0-9._/:-]*:[[:space:]]*$' "${RATES_FILE}" || true)
 [ "${model_count}" -gt 0 ] || fail "vendored dataset has 0 model entries: ${RATES_FILE}"
 
-# Sanity bounds: input/output must be 0 < rate <= ceiling; cache_read >= 0.
+# Sanity bounds: input/output must be 0 < rate <= ceiling;
+# cache_read/cache_creation >= 0 (both are optional-with-0 components).
 # A value outside the bounds means a malformed/poisoned feed slipped the
 # adapter — refuse it rather than ship a confidently-wrong price.
 bad=$(awk -v ceil="${MAX_PER_MTOK}" '
     /^[[:space:]]+(input|output):[[:space:]]/ {
         v=$2; if (v+0 <= 0 || v+0 > ceil) { print $0; }
     }
-    /^[[:space:]]+cache_read:[[:space:]]/ {
+    /^[[:space:]]+(cache_read|cache_creation):[[:space:]]/ {
         v=$2; if (v+0 < 0 || v+0 > ceil) { print $0; }
     }
 ' "${RATES_FILE}")

@@ -1,5 +1,19 @@
 # @matty-v/kyber-pwa-views
 
+## 0.21.0 — 2026-08-07
+
+### Added
+- Metrics tab Token Usage table gains a "Cache write" column so all four
+  priced token components (input, output, cache write, cache read) are
+  visible.
+
+### Fixed
+- Cost accuracy: the control plane now accumulates output tokens (the Output
+  column previously always showed 0) and prices cache-creation (cache-write)
+  tokens, so `costUsd` includes both components. The per-agent `TokenUsage`
+  type gains an optional `tokens.output` field; older control planes that
+  omit it keep rendering as 0.
+
 ## 0.20.2 — 2026-08-07
 
 ### Changed

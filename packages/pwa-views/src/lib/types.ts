@@ -627,6 +627,13 @@ export type TokenUsage = {
     input: number
     cacheCreation: number
     cacheRead: number
+    // Cumulative output-token spend since the in-pod reporter started
+    // (Claude Code) or since the rollout session started (Codex). NOT part
+    // of the context window (`used` stays input + cacheCreation +
+    // cacheRead). Optional for resilience against older control-planes /
+    // cached payloads that don't emit it yet (same idiom as
+    // contextWindowKnown).
+    output?: number
   }
   percentage: number
   effortLevel: string

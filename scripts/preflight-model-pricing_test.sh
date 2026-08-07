@@ -22,10 +22,12 @@ claude-opus-4-8:
     input: 5
     output: 25
     cache_read: 0.5
+    cache_creation: 6.25
 gpt-4o:
     input: 2.5
     output: 10
-    cache_read: 1.25'
+    cache_read: 1.25
+    cache_creation: 0'
 
 # A wired template references the vendored file via .Files.Get.
 WIRED_TEMPLATE='data:
@@ -82,6 +84,13 @@ run "non-positive rate → fail" 1 \
 'claude-x:
     input: 0
     output: 25' "${FRESH_META}" "${WIRED_TEMPLATE}"
+
+# Case 4b: an implausible cache_creation rate (unscaled per-token value) → fail.
+run "implausible cache_creation rate → fail" 1 \
+'claude-x:
+    input: 5
+    output: 25
+    cache_creation: 999999' "${FRESH_META}" "${WIRED_TEMPLATE}"
 
 # Case 5: stale stamp (older than FRESHNESS_DAYS) → fail (forces refresh bot).
 run "stale stamp → fail" 1 "${VALID_RATES}" "${STALE_META}" "${WIRED_TEMPLATE}"

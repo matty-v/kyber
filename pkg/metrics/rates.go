@@ -17,10 +17,13 @@ import (
 var datedSuffix = regexp.MustCompile(`-[0-9]{8}$`)
 
 // ProviderRates holds per-token-type pricing for one model (USD per 1M tokens).
+// An absent cache_creation key unmarshals to 0 (same semantics as cache_read):
+// the component simply prices at $0 rather than making the model unpriced.
 type ProviderRates struct {
-	Input     float64 `yaml:"input"`
-	Output    float64 `yaml:"output"`
-	CacheRead float64 `yaml:"cache_read"`
+	Input         float64 `yaml:"input"`
+	Output        float64 `yaml:"output"`
+	CacheRead     float64 `yaml:"cache_read"`
+	CacheCreation float64 `yaml:"cache_creation"`
 }
 
 // RateTable maps model name → token-type rates.
@@ -70,7 +73,8 @@ func (rt RateTable) ComputeCostKnown(model string, tokenCounts map[string]float6
 	}
 	cost := tokenCounts["input"]*rates.Input/1_000_000 +
 		tokenCounts["output"]*rates.Output/1_000_000 +
-		tokenCounts["cache_read"]*rates.CacheRead/1_000_000
+		tokenCounts["cache_read"]*rates.CacheRead/1_000_000 +
+		tokenCounts["cache_creation"]*rates.CacheCreation/1_000_000
 	return math.Round(cost*10000) / 10000, true
 }
 

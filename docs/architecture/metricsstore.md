@@ -9,9 +9,9 @@ All keys are scoped to the Kubernetes namespace so a single Redis instance can s
 | Key | Type | Purpose |
 |-----|------|---------|
 | `ts:activity:{namespace}:{agent}:{state}` | Sorted set | Per-agent activity time-series; score = Unix timestamp, member = `"{ts}:{value}"` |
-| `ts:token_usage:{namespace}:{agent}:{model}:{type}` | Sorted set | Per-(agent,model,type) token-delta time-series; `type` ∈ `input`/`cache_creation`/`cache_read`; score = Unix timestamp. Windowed source for the Token Usage panel (kyber#428) |
+| `ts:token_usage:{namespace}:{agent}:{model}:{type}` | Sorted set | Per-(agent,model,type) token-delta time-series; `type` ∈ `input`/`cache_creation`/`cache_read`/`output`; score = Unix timestamp. Windowed source for the Token Usage panel (kyber#428) |
 | `accum:state_changes:{namespace}:{agent}` | Hash | Accumulated state-transition counts; field = `to_state`, value = count |
-| `accum:token_usage:{namespace}:{agent}:{model}` | Hash | Accumulated all-time token counts; fields = `input`, `cache_creation`, `cache_read`. Retained as the (agent,model) enumerator + all-time view alongside the windowed `ts:token_usage:*` series |
+| `accum:token_usage:{namespace}:{agent}:{model}` | Hash | Accumulated all-time token counts; fields = `input`, `cache_creation`, `cache_read`, `output` (a missing `output` field on a pre-upgrade hash reads as 0). Retained as the (agent,model) enumerator + all-time view alongside the windowed `ts:token_usage:*` series. After the `output` field's deploy, mixed query windows under-report output for up to 7 days (retention == max query window) and then self-heal |
 | `node:{namespace}:{node}` | Hash | Latest node resource sample; fields = `cpuPercent`, `memUsedBytes`, etc. |
 
 ## Interfaces

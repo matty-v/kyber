@@ -27,4 +27,14 @@ type Tokens struct {
 	Input         int64 `json:"input"`
 	CacheCreation int64 `json:"cacheCreation"`
 	CacheRead     int64 `json:"cacheRead"`
+	// Output is the CUMULATIVE generated-token spend: since reporter start
+	// for Claude Code (accumulated across finalized assistant messages by the
+	// in-pod reporter's outputTracker) and since rollout-session start for
+	// Codex (the rollout's total_token_usage counter). It is billed spend,
+	// NOT part of the context-window formula — Used stays
+	// Input + CacheCreation + CacheRead and must never include Output.
+	// A reporter/rollout restart resets the counter; the control plane's
+	// delta logic treats the rollback as a fresh increment (see
+	// computeTokenDelta in pkg/api).
+	Output int64 `json:"output"`
 }

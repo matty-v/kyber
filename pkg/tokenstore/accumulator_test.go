@@ -17,7 +17,7 @@ func TestAccumulator_IncrBy_basic(t *testing.T) {
 	a := tokenstore.NewMemoryAccumulator()
 	ctx := context.Background()
 
-	delta := tokenstore.TokenDelta{Input: 100, CacheCreation: 20, CacheRead: 50}
+	delta := tokenstore.TokenDelta{Input: 100, CacheCreation: 20, CacheRead: 50, Output: 7}
 	if err := a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", delta); err != nil {
 		t.Fatalf("IncrBy: %v", err)
 	}
@@ -45,6 +45,9 @@ func TestAccumulator_IncrBy_basic(t *testing.T) {
 	if c.CacheRead != 50 {
 		t.Errorf("CacheRead = %d, want 50", c.CacheRead)
 	}
+	if c.Output != 7 {
+		t.Errorf("Output = %d, want 7", c.Output)
+	}
 }
 
 func TestAccumulator_IncrBy_accumulates(t *testing.T) {
@@ -54,6 +57,8 @@ func TestAccumulator_IncrBy_accumulates(t *testing.T) {
 	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Input: 100})
 	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Input: 200, CacheRead: 30})
 	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{CacheCreation: 10})
+	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Output: 40})
+	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Output: 2})
 
 	counts, _ := a.GetAll(ctx, "ns1")
 	if len(counts) != 1 {
@@ -68,6 +73,59 @@ func TestAccumulator_IncrBy_accumulates(t *testing.T) {
 	}
 	if c.CacheRead != 30 {
 		t.Errorf("CacheRead = %d, want 30", c.CacheRead)
+	}
+	if c.Output != 42 {
+		t.Errorf("Output = %d, want 42", c.Output)
+	}
+}
+
+// TestAccumulator_OutputBackCompat pins the pre-upgrade back-compat contract:
+// an entry accumulated before the output field existed (deltas carrying no
+// Output — the analogue of a Redis hash without the "output" field) must read
+// back with Output 0 and no error.
+func TestAccumulator_OutputBackCompat(t *testing.T) {
+	a := tokenstore.NewMemoryAccumulator()
+	ctx := context.Background()
+
+	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Input: 100, CacheRead: 30})
+
+	counts, err := a.GetAll(ctx, "ns1")
+	if err != nil {
+		t.Fatalf("GetAll: %v", err)
+	}
+	if len(counts) != 1 {
+		t.Fatalf("want 1 entry, got %d", len(counts))
+	}
+	if counts[0].Output != 0 {
+		t.Errorf("Output = %d, want 0 for a pre-output entry", counts[0].Output)
+	}
+}
+
+// TestTokenDelta_IsZero_CoversOutput ensures Output participates in IsZero —
+// otherwise an output-only delta would be dropped as a no-op.
+func TestTokenDelta_IsZero_CoversOutput(t *testing.T) {
+	if (tokenstore.TokenDelta{Output: 1}).IsZero() {
+		t.Errorf("IsZero() = true for an output-only delta, want false")
+	}
+	if !(tokenstore.TokenDelta{}).IsZero() {
+		t.Errorf("IsZero() = false for the zero delta, want true")
+	}
+}
+
+// TestAccumulator_OutputOnlyDeltaCreatesEntry proves an output-only delta is
+// persisted (the pre-fix code had no output path at all).
+func TestAccumulator_OutputOnlyDeltaCreatesEntry(t *testing.T) {
+	a := tokenstore.NewMemoryAccumulator()
+	ctx := context.Background()
+
+	_ = a.IncrBy(ctx, "ns1", "han", "claude-sonnet-4-6", tokenstore.TokenDelta{Output: 5})
+
+	counts, _ := a.GetAll(ctx, "ns1")
+	if len(counts) != 1 {
+		t.Fatalf("want 1 entry after output-only delta, got %d", len(counts))
+	}
+	if counts[0].Output != 5 {
+		t.Errorf("Output = %d, want 5", counts[0].Output)
 	}
 }
 

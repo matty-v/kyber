@@ -79,7 +79,7 @@ func ActivityKey(namespace, agent, state string) string {
 }
 
 // TokenUsageKey builds the Redis sorted-set key for an (agent, model, tokenType)
-// token-delta time series. tokenType is one of input/cache_creation/cache_read.
+// token-delta time series. tokenType is one of input/cache_creation/cache_read/output.
 // The ts: prefix means the existing retention worker (SCAN ts:*) evicts these
 // series automatically — no retention change required. model is interpolated
 // verbatim, byte-identical to the accumulator key (accum:token_usage:…:{model}),
