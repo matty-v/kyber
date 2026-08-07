@@ -1,0 +1,51 @@
+# Dependabot: weekly, grouped to keep PR noise manageable for a small
+# maintainer team. Majors are left ungrouped so breaking bumps get their
+# own PR and their own review.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      k8s:
+        # controller-runtime and the k8s.io libs must move in lockstep —
+        # one grouped PR per week instead of a half-upgraded matrix.
+        patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+      go-minor-patch:
+        update-types: ["minor", "patch"]
+        exclude-patterns:
+          - "k8s.io/*"
+          - "sigs.k8s.io/*"
+
+  - package-ecosystem: npm
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # Workspace-linked internal package — versioned and published by CI,
+      # never bumped as an external dependency.
+      - dependency-name: "@matty-v/kyber-pwa-views"
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directories:
+      - "/images/*"
+    schedule:
+      interval: weekly
+      day: monday

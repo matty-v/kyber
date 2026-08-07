@@ -1,9 +1,10 @@
 name: e2e
 
-# E2E tests are currently **manual-only** (workflow_dispatch). Push-to-main
-# auto-runs were disabled 2026-04-21 at Matt's request while we triage e2e
-# reliability. Re-enable by adding the `push:` trigger back once the suite
-# is stable.
+# E2E tests run on demand (workflow_dispatch) and on a weekly schedule.
+# Push-to-main auto-runs were disabled 2026-04-21 while e2e reliability was
+# triaged; the weekly cron keeps drift visible without putting the suite's
+# flake profile in every PR's critical path. Re-enable the `push:` trigger
+# once the suite is stable.
 #
 # To run from the GitHub UI: Actions → e2e → Run workflow.
 # These tests spin up a real k3d cluster, build the control-plane image
@@ -12,6 +13,8 @@ name: e2e
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: '0 8 * * 1'
 
 permissions:
   contents: read
