@@ -251,7 +251,7 @@ See `docs/` for design notes and ADRs.
 Kyber is designed to run agents with substantial power, and its deployment model reflects that:
 
 - **Agent runtime pods run privileged.** Whole-disk persistence requires `Privileged: true` and mounting `/dev/fuse` from the host (see [Architecture](#architecture)). A compromised or misbehaving agent pod should be assumed to have significant reach on its node.
-- **Agents accept prompts from connected chat channels.** Telegram and Discord bindings deliver external messages straight into agent sessions (after HMAC verification, dedup, and rate limiting). Anyone who can message a bound channel can influence what an agent does.
+- **Agents accept prompts from connected chat channels.** Telegram and Discord bindings deliver external messages straight into agent sessions (after webhook-secret verification, dedup, and rate limiting). The primary access control is the per-agent **user-ID allowlist** — messages from anyone not on it are ignored — so treat allowlist membership as operator-level trust: anyone listed can influence what an agent does.
 
 Run Kyber on a dedicated cluster whose workloads you trust the agents with — not on a shared production cluster. Treat the cluster as the blast radius of the agents it hosts.
 
