@@ -64,6 +64,7 @@ claude-sonnet-4-6:
   input: 3.0
   output: 15.0
   cache_read: 0.3
+  cache_creation: 3.75
 claude-haiku-4-5-20251001:
   input: 0.8
   output: 4.0
@@ -87,6 +88,13 @@ claude-haiku-4-5-20251001:
 		_ = acc.IncrBy(ctx, ns, f.agent, f.model, tokenstore.TokenDelta{Input: 1_000_000})
 		_ = ms.AddPoint(ctx, metricsstore.TokenUsageKey(ns, f.agent, f.model, "input"), now-100, 1_000_000)
 	}
+	// sonny additionally carries output + cache_creation usage so the cost
+	// includes both fixed components (output was previously dropped end-to-end;
+	// cache_creation previously had no rate and priced at $0).
+	_ = acc.IncrBy(ctx, ns, "sonny", "claude-sonnet-4-6",
+		tokenstore.TokenDelta{Output: 200_000, CacheCreation: 100_000})
+	_ = ms.AddPoint(ctx, metricsstore.TokenUsageKey(ns, "sonny", "claude-sonnet-4-6", "output"), now-100, 200_000)
+	_ = ms.AddPoint(ctx, metricsstore.TokenUsageKey(ns, "sonny", "claude-sonnet-4-6", "cache_creation"), now-100, 100_000)
 
 	ts := buildPricedMetricsServer(t, ratesPath, ms, acc)
 	defer ts.Close()
@@ -107,12 +115,25 @@ claude-haiku-4-5-20251001:
 		byAgent[r["agent"].(string)] = r
 	}
 
-	// Priced model: priced:true, cost = 1M input * $3/MTok = 3.0.
+	// Priced model: priced:true, cost = 1M input * $3/MTok
+	// + 200K output * $15/MTok + 100K cache_creation * $3.75/MTok
+	// = 3.0 + 3.0 + 0.375 = 6.375.
 	if got := byAgent["sonny"]["priced"]; got != true {
 		t.Errorf("sonnet priced = %v, want true", got)
 	}
-	if got := byAgent["sonny"]["costUsd"]; got != 3.0 {
-		t.Errorf("sonnet costUsd = %v, want 3.0", got)
+	if got := byAgent["sonny"]["costUsd"]; got != 6.375 {
+		t.Errorf("sonnet costUsd = %v, want 6.375 (input+output+cache_creation)", got)
+	}
+	// The output count must round-trip into the response's tokens map.
+	sonnyTokens, ok := byAgent["sonny"]["tokens"].(map[string]interface{})
+	if !ok {
+		t.Fatalf("sonny row missing tokens map: %v", byAgent["sonny"])
+	}
+	if got := sonnyTokens["output"]; got != 200_000.0 {
+		t.Errorf("sonny tokens.output = %v, want 200000", got)
+	}
+	if got := sonnyTokens["cache_creation"]; got != 100_000.0 {
+		t.Errorf("sonny tokens.cache_creation = %v, want 100000", got)
 	}
 
 	// Unpriced model (opus-4-8 — no rate): priced:false, cost 0 (NOT a

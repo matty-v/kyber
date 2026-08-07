@@ -13,6 +13,7 @@ const fixtureFeed = `{
     "input_cost_per_token": 5e-06,
     "output_cost_per_token": 2.5e-05,
     "cache_read_input_token_cost": 5e-07,
+    "cache_creation_input_token_cost": 6.25e-06,
     "litellm_provider": "anthropic"
   },
   "gpt-4o": {
@@ -38,6 +39,12 @@ const fixtureFeed = `{
     "input_cost_per_token": 0,
     "output_cost_per_token": 1e-05,
     "litellm_provider": "openai"
+  },
+  "bad-cache-creation-model": {
+    "input_cost_per_token": 3e-06,
+    "output_cost_per_token": 1.5e-05,
+    "cache_creation_input_token_cost": 1.0,
+    "litellm_provider": "anthropic"
   }
 }`
 
@@ -62,16 +69,16 @@ func TestProjectLiteLLM_ConvertsAndFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("claude-opus-4-8 missing from projection")
 	}
-	if opus.Input != 5.0 || opus.Output != 25.0 || opus.CacheRead != 0.5 {
-		t.Errorf("opus projected = %+v, want {5 25 0.5} per MTok", opus)
+	if opus.Input != 5.0 || opus.Output != 25.0 || opus.CacheRead != 0.5 || opus.CacheCreation != 6.25 {
+		t.Errorf("opus projected = %+v, want {Input:5 Output:25 CacheRead:0.5 CacheCreation:6.25} per MTok", opus)
 	}
 
 	gpt, ok := table["gpt-4o"]
 	if !ok {
 		t.Fatalf("gpt-4o missing from projection")
 	}
-	if gpt.Input != 2.5 || gpt.Output != 10.0 || gpt.CacheRead != 0 {
-		t.Errorf("gpt-4o projected = %+v, want {2.5 10 0} (no cache_read → 0)", gpt)
+	if gpt.Input != 2.5 || gpt.Output != 10.0 || gpt.CacheRead != 0 || gpt.CacheCreation != 0 {
+		t.Errorf("gpt-4o projected = %+v, want {2.5 10 0 0} (no cache_read/cache_creation → 0)", gpt)
 	}
 
 	if _, ok := table["command-r"]; ok {
@@ -99,8 +106,14 @@ func TestProjectLiteLLM_SanityBoundsReject(t *testing.T) {
 	if _, ok := table["zero-input-model"]; ok {
 		t.Errorf("zero-input-model has 0 input cost but was included")
 	}
-	if len(rejected) != 3 {
-		t.Errorf("rejected count = %d, want 3 (garbled, no-output, zero-input); got %v", len(rejected), rejected)
+	// bad-cache-creation-model: unscaled cache_creation (1.0/token →
+	// 1,000,000/MTok > ceiling) → the whole model is rejected, same as
+	// cache_read.
+	if _, ok := table["bad-cache-creation-model"]; ok {
+		t.Errorf("bad-cache-creation-model exceeded the cache_creation sanity ceiling but was included")
+	}
+	if len(rejected) != 4 {
+		t.Errorf("rejected count = %d, want 4 (garbled, no-output, zero-input, bad-cache-creation); got %v", len(rejected), rejected)
 	}
 }
 

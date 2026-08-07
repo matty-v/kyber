@@ -27,4 +27,8 @@ type Tokens struct {
 	Input         int64 `json:"input"`
 	CacheCreation int64 `json:"cacheCreation"`
 	CacheRead     int64 `json:"cacheRead"`
+	// Output is the per-message generated-token spend of the latest message.
+	// It is billed spend, NOT part of the context-window formula — Used stays
+	// Input + CacheCreation + CacheRead and must never include Output.
+	Output int64 `json:"output"`
 }

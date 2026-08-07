@@ -18,6 +18,9 @@ type codexEntry struct {
 				Input      int64 `json:"input_tokens"`
 				Cached     int64 `json:"cached_input_tokens"`
 				CacheWrite int64 `json:"cache_write_input_tokens"`
+				// Output covers all generated tokens; reasoning_output_tokens
+				// is a subset of it and is deliberately not tracked separately.
+				Output int64 `json:"output_tokens"`
 			} `json:"last_token_usage"`
 			ContextWindow int64 `json:"model_context_window"`
 		} `json:"info"`
@@ -118,5 +121,5 @@ func ParseCodexLatest(path, model string) (*Snapshot, error) {
 	if limit > 0 {
 		percentage = 100 * float64(u.Input) / float64(limit)
 	}
-	return &Snapshot{Model: model, Tokens: Tokens{Used: u.Input, Limit: limit, Input: u.Input - u.Cached, CacheCreation: u.CacheWrite, CacheRead: u.Cached}, Percentage: percentage, ContextWindowKnown: limit > 0, UpdatedAt: time.Now().UTC()}, nil
+	return &Snapshot{Model: model, Tokens: Tokens{Used: u.Input, Limit: limit, Input: u.Input - u.Cached, CacheCreation: u.CacheWrite, CacheRead: u.Cached, Output: u.Output}, Percentage: percentage, ContextWindowKnown: limit > 0, UpdatedAt: time.Now().UTC()}, nil
 }

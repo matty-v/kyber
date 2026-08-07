@@ -32,6 +32,7 @@ func (m *MemoryAccumulator) IncrBy(_ context.Context, namespace, agentName, mode
 	cur.Input += delta.Input
 	cur.CacheCreation += delta.CacheCreation
 	cur.CacheRead += delta.CacheRead
+	cur.Output += delta.Output
 	m.data[key] = cur
 	return nil
 }

@@ -14,10 +14,11 @@ import (
 // per-token; pointers distinguish "absent" from a genuine 0. Unknown fields are
 // ignored (the upstream entry carries dozens of capability flags we don't use).
 type litellmEntry struct {
-	InputCostPerToken       *float64 `json:"input_cost_per_token"`
-	OutputCostPerToken      *float64 `json:"output_cost_per_token"`
-	CacheReadInputTokenCost *float64 `json:"cache_read_input_token_cost"`
-	LiteLLMProvider         string   `json:"litellm_provider"`
+	InputCostPerToken           *float64 `json:"input_cost_per_token"`
+	OutputCostPerToken          *float64 `json:"output_cost_per_token"`
+	CacheReadInputTokenCost     *float64 `json:"cache_read_input_token_cost"`
+	CacheCreationInputTokenCost *float64 `json:"cache_creation_input_token_cost"`
+	LiteLLMProvider             string   `json:"litellm_provider"`
 }
 
 // RateBounds gates adopted per-MTok rates. A value must satisfy
@@ -73,7 +74,17 @@ func ProjectLiteLLM(raw []byte, providers map[string]bool, bounds RateBounds) (R
 				continue
 			}
 		}
-		table[id] = ProviderRates{Input: input, Output: output, CacheRead: cacheRead}
+		// cache_creation mirrors cache_read: optional, default 0, and a present
+		// value must be a sane non-negative rate within the ceiling.
+		var cacheCreation float64
+		if e.CacheCreationInputTokenCost != nil {
+			cacheCreation = round4(*e.CacheCreationInputTokenCost * perMTok)
+			if cacheCreation < 0 || cacheCreation > bounds.MaxPerMTok {
+				rejected = append(rejected, id)
+				continue
+			}
+		}
+		table[id] = ProviderRates{Input: input, Output: output, CacheRead: cacheRead, CacheCreation: cacheCreation}
 	}
 	sort.Strings(rejected)
 	return table, rejected, nil

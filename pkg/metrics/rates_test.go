@@ -1,6 +1,9 @@
 package metrics
 
-import "testing"
+import (
+	"os"
+	"testing"
+)
 
 // TestComputeCostKnown_UnknownModel pins the fail-loud sentinel: an unknown
 // model returns (0, false) so callers can distinguish "no rate for this model"
@@ -54,6 +57,55 @@ func TestComputeCostKnown_KnownModelWithUsage(t *testing.T) {
 	want = float64(int64(want*10000+0.5)) / 10000    // match ComputeCostUSD rounding
 	if cost != want {
 		t.Errorf("cost = %v, want %v", cost, want)
+	}
+}
+
+// TestComputeCostKnown_IncludesOutputAndCacheCreation pins the two fixed cost
+// components: output tokens and cache-creation (cache-write) tokens must both
+// contribute to the computed cost when the rate table carries their rates.
+func TestComputeCostKnown_IncludesOutputAndCacheCreation(t *testing.T) {
+	rt := RateTable{
+		"claude-sonnet-4-6": {Input: 3.0, Output: 15.0, CacheRead: 0.3, CacheCreation: 3.75},
+	}
+	cost, priced := rt.ComputeCostKnown("claude-sonnet-4-6", map[string]float64{
+		"input":          1_000_000,
+		"output":         1_000_000,
+		"cache_read":     1_000_000,
+		"cache_creation": 1_000_000,
+	})
+	if !priced {
+		t.Fatalf("priced = false, want true")
+	}
+	want := 3.0 + 15.0 + 0.3 + 3.75
+	if cost != want {
+		t.Errorf("cost = %v, want %v (input+output+cache_read+cache_creation)", cost, want)
+	}
+}
+
+// TestComputeCostKnown_MissingCacheCreationRateIsZero pins the back-compat
+// semantics for a rates YAML written before cache_creation existed: the
+// component prices at 0 but the model stays priced=true (same as cache_read).
+func TestComputeCostKnown_MissingCacheCreationRateIsZero(t *testing.T) {
+	dir := t.TempDir()
+	path := dir + "/provider-rates.yaml"
+	yaml := `claude-sonnet-4-6:
+  input: 3.0
+  output: 15.0
+  cache_read: 0.3
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o600); err != nil {
+		t.Fatalf("write rates: %v", err)
+	}
+	rt := LoadRateTable(path)
+	cost, priced := rt.ComputeCostKnown("claude-sonnet-4-6", map[string]float64{
+		"input":          1_000_000,
+		"cache_creation": 1_000_000,
+	})
+	if !priced {
+		t.Fatalf("priced = false, want true (absent cache_creation must not unprice the model)")
+	}
+	if cost != 3.0 {
+		t.Errorf("cost = %v, want 3.0 (cache_creation component 0 when the key is absent)", cost)
 	}
 }
 

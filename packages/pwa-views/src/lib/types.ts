@@ -627,6 +627,11 @@ export type TokenUsage = {
     input: number
     cacheCreation: number
     cacheRead: number
+    // Per-message output-token spend of the latest message. NOT part of the
+    // context window (`used` stays input + cacheCreation + cacheRead).
+    // Optional for resilience against older control-planes / cached payloads
+    // that don't emit it yet (same idiom as contextWindowKnown).
+    output?: number
   }
   percentage: number
   effortLevel: string

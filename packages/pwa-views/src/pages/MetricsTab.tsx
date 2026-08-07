@@ -289,6 +289,7 @@ export function TokenTable({ rows }: { rows: MetricsTokenUsage[] }) {
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Model</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Input</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Output</th>
+            <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache write</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache read</th>
             <th className="pb-2 font-mono font-medium uppercase tracking-wider">Cost (USD)</th>
           </tr>
@@ -300,6 +301,7 @@ export function TokenTable({ rows }: { rows: MetricsTokenUsage[] }) {
               <td className="py-2 pr-4 text-text-secondary">{row.model}</td>
               <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['input'] ?? 0).toLocaleString()}</td>
               <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['output'] ?? 0).toLocaleString()}</td>
+              <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['cache_creation'] ?? 0).toLocaleString()}</td>
               <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['cache_read'] ?? 0).toLocaleString()}</td>
               {isUnpriced(row) ? (
                 <td className="py-2 tabular-nums">

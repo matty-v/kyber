@@ -689,12 +689,25 @@ func (s *InternalServer) addTokenUsagePoints(ctx context.Context, agent, model s
 	add("input", delta.Input)
 	add("cache_creation", delta.CacheCreation)
 	add("cache_read", delta.CacheRead)
+	add("output", delta.Output)
 }
 
 // computeTokenDelta returns the per-token-type increment from prev to snap.
-// prev may be nil (first report) or have a different model (session/model change);
-// in both cases snap's values are the full increment. A negative result (session
-// restart, counter rolled back) uses snap's value as the increment.
+//
+// Input/cache_creation/cache_read are quasi-cumulative context-window numbers:
+// prev may be nil (first report) or have a different model (session/model
+// change); in both cases snap's values are the full increment. A negative
+// result (session restart, counter rolled back) uses snap's value as the
+// increment.
+//
+// Output has different semantics: it is the per-message spend of the LATEST
+// message, not a cumulative counter, and the in-pod reporter re-POSTs the same
+// last message every interval. The output delta is therefore 0 only when prev
+// exists, the model is unchanged, AND the full token tuple (Input,
+// CacheCreation, CacheRead, Output) is identical — i.e. the same message was
+// re-reported. Any change to the tuple means a new message landed, so the
+// whole snap.Tokens.Output is the increment (subtracting the previous
+// message's output would be wrong — they are different messages' spends).
 func computeTokenDelta(prev, snap *tokenreport.Snapshot) tokenstore.TokenDelta {
 	var prevInput, prevCache, prevCacheRead int64
 	if prev != nil && prev.Model == snap.Model {
@@ -712,10 +725,19 @@ func computeTokenDelta(prev, snap *tokenreport.Snapshot) tokenstore.TokenDelta {
 		}
 		return 0
 	}
+	outputDelta := snap.Tokens.Output
+	if prev != nil && prev.Model == snap.Model &&
+		prev.Tokens.Input == snap.Tokens.Input &&
+		prev.Tokens.CacheCreation == snap.Tokens.CacheCreation &&
+		prev.Tokens.CacheRead == snap.Tokens.CacheRead &&
+		prev.Tokens.Output == snap.Tokens.Output {
+		outputDelta = 0 // same message re-reported by the interval reporter
+	}
 	return tokenstore.TokenDelta{
 		Input:         safeDelta(snap.Tokens.Input, prevInput),
 		CacheCreation: safeDelta(snap.Tokens.CacheCreation, prevCache),
 		CacheRead:     safeDelta(snap.Tokens.CacheRead, prevCacheRead),
+		Output:        outputDelta,
 	}
 }
 
@@ -735,6 +757,7 @@ func emitTokenCounterDelta(ctx context.Context, agentName, model string, delta t
 	add("input", delta.Input)
 	add("cache_creation", delta.CacheCreation)
 	add("cache_read", delta.CacheRead)
+	add("output", delta.Output)
 }
 
 // handleJobEvent handles POST /internal/agents/{name}/job-events (#135).

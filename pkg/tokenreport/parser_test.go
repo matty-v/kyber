@@ -38,6 +38,14 @@ func TestParseLatest_FinalizedMessage(t *testing.T) {
 	if snap.Tokens.CacheRead != 25231 {
 		t.Errorf("Tokens.CacheRead=%d want 25231", snap.Tokens.CacheRead)
 	}
+	if snap.Tokens.Output != 50 {
+		t.Errorf("Tokens.Output=%d want 50", snap.Tokens.Output)
+	}
+	// Output is per-message spend, NOT part of the context window: Used must
+	// stay Input + CacheCreation + CacheRead and never include Output.
+	if snap.Tokens.Used != snap.Tokens.Input+snap.Tokens.CacheCreation+snap.Tokens.CacheRead {
+		t.Errorf("Tokens.Used=%d must equal Input+CacheCreation+CacheRead (Output excluded)", snap.Tokens.Used)
+	}
 	if snap.EffortLevel != "medium" {
 		t.Errorf("EffortLevel=%q want medium", snap.EffortLevel)
 	}

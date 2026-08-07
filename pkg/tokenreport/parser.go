@@ -126,6 +126,7 @@ func ParseLatest(dir, file string) (*Snapshot, error) {
 				Input:         e.Message.Usage.InputTokens,
 				CacheCreation: e.Message.Usage.CacheCreationInputTokens,
 				CacheRead:     e.Message.Usage.CacheReadInputTokens,
+				Output:        e.Message.Usage.OutputTokens,
 			},
 			Percentage:  0,
 			EffortLevel: e.EffortLevel,

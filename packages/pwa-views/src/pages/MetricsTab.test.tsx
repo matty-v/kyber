@@ -50,7 +50,10 @@ describe('formatAge', () => {
 
 // ---- ComputeCostUSD helper ----
 
-type RateTable = Record<string, { input: number; output: number; cache_read: number }>
+type RateTable = Record<
+  string,
+  { input: number; output: number; cache_read: number; cache_creation: number }
+>
 
 function computeCostUSD(table: RateTable, model: string, tokens: Record<string, number>): number {
   const rates = table[model]
@@ -58,18 +61,25 @@ function computeCostUSD(table: RateTable, model: string, tokens: Record<string, 
   const cost =
     (tokens['input'] ?? 0) * rates.input / 1_000_000 +
     (tokens['output'] ?? 0) * rates.output / 1_000_000 +
-    (tokens['cache_read'] ?? 0) * rates.cache_read / 1_000_000
+    (tokens['cache_read'] ?? 0) * rates.cache_read / 1_000_000 +
+    (tokens['cache_creation'] ?? 0) * rates.cache_creation / 1_000_000
   return Math.round(cost * 10000) / 10000
 }
 
 describe('computeCostUSD', () => {
   const table: RateTable = {
-    'claude-sonnet-4-6': { input: 3.0, output: 15.0, cache_read: 0.3 },
+    'claude-sonnet-4-6': { input: 3.0, output: 15.0, cache_read: 0.3, cache_creation: 3.75 },
   }
 
   it('computes cost correctly', () => {
-    const tokens = { input: 1_000_000, output: 500_000, cache_read: 2_000_000 }
-    expect(computeCostUSD(table, 'claude-sonnet-4-6', tokens)).toBe(11.1)
+    const tokens = {
+      input: 1_000_000,
+      output: 500_000,
+      cache_read: 2_000_000,
+      cache_creation: 1_000_000,
+    }
+    // 3.0 + 7.5 + 0.6 + 3.75 = 14.85
+    expect(computeCostUSD(table, 'claude-sonnet-4-6', tokens)).toBe(14.85)
   })
 
   it('returns 0 for unknown model', () => {
@@ -183,6 +193,35 @@ describe('TokenTable unpriced badge', () => {
     render(<TokenTable rows={rows} />)
     expect(screen.getByText('$0.0000')).toBeInTheDocument()
     expect(screen.queryByText(/unpriced/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the Cache write column with the cache_creation count', () => {
+    const rows: MetricsTokenUsage[] = [
+      {
+        agent: 'sonny',
+        model: 'claude-sonnet-4-6',
+        tokens: { input: 1000, output: 200, cache_creation: 4321, cache_read: 99 },
+        costUsd: 1.23,
+        priced: true,
+      },
+    ]
+    render(<TokenTable rows={rows} />)
+    expect(screen.getByText('Cache write')).toBeInTheDocument()
+    expect(screen.getByText('4,321')).toBeInTheDocument()
+    // Column order: Agent, Model, Input, Output, Cache write, Cache read, Cost.
+    const cells = screen.getAllByRole('cell').map((c) => c.textContent)
+    expect(cells.slice(2, 6)).toEqual(['1,000', '200', '4,321', '99'])
+  })
+
+  it('renders 0 in Cache write for a row without cache_creation', () => {
+    const rows: MetricsTokenUsage[] = [
+      { agent: 'legacy', model: 'x', tokens: { input: 5 }, costUsd: 0, priced: true },
+    ]
+    render(<TokenTable rows={rows} />)
+    expect(screen.getByText('Cache write')).toBeInTheDocument()
+    // Output, Cache write, and Cache read all fall back to 0.
+    const cells = screen.getAllByRole('cell').map((c) => c.textContent)
+    expect(cells.slice(2, 6)).toEqual(['5', '0', '0', '0'])
   })
 
   it('sorts unpriced rows last, below genuinely-priced rows', () => {
