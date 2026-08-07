@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 336 64" width="336" height="64" role="img" aria-label="Kyber">
+  <g transform="translate(2,5) scale(0.49)" fill="none" stroke="#4ECDDB" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+    <polygon points="38,16 82,16 106,42 60,94 14,42"/>
+    <line x1="14" y1="42" x2="106" y2="42"/>
+    <line x1="38" y1="16" x2="44" y2="42"/>
+    <line x1="82" y1="16" x2="76" y2="42"/>
+    <line x1="44" y1="42" x2="60" y2="94"/>
+    <line x1="76" y1="42" x2="60" y2="94"/>
+  </g>
+  <text x="76" y="45" font-family="-apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="700" letter-spacing="12" fill="#16212B">KYBER</text>
+</svg>
