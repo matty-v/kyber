@@ -253,8 +253,17 @@ jobs:
         run: |
           DESCRIBE=$(git describe --tags 2>/dev/null || echo "")
           if [ -z "$DESCRIBE" ]; then
-            echo "::error::git describe --tags returned empty — tags not fetched (check fetch-depth). Would silently fall back to the lagging chart version on razer (kyber#482)."
-            exit 1
+            # Distinguish "tags exist but weren't fetched" (a fetch-depth
+            # regression — fail loudly, kyber#482) from "the repository has no
+            # release tags yet" (fresh clone/fork pre-first-release — fall back
+            # to a truthful dev version instead of blocking every build).
+            if [ -z "$(git tag --list | head -1)" ]; then
+              DESCRIBE="0.0.0-dev-g$(git rev-parse --short HEAD)"
+              echo "::notice::No release tags exist yet — using ${DESCRIBE} as the build version."
+            else
+              echo "::error::git describe --tags returned empty — tags not fetched (check fetch-depth). Would silently fall back to the lagging chart version on the canary cluster (kyber#482)."
+              exit 1
+            fi
           fi
           VERSION="${DESCRIBE#v}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"

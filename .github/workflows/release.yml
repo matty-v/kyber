@@ -47,7 +47,19 @@ jobs:
       tag_message: ${{ steps.chainmeta.outputs.tag_message }}
       pwa_version: ${{ steps.chainmeta.outputs.pwa_version }}
       is_test: ${{ steps.chainmeta.outputs.is_test }}
+      has_deploy_app: ${{ steps.opsecrets.outputs.has_deploy_app }}
     steps:
+      # Optional-integration detection: the post-release chain (pwa-views tag
+      # push, deploy-repo bump PRs) is maintainer infrastructure driven by a
+      # GitHub App. Forks and fresh clones don't have those secrets — the
+      # dependent jobs skip cleanly instead of failing the release. (Secrets
+      # are not readable in job-level `if:`, hence this step-level output.)
+      - id: opsecrets
+        run: |
+          echo "has_deploy_app=${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" = "false" ]; then
+            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — the post-release chain jobs (pwa-views publish, deploy bump PRs) will be skipped. The GitHub Release and image pushes are unaffected."
+          fi
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -441,7 +453,7 @@ jobs:
     needs: [meta, release]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') && needs.meta.outputs.has_deploy_app == 'true' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -528,7 +540,8 @@ jobs:
     needs: [meta, release]
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    # has_deploy_app gate: digests only feed deploy-bump-pr, which needs the App.
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') && needs.meta.outputs.has_deploy_app == 'true' }}
     outputs:
       control_plane_digest: ${{ steps.digests.outputs.CONTROL_PLANE_DIGEST }}
       node_agent_digest:    ${{ steps.digests.outputs.NODE_AGENT_DIGEST }}
@@ -590,7 +603,7 @@ jobs:
     needs: [meta, release, resolve-digests]
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') && needs.meta.outputs.has_deploy_app == 'true' }}
     strategy:
       matrix:
         cluster: [falcon, gcp]

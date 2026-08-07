@@ -38,8 +38,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
+      # The auto-publish tag push is maintainer infrastructure (GitHub App +
+      # user-owned GitHub Packages). Forks and fresh clones won't have the
+      # secrets — skip cleanly instead of failing the run.
+      - name: Detect optional App credentials
+        id: creds
+        run: |
+          echo "available=${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
+          if [ "${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" = "false" ]; then
+            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — skipping the pwa-views auto-publish tag push (fine for forks; the package publish chain is a maintainer integration)."
+          fi
+
       - name: Mint a fresh GitHub App token
         id: app_token
+        if: steps.creds.outputs.available == 'true'
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.KYBER_APP_ID }}
@@ -92,7 +104,7 @@ jobs:
           fi
 
       - name: Push pwa-views tag (triggers publish-pwa-views.yml)
-        if: steps.ver.outputs.changed == 'true' && steps.check_published.outputs.already == 'false'
+        if: steps.creds.outputs.available == 'true' && steps.ver.outputs.changed == 'true' && steps.check_published.outputs.already == 'false'
         env:
           APP_TOKEN: ${{ steps.app_token.outputs.token }}
           PWA_VERSION: ${{ steps.ver.outputs.version }}

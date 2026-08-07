@@ -12,7 +12,16 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    outputs:
+      has_deploy_app: ${{ steps.creds.outputs.available }}
     steps:
+      # Secrets are not readable in job-level `if:` — computed here so the
+      # bump-holocron job (a maintainer-private integration) can skip cleanly
+      # on forks/fresh clones instead of failing.
+      - name: Detect optional App credentials
+        id: creds
+        run: echo "available=${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
@@ -58,6 +67,9 @@ jobs:
   bump-holocron:
     needs: publish
     runs-on: ubuntu-latest
+    # Holocron is the maintainer's private downstream consumer — skip when the
+    # GitHub App secrets that drive the bump aren't configured (forks/clones).
+    if: needs.publish.outputs.has_deploy_app == 'true'
     steps:
       - name: Compute published version
         id: ver
