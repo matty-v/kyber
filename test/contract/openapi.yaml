@@ -1,0 +1,977 @@
+openapi: 3.0.3
+info:
+  title: Kyber Control Plane API
+  description: >
+    Public HTTP API for the Kyber agent fleet control plane.
+    All /api/v1/* endpoints require Bearer authentication.
+    Webhook endpoints at /webhooks/* bypass Bearer auth.
+  version: 0.1.0
+
+servers:
+  - url: http://localhost:8080
+
+security:
+  - BearerAuth: []
+
+paths:
+  /api/v1/available:
+    get:
+      operationId: getAvailableRuntimes
+      summary: Get dynamically detected harness versions and models
+      tags: [agents]
+      responses:
+        '200':
+          description: Claude and authenticated Codex runtime catalogs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvailableResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/fleet/summary:
+    get:
+      operationId: getFleetSummary
+      summary: Get fleet status summary
+      tags: [fleet]
+      responses:
+        '200':
+          description: Fleet summary
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetSummary'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/fleet-defaults:
+    get:
+      operationId: getFleetDefaults
+      summary: Get runtime-scoped fleet defaults
+      tags: [fleet]
+      responses:
+        '200':
+          description: Claude Code and Codex defaults
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetDefaults'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      operationId: updateFleetDefaults
+      summary: Update runtime-scoped fleet defaults
+      tags: [fleet]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FleetDefaults'
+      responses:
+        '200':
+          description: Updated defaults
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FleetDefaults'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/machines:
+    get:
+      operationId: listMachines
+      summary: List all machines
+      tags: [machines]
+      responses:
+        '200':
+          description: List of machines
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MachineList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createMachine
+      summary: Create a new machine
+      tags: [machines]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMachineRequest'
+      responses:
+        '201':
+          description: Machine created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/machines/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getMachine
+      summary: Get a machine by name
+      tags: [machines]
+      responses:
+        '200':
+          description: Machine found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Machine'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteMachine
+      summary: Delete a machine
+      description: >
+        Destroys the machine (and its GCE VM / boot disk). Requires the
+        confirmation interlock (?confirm={name}) and the lifecycle:admin scope
+        (kyber#565). The existing "machine has attached agents" guard (422)
+        still applies after the gate.
+      tags: [machines]
+      parameters:
+        - $ref: '#/components/parameters/ConfirmName'
+      responses:
+        '204':
+          description: Machine deleted
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+
+  /api/v1/agents:
+    get:
+      operationId: listAgents
+      summary: List all agents
+      tags: [agents]
+      responses:
+        '200':
+          description: List of agents
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentList'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    post:
+      operationId: createAgent
+      summary: Create a new agent
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAgentRequest'
+      responses:
+        '201':
+          description: Agent created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/agents/{name}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgent
+      summary: Get an agent by name
+      tags: [agents]
+      responses:
+        '200':
+          description: Agent found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAgent
+      summary: Delete an agent
+      description: >
+        Permanently destroys the agent and all of its identity state (PVC,
+        agent-scoped secrets, and external-store rows). Requires the
+        confirmation interlock (?confirm={name}) and the lifecycle:admin scope
+        (kyber#565). Irreversible until off-cluster backups (#171) land.
+      tags: [agents]
+      parameters:
+        - $ref: '#/components/parameters/ConfirmName'
+      responses:
+        '204':
+          description: Agent deleted
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/comms:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: listAgentComms
+      summary: List per-agent communication channels and runtime health
+      tags: [agents]
+      responses:
+        '200':
+          description: Communication channel configuration and diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommsListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/comms/{channel}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - name: channel
+        in: path
+        required: true
+        schema:
+          type: string
+          enum: [telegram, discord]
+    get:
+      operationId: getAgentCommsChannel
+      tags: [agents]
+      responses:
+        '200':
+          description: Communication channel configuration and diagnostics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommsChannel'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: putAgentCommsChannel
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PutCommsRequest'
+      responses:
+        '200':
+          description: Updated communication channel
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CommsChannel'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deleteAgentCommsChannel
+      tags: [agents]
+      responses:
+        '204':
+          description: Communication channel disabled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/codex-device-auth:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: startCodexDeviceAuth
+      summary: Start or restart an in-pod Codex device-login flow
+      tags: [agents]
+      responses:
+        '204':
+          description: Device login scheduled
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /api/v1/agents/{name}/logs:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgentLogs
+      summary: Stream or query an agent's logs
+      description: >
+        Returns an agent's logs as a `text/plain` stream, one line per log line.
+
+
+        Two sources, selected by the `source` query param:
+
+          * `source=kubelet` (default) — the live kubelet ring-buffer tail. Window
+            params are RELATIVE: `since` is a Go duration (e.g. `5m`, `1h`) meaning
+            "that long ago". Supports `follow`, `tail`, `previous`, `container`.
+            History is bounded by the current pod lifetime — a pod restart evicts it.
+
+          * `source=archive` — the durable, off-cluster surface (kyber#431). Window
+            params are ABSOLUTE: `since` and `until` are REQUIRED RFC3339 timestamps
+            bounding an inclusive `[since, until]` window. Reads survive pod restarts.
+            `follow`, `tail`, `previous`, `container` do not apply. Returns 400 if a
+            bound is missing/malformed or if `until` is earlier than `since`; 503 if
+            the archive surface is not configured.
+
+
+        Note the deliberate per-source overload of `since`: a Go duration for
+        `kubelet`, an RFC3339 instant for `archive`.
+      tags: [agents]
+      parameters:
+        - name: source
+          in: query
+          required: false
+          description: Log source. `kubelet` (default) is the live tail; `archive` is the durable absolute-window surface.
+          schema:
+            type: string
+            enum: [kubelet, archive]
+            default: kubelet
+        - name: since
+          in: query
+          required: false
+          description: >
+            Window start. For `source=kubelet`, a Go duration ago (e.g. `5m`).
+            For `source=archive`, a REQUIRED RFC3339 timestamp (e.g. `2026-06-03T10:00:00Z`).
+          schema:
+            type: string
+            example: 2026-06-03T10:00:00Z
+        - name: until
+          in: query
+          required: false
+          description: >
+            Window end. Only used (and REQUIRED) when `source=archive`; an RFC3339
+            timestamp that must not be earlier than `since`. Ignored for `source=kubelet`.
+          schema:
+            type: string
+            example: 2026-06-03T11:00:00Z
+        - name: tail
+          in: query
+          required: false
+          description: Number of lines from the end (`source=kubelet` only). Defaults to 100.
+          schema:
+            type: integer
+            default: 100
+        - name: follow
+          in: query
+          required: false
+          description: Stream continuously (`source=kubelet` only).
+          schema:
+            type: boolean
+            default: false
+        - name: previous
+          in: query
+          required: false
+          description: Return logs from the previously-terminated container (`source=kubelet` only).
+          schema:
+            type: boolean
+            default: false
+        - name: container
+          in: query
+          required: false
+          description: Which container to tail (`source=kubelet` only).
+          schema:
+            type: string
+            enum: [agent, session-brief, kyber-status-sidecar]
+            default: agent
+      responses:
+        '200':
+          description: Log stream (one line per log line).
+          content:
+            text/plain:
+              schema:
+                type: string
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '502':
+          description: Archive read failed (upstream object store error).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '503':
+          description: Log surface not available (kubelet clientset or archive reader not configured).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    ResourceName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$'
+        example: dave
+
+    ConfirmName:
+      name: confirm
+      in: query
+      required: true
+      description: >
+        Confirmation interlock (kyber#565). MUST equal the resource's {name}.
+        A missing or mismatched value is rejected with 400 and nothing is
+        deleted — guards against an accidental or automated destructive DELETE.
+        BREAKING: this parameter is required; pre-#565 callers that omit it now
+        receive 400.
+      schema:
+        type: string
+        example: dave
+
+  schemas:
+    DiscordConnection:
+      type: object
+      required: [status, ready, restartCount]
+      properties:
+        status:
+          type: string
+          enum: [not-configured, restart-required, not-running, starting, connected, degraded]
+        ready:
+          type: boolean
+        restartCount:
+          type: integer
+          format: int32
+        detail:
+          type: string
+
+    CommsChannel:
+      type: object
+      required: [channel, configured, podRestartRequired, botTokenSet]
+      properties:
+        channel:
+          type: string
+          enum: [telegram, discord]
+        configured:
+          type: boolean
+        podRestartRequired:
+          type: boolean
+        botTokenSet:
+          type: boolean
+        guildIds:
+          type: array
+          items: {type: string}
+        channelIds:
+          type: array
+          items: {type: string}
+        allowedUserIds:
+          type: array
+          items: {type: string}
+        mentionOnly:
+          type: boolean
+        discordConnection:
+          $ref: '#/components/schemas/DiscordConnection'
+
+    CommsListResponse:
+      type: object
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/CommsChannel'
+
+    PutCommsRequest:
+      type: object
+      properties:
+        botToken:
+          type: string
+          writeOnly: true
+        guildIds:
+          type: array
+          items: {type: string}
+        channelIds:
+          type: array
+          items: {type: string}
+        allowedUserIds:
+          type: array
+          items: {type: string}
+        mentionOnly:
+          type: boolean
+        action:
+          type: string
+
+    FleetDefaults:
+      type: object
+      required: [defaultModel, defaultRuntimeVersion, codexDefaultModel, codexDefaultRuntimeVersion]
+      properties:
+        defaultModel:
+          type: string
+          description: Legacy-compatible Claude Code default model.
+        defaultRuntimeVersion:
+          type: string
+          description: Legacy-compatible Claude Code harness version.
+        codexDefaultModel:
+          type: string
+        codexDefaultRuntimeVersion:
+          type: string
+
+    AvailableModel:
+      type: object
+      required: [id, displayName, contextWindow, contextWindowKnown]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        contextWindow:
+          type: integer
+          format: int64
+        contextWindowKnown:
+          type: boolean
+
+    AvailableResponse:
+      type: object
+      required: [claudeCodeVersions, codexVersions, models, codexModels]
+      properties:
+        claudeCodeVersions:
+          type: array
+          items:
+            type: string
+        codexVersions:
+          type: array
+          items:
+            type: string
+        models:
+          type: array
+          description: Models detected from the Anthropic API.
+          items:
+            $ref: '#/components/schemas/AvailableModel'
+        codexModels:
+          type: array
+          description: Picker-visible models reported by authenticated Codex app-server model/list.
+          items:
+            $ref: '#/components/schemas/AvailableModel'
+
+    FleetSummary:
+      type: object
+      required: [machineCount, agentCount, agentsByPhase, machinesByPhase]
+      properties:
+        machineCount:
+          type: integer
+          description: Total number of machines
+          example: 2
+        agentCount:
+          type: integer
+          description: Total number of agents
+          example: 5
+        agentsByPhase:
+          type: object
+          description: Agent count grouped by phase
+          additionalProperties:
+            type: integer
+          example:
+            Running: 3
+            Suspended: 2
+        machinesByPhase:
+          type: object
+          description: Machine count grouped by phase
+          additionalProperties:
+            type: integer
+          example:
+            Running: 1
+            Ready: 1
+
+    MachineSpec:
+      type: object
+      required: [provider]
+      properties:
+        provider:
+          type: string
+          enum: [gce, mock]
+          example: gce
+        capacity:
+          $ref: '#/components/schemas/MachineCapacity'
+        machineType:
+          type: string
+          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          example: n2-standard-4
+        diskSizeGb:
+          type: integer
+          format: int32
+          minimum: 10
+          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          example: 100
+        spot:
+          type: boolean
+          description: GCE-only. Ignored when provider=mock.
+          example: false
+        zone:
+          type: string
+          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          example: us-central1-a
+
+    MachineCapacity:
+      type: object
+      required: [cpu, memory]
+      description: Declared resource budget. Stamped from machineType on gce; user-supplied on mock.
+      properties:
+        cpu:
+          type: string
+          example: "4"
+        memory:
+          type: string
+          example: "16Gi"
+
+    MachineStatus:
+      type: object
+      properties:
+        phase:
+          $ref: '#/components/schemas/MachinePhase'
+        message:
+          type: string
+        instanceId:
+          type: string
+        externalIP:
+          type: string
+        internalIP:
+          type: string
+        nodeName:
+          type: string
+        agentCount:
+          type: integer
+          format: int32
+
+    MachinePhase:
+      type: string
+      enum:
+        - Provisioning
+        - Ready
+        - Running
+        - Stopping
+        - Stopped
+        - Preempted
+        - Replacing
+        - Failed
+        - Deleted
+        - ""
+
+    Machine:
+      type: object
+      required: [id, phase, spec, createdAt]
+      properties:
+        id:
+          type: string
+          example: worker-1
+        phase:
+          $ref: '#/components/schemas/MachinePhase'
+        spec:
+          $ref: '#/components/schemas/MachineSpec'
+        status:
+          $ref: '#/components/schemas/MachineStatus'
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-10T00:00:00Z"
+
+    MachineList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Machine'
+
+    CreateMachineRequest:
+      type: object
+      required: [name, provider]
+      description: |-
+        Provider-conditional request.
+        - provider=gce: machineType, diskSizeGb, zone are required; capacity is rejected (derived server-side).
+        - provider=mock: capacity is required; machineType, diskSizeGb, spot, zone are rejected.
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$'
+          example: worker-1
+        provider:
+          type: string
+          enum: [gce, mock]
+          example: gce
+        capacity:
+          $ref: '#/components/schemas/MachineCapacity'
+        machineType:
+          type: string
+          example: n2-standard-4
+        diskSizeGb:
+          type: integer
+          format: int32
+          minimum: 10
+          example: 100
+        spot:
+          type: boolean
+          default: false
+          example: false
+        zone:
+          type: string
+          example: us-central1-a
+
+    AgentPhase:
+      type: string
+      enum:
+        - Creating
+        - Starting
+        - Running
+        - Stopping
+        - Stopped
+        - Restarting
+        - Failed
+        - Suspended
+        - Deleted
+        - ""
+
+    AgentResources:
+      type: object
+      required: [cpu, memory, disk]
+      properties:
+        cpu:
+          type: string
+          example: "1"
+        memory:
+          type: string
+          example: 2Gi
+        disk:
+          type: string
+          example: 50Gi
+
+    AgentStatus:
+      type: object
+      properties:
+        phase:
+          $ref: '#/components/schemas/AgentPhase'
+        podName:
+          type: string
+        podIP:
+          type: string
+        restartCount:
+          type: integer
+          format: int32
+        message:
+          type: string
+
+    Agent:
+      type: object
+      required: [id, phase, machine, runtime, authType, model, scaling, resources, createdAt]
+      properties:
+        id:
+          type: string
+          example: dave
+        phase:
+          $ref: '#/components/schemas/AgentPhase'
+        machine:
+          type: string
+          example: worker-1
+        runtime:
+          type: string
+          example: claude-code
+        authType:
+          type: string
+          enum: [oauth, api-key]
+        model:
+          type: string
+          example: claude-sonnet-4
+        scaling:
+          type: string
+          enum: [warm, scale-to-zero]
+          example: warm
+        resources:
+          $ref: '#/components/schemas/AgentResources'
+        status:
+          $ref: '#/components/schemas/AgentStatus'
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-04-10T00:00:00Z"
+
+    AgentList:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Agent'
+
+    CreateAgentRequest:
+      type: object
+      required: [name, machine, runtime, model]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$'
+          example: dave
+        machine:
+          type: string
+          example: worker-1
+        runtime:
+          type: string
+          example: claude-code
+        model:
+          type: string
+          example: claude-sonnet-4
+        scaling:
+          type: string
+          enum: [warm, scale-to-zero]
+          default: warm
+          example: warm
+        resources:
+          type: object
+          properties:
+            cpu:
+              type: string
+              example: "1"
+            memory:
+              type: string
+              example: 2Gi
+            disk:
+              type: string
+              example: 50Gi
+        identity:
+          type: object
+          properties:
+            soulDescription:
+              type: string
+        secrets:
+          type: object
+          properties:
+            telegramEnabled:
+              type: boolean
+              default: false
+            telegramBotToken:
+              type: string
+              writeOnly: true
+            telegramAllowedUserIds:
+              type: array
+              items:
+                type: string
+            anthropicKey:
+              type: string
+            openaiApiKey:
+              type: string
+              writeOnly: true
+            codexAuthJson:
+              type: string
+              description: Opaque auth.json from Codex ChatGPT login; write-only.
+            authType:
+              type: string
+              enum: [oauth, api-key]
+              default: oauth
+
+    ErrorDetail:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: name is required
+        field:
+          type: string
+          example: name
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: '#/components/schemas/ErrorDetail'
+
+  responses:
+    ValidationError:
+      description: Bad request — validation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Unauthorized:
+      description: Missing or invalid API key
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Forbidden:
+      description: >
+        Authenticated but not authorized — the caller's API key lacks the scope
+        this verb requires (kyber#474/#565). The body is intentionally non-leaky
+        (it names neither the required scope nor the caller's granted scopes).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    UnprocessableEntity:
+      description: Request is valid but cannot be processed (e.g. machine has attached agents)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'

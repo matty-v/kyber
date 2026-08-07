@@ -1,0 +1,53 @@
+name: Design lint (advisory)
+
+# Front-end design-quality check (kyber#... front-end-design capability).
+# WARN-FIRST: reports Impeccable's deterministic anti-pattern findings to the PR
+# job summary but does NOT fail the build yet. We're calibrating which of the
+# detector's rules are real signal on our stack before any become blocking.
+# Phase 2 (later): parse the JSON + exit non-zero on a curated rule set to make
+# this a hard gate.
+#
+# Security posture (see dave-agent spec 2026-06-03-frontend-design-capability):
+# impeccable@2.3.2 is pinned (never @latest), runs DETECT-ONLY on FILE PATHS
+# (never URLs — a URL would invoke a headless browser), has no install scripts,
+# no child_process/eval, and makes no outbound network call on the detect path.
+
+on:
+  pull_request:
+    paths:
+      - 'packages/pwa-views/**'
+      - 'apps/embedded-pwa/**'
+
+permissions:
+  contents: read
+
+jobs:
+  design-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: impeccable detect (advisory)
+        run: |
+          set -uo pipefail
+          # File paths only (never URLs). Pinned. Read-only.
+          npx --yes impeccable@2.3.2 detect packages/pwa-views/src apps/embedded-pwa/src --json > findings.json 2>detect.err || true
+          count=$(node -e "try{console.log(JSON.parse(require('fs').readFileSync('findings.json','utf8')).length)}catch(e){console.log(0)}")
+          {
+            echo "## 🎨 Design lint (advisory) — ${count} finding(s)"
+            echo ""
+            echo "_Warn-first: advisory only, does not block. See DESIGN_QUALITY.md._"
+            echo ""
+            if [ "${count}" -gt 0 ]; then
+              node -e "JSON.parse(require('fs').readFileSync('findings.json','utf8')).forEach(f=>console.log('- \`'+f.file.split('/').slice(-2).join('/')+':'+f.line+'\` **'+f.antipattern+'** — '+f.name))"
+            else
+              echo "No anti-patterns detected. ✅"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          # Always succeed (warn-first). Phase 2 flips this to a curated hard gate.
+          exit 0

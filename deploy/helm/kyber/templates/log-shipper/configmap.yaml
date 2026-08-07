@@ -1,0 +1,128 @@
+{{- if .Values.logShipper.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kyber.fullname" . }}-log-shipper
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: log-shipper
+data:
+  # Vector config (kyber#431/#437/#446). Reads this node's container logs, keeps
+  # only kyber-system pods carrying the kyber.io/agent label, and ships each line
+  # as NDJSON under agents/<agent>/<date>/ (agent stdout) or
+  # transcripts/<agent>/<date>/ (transcript-tailer sidecar) to the configured
+  # backend:
+  #   gcs (default) → gcp_cloud_storage sink, auth via node ADC (no key file).
+  #   s3            → aws_s3 sink at a custom endpoint (MinIO/AWS), creds from a
+  #                   Secret (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env).
+  # The object key layout is IDENTICAL across backends so the read path is
+  # backend-agnostic.
+  #
+  # NB: Vector's own field-templating braces must be escaped from Helm so Helm
+  # emits them literally for Vector — see the key_prefix below, which uses
+  # {{ "{{ agent }}" }} and {{ "{{ archive_prefix }}" }} to produce literal Vector
+  # field references.
+  vector.yaml: |
+    data_dir: /vector-data-dir
+
+    sources:
+      agent_logs:
+        type: kubernetes_logs
+        # Tail only THIS node's pods (set from the downward API on the pod).
+        self_node_name: ${VECTOR_SELF_NODE_NAME}
+        # Server-side narrowing so we never even read non-agent pods:
+        #   - only pods that carry the kyber.io/agent label
+        #   - only the kyber-system namespace
+        extra_label_selector: "kyber.io/agent"
+        extra_field_selector: "metadata.namespace={{ include "kyber.namespace" . }}"
+
+      # Internal Vector telemetry — lets `vector top`/metrics work; not shipped.
+      internal:
+        type: internal_metrics
+
+    transforms:
+      # Defense-in-depth: re-assert the namespace + label even if a selector
+      # ever loosened, and lift the agent name out of the pod label so the sink
+      # can key the object path by it.
+      #
+      # Sets .archive_prefix based on container_name so the key_prefix template
+      # routes stdout → agents/<agent>/<date>/ and transcript-tailer output →
+      # transcripts/<agent>/<date>/ (kyber#446).
+      agent_shape:
+        type: remap
+        inputs: [agent_logs]
+        source: |
+          if .kubernetes.pod_namespace != "{{ include "kyber.namespace" . }}" {
+            abort
+          }
+          .agent = string(.kubernetes.pod_labels."kyber.io/agent") ?? ""
+          if .agent == "" {
+            abort
+          }
+          if .kubernetes.container_name == "transcript-tailer" {
+            .archive_prefix = "transcripts"
+          } else {
+            .archive_prefix = "agents"
+          }
+
+    sinks:
+      archive:
+        {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+        type: aws_s3
+        inputs: [agent_shape]
+        bucket: ${KYBER_LOG_BUCKET}
+        # Custom S3-compatible endpoint (MinIO/AWS). The scheme (http/https) on
+        # the endpoint URL selects TLS. Vector routes writes to this endpoint and
+        # uses path-style addressing (bucket in the path) for custom endpoints —
+        # what MinIO requires.
+        endpoint: ${KYBER_LOG_S3_ENDPOINT}
+        region: ${KYBER_LOG_S3_REGION}
+        # Static creds from the writer Secret (least-privilege put-object).
+        auth:
+          access_key_id: ${AWS_ACCESS_KEY_ID}
+          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+        # Disable gzip compression (Vector's aws_s3 default). The control-plane
+        # archive reader parses plain NDJSON line-by-line — gzip-compressed
+        # objects read back as 0 lines. (kyber#437 root cause.)
+        compression: none
+        {{- else }}
+        type: gcp_cloud_storage
+        inputs: [agent_shape]
+        bucket: ${KYBER_LOG_BUCKET}
+        # Authenticate via Application Default Credentials (node metadata server
+        # → GCE node SA). No static credential is configured.
+        {{- end }}
+        # Per-agent, date-partitioned key prefix — IDENTICAL across backends.
+        # archive_prefix selects the object namespace: agents/ for stdout,
+        # transcripts/ for transcript-tailer sidecar output (kyber#446).
+        key_prefix: '{{ "{{ archive_prefix }}" }}/{{ "{{ agent }}" }}/%Y-%m-%d/'
+        filename_time_format: "%Y-%m-%dT%H-%M-%SZ"
+        filename_append_uuid: true
+        filename_extension: ndjson
+        encoding:
+          codec: json
+          timestamp_format: rfc3339
+          only_fields:
+            - timestamp
+            - message
+            - agent
+        # NDJSON = json codec + newline-delimited framing. Vector dropped the
+        # `ndjson` codec variant (≥0.40); `codec: ndjson` crashes config load.
+        # The reader parses one JSON object per line, so framing must stay
+        # newline-delimited. (kyber#437 latent bug, surfaced when the shipper
+        # was first actually enabled.)
+        framing:
+          method: newline_delimited
+        # Disk buffer so an object-store slowdown back-pressures locally on the
+        # node and never touches agent pods (the failure-isolation requirement).
+        buffer:
+          type: disk
+          max_size: 268435488 # 256 MiB
+          when_full: block
+        # Bound batching so lines land promptly enough to be queryable.
+        batch:
+          timeout_secs: 30
+        healthcheck:
+          enabled: true
+{{- end }}

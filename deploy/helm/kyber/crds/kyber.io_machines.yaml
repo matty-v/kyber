@@ -1,0 +1,380 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: machines.kyber.io
+spec:
+  group: kyber.io
+  names:
+    kind: Machine
+    listKind: MachineList
+    plural: machines
+    shortNames:
+    - mc
+    singular: machine
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.provider
+      name: Provider
+      type: string
+    - jsonPath: .spec.machineType
+      name: Type
+      type: string
+    - jsonPath: .spec.zone
+      name: Zone
+      type: string
+    - jsonPath: .spec.spot
+      name: Spot
+      type: boolean
+    - jsonPath: .status.agentCount
+      name: Agents
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Machine is the schema for the machines API.
+          A Machine CRD represents a cloud VM managed by the Kyber platform, hosting agent runtime pods.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: MachineSpec defines the desired state of a Machine.
+            properties:
+              capacity:
+                description: |-
+                  Capacity is the declared resource budget for this Machine. Optional at
+                  the CRD schema level for backward-compat; required at the REST API
+                  admission layer. Populated from Spec.MachineType on gce; user-supplied
+                  on mock.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU budget (e.g., "4", "500m").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  ephemeralStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      EphemeralStorage is the total ephemeral-storage budget for agent disk
+                      requests (e.g., "200Gi"). Sourced from node.status.allocatable on
+                      observed/assignable; the difference between assignable and the sum of
+                      agent.spec.resources.disk on this machine is published as available.
+                      Optional for backward compat — pre-#129 PR-C resources omitted it
+                      entirely; reading code MUST treat the zero value as "unknown."
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory budget (e.g., "16Gi",
+                      "512Mi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              desiredPhase:
+                description: |-
+                  DesiredPhase is written by the API module to signal a lifecycle intent.
+                  Valid values: Running, Stopped.
+                enum:
+                - Running
+                - Stopped
+                type: string
+              diskSizeGb:
+                description: |-
+                  DiskSizeGb is the boot disk size in gigabytes. Required when provider=gce;
+                  absent when provider=mock.
+                format: int32
+                minimum: 10
+                type: integer
+              machineType:
+                description: |-
+                  MachineType is the cloud provider machine type (e.g., "n2-standard-4" for GCE).
+                  Maps to the vCPU and memory configuration for the VM. Required when
+                  provider=gce; absent when provider=mock.
+                type: string
+              provider:
+                description: |-
+                  Provider is the cloud provider for this machine. One of "gce" (cloud
+                  VMs) or "mock" (standalone — attach to the existing k3s node).
+                enum:
+                - gce
+                - mock
+                type: string
+              spot:
+                description: |-
+                  Spot indicates whether the VM should use spot (preemptible) pricing.
+                  Spot VMs are significantly cheaper but may be preempted at any time.
+                  Ignored when provider=mock.
+                type: boolean
+              zone:
+                description: |-
+                  Zone is the cloud provider zone where the VM is created (e.g., "us-central1-a").
+                  Zone-local PVs require replacement VMs to use the same zone. Required when
+                  provider=gce; absent when provider=mock.
+                type: string
+            required:
+            - provider
+            type: object
+          status:
+            description: MachineStatus defines the observed state of a Machine.
+            properties:
+              agentCount:
+                description: |-
+                  AgentCount is the number of agent pods currently scheduled on this machine's node.
+                  Informational; used for the fleet dashboard and Ready vs Running phase transitions.
+                format: int32
+                type: integer
+              assignableCapacity:
+                description: |-
+                  AssignableCapacity is ObservedCapacity minus the chart-configured
+                  platform reservation (controlPlane.platformReservation.{cpu,memory,ephemeralStorage}).
+                  This is the budget against which agent resource requests are summed.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU budget (e.g., "4", "500m").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  ephemeralStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      EphemeralStorage is the total ephemeral-storage budget for agent disk
+                      requests (e.g., "200Gi"). Sourced from node.status.allocatable on
+                      observed/assignable; the difference between assignable and the sum of
+                      agent.spec.resources.disk on this machine is published as available.
+                      Optional for backward compat — pre-#129 PR-C resources omitted it
+                      entirely; reading code MUST treat the zero value as "unknown."
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory budget (e.g., "16Gi",
+                      "512Mi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              availableCapacity:
+                description: |-
+                  AvailableCapacity is AssignableCapacity minus the sum of all agents'
+                  spec.resources requests on this machine. This is the remaining budget
+                  a new agent can claim — the API server's /create-agent 409 check
+                  reads this directly.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU budget (e.g., "4", "500m").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  ephemeralStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      EphemeralStorage is the total ephemeral-storage budget for agent disk
+                      requests (e.g., "200Gi"). Sourced from node.status.allocatable on
+                      observed/assignable; the difference between assignable and the sum of
+                      agent.spec.resources.disk on this machine is published as available.
+                      Optional for backward compat — pre-#129 PR-C resources omitted it
+                      entirely; reading code MUST treat the zero value as "unknown."
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory budget (e.g., "16Gi",
+                      "512Mi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              conditions:
+                description: Conditions holds standard k8s conditions for this Machine.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              externalIP:
+                description: ExternalIP is the external IP address of the VM, if assigned.
+                type: string
+              instanceId:
+                description: InstanceId is the cloud provider instance ID (e.g., GCE
+                  instance ID).
+                type: string
+              internalIP:
+                description: InternalIP is the internal IP address of the VM within
+                  the VPC.
+                type: string
+              lastHealthCheck:
+                description: LastHealthCheck is the time of the most recent successful
+                  health check.
+                format: date-time
+                type: string
+              lastTransition:
+                description: LastTransition is the time of the most recent phase transition.
+                format: date-time
+                type: string
+              message:
+                description: Message is a human-readable description of the current
+                  state or last error.
+                type: string
+              nodeName:
+                description: |-
+                  NodeName is the name of the k8s node corresponding to this machine.
+                  Set once the VM boots and the k3s agent joins the cluster.
+                type: string
+              observedCapacity:
+                description: |-
+                  ObservedCapacity mirrors the backing Node's status.allocatable.
+                  Populated once the Machine has a backing node (NodeName is set).
+                  This is the upper bound of what could be allocated to agents before
+                  platform overhead is reserved.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the total CPU budget (e.g., "4", "500m").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  ephemeralStorage:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: |-
+                      EphemeralStorage is the total ephemeral-storage budget for agent disk
+                      requests (e.g., "200Gi"). Sourced from node.status.allocatable on
+                      observed/assignable; the difference between assignable and the sum of
+                      agent.spec.resources.disk on this machine is published as available.
+                      Optional for backward compat — pre-#129 PR-C resources omitted it
+                      entirely; reading code MUST treat the zero value as "unknown."
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the total memory budget (e.g., "16Gi",
+                      "512Mi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - memory
+                type: object
+              phase:
+                description: Phase is the current lifecycle phase of the machine.
+                type: string
+              replacementCount:
+                description: ReplacementCount is the number of times this machine
+                  has been replaced (spot preemption replacements).
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

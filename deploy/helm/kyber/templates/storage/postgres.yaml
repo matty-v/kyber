@@ -1,0 +1,158 @@
+{{- if .Values.postgresql.enabled }}
+{{/*
+First-party PostgreSQL StatefulSet.
+Uses stock postgres:16-alpine — no Bitnami subchart required.
+
+Secret management:
+  - When postgresql.auth.existingSecret is set, the chart uses that Secret
+    as-is (must contain a `postgres-password` key). No Secret resource is
+    rendered. Recommended for ArgoCD installs.
+  - Otherwise the chart creates {{ .Release.Name }}-postgres with the
+    password from auth.password, or a randAlphaNum fallback stabilised by
+    `lookup`. The lookup path does NOT survive ArgoCD renders (repo-server
+    has no cluster access) — use existingSecret there instead.
+*/}}
+
+{{- $secretName := include "kyber.postgresSecretName" . }}
+{{- if not .Values.postgresql.auth.existingSecret }}
+{{- $chartSecret := lookup "v1" "Secret" (include "kyber.namespace" .) $secretName }}
+{{- $password := "" }}
+{{- if $chartSecret }}
+  {{- $password = index $chartSecret.data "postgres-password" | b64dec }}
+{{- else if .Values.postgresql.auth.password }}
+  {{- $password = .Values.postgresql.auth.password }}
+{{- else }}
+  {{- $password = randAlphaNum 24 }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+type: Opaque
+data:
+  postgres-password: {{ $password | b64enc | quote }}
+---
+{{- end }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Release.Name }}-postgres
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  replicas: 1
+  serviceName: {{ .Release.Name }}-postgres
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: postgres
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: postgres
+    spec:
+      {{- with .Values.postgresql.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.postgresql.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: postgres
+          image: "{{ .Values.postgresql.image.repository }}:{{ .Values.postgresql.image.tag }}"
+          imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+          ports:
+            - name: postgres
+              containerPort: 5432
+              protocol: TCP
+          env:
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.postgresSecretName" . }}
+                  key: postgres-password
+            - name: POSTGRES_USER
+              value: {{ .Values.postgresql.auth.username | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.postgresql.auth.database | quote }}
+            # Postgres requires PGDATA to be a subdirectory of the mount point —
+            # it refuses to start if the data dir is the mount root itself.
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgresql.auth.username | quote }}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          livenessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - {{ .Values.postgresql.auth.username | quote }}
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5
+            failureThreshold: 3
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+      {{- if and .Values.preview.enabled .Values.preview.ephemeralStorage }}
+      # ephemeralStorage=true: use emptyDir so no PVC is created. The volume is
+      # lost when the pod is deleted — acceptable for preview environments where
+      # fresh data per-install is the expected behaviour. Avoids the local-path
+      # StorageClass Retain reclaimPolicy leaving orphaned PVCs after namespace
+      # deletion.
+      volumes:
+        - name: data
+          emptyDir: {}
+      {{- end }}
+  {{- if not (and .Values.preview.enabled .Values.preview.ephemeralStorage) }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- if .Values.postgresql.persistence.storageClassName }}
+        storageClassName: {{ .Values.postgresql.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.postgresql.persistence.size | quote }}
+  {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}-postgres
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+spec:
+  type: ClusterIP
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: postgres
+      protocol: TCP
+  selector:
+    {{- include "kyber.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+{{- end }}

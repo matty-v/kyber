@@ -1,0 +1,49 @@
+{{- /*
+Fleet defaults ConfigMap — kyber#376 (PR-B of #374).
+
+The control-plane reads this ConfigMap to resolve `agent.spec.model` when
+an Agent CR omits the field, and exposes the same data via GET /api/v1/
+fleet-defaults so the PWA Settings panel can edit it without a chart
+redeploy. Defaults are runtime-scoped while the original Claude keys remain
+stable for compatibility:
+
+  defaultModel          — fallback CLAUDE_MODEL injected into the pod.
+  defaultRuntimeVersion — fallback Claude Code harness version.
+  codexDefaultModel          — fallback model for Codex agents.
+  codexDefaultRuntimeVersion — fallback Codex harness version.
+
+When `defaultRuntimeVersion` is left empty in values.yaml, we derive it
+from `runtime.claudeCode.version` so existing installs see no behavior
+change until an operator opts in.
+
+When `controlPlane.fleetDefaults.configMapName` is empty, the ConfigMap
+isn't rendered and the API endpoint returns 503.
+
+The Helm-rendered values are seeds. The PWA's PUT path edits the same
+ConfigMap in place, so subsequent reads (and reconciles) see the
+operator's value. A `helm upgrade` that doesn't override the chart
+values will revert the ConfigMap to the seed — this is by design (the
+chart is the source of truth at install time) but operators who edit
+via the PWA should mirror the change into kyber-deploy values.yaml to
+survive the next upgrade.
+*/ -}}
+{{- if .Values.controlPlane.fleetDefaults.configMapName }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.controlPlane.fleetDefaults.configMapName }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+  annotations:
+    # ArgoCD: tolerate the PWA-driven Data drift. Without this, ArgoCD
+    # would mark the chart "OutOfSync" the moment an operator edits a
+    # default and self-heal would clobber it.
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Replace=false
+data:
+  defaultModel: {{ .Values.controlPlane.fleetDefaults.defaultModel | quote }}
+  defaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
+  codexDefaultModel: {{ .Values.controlPlane.fleetDefaults.codexDefaultModel | quote }}
+  codexDefaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
+{{- end }}

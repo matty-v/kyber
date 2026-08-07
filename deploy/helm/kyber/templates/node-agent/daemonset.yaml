@@ -1,0 +1,99 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kyber.fullname" . }}-node-agent
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: node-agent
+spec:
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: node-agent
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: node-agent
+    spec:
+      serviceAccountName: {{ include "kyber.fullname" . }}-node-agent
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # hostPID is required so that /sbin/shutdown can signal the host PID 1.
+      # Without this, the shutdown command targets the container PID namespace only.
+      hostPID: true
+      # hostNetwork allows node-level network stats access (future) and
+      # simplifies OTEL collector addressing.
+      hostNetwork: true
+      # Run on all nodes including control-plane nodes, which also need metrics
+      # collection and may need to receive reboot/stop actions.
+      tolerations:
+        {{- toYaml .Values.nodeAgent.tolerations | nindent 8 }}
+      containers:
+        - name: node-agent
+          image: {{ include "kyber.image" (dict "repo" .Values.image.nodeAgent.repository "tag" .Values.image.nodeAgent.tag) }}
+          imagePullPolicy: {{ .Values.image.nodeAgent.pullPolicy }}
+          # privileged is required for /sbin/shutdown -r/-h to interact with the host.
+          # This is an intentional security trade-off: the node agent is control-plane
+          # software deployed only by the cluster operator, not user workloads.
+          securityContext:
+            privileged: true
+          env:
+            # KYBER_NODE_NAME is injected from the k8s downward API so each DaemonSet
+            # pod knows which node it's running on and can tag its metrics accordingly.
+            - name: KYBER_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # OTEL endpoint: use telemetry.otlpEndpoint when set, fall back to
+            # nodeAgent.otelEndpoint so existing single-component overrides still work.
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ coalesce .Values.telemetry.otlpEndpoint .Values.nodeAgent.otelEndpoint | quote }}
+            - name: OTEL_SERVICE_NAME
+              value: kyber-node-agent
+            - name: KYBER_MACHINE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: KYBER_CONTROL_PLANE_URL
+              value: "http://{{ include "kyber.fullname" . }}-control-plane.{{ .Release.Namespace }}.svc:8082"
+            # Pod-token mount path (kyber#566). The node-agent reads its
+            # control-plane-signed token here and presents it as a Bearer to the
+            # internal API's machine/node routes (admitted as the node-agent
+            # identity only).
+            - name: KYBER_POD_TOKEN_PATH
+              value: /var/run/secrets/kyber/pod-token
+          resources:
+            {{- toYaml .Values.nodeAgent.resources | nindent 12 }}
+          volumeMounts:
+            # Mount the host /proc read-only so the metrics collector can parse
+            # CPU/memory/uptime/loadavg from the real host — not the container view.
+            - name: proc
+              mountPath: /proc
+              readOnly: true
+            # Control-plane-signed node-agent pod-token (kyber#566). The Secret
+            # is minted by the control plane at startup (ensureNodeAgentToken).
+            # Optional so the DaemonSet still schedules before the control plane
+            # has minted it — an absent token is tolerated by the internal API's
+            # grace mode during the rollout.
+            - name: pod-token
+              mountPath: /var/run/secrets/kyber
+              readOnly: true
+      volumes:
+        - name: proc
+          hostPath:
+            path: /proc
+        - name: pod-token
+          secret:
+            secretName: kyber-node-agent-token
+            optional: true
+      # Prefer to land on every node, but do not prevent scheduling if resources
+      # are tight — the agent is non-critical compared to user workloads.
+      priorityClassName: system-node-critical
+{{- end }}

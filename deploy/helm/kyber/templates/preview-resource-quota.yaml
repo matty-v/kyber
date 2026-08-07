@@ -1,0 +1,56 @@
+{{- if and .Values.preview.enabled .Values.preview.resourceQuota.enabled }}
+{{/*
+Preview resource isolation (kyber#498, Ackbar #3).
+
+namespace-per-PR gives workload isolation but NOT resource isolation — on the
+single-node kyber-dev cluster one runaway unmerged PR can starve the node and
+trigger disk-pressure eviction that takes down every other preview (and
+potentially ArgoCD). The ResourceQuota caps aggregate CPU/memory/ephemeral-
+storage/pods per kyber-pr-<n> namespace; the LimitRange supplies a default
+ephemeral-storage request/limit so the emptyDir-backed Postgres/Redis pods —
+which otherwise declare none — still count against the quota and can be evicted
+fairly rather than driving the node to disk pressure.
+
+Rendered only for preview installs with resourceQuota.enabled; a no-op on prod.
+*/}}
+{{- $ns := include "kyber.namespace" . }}
+{{- $rq := .Values.preview.resourceQuota }}
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: {{ include "kyber.fullname" . }}-preview
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-quota
+spec:
+  hard:
+    requests.cpu: {{ $rq.cpu | quote }}
+    limits.cpu: {{ $rq.cpu | quote }}
+    requests.memory: {{ $rq.memory | quote }}
+    limits.memory: {{ $rq.memory | quote }}
+    requests.ephemeral-storage: {{ $rq.ephemeralStorage | quote }}
+    limits.ephemeral-storage: {{ $rq.ephemeralStorage | quote }}
+    pods: {{ $rq.pods | quote }}
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: {{ include "kyber.fullname" . }}-preview
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-quota
+spec:
+  limits:
+    # Default ephemeral-storage request/limit for any container that omits one.
+    # Required: with a ResourceQuota on requests/limits.ephemeral-storage, a pod
+    # whose containers declare neither is REJECTED by the quota admission plugin
+    # unless a LimitRange supplies the default. This keeps the emptyDir
+    # Postgres/Redis pods schedulable under the quota.
+    - type: Container
+      default:
+        ephemeral-storage: {{ $rq.defaultEphemeralStorageLimit | quote }}
+      defaultRequest:
+        ephemeral-storage: {{ $rq.defaultEphemeralStorageRequest | quote }}
+{{- end }}

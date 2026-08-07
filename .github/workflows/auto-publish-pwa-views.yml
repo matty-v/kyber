@@ -1,0 +1,120 @@
+name: Auto-publish pwa-views on version bump
+
+# Closes the "bumped but never published" gap: a version bump to
+# packages/pwa-views merged to main (outside a release) used to sit unpublished
+# because the pwa-views npm package only publishes on a `pwa-views/v*` tag — and
+# that tag was only ever pushed by the release pipeline (release.yml B1) or by
+# hand. So a standalone bump (e.g. CI guard forced one, but no release followed)
+# never reached the published package, and holocron silently lagged.
+#
+# This workflow detects a pwa-views version bump on main and pushes the
+# `pwa-views/v<version>` tag, which triggers publish-pwa-views.yml. It mirrors
+# release.yml's B1 job: idempotent (skips if already on the registry) and pushes
+# the tag with a GitHub App token — GITHUB_TOKEN pushes do NOT trigger other
+# workflows (GitHub limitation), so the tag would otherwise never fire the
+# publish. When a release publishes the same version first, the npm-view check
+# here skips cleanly, so there is no double-publish.
+#
+# TOKEN: this MINTS a fresh GitHub App installation token per run via
+# actions/create-github-app-token (from KYBER_APP_ID + KYBER_APP_PRIVATE_KEY
+# secrets). It used to read a STATIC KYBER_APP_TOKEN secret, which is a GitHub
+# App installation token that expires hourly — so it went stale between runs and
+# the tag-push silently failed with exit 128 (observed 2026-06-01: pwa-views
+# 0.7.0 bumped on main but never published because the push step failed on a
+# stale token, stranding the version and leaving holocron lagging). Minting fresh
+# each run removes that expiry class of failure entirely.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'packages/pwa-views/package.json'
+
+permissions:
+  contents: read
+
+jobs:
+  publish-on-bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Mint a fresh GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          # default: token scoped to this repo only — exactly what the tag push needs.
+
+      - uses: actions/checkout@v4
+        with:
+          # Need the previous commit to detect whether the version changed.
+          fetch-depth: 2
+          # Don't persist the read-only GITHUB_TOKEN as a git auth header — it
+          # would override the App-token remote URL the push step sets and the
+          # tag push would auth as the contents:read GITHUB_TOKEN → 403.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@matty-v'
+
+      - name: Detect a version change
+        id: ver
+        run: |
+          set -euo pipefail
+          ver() { git show "$1:packages/pwa-views/package.json" \
+            | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1; }
+          NEW="$(ver HEAD)"
+          OLD="$(ver HEAD~1 || echo '')"
+          echo "old=${OLD:-<none>} new=${NEW}"
+          if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "version=${NEW}" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check if already published
+        id: check_published
+        if: steps.ver.outputs.changed == 'true'
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+          PWA_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          if npm view "@matty-v/kyber-pwa-views@${PWA_VERSION}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "@matty-v/kyber-pwa-views@${PWA_VERSION} already published — nothing to do"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push pwa-views tag (triggers publish-pwa-views.yml)
+        if: steps.ver.outputs.changed == 'true' && steps.check_published.outputs.already == 'false'
+        env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          PWA_VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Fail loudly if the minted token is somehow empty — a stale/empty
+          # token is exactly the silent failure (exit 128) this rework fixes.
+          if [ -z "${APP_TOKEN:-}" ]; then
+            echo "::error::App token is empty — actions/create-github-app-token did not produce a token. Check KYBER_APP_ID / KYBER_APP_PRIVATE_KEY secrets." >&2
+            exit 1
+          fi
+          PVT="pwa-views/v${PWA_VERSION}"
+          if git ls-remote --tags origin "refs/tags/${PVT}" | grep -q .; then
+            echo "tag ${PVT} already exists — nothing to do"
+            exit 0
+          fi
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git"
+          git tag -a "${PVT}" -m "Auto-publish @matty-v/kyber-pwa-views v${PWA_VERSION} (version bump on main)"
+          if ! git push origin "${PVT}"; then
+            echo "::error::Failed to push ${PVT} — @matty-v/kyber-pwa-views@${PWA_VERSION} will NOT publish and consumers (holocron) will lag. Investigate the App token / push permission immediately." >&2
+            exit 1
+          fi
+          echo "Pushed ${PVT} — publish-pwa-views.yml will publish @matty-v/kyber-pwa-views@${PWA_VERSION}."

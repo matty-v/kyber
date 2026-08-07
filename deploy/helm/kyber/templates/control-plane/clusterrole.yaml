@@ -1,0 +1,97 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "kyber.fullname" . }}-control-plane
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+rules:
+  # Agent CRD management (Agent Controller)
+  - apiGroups: ["kyber.io"]
+    resources: ["agents"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kyber.io"]
+    resources: ["agents/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["kyber.io"]
+    resources: ["agents/finalizers"]
+    verbs: ["update"]
+  # Machine CRD management (Machine Controller)
+  - apiGroups: ["kyber.io"]
+    resources: ["machines"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kyber.io"]
+    resources: ["machines/status"]
+    verbs: ["get", "update", "patch"]
+  - apiGroups: ["kyber.io"]
+    resources: ["machines/finalizers"]
+    verbs: ["update"]
+  # Pod management (Agent Controller — creates/deletes agent pods)
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Pod exec (debug shell + node agent actions)
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # Pod log streaming
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  # PVC management (Agent Controller — creates agent storage)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Node management (Machine Controller — maps machines to nodes)
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch", "delete"]
+  # Namespace reads — both Agent and Machine reconcilers call
+  # isNamespaceTerminating in their handleDeletion paths to detect
+  # "namespace is being torn down, skip in-namespace cleanup and
+  # self-remove the finalizer" (avoids deadlocking the namespace
+  # terminator on a finalizer the controller is being torn down with).
+  # controller-runtime's cache spins up a Namespace informer the moment
+  # any reconciler does a Namespace Get; without watch permission the
+  # informer reflector spams "namespaces is forbidden" every few
+  # seconds, eventually wedging the agent workqueue (delete agent
+  # stops processing entirely — seen in a production incident
+  # where an agent's deletion sat unprocessed for 12+ minutes until the
+  # control-plane was rolled).
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Secret management — the API creates agent secrets (OAuth, API key, Telegram
+  # bot token) when a new agent is created via the PWA. The controller also
+  # reads secrets for init container auth and mounting resolution, and deletes
+  # them during agent cleanup (finalizer cascades labeled secrets). `watch` is
+  # required because controller-runtime's cache registers an informer for any
+  # type touched by the cached client (r.Get/r.List), and informers LIST+WATCH.
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Event emission (Agent + Machine controllers)
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["create", "patch"]
+  # Event reads (Agent Controller — populateSchedulingStatus in
+  # pkg/controllers/agent/scheduling.go tails FailedScheduling /
+  # ImagePullBackOff / FailedMount events to drive the PWA's stuck-Pending
+  # banner shipped in kyber#210 PR-A). controller-runtime's cache installs a
+  # Watch the first time client.List(&EventList{}) runs, so list+watch are
+  # both required — without them the reflector loops "events is forbidden"
+  # every ~30s on every control-plane and populateSchedulingStatus silently
+  # returns false for every call, leaving the banner permanently invisible.
+  # Kept as a separate rule from the create/patch grant above so each
+  # consumer's rationale stays grep-discoverable.
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  # ConfigMap access (session brief storage, leader election)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Leader election coordination (controller-runtime)
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

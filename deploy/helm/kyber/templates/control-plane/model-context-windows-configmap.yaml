@@ -1,0 +1,48 @@
+{{- /*
+Model context-window override ConfigMap — kyber#378 (PR-D of #374).
+
+Operators edit this ConfigMap to add a new Claude model's context-window
+size without a Kyber release. Each data key is a model ID; the value is
+the total context-window size in tokens (decimal).
+
+When a model ID is present here, /api/v1/available surfaces it with
+`contextWindow: <value>` and `contextWindowKnown: true`, and the Claude
+Code adapter injects the same number into the pod as
+KYBER_MODEL_CONTEXT_WINDOW so start-claude.sh's [1m] gate fires when the
+window is >= 1_000_000.
+
+When a model is NOT present here, /available reports the 200K floor with
+`contextWindowKnown: false` (PWA renders a "context unknown" indicator);
+the adapter falls back to the Go-side knownModels table or, ultimately,
+the 200K floor.
+
+When `runtimeDetect.contextWindowsConfigMapName` is empty, the
+ConfigMap isn't rendered and the resolver runs in disabled mode — every
+model gets the floor + Known=false.
+
+The Helm-rendered values are seeds. Operators edit the ConfigMap in
+place via `kubectl edit cm <name>`; a `helm upgrade` that doesn't
+override values.yaml will revert to seeds (mirror PWA-driven changes to
+kyber-deploy values.yaml to survive the next upgrade). Same posture as
+fleet-defaults.
+*/ -}}
+{{- if .Values.runtimeDetect.enabled }}
+{{- if .Values.runtimeDetect.contextWindowsConfigMapName }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.runtimeDetect.contextWindowsConfigMapName }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+  annotations:
+    # ArgoCD: tolerate operator-driven Data drift. Same posture as the
+    # fleet-defaults ConfigMap.
+    argocd.argoproj.io/compare-options: IgnoreExtraneous
+    argocd.argoproj.io/sync-options: Replace=false
+data:
+  {{- range $id, $tokens := .Values.runtimeDetect.contextWindows }}
+  {{ $id | quote }}: {{ $tokens | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}

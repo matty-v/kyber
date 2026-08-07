@@ -1,0 +1,216 @@
+name: prepare-release
+
+# kyber#591: cut a release the right way — bump the chart version INSIDE the
+# commit that gets tagged, then push the tag on that merged commit.
+#
+# Why this exists: pre-#591 the chart-version bump was a SEPARATE post-tag PR
+# (the retired `chart-version-bump-pr` job in release.yml). That left two
+# defects on the bleeding-edge canary (razer, which tracks `:latest`):
+#   1. `git describe --tags` at `main` HEAD was always one commit past the tag
+#      (the post-tag bump), so a canary built there baked `vX.Y.Z-1-gSHA` —
+#      never a clean label.
+#   2. `main`'s Chart.yaml lagged the release tag for ~15 min until that PR
+#      merged.
+# Folding the bump into the tagged commit makes `git describe` at the release
+# commit resolve to the bare tag (so a canary built there reports a clean
+# `X.Y.Z`) and closes the lag window. This workflow is the single enforced
+# point where "bump ∈ tagged commit" holds; scripts/release-version-guard_test.sh
+# locks the invariant in CI.
+#
+# Flow: validate version → bump Chart.yaml on a branch → open + auto-merge the
+# bump PR to main → wait for the squash-merge → push tag vX.Y.Z on the merged
+# commit. The tag push then triggers release.yml (which builds the 5 images,
+# refreshes the control-plane :latest tag for the canary, and cuts the GitHub
+# Release).
+#
+# Operationally this REPLACES the ad-hoc `git tag && git push` tag-cut for a
+# normal release (see docs/operator/release-runbook.md). Lando's release flow
+# dispatches this workflow instead of pushing the tag directly.
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version, bare semver X.Y.Z (no leading v)'
+        required: true
+        type: string
+
+# Least privilege: this workflow mints a scoped GitHub App token for the writes
+# (PR + tag push must trigger downstream workflows, which GITHUB_TOKEN cannot).
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # --------------------------------------------------------------------
+      # Validate the operator-supplied version BEFORE it reaches yq / git tag /
+      # branch names — forecloses tag and shell injection (security review).
+      # --------------------------------------------------------------------
+      - name: Validate version input
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::version '${VERSION}' is not a bare semver X.Y.Z (e.g. 2.2.0, no leading v, no suffix)." >&2
+            exit 1
+          fi
+          echo "Validated version ${VERSION} → tag v${VERSION}"
+
+      # Mint a fresh per-run App token scoped to kyber. The bump PR and the tag
+      # push must trigger downstream workflows (kyber main's required checks and
+      # release.yml respectively) — GITHUB_TOKEN-driven writes do NOT trigger
+      # other workflows (GitHub limitation), and the App's installation on
+      # matty-v/kyber already grants contents:write + pull_requests:write (the
+      # kyber#457 delivery gate this relocates from release.yml).
+      - name: Mint a fresh GitHub App token (kyber)
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          owner: matty-v
+          repositories: kyber
+
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          token: ${{ steps.app_token.outputs.token }}
+          # Don't persist the App token as a git auth header — we set the remote
+          # URL with the token embedded explicitly below for the tag push.
+          persist-credentials: false
+
+      # --------------------------------------------------------------------
+      # Bump Chart.yaml version + appVersion to X.Y.Z (relocated from the retired
+      # chart-version-bump-pr job). Idempotent: if main is already at this
+      # version there is nothing to merge and the merged commit is current HEAD.
+      # --------------------------------------------------------------------
+      - name: Bump Chart.yaml version + appVersion
+        id: bump
+        env:
+          VER: ${{ inputs.version }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::App token is empty — actions/create-github-app-token did not produce a token. Check KYBER_APP_ID / KYBER_APP_PRIVATE_KEY and the App's kyber installation scope (kyber#457)." >&2
+            exit 1
+          fi
+          export VER
+          # version and appVersion stay in lockstep at the bare X.Y.Z (kyber#457).
+          yq -i '.version = strenv(VER) | .appVersion = strenv(VER)' deploy/helm/kyber/Chart.yaml
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          if git diff --quiet -- deploy/helm/kyber/Chart.yaml; then
+            echo "Chart.yaml already at ${VER}; no bump PR needed — main HEAD is the release commit."
+            echo "needs_bump=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "--- staged diff ---"
+            git --no-pager diff -- deploy/helm/kyber/Chart.yaml
+            echo "needs_bump=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # --------------------------------------------------------------------
+      # Open + auto-merge the bump PR, then wait for the squash to land on main.
+      # kyber main's ruleset (15133000) requires [test, pwa-build, changes,
+      # integration] with 0 approvals, so --auto queues the squash-merge for when
+      # those pass (~15min). A Chart.yaml-only PR satisfies all four (Ackbar,
+      # kyber#457). The tag is cut on the resulting merge commit so the bump is
+      # IN the tagged commit.
+      # --------------------------------------------------------------------
+      - name: Open + auto-merge chart-bump PR
+        if: steps.bump.outputs.needs_bump == 'true'
+        id: bump_pr
+        env:
+          VER: ${{ inputs.version }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          BRANCH="chore/prepare-release-v${VER}"
+          git checkout -b "${BRANCH}"
+          git add deploy/helm/kyber/Chart.yaml
+          git commit -m "chore(chart): bump chart version to ${VER} (v${VER})"
+          if ! git push -u origin "${BRANCH}"; then
+            echo "::error::Failed to push ${BRANCH} to matty-v/kyber — cannot prepare the release. Confirm the App's kyber installation grants contents:write + pull_requests:write (kyber#457 delivery gate)." >&2
+            exit 1
+          fi
+          BODY=$(cat <<EOF
+          ## Prepare release v${VER}
+
+          Bumps \`deploy/helm/kyber/Chart.yaml\` \`version\` + \`appVersion\` to \`${VER}\` (in lockstep), folded into the commit that will be tagged \`v${VER}\`.
+
+          Cutting the tag on this merged commit makes \`git describe --tags\` at the release commit resolve to the clean tag, so the canary (razer, \`:latest\`) reports \`${VER}\` instead of a stale pre-tag \`git describe\` string (kyber#591). Replaces the retired post-tag \`chart-version-bump-pr\` job.
+
+          _Opened + auto-merged by \`prepare-release.yml\`; \`prepare-release.yml\` pushes tag \`v${VER}\` once this lands._
+          EOF
+          )
+          PR_URL=$(gh pr create \
+            --title "chore(chart): prepare release v${VER}" \
+            --base main \
+            --head "${BRANCH}" \
+            --body "$BODY")
+          echo "Opened ${PR_URL}; enabling auto-merge."
+          gh pr merge "${PR_URL}" --auto --squash --delete-branch
+
+          # Wait for the squash-merge to land on main (required checks ~15min).
+          echo "Waiting for ${PR_URL} to merge..."
+          for attempt in $(seq 1 60); do
+            STATE=$(gh pr view "${PR_URL}" --json state -q .state)
+            if [ "${STATE}" = "MERGED" ]; then
+              echo "PR merged."
+              break
+            fi
+            if [ "${STATE}" = "CLOSED" ]; then
+              echo "::error::${PR_URL} was closed without merging — aborting the release prepare." >&2
+              exit 1
+            fi
+            echo "  attempt ${attempt}/60: state=${STATE}; sleeping 30s..."
+            sleep 30
+          done
+          STATE=$(gh pr view "${PR_URL}" --json state -q .state)
+          if [ "${STATE}" != "MERGED" ]; then
+            echo "::error::${PR_URL} did not merge within the timeout (state=${STATE}). Check main's required checks [test, pwa-build, changes, integration]." >&2
+            exit 1
+          fi
+
+      # --------------------------------------------------------------------
+      # Resolve the commit to tag (the merged bump commit, or current main HEAD
+      # when no bump was needed) and push the annotated tag. The tag push
+      # triggers release.yml.
+      # --------------------------------------------------------------------
+      - name: Push release tag on the merged commit
+        env:
+          VER: ${{ inputs.version }}
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::App token is empty — cannot push the release tag." >&2
+            exit 1
+          fi
+          TAG="v${VER}"
+          git fetch origin main
+          RELEASE_SHA=$(git rev-parse origin/main)
+          echo "Tagging origin/main HEAD ${RELEASE_SHA} as ${TAG}"
+          # Confirm the bump (if any) is actually present in the commit being
+          # tagged — the whole point of kyber#591. Fail loud otherwise.
+          CHART_VER=$(git show "${RELEASE_SHA}:deploy/helm/kyber/Chart.yaml" | yq '.version')
+          if [ "${CHART_VER}" != "${VER}" ]; then
+            echo "::error::Chart.yaml at ${RELEASE_SHA} is '${CHART_VER}', expected '${VER}' — refusing to tag a commit whose chart version doesn't match the release (kyber#591)." >&2
+            exit 1
+          fi
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
+          git tag -a "${TAG}" "${RELEASE_SHA}" -m "Release ${TAG}"
+          if ! git push origin "${TAG}"; then
+            echo "::error::Failed to push tag ${TAG} — release.yml will not trigger. Investigate the App token / push permission." >&2
+            exit 1
+          fi
+          echo "Pushed ${TAG} on ${RELEASE_SHA} — release.yml will build, refresh :latest, and cut the GitHub Release."

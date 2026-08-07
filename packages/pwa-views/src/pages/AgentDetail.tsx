@@ -1,0 +1,1022 @@
+import { useState } from 'react'
+import { useParams, useNavigate } from 'react-router-dom'
+import { usePrefixedPath } from '../lib/route-prefix'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, Pause, KeyRound, Cpu, Trash2, MoreHorizontal } from 'lucide-react'
+import {
+  useAgent,
+  useStartAgent,
+  useStopAgent,
+  useRestartAgent,
+  useRestartAgentSession,
+  useSuspendAgent,
+  useForceNeedsAuthAgent,
+  useSetAgentModel,
+  useSetAgentRuntimeVersion,
+  useSetAgentResources,
+  useDeleteAgent,
+  useTokenUsage,
+  useReauthorizeAgent,
+  useStartCodexDeviceAuth,
+  useComputeConfig,
+} from '../hooks/useAPI'
+import { useEffectiveModelList } from '../lib/models'
+import { StatusBadge } from '../components/StatusBadge'
+import { SchedulingFailureBanner } from '../components/SchedulingFailureBanner'
+import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
+import { AgentActivityBadge } from '../components/AgentActivityBadge'
+import { Button } from '../components/Button'
+import { Card } from '../components/Card'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { agentActionConfirmMessage } from '../lib/agentMessages'
+import { Skeleton } from '../components/Skeleton'
+import { TokenUsageCard } from '../components/TokenUsage'
+import { ActivityTab } from '../components/ActivityTab'
+import { JobsTab } from '../components/JobsTab'
+import { CommsTab } from '../components/CommsTab'
+import { SecretsTab } from '../components/SecretsTab'
+import { ShellTab } from '../components/ShellTab'
+import { ExecTerminal } from '../components/ExecTerminal'
+import { WebhooksTab } from '../components/WebhooksTab'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { lifecycleItemsInMore } from '../lib/design/agent-actions'
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { generatePkcePair } from '../lib/pkce'
+import { parseAuthorizationInput } from '../lib/oauth'
+import type { Agent, AgentPhase, AgentIdentityRepoStatus, AgentIdentityRepoPhase, AgentStatus, SetResourcesRequest } from '../lib/types'
+
+const CLAUDE_CODE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
+const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback'
+const OAUTH_SCOPES = [
+  'org:create_api_key',
+  'user:profile',
+  'user:inference',
+  'user:sessions:claude_code',
+  'user:mcp_servers',
+  'user:file_upload',
+].join(' ')
+
+function buildAuthorizeUrl(challenge: string, state: string): string {
+  const u = new URL('https://claude.ai/oauth/authorize')
+  u.searchParams.set('code', 'true')
+  u.searchParams.set('client_id', CLAUDE_CODE_CLIENT_ID)
+  u.searchParams.set('response_type', 'code')
+  u.searchParams.set('redirect_uri', OAUTH_REDIRECT_URI)
+  u.searchParams.set('scope', OAUTH_SCOPES)
+  u.searchParams.set('code_challenge', challenge)
+  u.searchParams.set('code_challenge_method', 'S256')
+  u.searchParams.set('state', state)
+  return u.toString()
+}
+
+type ActionKind =
+  | 'start'
+  | 'stop'
+  | 'restart' // pod-level roll (renamed "Restart pod" in the UI)
+  | 'restart-session' // in-pod tmux kill + relaunch (#128)
+  | 'suspend'
+  | 'force-needs-auth' // operator-forced re-auth for a wedged agent (#395)
+  | 'delete'
+  | 'set-model'
+  | 'set-runtime-version'
+  | 'set-resources'
+// Tab order per #125 refinement: Overview | Secrets | Jobs | Webhooks | Activity | Shell.
+// Activity replaces the old top-level "logs" (Pod Boot Log) tab and absorbs
+// the read-only tmux attach that used to live under Shell. Shell itself is
+// now interactive-only (root-in-chroot default). Webhooks (#208) sits between
+// Jobs and Activity — both are inbound-prompt surfaces (cron-driven vs
+// webhook-driven respectively).
+type Tab = 'overview' | 'comms' | 'secrets' | 'jobs' | 'webhooks' | 'activity' | 'shell'
+
+function identityRepoPhaseBadgeClass(phase: AgentIdentityRepoPhase | undefined): string {
+  switch (phase) {
+    case 'Ready':
+      return 'bg-success/20 text-success ring-1 ring-inset ring-success/30'
+    case 'Pending':
+      return 'bg-accent/20 text-accent ring-1 ring-inset ring-accent-ring'
+    case 'Failed':
+      return 'bg-danger/20 text-danger ring-1 ring-inset ring-danger/30'
+    default:
+      return 'bg-surface-overlay text-text-muted ring-1 ring-inset ring-border-default'
+  }
+}
+
+function formatTimestamp(iso: string | undefined): string | null {
+  if (!iso) return null
+  try {
+    return new Date(iso).toLocaleString(undefined, {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    })
+  } catch {
+    return iso
+  }
+}
+
+// StatusCardBody renders the right-hand "Status" card body on the Agent
+// detail Overview tab. Exported for AgentDetail.test.tsx so the empty-state
+// branch and partial-field rendering can be tested in isolation (no
+// component-tree boilerplate per case).
+//
+// kyber#355: before this fix the body was four optional rows with no
+// empty-state, so every Running agent in v1.3.1 (where the controller
+// wasn't writing pod-derived fields) rendered as a bare heading. The card
+// now mirrors MachineDetail.tsx's pending-data wording style ("X will
+// appear once …") for the no-data case so the empty card teaches "not
+// yet available" instead of "feature broken."
+export function StatusCardBody({ status }: { status: AgentStatus }) {
+  const formattedStart = formatTimestamp(status.startTime)
+  const hasAnyStatusDetail = Boolean(
+    status.podName ||
+      status.podIP ||
+      status.nodeName ||
+      formattedStart ||
+      status.restartCount !== undefined ||
+      status.message,
+  )
+
+  if (!hasAnyStatusDetail) {
+    return (
+      <p className="text-xs text-text-muted italic" data-testid="status-empty-state">
+        Pod is starting — status details will appear once it&apos;s scheduled.
+      </p>
+    )
+  }
+
+  return (
+    <dl className="space-y-2 text-sm">
+      {status.podName && (
+        <div className="flex justify-between gap-2">
+          <dt className="text-text-muted shrink-0">Pod</dt>
+          <dd className="text-text-primary font-mono text-xs truncate">{status.podName}</dd>
+        </div>
+      )}
+      {status.podIP && (
+        <div className="flex justify-between">
+          <dt className="text-text-muted">Pod IP</dt>
+          <dd className="text-text-primary font-mono text-xs">{status.podIP}</dd>
+        </div>
+      )}
+      {status.nodeName && (
+        <div className="flex justify-between gap-2">
+          <dt className="text-text-muted shrink-0">Node</dt>
+          <dd className="text-text-primary font-mono text-xs truncate">{status.nodeName}</dd>
+        </div>
+      )}
+      {formattedStart && (
+        <div className="flex justify-between">
+          <dt className="text-text-muted">Started</dt>
+          <dd className="text-text-primary text-xs">{formattedStart}</dd>
+        </div>
+      )}
+      {status.restartCount !== undefined && (
+        <div className="flex justify-between">
+          <dt className="text-text-muted">Restarts</dt>
+          <dd className={status.restartCount > 0 ? 'text-warn' : 'text-text-primary'}>
+            {status.restartCount}
+          </dd>
+        </div>
+      )}
+      {status.message && (
+        <div>
+          <dt className="text-text-muted mb-1">Message</dt>
+          <dd className="text-text-secondary text-xs">{status.message}</dd>
+        </div>
+      )}
+    </dl>
+  )
+}
+
+// MismatchBadges surfaces the two PR-E (kyber#379) safety-net
+// conditions: RuntimeVersionMismatch and ModelUnsupported. Both render
+// as warning-styled cards inline with the other agent-detail cards so
+// operators see them without scrolling — these signals replace what
+// used to be silent failures (R2-D2 incident class).
+//
+// Each badge clears within one reconcile cycle after the underlying
+// signal resolves (controller logic at
+// pkg/controllers/agent/reconciler.go:reconcileRuntimeStatusConditions).
+// Returns null when neither condition is True, so a healthy agent
+// surfaces nothing.
+export function MismatchBadges({ agent }: { agent: Agent }) {
+  const showMismatch = Boolean(agent.runtimeVersionMismatch)
+  const showUnsupported = Boolean(agent.modelUnsupported)
+  // kyber#674 — blocked-before-pod conditions. Unlike the two badges above,
+  // these mean NO pod exists at all, so the agent shows a blank status and a
+  // restart cannot help. Rendered first: they explain why everything else on
+  // the page is empty.
+  const showImageMissing = Boolean(agent.runtimeImageMissing)
+  const showModelUnresolved = Boolean(agent.modelUnresolved)
+  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved) return null
+  const installed = agent.runtimeVersion?.installedVersion
+  const requested = agent.runtimeVersion?.requestedVersion
+  return (
+    <div className="space-y-2">
+      {showImageMissing && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">
+                This cluster can&apos;t run the <code className="font-mono">{agent.runtime}</code> runtime
+              </h2>
+              <p className="text-xs text-text-muted">
+                {agent.blockedReason ??
+                  'No container image is configured for it on this install, so no pod can be created and the agent will never start.'}{' '}
+                This is an install-level fix, not an agent one — pin the runtime&apos;s image in the Helm
+                values and it clears on its own. Restarting the agent will not help.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      {showModelUnresolved && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">No model resolved</h2>
+              <p className="text-xs text-text-muted">
+                {agent.blockedReason ??
+                  "This agent has no model set and the fleet default is empty, so the controller won't build a pod. Set a model on the agent, or set the fleet default in Settings."}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      {showMismatch && (
+        <Card className="border-warning/40 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">Runtime version mismatch</h2>
+              <p className="text-xs text-text-muted">
+                {installed && requested ? (
+                  <>
+                    The agent is running harness version <code className="font-mono">{installed}</code>, but
+                    requested <code className="font-mono">{requested}</code>. The boot-time install
+                    likely failed and the pod fell back to the baked-in version. Fix the cause
+                    (bad version string, registry outage) and restart the agent.
+                  </>
+                ) : (
+                  <>The agent's installed harness version doesn't match what was requested. Restart the agent to re-attempt the install.</>
+                )}
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      {showUnsupported && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">Model not supported by installed Claude Code</h2>
+              <p className="text-xs text-text-muted">
+                The pre-flight probe reported the configured model
+                {agent.model ? <> (<code className="font-mono">{agent.model}</code>)</> : null}
+                {' '}as unsupported by the installed Claude Code{installed ? <> ({installed})</> : null}.
+                Apply a newer Claude Code version (set <code className="font-mono">spec.runtimeVersion</code>
+                {' '}per-agent or bump the fleet <code className="font-mono">defaultRuntimeVersion</code>
+                {' '}via Settings) and restart.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
+  return (
+    <Card>
+      <h2 className="text-sm font-medium text-text-muted mb-3">Identity repo</h2>
+      <dl className="space-y-2 text-sm">
+        {data.phase && (
+          <div className="flex justify-between items-center">
+            <dt className="text-text-muted">Phase</dt>
+            <dd>
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${identityRepoPhaseBadgeClass(data.phase)}`}
+              >
+                {data.phase}
+              </span>
+            </dd>
+          </div>
+        )}
+        {data.repo && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-text-muted shrink-0">Repo</dt>
+            <dd className="truncate">
+              <a
+                href={`https://github.com/${data.repo}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent hover:text-accent font-mono text-xs underline-offset-2 hover:underline"
+              >
+                {data.repo}
+              </a>
+            </dd>
+          </div>
+        )}
+        {data.tokenExpiresAt && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-text-muted shrink-0">Token expires</dt>
+            <dd className="text-text-primary text-xs">{formatTimestamp(data.tokenExpiresAt)}</dd>
+          </div>
+        )}
+        {data.phase === 'Failed' && data.message && (
+          <div>
+            <dt className="text-text-muted mb-1">Message</dt>
+            <dd className="text-danger text-xs">{data.message}</dd>
+          </div>
+        )}
+      </dl>
+    </Card>
+  )
+}
+
+// LifecycleMenuItems renders the per-phase lifecycle actions inside the agent
+// detail "More" dropdown. Extracted + exported (like StatusCardBody above) so
+// the actions surfaced per phase can be tested in isolation without mounting
+// the whole detail page — kyber#599: a crashed agent (Failed/MemoryExhausted)
+// must surface the WORKING recovery, Start (desiredPhase=Running), and no
+// longer the no-op Restart pod (which only ever fired from Running). The
+// per-phase set itself is owned by lifecycleItemsInMore; this just maps each
+// applicable kind to its labelled menu item.
+export function LifecycleMenuItems({
+  phase,
+  onSelect,
+}: {
+  phase: AgentPhase
+  onSelect: (kind: ActionKind) => void
+}) {
+  const items = lifecycleItemsInMore(phase)
+  return (
+    <>
+      {items.includes('start') && (
+        <DropdownMenuItem onSelect={() => onSelect('start')}>
+          <Play className="h-3.5 w-3.5" />
+          Start
+        </DropdownMenuItem>
+      )}
+      {items.includes('stop') && (
+        <DropdownMenuItem onSelect={() => onSelect('stop')}>
+          <Square className="h-3.5 w-3.5" />
+          Stop
+        </DropdownMenuItem>
+      )}
+      {items.includes('restart') && (
+        <DropdownMenuItem onSelect={() => onSelect('restart')}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          Restart pod
+        </DropdownMenuItem>
+      )}
+      {items.includes('suspend') && (
+        <DropdownMenuItem onSelect={() => onSelect('suspend')}>
+          <Pause className="h-3.5 w-3.5" />
+          Suspend
+        </DropdownMenuItem>
+      )}
+      {items.includes('force-needs-auth') && (
+        <DropdownMenuItem onSelect={() => onSelect('force-needs-auth')}>
+          <KeyRound className="h-3.5 w-3.5" />
+          Require re-auth
+        </DropdownMenuItem>
+      )}
+    </>
+  )
+}
+
+export function AgentDetail() {
+  const { name = '' } = useParams<{ name: string }>()
+  const navigate = useNavigate()
+  const prefixed = usePrefixedPath()
+  const { data: agent, isLoading, error } = useAgent(name)
+  const tokenUsage = useTokenUsage(name, agent?.phase === 'Running')
+  const { data: computeConfig } = useComputeConfig()
+  // kyber#378 PR-D: the effective model list (detected /available
+  // primary, /config Models fallback) also carries the CC version
+  // catalog for the set-runtime-version dialog.
+  const effective = useEffectiveModelList(agent?.runtime)
+  const [pending, setPending] = useState<ActionKind | null>(null)
+  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [newModel, setNewModel] = useState('')
+  const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
+  const [newCPU, setNewCPU] = useState('')
+  const [newMemory, setNewMemory] = useState('')
+
+  // Re-authorize flow state
+  const [reauthVerifier, setReauthVerifier] = useState('')
+  const [reauthState, setReauthState] = useState('')
+  const [reauthCode, setReauthCode] = useState('')
+  const [reauthError, setReauthError] = useState<string | null>(null)
+  const [reauthSuccess, setReauthSuccess] = useState(false)
+
+  const startAgent = useStartAgent()
+  const stopAgent = useStopAgent()
+  const restartAgent = useRestartAgent()
+  const restartAgentSession = useRestartAgentSession()
+  const suspendAgent = useSuspendAgent()
+  const forceNeedsAuthAgent = useForceNeedsAuthAgent()
+  const setAgentModel = useSetAgentModel()
+  const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
+  const setAgentResources = useSetAgentResources()
+  const deleteAgent = useDeleteAgent()
+  const reauthorizeAgent = useReauthorizeAgent()
+  const startCodexDeviceAuth = useStartCodexDeviceAuth()
+
+  const isActing =
+    startAgent.isPending ||
+    stopAgent.isPending ||
+    restartAgent.isPending ||
+    restartAgentSession.isPending ||
+    suspendAgent.isPending ||
+    forceNeedsAuthAgent.isPending ||
+    setAgentModel.isPending ||
+    setAgentRuntimeVersion.isPending ||
+    setAgentResources.isPending ||
+    deleteAgent.isPending
+
+  async function executeAction() {
+    if (!pending) return
+    try {
+      if (pending === 'start') await startAgent.mutateAsync(name)
+      if (pending === 'stop') await stopAgent.mutateAsync(name)
+      if (pending === 'restart') await restartAgent.mutateAsync(name)
+      if (pending === 'restart-session') await restartAgentSession.mutateAsync(name)
+      if (pending === 'suspend') await suspendAgent.mutateAsync(name)
+      if (pending === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
+      if (pending === 'set-model' && newModel) {
+        await setAgentModel.mutateAsync({ name, model: newModel })
+        setNewModel('')
+      }
+      if (pending === 'set-runtime-version') {
+        // Empty input is a deliberate clear (revert to fleet default).
+        await setAgentRuntimeVersion.mutateAsync({ name, runtimeVersion: newRuntimeVersion })
+        setNewRuntimeVersion('')
+      }
+      if (pending === 'set-resources') {
+        const body: SetResourcesRequest = {}
+        if (newCPU) body.cpu = newCPU
+        if (newMemory) body.memory = newMemory
+        if (!body.cpu && !body.memory) return
+        await setAgentResources.mutateAsync({ name, body })
+        setNewCPU('')
+        setNewMemory('')
+      }
+      if (pending === 'delete') {
+        await deleteAgent.mutateAsync(name)
+        navigate(prefixed('/agents'))
+        return
+      }
+    } finally {
+      setPending(null)
+    }
+  }
+
+  if (isLoading) {
+    return (
+      <div className="space-y-4">
+        <Skeleton className="h-8 w-48 rounded" />
+        <Skeleton className="h-40 rounded-xl" />
+      </div>
+    )
+  }
+
+  if (error || !agent) {
+    return (
+      <div className="rounded-lg border border-danger/40 bg-danger-muted p-4 text-sm text-danger">
+        {error?.message ?? 'Agent not found'}
+      </div>
+    )
+  }
+
+  const tabs: { id: Tab; label: string }[] = [
+    { id: 'overview', label: 'Overview' },
+    { id: 'comms', label: 'Comms' },
+    { id: 'secrets', label: 'Secrets' },
+    { id: 'jobs', label: 'Jobs' },
+    { id: 'webhooks', label: 'Webhooks' },
+    { id: 'activity', label: 'Activity' },
+    { id: 'shell', label: 'Shell' },
+  ]
+
+  // Per #128 amendment: Restart session is the primary header action when
+  // the agent is live. Other lifecycle actions (Start/Stop/Suspend/Restart
+  // pod) move into the More dropdown — filtered per the existing
+  // lifecycleItemsInMore helper so inapplicable items (e.g. Start on a
+  // Running agent) stay hidden.
+  const canRestartSession = agent.phase === 'Running'
+
+  return (
+    <div>
+      <div className="flex items-center gap-3 mb-4">
+        <Button variant="ghost" size="sm" onClick={() => navigate(prefixed('/agents'))}>
+          <ArrowLeft className="h-4 w-4" />
+        </Button>
+        <h1 className="min-w-0 truncate text-xl font-bold text-text-primary">{agent.id}</h1>
+        <StatusBadge phase={agent.phase} />
+        <SchedulingFailureBadge agent={agent} />
+        <AgentActivityBadge agent={agent} />
+        <div className="ml-auto flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isActing}
+                aria-label="More actions"
+              >
+                <MoreHorizontal className="h-4 w-4" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
+              {canRestartSession && (
+                <DropdownMenuItem
+                  onSelect={() => setPending('restart-session')}
+                  aria-label="Restart session"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  Restart session
+                </DropdownMenuItem>
+              )}
+              <LifecycleMenuItems phase={agent.phase} onSelect={setPending} />
+              <DropdownMenuLabel>Configure</DropdownMenuLabel>
+              <DropdownMenuItem
+                onSelect={() => {
+                  setNewModel(agent.model)
+                  setPending('set-model')
+                }}
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                Set Model
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? '')
+                  setPending('set-runtime-version')
+                }}
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                Set Harness Version
+              </DropdownMenuItem>
+              <DropdownMenuItem
+                onSelect={() => {
+                  setNewCPU(agent.resources.cpu)
+                  setNewMemory(agent.resources.memory)
+                  setPending('set-resources')
+                }}
+              >
+                <Cpu className="h-3.5 w-3.5" />
+                Set Resources
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem variant="danger" onSelect={() => setPending('delete')}>
+                <Trash2 className="h-3.5 w-3.5" />
+                Delete
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+
+      {/* Actions */}
+
+      {/* Tabs */}
+      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
+        <TabsList className="mb-4 w-full overflow-x-auto">
+          {tabs.map((tab) => (
+            <TabsTrigger key={tab.id} value={tab.id}>
+              {tab.label}
+            </TabsTrigger>
+          ))}
+        </TabsList>
+
+        <TabsContent value="overview">
+          <div className="space-y-4">
+          <SchedulingFailureBanner agent={agent} />
+          {agent.runtime === 'codex' && agent.authType === 'oauth' &&
+            (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
+            <Card className="border-accent/40 bg-accent/10">
+              <h2 className="mb-1 text-sm font-semibold text-text-primary">
+                {agent.phase === 'NeedsAuth' ? 'Codex login required' : 'Finish Codex device login'}
+              </h2>
+              <p className="mb-3 text-xs text-text-muted">
+                Kyber runs <code>codex login --device-auth</code> inside the agent. Follow the URL
+                and code below; no local auth file needs to be copied into Kyber.
+              </p>
+              {agent.phase === 'NeedsAuth' ? (
+                <Button
+                  type="button"
+                  variant="primary"
+                  size="sm"
+                  loading={startCodexDeviceAuth.isPending}
+                  onClick={() => startCodexDeviceAuth.mutate(name)}
+                >
+                  Start device login
+                </Button>
+              ) : (
+                <ExecTerminal kind="agent" name={name} mode="device-auth" heightClassName="h-64" />
+              )}
+            </Card>
+          )}
+          {agent.phase === 'NeedsAuth' && !(agent.runtime === 'codex' && agent.authType === 'oauth') && (
+            <Card className="border-warn/40 bg-warn-muted">
+              <h2 className="text-sm font-semibold text-warn mb-1">Re-authorization required</h2>
+              <p className="text-xs text-warn/80 mb-3">
+                This agent&apos;s OAuth credentials have expired. Re-authorize to resume.
+              </p>
+              {!reauthSuccess ? (
+                <div className="space-y-3">
+                  <div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      onClick={async () => {
+                        const { verifier, challenge } = await generatePkcePair()
+                        const state = crypto.randomUUID()
+                        setReauthVerifier(verifier)
+                        setReauthState(state)
+                        setReauthCode('')
+                        setReauthError(null)
+                        window.open(buildAuthorizeUrl(challenge, state), '_blank', 'noopener')
+                      }}
+                    >
+                      {reauthVerifier ? 'Re-authorize again' : 'Re-authorize'}
+                    </Button>
+                    <p className="mt-1 text-xs text-text-muted">
+                      Opens Anthropic in a new tab. Sign in and authorize. Anthropic will show a
+                      page with your authorization code — copy it and paste below.
+                    </p>
+                  </div>
+                  {reauthVerifier && (
+                    <div className="space-y-2">
+                      <label className="block text-xs font-medium text-text-muted">
+                        Authorization code
+                      </label>
+                      <input
+                        type="text"
+                        value={reauthCode}
+                        onChange={(e) => {
+                          setReauthCode(e.target.value)
+                          setReauthError(null)
+                        }}
+                        placeholder="Paste the code Anthropic shows you"
+                        className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                      />
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        loading={reauthorizeAgent.isPending}
+                        disabled={!reauthCode.trim()}
+                        onClick={async () => {
+                          setReauthError(null)
+                          const parsed = parseAuthorizationInput(reauthCode)
+                          if (!parsed) {
+                            setReauthError('Paste the authorization code Anthropic showed you')
+                            return
+                          }
+                          if (parsed.state && parsed.state !== reauthState) {
+                            setReauthError('State mismatch — authorize again')
+                            return
+                          }
+                          try {
+                            await reauthorizeAgent.mutateAsync({
+                              name,
+                              body: {
+                                oauthCode: parsed.code,
+                                pkceVerifier: reauthVerifier,
+                                state: reauthState,
+                              },
+                            })
+                            setReauthSuccess(true)
+                          } catch (err) {
+                            setReauthError(err instanceof Error ? err.message : 'Re-authorization failed')
+                          }
+                        }}
+                      >
+                        Submit
+                      </Button>
+                      {reauthError && (
+                        <p className="text-xs text-danger bg-danger/10 rounded-lg px-3 py-2">
+                          {reauthError}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <p className="text-xs text-success bg-success/10 rounded-lg px-3 py-2">
+                  Re-authorized successfully. The agent will transition out of NeedsAuth shortly.
+                </p>
+              )}
+            </Card>
+          )}
+          <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
+          {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
+          <MismatchBadges agent={agent} />
+          <div className="grid gap-4 sm:grid-cols-2">
+          <Card>
+            <h2 className="text-sm font-medium text-text-muted mb-3">Spec</h2>
+            <dl className="space-y-2 text-sm">
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Model</dt>
+                <dd className="text-text-primary font-mono text-xs">{agent.model}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Machine</dt>
+                <dd className="text-text-primary">{agent.machine}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Runtime</dt>
+                <dd className="text-text-primary">
+                  {agent.runtime}
+                  {agent.runtimeVersion?.installedVersion && (
+                    <span className="text-text-muted font-mono text-xs ml-2">
+                      {agent.runtimeVersion.installedVersion}
+                    </span>
+                  )}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Scaling</dt>
+                <dd className="text-text-primary">{agent.scaling}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">CPU</dt>
+                <dd className="text-text-primary font-mono text-xs">{agent.resources.cpu}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Memory</dt>
+                <dd className="text-text-primary font-mono text-xs">{agent.resources.memory}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Disk</dt>
+                <dd className="text-text-primary font-mono text-xs">{agent.resources.disk}</dd>
+              </div>
+            </dl>
+          </Card>
+          <Card>
+            <h2 className="text-sm font-medium text-text-muted mb-3">Status</h2>
+            <StatusCardBody status={agent.status} />
+          </Card>
+          </div>
+        </div>
+        </TabsContent>
+
+        <TabsContent value="comms">
+          {/* Restart pod is routed through the existing confirm flow so the
+              "apply this change" path is the same one the More menu uses —
+              including its warning that the live session ends. */}
+          <CommsTab agentName={name} onRestartPod={() => setPending('restart')} />
+        </TabsContent>
+
+        <TabsContent value="secrets">
+          <SecretsTab agentName={name} />
+        </TabsContent>
+
+        <TabsContent value="jobs">
+          <JobsTab agentName={name} />
+        </TabsContent>
+
+        <TabsContent value="webhooks">
+          <WebhooksTab agentName={name} />
+        </TabsContent>
+
+        <TabsContent value="activity">
+          <ActivityTab agentName={name} />
+        </TabsContent>
+
+        <TabsContent value="shell">
+          <ShellTab agentName={name} />
+        </TabsContent>
+      </Tabs>
+
+      {/* Set model dialog — custom modal because we need an input field inside */}
+      {pending === 'set-model' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-text-primary mb-4">Change model</h2>
+            {(() => {
+              // kyber#378 PR-D: detected list from /available wins; /config
+              // is the cold-start fallback (composed inside useEffectiveModelList).
+              const models = effective.models
+              const currentInList = models.some((m) => m.id === newModel)
+              return (
+                <>
+                  <select
+                    value={newModel}
+                    onChange={(e) => setNewModel(e.target.value)}
+                    className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    disabled={models.length === 0 && !newModel}
+                  >
+                    {!currentInList && newModel && (
+                      <option value={newModel}>{newModel} (manual)</option>
+                    )}
+                    {models.map((m) => {
+                      const k = Math.round(m.contextWindow / 1000)
+                      const window = k >= 1000 ? `${(k / 1000).toFixed(0)}M ctx` : `${k}K ctx`
+                      const label = m.contextWindowKnown ? window : `${window} (context unknown)`
+                      return (
+                        <option key={m.id} value={m.id}>
+                          {(m.displayName || m.id)} · {label}
+                        </option>
+                      )
+                    })}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder={`Manual override: type a ${agent.runtime === 'codex' ? 'Codex' : 'Claude'} model ID`}
+                    value={!currentInList && newModel ? newModel : ''}
+                    onChange={(e) => setNewModel(e.target.value.trim())}
+                    className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Manual model override"
+                  />
+                </>
+              )
+            })()}
+            <div className="mt-4 flex gap-3 justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void executeAction()}
+                loading={isActing}
+                disabled={!newModel}
+              >
+                Apply
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set harness version dialog — kyber#378 PR-D. Claude Code agents can
+          pick from detected npm versions; other runtimes use manual entry.
+          Empty input clears spec.runtimeVersion. */}
+      {pending === 'set-runtime-version' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-text-primary mb-4">Change Harness Version</h2>
+            {(() => {
+              const isClaudeCode = agent.runtime === 'claude-code'
+              const versions = isClaudeCode ? effective.claudeCodeVersions : effective.codexVersions
+              const inList = versions.includes(newRuntimeVersion)
+              return (
+                <>
+                  <select
+                    value={newRuntimeVersion}
+                    onChange={(e) => setNewRuntimeVersion(e.target.value)}
+                    className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                  >
+                    <option value="">{isClaudeCode ? '(use fleet default)' : '(use baked-in version)'}</option>
+                    {!inList && newRuntimeVersion && (
+                      <option value={newRuntimeVersion}>{newRuntimeVersion} (manual)</option>
+                    )}
+                    {versions.map((v, i) => (
+                      <option key={v} value={v}>
+                        {v}{i === 0 ? ' (latest)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="text"
+                    placeholder={isClaudeCode ? 'Manual override: e.g. 2.1.200' : 'Manual harness version'}
+                    value={!inList ? newRuntimeVersion : ''}
+                    onChange={(e) => setNewRuntimeVersion(e.target.value.trim())}
+                    className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Manual harness version override"
+                  />
+                  <p className="mt-2 text-[11px] text-text-disabled">
+                    Charset: <code>{`[0-9A-Za-z.\\-]`}</code>, max 64 chars. Empty
+                    clears spec.runtimeVersion and falls back to the {isClaudeCode ? 'fleet default' : 'baked-in version'}.
+                    Apply rolls the agent pod when Running.
+                  </p>
+                </>
+              )
+            })()}
+            <div className="mt-4 flex gap-3 justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void executeAction()}
+                loading={isActing}
+              >
+                Apply
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Set resources dialog — mirrors set-model dialog */}
+      {pending === 'set-resources' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-text-primary mb-4">Set Resources</h2>
+            <div className="space-y-3">
+              <label className="block text-sm text-text-secondary">
+                CPU
+                <input
+                  type="text"
+                  value={newCPU}
+                  onChange={(e) => setNewCPU(e.target.value)}
+                  placeholder="e.g. 500m, 1, 2"
+                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                />
+              </label>
+              <label className="block text-sm text-text-secondary">
+                Memory
+                <input
+                  type="text"
+                  value={newMemory}
+                  onChange={(e) => setNewMemory(e.target.value)}
+                  placeholder="e.g. 2Gi, 4Gi"
+                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                />
+              </label>
+              <p className="text-xs text-text-muted">
+                Applying this will restart the agent.
+              </p>
+            </div>
+            <div className="mt-4 flex gap-3 justify-end">
+              <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>
+                Cancel
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={() => void executeAction()}
+                loading={isActing}
+                disabled={
+                  (!newCPU && !newMemory) ||
+                  (newCPU === agent.resources.cpu && newMemory === agent.resources.memory)
+                }
+              >
+                Apply
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pending !== null && pending !== 'set-model' && pending !== 'set-runtime-version' && pending !== 'set-resources' && (
+        <ConfirmDialog
+          open={true}
+          title={confirmTitle(pending)}
+          message={agentActionConfirmMessage(pending, name)}
+          confirmLabel={pending === 'delete' ? 'Delete' : 'Confirm'}
+          dangerous={pending === 'delete'}
+          loading={isActing}
+          onConfirm={() => void executeAction()}
+          onCancel={() => setPending(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+// confirmTitle gives each ActionKind a readable dialog header. The generic
+// `${capitalize(kind)} agent?` template breaks down for multi-word kinds
+// like 'restart-session' ("Restart-session agent?" reads poorly).
+function confirmTitle(kind: ActionKind): string {
+  switch (kind) {
+    case 'restart-session':
+      return 'Restart session?'
+    case 'restart':
+      return 'Restart pod?'
+    case 'force-needs-auth':
+      return 'Require re-auth?'
+    case 'delete':
+      return 'Delete agent?'
+    default:
+      return `${capitalize(kind)} agent?`
+  }
+}
+
+function capitalize(s: string): string {
+  return s.charAt(0).toUpperCase() + s.slice(1)
+}

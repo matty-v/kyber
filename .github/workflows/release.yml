@@ -1,0 +1,767 @@
+name: release
+
+# Fires on git tag push matching v*.*.*. Builds ALL 5 Kyber images from
+# source at the tagged commit (full rebuild — not a manifest copy), pushes
+# them as :vX.Y.Z, then creates the GitHub Release and notifies Lando.
+#
+# Why full rebuild instead of re-tagging :<sha> manifests: build.yml uses
+# path filters (per kyber CI cost optimization), so not every commit on
+# main has all 8 :<sha> manifests in GHCR. Releases need a coherent set
+# of 8 images at the tagged commit; that means rebuild-on-tag.
+#
+# Slower than the manifest-copy approach (~10 min per release vs ~1 min)
+# but releases are infrequent (proposed via Lando's 24h soak gate) so the
+# cost is acceptable. See dave-agent/docs/specs/2026-05-25-kyber-release-
+# process-design.md and Matt's confirmation 2026-05-25.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  # Manual fallback for the cases where a tag push didn't trigger this
+  # workflow (e.g., GitHub Actions outage during the push, like the one
+  # at 2026-05-26T10:57Z that left v1.2.0 stalled for hours). Operator
+  # runs: `gh workflow run release.yml --ref v1.2.0` (or picks the tag in
+  # the Actions UI). The --ref selects the workflow + the meta job's
+  # tag resolution via GITHUB_REF_NAME, so no extra input is needed.
+  workflow_dispatch: {}
+
+permissions:
+  contents: write   # create GitHub Release
+  packages: write   # push GHCR tags
+
+env:
+  REGISTRY: ghcr.io/matty-v
+
+jobs:
+  # --------------------------------------------------------------------
+  # meta: resolve tag + sha + claude-code version (read once, reuse).
+  # --------------------------------------------------------------------
+  meta:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+      version: ${{ steps.meta.outputs.version }}
+      sha: ${{ steps.meta.outputs.sha }}
+      cc_version: ${{ steps.ccver.outputs.version }}
+      tag_message: ${{ steps.chainmeta.outputs.tag_message }}
+      pwa_version: ${{ steps.chainmeta.outputs.pwa_version }}
+      is_test: ${{ steps.chainmeta.outputs.is_test }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          SHA=$(git rev-list -n 1 "$TAG")
+          # User-facing version: the tag with its leading "v" stripped, matching
+          # the bare X.Y.Z users already see. Build-injected into the image as
+          # main.Version so the displayed version rides with the code (kyber#482).
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      # Match build.yml — claude-code version is pinned in the chart.
+      - id: ccver
+        run: |
+          version=$(yq '.runtime.claudeCode.version' deploy/helm/kyber/values.yaml)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::runtime.claudeCode.version missing or null in deploy/helm/kyber/values.yaml"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      # Outputs for post-release chain jobs (B1 pwa-views publish + B2 deploy bump PR).
+      # tag_message: annotated tag body, checked for [skip-publish] opt-out marker.
+      # pwa_version: read from packages/pwa-views/package.json.
+      # is_test: true when tag contains "-test" — chain jobs dry-run instead of side-effecting.
+      - id: chainmeta
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+        run: |
+          {
+            echo 'tag_message<<TAGMSGEOF'
+            git tag -l --format='%(contents)' "${TAG}" 2>/dev/null || true
+            echo TAGMSGEOF
+          } >> "$GITHUB_OUTPUT"
+          PWA_VERSION=$(node -p "require('./packages/pwa-views/package.json').version")
+          echo "pwa_version=${PWA_VERSION}" >> "$GITHUB_OUTPUT"
+          if [[ "${TAG}" == *"-test"* ]]; then
+            echo "is_test=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_test=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # --------------------------------------------------------------------
+  # preflight-check-tags: error fast if any of the 8 kyber-* images
+  # already has the target semver tag published on GHCR. Closes the
+  # tag-mutability cache-poisoning class of bug (kyber#364) — a
+  # re-pushed tag can leave long-lived nodes pinned to the old blob.
+  # Bypassed for -test tags so dev iteration can keep re-pushing.
+  # --------------------------------------------------------------------
+  preflight-check-tags:
+    needs: meta
+    if: needs.meta.outputs.is_test == 'false'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      GH_TOKEN: ${{ secrets.GHCR_PAT }}
+      KYBER_TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - name: Check each kyber-* image
+        run: |
+          set -e
+          for image in kyber-control-plane kyber-node-agent kyber-status-sidecar kyber-mcp-discord kyber-mcp-telegram kyber-runtime-base kyber-claude-code kyber-codex; do
+            ./scripts/preflight-tag-not-published.sh "${image}" "${KYBER_TAG}"
+          done
+
+  # --------------------------------------------------------------------
+  # Build independent leaf images in parallel: control-plane, node-agent,
+  # status-sidecar, mcp-discord, and mcp-telegram. Each is a leaf image (no FROM another
+  # Kyber image).
+  # --------------------------------------------------------------------
+  build-control-plane:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/control-plane/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-control-plane:${{ needs.meta.outputs.tag }}
+          build-args: |
+            BUILD_SHA=${{ needs.meta.outputs.sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_VERSION=${{ needs.meta.outputs.version }}
+          cache-from: type=gha,scope=control-plane
+          cache-to: type=gha,scope=control-plane,mode=max
+
+      # kyber#591: refresh the mutable control-plane :latest tag to THIS release's
+      # image so razer (canary, tracks :latest via ArgoCD Image Updater) reports
+      # the clean release label immediately, instead of the stale pre-tag
+      # git-describe string baked into whatever :latest build happened to run last
+      # (the v2.2.0 bug: razer stuck on 2.1.1-7-gd64fbbd because no canary build
+      # ran after the tag). Re-points the tag to the same digest just pushed — no
+      # rebuild. Cutting the tag inside release.yml is impossible (it fires ON the
+      # tag), so producing :latest here, after the tag exists, is the only place
+      # the clean canary label is reachable.
+      #
+      # Guard: only move :latest when the release commit is STILL origin/main HEAD,
+      # so a main merge racing the ~10-min release build can never move the canary
+      # backward. Skipped for -test tags (must not touch the live canary tag).
+      - name: Refresh control-plane :latest to the release image (guarded)
+        if: needs.meta.outputs.is_test == 'false'
+        env:
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+          RELEASE_SHA: ${{ needs.meta.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # ls-remote reads origin/main HEAD without needing full local history
+          # (the build checkout is shallow at the release sha).
+          MAIN_SHA=$(git ls-remote origin refs/heads/main | awk '{print $1}')
+          if [ -z "${MAIN_SHA}" ]; then
+            echo "::error::could not resolve origin/main HEAD — refusing to move :latest." >&2
+            exit 1
+          fi
+          if [ "${MAIN_SHA}" != "${RELEASE_SHA}" ]; then
+            echo ":latest NOT refreshed — release commit ${RELEASE_SHA} is no longer origin/main HEAD (${MAIN_SHA}); skipping to avoid moving the canary backward."
+            exit 0
+          fi
+          echo "Release commit is still origin/main HEAD — refreshing :latest → ${RELEASE_TAG} image (same digest, no rebuild)."
+          docker buildx imagetools create \
+            --tag "${REGISTRY}/kyber-control-plane:latest" \
+            "${REGISTRY}/kyber-control-plane:${RELEASE_TAG}"
+
+  build-node-agent:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/node-agent/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-node-agent:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=node-agent
+          cache-to: type=gha,scope=node-agent,mode=max
+
+  build-status-sidecar:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/status-sidecar/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-status-sidecar:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=status-sidecar
+          cache-to: type=gha,scope=status-sidecar,mode=max
+
+  # kyber-mcp-discord (kyber#646): the two-way Discord channel sidecar. Built
+  # for every release even though it is injected only into agents that enable
+  # spec.channels.discord — an unreleased tag is an unpinnable image, and the
+  # deploy-bump below pins it alongside the rest.
+  build-mcp-discord:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/mcp-discord/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-mcp-discord:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=mcp-discord
+          cache-to: type=gha,scope=mcp-discord,mode=max
+
+  build-mcp-telegram:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/mcp-telegram/Dockerfile
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-mcp-telegram:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=mcp-telegram
+          cache-to: type=gha,scope=mcp-telegram,mode=max
+
+  # --------------------------------------------------------------------
+  # runtime-base must publish before claude-code so the latter can FROM it.
+  # --------------------------------------------------------------------
+  build-runtime-base:
+    needs: [meta, preflight-check-tags]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: images/agent-base
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=runtime-base
+          cache-to: type=gha,scope=runtime-base,mode=max
+
+  # --------------------------------------------------------------------
+  # claude-code FROM runtime-base — wait for the tagged base image to exist.
+  # --------------------------------------------------------------------
+  build-claude-code:
+    needs: [meta, preflight-check-tags, build-runtime-base]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/claude-code/Dockerfile
+          build-args: |
+            BASE_IMAGE=${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+            CLAUDE_CODE_VERSION=${{ needs.meta.outputs.cc_version }}
+          push: true
+          tags: ${{ env.REGISTRY }}/kyber-claude-code:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=claude-code
+          cache-to: type=gha,scope=claude-code,mode=max
+
+  build-codex:
+    needs: [meta, preflight-check-tags, build-runtime-base]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/codex/Dockerfile
+          push: true
+          build-args: BASE_IMAGE=${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+          tags: ${{ env.REGISTRY }}/kyber-codex:${{ needs.meta.outputs.tag }}
+          cache-from: type=gha,scope=codex
+          cache-to: type=gha,scope=codex,mode=max
+
+  # --------------------------------------------------------------------
+  # Once all 8 images are pushed: create the GitHub Release + notify Lando.
+  # --------------------------------------------------------------------
+  release:
+    needs: [meta, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-runtime-base, build-claude-code, build-codex]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build changelog
+        id: changelog
+        run: |
+          PREV=$(git describe --tags --abbrev=0 "${{ needs.meta.outputs.tag }}^" 2>/dev/null || echo "")
+          if [ -n "$PREV" ]; then
+            BODY=$(git log --pretty=format:"- %s (%h)" "${PREV}..${{ needs.meta.outputs.tag }}")
+          else
+            BODY="Initial release"
+          fi
+          {
+            echo 'body<<EOF'
+            echo "$BODY"
+            echo EOF
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.meta.outputs.tag }}
+          name: ${{ needs.meta.outputs.tag }}
+          body: ${{ steps.changelog.outputs.body }}
+          make_latest: 'true'
+
+      - name: Notify Lando
+        if: success()
+        env:
+          LANDO_RELEASE_URL: ${{ secrets.LANDO_RELEASE_NOTIFY_URL }}
+          LANDO_SECRET:      ${{ secrets.LANDO_RELEASE_HMAC }}
+        run: |
+          if [ -z "$LANDO_RELEASE_URL" ] || [ -z "$LANDO_SECRET" ]; then
+            echo "WARNING: LANDO_RELEASE_NOTIFY_URL or LANDO_RELEASE_HMAC not configured — skipping notify"
+            exit 0
+          fi
+          PAYLOAD=$(jq -nc \
+            --arg tag "${{ needs.meta.outputs.tag }}" \
+            --arg sha "${{ needs.meta.outputs.sha }}" \
+            --arg url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.meta.outputs.tag }}" \
+            '{event:"release-published", tag:$tag, sha:$sha, url:$url}')
+          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$LANDO_SECRET" | awk '{print $2}')
+          curl -fsS -X POST "$LANDO_RELEASE_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Falcon-Signature: sha256=$SIG" \
+            -d "$PAYLOAD"
+
+  # --------------------------------------------------------------------
+  # B1: Chain-trigger publish-pwa-views.yml by pushing a pwa-views/v* tag.
+  # Skipped when: [skip-publish] in tag message, version already on registry,
+  # or is_test=true (dry-run only — no tag pushed).
+  #
+  # NOTE: pushes the tag with a GitHub App token (not GITHUB_TOKEN) because
+  # GITHUB_TOKEN pushes do not trigger other workflows (GitHub limitation).
+  # Requires kyber-app GitHub App to have contents:write on matty-v/kyber.
+  #
+  # TOKEN: this MINTS a fresh GitHub App installation token per run via
+  # actions/create-github-app-token (from KYBER_APP_ID + KYBER_APP_PRIVATE_KEY
+  # secrets). It used to read a STATIC KYBER_APP_TOKEN secret — a GitHub App
+  # installation token that expires hourly, so it went stale between the
+  # infrequent release runs and the tag-push failed with exit 128 (same
+  # stale-token failure mode as auto-publish-pwa-views.yml; see #411 / PR #410,
+  # 2026-06-01 — v1.4.0 / v1.3.7 release runs failed on it). Minting fresh each
+  # run removes that expiry class of failure entirely.
+  # --------------------------------------------------------------------
+  publish-pwa-views-chain:
+    needs: [meta, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+          fetch-depth: 0
+          # Don't persist the read-only GITHUB_TOKEN as a git auth header — it
+          # would override the App-token remote URL the push step sets and the
+          # tag push would auth as the contents:read GITHUB_TOKEN → 403.
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@matty-v'
+
+      - name: Check if pwa-views version already published
+        id: check_published
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+          PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
+        run: |
+          if npm view "@matty-v/kyber-pwa-views@${PWA_VERSION}" version >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "@matty-v/kyber-pwa-views@${PWA_VERSION} already published — skipping tag push"
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Mint a fresh per-run App token — gated identically to the push below so
+      # a test run (is_test=true) or an already-published version neither mints
+      # nor pushes.
+      - name: Mint a fresh GitHub App token
+        id: app_token
+        if: steps.check_published.outputs.already == 'false' && needs.meta.outputs.is_test == 'false'
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          # default: token scoped to this repo only — exactly what the tag push needs.
+
+      - name: Push pwa-views tag (triggers publish-pwa-views.yml)
+        if: steps.check_published.outputs.already == 'false' && needs.meta.outputs.is_test == 'false'
+        env:
+          APP_TOKEN: ${{ steps.app_token.outputs.token }}
+          PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
+          RELEASE_SHA: ${{ needs.meta.outputs.sha }}
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Fail loudly if the minted token is somehow empty — a stale/empty
+          # token is exactly the silent exit-128 failure this rework fixes.
+          if [ -z "${APP_TOKEN:-}" ]; then
+            echo "::error::App token is empty — actions/create-github-app-token did not produce a token. Check KYBER_APP_ID / KYBER_APP_PRIVATE_KEY secrets." >&2
+            exit 1
+          fi
+          PVT="pwa-views/v${PWA_VERSION}"
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git"
+          git tag -a "${PVT}" "${RELEASE_SHA}" -m "Release @matty-v/kyber-pwa-views v${PWA_VERSION} (chained from ${RELEASE_TAG})"
+          if ! git push origin "${PVT}"; then
+            echo "::error::Failed to push ${PVT} — @matty-v/kyber-pwa-views@${PWA_VERSION} will NOT publish and consumers (holocron) will lag. Investigate the App token / push permission immediately." >&2
+            exit 1
+          fi
+
+      - name: Test mode — tag push skipped
+        if: needs.meta.outputs.is_test == 'true'
+        env:
+          PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
+          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
+        run: |
+          echo "TEST MODE (${RELEASE_TAG}): would push pwa-views/v${PWA_VERSION} → triggers publish-pwa-views.yml"
+
+  # --------------------------------------------------------------------
+  # B2a: Resolve GHCR manifest digests for all 8 images once, upstream of
+  # the per-cluster matrix. Both matrix legs pin the SAME digests — resolved
+  # here rather than re-running resolve-image-digest.sh per cluster.
+  # (kyber#449: extracted from deploy-bump-pr for consistency + parallelism.)
+  #
+  # Skipped when: [skip-publish] in tag message (same guard as deploy-bump-pr).
+  # --------------------------------------------------------------------
+  resolve-digests:
+    needs: [meta, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    outputs:
+      control_plane_digest: ${{ steps.digests.outputs.CONTROL_PLANE_DIGEST }}
+      node_agent_digest:    ${{ steps.digests.outputs.NODE_AGENT_DIGEST }}
+      status_sidecar_digest: ${{ steps.digests.outputs.STATUS_SIDECAR_DIGEST }}
+      mcp_discord_digest:   ${{ steps.digests.outputs.MCP_DISCORD_DIGEST }}
+      mcp_telegram_digest:  ${{ steps.digests.outputs.MCP_TELEGRAM_DIGEST }}
+      agent_base_digest:    ${{ steps.digests.outputs.AGENT_BASE_DIGEST }}
+      claude_code_digest:   ${{ steps.digests.outputs.CLAUDE_CODE_DIGEST }}
+      codex_digest:         ${{ steps.digests.outputs.CODEX_DIGEST }}
+    env:
+      KYBER_TAG: ${{ needs.meta.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+
+      - name: Resolve image digests
+        id: digests
+        env:
+          GH_TOKEN: ${{ secrets.GHCR_PAT }}
+        run: |
+          for pair in \
+            "kyber-control-plane:CONTROL_PLANE_DIGEST" \
+            "kyber-node-agent:NODE_AGENT_DIGEST" \
+            "kyber-status-sidecar:STATUS_SIDECAR_DIGEST" \
+            "kyber-mcp-discord:MCP_DISCORD_DIGEST" \
+            "kyber-mcp-telegram:MCP_TELEGRAM_DIGEST" \
+            "kyber-runtime-base:AGENT_BASE_DIGEST" \
+            "kyber-claude-code:CLAUDE_CODE_DIGEST" \
+            "kyber-codex:CODEX_DIGEST"; do
+            image="${pair%%:*}"
+            var="${pair##*:}"
+            digest=$(./scripts/resolve-image-digest.sh "${image}" "${KYBER_TAG}")
+            echo "${var}=${digest}" >> "$GITHUB_OUTPUT"
+            echo "${image}:${KYBER_TAG} @ ${digest}"
+          done
+
+  # --------------------------------------------------------------------
+  # B2b: Open AND auto-merge a bump PR on matty-v/kyber-deploy for each
+  # production cluster: [falcon, gcp]. Both get the same digest-pinned
+  # release values. fail-fast:false keeps each leg atomic — a gcp failure
+  # does not strand falcon, and vice-versa. (kyber#449: gcp was never bumped;
+  # was stuck at v1.0.0 while falcon tracked v1.7.x.)
+  #
+  # Previously (pre-#449): falcon only, single job, no per-cluster signals.
+  # Now: cluster matrix; each leg emits cluster-promoted / cluster-promote-
+  # failed to Lando's inbound so Matt sees per-cluster progress in Telegram
+  # without inspecting CI.
+  #
+  # Skipped when: [skip-publish] in tag message, or is_test=true per leg
+  # (test mode shows the would-be diff only — no push or PR).
+  #
+  # TOKEN: mints a fresh GitHub App installation token per run via
+  # actions/create-github-app-token (from KYBER_APP_ID + KYBER_APP_PRIVATE_KEY).
+  # The mint is NOT gated on is_test — matty-v/kyber-deploy is PRIVATE, so even
+  # test-mode must clone it to show the diff, which needs a valid token.
+  # --------------------------------------------------------------------
+  deploy-bump-pr:
+    needs: [meta, release, resolve-digests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') }}
+    strategy:
+      matrix:
+        cluster: [falcon, gcp]
+      fail-fast: false
+    env:
+      KYBER_TAG:              ${{ needs.meta.outputs.tag }}
+      KYBER_SHA:              ${{ needs.meta.outputs.sha }}
+      KYBER_RELEASE_URL:      https://github.com/${{ github.repository }}/releases/tag/${{ needs.meta.outputs.tag }}
+      CLUSTER:                ${{ matrix.cluster }}
+      CONTROL_PLANE_DIGEST:   ${{ needs.resolve-digests.outputs.control_plane_digest }}
+      NODE_AGENT_DIGEST:      ${{ needs.resolve-digests.outputs.node_agent_digest }}
+      STATUS_SIDECAR_DIGEST:  ${{ needs.resolve-digests.outputs.status_sidecar_digest }}
+      MCP_DISCORD_DIGEST:     ${{ needs.resolve-digests.outputs.mcp_discord_digest }}
+      MCP_TELEGRAM_DIGEST:    ${{ needs.resolve-digests.outputs.mcp_telegram_digest }}
+      AGENT_BASE_DIGEST:      ${{ needs.resolve-digests.outputs.agent_base_digest }}
+      CLAUDE_CODE_DIGEST:     ${{ needs.resolve-digests.outputs.claude_code_digest }}
+      CODEX_DIGEST:           ${{ needs.resolve-digests.outputs.codex_digest }}
+    steps:
+      - name: Mint a fresh GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          # kyber-deploy is a separate repo — grant the token access to it too.
+          owner: matty-v
+          repositories: kyber-deploy
+
+      - name: Clone kyber-deploy
+        # gh repo clone uses GH_TOKEN for auth on the clone, but the resulting
+        # origin remote URL has no embedded auth — subsequent git push prompts
+        # for username and fails in CI. Set the remote URL with token embedded
+        # right after clone so `git push origin` works without a credential helper.
+        # First-failure ref: v1.2.0 release run 26450938025 (2026-05-26).
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # Fail loudly if the minted token is empty — the stale/empty-token
+          # exit-128 failure this rework fixes must never be silent.
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::App token is empty — actions/create-github-app-token did not produce a token. Check KYBER_APP_ID / KYBER_APP_PRIVATE_KEY secrets." >&2
+            exit 1
+          fi
+          gh repo clone matty-v/kyber-deploy kyber-deploy
+          git -C kyber-deploy remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/matty-v/kyber-deploy.git"
+
+      - name: Bump image tags in ${{ matrix.cluster }} environment
+        working-directory: kyber-deploy
+        run: |
+          # tag@digest form is canonical OCI grammar; the chart's
+          # `kyber.image` helper printf-passes it through unchanged.
+          yq -i ".image.controlPlane.tag  = \"${KYBER_TAG}@${CONTROL_PLANE_DIGEST}\""  "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.nodeAgent.tag     = \"${KYBER_TAG}@${NODE_AGENT_DIGEST}\""     "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.statusSidecar.tag = \"${KYBER_TAG}@${STATUS_SIDECAR_DIGEST}\"" "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.discordSidecar.tag = \"${KYBER_TAG}@${MCP_DISCORD_DIGEST}\"" "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.telegramSidecar.tag = \"${KYBER_TAG}@${MCP_TELEGRAM_DIGEST}\"" "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.agentBase.tag     = \"${KYBER_TAG}@${AGENT_BASE_DIGEST}\""     "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.claudeCode.tag    = \"${KYBER_TAG}@${CLAUDE_CODE_DIGEST}\""    "environments/${CLUSTER}/values.yaml"
+          yq -i ".image.codex.tag         = \"${KYBER_TAG}@${CODEX_DIGEST}\""          "environments/${CLUSTER}/values.yaml"
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git checkout -b "chore/bump-kyber-${KYBER_TAG}-${CLUSTER}"
+          git add "environments/${CLUSTER}/values.yaml"
+          echo "--- staged diff (${CLUSTER}) ---"
+          git diff --cached
+
+      - name: Open bump PR (production)
+        if: needs.meta.outputs.is_test == 'false'
+        working-directory: kyber-deploy
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::error::App token is empty — actions/create-github-app-token did not produce a token. Check KYBER_APP_ID / KYBER_APP_PRIVATE_KEY secrets." >&2
+            exit 1
+          fi
+          git commit -m "chore(env/${CLUSTER}): bump kyber to ${KYBER_TAG} (digest-pinned)"
+          if ! git push origin "chore/bump-kyber-${KYBER_TAG}-${CLUSTER}"; then
+            echo "::error::Failed to push chore/bump-kyber-${KYBER_TAG}-${CLUSTER} to matty-v/kyber-deploy — ${CLUSTER} will NOT promote to ${KYBER_TAG}. Investigate the App token / push permission immediately." >&2
+            exit 1
+          fi
+          BODY=$(cat <<EOF
+          ## Automated release bump
+
+          Kyber release [${KYBER_TAG}](${KYBER_RELEASE_URL}) published at \`${KYBER_SHA}\`.
+
+          Updates \`environments/${CLUSTER}/values.yaml\` image tags (digest-pinned per kyber#364):
+          - \`image.controlPlane.tag\` → \`${KYBER_TAG}@${CONTROL_PLANE_DIGEST}\`
+          - \`image.nodeAgent.tag\` → \`${KYBER_TAG}@${NODE_AGENT_DIGEST}\`
+          - \`image.statusSidecar.tag\` → \`${KYBER_TAG}@${STATUS_SIDECAR_DIGEST}\`
+          - \`image.discordSidecar.tag\` → \`${KYBER_TAG}@${MCP_DISCORD_DIGEST}\`
+          - \`image.telegramSidecar.tag\` → \`${KYBER_TAG}@${MCP_TELEGRAM_DIGEST}\`
+          - \`image.agentBase.tag\` → \`${KYBER_TAG}@${AGENT_BASE_DIGEST}\`
+          - \`image.claudeCode.tag\` → \`${KYBER_TAG}@${CLAUDE_CODE_DIGEST}\`
+          - \`image.codex.tag\` → \`${KYBER_TAG}@${CODEX_DIGEST}\`
+
+          Each digest is pinned from this release's build (matty-v/kyber Releases → \`${KYBER_TAG}\` → image manifests).
+
+          **Auto-merged on release** to promote ${CLUSTER}: the release is gated by operator approval and validated on razer (canary, tracks latest) before any tag is cut. To roll back, revert this bump commit on \`main\`. See the [release runbook](https://github.com/matty-v/kyber/blob/main/docs/operator/release-runbook.md).
+
+          _Opened + auto-merged by \`release.yml\` → \`deploy-bump-pr (${CLUSTER})\` job (kyber#449)._
+          EOF
+          )
+          PR_URL=$(gh pr create \
+            --title "chore(env/${CLUSTER}): bump kyber to ${KYBER_TAG}" \
+            --base main \
+            --head "chore/bump-kyber-${KYBER_TAG}-${CLUSTER}" \
+            --body "$BODY")
+          echo "Opened ${PR_URL}; auto-promoting ${CLUSTER} by merging it."
+          # A freshly-created PR can briefly report mergeable=UNKNOWN while GitHub
+          # computes the merge. kyber-deploy main has no required checks, so once
+          # computed the squash-merge lands immediately. Retry a few times.
+          for attempt in 1 2 3 4 5 6; do
+            if gh pr merge "${PR_URL}" --squash --delete-branch; then
+              echo "${CLUSTER} promoted to ${KYBER_TAG}."
+              break
+            fi
+            echo "merge not ready (attempt ${attempt}); retrying in 10s..."
+            sleep 10
+          done
+
+      - name: Test mode — PR skipped, diff shown
+        if: needs.meta.outputs.is_test == 'true'
+        working-directory: kyber-deploy
+        run: |
+          echo "TEST MODE (${KYBER_TAG}/${CLUSTER}): would open PR on matty-v/kyber-deploy"
+          echo "Diff that would be committed:"
+          git diff --cached
+
+      - name: Notify Lando — cluster-promoted
+        if: success()
+        env:
+          LANDO_RELEASE_URL: ${{ secrets.LANDO_RELEASE_NOTIFY_URL }}
+          LANDO_SECRET:      ${{ secrets.LANDO_RELEASE_HMAC }}
+        run: |
+          if [ -z "$LANDO_RELEASE_URL" ] || [ -z "$LANDO_SECRET" ]; then
+            echo "WARNING: LANDO_RELEASE_NOTIFY_URL or LANDO_RELEASE_HMAC not configured — skipping notify"
+            exit 0
+          fi
+          PAYLOAD=$(jq -nc \
+            --arg event   "cluster-promoted" \
+            --arg cluster "${CLUSTER}" \
+            --arg tag     "${KYBER_TAG}" \
+            --arg sha     "${KYBER_SHA}" \
+            '{event:$event, cluster:$cluster, tag:$tag, sha:$sha}')
+          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$LANDO_SECRET" | awk '{print $2}')
+          curl -fsS -X POST "$LANDO_RELEASE_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Falcon-Signature: sha256=$SIG" \
+            -d "$PAYLOAD"
+
+      - name: Notify Lando — cluster-promote-failed
+        if: failure()
+        env:
+          LANDO_RELEASE_URL: ${{ secrets.LANDO_RELEASE_NOTIFY_URL }}
+          LANDO_SECRET:      ${{ secrets.LANDO_RELEASE_HMAC }}
+        run: |
+          if [ -z "$LANDO_RELEASE_URL" ] || [ -z "$LANDO_SECRET" ]; then
+            echo "WARNING: LANDO_RELEASE_NOTIFY_URL or LANDO_RELEASE_HMAC not configured — skipping notify"
+            exit 0
+          fi
+          PAYLOAD=$(jq -nc \
+            --arg event   "cluster-promote-failed" \
+            --arg cluster "${CLUSTER}" \
+            --arg tag     "${KYBER_TAG}" \
+            --arg sha     "${KYBER_SHA}" \
+            '{event:$event, cluster:$cluster, tag:$tag, sha:$sha}')
+          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$LANDO_SECRET" | awk '{print $2}')
+          curl -fsS -X POST "$LANDO_RELEASE_URL" \
+            -H "Content-Type: application/json" \
+            -H "X-Falcon-Signature: sha256=$SIG" \
+            -d "$PAYLOAD"

@@ -1,0 +1,125 @@
+name: Publish @matty-v/kyber-pwa-views
+
+on:
+  push:
+    tags:
+      - 'pwa-views/v*'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@matty-v'
+
+      - name: Verify tag matches package version
+        run: |
+          TAG_VERSION="${GITHUB_REF#refs/tags/pwa-views/v}"
+          PKG_VERSION="$(node -p "require('./packages/pwa-views/package.json').version")"
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version $TAG_VERSION does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Install workspace deps
+        run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+
+      - name: Build the package
+        run: npm run build --workspace=packages/pwa-views
+
+      - name: Run tests
+        run: npm run test --workspace=packages/pwa-views
+
+      - name: Publish to GitHub Packages
+        working-directory: packages/pwa-views
+        run: npm publish
+        env:
+          # GITHUB_TOKEN cannot write user-owned packages on GitHub Packages
+          # (per feedback memory). Use the same PAT used for GHCR image publishes.
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+
+  # ---------------------------------------------------------------------------
+  # Release-coupled consumer bump: as soon as a new pwa-views version publishes,
+  # open (and auto-merge) a PR on Holocron bumping its @matty-v/kyber-pwa-views
+  # dependency, so Holocron always tracks the latest release with NO manual step.
+  # (Holocron's Dependabot ignores this package to avoid duplicate PRs.)
+  # ---------------------------------------------------------------------------
+  bump-holocron:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compute published version
+        id: ver
+        run: echo "version=${GITHUB_REF#refs/tags/pwa-views/v}" >> "$GITHUB_OUTPUT"
+
+      - name: Mint a GitHub App token scoped to holocron
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          owner: matty-v
+          repositories: holocron
+
+      - name: Checkout holocron
+        uses: actions/checkout@v4
+        with:
+          repository: matty-v/holocron
+          # Persist the App token (which HAS write to holocron) as the git
+          # credential — so the branch push below authenticates as the App,
+          # not a read-only token (see kyber#420).
+          token: ${{ steps.app_token.outputs.token }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@matty-v'
+
+      - name: Bump @matty-v/kyber-pwa-views and open an auto-merge PR
+        env:
+          # GHCR_PAT (read:packages) so `npm install` can resolve the private
+          # @matty-v package and update package.json + package-lock.json.
+          NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
+          # App token (PR + contents write on holocron) for gh + the push.
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          CURRENT="$(node -p "require('./package.json').dependencies['@matty-v/kyber-pwa-views'] || ''")"
+          if [ "$CURRENT" = "$VERSION" ]; then
+            echo "holocron already on @matty-v/kyber-pwa-views@${VERSION} — nothing to do"
+            exit 0
+          fi
+          BRANCH="auto/pwa-views-${VERSION}"
+          if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH}" >/dev/null 2>&1; then
+            echo "branch ${BRANCH} already exists — a bump PR is already open; nothing to do"
+            exit 0
+          fi
+          git config user.name "kyber-app[bot]"
+          git config user.email "kyber-app[bot]@users.noreply.github.com"
+          git checkout -b "${BRANCH}"
+          # Pin the exact published version (matches holocron's existing style)
+          # and update the lockfile so `npm ci` in CI stays consistent.
+          npm install --save-exact "@matty-v/kyber-pwa-views@${VERSION}"
+          git add package.json package-lock.json
+          git commit -m "chore(deps): bump @matty-v/kyber-pwa-views to ${VERSION}" \
+                     -m "Auto-bumped by the kyber pwa-views release (publish-pwa-views.yml) so Holocron always tracks the latest published pwa-views — no manual step (kyber#417 follow-up)."
+          git push origin "${BRANCH}"
+          PR_URL="$(gh pr create --repo matty-v/holocron --base main --head "${BRANCH}" \
+            --title "chore(deps): bump @matty-v/kyber-pwa-views to ${VERSION}" \
+            --body "Release-coupled auto-bump from the kyber pwa-views publish. Tracks \`@matty-v/kyber-pwa-views@${VERSION}\`. Auto-merges once CI is green.")"
+          echo "opened ${PR_URL}"
+          gh pr merge --auto --squash "${PR_URL}" \
+            || echo "::warning::could not enable auto-merge on ${PR_URL} — merge it manually"

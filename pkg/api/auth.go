@@ -1,0 +1,280 @@
+package api
+
+import (
+	"context"
+	"crypto/subtle"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/gorilla/websocket"
+)
+
+// Scope is a named capability a caller may hold (kyber#474). Scopes are the
+// authorization vocabulary checked at mutation chokepoints (see authz.go).
+type Scope string
+
+const (
+	// ScopeLifecycleWrite permits the fail-safe lifecycle verbs
+	// (start/stop/restart) and the OAuth re-auth resume to Running.
+	ScopeLifecycleWrite Scope = "lifecycle:write"
+	// ScopeLifecycleAdmin permits the impactful, less-fail-safe verbs
+	// (suspend, force-needs-auth). It is strictly higher than
+	// ScopeLifecycleWrite (admin ⊃ write), so an admin caller also satisfies a
+	// write requirement — this nesting is what guarantees the impactful verbs are
+	// never less-protected than fail-safe Stop (the #474 privilege-ordering AC).
+	ScopeLifecycleAdmin Scope = "lifecycle:admin"
+)
+
+// ScopeSet is the set of scopes a Caller holds. A full-scope set (the legacy
+// shared key) satisfies every check; otherwise membership is explicit, with the
+// admin ⊃ write nesting applied in Has.
+type ScopeSet struct {
+	full   bool
+	scopes map[Scope]bool
+}
+
+// newFullScopeSet returns a ScopeSet that satisfies every scope check — used for
+// the legacy shared API key so single-key installs are unaffected by authz.
+func newFullScopeSet() ScopeSet { return ScopeSet{full: true} }
+
+// newScopeSet builds an explicit scope set.
+func newScopeSet(scopes ...Scope) ScopeSet {
+	m := make(map[Scope]bool, len(scopes))
+	for _, s := range scopes {
+		m[s] = true
+	}
+	return ScopeSet{scopes: m}
+}
+
+// Has reports whether the set satisfies the required scope, applying the
+// admin ⊃ write nesting: holding ScopeLifecycleAdmin satisfies a
+// ScopeLifecycleWrite requirement. A full-scope set satisfies everything.
+func (s ScopeSet) Has(required Scope) bool {
+	if s.full {
+		return true
+	}
+	if s.scopes[required] {
+		return true
+	}
+	// Nesting: admin implies write.
+	if required == ScopeLifecycleWrite && s.scopes[ScopeLifecycleAdmin] {
+		return true
+	}
+	return false
+}
+
+// Caller is the authenticated principal behind a request (kyber#474). Name is
+// for audit logging only (never the key material); Scopes drives authorization.
+type Caller struct {
+	Name   string
+	Scopes ScopeSet
+}
+
+// SecretKeyRef points a ScopedCaller at a Secret data key in the control
+// plane's own namespace (kyber#557). Same-namespace-only by design: the cp's
+// ClusterRole is cluster-wide on Secrets, so this app-level pin is what keeps
+// the callers doc from designating Secrets outside the cp namespace.
+type SecretKeyRef struct {
+	Secret string `json:"secret"`
+	Key    string `json:"key"`
+}
+
+// ScopedCaller is the operator-facing config shape for a scoped API key,
+// parsed from the `callers` JSON document on the kyber-api-credentials Secret.
+// Key is the 32-byte-hex secret the caller presents as its Bearer token.
+// KeyFrom (kyber#557) sources that value from a Secret reference instead, so
+// the shared callers doc carries no value — exactly one of Key/KeyFrom must
+// be set; KeyFrom entries are filled in by ResolveScopedCallers at startup.
+type ScopedCaller struct {
+	Name    string        `json:"name"`
+	Key     string        `json:"key,omitempty"`
+	KeyFrom *SecretKeyRef `json:"keyFrom,omitempty"`
+	Scopes  []string      `json:"scopes"`
+}
+
+// ParseScopedCallers parses the `callers` JSON document (a list of scoped keys)
+// from the Secret. Returns an error on malformed JSON, an unknown scope, a
+// caller missing a name, or an entry not carrying exactly one of key/keyFrom —
+// fail-closed: a bad config must not silently grant. Parsing does no I/O;
+// keyFrom references are resolved separately (ResolveScopedCallers).
+func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	var callers []ScopedCaller
+	if err := json.Unmarshal([]byte(raw), &callers); err != nil {
+		return nil, fmt.Errorf("parsing callers JSON: %w", err)
+	}
+	for i, c := range callers {
+		if c.Name == "" {
+			return nil, fmt.Errorf("caller[%d]: name is required", i)
+		}
+		switch {
+		case c.Key == "" && c.KeyFrom == nil:
+			return nil, fmt.Errorf("caller %q: exactly one of key/keyFrom is required (neither set)", c.Name)
+		case c.Key != "" && c.KeyFrom != nil:
+			return nil, fmt.Errorf("caller %q: exactly one of key/keyFrom is required (both set)", c.Name)
+		case c.KeyFrom != nil && (c.KeyFrom.Secret == "" || c.KeyFrom.Key == ""):
+			return nil, fmt.Errorf("caller %q: keyFrom requires both secret and key names", c.Name)
+		}
+		for _, sc := range c.Scopes {
+			if sc != string(ScopeLifecycleWrite) && sc != string(ScopeLifecycleAdmin) {
+				return nil, fmt.Errorf("caller %q: unknown scope %q", c.Name, sc)
+			}
+		}
+	}
+	return callers, nil
+}
+
+// Authenticator validates an HTTP request and returns the caller's identity.
+// V1 ships APIKeyAuthenticator. V2 can swap in OIDCAuthenticator without
+// changing any route handler.
+type Authenticator interface {
+	Authenticate(r *http.Request) (*Caller, error)
+}
+
+// scopedKey binds a secret key to the Caller it authenticates.
+type scopedKey struct {
+	key    string
+	caller Caller
+}
+
+// APIKeyAuthenticator validates the Bearer token in the Authorization header
+// against the legacy shared key (full scope, mutable via SetKey for rotation
+// #143) and an optional set of named scoped keys (kyber#474).
+type APIKeyAuthenticator struct {
+	mu      sync.RWMutex
+	key     string // legacy full-scope key (rotatable)
+	callers []scopedKey
+}
+
+// NewAPIKeyAuthenticator returns an Authenticator that accepts the legacy key
+// (resolving to a full-scope caller) plus any scoped callers. Existing callers
+// pass no scoped callers and get exactly the prior behavior.
+func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenticator {
+	a := &APIKeyAuthenticator{key: key}
+	for _, c := range callers {
+		scopes := make([]Scope, 0, len(c.Scopes))
+		for _, sc := range c.Scopes {
+			scopes = append(scopes, Scope(sc))
+		}
+		a.callers = append(a.callers, scopedKey{
+			key:    c.Key,
+			caller: Caller{Name: c.Name, Scopes: newScopeSet(scopes...)},
+		})
+	}
+	return a
+}
+
+// SetKey atomically replaces the accepted legacy key. After this returns, the
+// OLD key produces 401 and the NEW key authenticates as full-scope. Used by the
+// API-key rotation endpoint (#143). Scoped callers are unaffected.
+func (a *APIKeyAuthenticator) SetKey(key string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.key = key
+}
+
+// currentKey returns a snapshot of the active legacy key under read-lock.
+func (a *APIKeyAuthenticator) currentKey() string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.key
+}
+
+// Authenticate returns the resolved *Caller when the request carries a valid
+// key, or an error (mapped to 401 Unauthorized) otherwise.
+//
+// Auth is accepted from two sources (first present wins):
+//  1. Authorization: Bearer <key> header — used by REST clients.
+//  2. ?token=<key> query parameter — accepted ONLY on WebSocket upgrade
+//     requests, because browsers cannot set custom headers during the HTTP
+//     upgrade handshake. Plain REST requests must use the Bearer header:
+//     keys in URLs leak into proxy/ingress access logs and browser history.
+//
+// Resolution: the presented key is compared (constant-time) against every scoped
+// caller key AND the legacy key. A scoped match resolves to that caller's
+// scopes; the legacy key resolves to a full-scope caller. To avoid a timing
+// oracle on WHICH key matched, all comparisons run before a decision is made.
+func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
+	presented, err := presentedKey(r)
+	if err != nil {
+		return nil, err
+	}
+
+	a.mu.RLock()
+	legacy := a.key
+	callers := a.callers
+	a.mu.RUnlock()
+
+	var matched *Caller
+	for i := range callers {
+		if subtle.ConstantTimeCompare([]byte(presented), []byte(callers[i].key)) == 1 {
+			c := callers[i].caller
+			matched = &c
+		}
+	}
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(legacy)) == 1 {
+		matched = &Caller{Name: "legacy", Scopes: newFullScopeSet()}
+	}
+	if matched == nil {
+		return nil, errUnauthorized("invalid API key")
+	}
+	return matched, nil
+}
+
+// presentedKey extracts the API key from the Bearer header, or — on WebSocket
+// upgrade requests only — the ?token= param. Returns a 401-mapped error when
+// neither is present / the header is malformed.
+func presentedKey(r *http.Request) (string, error) {
+	if auth := r.Header.Get("Authorization"); auth != "" {
+		parts := strings.SplitN(auth, " ", 2)
+		if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") {
+			return "", errUnauthorized("Authorization header must use Bearer scheme")
+		}
+		return parts[1], nil
+	}
+	if websocket.IsWebSocketUpgrade(r) {
+		if token := r.URL.Query().Get("token"); token != "" {
+			return token, nil
+		}
+	}
+	return "", errUnauthorized("missing Authorization header")
+}
+
+// authError is a sentinel type for authentication failures.
+type authError struct{ msg string }
+
+func (e *authError) Error() string { return e.msg }
+
+func errUnauthorized(msg string) error { return &authError{msg: msg} }
+
+// callerCtxKey is the unexported context key under which the authenticated
+// Caller is stashed by authMiddleware.
+type callerCtxKey struct{}
+
+// callerFrom returns the authenticated Caller stashed in ctx by authMiddleware,
+// or nil if none (which should not happen behind the protected mux).
+func callerFrom(ctx context.Context) *Caller {
+	c, _ := ctx.Value(callerCtxKey{}).(*Caller)
+	return c
+}
+
+// authMiddleware wraps next with API key authentication. Requests that pass are
+// forwarded with the resolved Caller stashed in the request context; requests
+// that fail receive 401.
+func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		caller, err := auth.Authenticate(r)
+		if err != nil {
+			writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			return
+		}
+		ctx := context.WithValue(r.Context(), callerCtxKey{}, caller)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}

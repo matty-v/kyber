@@ -1,0 +1,167 @@
+@import "tailwindcss";
+
+/* Font faces — self-hosted via @fontsource, loaded only where we opt in. */
+@import "@fontsource/inter/400.css";
+@import "@fontsource/inter/500.css";
+@import "@fontsource/inter/600.css";
+@import "@fontsource/inter/700.css";
+@import "@fontsource/inter-tight/500.css";
+@import "@fontsource/inter-tight/600.css";
+@import "@fontsource/inter-tight/700.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
+
+/* Kyber Crystal design tokens — tuned direction (Phase 3A). */
+@theme {
+  /* Surfaces — cooler blue-grey, deeper base, a touch more chroma on the lifts */
+  --color-surface-base: oklch(13% 0.012 245);
+  --color-surface-raised: oklch(18% 0.018 245);
+  --color-surface-overlay: oklch(23% 0.025 250);
+  --color-surface-sunken: oklch(10% 0.01 245);
+
+  /* Borders — subtle to strong */
+  --color-border-subtle: oklch(26% 0.02 245);
+  --color-border-default: oklch(33% 0.025 245);
+  --color-border-strong: oklch(46% 0.035 245);
+
+  /* Text */
+  --color-text-primary: oklch(96% 0.01 245);
+  --color-text-secondary: oklch(72% 0.015 245);
+  --color-text-muted: oklch(55% 0.015 245);
+  --color-text-disabled: oklch(40% 0.01 245);
+
+  /* Accent / brand — kyber cyan, tightened (less neon, more controlled) */
+  --color-accent: oklch(81% 0.12 202);
+  --color-accent-muted: oklch(81% 0.12 202 / 0.15);
+  --color-accent-ring: oklch(81% 0.12 202 / 0.4);
+
+  /* Secondary highlight — kyber violet, softened */
+  --color-highlight: oklch(77% 0.14 295);
+  --color-highlight-muted: oklch(77% 0.14 295 / 0.18);
+
+  /* Semantic status */
+  --color-success: oklch(78% 0.15 155);
+  --color-success-muted: oklch(78% 0.15 155 / 0.18);
+  --color-warn: oklch(82% 0.14 75);
+  --color-warn-muted: oklch(82% 0.14 75 / 0.18);
+  --color-danger: oklch(70% 0.18 15);
+  --color-danger-muted: oklch(70% 0.18 15 / 0.18);
+  --color-info: oklch(78% 0.13 240);
+  --color-info-muted: oklch(78% 0.13 240 / 0.18);
+
+  /* Typography families */
+  --font-sans: "Inter", system-ui, -apple-system, sans-serif;
+  --font-display: "Inter Tight", "Inter", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Motion */
+  --ease-spring: cubic-bezier(0.25, 0.8, 0.4, 1);
+  --ease-exit: cubic-bezier(0.6, 0, 0.8, 0.4);
+}
+
+/* Ensure dark mode is applied by default */
+:root {
+  color-scheme: dark;
+}
+
+/* Smooth scrolling on mobile */
+* {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Full height layout */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* Ambient keyframe animations used by the specimen page. */
+@keyframes kyber-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+@keyframes kyber-pulse-ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 var(--color-accent-ring);
+  }
+  50% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+}
+
+@keyframes kyber-flash {
+  0% {
+    background-color: var(--color-accent-muted);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+@keyframes kyber-fade-in {
+  0% {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Tailwind v4 utility wrapping kyber-fade-in. Used by the wizard step
+   transitions (each section's wrapper carries `animate-fade-in` so that
+   navigating between steps fades the new content in subtly). The
+   prefers-reduced-motion media query below collapses the duration. */
+@utility animate-fade-in {
+  animation: kyber-fade-in 200ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* Compact density mode (#105). The DensityProvider writes
+ * data-density="compact" on <body> when the user picks Compact in Settings.
+ * On mobile (≤768px) the provider forces "comfortable" regardless of
+ * preference, so these rules naturally don't fire there.
+ *
+ * Each rule is an additive override on the affected component's class hook
+ * (kyber-card, kyber-data-table, kyber-nav-item, kyber-status-badge).
+ * Higher specificity than the Tailwind utility class lets us shrink padding
+ * without touching every component's class strings. */
+body[data-density="compact"] .kyber-card {
+  padding: 0.75rem; /* p-4 → p-3 */
+}
+
+body[data-density="compact"] .kyber-data-table th,
+body[data-density="compact"] .kyber-data-table td {
+  padding-top: 0.375rem; /* py-2.5/py-3 → py-1.5 */
+  padding-bottom: 0.375rem;
+  padding-left: 0.75rem; /* px-4 → px-3 */
+  padding-right: 0.75rem;
+}
+
+body[data-density="compact"] .kyber-nav-item {
+  min-height: 36px; /* 44px → 36px */
+  padding-top: 0.375rem; /* py-2 → py-1.5 */
+  padding-bottom: 0.375rem;
+}
+
+body[data-density="compact"] .kyber-status-badge {
+  padding-top: 0; /* py-0.5 → py-0 */
+  padding-bottom: 0;
+}

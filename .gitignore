@@ -1,0 +1,75 @@
+# Go build artifacts
+bin/
+*.test
+*.out
+coverage.out
+# Compiled binaries at repo root — `go build -o <name> ./cmd/<name>` at the
+# root accidentally committed a 101MB control-plane binary once. Pin explicitly.
+/control-plane
+/node-agent
+/token-reporter
+/kyber-mcp-telegram
+/kyber-mcp-discord
+
+# Vendor directory (dependencies managed by go modules)
+vendor/
+
+# IDE directories
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# pwa_dist/ is populated by `make pwa-build`; only the placeholder files are committed
+pkg/api/pwa_dist/*
+!pkg/api/pwa_dist/.gitkeep
+!pkg/api/pwa_dist/index.html
+
+# Terraform state and working directories
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfstate.d/
+*.tfplan
+
+# Temporary files
+tmp/
+
+# Docker bind-mount data for local integration test services
+test/integration/.docker-data/
+
+# npm workspaces
+node_modules/
+apps/*/node_modules/
+packages/*/node_modules/
+apps/*/dist/
+packages/*/dist/
+
+# Local binary outputs from `go build ./cmd/...` invocations.
+/status-sidecar
+/control-plane
+/node-agent
+
+# npm workspaces — only the root package-lock.json is authoritative
+apps/*/package-lock.json
+packages/*/package-lock.json
+
+.superpowers/
+
+# Developer-local Kyber credentials and generated config.
+.kyber-local/
+
+# Secrets safety net — never commit credentials, keys, or env files.
+.env
+*.env
+.env.*
+*.pem
+*.key
+*.p12
+id_rsa*
+kubeconfig
+*.kubeconfig
+*.tfvars
+*.tfvars.json
+*credentials*.json
+*service-account*.json

@@ -1,0 +1,21 @@
+/*
+ * Single Tailwind v4 entry for the embedded app.
+ *
+ * The package's published CSS (@matty-v/kyber-pwa-views/styles.css) carries
+ * `@import "tailwindcss"`, the `@theme` design-token block, and any
+ * @layer/@utility rules the views depend on. Importing it here (instead of
+ * separately from main.tsx) keeps Tailwind processing in a single pass — if
+ * `@theme` lives in one processed CSS file and `@source` lives in another,
+ * Tailwind generates utilities without resolving the design-token vars and
+ * the page renders unstyled.
+ *
+ * The @source directives tell Tailwind where to scan for class names:
+ *  - workspace mode: read from the package source on disk
+ *  - published mode (after holocron pulls @matty-v/kyber-pwa-views from npm):
+ *    read from the bundled dist
+ * Both directives are always present; whichever path resolves on a given
+ * build is the one Tailwind uses.
+ */
+@import '@matty-v/kyber-pwa-views/styles.css';
+@source "../../../packages/pwa-views/src/**/*.{ts,tsx}";
+@source "../node_modules/@matty-v/kyber-pwa-views/dist/**/*.{js,mjs}";

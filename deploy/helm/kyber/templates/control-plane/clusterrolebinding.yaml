@@ -1,0 +1,15 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kyber.fullname" . }}-control-plane
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "kyber.fullname" . }}-control-plane
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kyber.fullname" . }}-control-plane
+    namespace: {{ include "kyber.namespace" . }}

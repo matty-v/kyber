@@ -1,0 +1,5 @@
+# Anchor to apps/embedded-pwa/ root so it matches ./screenshots/ (captured PNGs)
+# without matching ./tests/screenshots/ (the Playwright spec directory).
+/screenshots/
+/test-results/
+/playwright-report/

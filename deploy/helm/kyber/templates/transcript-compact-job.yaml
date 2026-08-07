@@ -1,0 +1,101 @@
+{{- if .Values.transcriptCompaction.enabled }}
+{{/*
+Transcript compaction Job (kyber#458 Part B) — on-demand reclaim of duplicate
+transcript objects left by the pre-fix tailer re-ship. HELM-GATED: rendered ONLY
+when transcriptCompaction.enabled=true, so it is never created implicitly.
+
+Dry-run by default (reports reclaimable bytes, changes nothing). It becomes
+DESTRUCTIVE only when transcriptCompaction.apply=true — that merges per
+<agent>/<date> prefix and DELETES the redundant objects. Destructive runs mutate
+durable audit data and are gated on Matt's explicit go (see
+docs/operator/transcript-compaction.md); the tool itself does write-then-verify-
+then-delete and stays within the #456 memory caps.
+
+Deliberately a Job, NOT a CronJob — destructive storage mutation must never be
+silent/scheduled. Re-run by bumping transcriptCompaction.runId (new Job name) or
+deleting the finished Job. Reuses logShipper.* for the backend/bucket/creds, the
+same config the control-plane reader uses.
+*/}}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kyber.fullname" . }}-transcript-compact-{{ .Values.transcriptCompaction.runId | default "1" }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: transcript-compact
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: transcript-compact
+    spec:
+      restartPolicy: Never
+      {{- with .Values.controlPlane.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: transcript-compact
+          image: {{ include "kyber.image" (dict "repo" .Values.image.controlPlane.repository "tag" .Values.image.controlPlane.tag) }}
+          imagePullPolicy: {{ .Values.image.controlPlane.pullPolicy }}
+          command: ["/usr/local/bin/transcript-compact"]
+          args:
+            {{- if .Values.transcriptCompaction.apply }}
+            - "--apply"
+            {{- end }}
+            {{- if .Values.transcriptCompaction.agent }}
+            - "--agent"
+            - {{ .Values.transcriptCompaction.agent | quote }}
+            {{- end }}
+          env:
+            # Same backend/bucket/creds the control-plane reader uses (logShipper.*).
+            - name: KYBER_LOG_ARCHIVE_BACKEND
+              value: {{ .Values.logShipper.backend | default "gcs" | quote }}
+            {{- if .Values.logShipper.bucket }}
+            - name: KYBER_LOG_ARCHIVE_BUCKET
+              value: {{ .Values.logShipper.bucket | quote }}
+            {{- end }}
+            {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+            - name: KYBER_LOG_ARCHIVE_ENDPOINT
+              value: {{ .Values.logShipper.endpoint | quote }}
+            - name: KYBER_LOG_ARCHIVE_REGION
+              value: {{ .Values.logShipper.region | quote }}
+            - name: KYBER_LOG_ARCHIVE_USE_TLS
+              value: {{ .Values.logShipper.useTLS | quote }}
+            # Compaction credentials — these need DELETE on the transcripts/ lane
+            # (a higher privilege than the read-only reader's get/list). Source
+            # from a Secret; never committed. Scope to the log bucket.
+            - name: KYBER_LOG_ARCHIVE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "transcriptCompaction with logShipper.backend=s3 requires logShipper.existingCredentialsSecret" .Values.logShipper.existingCredentialsSecret }}
+                  key: access-key-id
+            - name: KYBER_LOG_ARCHIVE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "transcriptCompaction with logShipper.backend=s3 requires logShipper.existingCredentialsSecret" .Values.logShipper.existingCredentialsSecret }}
+                  key: secret-access-key
+            {{- end }}
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+{{- end }}

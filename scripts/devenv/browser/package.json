@@ -1,0 +1,14 @@
+{
+  "name": "@kyber/devenv-browser",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Headless-browser harness that drives the brought-up devenv PWA (real control-plane + mock compute) — Phase 2 of kyber#399 (#402). Self-contained: lives outside the root npm workspaces, so it carries its own manifest and is installed/run independently.",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "install-browser": "playwright install chromium"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.59.1"
+  }
+}

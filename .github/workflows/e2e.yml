@@ -1,0 +1,70 @@
+name: e2e
+
+# E2E tests are currently **manual-only** (workflow_dispatch). Push-to-main
+# auto-runs were disabled 2026-04-21 at Matt's request while we triage e2e
+# reliability. Re-enable by adding the `push:` trigger back once the suite
+# is stable.
+#
+# To run from the GitHub UI: Actions → e2e → Run workflow.
+# These tests spin up a real k3d cluster, build the control-plane image
+# locally, install Kyber via Helm, and run the Go test suite against the
+# live API. Expected duration: ~10 minutes.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25"
+          cache: true
+
+      - name: Download Go modules
+        run: go mod download
+
+      - name: Install k3d
+        run: |
+          curl -s https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | TAG=v5.7.4 bash
+          k3d version
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
+
+      - name: Run e2e tests
+        # The test binary handles cluster creation, image build, Helm install,
+        # port-forward, and teardown. Flags can override defaults via env or CLI flags.
+        # -skip-build=false: build docker image (default)
+        # -skip-cleanup=false: delete cluster after tests (default)
+        # -port-forward=true: kubectl port-forward to localhost:18080 (default)
+        run: go test -tags e2e -v -timeout 25m ./test/e2e/... -cluster-name kyber-e2e
+
+      - name: Collect cluster info on failure
+        if: failure()
+        run: |
+          echo "=== kubectl get pods -n kyber-system ==="
+          kubectl get pods -n kyber-system || true
+          echo "=== kubectl describe deployment -n kyber-system ==="
+          kubectl describe deployment -n kyber-system || true
+          echo "=== kubectl logs -n kyber-system -l app.kubernetes.io/component=control-plane --tail=100 ==="
+          kubectl logs -n kyber-system -l app.kubernetes.io/component=control-plane --tail=100 || true
+
+      - name: Cleanup cluster on failure
+        if: failure()
+        run: k3d cluster delete kyber-e2e || true

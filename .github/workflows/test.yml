@@ -1,0 +1,226 @@
+name: test
+
+on:
+  # Manual escape hatch. This workflow reports three of the four required
+  # checks (`changes`, `test`, `pwa-build`); `integration` is the fourth and
+  # already dispatchable. Without this trigger those three are reachable ONLY
+  # via a `pull_request` webhook, so when GitHub throttles webhook delivery no
+  # PR can be merged at all — there is no way to ask for the checks the gate
+  # demands. That happened during the 2026-08-06 Actions incident
+  # (https://stspg.io/rcz3fcm83sff): `integration` was recoverable by manual
+  # dispatch, these three were not, and kyber#696 sat unmergeable for hours.
+  # Dispatch on a PR's head branch — check runs attach to the head commit, so
+  # they satisfy that PR's merge gate. Bonus: a dispatched run lands in a
+  # different concurrency group than the PR's (no `pull_request.number`), so
+  # it is immune to being cancelled by an inbound `pull_request` event.
+  workflow_dispatch:
+  # Scope push triggers to main only — PR branches already get a run
+  # via the `pull_request:` event. Without this filter, every PR branch
+  # push fired the suite twice (push + pull_request).
+  push:
+    branches:
+      - main
+  pull_request:
+
+# Cancel an in-progress workflow when a new commit arrives on the same PR.
+# Only on `pull_request` events — main pushes must complete (the test suite
+# is the canonical signal for a green main). Saves CI minutes when a PR
+# author force-pushes or follows up with a quick fix.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  # Change detection: decide whether the heavy Go and PWA steps need to run for
+  # this PR. The `test` and `pwa-build` jobs ALWAYS run (so their required-check
+  # status is always reported — a job-level skip would report "skipped" and can
+  # wedge a required-check merge gate), but their expensive steps are gated on
+  # these outputs. A docs- or devenv-scripts-only PR skips the ~13-minute Go
+  # suite entirely. Fail-safe: anything not on the explicit safe list, plus any
+  # push to main or an undeterminable diff, runs everything.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      pwa: ${{ steps.filter.outputs.pwa }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "go=true"  >> "$GITHUB_OUTPUT"
+            echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "non-PR event ($EVENT) → run everything."
+            exit 0
+          fi
+          CHANGED="$(git diff --name-only "${BASE}...HEAD" || true)"
+          if [ -z "$CHANGED" ]; then
+            echo "go=true"  >> "$GITHUB_OUTPUT"
+            echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "could not determine changed files → run everything (fail-safe)."
+            exit 0
+          fi
+          echo "Changed files:"; echo "$CHANGED" | sed 's/^/  - /'
+          # SAFE = paths that never need the Go/chart/preflight suite. Frontend
+          # paths are safe for Go (handled by the PWA gate below). Anything NOT
+          # matching → the Go suite runs.
+          SAFE='(\.md$|^docs/|^scripts/devenv/|^packages/|^apps/|^\.github/workflows/test\.yml$)'
+          if echo "$CHANGED" | grep -qvE "$SAFE"; then GO=true; else GO=false; fi
+          # PWA build/test runs when frontend sources or the lockfile change.
+          if echo "$CHANGED" | grep -qE '^(packages|apps)/|^package(-lock)?\.json$'; then PWA=true; else PWA=false; fi
+          echo "go=$GO"  >> "$GITHUB_OUTPUT"
+          echo "pwa=$PWA" >> "$GITHUB_OUTPUT"
+          echo "Decision: go=$GO pwa=$PWA"
+
+  test:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No Go-relevant changes — skipping Go build, lint, and tests
+        if: needs.changes.outputs.go != 'true'
+        run: echo "This PR touches only docs/devenv-scripts/frontend — the Go suite is not needed."
+
+      - uses: actions/setup-go@v5
+        if: needs.changes.outputs.go == 'true'
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Download modules
+        if: needs.changes.outputs.go == 'true'
+        run: go mod download
+
+      - name: Install envtest binaries
+        if: needs.changes.outputs.go == 'true'
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19
+          KUBEBUILDER_ASSETS=$(setup-envtest use 1.31.0 -p path)
+          echo "KUBEBUILDER_ASSETS=${KUBEBUILDER_ASSETS}" >> "$GITHUB_ENV"
+
+      - name: Install helm
+        if: needs.changes.outputs.go == 'true'
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+          helm version --short
+
+      # kyber#487: assert the vendored LiteLLM pricing feed is wired (dataset
+      # present, parses, rates within sanity bounds, chart renders it) and fresh
+      # (snapshot within the freshness window) — the refresh bot keeps it current.
+      - name: Pricing feed wired + fresh
+        if: needs.changes.outputs.go == 'true'
+        run: |
+          bash scripts/preflight-model-pricing_test.sh
+          bash scripts/preflight-model-pricing.sh
+
+      # kyber#578: the internal-auth key-presence deploy gate — a keyless ENFORCE
+      # cutover must abort before reaching a cluster (the v2.1.0 fail-closed
+      # outage). Test the gate logic (mocks kubectl).
+      - name: Internal-auth deploy gate
+        if: needs.changes.outputs.go == 'true'
+        run: bash scripts/preflight-internal-auth-key_test.sh
+
+      # kyber#591: assert the release flow keeps the Chart.yaml version bump
+      # inside the tagged commit (so the canary's git describe resolves to the
+      # clean tag, not a stale -N-g string) and that release.yml retains the
+      # guarded control-plane :latest refresh. Regression guard for the
+      # stale-chartVersion bug that left razer on 2.1.1-7-gd64fbbd after v2.2.0.
+      - name: Release version guard
+        if: needs.changes.outputs.go == 'true'
+        run: bash scripts/release-version-guard_test.sh
+
+      - name: Lint
+        if: needs.changes.outputs.go == 'true'
+        run: make lint
+
+      - name: Test
+        if: needs.changes.outputs.go == 'true'
+        run: make test
+
+  pwa-build:
+    needs: changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the version-bump guard below can diff the PR
+          # against its base commit.
+          fetch-depth: 0
+
+      # Guard: any change under packages/pwa-views/ must bump its package.json
+      # version. holocron consumes the *published* @matty-v/kyber-pwa-views
+      # package, which only publishes on a `pwa-views/v*` tag (see
+      # publish-pwa-views.yml). A source change that doesn't bump the version
+      # never gets published, so holocron silently lags — exactly what happened
+      # when the runtime/model epic (#374) shipped UI that never reached
+      # holocron. CHANGELOG.md is excluded so a docs-only touch isn't blocked.
+      - name: Require a pwa-views version bump when its source changes
+        if: github.event_name == 'pull_request' && needs.changes.outputs.pwa == 'true'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          CHANGED="$(git diff --name-only "${BASE_SHA}...HEAD" -- packages/pwa-views/ ':(exclude)packages/pwa-views/CHANGELOG.md')"
+          if [ -z "$CHANGED" ]; then
+            echo "No packages/pwa-views source changes in this PR — version-bump guard skipped."
+            exit 0
+          fi
+          ver() { git show "$1:packages/pwa-views/package.json" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1; }
+          BASE_VER="$(ver "$BASE_SHA")"
+          HEAD_VER="$(ver HEAD)"
+          echo "Changed pwa-views files:"; echo "$CHANGED" | sed 's/^/  - /'
+          echo "pwa-views version: base=${BASE_VER} head=${HEAD_VER}"
+          if [ "$BASE_VER" = "$HEAD_VER" ]; then
+            echo "::error::packages/pwa-views changed but its package.json version is unchanged (${HEAD_VER}). Bump packages/pwa-views/package.json (and add a CHANGELOG entry). The library is published to holocron only on a version bump (a 'pwa-views/v*' tag via publish-pwa-views.yml); without a bump the change never reaches holocron."
+            exit 1
+          fi
+          echo "OK — pwa-views version bumped ${BASE_VER} -> ${HEAD_VER}."
+
+      - name: No frontend changes — skipping PWA build and tests
+        if: needs.changes.outputs.pwa != 'true'
+        run: echo "This PR touches no packages/ or apps/ sources — the PWA build/test is not needed."
+
+      - uses: actions/setup-node@v4
+        if: needs.changes.outputs.pwa == 'true'
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Install workspace dependencies
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm ci
+
+      - name: Build pwa-views library
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run build --workspace=packages/pwa-views
+
+      - name: Build embedded PWA
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run build --workspace=apps/embedded-pwa
+
+      - name: Lint pwa-views (type-check)
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run lint --workspace=packages/pwa-views
+
+      - name: Lint embedded PWA (type-check)
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run lint --workspace=apps/embedded-pwa
+
+      - name: Test pwa-views
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run test --workspace=packages/pwa-views
+
+      - name: Test embedded PWA
+        if: needs.changes.outputs.pwa == 'true'
+        run: npm run test --workspace=apps/embedded-pwa

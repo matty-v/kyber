@@ -1,0 +1,27 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kyber.fullname" . }}-control-plane
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+data:
+  # KYBER_NAMESPACE scopes the control plane's Agent / Machine CR reads and
+  # writes. MUST resolve to the release namespace — if it's empty or points
+  # at a different namespace, the control plane will read/write CRs in that
+  # other namespace. In preview the chart leaves namespace.name="" so the
+  # old `{{ .Values.namespace.name }}` would produce an empty string here,
+  # the binary would fall back to "kyber-system", and preview PWA activity
+  # would create agents in prod. Use the same helper that every other
+  # namespace-bearing template uses so the value is always the resolved
+  # chart namespace, not the raw input value.
+  KYBER_NAMESPACE: {{ include "kyber.namespace" . | quote }}
+  # Telemetry config — read by the control plane at startup.
+  KYBER_TELEMETRY_ENABLED: {{ .Values.telemetry.enabled | quote }}
+  OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlpEndpoint | quote }}
+  # Metrics tab — Redis-backed always-on metrics store.
+  KYBER_METRICS_REDIS_STORE_ENABLED: {{ .Values.metrics.redisStoreEnabled | quote }}
+  KYBER_METRICS_RETENTION_SECONDS: {{ .Values.metrics.redisRetentionSeconds | quote }}
+  KYBER_METRICS_PROMETHEUS_URL: {{ .Values.metrics.prometheusURL | quote }}
+  KYBER_METRICS_PROMETHEUS_INSECURE: {{ .Values.metrics.prometheusInsecureSkipVerify | quote }}

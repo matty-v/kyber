@@ -1,0 +1,27 @@
+{{/*
+Preview installs must NEVER render a Namespace resource. If they do, the
+Application "owns" the Namespace object in ArgoCD's tracked-resources set,
+and any later prune operation (e.g. triggered by retargeting the source or
+swapping values) can cascade-delete the Namespace and everything inside it.
+On 2026-04-19 a preview rendered its stack into kyber-system because its
+chart branch had a stale default, and a subsequent ApplicationSet retarget
+pruned kyber-system — wiping prod. Preview envs rely on
+syncOptions: CreateNamespace=true instead, which brings the namespace up
+without putting it in the Application's owned-resources set.
+
+Additional guard: refuse to render at all if someone tries to stand up a
+preview rooted at kyber-system. This stops a future stale chart or bad
+values file from repeating the incident.
+*/}}
+{{- if and .Values.preview.enabled (eq (include "kyber.namespace" .) "kyber-system") }}
+{{- fail "preview.enabled=true must NOT target the kyber-system namespace — set namespace.name to an empty string (falls through to Release.Namespace) or to a per-PR namespace such as kyber-pr-<n>" }}
+{{- end }}
+{{- if and .Values.namespace.create (not .Values.preview.enabled) }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: namespace
+{{- end }}

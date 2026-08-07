@@ -1,0 +1,4 @@
+interface:
+  display_name: "Discord Messaging"
+  short_description: "Use Kyber Discord conversation tools"
+  default_prompt: "Use $discord-messaging to handle this Discord conversation appropriately."

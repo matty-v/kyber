@@ -1,0 +1,4 @@
+interface:
+  display_name: "Telegram Messaging"
+  short_description: "Use Kyber Telegram messaging features"
+  default_prompt: "Use $telegram-messaging to handle this Telegram conversation appropriately."

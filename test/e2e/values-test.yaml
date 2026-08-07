@@ -1,0 +1,69 @@
+# Test install overrides for the e2e harness.
+# Keeps the footprint small and disables optional external dependencies.
+# Applied via: helm install kyber deploy/helm/kyber -f test/e2e/values-test.yaml
+
+namespace:
+  create: true
+  name: kyber-system
+
+api:
+  apiKey: "test-api-key-e2e"
+  webhookSecret: "test-webhook-secret-e2e"
+  service:
+    type: ClusterIP
+    port: 8080
+    internalPort: 8082
+    metricsPort: 9090
+
+# Use the locally built image imported via `k3d image import`.
+image:
+  controlPlane:
+    repository: kyber/control-plane
+    tag: local
+    pullPolicy: Never
+  nodeAgent:
+    repository: kyber/node-agent
+    tag: local
+    pullPolicy: Never
+  # Image tags are required at render time (no Chart.AppVersion fallback; see
+  # kyber#358). The mock-provider e2e never pulls these images, but the tag
+  # must be non-empty for the chart to render — pin a placeholder.
+  statusSidecar:
+    tag: local
+  claudeCode:
+    tag: local
+
+controlPlane:
+  replicaCount: 1
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  leaderElection:
+    enabled: false  # single replica in test — no lease needed
+
+# Disable sub-charts — tests use in-memory stores.
+# The control-plane falls back to NewMemoryStore and NewMemoryBuffer when
+# KYBER_POSTGRES_URL and KYBER_REDIS_URL are not set.
+postgresql:
+  enabled: false
+
+redis:
+  enabled: false
+
+# Telemetry adds latency and noise in tests — disable it.
+telemetry:
+  enabled: false
+  otlpEndpoint: ""
+
+# k3s credentials are optional (not used by MockComputeAdapter).
+k3s:
+  joinToken: "e2e-placeholder"
+  serverUrl: "https://127.0.0.1:6443"
+
+# Skip the DaemonSet — simpler test setup.
+nodeAgent:
+  enabled: false

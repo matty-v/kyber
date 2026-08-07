@@ -1,0 +1,875 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.16.5
+  name: agents.kyber.io
+spec:
+  group: kyber.io
+  names:
+    kind: Agent
+    listKind: AgentList
+    plural: agents
+    shortNames:
+    - ag
+    singular: agent
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .spec.machine
+      name: Machine
+      type: string
+    - jsonPath: .spec.runtime
+      name: Runtime
+      type: string
+    - jsonPath: .spec.model
+      name: Model
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1
+    schema:
+      openAPIV3Schema:
+        description: |-
+          Agent is the schema for the agents API.
+          An Agent CRD represents a single AI agent instance managed by the Kyber platform.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentSpec defines the desired state of an Agent.
+            properties:
+              channels:
+                description: |-
+                  Channels declares bidirectional comms channels for this agent, each
+                  backed by a Kyber-managed sidecar container that holds the channel
+                  connection and bridges inbound messages onto an inbound binding
+                  (kyber#138, #646). Distinct from Secrets.{Telegram,Discord}Enabled,
+                  which are the older runtime-coupled / outbound-only paths.
+                properties:
+                  discord:
+                    description: |-
+                      Discord enables two-way Discord via the kyber-mcp-discord sidecar
+                      (kyber#646). Nil = disabled.
+                    properties:
+                      existingSecret:
+                        description: |-
+                          ExistingSecret names a Secret with the channel credentials.
+                          Required keys: "bot-token" (Discord bot token) and "webhook-secret"
+                          (the HMAC secret, which must match the agent's "discord" inbound
+                          binding). Optional keys: "guild-id", "channel-id", "allowed-user-ids"
+                          (csv) — the allowlist; an empty allowlist is fail-closed (no inbound
+                          accepted).
+
+                          Nothing renders the companion "discord" inbound binding from this field.
+                          PUT /api/v1/agents/{name}/comms/discord (kyber#664) writes the Secret,
+                          the binding, and this field together with a shared HMAC secret; setting
+                          this field alone leaves the binding missing and inbound silently dropped.
+                        type: string
+                      mentionOnly:
+                        description: |-
+                          MentionOnly restricts inbound to messages that address the bot directly:
+                          an @-mention of the bot user, or a reply to one of the bot's own messages.
+                          Default (false) forwards every allowlisted message in the channel, which
+                          is right for a dedicated agent channel and wrong for a shared one where
+                          humans also talk to each other. Orthogonal to the allowlist — this narrows
+                          WHICH messages count, not WHO may send them.
+                        type: boolean
+                    required:
+                    - existingSecret
+                    type: object
+                type: object
+              desiredPhase:
+                description: |-
+                  DesiredPhase is written by the API module to signal a lifecycle intent.
+                  Valid values: Running, Stopped, Suspended, Restarting, NeedsAuth.
+                  The controller reads this and drives state transitions.
+
+                  NeedsAuth is the operator-forced re-auth intent (#395), written by
+                  POST /agents/{name}/force-needs-auth. It MUST stay in this enum: the
+                  setter and the controller gate (classifyEvent's EventDesiredNeedsAuth
+                  arm) have both handled it since #395, but it was missing here, so the
+                  API server rejected every write and the endpoint returned a blanket
+                  500 — the action could never once have worked. Unit tests missed it
+                  because they build the Agent in memory and call classifyEvent directly,
+                  never writing through an API server that would apply this schema; see
+                  TestDesiredPhaseEnum_AcceptsEveryAPISettablePhase, which closes that gap.
+                enum:
+                - Running
+                - Stopped
+                - Suspended
+                - Restarting
+                - NeedsAuth
+                type: string
+              identity:
+                description: Identity holds configuration for agent identity scaffolding
+                  on first boot.
+                properties:
+                  soulDescription:
+                    description: SoulDescription is a short narrative used to scaffold
+                      the agent's SOUL.md on first boot.
+                    type: string
+                type: object
+              identityRepo:
+                description: |-
+                  IdentityRepo points at a GitHub repo used as the agent's mutable
+                  identity/memory store. When spec.identityRepo.repo is set, the
+                  controller mints a short-lived installation token via the Kyber GitHub
+                  App and exposes it to the pod (see `images/claude-code/start-claude.sh`
+                  for the clone/credential-helper wiring).
+                properties:
+                  repo:
+                    description: |-
+                      Repo is the "owner/name" slug of an existing GitHub repo that the Kyber
+                      GitHub App has access to (e.g. "matty-v/chewie-agent"). When empty, the
+                      agent runs without a mounted identity repo.
+                    type: string
+                  template:
+                    description: |-
+                      Template is the "owner/repo" slug of a GitHub template repository. When
+                      set and Repo is empty, the controller creates a new private repo from this
+                      template under the configured default owner (KYBER_IDENTITY_REPO_OWNER),
+                      substitutes {{ .AgentName }} and {{ .Description }} in all text files,
+                      and sets Repo to the resulting "owner/repo". Empty means no auto-create;
+                      the operator must supply Repo directly.
+                    type: string
+                type: object
+              idleTimeout:
+                description: |-
+                  IdleTimeout is how long the agent can be idle before suspending.
+                  Format: Go duration string (e.g., "15m", "1h").
+                  Only applies when scaling is "scale-to-zero".
+                type: string
+              inboundBindings:
+                description: |-
+                  InboundBindings declares generic HMAC-authenticated inbound prompt
+                  sources for this agent. Each binding exposes a public endpoint at
+                  /api/v1/inbound/<agent>/<binding>; verified payloads are extracted and
+                  dispatched into the agent's tmux session via kyber-job-dispatch.
+                items:
+                  description: |-
+                    AgentInboundBinding declares a generic HMAC-authenticated inbound prompt source.
+                    External systems POST signed payloads to /webhooks/inbound/<agent>/<binding>; the
+                    platform extracts fields per this binding and renders a structured envelope into
+                    the agent's session via kyber-job-dispatch.
+                  properties:
+                    action:
+                      description: |-
+                        Action is the operator's static instruction text rendered into the
+                        envelope. V1 has no templating — preserves the data/instruction trust
+                        boundary.
+                      minLength: 1
+                      type: string
+                    eventHeader:
+                      description: |-
+                        EventHeader names the request header that carries the event identifier.
+                        Optional — if empty, every authenticated request is treated as event "".
+                      type: string
+                    eventPath:
+                      description: |-
+                        EventPath is an optional JSONPath into the request body whose extracted
+                        value is appended to the EventHeader value, separated by a dot. Lets the
+                        operator build composite event identifiers like "pull_request.opened"
+                        from the GitHub X-GitHub-Event header ("pull_request") plus body.action
+                        ("opened").
+                      type: string
+                    existingSecret:
+                      description: |-
+                        ExistingSecret is the name of a Kubernetes Secret holding the binding's
+                        HMAC secret. The Secret must contain a key named `webhook-secret`. Same
+                        convention as Telegram secrets.
+                      minLength: 1
+                      type: string
+                    fields:
+                      description: |-
+                        Fields define the data block of the envelope rendered into the agent's
+                        prompt. Order is preserved in rendering.
+                      items:
+                        description: |-
+                          AgentInboundField extracts a value from the request body for inclusion in
+                          the rendered envelope's data block.
+                        properties:
+                          jsonPath:
+                            description: JsonPath into the request body.
+                            minLength: 1
+                            type: string
+                          label:
+                            description: Label names this field in the envelope. Operator-friendly
+                              identifier.
+                            minLength: 1
+                            type: string
+                          prefix:
+                            description: Prefix is prepended to the rendered field.
+                              Useful for marking URLs as such.
+                            type: string
+                          truncate:
+                            description: |-
+                              Truncate caps the rendered field length to this many runes (UTF-8
+                              codepoints, not bytes). Zero means no truncation.
+                            type: integer
+                        required:
+                        - jsonPath
+                        - label
+                        type: object
+                      type: array
+                    filters:
+                      description: Filters narrow further within matched events. ALL
+                        filters must pass.
+                      items:
+                        description: |-
+                          AgentInboundFilter is a single conditional clause evaluated against the
+                          request body. At least one of In or Equals should be set; if both are set
+                          both must pass (logical AND). A filter with neither In nor Equals is a
+                          no-op pass — admission does not reject this misconfiguration today; the
+                          dispatcher just lets the filter through.
+                        properties:
+                          equals:
+                            description: Equals matches if the extracted value (string-coerced)
+                              equals this string.
+                            type: string
+                          in:
+                            description: In matches if the extracted value (string-coerced)
+                              appears in this list.
+                            items:
+                              type: string
+                            type: array
+                          jsonPath:
+                            description: JsonPath into the request body.
+                            minLength: 1
+                            type: string
+                        required:
+                        - jsonPath
+                        type: object
+                      type: array
+                    limits:
+                      description: 'Limits applies per-binding rate limiting. Defaults:
+                        maxPerMinute=10.'
+                      properties:
+                        maxPerMinute:
+                          description: MaxPerMinute is the per-binding token-bucket
+                            rate. Default 10.
+                          maximum: 600
+                          minimum: 1
+                          type: integer
+                      type: object
+                    matchEvents:
+                      description: |-
+                        MatchEvents is a list of event identifiers this binding accepts. If
+                        empty, every event passes. Otherwise the resolved event identifier must
+                        appear in this list.
+                      items:
+                        type: string
+                      type: array
+                    name:
+                      description: Name identifies the binding within the agent. Forms
+                        part of the URL.
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    signatureHeader:
+                      description: |-
+                        SignatureHeader is the request header carrying the HMAC. Operator-defined
+                        (e.g. "X-Hub-Signature-256" for GitHub).
+                      minLength: 1
+                      type: string
+                    signaturePrefix:
+                      description: |-
+                        SignaturePrefix is stripped from the header value before hex-decoding.
+                        Empty string is valid (header is bare hex). Common: "sha256=".
+                      type: string
+                  required:
+                  - action
+                  - existingSecret
+                  - name
+                  - signatureHeader
+                  type: object
+                type: array
+              jobs:
+                description: |-
+                  Jobs declares recurring scheduled prompts for this agent. Each entry is
+                  rendered as a line in a per-agent crontab file (ConfigMap-delivered),
+                  fired by the pod's cron daemon, and dispatched into the agent's tmux
+                  session by the in-pod kyber-job-dispatch helper.
+                items:
+                  description: |-
+                    AgentJob declares a recurring prompt that should be delivered into the
+                    agent's tmux session on a cron schedule. Rendered by the controller into a
+                    per-agent ConfigMap that the pod mounts and the in-pod dispatcher reads.
+                  properties:
+                    exclusive:
+                      description: |-
+                        Exclusive, when true, causes the dispatcher to skip a fire if a previous
+                        run of the same job is still holding the per-job flock. Default false
+                        lets concurrent fires overlap.
+                      type: boolean
+                    name:
+                      description: |-
+                        Name is a human-readable label for the job. Must be unique within the
+                        Agent and safe to use as a filename (used for per-job lock files under
+                        /persist/var/lock/).
+                      maxLength: 63
+                      minLength: 1
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    prompt:
+                      description: |-
+                        Prompt is the text delivered into the agent's tmux session when the job
+                        fires. Multi-line prompts are supported; newlines are preserved.
+                      minLength: 1
+                      type: string
+                    schedule:
+                      description: |-
+                        Schedule is a standard 5-field cron expression (minute hour dom month dow).
+                        Interpreted in the pod's configured TZ.
+                      maxLength: 200
+                      minLength: 9
+                      type: string
+                  required:
+                  - name
+                  - prompt
+                  - schedule
+                  type: object
+                type: array
+              machine:
+                description: Machine is the name of the Machine CRD this agent should
+                  run on.
+                type: string
+              model:
+                description: |-
+                  Model is the LLM model identifier to use (e.g., "claude-sonnet-4").
+                  Optional: when empty, the controller resolves the fleet-default
+                  model (kyber-fleet-defaults ConfigMap key `defaultModel`, seeded by
+                  the chart's `controlPlane.fleetDefaults.defaultModel` value and
+                  writable via the PWA Settings panel — kyber#376 / PR-B of #374).
+                  If both spec.model AND the fleet default are empty, the
+                  AgentConditionModelUnresolved condition fires and pod creation is
+                  refused.
+                type: string
+              resources:
+                description: Resources specifies the compute resources requested for
+                  the agent pod.
+                properties:
+                  cpu:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: CPU is the CPU request and limit (e.g., "1", "500m").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  disk:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Disk is the size of the agent's persistent volume
+                      (e.g., "50Gi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                  memory:
+                    anyOf:
+                    - type: integer
+                    - type: string
+                    description: Memory is the memory request and limit (e.g., "2Gi",
+                      "512Mi").
+                    pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                    x-kubernetes-int-or-string: true
+                required:
+                - cpu
+                - disk
+                - memory
+                type: object
+              runtime:
+                description: Runtime identifies the RuntimeAdapter type (e.g., "claude-code").
+                type: string
+              runtimeVersion:
+                description: |-
+                  RuntimeVersion is the requested Claude Code CLI version for this
+                  agent. Optional: when empty, the controller resolves the fleet
+                  default (kyber-fleet-defaults ConfigMap key `defaultRuntimeVersion`,
+                  seeded by chart value `controlPlane.fleetDefaults.defaultRuntimeVersion`
+                  which itself defaults to the build-time `runtime.claudeCode.version`
+                  baked into the kyber-claude-code image). On boot, start-claude.sh
+                  validates the resolved value against the charset pattern, then runs
+                  `npm install -g @anthropic-ai/claude-code@<version>` iff it differs
+                  from the baked-in default. Install failure is non-fatal — the pod
+                  continues on the baked-in version and PR-E surfaces the mismatch via
+                  the runtime report. The kubebuilder Pattern + MaxLength validate
+                  server-side; start-claude.sh re-validates pre-shell-interpolation as
+                  defense in depth (kyber#377 / PR-C of #374).
+                maxLength: 64
+                pattern: ^[0-9A-Za-z.\-]+$
+                type: string
+              scaling:
+                default: warm
+                description: Scaling controls whether the agent uses warm (always-on)
+                  or scale-to-zero mode.
+                enum:
+                - warm
+                - scale-to-zero
+                type: string
+              secrets:
+                description: Secrets holds references to GCP Secret Manager paths
+                  for this agent.
+                properties:
+                  anthropicKey:
+                    description: AnthropicKey is the Secret Manager path to the agent's
+                      Anthropic API key.
+                    type: string
+                  authType:
+                    description: 'AuthType specifies the Claude authentication method:
+                      "oauth" or "api-key".'
+                    enum:
+                    - oauth
+                    - api-key
+                    type: string
+                  discordEnabled:
+                    description: |-
+                      DiscordEnabled indicates whether this agent has a Discord webhook configured
+                      (kyber#132 Phase 1). When true, the runtime adapter injects the
+                      KYBER_DISCORD_WEBHOOK env var from the k8s secret named "<agent-name>-discord"
+                      (key "webhook-url"). Outbound-only: the agent can curl the webhook URL to
+                      post messages into a Discord channel; bidirectional comms wait on
+                      kyber#138 (per-channel MCP sidecars) for Phase 2.
+                    type: boolean
+                  telegramEnabled:
+                    description: |-
+                      TelegramEnabled indicates whether this agent has a Telegram bot configured.
+                      When true, the runtime adapter injects the TELEGRAM_BOT_TOKEN env var from
+                      the k8s secret named "<agent-name>-telegram" (key "token"). Operators are
+                      responsible for creating the secret before setting this flag.
+                    type: boolean
+                required:
+                - authType
+                type: object
+            required:
+            - machine
+            - resources
+            - runtime
+            - scaling
+            - secrets
+            type: object
+          status:
+            description: AgentStatus defines the observed state of an Agent.
+            properties:
+              activity:
+                description: |-
+                  Activity carries runtime-agnostic activity signals from the
+                  kyber-status-sidecar (kyber#247 epic; foundation in kyber#248).
+                  Phase A populates LastHeartbeatAt only; Phase B (kyber#249) fills in
+                  State (working/idle) and LastActivityAt.
+                properties:
+                  lastActivityAt:
+                    description: |-
+                      LastActivityAt is the timestamp of the most recent observed activity
+                      (turn start / tool invocation / etc — runtime-specific). Populated
+                      in Phase B. Used by the PWA to render "active 2m ago".
+                    format: date-time
+                    type: string
+                  lastHeartbeatAt:
+                    description: |-
+                      LastHeartbeatAt is the timestamp of the most recent heartbeat event
+                      the control plane received from the agent's status sidecar. Updated
+                      on every heartbeat (currently 5s cadence). Treat absence (or a
+                      timestamp older than ~30s) as "sidecar is unreachable" — the agent
+                      itself may still be running, but the observability surface is dark.
+                    format: date-time
+                    type: string
+                  state:
+                    description: |-
+                      State is the runtime-derived activity state. Populated in Phase B.
+                      One of: "working", "idle", "unknown" (default when probe hasn't
+                      reported). Empty string here matches the omitempty contract — the
+                      PWA renders "no signal" rather than a stale dot.
+                    enum:
+                    - working
+                    - idle
+                    - unknown
+                    type: string
+                type: object
+              conditions:
+                description: Conditions holds standard k8s conditions for this Agent.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              currentModel:
+                description: |-
+                  CurrentModel is the model currently in use by the agent.
+                  Updated when a model change takes effect.
+                type: string
+              identityRepo:
+                description: |-
+                  IdentityRepo reports the mint/refresh state of the agent's GitHub
+                  identity-repo credential, when spec.identityRepo.repo is set.
+                properties:
+                  lastMinted:
+                    description: |-
+                      LastMinted is when the reconciler last successfully wrote a fresh token
+                      into the agent's github Secret.
+                    format: date-time
+                    type: string
+                  message:
+                    description: Message is a human-readable error when Phase=Failed.
+                    type: string
+                  phase:
+                    description: Phase is the observed state of the identity repo
+                      token.
+                    type: string
+                  repo:
+                    description: |-
+                      Repo mirrors spec.identityRepo.repo so status readers don't need to
+                      cross-reference the spec.
+                    type: string
+                  tokenExpiresAt:
+                    description: |-
+                      TokenExpiresAt is the expiry timestamp reported by GitHub for the most
+                      recently minted token. Reconciler uses this to schedule refresh.
+                    format: date-time
+                    type: string
+                type: object
+              inboundRuns:
+                description: |-
+                  InboundRuns is the bounded ring buffer of recent inbound prompt
+                  deliveries. Capped at MaxInboundRunsPerBinding entries per
+                  spec.inboundBindings[].name by the controller; older entries roll off as
+                  new ones are appended. Ordered oldest-first.
+                items:
+                  description: |-
+                    AgentInboundRun is a recorded delivery of an inbound prompt — appended to
+                    status as a ring buffer (cap MaxInboundRunsPerBinding per binding).
+                  properties:
+                    bindingName:
+                      description: |-
+                        BindingName matches an AgentInboundBinding.Name at the time the run was
+                        recorded. Entries are not removed when the underlying binding is renamed
+                        or deleted, so a reader may see names that no longer resolve in
+                        spec.inboundBindings.
+                      type: string
+                    dropReason:
+                      description: |-
+                        DropReason explains why a "dropped" run was rejected. One of:
+                        sig-mismatch | missing-secret | unmatched-event | filter-rejected |
+                        rate-limited | queue-full | dedup. Empty when Outcome is "dispatched".
+                      type: string
+                    error:
+                      description: |-
+                        Error is a short human-readable error string when processing failed
+                        for an unexpected reason. Empty on the normal dispatched/dropped paths.
+                      type: string
+                    finishedAt:
+                      description: FinishedAt is when the handler finished (dispatched
+                        or dropped).
+                      format: date-time
+                      type: string
+                    outcome:
+                      description: 'Outcome is the terminal state of this run: "dispatched"
+                        or "dropped".'
+                      type: string
+                    requestId:
+                      description: |-
+                        RequestID is a server-assigned identifier for the inbound request,
+                        useful for correlating with logs.
+                      type: string
+                    startedAt:
+                      description: StartedAt is when the inbound handler began processing
+                        the request.
+                      format: date-time
+                      type: string
+                  required:
+                  - bindingName
+                  - outcome
+                  - requestId
+                  - startedAt
+                  type: object
+                type: array
+              jobs:
+                description: |-
+                  Jobs is the bounded ring buffer of recent job dispatch runs. Capped at
+                  50 entries per spec.jobs[].name by the controller; older entries roll
+                  off as new ones are appended. Ordered oldest-first.
+                items:
+                  description: |-
+                    AgentJobRun is one entry in the status.jobs ring buffer. The controller
+                    caps the buffer at 50 entries per job name.
+                  properties:
+                    error:
+                      description: |-
+                        Error is a short human-readable reason when Outcome is "failed" or
+                        "skipped". Empty on success.
+                      type: string
+                    finishedAt:
+                      description: FinishedAt is when the dispatcher finished (success,
+                        failure, or skip).
+                      format: date-time
+                      type: string
+                    jobName:
+                      description: |-
+                        JobName matches an AgentJob.Name at the time the run was recorded.
+                        Entries are not removed when the underlying job is renamed or deleted,
+                        so a reader may see names that no longer resolve in spec.jobs.
+                      type: string
+                    outcome:
+                      description: Outcome is the terminal state of this run.
+                      enum:
+                      - success
+                      - failed
+                      - skipped
+                      type: string
+                    startedAt:
+                      description: StartedAt is when the dispatcher began handling
+                        the fire.
+                      format: date-time
+                      type: string
+                  required:
+                  - jobName
+                  - outcome
+                  - startedAt
+                  type: object
+                type: array
+              lastKernelOOMKillAt:
+                description: |-
+                  LastKernelOOMKillAt is the wall-clock timestamp of the most recent
+                  kernel OOM kill observed inside this agent's pod-level cgroup, as
+                  reported by kyber-status-sidecar reading the recursive memory.events
+                  file (kyber#285). Closes the gap left by #272 V1: kubelet only tags
+                  containerStatuses[*].State.Terminated.Reason="OOMKilled" when the
+                  kernel's OOM-killer victim is the container's PID 1. When PID 1 is
+                  a shepherd like dbus-run-session and the killer picks a child
+                  (claude-code), kubelet records reason="Error" and the OOM is
+                  invisible at the K8s API level. The cgroup counter is kernel-
+                  authoritative and does not depend on which process was the victim.
+
+                  Populated by the sidecar when the cgroup's oom_kill counter
+                  increments. Compared by the agent controller against the agent
+                  container's StartedAt to attribute the kill to the current life,
+                  not a previous one. See classifyEvent for the routing logic.
+                format: date-time
+                type: string
+              lastTransition:
+                description: LastTransition is the time of the most recent phase transition.
+                format: date-time
+                type: string
+              message:
+                description: Message is a human-readable description of the current
+                  state or last error.
+                type: string
+              nodeName:
+                description: NodeName is the k8s node the agent pod is scheduled on.
+                type: string
+              observedGeneration:
+                description: |-
+                  ObservedGeneration is the spec.metadata.generation that was last
+                  applied to a running pod. The reconciler stamps this when it
+                  successfully creates or recreates the pod, so spec changes that DO
+                  trigger a roll update it; spec changes that DON'T (resources today,
+                  per kyber#149; runtime/adapter fields where the pod isn't recreated)
+                  leave it lagging. The PWA derives a "restart required" badge from
+                  metadata.generation > status.observedGeneration. See kyber#157.
+                format: int64
+                type: integer
+              phase:
+                description: Phase is the current lifecycle phase of the agent.
+                type: string
+              podIP:
+                description: PodIP is the IP address of the currently running agent
+                  pod.
+                type: string
+              podName:
+                description: PodName is the name of the currently running agent pod.
+                type: string
+              recoveryInput:
+                description: |-
+                  RecoveryInput identifies the operator-supplied input that the most
+                  recent recovery attempt out of a human-required phase consumed — the
+                  credential Secret's resourceVersion for NeedsAuth, the memory limit for
+                  MemoryExhausted.
+
+                  Human-required phases cannot use spec.desiredPhase=Running as their
+                  retry trigger: it is permanently true for every agent, so there is no
+                  edge and the agent rebuilds its pod forever (kyber#684 — measured at 515
+                  pod creations in 53 minutes on an agent with a dead credential). Re-entry
+                  is gated on this value changing, so it happens once per genuinely new
+                  input instead of once per reconcile. Empty means "no attempt recorded",
+                  which permits exactly one attempt.
+                type: string
+              restartCount:
+                description: |-
+                  RestartCount is the number of consecutive restart attempts since last stable Running.
+                  Reset after the agent has been Running for the retry reset threshold.
+                format: int32
+                type: integer
+              runtime:
+                description: |-
+                  Runtime reports the version of the agent-runtime harness (claude-code,
+                  codex, etc.) actually installed in the running pod. Populated by the
+                  in-pod start script via /internal/agents/{name}/runtime-version on
+                  each pod start.
+                properties:
+                  installedAt:
+                    description: |-
+                      InstalledAt is when the controller last received a runtime-version
+                      report for this agent. Useful for detecting stale reports after a
+                      pending upgrade.
+                    format: date-time
+                    type: string
+                  installedVersion:
+                    description: |-
+                      InstalledVersion is the version string reported by the runtime's
+                      `--version` command at pod start (e.g. "2.1.119"). Empty when the pod
+                      has not yet reported or the version could not be determined (in which
+                      case the reporter sends the literal string "unknown").
+                    type: string
+                  modelSupported:
+                    description: |-
+                      ModelSupported is true when the pre-flight probe
+                      (`claude --model <resolved> --print 'ping'` with a hard timeout)
+                      succeeded; false when it failed in a way attributable to an
+                      unknown/unsupported model. Nil when the report came from an older
+                      sidecar image that doesn't run the probe. The reconciler raises
+                      AgentConditionModelUnsupported on False; a timeout that isn't
+                      clearly attributable to model rejection reports nil rather than
+                      false so a flaky network blip doesn't flip the badge.
+                    type: boolean
+                  requestedSatisfied:
+                    description: |-
+                      RequestedSatisfied is true when the boot-time `npm install` ran
+                      successfully (or was skipped because the requested version matched
+                      the baked-in pin); false when the install failed and the pod fell
+                      back to the baked-in version. Nil when the report came from an
+                      older sidecar image that doesn't populate the field (the runtime-
+                      image roll is staggered — see kyber#379 § Sidecar coordination).
+                    type: boolean
+                  requestedVersion:
+                    description: |-
+                      RequestedVersion is what spec.runtimeVersion (or the fleet default
+                      from PR-B) asked the agent to run. The runtime-image roll injects
+                      this so the reconciler can compare against InstalledVersion and
+                      raise AgentConditionRuntimeVersionMismatch when they disagree.
+                      Empty when the agent never overrode the baked-in default (existing
+                      behavior pre-PR-C). See kyber#379.
+                    type: string
+                type: object
+              scheduling:
+                description: |-
+                  Scheduling reports a stuck-Pending pod's most recent scheduling /
+                  kubelet failure (FailedScheduling, FailedMount, ImagePullBackOff,
+                  ErrImagePull). Populated by the controller after a 30s grace window
+                  and cleared when the pod reaches Running. Drives the PWA banner that
+                  surfaces "why is this agent stuck?" without forcing the operator
+                  into kubectl. See kyber#210.
+                properties:
+                  category:
+                    description: |-
+                      Category classifies the failure into one of a small enum so the PWA
+                      can render category-specific remediation copy. Derived from the
+                      event reason + message via classifySchedulingCategory.
+                    enum:
+                    - Capacity
+                    - Placement
+                    - Image
+                    - Storage
+                    - Other
+                    type: string
+                  firstObservedAt:
+                    description: |-
+                      FirstObservedAt is when the controller first wrote this scheduling
+                      status entry. Preserved across reconciles, including when the
+                      category changes (so operators read the true total stuckness
+                      duration). Cleared only when the pod reaches Running.
+                    format: date-time
+                    type: string
+                  lastError:
+                    description: |-
+                      LastError is the verbatim event message (e.g.
+                      "0/1 nodes are available: 1 Insufficient memory."). The PWA renders
+                      this in monospace so operators have a search string for kubectl.
+                    type: string
+                required:
+                - category
+                type: object
+              startTime:
+                description: StartTime is the time the current pod became Running.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

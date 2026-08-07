@@ -1,0 +1,105 @@
+# Full-local overlay — layer ON TOP of test/e2e/values-test.yaml to run a
+# COMPLETE kyber locally on k3d, including live agent pods (not just the
+# control-plane). Apply with both -f files (see scripts/devenv/up-full.sh):
+#
+#   helm upgrade --install kyber deploy/helm/kyber \
+#     -f test/e2e/values-test.yaml \
+#     -f scripts/devenv/values-full-local.yaml \
+#     --namespace kyber-system --set namespace.create=false --wait
+#
+# Prereqs: build + k3d-import kyber/{control-plane,node-agent,status-sidecar,
+# claude-code}:local first (scripts/devenv/build-local-images.sh).
+
+# Agent PVCs: the chart default storageClass is `kyber-pd` (a GCE class that
+# does not exist on k3d), which leaves agent pods Pending on an unbound PVC.
+# Empty string => the cluster default (local-path) binds the volume.
+storage:
+  agentStorageClass: ""
+  gcePD:
+    enabled: false
+  transcriptOffsets:
+    size: "10Mi"
+    storageClassName: ""
+
+# Run agent workloads: the node-agent DaemonSet provides node metrics + machine
+# actions. It needs no real k3s join creds under mock compute.
+nodeAgent:
+  enabled: true
+
+# Live agent pods need the runtime + sidecar images locally (values-test.yaml
+# only builds control-plane + node-agent). pullPolicy: Never => use the
+# k3d-imported local images, never reach for GHCR.
+image:
+  agentBase:
+    repository: kyber/runtime-base
+    tag: local
+    pullPolicy: Never
+  claudeCode:
+    repository: kyber/claude-code
+    tag: local
+    pullPolicy: Never
+  codex:
+    repository: kyber/codex
+    tag: local
+    pullPolicy: Never
+  statusSidecar:
+    repository: kyber/status-sidecar
+    tag: local
+    pullPolicy: Never
+  telegramSidecar:
+    repository: kyber/mcp-telegram
+    tag: local
+    pullPolicy: Never
+  discordSidecar:
+    repository: kyber/mcp-discord
+    tag: local
+    pullPolicy: Never
+
+# The in-pod sidecars POST status to the control-plane's internal :8082 API,
+# which fails closed without the signing key. Grace mode accept-and-logs so the
+# status pipeline works locally even before every pod carries a minted token.
+internalAuth:
+  graceMode: true
+
+# k3d's default flannel CNI generally does not enforce NetworkPolicy, but admit
+# the k3s pod CIDR so the hostNetwork node-agent's :8082 calls aren't dropped if
+# a policy-enforcing CNI is ever used locally.
+networkPolicy:
+  internalApi:
+    allowedNodeCIDRs: ["10.42.0.0/16"]
+
+# Mock compute: agents schedule onto the existing k3d node; no real VMs.
+compute:
+  provider: mock
+
+# Allow the local vite dev servers (embedded-pwa :5173, holocron :5174) to call
+# this control-plane cross-origin. Baked into the profile so it survives helm
+# upgrades (no ephemeral kubectl patch needed).
+controlPlane:
+  cors:
+    allowedOrigins:
+      - http://localhost:5173
+      - http://localhost:5174
+
+# --- Transcript/archive object lane for local testing (structured History) ---
+# The chart ships an optional MinIO + a Vector log-shipper DaemonSet. Enabling
+# both makes ?source=archive AND ?source=transcript return real data locally:
+# the transcript-tailer sidecar (already on agent pods) writes session JSONL to
+# stdout, Vector ships it to MinIO under transcripts/<agent>/<date>/, and the
+# control-plane TranscriptReader (KYBER_LOG_ARCHIVE_* → s3) reads it back.
+minio:
+  enabled: true
+  # chart-managed root creds Secret (keys: access-key-id, secret-access-key)
+  credentialsSecret: kyber-minio-credentials
+  rootUser: kyber
+  # rootPassword left empty => chart generates a stable random one.
+
+logShipper:
+  enabled: true
+  backend: s3
+  bucket: kyber-agent-logs            # matches minio.bucket default
+  # cluster-internal MinIO Service (release "kyber" => svc "kyber-minio")
+  endpoint: http://kyber-minio.kyber-system.svc:9000
+  region: us-east-1
+  useTLS: false                       # plaintext in-cluster MinIO
+  existingCredentialsSecret: kyber-minio-credentials

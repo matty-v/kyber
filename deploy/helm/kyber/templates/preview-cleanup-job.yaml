@@ -1,0 +1,154 @@
+{{- if and .Values.preview.enabled .Values.preview.cleanupOnTeardown }}
+{{/*
+Preview Cleanup — pre-delete Job that removes Agent + Machine CRs from the
+preview namespace before ArgoCD prunes the chart-rendered resources.
+
+Why this exists: agents can be created via the PWA *after* the chart is
+installed on a preview env. Those Agent CRs aren't owned by the Helm release,
+so when ArgoCD prunes the Application on PR close, they're left behind as
+orphans — pods keep running, memory stays reserved, namespace sticks around
+in Terminating (finalizer on the Agent CR that no live controller is handling
+because the preview's control-plane was just pruned).
+
+This hook runs BEFORE the main chart resources are pruned, while the
+preview's control-plane is still up to process the deletions cleanly. As a
+belt-and-suspenders, the Job also strips any lingering finalizers so the
+deletion completes even if the controller is unresponsive.
+
+Best-effort by design: the Job always exits 0, so a cleanup failure never
+blocks Application pruning. Any leftover state can be manually cleaned up
+the way we did on 2026-04-21 with `kyber-pr-119`.
+*/}}
+
+{{- $ns := include "kyber.namespace" . }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kyber.fullname" . }}-cleanup
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-cleanup
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "kyber.fullname" . }}-cleanup
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-cleanup
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+rules:
+  - apiGroups: ["kyber.io"]
+    resources: ["agents", "agents/finalizers", "machines", "machines/finalizers"]
+    verbs: ["get", "list", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "kyber.fullname" . }}-cleanup
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-cleanup
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-11"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "kyber.fullname" . }}-cleanup
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kyber.fullname" . }}-cleanup
+    namespace: {{ $ns }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kyber.fullname" . }}-cleanup
+  namespace: {{ $ns }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: preview-cleanup
+  annotations:
+    "helm.sh/hook": pre-delete
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+    argocd.argoproj.io/hook: PreDelete
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 2
+  activeDeadlineSeconds: 120
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: preview-cleanup
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: {{ include "kyber.fullname" . }}-cleanup
+      containers:
+        - name: cleanup
+          image: bitnami/kubectl:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -u
+              NS="{{ $ns }}"
+              echo "Preview cleanup: stripping finalizers + deleting CRs in ${NS}"
+
+              # Strip finalizers on every agent + machine so deletion completes
+              # regardless of controller state, then delete. Best-effort — any
+              # kubectl failure is logged but doesn't fail the job.
+              strip_and_delete() {
+                local kind="$1"
+                local names
+                names=$(kubectl get "${kind}" -n "${NS}" -o name 2>/dev/null || true)
+                if [ -z "${names}" ]; then
+                  echo "  no ${kind} found"
+                  return 0
+                fi
+                for obj in ${names}; do
+                  echo "  clearing finalizers + deleting ${obj}"
+                  kubectl patch "${obj}" -n "${NS}" --type json \
+                    -p='[{"op":"remove","path":"/metadata/finalizers"}]' \
+                    2>/dev/null || true
+                  kubectl delete "${obj}" -n "${NS}" --wait=false \
+                    --ignore-not-found 2>/dev/null || true
+                done
+              }
+
+              strip_and_delete agents.kyber.io
+              strip_and_delete machines.kyber.io
+
+              # Backstop: force-delete any agent pods that may outlive the
+              # CR deletion (shouldn't happen, but belt-and-suspenders).
+              echo "  force-deleting any lingering agent-* pods"
+              kubectl delete pod -n "${NS}" -l app.kubernetes.io/component=agent \
+                --grace-period=0 --force --ignore-not-found 2>/dev/null || true
+
+              echo "Cleanup done. Exiting 0 regardless."
+              exit 0
+{{- end }}

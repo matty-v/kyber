@@ -1,0 +1,25 @@
+{{- if .Values.cloudflared.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kyber.fullname" . }}-cloudflared
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: cloudflared
+data:
+  config.yaml: |
+    tunnel: {{ required "cloudflared.tunnelId is required when cloudflared.enabled=true" .Values.cloudflared.tunnelId }}
+    credentials-file: /etc/cloudflared/creds/credentials.json
+    metrics: 0.0.0.0:2000
+    no-autoupdate: true
+    {{- with .Values.cloudflared.protocol }}
+    protocol: {{ . }}
+    {{- end }}
+    ingress:
+      {{- range .Values.cloudflared.ingress }}
+      - hostname: {{ .hostname | quote }}
+        service: {{ .service | quote }}
+      {{- end }}
+      - service: http_status:404
+{{- end }}

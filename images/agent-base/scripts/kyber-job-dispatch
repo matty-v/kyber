@@ -1,0 +1,247 @@
+#!/bin/bash
+# kyber-job-dispatch — invoked from /etc/cron.d/kyber-jobs to deliver a
+# scheduled prompt into the agent's tmux session. One invocation per fire.
+#
+# Usage:  kyber-job-dispatch [--exclusive] [--stdin] <job-name>
+#
+# Contract:
+#   - Reads the prompt from /kyber/jobs-src/prompt-<name> (a file projected
+#     from the per-agent <name>-jobs ConfigMap — content updates without a
+#     pod restart when the operator edits spec.jobs).
+#   - If --stdin is set, reads the prompt body from standard input instead
+#     of from the prompt file (used by the inbound-prompts receiver path,
+#     where <job-name> is something like inbound-<requestID>). The prompt-
+#     file existence check is skipped. An empty stdin records
+#     outcome=skipped reason=empty_prompt and does not touch tmux.
+#   - If --exclusive and the per-job flock is held by another run of the
+#     same job, records outcome=skipped and exits 0.
+#   - If the session lock (/persist/var/lock/session.lock) is flocked by the
+#     session-restart handler, records outcome=skipped and exits 0 — job
+#     fires during a restart must not race the relaunch (#128).
+#   - Sends the prompt verbatim into tmux session "agent" via an explicit
+#     bracketed paste, followed by Enter.
+#   - Appends a status line to /persist/var/log/kyber-jobs.log on every run.
+#   - POSTs a structured event to the control-plane's internal events
+#     endpoint so status.jobs[] on the CR can surface last-run state.
+#     Failures to POST are logged locally but do not fail the dispatch.
+#
+# Exit status: always 0 unless the invocation itself was malformed. The
+# outcome of the dispatch (success/failed/skipped) lives in the log line
+# and in the POSTed event, not in the exit code — cron doesn't retry on
+# non-zero anyway, and a non-zero exit would produce noisy mail output.
+
+set -u
+
+# Paths are env-var overridable so the script is unit-testable without a
+# running agent pod. Defaults match the production runtime image layout.
+LOG_FILE="${KYBER_JOBS_LOG_FILE:-/persist/var/log/kyber-jobs.log}"
+LOCK_DIR="${KYBER_JOBS_LOCK_DIR:-/persist/var/lock}"
+SESSION_LOCK="$LOCK_DIR/session.lock"
+JOBS_SRC="${KYBER_JOBS_SRC_DIR:-/kyber/jobs-src}"
+TMUX_SESSION="${KYBER_JOBS_TMUX_SESSION:-agent}"
+# Dir where a completion marker is dropped for each NAMED scheduled job on
+# successful injection. A Stop hook (falcon-dev-common cron-complete-notify.sh)
+# consumes the marker to notify the operator when the agent finishes the job
+# (kyber#627). Inbound dispatches (--stdin) are excluded — they aren't operator
+# crons and would spam. Lives on /persist so it survives nothing-in-particular;
+# markers are short-lived (created here, cleared by the hook on the next Stop).
+CRON_COMPLETE_DIR="${KYBER_CRON_COMPLETE_DIR:-/persist/var/run/kyber-cron-complete}"
+
+# Ensure log + lock dirs exist on every boot. /persist is the PV, so these
+# live-survive pod restarts; we only mkdir on the first run.
+mkdir -p "$(dirname "$LOG_FILE")" "$LOCK_DIR" 2>/dev/null || true
+
+# Stale session-lock cleanup: if the lock file is older than 24h and nobody
+# currently holds the flock, remove it so a crashed restart handler can't
+# indefinitely block scheduled jobs (D9).
+if [ -f "$SESSION_LOCK" ]; then
+    age_seconds=$(( $(date +%s) - $(stat -c %Y "$SESSION_LOCK" 2>/dev/null || echo 0) ))
+    if [ "$age_seconds" -gt 86400 ]; then
+        # flock -n returns 1 (without running the inner command) if the lock
+        # is already held. If nobody holds it, we got it — and then release
+        # it by exiting the sub-shell — then remove the stale file.
+        if flock -n "$SESSION_LOCK" true 2>/dev/null; then
+            rm -f "$SESSION_LOCK"
+            echo "ts=$(date -Iseconds) event=stale_session_lock_cleared age_seconds=$age_seconds" >> "$LOG_FILE"
+        fi
+    fi
+fi
+
+# ---- Argument parsing ----
+EXCLUSIVE=false
+STDIN_MODE=false
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --exclusive) EXCLUSIVE=true; shift ;;
+        --stdin) STDIN_MODE=true; shift ;;
+        --) shift; break ;;
+        -*)
+            echo "kyber-job-dispatch: unknown flag $1" >&2
+            exit 2
+            ;;
+        *) break ;;
+    esac
+done
+if [ $# -ne 1 ]; then
+    echo "usage: kyber-job-dispatch [--exclusive] [--stdin] <job-name>" >&2
+    exit 2
+fi
+JOB_NAME="$1"
+
+# Defense-in-depth: the controller validates job names via a CRD regex, but
+# this binary is also reachable via the run-now exec pathway where the name
+# flows through a different channel. Reject anything that isn't safe for a
+# filename before using it in lock / prompt paths.
+if ! printf '%s' "$JOB_NAME" | grep -Eq '^[a-z0-9]([-a-z0-9]*[a-z0-9])?$'; then
+    echo "kyber-job-dispatch: invalid job name $JOB_NAME" >&2
+    exit 2
+fi
+
+PROMPT_FILE="$JOBS_SRC/prompt-$JOB_NAME"
+JOB_LOCK="$LOCK_DIR/job-$JOB_NAME.lock"
+STARTED_AT="$(date -Iseconds)"
+
+# AGENT_NAME is set on every agent pod via pod_builder.go. Missing it means
+# something's wrong with the pod spec; record and bail before doing work.
+AGENT_NAME="${AGENT_NAME:-}"
+if [ -z "$AGENT_NAME" ]; then
+    echo "ts=$STARTED_AT job=$JOB_NAME event=failed reason=AGENT_NAME_unset" >> "$LOG_FILE"
+    exit 0
+fi
+
+# ---- Event emission (POST to control-plane) ----
+# Called with outcome (success/failed/skipped) and optional error message.
+# Never propagates a failure — local logs + CR state are our fallback.
+CONTROL_PLANE_URL="${KYBER_CONTROL_PLANE_INTERNAL_URL:-}"
+POD_TOKEN_FILE="${KYBER_POD_TOKEN_FILE:-/var/run/secrets/kyber/pod-token}"
+emit_event() {
+    local outcome="$1"
+    local err="${2:-}"
+    local finished_at="$(date -Iseconds)"
+    echo "ts=$finished_at job=$JOB_NAME event=$outcome${err:+ error=$err}" >> "$LOG_FILE"
+    if [ -z "$CONTROL_PLANE_URL" ]; then
+        return 0
+    fi
+    local pod_token=""
+    if [ -r "$POD_TOKEN_FILE" ]; then
+        pod_token="$(cat "$POD_TOKEN_FILE")"
+    fi
+    # jq encodes the values safely — prompts can contain any char but we
+    # don't send the prompt here, just the outcome + timestamps + error.
+    local body
+    body=$(jq -n \
+        --arg jn "$JOB_NAME" \
+        --arg sa "$STARTED_AT" \
+        --arg fa "$finished_at" \
+        --arg oc "$outcome" \
+        --arg er "$err" \
+        '{jobName:$jn, startedAt:$sa, finishedAt:$fa, outcome:$oc, error:$er}')
+    curl -sS --max-time 5 \
+        -H "Authorization: Bearer $pod_token" \
+        -H "Content-Type: application/json" \
+        -X POST \
+        "$CONTROL_PLANE_URL/internal/agents/$AGENT_NAME/job-events" \
+        -d "$body" >/dev/null 2>&1 || true
+}
+
+# ---- Session-lock guard ----
+# If the session-restart handler (#128) holds the session lock, defer.
+if [ -f "$SESSION_LOCK" ] && ! flock -n "$SESSION_LOCK" true 2>/dev/null; then
+    emit_event "skipped" "session_restart_in_progress"
+    exit 0
+fi
+
+# ---- Prompt source ----
+# In stdin mode the prompt body is piped in by the caller (the inbound-
+# prompts receiver). We slurp the whole thing into PROMPT_BODY up front so
+# downstream branching doesn't have to worry about stdin state. In file
+# mode we leave PROMPT_BODY empty and dispatch() will cat the file at
+# send time, preserving the prior behavior byte-for-byte.
+PROMPT_BODY=""
+if [ "$STDIN_MODE" = true ]; then
+    # `cat` with no args reads stdin until EOF. Command-substitution strips
+    # trailing newlines, which matches the prior file-mode behavior — the
+    # final Enter keystroke supplies the submit newline either way.
+    PROMPT_BODY="$(cat)"
+    if [ -z "$PROMPT_BODY" ]; then
+        emit_event "skipped" "empty_prompt"
+        exit 0
+    fi
+else
+    if [ ! -r "$PROMPT_FILE" ]; then
+        emit_event "failed" "prompt_file_missing"
+        exit 0
+    fi
+fi
+
+# ---- tmux session presence ----
+# Claude Code runs inside `tmux new-session -d -s agent`. If the session
+# isn't up yet (first boot still bootstrapping, or agent is mid-crash),
+# record failed and bail. Don't queue — the next cron tick is the retry.
+if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    emit_event "failed" "tmux_session_absent"
+    exit 0
+fi
+
+# ---- Dispatch ----
+dispatch() {
+    # Keep the prompt in data channels (stdin → tmux buffer), never shell code,
+    # then deliver Enter separately so the interactive runtime submits it.
+    local prompt
+    if [ "$STDIN_MODE" = true ]; then
+        prompt="$PROMPT_BODY"
+    else
+        prompt="$(cat "$PROMPT_FILE")"
+    fi
+    # Use tmux's explicit bracketed-paste path instead of a rapid send-keys
+    # burst. Codex's TUI can keep a heuristic paste burst open long enough to
+    # absorb the following Enter, leaving the entire inbound envelope stranded
+    # in its editor. paste-buffer -p supplies an unambiguous paste-end marker.
+    local buffer_name="kyber-$JOB_NAME"
+    if ! printf '%s' "$prompt" | tmux load-buffer -b "$buffer_name" -; then
+        emit_event "failed" "tmux_load_buffer_failed"
+        return 1
+    fi
+    if ! tmux paste-buffer -p -d -b "$buffer_name" -t "$TMUX_SESSION"; then
+        tmux delete-buffer -b "$buffer_name" 2>/dev/null || true
+        emit_event "failed" "tmux_paste_buffer_failed"
+        return 1
+    fi
+    # Let the TUI render the completed bracketed paste before submitting.
+    sleep 0.1
+    if ! tmux send-keys -t "$TMUX_SESSION" Enter; then
+        emit_event "failed" "tmux_send_keys_enter_failed"
+        return 1
+    fi
+    # Drop a completion marker for NAMED scheduled jobs so the Stop hook can
+    # notify the operator when the agent finishes (kyber#627). Excludes inbound
+    # dispatches (--stdin): those are event-driven, not operator crons. The
+    # marker name is the job name; its content is the started-at timestamp.
+    # Best-effort — a marker-write failure must not fail an otherwise-good
+    # dispatch, so it never flips the outcome.
+    if [ "$STDIN_MODE" = false ]; then
+        if mkdir -p "$CRON_COMPLETE_DIR" 2>/dev/null; then
+            printf '%s\n' "$STARTED_AT" > "$CRON_COMPLETE_DIR/$JOB_NAME" 2>/dev/null || true
+        fi
+    fi
+    emit_event "success"
+    return 0
+}
+
+if [ "$EXCLUSIVE" = true ]; then
+    # flock -n: exit immediately with 1 if the lock is held. The flock holder
+    # runs `dispatch` while holding the lock; any overlapping fire sees the
+    # held lock and records outcome=skipped.
+    (
+        flock -n 9 || exit 42
+        dispatch
+    ) 9>"$JOB_LOCK"
+    rc=$?
+    if [ "$rc" = 42 ]; then
+        emit_event "skipped" "exclusive_lock_held"
+    fi
+else
+    dispatch
+fi
+
+exit 0

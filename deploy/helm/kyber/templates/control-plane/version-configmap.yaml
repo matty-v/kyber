@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "kyber.fullname" . }}-control-plane-version
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+data:
+  # Rendered as a file at /etc/kyber/chart-version inside the control-plane
+  # container via the Deployment's volume mount. Read once at boot by
+  # readChartVersion() in cmd/control-plane/version.go and surfaced through
+  # GET /api/v1/version for the PWA Diagnostics card.
+  chart-version: {{ .Chart.Version | quote }}

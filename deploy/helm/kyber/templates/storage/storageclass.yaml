@@ -1,0 +1,26 @@
+{{- if .Values.storage.gcePD.enabled }}
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storage.gcePD.storageClassName }}
+  annotations:
+    # StorageClass.parameters is immutable — k8s rejects in-place patches.
+    # Replace=true tells ArgoCD to delete + recreate the SC during sync
+    # whenever a parameter changes (e.g. type, replication-type), so chart
+    # bumps don't fail with "Forbidden: updates to parameters are forbidden"
+    # and require a manual `kubectl delete sc` to unstick. Safe — the SC
+    # itself holds no data; existing bound PVCs are unaffected by SC
+    # delete/recreate. See kyber-gcp incident 2026-04-26 (kyber-deploy#18).
+    argocd.argoproj.io/sync-options: Replace=true
+provisioner: pd.csi.storage.gke.io
+# Delete lets PVC deletion cascade to PV deletion and (via the CSI driver)
+# to the underlying GCE disk. Retain was the earlier default and was the
+# root cause of kyber#152 — orphan GCE disks piling up on every agent
+# delete. Agent PVCs are per-agent ephemeral workdirs; there is no value
+# in retaining the underlying disk after the Agent CR is gone.
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+parameters:
+  type: {{ .Values.storage.gcePD.diskType }}
+  replication-type: {{ .Values.storage.gcePD.replicationType }}
+{{- end }}

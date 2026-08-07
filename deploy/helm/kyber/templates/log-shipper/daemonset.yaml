@@ -1,0 +1,122 @@
+{{- if .Values.logShipper.enabled }}
+{{- if not .Values.logShipper.bucket }}
+{{- fail "logShipper.enabled is true but logShipper.bucket is empty — set it to the archive bucket (GCS: Terraform output agent_log_bucket_name; S3/MinIO: the bucket name)." }}
+{{- end }}
+{{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+{{- if not .Values.logShipper.endpoint }}
+{{- fail "logShipper.backend is s3 but logShipper.endpoint is empty — set it to the S3/MinIO endpoint URL (scheme selects TLS)." }}
+{{- end }}
+{{- if not .Values.logShipper.existingCredentialsSecret }}
+{{- fail "logShipper.backend is s3 but logShipper.existingCredentialsSecret is empty — set it to a Secret holding access-key-id/secret-access-key." }}
+{{- end }}
+{{- end }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ include "kyber.fullname" . }}-log-shipper
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: log-shipper
+spec:
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: log-shipper
+  updateStrategy:
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: log-shipper
+      annotations:
+        # Roll the DaemonSet when the Vector config changes.
+        checksum/config: {{ include (print $.Template.BasePath "/log-shipper/configmap.yaml") . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "kyber.fullname" . }}-log-shipper
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Run on every node (including control-plane nodes) so no agent's stdout
+      # is missed. Unlike the node-agent, the shipper needs NO privileged,
+      # hostPID, or hostNetwork — it only reads host log files read-only.
+      tolerations:
+        {{- toYaml .Values.logShipper.tolerations | nindent 8 }}
+      containers:
+        - name: log-shipper
+          image: {{ .Values.logShipper.image.repository }}:{{ .Values.logShipper.image.tag }}
+          imagePullPolicy: {{ .Values.logShipper.image.pullPolicy }}
+          args: ["--config", "/etc/vector/vector.yaml"]
+          # Run as root to read root-owned /var/log/pods; no other host
+          # privilege (no privileged, no hostPID/hostNetwork).
+          securityContext:
+            runAsUser: 0
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # kubernetes_logs filters to pods on this node via VECTOR_SELF_NODE_NAME.
+            - name: VECTOR_SELF_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            # Destination bucket — referenced by vector.yaml (both backends).
+            - name: KYBER_LOG_BUCKET
+              value: {{ .Values.logShipper.bucket | quote }}
+            {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+            # S3/MinIO sink config. Endpoint scheme (http/https) selects TLS.
+            - name: KYBER_LOG_S3_ENDPOINT
+              value: {{ .Values.logShipper.endpoint | quote }}
+            - name: KYBER_LOG_S3_REGION
+              value: {{ .Values.logShipper.region | quote }}
+            # Writer credentials — least-privilege put-object on the bucket.
+            # Sourced from a Secret; never committed to values/git. (kyber#437.)
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.logShipper.existingCredentialsSecret | quote }}
+                  key: access-key-id
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.logShipper.existingCredentialsSecret | quote }}
+                  key: secret-access-key
+            {{- end }}
+          resources:
+            {{- toYaml .Values.logShipper.resources | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/vector
+              readOnly: true
+            # Pod logs (the real files) + the /var/log/containers symlinks that
+            # point into them — both read-only.
+            - name: var-log-pods
+              mountPath: /var/log/pods
+              readOnly: true
+            - name: var-log-containers
+              mountPath: /var/log/containers
+              readOnly: true
+            # Vector checkpoints + disk buffer. hostPath so a shipper restart
+            # resumes where it left off instead of re-shipping the node's logs.
+            - name: data-dir
+              mountPath: /vector-data-dir
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "kyber.fullname" . }}-log-shipper
+        - name: var-log-pods
+          hostPath:
+            path: /var/log/pods
+        - name: var-log-containers
+          hostPath:
+            path: /var/log/containers
+        - name: data-dir
+          hostPath:
+            path: /var/lib/kyber-log-shipper
+            type: DirectoryOrCreate
+      # Non-critical relative to user workloads — schedule best-effort.
+      priorityClassName: system-node-critical
+{{- end }}

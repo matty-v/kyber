@@ -1,0 +1,139 @@
+name: Refresh provider rates
+
+# Auto-refresh bot for the vendored pricing dataset (kyber#487 v2).
+#
+# Pricing is the build-time vendored projection of LiteLLM's public model-prices
+# feed (deploy/helm/kyber/files/provider-rates.generated.yaml). This job pins the
+# latest upstream commit, regenerates the dataset via cmd/fetch-provider-rates,
+# and opens a PR when the prices changed OR the snapshot is approaching the CI
+# freshness threshold — so every price change lands behind Chewie's review (the
+# third party never enters the runtime path) and the snapshot never goes stale
+# enough to red the `preflight-model-pricing` gate on main.
+#
+# Cadence: weekly (Mondays 06:00 UTC) + manual dispatch. Freshness CI fails at
+# 30 days; refreshing the stamp at >21 days keeps a margin.
+#
+# TOKEN: a GITHUB_TOKEN-opened PR does NOT trigger CI (GitHub limitation), so the
+# PR is opened with a minted GitHub App token (mirrors auto-publish-pwa-views.yml)
+# so test.yml actually runs on the bot PR.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+    inputs:
+      force:
+        description: 'Open a PR even if nothing changed'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  FEED_REPO: BerriAI/litellm
+  FEED_FILE: model_prices_and_context_window.json
+  DATASET: deploy/helm/kyber/files/provider-rates.generated.yaml
+  META: deploy/helm/kyber/files/provider-rates.generated.meta
+  REFRESH_AFTER_DAYS: '21'
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Mint a fresh GitHub App token
+        id: app_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Resolve the latest upstream commit for the feed file
+        id: pin
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA=$(gh api "/repos/${FEED_REPO}/commits?path=${FEED_FILE}&per_page=1" --jq '.[0].sha')
+          [ -n "$SHA" ] || { echo "::error::could not resolve upstream commit"; exit 1; }
+          echo "sha=${SHA}" >> "$GITHUB_OUTPUT"
+          echo "url=https://raw.githubusercontent.com/${FEED_REPO}/${SHA}/${FEED_FILE}" >> "$GITHUB_OUTPUT"
+          echo "Pinned ${FEED_REPO}@${SHA}"
+
+      - name: Regenerate the vendored dataset
+        run: |
+          set -euo pipefail
+          go run ./cmd/fetch-provider-rates \
+            -url "${{ steps.pin.outputs.url }}" \
+            -commit "${{ steps.pin.outputs.sha }}" \
+            -out "${DATASET}" \
+            -meta "${META}"
+
+      - name: Decide whether to open a PR
+        id: decide
+        run: |
+          set -euo pipefail
+          # Price changes = non-comment diff lines in the dataset (the header
+          # carries the fetch timestamp/commit, which change every run).
+          PRICE_DIFF=$(git diff -- "${DATASET}" \
+            | grep -E '^[+-]' | grep -vE '^[+-]{3}' | grep -vE '^[+-][[:space:]]*#' | wc -l | tr -d ' ')
+          # Age of the stamp currently on main.
+          OLD_TS=$(git show "HEAD:${META}" 2>/dev/null | sed -nE 's/^fetched_at:[[:space:]]*//p' | head -1 || true)
+          AGE_DAYS=9999
+          if [ -n "${OLD_TS}" ]; then
+            AGE_DAYS=$(( ( $(date -u +%s) - $(date -u -d "${OLD_TS}" +%s) ) / 86400 ))
+          fi
+          FORCE='${{ github.event.inputs.force }}'
+          echo "price_diff=${PRICE_DIFF} age_days=${AGE_DAYS} force=${FORCE}"
+          if [ "${PRICE_DIFF}" -gt 0 ] || [ "${AGE_DAYS}" -gt "${REFRESH_AFTER_DAYS}" ] || [ "${FORCE}" = "true" ]; then
+            echo "open=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "open=false" >> "$GITHUB_OUTPUT"
+            echo "No price change and snapshot is fresh (${AGE_DAYS}d) — nothing to do."
+          fi
+          echo "price_diff=${PRICE_DIFF}" >> "$GITHUB_OUTPUT"
+
+      - name: Open / update the refresh PR
+        if: steps.decide.outputs.open == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+          SHA: ${{ steps.pin.outputs.sha }}
+          PRICE_DIFF: ${{ steps.decide.outputs.price_diff }}
+        run: |
+          set -euo pipefail
+          BRANCH="bot/refresh-provider-rates"
+          SHORT="${SHA:0:12}"
+          git config user.name "kyber-bot"
+          git config user.email "kyber-bot@users.noreply.github.com"
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          git checkout -B "${BRANCH}"
+          git add "${DATASET}" "${META}"
+          git commit \
+            -m "chore(metrics): refresh vendored provider rates from LiteLLM@${SHORT}" \
+            -m "Auto-generated by .github/workflows/refresh-provider-rates.yml (cmd/fetch-provider-rates). Price-line changes: ${PRICE_DIFF}. Review the diff before merging — this is the human-review gate keeping the third-party pricing feed out of kyber's runtime path (kyber#487)."
+          git push -f origin "${BRANCH}"
+          if gh pr view "${BRANCH}" >/dev/null 2>&1; then
+            echo "PR already open for ${BRANCH} — updated the branch."
+            exit 0
+          fi
+          {
+            printf 'Automated refresh of the vendored pricing dataset from LiteLLM `%s` @ `%s`.\n\n' "${FEED_FILE}" "${SHA}"
+            printf -- '- Price-line changes: %s (0 = freshness-stamp refresh only).\n' "${PRICE_DIFF}"
+            printf -- '- Source: %s (MIT). Projected to per-MTok `ProviderRates` by `cmd/fetch-provider-rates` with sanity bounds.\n\n' "${FEED_REPO}"
+            printf '**Review the price diff** — this PR is the human-review gate (kyber#487): the third-party feed never enters the runtime path; a poisoned/implausible value is caught here, and anything uncovered renders the fail-loud `unpriced` badge, never a fake $0.00.\n'
+          } > /tmp/pr-body.md
+          gh pr create \
+            --base main --head "${BRANCH}" \
+            --title "chore(metrics): refresh vendored provider rates (LiteLLM@${SHORT})" \
+            --body-file /tmp/pr-body.md \
+            --reviewer chewie

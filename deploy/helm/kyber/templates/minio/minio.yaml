@@ -1,0 +1,215 @@
+{{- if .Values.minio.enabled }}
+{{- /*
+  Optional in-cluster MinIO (kyber#437) — an S3-compatible object store for the
+  durable log archive on clusters with no cloud object store.
+  Single-node Deployment + PVC + Service + Secret, plus a one-shot bootstrap Job
+  that creates the bucket and applies a retention lifecycle matching the GCS
+  default. Cluster-internal only: NO Ingress is created and the Service is
+  ClusterIP, so the MinIO API/console is never publicly reachable.
+
+  Credentials: the root access/secret key live in a chart-created Secret
+  (Values.minio.credentialsSecret). The secret key is taken from
+  minio.rootPassword, or a randAlphaNum fallback stabilised by lookup (same
+  pattern as the postgres Secret). For ArgoCD/production, pre-create the Secret
+  and reference it instead.
+*/}}
+{{- /* existingSecret: a pre-created Secret (kyber-deploy) holding the root
+       access/secret key. When set, the chart does NOT render the Secret — it
+       references the existing one. This avoids the lookup+randAlphaNum fallback
+       regenerating the password on every ArgoCD sync (repo-server has no cluster
+       access → lookup fails → churn), the exact trap fixed for postgres. */}}
+{{- $secretName := .Values.minio.existingSecret | default .Values.minio.credentialsSecret }}
+{{- $existing := lookup "v1" "Secret" (include "kyber.namespace" .) $secretName }}
+{{- $rootUser := .Values.minio.rootUser | default "kyber" }}
+{{- $rootPassword := "" }}
+{{- if $existing }}
+  {{- $rootPassword = index $existing.data "secret-access-key" | b64dec }}
+  {{- $rootUser = index $existing.data "access-key-id" | b64dec }}
+{{- else if .Values.minio.rootPassword }}
+  {{- $rootPassword = .Values.minio.rootPassword }}
+{{- else }}
+  {{- $rootPassword = randAlphaNum 32 }}
+{{- end }}
+{{- if not .Values.minio.existingSecret }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+type: Opaque
+data:
+  # Key names match what the log-shipper (writer) and control-plane (reader)
+  # read via secretKeyRef — see logShipper.existingCredentialsSecret.
+  access-key-id: {{ $rootUser | b64enc | quote }}
+  secret-access-key: {{ $rootPassword | b64enc | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kyber.fullname" . }}-minio
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.minio.persistence.size | quote }}
+  {{- if .Values.minio.persistence.storageClassName }}
+  storageClassName: {{ .Values.minio.persistence.storageClassName | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kyber.fullname" . }}-minio
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  replicas: 1
+  # Single-node: the PVC is RWO, so never run two replicas against one volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: minio
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: minio
+          image: {{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: access-key-id
+            - name: MINIO_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: secret-access-key
+          ports:
+            - name: api
+              containerPort: 9000
+            - name: console
+              containerPort: 9001
+          readinessProbe:
+            httpGet:
+              path: /minio/health/ready
+              port: api
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.minio.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "kyber.fullname" . }}-minio
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kyber.fullname" . }}-minio
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+spec:
+  # ClusterIP only — the object store is reachable on the cluster network and is
+  # never exposed via Ingress (kyber#437 security: no public attack surface).
+  type: ClusterIP
+  selector:
+    {{- include "kyber.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: minio
+  ports:
+    - name: api
+      port: 9000
+      targetPort: api
+    - name: console
+      port: 9001
+      targetPort: console
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "kyber.fullname" . }}-minio-bootstrap
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: minio-bootstrap
+  annotations:
+    # Run after the Service/Deployment exist; re-run on upgrade so a changed
+    # retention window is reapplied. mc operations are idempotent.
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: minio-bootstrap
+    spec:
+      restartPolicy: OnFailure
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: mc
+          image: {{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}
+          imagePullPolicy: {{ .Values.minio.image.pullPolicy }}
+          env:
+            - name: MINIO_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: access-key-id
+            - name: MINIO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: secret-access-key
+          command: ["/bin/sh", "-c"]
+          args:
+            - |
+              set -e
+              ENDPOINT="http://{{ include "kyber.fullname" . }}-minio.{{ include "kyber.namespace" . }}.svc:9000"
+              echo "waiting for MinIO at $ENDPOINT ..."
+              until mc alias set kyber "$ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY" >/dev/null 2>&1; do
+                sleep 2
+              done
+              # Create the archive bucket (idempotent).
+              mc mb --ignore-existing kyber/{{ .Values.minio.bucket }}
+              # Bounded-retention parity with the GCS lifecycle (kyber#437 AC):
+              # expire objects older than retentionDays so durable logs don't
+              # accumulate unbounded on local clusters.
+              mc ilm rule add kyber/{{ .Values.minio.bucket }} --expire-days "{{ .Values.minio.retentionDays }}" \
+                || mc ilm add --expiry-days "{{ .Values.minio.retentionDays }}" kyber/{{ .Values.minio.bucket }} \
+                || true
+              echo "bootstrap complete: bucket {{ .Values.minio.bucket }}, retention {{ .Values.minio.retentionDays }}d"
+{{- end }}

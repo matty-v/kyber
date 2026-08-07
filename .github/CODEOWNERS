@@ -1,0 +1,7 @@
+# Pricing data feed — vendored from LiteLLM by the auto-refresh bot (kyber#487, arch A).
+# The weekly refresh PR is opened by kyber-app[bot]; require a code-owner review of the
+# price diff before merge. This is the architecture-A human-review gate: it keeps the
+# third-party feed out of the runtime path AND stops plausible-but-wrong prices from
+# shipping silently. The owner approves as matty-v (distinct from the bot author).
+/deploy/helm/kyber/files/provider-rates.generated.yaml @matty-v
+/deploy/helm/kyber/files/provider-rates.generated.meta @matty-v

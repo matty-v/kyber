@@ -1,0 +1,471 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kyber.fullname" . }}-control-plane
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  replicas: {{ .Values.controlPlane.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: control-plane
+    spec:
+      serviceAccountName: {{ include "kyber.fullname" . }}-control-plane
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # Pin the control plane to the k3s control-plane node. Worker nodes
+      # provisioned by the Machine Controller live on the `default` GCP VPC
+      # (not `kyber-small-network`), which means the k3s server cannot
+      # directly reach their kubelet for probes or logs. Until the Machine
+      # Controller places VMs on the same network, the control plane must
+      # land on the server node where the kubelet is reachable.
+      {{- with .Values.controlPlane.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.controlPlane.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: control-plane
+          image: {{ include "kyber.image" (dict "repo" .Values.image.controlPlane.repository "tag" .Values.image.controlPlane.tag) }}
+          imagePullPolicy: {{ .Values.image.controlPlane.pullPolicy }}
+          args:
+            - --metrics-bind-address=:{{ .Values.api.service.metricsPort }}
+            - --leader-elect={{ .Values.controlPlane.leaderElection.enabled }}
+          env:
+            # Namespace where agent pods are created.
+            - name: KYBER_NAMESPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_NAMESPACE
+            # StorageClass applied to new agent PVCs. Empty string means the
+            # cluster's default StorageClass binds the volume (e.g. local-path
+            # on k3s, standard on GKE) — the standalone-friendly choice.
+            - name: KYBER_AGENT_STORAGE_CLASS
+              value: {{ .Values.storage.agentStorageClass | quote }}
+            # Durable transcript-offsets PVC (kyber#467). StorageClass defaults to
+            # empty (cluster default = local-path) on ALL targets — never kyber-pd,
+            # whose 1Gi PD minimum wastes space for sub-1KB line-count checkpoints.
+            - name: KYBER_TRANSCRIPT_OFFSETS_STORAGE_CLASS
+              value: {{ .Values.storage.transcriptOffsets.storageClassName | quote }}
+            - name: KYBER_TRANSCRIPT_OFFSETS_SIZE
+              value: {{ .Values.storage.transcriptOffsets.size | quote }}
+            # API credentials from Secret.
+            # KYBER_API_KEY and KYBER_WEBHOOK_SECRET are already read via os.Getenv in main.go.
+            # The Helm Secret (or existingSecret) mounts them here.
+            - name: KYBER_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.secretName" . }}
+                  key: api-key
+            # The Secret name is also passed as a literal so /api/v1/rotate-api-key
+            # (#143) knows which Secret to patch. The handler returns 503 if this
+            # env var is unset.
+            - name: KYBER_API_KEY_SECRET_NAME
+              value: {{ include "kyber.secretName" . | quote }}
+            - name: KYBER_WEBHOOK_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.secretName" . }}
+                  key: webhook-secret
+                  optional: true
+            # Caller-level authorization (kyber#474). KYBER_API_CALLERS is an
+            # optional `callers` JSON doc on the api-key Secret (scoped keys);
+            # absent ⇒ only the legacy full-scope api-key is accepted (prior
+            # behavior). KYBER_AUTHZ_ENFORCE (default false) gates whether an
+            # under-scoped caller is blocked (403) vs. permissive/audit-only.
+            - name: KYBER_API_CALLERS
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.secretName" . }}
+                  key: callers
+                  optional: true
+            - name: KYBER_AUTHZ_ENFORCE
+              value: {{ .Values.api.authz.enforce | default false | quote }}
+            # Internal-API per-agent authentication (kyber#566). The signing key
+            # mints + verifies pod-tokens on :8082 so an agent can act only on
+            # itself. Delivered out-of-band by Ackbar as the
+            # internalAuth.signingKeySecretName Secret (never committed). optional
+            # so the pod still starts before the key lands — but in that window
+            # main.go fails CLOSED: :8082 refuses to serve (every internal route
+            # 503s) rather than serve unauthenticated, so a missing-key deploy
+            # cannot silently re-open the cross-agent hole. The :8082 gate is
+            # scoped — the control plane's other surfaces keep running. Enforces
+            # normally once the key is present.
+            # KYBER_INTERNAL_AUTH_GRACE is the cutover valve: true accepts-and-logs
+            # unauthenticated calls while the fleet re-rolls onto mounted tokens; it
+            # never softens a cross-identity denial, and a missing key still fails
+            # closed + alerts (kyber#578). GRACE-FIRST: a new rollout defaults true;
+            # the flip to enforce (false) is an explicit, key-verified step
+            # (scripts/preflight-internal-auth-key.sh + Ackbar deploy-review), not an
+            # auto-flip. Back-compat: deploys that pin graceMode explicitly unchanged.
+            - name: KYBER_INTERNAL_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.internalAuth.signingKeySecretName }}
+                  key: {{ .Values.internalAuth.signingKeySecretKey }}
+                  optional: true
+            # toString BEFORE default: Helm's `default` treats the bool false as
+            # empty, so `graceMode | default true` would wrongly flip an explicit
+            # `false` (the existing enforce clusters) to grace. Stringifying first
+            # makes "false" a non-empty value `default` won't override, while an
+            # unset/null key still grace-firsts to "true" (kyber#578 back-compat).
+            - name: KYBER_INTERNAL_AUTH_GRACE
+              value: {{ .Values.internalAuth.graceMode | toString | default "true" | quote }}
+            # k3s credentials for Machine Controller to provision worker nodes.
+            # Only wired when compute.provider != "mock" — a mock provider never
+            # hits the Machine Controller path that reads these, so there's no
+            # reason to force the operator to stub them into api-credentials.
+            {{- if ne .Values.compute.provider "mock" }}
+            - name: KYBER_K3S_JOIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.k3sSecretName" . }}
+                  key: k3s-join-token
+                  optional: true
+            - name: KYBER_K3S_SERVER_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.k3sSecretName" . }}
+                  key: k3s-server-url
+                  optional: true
+            {{- end }}
+            # Platform reservation — carve-out for kube-system / kyber-system / k3s overhead.
+            - name: KYBER_PLATFORM_RESERVATION_CPU
+              value: {{ .Values.controlPlane.platformReservation.cpu | quote }}
+            - name: KYBER_PLATFORM_RESERVATION_MEMORY
+              value: {{ .Values.controlPlane.platformReservation.memory | quote }}
+            - name: KYBER_PLATFORM_RESERVATION_EPHEMERAL_STORAGE
+              value: {{ .Values.controlPlane.platformReservation.ephemeralStorage | default "10Gi" | quote }}
+            # Status sidecar image (kyber#248). Read by the agent reconciler
+            # when injecting the kyber-status-sidecar container into agent
+            # pods, and enforced fleet-wide by the unconditional sidecar-image
+            # convergence (kyber#358). The tag is REQUIRED: a missing pin must
+            # fail the render, never fall back to Chart.AppVersion. Since
+            # kyber#457 appVersion is a real release tag (e.g. 1.8.0), so a
+            # fallback would resolve to a real-looking but wrong image SILENTLY
+            # (pre-#457 it 404'd on the unpublished :0.1.0 placeholder) — either
+            # way catastrophic: convergence deletes every running agent pod to
+            # chase it, killing agents mid-session (R2-D2 crash 2026-05-29).
+            - name: KYBER_STATUS_SIDECAR_IMAGE
+              value: "{{ .Values.image.statusSidecar.repository }}:{{ required "image.statusSidecar.tag must be set — pin it via ArgoCD Image Updater or release.yml. Refusing the Chart.AppVersion fallback (chart/release version, not a per-image tag); enforced fleet-wide by sidecar convergence (kyber#358, #457)." .Values.image.statusSidecar.tag }}"
+            {{- with .Values.image.discordSidecar }}
+            {{- if .tag }}
+            # KYBER_DISCORD_SIDECAR_IMAGE (kyber#646). OPTIONAL — rendered only
+            # when a tag is pinned. Empty tag means no Discord support on this
+            # install and the controller skips the sidecar injection entirely.
+            - name: KYBER_DISCORD_SIDECAR_IMAGE
+              value: "{{ .repository }}:{{ .tag }}"
+            {{- end }}
+            {{- end }}
+            {{- with .Values.image.telegramSidecar }}
+            {{- if .tag }}
+            - name: KYBER_TELEGRAM_SIDECAR_IMAGE
+              value: "{{ .repository }}:{{ .tag }}"
+            {{- end }}
+            {{- end }}
+            {{- with .Values.telegram.defaultAllowedUserIds }}
+            - name: KYBER_TELEGRAM_DEFAULT_ALLOWED_USER_IDS
+              value: "{{ . }}"
+            {{- end }}
+            # Agent runtime image (kyber#360 Cause D). Read by the Claude
+            # Code adapter at construction; previously hardcoded to
+            # ":latest" in pkg/runtimes/claudecode/adapter.go, which
+            # silently ignored the chart's image.claudeCode.tag and let
+            # the cluster drift onto a stale image that bypassed the
+            # sidecar forwarder. Mirrors the KYBER_STATUS_SIDECAR_IMAGE
+            # block above; tag REQUIRED, no Chart.AppVersion fallback (since
+            # kyber#457 appVersion is a real release tag — a fallback would
+            # resolve silently to the wrong image rather than 404).
+            - name: KYBER_AGENT_RUNTIME_IMAGE
+              value: "{{ .Values.image.claudeCode.repository }}:{{ required "image.claudeCode.tag must be set — pin it via ArgoCD Image Updater or release.yml. Refusing the Chart.AppVersion fallback (chart/release version, not a per-image tag); see kyber#358, #457." .Values.image.claudeCode.tag }}"
+            {{ if .Values.image.codex.tag }}
+            - name: KYBER_CODEX_RUNTIME_IMAGE
+              value: "{{ .Values.image.codex.repository }}:{{ .Values.image.codex.tag }}"
+            {{ end }}
+            # Sidecar OTLP endpoint (kyber#256). The reconciler forwards this
+            # to each agent pod's status-sidecar container as KYBER_OTEL_ENDPOINT
+            # so the sidecar can push per-agent metrics. Default empty (opt-in)
+            # since kyber#358 — the kyber#343 heartbeat path already carries
+            # every in-tree Metrics tab consumer; OTel push is for external
+            # collectors only. Coalesces metrics.otelEndpoint (preferred) over
+            # telemetry.otlpEndpoint and the deprecated controlPlane.otelEndpoint.
+            # When all three are empty the reconciler omits the env var on the
+            # sidecar entirely (initOTel short-circuits — no DNS, no failed uploads).
+            - name: KYBER_SIDECAR_OTEL_ENDPOINT
+              value: {{ coalesce .Values.metrics.otelEndpoint .Values.telemetry.otlpEndpoint .Values.controlPlane.otelEndpoint | default "" | quote }}
+            # Max simultaneous in-flight windowed log reads (kyber#463). Bounds
+            # aggregate read memory + CPU so concurrent large transcript/archive
+            # reads can't crash the control plane; over-cap reads get 429.
+            - name: KYBER_MAX_CONCURRENT_READS
+              value: {{ .Values.controlPlane.maxConcurrentReads | quote }}
+            # Transcript-pruner retention (kyber#471). Bounds on-PVC transcript
+            # backlog growth via a per-agent pruner sidecar. Enabled by default
+            # (Ackbar deploy review) with a conservative 7-day archived-safety
+            # threshold; the active session file is never pruned and the default
+            # path carries no object-store credentials. Absent block ⇒ disabled.
+            - name: KYBER_TRANSCRIPT_RETENTION_ENABLED
+              value: {{ .Values.transcripts.retention.enabled | quote }}
+            - name: KYBER_TRANSCRIPT_RETENTION_MAX_AGE_DAYS
+              value: {{ .Values.transcripts.retention.maxAgeDays | quote }}
+            - name: KYBER_TRANSCRIPT_RETENTION_MAX_BYTES_PER_AGENT
+              value: {{ .Values.transcripts.retention.maxBytesPerAgent | quote }}
+            - name: KYBER_TRANSCRIPT_RETENTION_PRUNE_INTERVAL_MINUTES
+              value: {{ .Values.transcripts.retention.pruneIntervalMinutes | quote }}
+            - name: KYBER_TRANSCRIPT_RETENTION_ARCHIVE_CROSSCHECK
+              value: {{ .Values.transcripts.retention.archiveCrosscheck | quote }}
+            # PostgreSQL DSN — first-party StatefulSet (postgres:16-alpine).
+            {{- if .Values.postgresql.enabled }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "kyber.postgresSecretName" . }}
+                  key: postgres-password
+            - name: KYBER_POSTGRES_URL
+              value: "postgres://{{ .Values.postgresql.auth.username }}:$(POSTGRES_PASSWORD)@{{ .Release.Name }}-postgres:5432/{{ .Values.postgresql.auth.database }}?sslmode=disable"
+            {{- else if .Values.postgresql.externalUrl }}
+            - name: KYBER_POSTGRES_URL
+              value: {{ .Values.postgresql.externalUrl | quote }}
+            {{- end }}
+            # Redis URL — first-party StatefulSet (redis:7-alpine), no auth (internal network).
+            {{- if .Values.redis.enabled }}
+            - name: KYBER_REDIS_URL
+              value: "redis://{{ .Release.Name }}-redis:6379"
+            {{- else if .Values.redis.externalUrl }}
+            - name: KYBER_REDIS_URL
+              value: {{ .Values.redis.externalUrl | quote }}
+            {{- end }}
+            # Public URL for Telegram webhook registration.
+            {{- if .Values.api.publicURL }}
+            - name: KYBER_PUBLIC_URL
+              value: {{ .Values.api.publicURL | quote }}
+            {{- end }}
+            # Durable log archive read path (kyber#431/#437). The backend is
+            # provider-agnostic: gcs (default) reads via node ADC; s3 reads any
+            # S3-compatible store (MinIO/AWS) via Secret creds. The log-shipper
+            # writes the same bucket/layout. Required config absent → source=archive
+            # returns 503 and the live kubelet tail is unaffected.
+            - name: KYBER_LOG_ARCHIVE_BACKEND
+              value: {{ .Values.logShipper.backend | default "gcs" | quote }}
+            {{- if .Values.logShipper.bucket }}
+            - name: KYBER_LOG_ARCHIVE_BUCKET
+              value: {{ .Values.logShipper.bucket | quote }}
+            {{- end }}
+            {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+            - name: KYBER_LOG_ARCHIVE_ENDPOINT
+              value: {{ .Values.logShipper.endpoint | quote }}
+            - name: KYBER_LOG_ARCHIVE_REGION
+              value: {{ .Values.logShipper.region | quote }}
+            - name: KYBER_LOG_ARCHIVE_USE_TLS
+              value: {{ .Values.logShipper.useTLS | quote }}
+            # Reader credentials — least-privilege get/list on agents/*. Sourced
+            # from a Secret; never committed to values/git. (kyber#437 security.)
+            - name: KYBER_LOG_ARCHIVE_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "logShipper.backend=s3 requires logShipper.existingCredentialsSecret (Secret with access-key-id/secret-access-key)" .Values.logShipper.existingCredentialsSecret }}
+                  key: access-key-id
+            - name: KYBER_LOG_ARCHIVE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "logShipper.backend=s3 requires logShipper.existingCredentialsSecret (Secret with access-key-id/secret-access-key)" .Values.logShipper.existingCredentialsSecret }}
+                  key: secret-access-key
+            {{- end }}
+            # Compute adapter selection.
+            - name: KYBER_COMPUTE_PROVIDER
+              value: {{ .Values.compute.provider | default "mock" | quote }}
+            {{- if eq (.Values.compute.provider | default "mock") "gce" }}
+            - name: KYBER_GCE_PROJECT
+              value: {{ .Values.compute.gce.project | quote }}
+            {{- if .Values.compute.gce.network }}
+            - name: KYBER_GCE_NETWORK
+              value: {{ .Values.compute.gce.network | quote }}
+            {{- end }}
+            {{- if .Values.compute.gce.subnet }}
+            - name: KYBER_GCE_SUBNET
+              value: {{ .Values.compute.gce.subnet | quote }}
+            {{- end }}
+            {{- if .Values.compute.gce.vmTypeCatalog }}
+            - name: KYBER_GCE_VM_TYPE_CATALOG
+              value: {{ .Values.compute.gce.vmTypeCatalog | toJson | quote }}
+            {{- end }}
+            {{- end }}
+            # Telemetry — OTEL exporter config.
+            - name: KYBER_TELEMETRY_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TELEMETRY_ENABLED
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: OTEL_EXPORTER_OTLP_ENDPOINT
+            # Internal URL for this control-plane Service (used by agent pods).
+            # Passed to the controller so it can inject it into agent pod envs and
+            # init-container args — avoids hardcoding the Helm-rendered Service name.
+            - name: KYBER_CONTROL_PLANE_INTERNAL_URL
+              value: "http://{{ include "kyber.fullname" . }}-control-plane.{{ include "kyber.namespace" . }}.svc:{{ .Values.api.service.internalPort }}"
+            - name: KYBER_ALERT_WEBHOOK_URL
+              value: {{ .Values.telemetry.alertWebhookUrl | quote }}
+            # GitHub identity-repo auto-create owner.
+            # Used when spec.identityRepo.template is set on an Agent.
+            {{- if .Values.identityRepo.defaultOwner }}
+            - name: KYBER_IDENTITY_REPO_OWNER
+              value: {{ .Values.identityRepo.defaultOwner | quote }}
+            {{- end }}
+            # Fleet defaults ConfigMap name — read by the reconciler to
+            # resolve agent.Spec.Model when it's empty, and by the API
+            # handler at /api/v1/fleet-defaults so the PWA can GET/PUT
+            # without hardcoding the name. See kyber#376 (PR-B of #374).
+            {{- if .Values.controlPlane.fleetDefaults.configMapName }}
+            - name: KYBER_FLEET_DEFAULTS_CONFIGMAP
+              value: {{ .Values.controlPlane.fleetDefaults.configMapName | quote }}
+            {{- end }}
+            # Model context-window override ConfigMap (kyber#378 / PR-D).
+            # Read by pkg/contextwindowmap.Resolver, which feeds the
+            # detection poller's snapshot enrichment AND the Claude Code
+            # adapter's KYBER_MODEL_CONTEXT_WINDOW env var. Unset → every
+            # model falls back to tokenreport.LimitFor (knownModels or
+            # 200K floor).
+            {{- if and .Values.runtimeDetect.enabled .Values.runtimeDetect.contextWindowsConfigMapName }}
+            - name: KYBER_MODEL_CONTEXT_WINDOWS_CONFIGMAP
+              value: {{ .Values.runtimeDetect.contextWindowsConfigMapName | quote }}
+            {{- end }}
+            # Agent-job timezone — drives the CRON_TZ line written into each
+            # agent's rendered crontab so spec.jobs[].schedule is interpreted
+            # in the operator's local TZ, not UTC. See kyber#177.
+            # `with` guards against an override that nulls the runtime block
+            # entirely; without it `.Values.runtime.timezone` nil-derefs.
+            {{- with .Values.runtime }}
+            {{- if .timezone }}
+            - name: KYBER_AGENT_TIMEZONE
+              value: {{ .timezone | quote }}
+            {{- end }}
+            {{- end }}
+            # Surfaced via /api/v1/cluster-info; populates the PWA header.
+            - name: KYBER_CLUSTER_NAME
+              value: {{ .Values.controlPlane.clusterName | quote }}
+            # CORS allowlist for cross-origin clients (holocron). Comma-
+            # separated list; empty disables CORS entirely. Same allowlist
+            # governs REST/SSE (via corsMiddleware) and WebSocket (via the
+            # upgrader's CheckOrigin).
+            - name: KYBER_CORS_ALLOWED_ORIGINS
+              value: {{ join "," .Values.controlPlane.cors.allowedOrigins | quote }}
+            # Provider rates file path — read by metrics.LoadRateTable at boot
+            # to populate the Token Usage Cost column. Gated on the ConfigMap
+            # being wired below; absent when metrics.tokenRatesConfigMapName
+            # is empty so LoadRateTable("") returns an empty table and costs
+            # fail soft to $0 (the documented disabled-state contract).
+            {{- if .Values.metrics.tokenRatesConfigMapName }}
+            - name: KYBER_METRICS_TOKEN_RATES_PATH
+              value: /etc/kyber-rates/provider-rates.yaml
+            {{- end }}
+            {{- if .Values.runtimeDetect.enabled }}
+            # Runtime detection (kyber#375). Poller refreshes the npm + Anthropic
+            # caches on this cadence; the cap bounds how many CC versions /available
+            # returns to the PWA picker. The Secret named here holds the operator-
+            # supplied Anthropic API key — patched via PUT /api/v1/settings/anthropic-key.
+            - name: KYBER_RUNTIMEDETECT_ENABLED
+              value: "true"
+            - name: KYBER_RUNTIMEDETECT_CADENCE_SECONDS
+              value: {{ .Values.runtimeDetect.cadenceSeconds | quote }}
+            - name: KYBER_RUNTIMEDETECT_VERSION_LIMIT
+              value: {{ .Values.runtimeDetect.versionLimit | quote }}
+            - name: KYBER_ANTHROPIC_KEY_SECRET_NAME
+              value: {{ include "kyber.anthropicKeySecretName" . | quote }}
+            - name: KYBER_ANTHROPIC_KEY_PATH
+              value: "/etc/kyber-anthropic-key/api-key"
+            {{- else }}
+            - name: KYBER_RUNTIMEDETECT_ENABLED
+              value: "false"
+            {{- end }}
+            {{- with .Values.controlPlane.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.api.service.port }}
+              protocol: TCP
+            - name: internal
+              containerPort: {{ .Values.api.service.internalPort }}
+              protocol: TCP
+            - name: metrics
+              containerPort: {{ .Values.api.service.metricsPort }}
+              protocol: TCP
+            - name: probes
+              containerPort: 8081
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: probes
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            # Defense-in-depth for the read-concurrency cap (kyber#463): the probe
+            # listens on a separate :8081 mux but shares the process scheduler, so
+            # a brief CPU spike from a heavy read burst could time out the default
+            # 1s probe and trip the default 3-failure SIGKILL. The code-side
+            # in-flight cap (controlPlane.maxConcurrentReads) is the real fix;
+            # these widen the margin so a transient spike can't kill the CP.
+            timeoutSeconds: 2
+            failureThreshold: 4
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: probes
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          resources:
+            {{- toYaml .Values.controlPlane.resources | nindent 12 }}
+          volumeMounts:
+            - name: chart-version
+              mountPath: /etc/kyber
+              readOnly: true
+            {{- if .Values.metrics.tokenRatesConfigMapName }}
+            - name: provider-rates
+              mountPath: /etc/kyber-rates
+              readOnly: true
+            {{- end }}
+            {{- if .Values.runtimeDetect.enabled }}
+            # Anthropic API key (kyber#375). Mounted RO so a `PUT
+            # /api/v1/settings/anthropic-key` rotation propagates to the
+            # next poll cycle (kubelet refreshes Secret mounts within ~60s)
+            # without a control-plane pod restart.
+            - name: anthropic-key
+              mountPath: /etc/kyber-anthropic-key
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: chart-version
+          configMap:
+            name: {{ include "kyber.fullname" . }}-control-plane-version
+        {{- if .Values.metrics.tokenRatesConfigMapName }}
+        # provider-rates: populates the Token Usage Cost column. ConfigMap is
+        # rendered at templates/configmap-rates.yaml under the same gate.
+        - name: provider-rates
+          configMap:
+            name: {{ .Values.metrics.tokenRatesConfigMapName }}
+        {{- end }}
+        {{- if .Values.runtimeDetect.enabled }}
+        - name: anthropic-key
+          secret:
+            # optional: pod boots even if the Secret hasn't been created
+            # yet (initial install or external-secret race). The poller's
+            # FileKeySource returns "" → no key → graceful skip.
+            secretName: {{ include "kyber.anthropicKeySecretName" . }}
+            optional: true
+        {{- end }}

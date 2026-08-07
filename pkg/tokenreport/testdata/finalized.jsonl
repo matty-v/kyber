@@ -1,0 +1,2 @@
+{"type":"user","message":{"role":"user","content":"hello"}}
+{"type":"assistant","message":{"model":"claude-sonnet-4-5","role":"assistant","content":[{"type":"text","text":"hi"}],"usage":{"input_tokens":12000,"cache_creation_input_tokens":8000,"cache_read_input_tokens":25231,"output_tokens":50,"speed":"standard","service_tier":"standard"}},"effortLevel":"medium"}

@@ -1,0 +1,71 @@
+{{- if .Values.networkPolicy.enabled }}
+# Internal-API NetworkPolicy (kyber#566, C1 — defense-in-depth).
+#
+# This is the SECOND of the two controls. The load-bearing control is the
+# per-agent authz on :8082 (pkg/api/internal_auth.go) — a NetworkPolicy can
+# never isolate agent-from-agent because every agent pod must be allowed to
+# reach :8082 (its own sidecar + init container call it). What this policy adds
+# is attack-surface reduction: a compromised NON-agent workload elsewhere in the
+# cluster cannot even open a socket to the internal API.
+#
+# Scope: :8082 only (Matt-locked decision #3 — :8082-scoped, not a broad
+# default-deny). Selecting the control-plane pod with a NetworkPolicy would,
+# by default-deny semantics, drop ALL ingress not explicitly allowed — so this
+# policy ALSO re-admits the public API (http), health, and metrics ports from
+# anywhere, leaving them exactly as reachable as before. Only :8082 is tightened.
+#
+# CAVEAT (delivery-time, Ackbar): two things make this policy inert or wrong if
+# unverified — (1) the CNI must actually enforce NetworkPolicy (k3s without its
+# NP controller, or GKE without Dataplane V2/Calico, silently no-ops it); and
+# (2) the node-agent runs hostNetwork:true, so its traffic to :8082 originates
+# from the NODE IP, not a selectable pod — a podSelector can NOT match it. It is
+# admitted only via networkPolicy.internalApi.allowedNodeCIDRs below. If that is
+# empty AND the CNI enforces this policy, the node-agent's :8082 calls are
+# dropped (agent-pod auth still holds). Set the node/pod CIDRs per target and
+# verify enforcement empirically. The authz control does not depend on any of
+# this.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kyber.fullname" . }}-internal-api
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-plane
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: control-plane
+  policyTypes:
+    - Ingress
+  ingress:
+    # (1) Internal API :8082 — sanctioned callers only.
+    - from:
+        # Every agent pod (its sidecar + session-brief init container call the
+        # internal API as the agent's own identity).
+        - podSelector:
+            matchExpressions:
+              - key: kyber.io/agent
+                operator: Exists
+        {{- range .Values.networkPolicy.internalApi.allowedNodeCIDRs }}
+        # Node/pod CIDR(s) — REQUIRED to admit the hostNetwork node-agent (see
+        # the CAVEAT above). Operator-supplied per target.
+        - ipBlock:
+            cidr: {{ . | quote }}
+        {{- end }}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.internalPort }}
+    # (2) Public API (http), health, and metrics — left open from anywhere so
+    # this :8082-scoped policy does not silently deny the public API, kubelet
+    # health probes, or metrics scraping. The public API has its own auth.
+    - from: []
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+        - protocol: TCP
+          port: 8081
+        - protocol: TCP
+          port: {{ .Values.api.service.metricsPort }}
+{{- end }}

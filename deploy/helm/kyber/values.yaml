@@ -1,0 +1,999 @@
+# Kyber Helm Chart — Default Values
+#
+# All values here are defaults. Override via --set flags or a values file.
+# Required values (marked below) MUST be supplied at install time.
+
+# Image configuration — override for your registry.
+#
+# Image tags are REQUIRED at render time — an empty tag fails `helm template`
+# loudly rather than falling back to Chart.AppVersion. Chart.AppVersion tracks
+# the chart/release version (kyber#457), NOT a per-image tag; a missing pin used
+# to render an unpullable `:0.1.0` reference that the sidecar-image convergence
+# loop (kyber#358) then enforced fleet-wide, deleting running agent pods. Now
+# that appVersion is a real release tag, a fallback would resolve to a wrong
+# image SILENTLY — so the pin stays REQUIRED. Pins come from ArgoCD Image
+# Updater, release.yml's yq bump, or an explicit --set image.<component>.tag=...
+# — see docs/installation.md.
+image:
+  controlPlane:
+    repository: ghcr.io/matty-v/kyber-control-plane
+    tag: "" # REQUIRED — must be pinned at install/sync time (see note above)
+    pullPolicy: IfNotPresent
+  nodeAgent:
+    repository: ghcr.io/matty-v/kyber-node-agent
+    tag: "" # REQUIRED — must be pinned at install/sync time
+    pullPolicy: IfNotPresent
+  agentBase:
+    # Published as kyber-runtime-base to avoid collision with the legacy
+    # kyber-agent-base package. See docs/installation.md.
+    repository: ghcr.io/matty-v/kyber-runtime-base
+    tag: ""
+  claudeCode:
+    repository: ghcr.io/matty-v/kyber-claude-code
+    tag: "" # REQUIRED — must be pinned at install/sync time
+  codex:
+    repository: ghcr.io/matty-v/kyber-codex
+    # OPTIONAL until Codex agents are enabled. Left empty deliberately rather
+    # than `required` like claudeCode/statusSidecar: most installs never run
+    # Codex, and forcing them to pin an image they never pull would break them.
+    #
+    # Since kyber#674 an empty tag fails LOUDLY at the point it matters instead
+    # of silently: POST /api/v1/agents rejects a codex agent with a 400 naming
+    # this value, and the controller sets the RuntimeImageMissing condition
+    # rather than building a pod with an empty image. Before that, creating a
+    # Codex agent here succeeded and then failed invisibly forever — blank
+    # status, reason only in the control-plane log.
+    tag: ""
+  # statusSidecar runs alongside every agent runtime container as a
+  # platform-injected sidecar (kyber#248). Pushes heartbeats + (post-#249)
+  # activity events to the control plane.
+  statusSidecar:
+    repository: ghcr.io/matty-v/kyber-status-sidecar
+    tag: "" # REQUIRED — must be pinned at install/sync time
+  # discordSidecar (kyber-mcp-discord, kyber#646) is injected ONLY into pods of
+  # agents that enable spec.channels.discord. OPTIONAL — leave tag empty on
+  # installs that don't use two-way Discord; when empty the control plane sets
+  # no KYBER_DISCORD_SIDECAR_IMAGE and Discord injection is a no-op.
+  discordSidecar:
+    repository: ghcr.io/matty-v/kyber-mcp-discord
+    tag: ""
+  telegramSidecar:
+    repository: ghcr.io/matty-v/kyber-mcp-telegram
+    tag: ""
+
+# telegram: install-wide Telegram settings.
+#
+# defaultAllowedUserIds — comma-separated Telegram user IDs this install trusts
+# by default. It seeds the allowlist of an agent being migrated off the retired
+# in-process Claude Code plugin (kyber#684): that plugin kept its allowlist in
+# access.json on the agent's own PVC, which the control plane cannot read, so
+# there is no per-agent value to carry forward — but whoever runs the install
+# knows who owns these agents.
+#
+# Only ever used to fill an allowlist that is ABSENT; it never overrides one set
+# through /comms, and it does not apply to newly created agents (those supply
+# their own). Leave empty and a migrated agent accepts nobody until an operator
+# sets its allowlist explicitly.
+#
+#   telegram:
+#     defaultAllowedUserIds: "123456789,987654321"
+telegram:
+  defaultAllowedUserIds: ""
+
+# imagePullSecrets: list of secret names for pulling images from private registries.
+# Example: imagePullSecrets: [{ name: regcred }]
+imagePullSecrets: []
+
+# nameOverride: override the chart name component of resource names.
+nameOverride: ""
+# fullnameOverride: override the full resource name prefix.
+fullnameOverride: ""
+
+# Namespace configuration
+namespace:
+  # create: set to false if you are managing the namespace outside this chart.
+  create: true
+  # name: explicit namespace name. Leave empty to use Release.Namespace (the
+  # default when installing with --namespace or via ArgoCD's Application
+  # destination.namespace). Prod environments set this explicitly.
+  # Preview environments leave it empty so each release lands in its own
+  # namespace (kyber-pr-<n>) without colliding with kyber-system.
+  name: ""
+
+# API server configuration
+api:
+  # apiKey: REQUIRED unless existingSecret is set.
+  # The control plane rejects all requests when this is unset.
+  apiKey: ""
+  # webhookSecret: REQUIRED for the Telegram webhook routes to accept traffic.
+  # The webhook secret Telegram echoes back in the X-Telegram-Bot-Api-Secret-Token
+  # header. Empty = FAIL CLOSED (kyber#564): the routes reject ALL webhook traffic
+  # until a secret is set — an empty value is no longer "auth disabled". Set this
+  # (or existingSecret) and re-register the bot via Telegram setWebhook with the
+  # same value, or inbound Telegram messages will be dropped.
+  webhookSecret: ""
+  # publicURL: externally-reachable HTTPS URL for this Kyber instance.
+  # Used for Telegram webhook auto-registration when agents are created.
+  # Example: "https://kyber.your-tailnet.ts.net"
+  # If empty, Telegram webhook registration is skipped (operator must call setWebhook manually).
+  publicURL: ""
+  # existingSecret: name of a pre-created Secret that provides api-key and webhook-secret
+  # keys. When set, the chart does NOT create a Secret — the operator is responsible.
+  # Overrides apiKey / webhookSecret above.
+  existingSecret: ""
+  # authz (kyber#474): caller-level authorization on agent lifecycle mutations.
+  # Scoped API keys are an optional `callers` JSON doc on the api-key Secret, e.g.
+  #   [ {"name":"pwa","key":"<32-byte hex>","scopes":["lifecycle:write"]},
+  #     {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
+  # The legacy api-key above always resolves to a full-scope caller (backward-
+  # compatible). Scopes nest: lifecycle:admin ⊃ lifecycle:write — the impactful
+  # verbs (suspend, force-needs-auth) require admin; start/stop/restart require write.
+  authz:
+    # enforce: when false (default) authz decisions are audit-logged but never
+    # block (permissive/observation mode) — single-key installs are unaffected.
+    # Set true to return 403 to an authenticated-but-under-scoped caller. Only
+    # bites once scoped (sub-full) keys are issued. Opt-in is a 🚦-gated operator
+    # action (per-cluster). Roll out: define scoped callers → watch the
+    # permissive-mode audit log → flip enforce on.
+    enforce: false
+  service:
+    type: ClusterIP
+    # port: public API port (Telegram webhooks + Echo Base)
+    port: 8080
+    # internalPort: internal API port (init containers, cluster-internal)
+    internalPort: 8082
+    # metricsPort: Prometheus metrics scrape port
+    metricsPort: 9090
+
+# Internal-API per-agent authentication (kyber#566, C1). The control plane
+# mints a signed pod-token per agent (and one for the node-agent) and verifies
+# it on every :8082 request, enforcing act-on-self-only.
+#
+# GRACE-FIRST cutover (kyber#578, after the v2.1.0 fail-closed fleet outage). A
+# NEW internal-auth rollout defaults to graceMode:true so the cutover is a
+# two-step, verified sequence rather than a single flip that fail-closes the
+# whole internal API if the out-of-band signing key is missing:
+#   1. Release N: graceMode:true — deliver the signing-key Secret, let the fleet
+#      re-roll onto mounted tokens (grace accepts-and-logs unauthenticated
+#      stragglers while ALWAYS blocking cross-identity 403).
+#   2. Release N+1: graceMode:false (enforce) — an EXPLICIT, key-verified flip,
+#      gated by scripts/preflight-internal-auth-key.sh + Ackbar's deploy-review.
+# Back-compat: a deploy that sets graceMode explicitly (e.g. the existing enforce
+# clusters that pin false) is unchanged — only an unset/fresh rollout picks up
+# the grace-first default. Even under grace, a missing key still FAILS CLOSED
+# (conservative, Matt's Q1=NO) and raises a startup alert — it never serves
+# unauthenticated.
+internalAuth:
+  # signingKeySecretName/Key: the cluster signing key (Option A). Delivered
+  # OUT OF BAND by Ackbar (sealed-secret / kv-secrets) — NEVER committed. The
+  # control-plane env reads it with optional:true, so the pod starts even before
+  # the Secret lands — but until it does, the :8082 internal API FAILS CLOSED
+  # (every internal route 503s) rather than serving unauthenticated, so a
+  # missing-key deploy can't silently re-open the cross-agent hole. The gate is
+  # scoped to :8082; other control-plane surfaces keep running. Generate with e.g.
+  #   kubectl -n kyber-system create secret generic kyber-internal-signing-key \
+  #     --from-literal=signing-key="$(openssl rand -hex 32)"
+  signingKeySecretName: kyber-internal-signing-key
+  signingKeySecretKey: signing-key
+  # graceMode: the cutover valve. true ⇒ accept-and-log unauthenticated :8082
+  # calls (covers pods not yet re-rolled onto a mounted token); never softens a
+  # cross-identity denial; a missing key still fails closed + alerts. GRACE-FIRST
+  # (kyber#578): a new rollout ships true; the flip to false (enforce) is an
+  # explicit, key-verified step (preflight + deploy-review), NOT an auto-flip.
+  graceMode: true
+
+# NetworkPolicy — defense-in-depth in front of the internal API (kyber#566).
+# This is the SECOND layer; the per-agent authz above is load-bearing. See
+# templates/networkpolicy.yaml for the full rationale + delivery caveats.
+networkPolicy:
+  # enabled: render the :8082-scoped NetworkPolicy. It restricts only the
+  # internal port; the public/health/metrics ports stay open. Whether the CNI
+  # actually ENFORCES it is a per-target delivery check (Ackbar).
+  enabled: true
+  internalApi:
+    # allowedNodeCIDRs: node/pod CIDR(s) admitted to :8082 in addition to agent
+    # pods. REQUIRED to admit the hostNetwork node-agent when the CNI enforces
+    # NetworkPolicy (its traffic comes from the node IP, not a selectable pod).
+    # Empty + enforcing CNI ⇒ the node-agent's :8082 calls are dropped (agent
+    # auth still holds). Set per target during delivery, e.g.:
+    #   allowedNodeCIDRs: ["10.42.0.0/16"]   # k3s default pod CIDR
+    allowedNodeCIDRs: []
+
+# Ingress — expose the public API externally.
+ingress:
+  enabled: false
+  className: nginx
+  annotations: {}
+  hosts:
+    - host: kyber.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Control plane deployment
+controlPlane:
+  # replicaCount: V1 runs a single replica. Leader election handles HA when >1.
+  replicaCount: 1
+  # maxConcurrentReads: max simultaneous in-flight windowed log reads
+  # (source=archive|transcript) — kyber#463. Bounds AGGREGATE read memory + CPU
+  # (the per-read streaming caps in kyber#456 bound one read; this bounds the sum)
+  # so a burst of concurrent large transcript reads can't exhaust the CP or starve
+  # its CPU (which would time out the liveness probe and SIGKILL the process,
+  # 502'ing unrelated endpoints). Over-cap reads get 429 + Retry-After, never a
+  # partial/crashed stream. Default 2 is safe on the smallest CP (256Mi/500m);
+  # raise it on CPs with more CPU headroom. A non-positive value falls back to the
+  # built-in default (the gate can't be disabled).
+  maxConcurrentReads: 2
+  resources:
+    limits:
+      cpu: 1000m
+      # memory: raised 512Mi -> 1Gi (kyber#455). The durable log/transcript read
+      # path is a net-new memory consumer that shipped without revisiting CP
+      # resources; a wide read on top of normal controller load left too little
+      # headroom and a large transcript read OOM-killed the whole control plane
+      # (CrashLoopBackOff, 502s on every endpoint). The read path is now
+      # memory-bounded (one object streamed at a time + a returned-line/byte cap),
+      # so this is headroom, not the fix. Production overlays typically do not
+      # override controlPlane.resources, so this chart default governs them.
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      # memory: right-sized 128Mi -> 256Mi to match the raised ceiling so the
+      # scheduler reserves realistic headroom for the control plane.
+      memory: 256Mi
+  leaderElection:
+    # enabled: set to true when running multiple replicas.
+    enabled: false
+    # namespace: leader election lease namespace. Defaults to release namespace.
+    namespace: ""
+  # nodeSelector: pin the control plane to a specific node. Default pins it
+  # to the k3s control-plane node, since worker nodes provisioned by the
+  # Machine Controller currently land on a different VPC (default network)
+  # and the k3s server can't reach their kubelets across VPC boundaries.
+  nodeSelector:
+    node-role.kubernetes.io/control-plane: "true"
+  # tolerations: by default the chart tolerates the control-plane NoSchedule
+  # taint so the pod can actually land on the server node.
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+  # platformReservation carves out resources on each Machine for kube-system /
+  # kyber-system / k3s overhead. The Machine controller subtracts these from
+  # the backing node's allocatable to produce status.assignableCapacity. The
+  # cpu/memory defaults cover a small single-node standalone install
+  # (~800Mi observed kyber-system load + headroom) without wasting capacity
+  # on cloud VMs sized for one or two agents. ephemeralStorage was added in
+  # #129 PR-C; 10Gi reserves room for image pulls + node logs that share the
+  # same disk pool as agent ephemeral storage.
+  platformReservation:
+    cpu: "1"
+    memory: "1Gi"
+    ephemeralStorage: "10Gi"
+  # extraEnv: additional environment variables injected into the control-plane container.
+  extraEnv: []
+
+  # clusterName: user-facing logical name surfaced in /api/v1/cluster-info and
+  # rendered in the PWA header. Per-env values should set this (kyber-gcp /
+  # kyber-dev / etc). Empty = PWA header renders blank (acceptable for
+  # first-deploy state, but set it before declaring the install ready).
+  clusterName: ""
+
+  # cors: cross-origin support for browser clients (e.g. holocron.example.com).
+  # Empty allowedOrigins = CORS disabled (same-origin clients only). Add the
+  # PWA's URL here when running multi-install. Same allowlist applies to
+  # REST + SSE (via middleware) and WebSocket (via upgrader CheckOrigin).
+  #
+  # This list is for OTHER origins only. Never add this install's own public
+  # URL: same-origin requests — the embedded PWA the control plane serves —
+  # bypass the allowlist entirely. Before kyber#657 they did not, so setting
+  # this list at all 403'd the install's own Shell tab and live event stream
+  # while REST kept working (same-origin fetch needs no CORS).
+  cors:
+    allowedOrigins: []
+
+  # otelEndpoint: legacy OTLP HTTP endpoint for the kyber-status-sidecar OTel push.
+  # DEPRECATED — superseded by metrics.otelEndpoint. Empty default (was the
+  # broken kyber-otel-collector URL, which doesn't exist on most installs and
+  # caused kyber#358 — sidecars failing ~20k DNS lookups/day and four empty
+  # Metrics panels). Operators who still rely on the OTel push should move to
+  # metrics.otelEndpoint; this value is preserved for backwards compatibility
+  # and will continue to coalesce-in if set explicitly.
+  otelEndpoint: ""
+
+  # fleetDefaults: cluster-wide fallback values used when an Agent CR omits
+  # the corresponding spec field. Rendered into a ConfigMap (see
+  # templates/control-plane/fleet-defaults-configmap.yaml) that the
+  # control-plane reads at reconcile time and the PWA Settings panel
+  # reads + edits via GET/PUT /api/v1/fleet-defaults. Edits persist on
+  # the ConfigMap, so they outlive PWA refreshes but are reverted by a
+  # subsequent `helm upgrade` unless captured back into chart values.
+  # See kyber#376 (PR-B of kyber#374); design doc
+  # docs/2026-05-29-runtime-model-management-design.md §2.
+  fleetDefaults:
+    # configMapName: name of the ConfigMap. Empty disables the layer
+    # entirely (the PUT endpoint returns 503 and the reconciler treats
+    # every empty spec.model as ModelUnresolved). The default name
+    # matches what the chart template renders below.
+    configMapName: "kyber-fleet-defaults"
+    # defaultModel: fleet-default LLM model identifier injected as
+    # CLAUDE_MODEL into the agent pod when spec.model is empty. Empty
+    # means "no fleet default" — every agent must set spec.model
+    # explicitly or land on AgentConditionModelUnresolved.
+    # Pick a sane current model at chart-install time and let operators
+    # edit via the PWA going forward.
+    defaultModel: "claude-sonnet-4-5"
+    # defaultRuntimeVersion: fleet-default Claude Code version requested
+    # by agents whose spec.runtimeVersion is empty. PR-B plumbs this
+    # value end-to-end (Helm → ConfigMap → API → PWA) but does NOT
+    # consume it yet — that wiring lands in PR-C alongside the
+    # spec.runtimeVersion field and the boot-time install. Empty here
+    # means "derive from the build-time runtime.claudeCode.version
+    # baked into the kyber-claude-code image" — which is what the
+    # template default does so existing installs see no change until
+    # opt-in.
+    defaultRuntimeVersion: ""
+    # Codex-specific defaults. Empty version uses the version baked into the
+    # Codex runtime image; the model seed matches the V1 subscription runtime.
+    codexDefaultModel: "gpt-5.6-sol"
+    codexDefaultRuntimeVersion: ""
+
+# Node agent DaemonSet — runs on every node to collect metrics and manage lifecycle.
+nodeAgent:
+  enabled: true
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 64Mi
+  tolerations:
+    - operator: Exists
+  # otelEndpoint: OTEL collector endpoint for node metrics.
+  # Leave empty to disable OTEL export from the node agent.
+  otelEndpoint: "http://kyber-otel-collector:4318"
+
+# Log-shipper DaemonSet (kyber#431) — runs a Vector instance on every node that
+# tails agent container stdout and ships it to a durable GCS bucket, keyed
+# per-agent. Off by default: it requires a bucket (created by Terraform) and a
+# GCP node service account with bucket-scoped object access (node ADC). Enable
+# it on GCP installs by setting enabled: true and bucket to the Terraform output
+# `agent_log_bucket_name`. The control-plane reads the same bucket via
+# api.archiveBucket / KYBER_LOG_ARCHIVE_BUCKET to serve source=archive.
+logShipper:
+  enabled: false
+  # backend: which object-store backend ships+serves the archive (kyber#437).
+  #   gcs (default) — GCS via node ADC (GCP installs; no static key).
+  #   s3            — any S3-compatible store (MinIO/AWS) via Secret creds; works
+  #                   on local-provider clusters with no cloud identity.
+  # Default gcs is backward-compatible: existing GCP installs are unchanged.
+  backend: gcs
+  # bucket: the archive bucket name. REQUIRED when enabled — the template fails
+  # fast if enabled with an empty bucket. GCS: Terraform output
+  # agent_log_bucket_name. S3/MinIO: the bucket name created in the store.
+  bucket: ""
+  # --- S3/MinIO backend (only used when backend: s3) ---
+  # endpoint: the S3-compatible endpoint URL. The scheme selects TLS
+  #   (https:// → on, http:// → plaintext). For in-cluster MinIO this is the
+  #   cluster-internal Service, e.g. http://kyber-minio.kyber-system.svc:9000.
+  #   REQUIRED when backend: s3.
+  endpoint: ""
+  # region: S3 region. May be empty for MinIO (e.g. "us-east-1" by convention).
+  region: ""
+  # useTLS: the control-plane reader's TLS toggle for the S3 endpoint. Defaults
+  # true (external S3); set false for plaintext cluster-internal MinIO.
+  useTLS: true
+  # existingCredentialsSecret: name of a pre-created Secret holding the S3 access
+  # key. MUST contain keys `access-key-id` and `secret-access-key`. Referenced by
+  # both the Vector writer and the control-plane reader. REQUIRED when backend: s3.
+  # Never commit credentials to values/git. When minio.enabled and this is empty,
+  # point it at the chart-created MinIO Secret (see minio.credentialsSecret).
+  existingCredentialsSecret: ""
+  image:
+    # Vector is a third-party image (not a matty-v image), so it carries its own
+    # pinned tag here rather than going through the kyber.image required-tag helper.
+    repository: timberio/vector
+    tag: "0.43.1-debian"
+    pullPolicy: IfNotPresent
+  resources:
+    limits:
+      cpu: 500m
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  tolerations:
+    - operator: Exists
+
+# transcriptCompaction (kyber#458 Part B) — on-demand Job that reclaims duplicate
+# transcript objects left by the pre-fix tailer re-ship (the Part A source fix
+# stops new ones). OFF by default: the Job is rendered ONLY when enabled, never
+# implicitly. It reuses logShipper.* (backend/bucket/creds — the s3 backend needs
+# logShipper.existingCredentialsSecret with DELETE on the transcripts/ lane).
+#
+# apply=false is a DRY-RUN (reports reclaimable bytes, changes nothing).
+# apply=true is DESTRUCTIVE (merges per <agent>/<date> and DELETES redundant
+# objects) — gated on Matt's explicit go; run only after Part A is deployed. See
+# docs/operator/transcript-compaction.md. Bump runId (or delete the finished Job)
+# to re-run.
+transcriptCompaction:
+  enabled: false
+  apply: false
+  agent: "" # limit to one agent's prefix; "" = all agents
+  runId: "1" # bump to launch a fresh run (new Job name)
+
+# transcripts.retention (kyber#471): bound the unbounded growth of on-PVC Claude
+# Code session JSONL (~4MB/day/agent). A per-agent transcript-pruner SIDECAR
+# removes session files already durably shipped to the object-store archive once
+# they pass the age (and optional size) policy. Distinct from:
+#   - minio.retentionDays / object-store lifecycle expiry (the durable backstop)
+#   - transcriptCompaction (reclaims DUPLICATE object-store objects)
+# This is the only mechanism that bounds the *on-PVC* working set.
+#
+# ENABLED BY DEFAULT (Ackbar deploy review, #471): this bounds unbounded resource
+# growth — like a memory limit, it should self-heal on every cluster rather than
+# wait for a manual opt-in. The safety floor is structural and cluster-independent:
+# the 7-day threshold is ~10,000x the minutes-scale tailer→Vector ship lag, the
+# active session file is never pruned, and the default path carries NO object-store
+# credentials (it deletes only local already-archived copies — the durable archive
+# is out of its reach). Set enabled:false in your per-environment values to
+# opt out.
+transcripts:
+  retention:
+    enabled: true
+    # Prune *.jsonl whose mtime is older than this many days (the archived-safety
+    # proxy: >> ship lag, so an older file is demonstrably fully shipped). The
+    # active/newest session file is always exempt.
+    maxAgeDays: 7
+    # Optional secondary per-agent size ceiling (e.g. "200Mi"). "" = age-only.
+    # When set, age-eligible files are pruned oldest-first only until the on-PVC
+    # transcript total is at/under the ceiling. Never prunes recent/active files.
+    maxBytesPerAgent: ""
+    # Pruner sidecar poll cadence.
+    pruneIntervalMinutes: 60
+    # Belt-and-suspenders: when true, only prune a file the tailer's local ship
+    # checkpoint confirms was fully shipped (in addition to the age threshold).
+    # Off by default — the age threshold alone is archive-safe and needs no creds.
+    archiveCrosscheck: false
+
+# Optional in-cluster MinIO (kyber#437) — an S3-compatible object store for the
+# durable log archive on clusters with no cloud object store.
+# Default OFF: GCP installs use backend: gcs and never render these resources.
+# When enabled, set logShipper.backend: s3 and point logShipper.endpoint at the
+# minio Service and logShipper.existingCredentialsSecret at credentialsSecret.
+# Single-node is sufficient for durable logs (distributed/HA is out of scope).
+minio:
+  enabled: false
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-04-08T15-41-24Z"
+    pullPolicy: IfNotPresent
+  # bucket created on first start (via the chart's bootstrap) for the archive.
+  bucket: kyber-agent-logs
+  # credentialsSecret: name of the Secret the chart creates holding the MinIO
+  # root credentials (keys: access-key-id, secret-access-key). Point
+  # logShipper.existingCredentialsSecret at this name to wire writer+reader.
+  # NOTE: first cut uses a single bucket-scoped key for both writer and reader;
+  # split least-privilege keys (writer=put, reader=get/list) are a follow-up.
+  credentialsSecret: kyber-minio-credentials
+  # existingSecret: name of a PRE-CREATED Secret (keys: access-key-id,
+  # secret-access-key) to use INSTEAD of the chart-managed credentialsSecret.
+  # Set this on ArgoCD-managed clusters so the chart does NOT
+  # render the Secret — the lookup+randAlphaNum fallback otherwise regenerates
+  # the password on every sync (repo-server has no cluster access), churning
+  # MinIO + the writer/reader. Same pattern as postgresql.auth.existingSecret.
+  # Empty = chart manages credentialsSecret above (fine for direct helm install).
+  existingSecret: ""
+  # rootUser/rootPassword: when both empty the chart generates a random password
+  # (stable across upgrades via lookup) and a default user. Prefer setting these
+  # via a pre-created Secret in production rather than values.
+  rootUser: "kyber"
+  rootPassword: ""
+  persistence:
+    size: 20Gi
+    # storageClassName: empty = cluster default (e.g. local-path on k3s),
+    # mirroring storage.agentStorageClass. Set in your per-environment values.
+    storageClassName: ""
+  # retentionDays: object-expiry lifecycle for the bucket, matching the GCS
+  # default so bounded retention is preserved on local clusters (kyber#437 AC).
+  retentionDays: 30
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+# Postgres — first-party StatefulSet (postgres:16-alpine)
+# Set enabled: false and externalUrl to use an external PostgreSQL instance.
+postgresql:
+  enabled: true
+  image:
+    repository: postgres
+    tag: "16-alpine"
+    pullPolicy: IfNotPresent
+  auth:
+    username: kyber
+    database: kyber
+    password: ""  # empty = auto-generate random (stable across upgrades via lookup)
+    # existingSecret: pre-created Secret with a `postgres-password` key.
+    # When set, the chart does NOT create the postgres Secret — the operator is
+    # responsible for provisioning it. Overrides auth.password. Recommended for
+    # ArgoCD installs because the lookup+randAlphaNum fallback regenerates on
+    # every render (repo-server has no cluster access).
+    existingSecret: ""
+  persistence:
+    size: 10Gi
+    storageClassName: ""  # empty = cluster default
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+      cpu: 500m
+  externalUrl: ""  # set this and enabled=false to use an external postgres
+  # nodeSelector / tolerations: pin Postgres to a specific node, mirroring the
+  # controlPlane knobs above. Empty by default — single-node installs have
+  # nowhere else to put it. Multi-node installs that dedicate a node pool to
+  # agent pods should pin the database to the platform pool instead, since
+  # agent pods carry no tolerations of their own and so cannot be fenced off
+  # by a taint on their own pool.
+  nodeSelector: {}
+  tolerations: []
+
+# Redis — first-party StatefulSet (redis:7-alpine), no auth (internal network)
+# Set enabled: false and externalUrl to use an external Redis instance.
+redis:
+  enabled: true
+  image:
+    repository: redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  persistence:
+    size: 2Gi
+    storageClassName: ""
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 200m
+  externalUrl: ""  # set this and enabled=false to use an external redis
+  # nodeSelector / tolerations: see the postgresql equivalents above.
+  nodeSelector: {}
+  tolerations: []
+
+# Telemetry (OTEL) — control-plane and node-agent OTLP exporters.
+telemetry:
+  # enabled: set to true to activate OTEL metric + trace export.
+  # Defaults to false — no OTLP traffic until an endpoint is configured.
+  enabled: false
+  # otlpEndpoint: OTLP HTTP endpoint, e.g. http://otel-collector.monitoring:4318
+  # Required when enabled=true. Passed as OTEL_EXPORTER_OTLP_ENDPOINT to both
+  # the control plane and the node agent.
+  otlpEndpoint: ""
+  # serviceName: OTEL service.name for the control plane.
+  # The node agent always reports as "kyber-node-agent".
+  serviceName: kyber-control-plane
+  # alertWebhookUrl: optional — POST JSON alert payloads to this URL on
+  # agent/machine failure or preemption events.
+  alertWebhookUrl: ""
+
+# Metrics tab — controls the /api/v1/metrics/* endpoints that back the Kyber PWA
+# Metrics dashboard (#328). CRD-backed panels (Fleet Summary, Last Active) always work.
+# Time-series panels (Activity, Working Time, Tokens, Nodes, State Changes) require
+# a Prometheus-compatible TSDB receiving OTLP pushes from the control plane and
+# node agent (see telemetry.enabled above).
+metrics:
+  # prometheusURL: base URL of a Prometheus-compatible query API accessible from the
+  # control-plane pod. When empty (default), time-series panels show an empty state
+  # rather than erroring. Example: http://prometheus.monitoring:9090
+  prometheusURL: ""
+  # stalenessThresholdSeconds: age (in seconds) beyond which a missing heartbeat is
+  # considered stale in the Last Active panel. Agents exceeding this threshold are
+  # visually distinguished. Default: 300 (5 minutes).
+  stalenessThresholdSeconds: 300
+  # tokenRatesConfigMapName: name of the ConfigMap containing provider-rates.yaml.
+  # Drives three things in one switch:
+  #   1. The chart renders the default rates ConfigMap (templates/configmap-rates.yaml).
+  #   2. The control-plane Deployment mounts that ConfigMap read-only at
+  #      /etc/kyber-rates inside the control-plane container.
+  #   3. KYBER_METRICS_TOKEN_RATES_PATH is set to the rates file path so
+  #      metrics.LoadRateTable reads it at boot.
+  # When empty, all three are omitted: no ConfigMap, no mount, no env var, and
+  # token cost computations return $0 (token counts still shown — fail-soft).
+  tokenRatesConfigMapName: kyber-provider-rates
+  # prometheusInsecureSkipVerify: allow self-signed TLS certificates on prometheusURL.
+  # Defaults to false (TLS verification enforced). Only set true for internal-only URLs.
+  prometheusInsecureSkipVerify: false
+  # redisStoreEnabled: when true (default), the control plane writes per-agent activity,
+  # state-change, and token snapshots to Redis on a 15-second cadence and reads endpoints
+  # prefer Redis over Prometheus when both are configured. Set to false for Prometheus-only
+  # semantics.
+  redisStoreEnabled: true
+  # redisRetentionSeconds: retention horizon for Redis time-series. Points older than this
+  # value are evicted by a background worker every 5 minutes. Default: 604800 (7 days),
+  # matching the Metrics tab's longest time-range option.
+  redisRetentionSeconds: 604800
+  # otelEndpoint: opt-in OTLP HTTP endpoint the kyber-status-sidecar pushes per-agent
+  # metrics to. DEFAULT EMPTY — the controller does not inject KYBER_OTEL_ENDPOINT
+  # into the sidecar and the sidecar's OTel exporter stays disabled.
+  #
+  # Why opt-in: kyber#343 moved every in-tree Metrics tab panel to a heartbeat path
+  # (sidecar POSTs metrics-snapshot data to /internal/agents/{name}/status every 15s,
+  # written to pkg/metricsstore / Redis sorted sets, read by the Metrics tab). The
+  # OTel push is vestigial — it predates the #343 redesign and is not required by any
+  # in-tree consumer. Defaulting it ON caused kyber#358 (sidecars failing ~20k DNS
+  # lookups/day on installs without a cluster-internal OTel collector).
+  #
+  # Set this to an OTLP HTTP endpoint (e.g. "http://otel-collector.monitoring:4318")
+  # only if you run an external OTel pipeline that consumes per-agent metrics.
+  otelEndpoint: ""
+
+# Compute adapter — selects which cloud the Machine Controller provisions VMs on.
+#
+#   provider: "mock" — default, creates fake instances in memory (dev/test)
+#   provider: "gce"  — uses Google Compute Engine via Application Default Credentials
+#
+# GCE requires the VM or pod to have a service account with compute.instanceAdmin.v1
+# or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the
+# instance's service account via the metadata server — no key file is needed.
+compute:
+  provider: mock          # "mock" or "gce"
+  gce:
+    project: ""           # GCP project ID, REQUIRED when provider=gce
+    # network: VPC network name for new VMs. MUST match the k3s server's network
+    # so kubelet probes and pod-to-pod communication work across nodes.
+    # For the small Terraform profile, this is "kyber-small-network".
+    # If empty, GCE uses the "default" network (cross-VPC issues with k3s).
+    network: ""
+    # subnet: subnetwork within the network. Required for custom-mode VPCs.
+    # For the small Terraform profile, this is "kyber-small-subnet".
+    subnet: ""
+    # vmTypeCatalog: curated list of GCE machine types the create-machine API
+    # will accept. To add a type, append an entry here — no code change required.
+    # Each entry must include type (GCE machine type name), cpu (vCPU count),
+    # and memory (Kubernetes quantity, e.g. "4Gi" or "3750Mi").
+    # When omitted, the control plane uses a built-in default shortlist.
+    #
+    # Curated for typical agent workloads — covers shared-core / micros for
+    # small workers, plus E2 / N1 / N2 standard sizes up to 16 vCPU. Specialty
+    # families (N2D AMD, C2/C3 compute-optimized, T2D Tau, M-series memory-
+    # optimized, A-series GPU) intentionally omitted; add when a real use case
+    # appears.
+    vmTypeCatalog:
+      # Shared-core / micros (legacy and current generation)
+      - type: f1-micro
+        cpu: "1"
+        memory: "600Mi"
+      - type: g1-small
+        cpu: "1"
+        memory: "1700Mi"
+      - type: e2-micro
+        cpu: "2"
+        memory: "1Gi"
+      - type: e2-small
+        cpu: "2"
+        memory: "2Gi"
+      - type: e2-medium
+        cpu: "2"
+        memory: "4Gi"
+      # E2 standard (cost-optimized current generation)
+      - type: e2-standard-2
+        cpu: "2"
+        memory: "8Gi"
+      - type: e2-standard-4
+        cpu: "4"
+        memory: "16Gi"
+      - type: e2-standard-8
+        cpu: "8"
+        memory: "32Gi"
+      - type: e2-standard-16
+        cpu: "16"
+        memory: "64Gi"
+      # N1 standard (older Intel, cheap, broad availability)
+      - type: n1-standard-1
+        cpu: "1"
+        memory: "3750Mi"
+      - type: n1-standard-2
+        cpu: "2"
+        memory: "7500Mi"
+      - type: n1-standard-4
+        cpu: "4"
+        memory: "15Gi"
+      - type: n1-standard-8
+        cpu: "8"
+        memory: "30Gi"
+      # N2 standard (newer Intel, better price/perf)
+      - type: n2-standard-2
+        cpu: "2"
+        memory: "8Gi"
+      - type: n2-standard-4
+        cpu: "4"
+        memory: "16Gi"
+      - type: n2-standard-8
+        cpu: "8"
+        memory: "32Gi"
+      - type: n2-standard-16
+        cpu: "16"
+        memory: "64Gi"
+
+# k3s join config — required for the Machine Controller to provision k3s worker nodes.
+# Obtain these from Terraform outputs (k3s_join_token, k3s_server_url).
+k3s:
+  # joinToken: REQUIRED for Machine Controller to provision k3s agents.
+  joinToken: ""
+  # serverUrl: REQUIRED — https://<api-endpoint>:6443
+  serverUrl: ""
+  # existingSecret: pull k3s-join-token and k3s-server-url from a pre-created secret.
+  # Overrides joinToken / serverUrl above.
+  existingSecret: ""
+
+# Cloudflare Tunnel — public ingress that doesn't require port-forwarding.
+#
+# When enabled, runs a `cloudflared` deployment that establishes an outbound
+# connection to Cloudflare's edge and routes the hostnames in `ingress` to
+# in-cluster Services. Replaces Tailscale Funnel / LoadBalancer+port-forward
+# setups on standalone installs where the cluster can't accept inbound
+# connections directly.
+#
+# Requires a pre-created tunnel (run `cloudflared tunnel create <name>` on
+# any host with `cloudflared` installed and the `example.com` zone permissions)
+# and a k8s Secret holding the resulting credentials.json (key name
+# `credentials.json`).
+cloudflared:
+  enabled: false
+  image:
+    repository: cloudflare/cloudflared
+    tag: "2024.10.0"
+    pullPolicy: IfNotPresent
+  # replicaCount: Cloudflare recommends 2 for HA. Single-node clusters
+  # typically keep this at 1 since both replicas land on the same node.
+  replicaCount: 1
+  # tunnelId: UUID emitted by `cloudflared tunnel create`. REQUIRED.
+  tunnelId: ""
+  # existingSecret: name of a pre-created k8s Secret containing a
+  # `credentials.json` key with the tunnel's credentials file contents.
+  # REQUIRED. Not managed by the chart — operator creates out-of-band.
+  existingSecret: ""
+  # ingress: list of { hostname, service } rules routed through the tunnel.
+  # `service` is any URL cloudflared understands, typically
+  # http://<svc>.<ns>.svc.cluster.local:<port> or http://<svc>:<port> in-ns.
+  # A final catch-all "http_status:404" rule is appended automatically.
+  ingress: []
+  # protocol: override cloudflared's edge transport. Empty string uses the
+  # cloudflared default (currently quic, UDP:7844). Set to "http2" on hosts
+  # where outbound UDP is unreliable — e.g. WSL2's NAT stack, corporate
+  # networks with UDP egress filtering. "http2" uses TCP:443 exclusively.
+  protocol: ""
+  resources:
+    limits:
+      cpu: 200m
+      memory: 128Mi
+    requests:
+      cpu: 50m
+      memory: 32Mi
+  nodeSelector: {}
+  tolerations: []
+
+# Storage configuration. gcePD is a GCE-only StorageClass — leave disabled
+# for standalone/mock installs (k3s/kind/etc.), where the cluster's default
+# StorageClass (e.g. local-path on k3s) serves PVCs. GCE installs should
+# set gcePD.enabled: true in their environment values.yaml.
+storage:
+  # agentStorageClass: StorageClass name applied to new agent PVCs. Empty
+  # string means the cluster's default StorageClass binds the volume (e.g.
+  # local-path on k3s, standard on GKE) — the standalone-friendly choice.
+  # Defaults to "kyber-pd" for GCE back-compat. Standalone environments
+  # should set this to "".
+  agentStorageClass: kyber-pd
+  # transcriptOffsets: the small durable per-agent PVC (kyber#467) that holds the
+  # transcript-tailer's per-file line-count checkpoints so they survive pod
+  # recreation (no full-backlog re-ship; the #466 incident). The data is
+  # sub-1KB integers, so size is deliberately tiny.
+  #
+  # storageClassName MUST stay empty on ALL targets (cluster default = local-path
+  # on k3s) — do NOT set it to kyber-pd on gcp: a GCE-PD has a 1Gi minimum and
+  # would waste storage by four orders of magnitude for sub-1KB checkpoints
+  # (Ackbar's deploy review). local-path PVCs survive pod recreation (the point
+  # of this feature); a node replacement just falls back to the bounded
+  # MAX_COLD_TAILS first-boot re-ship.
+  transcriptOffsets:
+    size: "10Mi"
+    storageClassName: ""
+  gcePD:
+    enabled: false
+    storageClassName: kyber-pd
+    diskType: pd-standard
+    replicationType: regional-pd
+
+# Identity repo configuration.
+#
+# Agent identity repos (per-agent memory/persona/state) are managed by a
+# **Kyber Platform GitHub App** that each install configures — nothing is
+# hardcoded to a particular account or app. To enable the feature an install
+# provides two things:
+#   1. A `kyber-github-app` Secret (keys: app-id, installation-id,
+#      private-key.pem) holding the credentials of a GitHub App with
+#      Administration + Contents (write) on the identity-repo account. This App
+#      both scaffolds identity repos and mints the short-lived, repo-scoped
+#      tokens agents use to read/write their own identity repo (kyber#508).
+#   2. `identityRepo.defaultOwner` below, set to the account the App is
+#      installed on.
+# If either is absent the identity-repo feature disables cleanly (agents run
+# without an identity repo); it is never silently backfilled with a broad PAT.
+identityRepo:
+  # defaultOwner: GitHub username or org under which auto-created identity repos
+  # are placed and against which the Kyber App is installed. Required for
+  # identity-repo scaffolding + scoped-token minting. Empty = feature disabled;
+  # set it per-install (e.g. in your environment values), do not assume a
+  # global default. Example: "your-org"
+  defaultOwner: ""
+
+# Agent runtime settings — how scheduled jobs and the in-pod harness behave,
+# plus pinned per-runtime versions of the harness installed inside agent
+# images. Bumping a `<runtime>.version` here is the cluster-wide upgrade
+# primitive (kyber#175): CI reads the value via yq, passes it as a
+# --build-arg to the corresponding image build, and ArgoCD rolls the fleet
+# on the new SHA. The image Dockerfile keeps a matching ARG default so
+# ad-hoc local `docker build` without --build-arg still works; a
+# drift-detector test in pkg/runtimes/<runtime>/ keeps the two in sync.
+runtime:
+  # timezone: IANA timezone (e.g. "America/Denver", "UTC", "Europe/London")
+  # used to interpret cron schedules in spec.jobs[].schedule. The controller
+  # renders a CRON_TZ=<value> line at the top of each agent's <name>-jobs
+  # ConfigMap, which Linux cron honors per-file. Honors DST automatically.
+  #
+  # Empty string → no CRON_TZ line; cron falls back to /etc/localtime, which
+  # is UTC in stock k8s images (kyber#177 — schedules silently misfired).
+  #
+  # Default "America/Denver" matches the operator's local TZ; override per
+  # cluster as needed. Per-agent overrides are intentionally not supported:
+  # divergent timezones across the fleet are a debugging hazard.
+  timezone: "America/Denver"
+
+  # claudeCode: claude-code runtime pin. Surfaced at runtime via
+  # Agent.status.runtime.installedVersion (kyber#175 Phase 1).
+  claudeCode:
+    # @anthropic-ai/claude-code npm version baked into the
+    # kyber-claude-code image. Bump here → CI rebuild → ArgoCD rolls.
+    version: "2.1.119"
+  codex:
+    # @openai/codex npm version baked into the Kyber Codex image.
+    version: "0.146.0"
+
+# Runtime detection (kyber#375 / PR-A of #374). A control-plane goroutine
+# polls the npm registry + the Anthropic Models API on a cadence and writes
+# results into Redis. GET /api/v1/available reads from that cache so the
+# PWA picker stays current without a Kyber rebuild.
+runtimeDetect:
+  # When false, the poller is not registered and /api/v1/available returns
+  # the empty contract. Use this on air-gapped installs.
+  enabled: true
+  # How often to refresh. Lower bound is enforced by the loop at 1s; the
+  # design target is ~1h.
+  cadenceSeconds: 3600
+  # Cap on the number of recent CC versions surfaced through /available.
+  versionLimit: 20
+  # Operator-supplied Anthropic API key, used only for the read-only
+  # Models API call. Empty leaves the Secret blank; the PWA Settings panel
+  # is the canonical write-only path. Stored in the
+  # {release}-anthropic-key Secret in this namespace.
+  anthropicApiKey: ""
+  # Name of an existing Secret holding the api-key field. When set, the
+  # chart does NOT render the anthropic-key Secret — the operator is
+  # responsible for its lifecycle.
+  existingSecret: ""
+  # Operator-editable context-window override map (kyber#378 / PR-D).
+  # Each key is a model ID; each value is the total context-window size
+  # in tokens (decimal). Models listed here surface through /available
+  # with the configured window + contextWindowKnown=true, and the Claude
+  # Code adapter writes the value into the pod's KYBER_MODEL_CONTEXT_WINDOW
+  # env var so start-claude.sh's [1m] decision (>= 1_000_000) is
+  # data-driven. Unlisted models fall back to the in-Go knownModels
+  # table or the 200K floor. Operators add new models in-cluster:
+  #   kubectl edit cm kyber-model-context-windows
+  # See docs/operator/adopting-anthropic-model.md.
+  contextWindows:
+    "claude-opus-4-7": "1000000"
+    "claude-opus-4-6": "1000000"
+    "claude-opus-4-5": "200000"
+    "claude-opus-4": "200000"
+    "claude-sonnet-4-6": "1000000"
+    "claude-sonnet-4-5": "200000"
+    "claude-sonnet-4": "200000"
+    "claude-haiku-4-5": "200000"
+  # Name of the ConfigMap rendered by the chart. Empty disables the
+  # override map entirely — every model gets the floor + Known=false.
+  contextWindowsConfigMapName: "kyber-model-context-windows"
+
+# Preview environment settings. When enabled, the chart renders a
+# cloudflare-tunnel Ingress for the control-plane Service so a per-PR
+# preview env can be reached via the substrate's preview tunnel.
+# Intended use: paired with matty-v/kyber-deploy's preview ApplicationSet.
+preview:
+  enabled: false
+  # host: the flat hostname under example.com, e.g.
+  #   kyber-preview-pr-12.example.com
+  # Must be set when enabled=true.
+  host: ""
+  # bootstrapSecrets: when true (and preview.enabled=true), renders a
+  # pre-install Job that idempotently creates the credentials and postgres
+  # Secrets if they don't already exist. Safe to set=true on ArgoCD-managed
+  # preview installs; no-op on prod (where secrets are pre-provisioned).
+  bootstrapSecrets: false
+  # credentialsSecretName: name of the api-credentials Secret the bootstrap
+  # Job creates. Empty → defaults to "<release-name>-credentials".
+  credentialsSecretName: ""
+  # postgresSecretName: name of the postgres Secret the bootstrap Job creates.
+  # Empty → defaults to "<release-name>-postgres".
+  postgresSecretName: ""
+  # ephemeralStorage: when true (and preview.enabled=true), disables
+  # persistence on Postgres and Redis — both use emptyDir volumes. On k3s
+  # with local-path StorageClass the default reclaimPolicy is Retain, so PVCs
+  # accumulate after namespace deletion. ephemeralStorage=true avoids that
+  # entirely by not creating PVCs in the first place. Not for production use.
+  ephemeralStorage: false
+  # copyGithubAppSecret: when true (and preview.enabled=true), the bootstrap
+  # Job copies the GitHub App Secret from the prod namespace into this
+  # preview so identity-repo auto-create works without manual operator
+  # action. Grants the bootstrap ServiceAccount a narrowly-scoped ClusterRole
+  # with `get` on just that one Secret in the source namespace. Disable for
+  # security-sensitive setups where previews should not share the prod App.
+  copyGithubAppSecret: false
+  # githubAppSecretName: name of the GitHub App Secret to copy. Must match
+  # the secret name used by the prod chart (default "kyber-github-app").
+  githubAppSecretName: "kyber-github-app"
+  # githubAppSourceNamespace: namespace where the GitHub App Secret lives.
+  # Usually the prod Kyber namespace ("kyber-system"). Empty disables the
+  # copy step even if copyGithubAppSecret=true.
+  githubAppSourceNamespace: "kyber-system"
+  # cleanupOnTeardown: when true (and preview.enabled=true), a PreDelete hook
+  # Job strips finalizers + deletes all Agent/Machine CRs in the preview
+  # namespace before ArgoCD prunes the chart resources. Prevents orphaned
+  # pods + Terminating-stuck namespaces when a PR is closed while agents
+  # exist (they're created via PWA after chart install, so they're not
+  # owned by the Helm release and aren't cleaned up by normal prune).
+  cleanupOnTeardown: false
+  # devApiKeySecretName: name of a shared cluster Secret (key "api-key")
+  # holding a DETERMINISTIC dev API key. When set (and bootstrapSecrets=true),
+  # the bootstrap Job seeds the preview's api-credentials Secret with THIS key
+  # instead of a random one — so the kyber-dev verification gate's CI probe
+  # (kyber#498), which runs with no kube access, can authenticate with a key it
+  # already knows (provisioned identically as the CI secret KYBER_DEV_PROBE_API_KEY).
+  # Empty → the bootstrap Job generates a random per-PR key (the default).
+  # DEV-ONLY: never set on a non-preview install — it makes the API key
+  # predictable. The webhook-secret stays random regardless.
+  devApiKeySecretName: ""
+  # devApiKeySourceNamespace: namespace holding devApiKeySecretName. Empty →
+  # the preview namespace itself (no cross-namespace read needed).
+  devApiKeySourceNamespace: ""
+  # resourceQuota: when enabled (and preview.enabled=true), renders a
+  # ResourceQuota + LimitRange into the preview namespace so a single runaway
+  # unmerged PR can't drive node disk-pressure eviction across every preview on
+  # the single-node kyber-dev cluster (kyber#498, Ackbar #3). The LimitRange
+  # supplies a default ephemeral-storage request/limit to the emptyDir-backed
+  # Postgres/Redis pods that would otherwise have none.
+  resourceQuota:
+    enabled: false
+    cpu: "2"
+    memory: 3Gi
+    ephemeralStorage: 6Gi
+    pods: "20"
+    # defaultEphemeralStorageRequest/Limit: per-container LimitRange defaults so
+    # pods without an explicit ephemeral-storage request still count against the
+    # quota and can be evicted fairly rather than starving the node.
+    defaultEphemeralStorageRequest: 256Mi
+    defaultEphemeralStorageLimit: 1Gi
+
+# Backups (deferred from C1 — NOT IMPLEMENTED in V1)
+# Uncomment and configure when implemented in a future release.
+# backups:
+#   enabled: false
+#   storage: gcs
+#   bucket: ""

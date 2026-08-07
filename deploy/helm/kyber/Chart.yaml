@@ -1,0 +1,16 @@
+apiVersion: v2
+name: kyber
+description: Kyber agent fleet platform — control plane, node agent, and CRD lifecycle
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - kyber
+  - agents
+  - claude-code
+  - fleet
+home: https://github.com/matty-v/kyber
+sources:
+  - https://github.com/matty-v/kyber
+maintainers:
+  - name: matty-v

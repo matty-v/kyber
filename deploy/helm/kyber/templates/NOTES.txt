@@ -1,0 +1,46 @@
+Kyber agent fleet platform has been installed.
+
+Release:   {{ .Release.Name }}
+Namespace: {{ include "kyber.namespace" . }}
+Version:   {{ .Chart.AppVersion }}
+
+== Quick status ==
+
+  kubectl -n {{ include "kyber.namespace" . }} get pods
+
+== API access ==
+
+The control-plane API is available on port {{ .Values.api.service.port }} inside the cluster.
+
+{{- if .Values.ingress.enabled }}
+External access is configured via Ingress:
+{{- range .Values.ingress.hosts }}
+  http{{ if $.Values.ingress.tls }}s{{ end }}://{{ .host }}
+{{- end }}
+{{- else }}
+To access the API locally, forward the port:
+
+  kubectl -n {{ include "kyber.namespace" . }} port-forward svc/{{ include "kyber.fullname" . }}-control-plane 8080:{{ .Values.api.service.port }}
+
+Then:
+
+  curl -H "Authorization: Bearer <your-api-key>" http://localhost:8080/api/v1/fleet
+{{- end }}
+
+== CRDs ==
+
+Agent and Machine CRDs are installed at the cluster level:
+
+  kubectl get agents.kyber.io
+  kubectl get machines.kyber.io
+
+== Notes ==
+
+- The Machine Controller requires KYBER_K3S_JOIN_TOKEN and KYBER_K3S_SERVER_URL to
+  provision k3s worker nodes. Set these via k3s.joinToken and k3s.serverUrl values
+  (or reference a pre-created secret via k3s.existingSecret).
+
+- The /api/v1/backups endpoint is deferred and NOT implemented in V1.
+
+- For telemetry (OTEL), set telemetry.enabled=true and configure telemetry.otlpEndpoint
+  after Task D2 ships.

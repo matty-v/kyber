@@ -1,0 +1,544 @@
+name: build
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+# Note: GHCR_PAT must be a Personal Access Token (classic) with write:packages scope,
+# stored as a repo secret. GITHUB_TOKEN cannot write to user-owned GHCR packages
+# (matty-v/*) — it only works for org-owned repos. Do not substitute GITHUB_TOKEN here.
+
+# Cancel an in-progress workflow when a new commit arrives on the same PR.
+# Only on `pull_request` events — main pushes must complete (they push images
+# and tag releases). PR runs share a group keyed to the PR number, so a force-
+# push or quick-fix commit cancels the previous attempt and reclaims its CI
+# minutes. Audit (2026-05-10) showed kyber as the dominant CI consumer; this
+# is the lowest-risk save before deeper restructuring.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+  packages: write
+  # dorny/paths-filter's PR mode calls GitHub's PR-files API; without this
+  # grant it fails on pull_request events with "Resource not accessible by
+  # integration" and skips every subsequent job.
+  pull-requests: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      go: ${{ steps.filter.outputs.go }}
+      pwa: ${{ steps.filter.outputs.pwa }}
+      runtimeBase: ${{ steps.filter.outputs.runtimeBase }}
+      claudeCode: ${{ steps.filter.outputs.claudeCode }}
+      codex: ${{ steps.filter.outputs.codex }}
+      controlPlaneImage: ${{ steps.filter.outputs.controlPlaneImage }}
+      nodeAgentImage: ${{ steps.filter.outputs.nodeAgentImage }}
+      # statusSidecarImage was referenced by push-status-sidecar (below) but
+      # never declared as an output — the condition silently saw "" (the job
+      # still built on go==true, masking the gap). Declared now (kyber#498
+      # touched this block; actionlint surfaced it).
+      statusSidecarImage: ${{ steps.filter.outputs.statusSidecarImage }}
+      mcpDiscordImage: ${{ steps.filter.outputs.mcpDiscordImage }}
+      mcpTelegramImage: ${{ steps.filter.outputs.mcpTelegramImage }}
+      chart: ${{ steps.filter.outputs.chart }}
+      anyImage: ${{ steps.derive.outputs.anyImage }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            go:
+              # `**/*.go` matches Go files at any depth, including `test/**.go`
+              # — that's intentional. Test code that affects exported behavior
+              # via shared helpers must trigger image rebuilds; the previous
+              # `'!test/**'` line was meant to *exclude* test/, but
+              # dorny/paths-filter v3 treats list items as positive patterns,
+              # so a negation on its own line matches "every file outside
+              # test/" — which made `go = true` for basically every PR
+              # (yaml-only, chart-only, doc-only). Confirmed via the changes
+              # job log on the post-#321 main run, where .github/workflows/
+              # yaml edits matched the `go` filter. Removing the negation:
+              # over-trigger on test-only changes is rare and cheap; the
+              # silent over-trigger on every non-test edit was expensive.
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+            pwa:
+              # The control-plane Docker image embeds the PWA built from these
+              # paths (see images/control-plane/Dockerfile pwa-builder stage,
+              # which COPYs both packages/pwa-views and apps/embedded-pwa).
+              # Changes anywhere in either workspace must trigger a rebuild,
+              # otherwise updates land in the package but never reach the
+              # binary the user is running. The legacy `'pwa/**'` filter was
+              # left over from the pre-workspace layout (d7783aa, 2026-04) and
+              # silently skipped rebuilds.
+              - 'packages/pwa-views/**'
+              - 'apps/embedded-pwa/**'
+              # Workspace metadata: dep bumps + lockfile changes can affect
+              # what the pwa-builder stage installs even when source is
+              # untouched. Over-trigger on root package.json edits is fine.
+              - 'package.json'
+              - 'package-lock.json'
+            runtimeBase:
+              - 'images/agent-base/**'
+            claudeCode:
+              - 'images/claude-code/**'
+              # kyber#676: the identity-repo setup is now a SHARED script both
+              # runtime images COPY. Without this entry a change to it would
+              # ship to neither image — the same class of gap kyber#655 hit.
+              - 'images/shared/**'
+              # The Dockerfile's builder stage compiles kyber-token-reporter
+              # from the repo root, so Go changes that affect its binary
+              # MUST trigger a rebuild. Without these entries, fixes to
+              # pkg/tokenreport/ silently ship nothing to agents.
+              - 'cmd/token-reporter/**'
+              - 'pkg/tokenreport/**'
+              - 'go.mod'
+              - 'go.sum'
+              # values.yaml carries the pinned runtime.claudeCode.version
+              # (kyber#175 Phase 2). Bumping it must trigger a rebuild so
+              # the new npm version actually lands in the published image.
+              # Over-trigger is acceptable — chart-only edits also rebuild.
+              - 'deploy/helm/kyber/values.yaml'
+              # The Dockerfile bakes the agent manual to /opt/kyber/KYBER.md,
+              # which start-claude.sh renders into every agent's .runtime/ at
+              # boot. Editing the manual without a rebuild publishes nothing —
+              # the fleet keeps reading the old text with no signal that it is
+              # stale. Same class as the pre-workspace 'pwa/**' filter above.
+              - 'docs/agent-manual.md'
+            codex:
+              - 'images/codex/**'
+              # kyber#676: the identity-repo setup is now a SHARED script both
+              # runtime images COPY. Without this entry a change to it would
+              # ship to neither image — the same class of gap kyber#655 hit.
+              - 'images/shared/**'
+              # The Dockerfile's reporter-builder stage compiles
+              # kyber-codex-reporter from the repo root
+              # (`go build ./cmd/codex-reporter`), exactly as claude-code does
+              # for kyber-token-reporter — but these entries were missing here,
+              # so a change confined to the reporter or to pkg/tokenreport/
+              # rebuilt the claude-code image and NOT the codex one, shipping
+              # nothing to Codex agents. Found while fixing kyber#681, whose
+              # credential syncer lives in precisely those paths.
+              - 'cmd/codex-reporter/**'
+              - 'pkg/tokenreport/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'docs/agent-manual.md'
+              - 'deploy/helm/kyber/values.yaml'
+            controlPlaneImage:
+              - 'images/control-plane/**'
+            nodeAgentImage:
+              - 'images/node-agent/**'
+            statusSidecarImage:
+              - 'images/status-sidecar/**'
+            mcpDiscordImage:
+              - 'images/mcp-discord/**'
+              - 'cmd/kyber-mcp-discord/**'
+            mcpTelegramImage:
+              - 'images/mcp-telegram/**'
+              - 'cmd/kyber-mcp-telegram/**'
+            # chart: any Helm change. A deploy/helm/** change is a deployable
+            # change (the dev-test loop should catch a broken chart) even when
+            # no image rebuilds, so it is not treated as docs-only. The
+            # deployable-paths contract now lives in Lando's pipeline wiring
+            # (kyber#535); this filter feeds the per-image push jobs.
+            chart:
+              - 'deploy/helm/**'
+
+      - id: derive
+        run: |
+          # Anything that requires an image rebuild
+          if [ "${{ steps.filter.outputs.go }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.pwa }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.runtimeBase }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.claudeCode }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.codex }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.controlPlaneImage }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.nodeAgentImage }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.statusSidecarImage }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.mcpDiscordImage }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.mcpTelegramImage }}" = "true" ]; then
+            echo "anyImage=true" >> $GITHUB_OUTPUT
+          else
+            echo "anyImage=false" >> $GITHUB_OUTPUT
+          fi
+
+  # Note: the previous `build` compile-check gate was removed (2026-05-10) —
+  # ~1000 min/mo of CI was spent re-running `make build` before each push-*
+  # job, but `go test` in test.yml already compiles the tree (and runs in
+  # parallel), and the Docker `go build` in each image stage will fail the
+  # push-* job on its own if Go is broken. Net loss is ~10 min on the rare
+  # broken-Go push when push-* spends time on a doomed Docker build.
+
+  # Docker-integration tests for images/agent-base. These shell out to
+  # `docker build` which pulls apt packages from Ubuntu mirrors — network
+  # flakes there would hang `go test ./...` for 10 minutes and fail the
+  # whole build. Gated behind the docker_integration build tag and only
+  # run when the agent-base image is touched, so the default unit-tests
+  # step stays fast and network-independent.
+  agent-base-integration:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.runtimeBase == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+          cache: true
+
+      - name: Docker integration tests
+        run: go test -tags docker_integration -timeout 20m ./images/agent-base/...
+
+  push-control-plane:
+    runs-on: ubuntu-latest
+    needs: changes
+    # Fires on main pushes (as always) AND on same-repo PRs (kyber#544): the
+    # deploy-to-dev substrate (epic #531, step 4) deploys cp:<pr.head.sha> and
+    # needs CI to have pushed it. Fork PRs are EXCLUDED explicitly — same-repo-
+    # only is the dev-deploy substrate invariant, not just a credential
+    # accident (fork runs don't get GHCR_PAT anyway).
+    if: >-
+      (github.event_name == 'push' ||
+       (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+      && (needs.changes.outputs.go == 'true' || needs.changes.outputs.pwa == 'true' || needs.changes.outputs.controlPlaneImage == 'true')
+    steps:
+      # fetch-depth: 0 is REQUIRED (kyber#482): this :latest image is what razer
+      # runs, and its displayed version comes from `git describe --tags` below.
+      # A shallow checkout fetches no tags, so `git describe` would return empty,
+      # main.Version would be "", and the binary would silently fall back to the
+      # lagging chart-rendered version — re-creating the exact bug on razer.
+      #
+      # ref: on pull_request events, check out the PR HEAD sha — the default is
+      # the synthetic merge commit, but the image is tagged with the head sha
+      # (deploy-to-dev and the stale-deploy guard key on marker.sha ==
+      # pr.head.sha, kyber#534), so the content must BE the head sha. Empty on
+      # push events → default behavior, unchanged.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || '' }}
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Honest pre-release version for the canary (:latest) image, e.g.
+      # 1.10.0-3-gabc1234 — razer runs ahead of releases, so this is the truth.
+      # Leading "v" stripped for parity with the release path's bare X.Y.Z.
+      # If no tags are reachable (should not happen with fetch-depth: 0), this
+      # is empty and the binary falls back to the chart version — but we fail
+      # loudly first so the fetch-depth regression can't slip back in silently.
+      - id: version
+        name: Resolve build version from git describe
+        run: |
+          DESCRIBE=$(git describe --tags 2>/dev/null || echo "")
+          if [ -z "$DESCRIBE" ]; then
+            echo "::error::git describe --tags returned empty — tags not fetched (check fetch-depth). Would silently fall back to the lagging chart version on razer (kyber#482)."
+            exit 1
+          fi
+          VERSION="${DESCRIBE#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved BUILD_VERSION=$VERSION"
+
+      # PR builds push the HEAD-sha tag ONLY — never :latest, never a release/
+      # moving tag — so a PR build can't affect what prod or main-tracking
+      # consumers (razer's :latest) pull. On pull_request, github.sha is the
+      # synthetic merge commit; the head sha is the tag the deploy-to-dev
+      # contract and the stale-deploy guard (kyber#534) key on.
+      - id: meta
+        name: Resolve image tags + build sha (per-PR head sha vs main push)
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BUILD_SHA="${{ github.event.pull_request.head.sha }}"
+            TAGS="ghcr.io/matty-v/kyber-control-plane:${BUILD_SHA}"
+          else
+            BUILD_SHA="${{ github.sha }}"
+            TAGS=$(printf 'ghcr.io/matty-v/kyber-control-plane:latest\nghcr.io/matty-v/kyber-control-plane:%s' "${BUILD_SHA}")
+          fi
+          echo "build_sha=${BUILD_SHA}" >> "$GITHUB_OUTPUT"
+          {
+            echo "tags<<TAGS_EOF"
+            echo "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Tags resolved:"; echo "${TAGS}"
+
+      - name: Build and push control-plane image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/control-plane/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          build-args: |
+            BUILD_SHA=${{ steps.meta.outputs.build_sha }}
+            BUILD_DATE=${{ github.event.head_commit.timestamp }}
+            BUILD_VERSION=${{ steps.version.outputs.version }}
+          cache-from: type=gha,scope=control-plane
+          cache-to: type=gha,scope=control-plane,mode=max
+
+  push-node-agent:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.nodeAgentImage == 'true')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push node-agent image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/node-agent/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-node-agent:latest
+            ghcr.io/matty-v/kyber-node-agent:${{ github.sha }}
+          cache-from: type=gha,scope=node-agent
+          cache-to: type=gha,scope=node-agent,mode=max
+
+  push-status-sidecar:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.statusSidecarImage == 'true')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push status-sidecar image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/status-sidecar/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-status-sidecar:latest
+            ghcr.io/matty-v/kyber-status-sidecar:${{ github.sha }}
+          cache-from: type=gha,scope=status-sidecar
+          cache-to: type=gha,scope=status-sidecar,mode=max
+
+  push-mcp-discord:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpDiscordImage == 'true')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push mcp-discord image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/mcp-discord/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-mcp-discord:latest
+            ghcr.io/matty-v/kyber-mcp-discord:${{ github.sha }}
+          cache-from: type=gha,scope=mcp-discord
+          cache-to: type=gha,scope=mcp-discord,mode=max
+
+  push-mcp-telegram:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpTelegramImage == 'true')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push mcp-telegram image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/mcp-telegram/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-mcp-telegram:latest
+            ghcr.io/matty-v/kyber-mcp-telegram:${{ github.sha }}
+          cache-from: type=gha,scope=mcp-telegram
+          cache-to: type=gha,scope=mcp-telegram,mode=max
+
+  # Published as kyber-runtime-base (not kyber-agent-base) to avoid
+  # collision with the legacy Kyber platform's package of the same name.
+  push-runtime-base:
+    runs-on: ubuntu-latest
+    needs: [changes, agent-base-integration]
+    if: github.event_name == 'push' && needs.changes.outputs.runtimeBase == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push runtime-base image
+        uses: docker/build-push-action@v5
+        with:
+          context: images/agent-base
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-runtime-base:latest
+            ghcr.io/matty-v/kyber-runtime-base:${{ github.sha }}
+          cache-from: type=gha,scope=runtime-base
+          cache-to: type=gha,scope=runtime-base,mode=max
+
+  # claude-code FROM runtime-base; wait for it if it's being rebuilt so the
+  # SHA-tagged layer exists before we reference it as BASE_IMAGE.
+  push-claude-code:
+    runs-on: ubuntu-latest
+    needs: [changes, push-runtime-base]
+    if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.claudeCode == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      # If runtime-base was rebuilt this run, pin to the new SHA tag so the
+      # layer graph is reproducible. If it was skipped, fall back to :latest
+      # (the previously published base) to avoid a missing-tag build failure.
+      - name: Determine BASE_IMAGE tag
+        id: base
+        run: |
+          if [ "${{ needs.changes.outputs.runtimeBase }}" = "true" ]; then
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+
+      # Read the pinned claude-code version from the chart (kyber#175 Phase 2):
+      # values.yaml is the source of truth for cluster-wide upgrades. Pass the
+      # value as a build-arg so the image installs exactly that npm version
+      # and tag the published image with the version too for audit/rollback.
+      - name: Read claude-code version from chart
+        id: ccver
+        run: |
+          version=$(yq '.runtime.claudeCode.version' deploy/helm/kyber/values.yaml)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::runtime.claudeCode.version missing or null in deploy/helm/kyber/values.yaml"
+            exit 1
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Pinned claude-code version: $version"
+
+      - name: Build and push claude-code image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/claude-code/Dockerfile
+          build-args: |
+            BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ steps.base.outputs.tag }}
+            CLAUDE_CODE_VERSION=${{ steps.ccver.outputs.version }}
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-claude-code:latest
+            ghcr.io/matty-v/kyber-claude-code:${{ github.sha }}
+            ghcr.io/matty-v/kyber-claude-code:${{ steps.ccver.outputs.version }}
+          cache-from: type=gha,scope=claude-code
+          cache-to: type=gha,scope=claude-code,mode=max
+
+  push-codex:
+    runs-on: ubuntu-latest
+    needs: [changes, push-runtime-base]
+    if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.codex == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v3
+      - name: Determine BASE_IMAGE tag
+        id: base
+        run: |
+          if [ "${{ needs.changes.outputs.runtimeBase }}" = "true" ]; then
+            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=latest" >> $GITHUB_OUTPUT
+          fi
+      - name: Determine pinned Codex version
+        id: cxver
+        run: |
+          version=$(yq '.runtime.codex.version' deploy/helm/kyber/values.yaml)
+          if [ -z "$version" ] || [ "$version" = "null" ]; then
+            echo "::error::runtime.codex.version missing or null in deploy/helm/kyber/values.yaml"
+            exit 1
+          fi
+          echo "version=$version" >> $GITHUB_OUTPUT
+          echo "Pinned codex version: $version"
+
+      - name: Build and push Codex image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: images/codex/Dockerfile
+          # CODEX_VERSION is passed explicitly so the npm version baked into
+          # the image and the version tag can never disagree — both derive
+          # from runtime.codex.version in values.yaml (mirrors claude-code).
+          build-args: |
+            BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ steps.base.outputs.tag }}
+            CODEX_VERSION=${{ steps.cxver.outputs.version }}
+          push: true
+          tags: |
+            ghcr.io/matty-v/kyber-codex:latest
+            ghcr.io/matty-v/kyber-codex:${{ github.sha }}
+            ghcr.io/matty-v/kyber-codex:${{ steps.cxver.outputs.version }}
+          cache-from: type=gha,scope=codex
+          cache-to: type=gha,scope=codex,mode=max
+  # Deployment is managed by ArgoCD — see matty-v/kyber-deploy. The
+  # Image Updater there polls GHCR every ~2 min, commits new image tags
+  # into environments/*/values.yaml, and ArgoCD syncs the cluster.
