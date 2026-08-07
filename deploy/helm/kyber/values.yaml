@@ -310,7 +310,7 @@ controlPlane:
   # the ConfigMap, so they outlive PWA refreshes but are reverted by a
   # subsequent `helm upgrade` unless captured back into chart values.
   # See kyber#376 (PR-B of kyber#374); design doc
-  # docs/2026-05-29-runtime-model-management-design.md §2.
+  # docs/design/2026-05-29-runtime-model-management-design.md §2.
   fleetDefaults:
     # configMapName: name of the ConfigMap. Empty disables the layer
     # entirely (the PUT endpoint returns 503 and the reconciler treats

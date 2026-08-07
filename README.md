@@ -131,7 +131,7 @@ The maintained, detailed map lives in [`AGENTS.md`](AGENTS.md).
 
 ## Runtimes & authentication
 
-Claude Code agents authenticate via a PWA-driven PKCE OAuth flow: authorize once at agent creation, and every later pod boot refreshes credentials on its own, so agents come up already logged in. Codex agents use ChatGPT device login or an OpenAI API key. Details in [`docs/runtimes.md`](docs/runtimes.md) and the [OAuth design note](docs/2026-04-14-programmatic-oauth-design.md).
+Claude Code agents authenticate via a PWA-driven PKCE OAuth flow: authorize once at agent creation, and every later pod boot refreshes credentials on its own, so agents come up already logged in. Codex agents use ChatGPT device login or an OpenAI API key. Details in [`docs/runtimes.md`](docs/runtimes.md) and the [OAuth design note](docs/design/2026-04-14-programmatic-oauth-design.md).
 
 ## CI & releases
 

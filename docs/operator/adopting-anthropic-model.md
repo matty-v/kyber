@@ -86,7 +86,7 @@ server-side, so suffixed and family-alias model ids resolve correctly.
 Existing pods continue running with the previously-resolved
 `KYBER_MODEL_CONTEXT_WINDOW` env until their next recreation (lazy adopt —
 same posture as fleet defaults; see
-`docs/2026-05-29-runtime-model-management-design.md` § "Known
+`docs/design/2026-05-29-runtime-model-management-design.md` § "Known
 interactions" for the kyber#358 convergence interaction). The budget %,
 by contrast, is not pod-env-bound and updates on the next read.
 
@@ -136,7 +136,7 @@ agent pod when the sidecar image rolls. Because pod recreation
 re-resolves `(spec.model || defaultModel)` against the *current*
 fleet default, that opportunistic recreation will adopt the new
 default fleet-wide. This is documented behavior — see
-`docs/2026-05-29-runtime-model-management-design.md` § "Known
+`docs/design/2026-05-29-runtime-model-management-design.md` § "Known
 interactions". If you want to avoid this, set per-agent `spec.model`
 explicitly before bumping the default.
 

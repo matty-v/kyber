@@ -1,7 +1,7 @@
 // Package contextwindowmap loads the operator-editable model →
 // context-window override map used by the detection poller and the agent
 // reconciler. See PR-D of kyber#374
-// (docs/2026-05-29-runtime-model-management-design.md §5).
+// (docs/design/2026-05-29-runtime-model-management-design.md §5).
 //
 // The values live in a Kubernetes ConfigMap (one entry per model: key =
 // model ID, value = decimal token count) seeded by the Helm chart

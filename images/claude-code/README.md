@@ -89,7 +89,7 @@ go test -tags=integration ./images/claude-code/ -run TestStartClaude_PRC -v
 
 ## Related
 
-- `docs/2026-05-29-runtime-model-management-design.md` — authoritative
+- `docs/design/2026-05-29-runtime-model-management-design.md` — authoritative
   runtime + model management design.
 - `docs/operator/adopting-cc-version.md` — operator how-to for the
   install path.

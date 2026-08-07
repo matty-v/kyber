@@ -371,7 +371,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// 3a. Ensure the user-secrets shell Secrets exist (#75). These are mounted
 	// unconditionally by pod_builder.go, so they must exist before any pod is
-	// created — see docs/2026-04-18-user-secrets-design.md.
+	// created — see docs/design/2026-04-18-user-secrets-design.md.
 	if err := r.ensureUserSecrets(ctx, agent); err != nil {
 		return ctrl.Result{}, err
 	}

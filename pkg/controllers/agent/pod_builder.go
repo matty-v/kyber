@@ -60,14 +60,14 @@ const defaultTranscriptOffsetsSize = "10Mi"
 
 // UserSecretKVName returns the k8s Secret name holding operator-uploaded kv
 // secrets for the given agent. Projected into the pod via envFrom with the
-// USER_ prefix. See docs/2026-04-18-user-secrets-design.md (#75).
+// USER_ prefix. See docs/design/2026-04-18-user-secrets-design.md (#75).
 func UserSecretKVName(agentName string) string {
 	return fmt.Sprintf("%s-user-secrets-kv", agentName)
 }
 
 // UserSecretFilesName returns the k8s Secret name holding operator-uploaded
 // file secrets for the given agent. Projected into the pod as a volume mount
-// at /user-secrets. See docs/2026-04-18-user-secrets-design.md (#75).
+// at /user-secrets. See docs/design/2026-04-18-user-secrets-design.md (#75).
 func UserSecretFilesName(agentName string) string {
 	return fmt.Sprintf("%s-user-secrets-files", agentName)
 }

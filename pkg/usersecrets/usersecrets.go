@@ -1,5 +1,5 @@
 // Package usersecrets holds pure validation for the user-defined per-agent
-// secrets feature (see docs/2026-04-18-user-secrets-design.md and issue #75).
+// secrets feature (see docs/design/2026-04-18-user-secrets-design.md and issue #75).
 //
 // The API layer calls these validators before any Kubernetes write. They have
 // no k8s dependency and are safe to exercise from unit tests without a fake
