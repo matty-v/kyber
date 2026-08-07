@@ -152,7 +152,7 @@ to bump `spec.runtimeVersion` for that agent.
 
 ## Related
 
-- `docs/2026-05-29-runtime-model-management-design.md` — authoritative
+- `docs/design/2026-05-29-runtime-model-management-design.md` — authoritative
   architecture for the whole runtime + model management story.
 - kyber#374 — epic tracker.
 - kyber#376 — PR-B (fleet-default resolution layer; `defaultModel`).

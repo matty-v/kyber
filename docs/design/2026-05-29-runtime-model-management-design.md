@@ -108,7 +108,7 @@ Exposed via **`GET /api/v1/available`** returning
 **Authentication & key handling:** the Models API call uses an **operator-supplied
 Anthropic API key**, entered in the PWA and stored as a Kubernetes Secret in the
 control-plane namespace (reuse the user-secrets pattern,
-`docs/2026-04-18-user-secrets-design.md`). Note this key is org/billing-capable and
+`docs/design/2026-04-18-user-secrets-design.md`). Note this key is org/billing-capable and
 is held by the _control-plane_ (not per-agent); document it as such, mount read-only,
 and ensure the poller treats a rotated/revoked key as a soft failure (serve cache,
 flag "detection unavailable") rather than crashing. The key is used only for the
@@ -334,4 +334,4 @@ layer). PR-D depends on PR-A. PR-E depends on PR-C. Repo convention notes this i
 - `deploy/helm/kyber/values.yaml:485` — `runtime.claudeCode.version` (build-time pin).
 - kyber#175 — runtime-version reporting this builds on.
 - kyber#371 — sidecar-convergence hardening (bounds the §"Known interactions" blast radius).
-- `docs/2026-04-18-user-secrets-design.md` — operator-supplied-secret pattern for the Anthropic key.
+- `docs/design/2026-04-18-user-secrets-design.md` — operator-supplied-secret pattern for the Anthropic key.

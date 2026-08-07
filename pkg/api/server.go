@@ -499,7 +499,7 @@ func (s *Server) anthropicTokenURL() string {
 // Auth is applied only to the protected sub-mux, not to public or webhook routes.
 //
 // NOTE: /api/v1/backups routes (spec lines 65-67) are deferred to a later task.
-// They were not included in the C1 plan. See phase-b-summary.md for carry-forwards.
+// They were not included in the C1 plan.
 func (s *Server) buildTopHandler() http.Handler {
 	// Propagate the allowlist to the WebSocket upgrader. Same list governs
 	// both REST/SSE (via corsMiddleware) and WS (via the upgrader's

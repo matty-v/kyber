@@ -3,7 +3,7 @@
 // requiring a Kyber code change or rebuild. Results are cached (Redis in
 // production, in-memory in dev/test) and read by GET /api/v1/available.
 //
-// See docs/2026-05-29-runtime-model-management-design.md §1 for design.
+// See docs/design/2026-05-29-runtime-model-management-design.md §1 for design.
 package runtimedetect
 
 import "time"

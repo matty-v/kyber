@@ -602,7 +602,7 @@ export type VMType = {
 }
 
 // User-defined per-agent secrets — matches pkg/api/routes_user_secrets.go.
-// See docs/2026-04-18-user-secrets-design.md (#75).
+// See docs/design/2026-04-18-user-secrets-design.md (#75).
 export type AgentSecretKind = 'kv' | 'file'
 
 export interface AgentSecret {

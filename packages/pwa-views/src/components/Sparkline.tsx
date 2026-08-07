@@ -1,5 +1,5 @@
 // Hand-rolled SVG sparkline — no chart library per design decision #5
-// (docs/2026-04-19-pwa-design-system.md). One polyline scaled to the
+// (docs/design/2026-04-19-pwa-design-system.md). One polyline scaled to the
 // component's viewport. Used by the FleetOverview SummaryCards to show
 // per-phase count trends across the rolling poll window.
 

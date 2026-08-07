@@ -1,5 +1,5 @@
 // Secrets tab for AgentDetail — list/add/delete/readback operator-uploaded
-// per-agent user secrets. See docs/2026-04-18-user-secrets-design.md (#75).
+// per-agent user secrets. See docs/design/2026-04-18-user-secrets-design.md (#75).
 
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { ChevronDown, Eye, FileText, HelpCircle, KeyRound, Plus, Trash2, Upload } from 'lucide-react'

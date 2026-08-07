@@ -2,7 +2,7 @@
 // fallbacks when an individual Agent CR omits its model or runtime version.
 // The original keys remain the Claude Code defaults for compatibility; Codex
 // uses parallel codexDefault* keys. See PR-B of
-// kyber#374 (docs/2026-05-29-runtime-model-management-design.md §2 +
+// kyber#374 (docs/design/2026-05-29-runtime-model-management-design.md §2 +
 // "Requested config" subsection).
 //
 // The values live in a Kubernetes ConfigMap (one key per field) seeded by

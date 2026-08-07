@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.20.2 — 2026-08-07
+
+### Changed
+- Comment-only: repository doc paths referenced in source comments follow the
+  design docs' move to `docs/design/`. No behavior change.
+
 ## 0.20.1 — 2026-08-07
 
 ### Fixed

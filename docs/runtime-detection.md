@@ -12,7 +12,7 @@ PRs B–E layer per-agent default resolution, runtime-install at boot, the
 operator-editable context-window override map, and the
 `RuntimeVersionMismatch` / `ModelUnsupported` safety net on top.
 
-See [`docs/2026-05-29-runtime-model-management-design.md`](2026-05-29-runtime-model-management-design.md)
+See [`docs/design/2026-05-29-runtime-model-management-design.md`](design/2026-05-29-runtime-model-management-design.md)
 for the full design.
 
 ## What the poller does

@@ -1,7 +1,7 @@
 /*
  * Design specimen page — renders the proposed "Kyber Crystal" palette, typography,
  * motion, and primitive samples so Matt can react to the visual direction before
- * we migrate the real app onto these tokens (see docs/2026-04-19-pwa-design-system.md).
+ * we migrate the real app onto these tokens (see docs/design/2026-04-19-pwa-design-system.md).
  *
  * Intentionally standalone: no API hooks, no shared layout, no import of the
  * production Button/Card/StatusBadge. Sample primitives below are local so the
@@ -671,7 +671,7 @@ export function DesignSpecimen() {
               Proposed palette, typography, and primitives for the Kyber PWA. Review
               the visual direction here before Phase&nbsp;1 token migration. See{' '}
               <span className="font-mono text-text-muted">
-                docs/2026-04-19-pwa-design-system.md
+                docs/design/2026-04-19-pwa-design-system.md
               </span>
               .
             </p>
