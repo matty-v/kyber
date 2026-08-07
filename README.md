@@ -1,11 +1,49 @@
-# Kyber — Self-Hosted Agent Fleet Platform
+<p align="center"><img src="docs/assets/kyber-logo.svg" width="96" alt="Kyber logo"></p>
 
-Kyber is a self-hosted platform for creating and managing AI agents on cost-optimized cloud infrastructure. It runs on Kubernetes (k3s for small installs, GKE for large), deployed via Terraform and Helm.
+# Kyber
+
+[![test](https://github.com/matty-v/kyber/actions/workflows/test.yml/badge.svg)](https://github.com/matty-v/kyber/actions/workflows/test.yml)
+[![release](https://img.shields.io/github/v/release/matty-v/kyber)](https://github.com/matty-v/kyber/releases)
+[![license](https://img.shields.io/github/license/matty-v/kyber)](LICENSE)
+
+**Kyber runs long-lived AI coding agents as Kubernetes pods with whole-disk persistence.** An agent keeps its entire filesystem — installed packages, working repos, memory, credentials — across pod restarts, platform upgrades, and spot-VM preemption. Agents and machines are declared as two CRDs, a controller-runtime control plane reconciles them, and you operate the fleet from a PWA or straight from Telegram and Discord.
+
+## Features
+
+- **Persistent agents.** A three-tier overlay dispatcher (kernel overlayfs, fuse-overlayfs, bind-mount `$HOME`) gives each agent a durable whole-pod filesystem on a PersistentVolume. Agents survive recreation and spot preemption with full continuity.
+- **Claude Code and Codex runtimes.** Claude Code boots non-interactively via Anthropic OAuth; Codex uses ChatGPT device login or an OpenAI API key.
+- **Two-way chat channels.** Talk to any agent over Telegram or Discord through per-agent MCP sidecars, gated by per-agent user-ID allowlists.
+- **Git-backed identity.** Each agent's memory, persona, and skills live in an identity repo, authenticated with short-lived GitHub-App-minted tokens.
+- **Fleet PWA.** Create, wake, exec into, and observe agents; configure channels; multi-cluster aware.
+- **Scheduled jobs.** Cron persists inside agents across restarts.
+- **Runtime detection.** New Claude Code CLI versions and models are detected and adoptable without a Kyber release.
+- **Runs cheap.** Spot/preemptible VMs, machine capacity management, per-agent context-window budgets.
+- **Observable.** OpenTelemetry metrics, activity states, session transcripts and history.
+
+## Try it locally
+
+A deterministic, mock-backed Kyber you can bring up, drive over the API, and tear down. No cloud account, no credentials:
+
+```bash
+scripts/devenv/up.sh      # k3d + mock-provider Kyber, API on localhost:18080
+scripts/devenv/down.sh    # tear down, no orphans
+```
+
+`up.sh` prints the entry-point contract: API base URL, health check, throwaway test credentials. [`scripts/devenv/README.md`](scripts/devenv/README.md) covers what's mocked and how to drive it.
 
 ## Install
 
-- **With an AI agent (recommended for non-developers).** Open your AI assistant of choice (Claude Code, Cursor, ChatGPT, etc.). Give it the prompt below and follow its instructions.
-- **Manually.** See [`docs/installation-wsl2.md`](docs/installation-wsl2.md) (Windows + WSL2 standalone) or [`docs/installation.md`](docs/installation.md) (GCP production).
+| Path | For | Guide |
+|---|---|---|
+| **macOS / Linux, local** | Full stack on one machine via k3d (Docker Desktop on macOS): live agent pods with whole-disk persistence, mock cloud | [`scripts/devenv/full-local.md`](scripts/devenv/full-local.md) |
+| **Windows, WSL2** | A Windows laptop as a standalone install; no cloud infra (native k3s + Tailscale Funnel) | [`docs/installation-wsl2.md`](docs/installation-wsl2.md) |
+| **GCP** | Production multi-VM install (Terraform + GCE) | [`docs/installation.md`](docs/installation.md) |
+| **Your own cluster** | You already run Kubernetes | Install the chart directly: [`deploy/helm/kyber`](deploy/helm/kyber) is the deployment contract, and every value is documented in [`values.yaml`](deploy/helm/kyber/values.yaml). The chart requires explicit image-tag pins. |
+
+<details>
+<summary><b>Installing with an AI assistant</b> (recommended for non-developers) — click to expand</summary>
+
+Open your AI assistant of choice (Claude Code, Cursor, ChatGPT, etc.), give it the prompt below, and follow its instructions.
 
 ```
 You're helping me install Kyber on my Windows laptop. Kyber is a self-hosted AI
@@ -35,216 +73,94 @@ Operating principles:
 Start at § 0 (Bring up WSL2). Proceed sequentially.
 ```
 
+</details>
+
 ## Architecture
 
-The platform has three runtime components:
+Three core components, plus per-agent sidecars:
 
-**Control Plane** — a modular monolith (single Go binary) that is the platform brain. It owns the REST API, agent lifecycle, machine lifecycle, telemetry, and background processing. Internal modules: API, Agent Controller, Machine Controller, Telemetry, Background Workers.
+- **Control Plane.** A modular monolith (single Go binary): REST API, agent and machine lifecycle controllers, telemetry, background workers. Built on controller-runtime.
+- **Node Agent.** A thin DaemonSet binary, one per node, for machine-level concerns: node metrics and machine actions (reboot, stop) on instruction from the control plane.
+- **Agent Runtime.** One pod per agent with a persistent whole-disk filesystem. Each agent pod also carries a **status sidecar** (activity and telemetry) and, per enabled channel, an **MCP channel sidecar** (`kyber-mcp-telegram`, `kyber-mcp-discord`) bridging chat to the agent session.
 
-**Node Agent** — a thin DaemonSet binary (one pod per k8s node) responsible for machine-level concerns only: exporting node metrics to OpenTelemetry and executing machine-level actions (reboot, stop) on instruction from the control plane.
+> **Pod requirements:** agent pods run `Privileged: true` (required for both fuse-overlayfs and bind mounts) and mount `/dev/fuse` from the host. See the [Security & threat model](#security--threat-model).
 
-**Agent Runtime** — one pod per agent, managed by the Agent Controller via Agent CRDs. Each agent has a full persistent filesystem backed by a PersistentVolume. The entrypoint uses a three-tier dispatcher to achieve whole-disk persistence: (1) kernel overlayfs — fast path, works when the container root isn't already on overlayfs; (2) fuse-overlayfs — userspace overlay, works on top of any filesystem including k3s's containerd-overlay (the prod default); (3) bind-mount HOME — last resort fallback when `/dev/fuse` is unavailable, persists `$HOME` only. Modes (1) and (2) persist the entire pod filesystem including apt packages and system paths. Agents survive pod recreation, spot preemption, and restarts with full filesystem continuity.
+Two CRDs are the source of truth. Operators declare intent; controllers reconcile against reality:
 
-> **Pod requirements:** agent pods run `Privileged: true` (required for both fuse-overlayfs and `mount(MS_BIND)`) and mount `/dev/fuse` from the host. See `docs/installation.md` § GCE CSI Driver for cluster prerequisites.
+- `Agent` (`kyber.io/v1`) — one AI agent instance: target machine, runtime, resources, scaling mode, identity, secrets, model
+- `Machine` (`kyber.io/v1`) — one managed cloud VM: provider, machine type, disk, spot pricing, zone
 
-### CRDs
+Lifecycle flows through the k8s API. Async and real-time events (agent wake, machine health, task completion) flow through Redis.
 
-Two custom resource definitions are the source of truth for platform state:
+Full detail: [`docs/architecture/overview.md`](docs/architecture/overview.md).
 
-- `Agent` (`kyber.io/v1`) — represents a single AI agent instance. Specifies the target machine, runtime type, compute resources, scaling mode, identity, secrets, and model.
-- `Machine` (`kyber.io/v1`) — represents a cloud VM managed by the platform. Specifies the provider, machine type, disk size, spot pricing, and zone.
-
-### Communication
-
-- **k8s API:** All lifecycle operations flow through CRDs. Operators declare intent; controllers reconcile against reality.
-- **Redis:** Async and real-time events (wake suspended agents, machine health events, task completion signals).
-
-## Tech Stack
+## Tech stack
 
 | Component | Technology |
 |---|---|
-| Control Plane | Go + controller-runtime (kubebuilder) |
-| Node Agent | Go (static binary) |
+| Control plane | Go + controller-runtime (kubebuilder) |
+| Node agent | Go (static binary) |
 | PWA | React + Vite + TypeScript |
 | Database | PostgreSQL (fleet metadata) |
-| Message Queue | Redis (async events) |
+| Events | Redis |
 | Orchestration | Kubernetes (k3s / GKE) |
 | Infrastructure | Terraform (GCP-first) |
-| Deployment | Helm chart in-repo ([`deploy/helm/kyber`](deploy/helm/kyber)); optionally GitOps via ArgoCD + ArgoCD Image Updater |
+| Deployment | Helm chart in-repo ([`deploy/helm/kyber`](deploy/helm/kyber)); optionally GitOps via ArgoCD |
 | Telemetry | OpenTelemetry |
-| Agent Runtimes (V1) | Claude Code, Codex (ChatGPT device login or OpenAI API key) |
-| Secrets | GCP Secret Manager |
+| Agent runtimes | Claude Code, Codex |
+| Secrets | Kubernetes Secrets; GCP Secret Manager integration on GCP installs |
 
-## Repository Structure
+## Repository layout
 
 ```
 kyber/
-├── cmd/
-│   ├── control-plane/    # Control plane entrypoint
-│   └── node-agent/       # Node agent entrypoint
-├── pkg/
-│   ├── api/              # REST API + CRD types (api/v1)
-│   ├── controllers/
-│   │   ├── agent/        # Agent Controller (CRD reconciliation)
-│   │   └── machine/      # Machine Controller (GCE + k8s reconciliation)
-│   ├── adapters/         # Cloud/infra adapters (GCE, Secret Manager)
-│   ├── briefstore/       # Session-brief persistence (Postgres + memory)
-│   ├── githubapp/        # GitHub App client (identity-repo scaffolding + GitHub API + short-lived per-agent identity-repo token minting, kyber#508 Stage 3/4)
-│   ├── inbound/          # Inbound-prompt verifier, dedup, rate limit, queue
-│   ├── messagebuffer/    # Telegram message buffer for suspended agents
-│   ├── nodeagent/        # Node agent logic
-│   ├── oauth/            # Anthropic OAuth (token exchange + refresh)
-│   ├── telemetry/        # OpenTelemetry emission
-│   ├── tokenreport/      # Per-agent context-budget snapshot model
-│   ├── tokenstore/       # Token-budget storage (Redis + memory)
-│   └── usersecrets/      # Per-agent user-managed secret integration
-├── apps/embedded-pwa/    # React + Vite + TypeScript PWA (shared views in packages/pwa-views/)
-├── images/
-│   ├── agent-base/       # Base Dockerfile for agent containers
-│   └── claude-code/      # Claude Code runtime image
-│   └── codex/             # Codex runtime image
-├── infra/terraform/      # Terraform modules
-├── deploy/helm/kyber/    # Helm chart
-│   └── crds/             # Generated CRD manifests
-└── test/
-    ├── contract/         # Cross-package contract tests
-    ├── integration/      # Integration tests (envtest)
-    ├── e2e/              # k3d-based end-to-end tests
-    └── prod-e2e/         # Real-cluster smoke tests
+├── cmd/               # Entrypoints: control-plane, node-agent, status-sidecar,
+│                      #   MCP channel sidecars, and supporting tools
+├── pkg/               # Go packages: API + CRD types, controllers, adapters,
+│                      #   runtimes, inbound dispatch, telemetry, …
+├── apps/, packages/   # PWA: embedded app + published view components
+├── images/            # Dockerfiles for the published container images
+├── deploy/helm/kyber/ # Helm chart (+ generated CRD manifests)
+├── infra/terraform/   # GCP infrastructure modules
+├── scripts/devenv/    # One-command mock-backed dev environment
+├── docs/              # Product docs, architecture, operator runbooks, ADRs
+└── test/              # Contract, integration (envtest), and e2e (k3d) suites
 ```
 
-## Agent Authentication
+The maintained, detailed map lives in [`AGENTS.md`](AGENTS.md).
 
-Agents authenticate to Anthropic via a PWA-driven PKCE OAuth flow. When creating an agent:
+## Runtimes & authentication
 
-1. Click **Authorize with Claude** in the Create Agent form — the PWA opens Anthropic's authorize URL.
-2. Approve the scope grant in your browser, copy the authorization code.
-3. Paste the code back into the PWA and click **Create Agent**.
+Claude Code agents authenticate via a PWA-driven PKCE OAuth flow: authorize once at agent creation, and every later pod boot refreshes credentials on its own, so agents come up already logged in. Codex agents use ChatGPT device login or an OpenAI API key. Details in [`docs/runtimes.md`](docs/runtimes.md) and the [OAuth design note](docs/2026-04-14-programmatic-oauth-design.md).
 
-Kyber exchanges the code + PKCE verifier for `{access_token, refresh_token}`, stores them in a per-agent k8s secret. On every pod boot, `start-claude.sh` checks whether the stored access token is still valid (more than 5 minutes before expiry). If so, it skips the refresh and starts Claude Code immediately. If the token has expired or is close to expiry, it exchanges the stored refresh token for a new credential set, writes `~/.claude/.credentials.json`, and POSTs the new refresh token back to the control plane (blocking — pod exits if this fails). Agents boot fully authenticated — no interactive `/login` step.
+## CI & releases
 
-See `docs/2026-04-14-programmatic-oauth-design.md` for full design detail and `docs/installation.md` § 9 for the step-by-step install flow.
-
-## CI / Deployment
-
-`.github/workflows/build.yml` uses path filters and per-image jobs to build and push container images to GHCR. Typical build times:
-
-- PWA-only change: ~3 min
-- Single Go image: ~4-5 min
-- All images: ~10-12 min
-
-Doc-only commits (`docs/**`, `*.md`) skip the build job entirely.
-
-**CI does not deploy.** The Helm chart lives in this repo at [`deploy/helm/kyber`](deploy/helm/kyber), and a plain `helm install` following [`docs/installation.md`](docs/installation.md) is the supported route for deploying your own cluster. The maintainer's own clusters are additionally deployed via [ArgoCD](https://argo-cd.readthedocs.io/) driven by a separate (currently private) deploy repo that holds per-environment values and ArgoCD Application manifests — that repo is not required to run Kyber.
-
-### How deployment works
-
-Two release tracks per environment:
-
-| Track | Chart source | Image tag | Used by |
-|---|---|---|---|
-| **latest** | `main` HEAD | `:latest` | dev/canary clusters |
-| **release** | tagged commit (`vX.Y.Z`) | `:vX.Y.Z` (digest-pinned in the deploy repo) | production clusters |
-
-```
-Push to main (matty-v/kyber)
-        │
-        ▼
-build.yml builds + pushes images to GHCR
-  ghcr.io/matty-v/kyber-*:latest + :<sha>
-        │
-        ▼  (~2 min)
-ArgoCD Image Updater on LATEST-track clusters
-detects the new digest, writes override into the
-Application's helm.parameters
-        │
-        ▼
-ArgoCD syncs → pods roll. Canary clusters get the
-new images automatically.
-
-
- ─── separately, cut a release (the operator approves via Telegram/Discord) ───
-
-.github/workflows/prepare-release.yml — folds the
-Chart.yaml bump into the commit, pushes tag vX.Y.Z
-        │
-        ▼
-.github/workflows/release.yml — full rebuild of all 8
-images from source at the tagged commit → pushed as
-:vX.Y.Z, then a GitHub Release is created
-        │
-        ▼
-post-release chain opens digest-pinned bump PRs on
-the deploy repo for the production clusters
-(per-environment values.yaml → :vX.Y.Z@sha256:...)
-        │
-        ▼
-operator merges the bump PR; ArgoCD on RELEASE-track
-clusters syncs the pinned digests on the next
-sync (~5 min)
-```
-
-The Helm chart ([`deploy/helm/kyber/`](deploy/helm/kyber)) is the deployment contract, whether you install it directly with `helm install` or point a GitOps tool at it. Per-environment values, ArgoCD Application manifests, and bootstrap scripts for the maintainer's clusters live in a separate (currently private) deploy repo; running your own instance does not depend on it — follow [`docs/installation.md`](docs/installation.md) instead. See `docs/upgrading.md` for the day-to-day upgrade flow and `docs/operator/release-runbook.md` for the release (`vX.Y.Z`) promotion + rollback reference.
-
-## Quickstart
-
-> First-time install (Terraform + Helm chart + ArgoCD) is documented in [`docs/installation.md`](docs/installation.md); see `docs/upgrading.md` for the day-to-day upgrade flow. The commands below cover local build/test.
-
-```bash
-# Build
-make build
-
-# Run tests
-make test
-
-# Generate CRD manifests
-make generate
-
-# List managed images
-make image-list
-```
-
-### Local dev/test environment (mock-backed, one command)
-
-For a deterministic, mock-backed Kyber instance you can bring up, drive over the
-API, and tear down — no real cloud or prod credentials:
-
-```bash
-scripts/devenv/up.sh      # k3d + mock-provider Kyber, API on localhost:18080
-scripts/devenv/down.sh    # tear down, no orphans
-```
-
-See [`scripts/devenv/README.md`](scripts/devenv/README.md) for the entry-point
-contract (URLs, test creds), what is mocked, and the agent-invocation pattern.
+CI builds and publishes all container images to GHCR (`ghcr.io/matty-v/kyber-*`) on every merge to `main` (`:latest` + `:<sha>`). Releases are semver tags: a `vX.Y.Z` tag rebuilds every image from source at that commit and publishes a [GitHub Release](https://github.com/matty-v/kyber/releases). The Helm chart is the deployment contract for both `helm install` and GitOps consumers. Operator-side detail: [`docs/upgrading.md`](docs/upgrading.md) and [`docs/operator/release-runbook.md`](docs/operator/release-runbook.md).
 
 ## Documentation
 
-**Working-knowledge (repo root — read before contributing):**
+**Product & architecture:**
 
-- [CODE_QUALITY.md](CODE_QUALITY.md) — repo-local code standards: Go + TS/PWA conventions, what "done" testing means for a controller/API change, and the lint/format CI actually gates on
-- [REVIEWING.md](REVIEWING.md) — reviewer gotchas / fragile-area focus map: known landmines and "look harder here" hotspots, seeded from real incident history
+- [`docs/product/README.md`](docs/product/README.md) — product source of truth: what Kyber does, in operator-observable terms
+- [`docs/architecture/overview.md`](docs/architecture/overview.md) — components, CRDs, control-plane module map, agent lifecycle, inbound dispatch
+- [`docs/runtimes.md`](docs/runtimes.md) — runtime selection and authentication
 
-**Product & architecture — the WHAT and the HOW (a matched, cross-linked pair):**
+**Operating Kyber:**
 
-- [docs/product/README.md](docs/product/README.md) — **product source of truth (the WHAT):** what Kyber does, the observable behaviors and concepts an operator sees and can do. No implementation detail.
-- [docs/architecture/overview.md](docs/architecture/overview.md) — **architecture deep-dive (the HOW):** the three runtime components, CRDs, control-plane module map, agent lifecycle, and inbound dispatch path (entry point to `docs/architecture/`)
-- [docs/runtimes.md](docs/runtimes.md) — Runtime selection and Codex ChatGPT-subscription authentication
+- [`docs/installation.md`](docs/installation.md) / [`docs/installation-wsl2.md`](docs/installation-wsl2.md) — install guides (see [Install](#install))
+- [`docs/upgrading.md`](docs/upgrading.md) — chart and image upgrade flow
+- [`docs/operator/release-runbook.md`](docs/operator/release-runbook.md) — cutting releases, promotion, rollback
+- [`docs/operator/wedged-agent-recovery.md`](docs/operator/wedged-agent-recovery.md) — recovering a wedged agent via forced re-auth
+- [`docs/api-keys.md`](docs/api-keys.md) — platform API key lifecycle and scopes
 
-**Design notes & runbooks:**
+**Agent capabilities:**
 
-- [docs/installation.md](docs/installation.md) — GCP multi-VM install (Terraform + GCE + ArgoCD)
-- [docs/installation-wsl2.md](docs/installation-wsl2.md) — WSL2 standalone install (native k3s + Tailscale Funnel, no cloud infra)
-- [docs/upgrading.md](docs/upgrading.md) — chart and image upgrade flow
-- [docs/operator/release-runbook.md](docs/operator/release-runbook.md) — semver (`vX.Y.Z`) release track: how to cut a release, when to promote, rollback recipe
-- [docs/operator/wedged-agent-recovery.md](docs/operator/wedged-agent-recovery.md) — recover a wedged agent with the "Require re-auth" action (force `NeedsAuth` → re-authorize → Running)
-- [docs/api-keys.md](docs/api-keys.md) — Kyber platform API key lifecycle (generation, rotation, revocation, scope + threat model)
-- [docs/agents-identity-repos.md](docs/agents-identity-repos.md) — Git-backed agent identity (memory, persona, skills); identity-repo git auth via App-minted short-lived tokens, no PAT fallback (kyber#508 Stage 3/4); three creation modes
-- [docs/agents-scheduled-jobs.md](docs/agents-scheduled-jobs.md) — OS-level cron persistence inside agents
-- [docs/runtime-detection.md](docs/runtime-detection.md) — Detection of new Claude Code versions and models without a Kyber release (poller + `/api/v1/available`)
-- [docs/operator/adopting-cc-version.md](docs/operator/adopting-cc-version.md) — How to pin a Claude Code CLI version per-agent or fleet-wide (PR-C)
-- [docs/operator/adopting-anthropic-model.md](docs/operator/adopting-anthropic-model.md) — How to choose a Claude model, set its context window, and apply it per-agent or fleet-wide (PR-D)
+- [`docs/agents-comms.md`](docs/agents-comms.md) — Telegram/Discord channel setup
+- [`docs/agents-identity-repos.md`](docs/agents-identity-repos.md) — git-backed agent identity: memory, persona, skills
+- [`docs/agents-scheduled-jobs.md`](docs/agents-scheduled-jobs.md) — cron persistence inside agents
+- [`docs/runtime-detection.md`](docs/runtime-detection.md), [`docs/operator/adopting-cc-version.md`](docs/operator/adopting-cc-version.md), [`docs/operator/adopting-anthropic-model.md`](docs/operator/adopting-anthropic-model.md) — adopting new CLI versions and models without a release
 
-See `docs/` for design notes and ADRs.
+Contributors: start with [`AGENTS.md`](AGENTS.md), then [`CODE_QUALITY.md`](CODE_QUALITY.md) and [`REVIEWING.md`](REVIEWING.md). Design notes and ADRs live in [`docs/`](docs/).
 
 ## Security & threat model
 
@@ -256,6 +172,14 @@ Kyber is designed to run agents with substantial power, and its deployment model
 Run Kyber on a dedicated cluster whose workloads you trust the agents with — not on a shared production cluster. Treat the cluster as the blast radius of the agents it hosts.
 
 To report a vulnerability, see [SECURITY.md](SECURITY.md).
+
+## Project status
+
+Kyber is v1.x and solo-maintained. The 1.0 release opened the project to the public after a long private development history; the [CHANGELOG](CHANGELOG.md) explains the versioning reset. It runs the maintainer's production fleets today. Expect the CRD schemas and REST API to keep evolving: breaking changes land in minor versions and are called out in the [CHANGELOG](CHANGELOG.md) and [Releases](https://github.com/matty-v/kyber/releases).
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the dev environment, test gates, and PR conventions, and [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) for community expectations. For non-trivial changes, open an issue first.
 
 ## License
 
