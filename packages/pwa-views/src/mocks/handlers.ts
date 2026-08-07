@@ -63,6 +63,25 @@ let mockFleetTick = 0
 // reverse-proxies. Use wildcards so localhost:5173 and any configured server
 // URL both resolve.
 export const handlers = [
+  // cluster-info is the embedded app's bootstrap gate (EmbeddedClusterProvider
+  // fetches it before mounting anything) — without this handler every
+  // mock-backed page renders the "Could not reach the kyber control plane"
+  // error and the screenshot suite fails at the gate.
+  http.get('*/api/v1/cluster-info', () =>
+    HttpResponse.json({ name: 'kyber-demo', version: '1.0.0', capabilities: [] }),
+  ),
+
+  // Sidebar + Settings poll this for the running build; without it the header
+  // renders "version unavailable".
+  http.get('*/api/v1/version', () =>
+    HttpResponse.json({
+      sha: 'a1b2c3d',
+      buildDate: '2026-08-07T00:00:00Z',
+      chartVersion: '1.0.0',
+      substrate: 'k3s',
+    }),
+  ),
+
   http.get('*/api/v1/config', () => HttpResponse.json(mockComputeConfig)),
 
   // Rotate API key — return a deterministic-looking key so screenshots
