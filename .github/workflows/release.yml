@@ -438,6 +438,110 @@ jobs:
             -d "$PAYLOAD"
 
   # --------------------------------------------------------------------
+  # B0: Publish the Helm chart as an OCI artifact.
+  #
+  # Until now the chart was never published anywhere — every ArgoCD Application
+  # (razer, falcon, gcp, and Steve's standalone lonestar box) rendered it
+  # straight from this git repo at `targetRevision: main`, while pinning image
+  # tags to a release. So images were gated and chart TEMPLATES were not: any
+  # change merged here reached all four clusters within minutes, ungated, with
+  # selfHeal on. Worse, /api/v1/version reports chartVersion from the image's
+  # ldflags, so it reported the pinned release while the rendered templates were
+  # head-of-main — the version surface lied about the templates.
+  #
+  # Publishing the chart per release gives every cluster a versioned artifact to
+  # pin (`targetRevision: 1.0.1`, or `helm install oci://…`), and is the
+  # distribution path the operator-facing update feature needs: a standalone
+  # cluster self-upgrades by pulling this artifact. That is why the chart and not
+  # just the image tags — the chart carries crds/ and template changes, which
+  # patching image tags on a Deployment cannot.
+  #
+  # Runs after `release` so a chart is only ever published alongside a GitHub
+  # Release whose 8 images all built. Idempotent: re-publishing an existing
+  # version is skipped, not failed, so the workflow_dispatch re-run path (used
+  # during Actions outages) stays usable.
+  #
+  # TOKEN: GHCR_PAT, not GITHUB_TOKEN — matty-v is a user account and
+  # GITHUB_TOKEN cannot write user-owned GHCR packages (same constraint as the
+  # image pushes above).
+  #
+  # NOTE: a newly-created GHCR package is PRIVATE by default. After the first
+  # publish, charts/kyber must be flipped to public once, by hand, or operators
+  # pulling it get a 401 that reads like a bad chart reference. Same one-time
+  # step every kyber-* image package needed.
+  # --------------------------------------------------------------------
+  publish-chart:
+    needs: [meta, release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      KYBER_VERSION: ${{ needs.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.meta.outputs.sha }}
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      # Derived in a step, not job-level `env:` — REGISTRY is a workflow-level
+      # env var, which is exported into each step's shell but is NOT resolvable
+      # from another `env:` block's expression.
+      - name: Resolve chart repository
+        run: echo "CHART_REPO=oci://${REGISTRY}/charts" >> "$GITHUB_ENV"
+
+      # The chart version must equal the release version. prepare-release.yml
+      # bumps Chart.yaml INSIDE the tagged commit precisely so this holds
+      # (kyber#591), and scripts/release-version-guard_test.sh locks it. Assert
+      # it here too: publishing a chart labelled differently from the release it
+      # ships with would make the artifact unpinnable by version.
+      - name: Assert chart version matches the release
+        run: |
+          CHART_VERSION=$(yq '.version' deploy/helm/kyber/Chart.yaml)
+          if [ "$CHART_VERSION" != "$KYBER_VERSION" ]; then
+            echo "::error::Chart.yaml version ($CHART_VERSION) != release version ($KYBER_VERSION). prepare-release.yml should have bumped it inside the tagged commit."
+            exit 1
+          fi
+          echo "Chart version $CHART_VERSION matches release $KYBER_VERSION"
+
+      - name: Log in to GHCR
+        if: needs.meta.outputs.is_test == 'false'
+        run: |
+          echo "${{ secrets.GHCR_PAT }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Package chart
+        run: helm package deploy/helm/kyber --destination dist
+
+      # Idempotency: `helm push` happily overwrites an existing version, which is
+      # the same tag-mutability hazard preflight-check-tags guards for images
+      # (kyber#364) — a re-pushed chart version leaves clusters that already
+      # pulled it on a different artifact under the same name. Skip instead.
+      - name: Skip if this chart version is already published
+        if: needs.meta.outputs.is_test == 'false'
+        id: published
+        run: |
+          if helm show chart "${CHART_REPO}/kyber" --version "$KYBER_VERSION" >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Chart kyber-${KYBER_VERSION} is already published — skipping push."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Push chart to GHCR
+        if: needs.meta.outputs.is_test == 'false' && steps.published.outputs.already == 'false'
+        run: |
+          helm push "dist/kyber-${KYBER_VERSION}.tgz" "${CHART_REPO}"
+          echo "::notice::Published ${CHART_REPO}/kyber:${KYBER_VERSION}"
+
+      - name: Test mode — chart push skipped
+        if: needs.meta.outputs.is_test == 'true'
+        run: |
+          echo "TEST MODE (${KYBER_VERSION}): packaged dist/kyber-${KYBER_VERSION}.tgz, would push to ${CHART_REPO}"
+          ls -l dist/
+
+  # --------------------------------------------------------------------
   # B1: Chain-trigger publish-pwa-views.yml by pushing a pwa-views/v* tag.
   # Skipped when: [skip-publish] in tag message, version already on registry,
   # or is_test=true (dry-run only — no tag pushed).
