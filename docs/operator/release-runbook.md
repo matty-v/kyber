@@ -2,6 +2,18 @@
 
 This document describes the release process for Kyber, including which steps are automated by CI and which require the operator to act. The upstream project drives several steps through a private team of release-automation agents; where a step depends on that private setup it is marked operator-specific — a fork can perform the same step by hand.
 
+> **⚠️ Upstream status (2026-08-10): the canary role is currently VACANT.**
+>
+> This runbook describes a canary cluster in several places — the pre-release smoke test (step 1), the `:latest` refresh (step 5), and the `git describe` version labelling. Those mechanics are unchanged and still correct, but **upstream has no cluster filling the role right now.** The cluster that did (`kyber-razer`) was moved onto the gated release lane because it hosts the operator's own working agents, and continuous delivery there meant an ungated merge could roll a live agent's pod out from under it.
+>
+> What this changes until a replacement canary exists:
+> - **Step 1's smoke test has nothing to run against.** No cluster tracks head-of-main, so a merge is not exercised anywhere before it is tagged.
+> - **A soak/readiness check that reports "canary green" is reporting on a *released* cluster**, not on the commits being proposed. Do not read it as evidence the tag is safe.
+> - **Operator approval is the only real gate** on a release reaching production.
+> - Step 5 (`:latest` refresh) still runs and is still correct; it simply has no consumer at the moment.
+>
+> A forked or self-hosted setup that *does* keep a canary should read this runbook as written and ignore this note.
+
 ---
 
 ## Overview
