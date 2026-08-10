@@ -505,6 +505,13 @@ jobs:
           fi
           echo "Chart version $CHART_VERSION matches release $KYBER_VERSION"
 
+      # The three is_test guards below are defensive only — this job cannot
+      # currently run for a -test tag at all. `preflight-check-tags` is skipped
+      # when is_test is true, every build job `needs` it with no `always()`
+      # override, so the whole chain (builds → release → here) skips. Kept so
+      # the job stays correct if that ever changes; NOT paired with a "test
+      # mode" step, because such a step would be unreachable and would imply
+      # test tags are handled here when they never arrive.
       - name: Log in to GHCR
         if: needs.meta.outputs.is_test == 'false'
         run: |
@@ -534,12 +541,6 @@ jobs:
         run: |
           helm push "dist/kyber-${KYBER_VERSION}.tgz" "${CHART_REPO}"
           echo "::notice::Published ${CHART_REPO}/kyber:${KYBER_VERSION}"
-
-      - name: Test mode — chart push skipped
-        if: needs.meta.outputs.is_test == 'true'
-        run: |
-          echo "TEST MODE (${KYBER_VERSION}): packaged dist/kyber-${KYBER_VERSION}.tgz, would push to ${CHART_REPO}"
-          ls -l dist/
 
   # --------------------------------------------------------------------
   # B1: Chain-trigger publish-pwa-views.yml by pushing a pwa-views/v* tag.
