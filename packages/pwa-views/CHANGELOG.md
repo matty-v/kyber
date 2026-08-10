@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.21.1 — 2026-08-10
+
+### Changed
+- Dependency maintenance only, no source change: minor/patch bumps of the
+  Radix UI primitives, `@fontsource/*`, `@tanstack/react-query` and the rest
+  of the npm-minor-patch group. Version bumped so the refreshed dependency
+  set actually reaches holocron — the library publishes on a version bump.
+
 ## 0.21.0 — 2026-08-07
 
 ### Added
