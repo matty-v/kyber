@@ -47,7 +47,7 @@ jobs:
       go: ${{ steps.filter.outputs.go }}
       pwa: ${{ steps.filter.outputs.pwa }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - id: filter
@@ -85,13 +85,13 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: No Go-relevant changes — skipping Go build, lint, and tests
         if: needs.changes.outputs.go != 'true'
         run: echo "This PR touches only docs/devenv-scripts/frontend — the Go suite is not needed."
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         if: needs.changes.outputs.go == 'true'
         with:
           go-version-file: go.mod
@@ -151,7 +151,7 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Full history so the version-bump guard below can diff the PR
           # against its base commit.
@@ -190,7 +190,7 @@ jobs:
         if: needs.changes.outputs.pwa != 'true'
         run: echo "This PR touches no packages/ or apps/ sources — the PWA build/test is not needed."
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         if: needs.changes.outputs.pwa == 'true'
         with:
           node-version: "22"
