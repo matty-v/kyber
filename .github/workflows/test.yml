@@ -94,7 +94,7 @@ jobs:
       - uses: actions/setup-go@v5
         if: needs.changes.outputs.go == 'true'
         with:
-          go-version: "1.22"
+          go-version-file: go.mod
           cache: true
 
       - name: Download modules
