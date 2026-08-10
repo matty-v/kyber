@@ -1,0 +1,93 @@
+<!-- Source for docs/assets/social-preview.png — the repo's GitHub social preview card (1280x640).
+     Upload the PNG at Settings > General > Social preview. Re-render after editing:
+       npx playwright install chromium   # once
+       node -e "const{chromium}=require('playwright');(async()=>{const b=await chromium.launch();const p=await b.newPage({viewport:{width:1280,height:640}});await p.goto('file://'+process.cwd()+'/docs/assets/social-preview.html');await p.screenshot({path:'docs/assets/social-preview.png'});await b.close()})()"
+     Copy must match the README's claims — this card is the first thing a stranger sees. -->
+<meta charset="utf-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; }
+  body {
+    background: #0D1117;
+    background-image:
+      radial-gradient(900px 500px at 82% 12%, rgba(78,205,219,0.16), transparent 62%),
+      radial-gradient(700px 460px at 8% 96%, rgba(78,205,219,0.07), transparent 60%);
+    font-family: "DejaVu Sans", -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+    color: #E6EDF3;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 96px;
+    position: relative;
+    overflow: hidden;
+  }
+  /* hairline accent down the left edge */
+  .edge {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 8px;
+    background: linear-gradient(180deg, #4ECDDB 0%, rgba(78,205,219,0.15) 100%);
+  }
+  /* oversized watermark gem, bleeding off the right */
+  .watermark { position: absolute; right: -110px; top: 96px; opacity: 0.10; }
+
+  .lockup { display: flex; align-items: center; gap: 26px; margin-bottom: 40px; }
+  .wordmark {
+    font-size: 52px; font-weight: 700; letter-spacing: 18px; line-height: 1;
+    color: #E6EDF3;
+  }
+  h1 {
+    font-size: 62px; font-weight: 700; line-height: 1.12; letter-spacing: -1.2px;
+    max-width: 1010px;
+  }
+  h1 .hl { color: #4ECDDB; }
+  p.sub {
+    margin-top: 28px; font-size: 29px; line-height: 1.4; color: #A8B3BF;
+    max-width: 1010px; font-weight: 400; white-space: nowrap;
+  }
+  .facts {
+    margin-top: 46px; display: flex; align-items: center; gap: 18px;
+    font-size: 22px; color: #7D8894; font-weight: 500;
+  }
+  .facts .dot { color: #3A4450; }
+  .facts b { color: #C3CDD8; font-weight: 600; }
+</style>
+
+<div class="edge"></div>
+
+<svg class="watermark" width="560" height="513" viewBox="0 0 120 110" aria-hidden="true">
+  <g fill="none" stroke="#4ECDDB" stroke-width="4" stroke-linejoin="round" stroke-linecap="round">
+    <polygon points="38,16 82,16 106,42 60,94 14,42"/>
+    <line x1="14" y1="42" x2="106" y2="42"/>
+    <line x1="38" y1="16" x2="44" y2="42"/>
+    <line x1="82" y1="16" x2="76" y2="42"/>
+    <line x1="44" y1="42" x2="60" y2="94"/>
+    <line x1="76" y1="42" x2="60" y2="94"/>
+  </g>
+</svg>
+
+<div class="lockup">
+  <svg width="72" height="66" viewBox="0 0 120 110" aria-hidden="true">
+    <g fill="none" stroke="#4ECDDB" stroke-width="6" stroke-linejoin="round" stroke-linecap="round">
+      <polygon points="38,16 82,16 106,42 60,94 14,42"/>
+      <line x1="14" y1="42" x2="106" y2="42"/>
+      <line x1="38" y1="16" x2="44" y2="42"/>
+      <line x1="82" y1="16" x2="76" y2="42"/>
+      <line x1="44" y1="42" x2="60" y2="94"/>
+      <line x1="76" y1="42" x2="60" y2="94"/>
+    </g>
+  </svg>
+  <div class="wordmark">KYBER</div>
+</div>
+
+<h1>Long-lived AI coding agents<br>as <span class="hl">Kubernetes pods</span></h1>
+
+<p class="sub">Whole-disk persistence across restarts, upgrades and spot preemption.</p>
+
+<div class="facts">
+  <span><b>Claude Code</b> + <b>Codex</b></span>
+  <span class="dot">•</span>
+  <span>Telegram &amp; Discord</span>
+  <span class="dot">•</span>
+  <span>Fleet PWA</span>
+  <span class="dot">•</span>
+  <span>Apache-2.0</span>
+</div>
