@@ -213,9 +213,19 @@ jobs:
     # needs CI to have pushed it. Fork PRs are EXCLUDED explicitly — same-repo-
     # only is the dev-deploy substrate invariant, not just a credential
     # accident (fork runs don't get GHCR_PAT anyway).
+    #
+    # Dependabot is EXCLUDED (github.actor check below). Its branches live in
+    # this repo, so they satisfy the same-repo test above — but GitHub keeps
+    # Dependabot's secrets in a separate store and does NOT expose
+    # secrets.GHCR_PAT to them. The login step therefore fails with "Password
+    # required" on every Dependabot PR, marking each one red for a reason that
+    # has nothing to do with the dependency being bumped. The same-repo test
+    # was standing in for "has credentials"; for Dependabot that inference is
+    # false, so state it explicitly.
     if: >-
       (github.event_name == 'push' ||
        (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+      && github.actor != 'dependabot[bot]'
       && (needs.changes.outputs.go == 'true' || needs.changes.outputs.pwa == 'true' || needs.changes.outputs.controlPlaneImage == 'true')
     steps:
       # fetch-depth: 0 is REQUIRED (kyber#482): this :latest image is what razer
