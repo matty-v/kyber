@@ -12,38 +12,67 @@ stable for compatibility:
   codexDefaultModel          — fallback model for Codex agents.
   codexDefaultRuntimeVersion — fallback Codex harness version.
 
-When `defaultRuntimeVersion` is left empty in values.yaml, we derive it
-from `runtime.claudeCode.version` so existing installs see no behavior
-change until an operator opts in.
-
 When `controlPlane.fleetDefaults.configMapName` is empty, the ConfigMap
 isn't rendered and the API endpoint returns 503.
 
-The Helm-rendered values are seeds. The PWA's PUT path edits the same
-ConfigMap in place, so subsequent reads (and reconciles) see the
-operator's value. A `helm upgrade` that doesn't override the chart
-values will revert the ConfigMap to the seed — this is by design (the
-chart is the source of truth at install time) but operators who edit
-via the PWA should mirror the change into kyber-deploy values.yaml to
-survive the next upgrade.
+PRECEDENCE — the LIVE value wins; chart values are a first-install SEED.
+
+  1. The live ConfigMap value, read via `lookup`. This is what the PWA
+     wrote, and it wins.
+  2. The chart value, used to seed the key on a first install.
+  3. The derived default (the pinned harness version) or empty.
+
+Live-wins is deliberate, and it is the direct consequence of "a cluster's
+config lives in the cluster" (Matt, 2026-08-10). The alternative —
+values-win-when-non-empty — cannot work here, because `defaultModel` and
+`codexDefaultModel` ship NON-EMPTY defaults in values.yaml. Helm cannot
+distinguish "the operator overrode this" from "this is the chart default",
+so a values-first rule would clobber every PWA edit to exactly the two
+fields most likely to be edited.
+
+The cost, stated plainly: editing one of these in values.yaml has no effect
+on a cluster where the key already exists. Change it through the PWA or
+PUT /api/v1/fleet-defaults, which is the canonical path anyway. To force a
+chart value back in, delete the key from the live ConfigMap and upgrade.
+
+Why the live tier exists at all: this template used to render straight from
+`.Values`, so any `helm upgrade` reverted every PWA-written default back to
+the chart seed. That was harmless only because nothing ran `helm upgrade` —
+ArgoCD renders and applies manifests, and the argocd-specific annotations
+below told it to tolerate the drift. Making Kyber upgrade ITSELF via Helm
+turns that dormant bug into a live one: every self-upgrade would silently
+reset the operator's fleet defaults. See dave-agent spec
+2026-08-10-kyber-owns-its-deployment.md.
+
+`lookup` returns nothing when there is no cluster access — notably inside
+ArgoCD's repo-server, and under plain `helm template`. The live tier is then
+simply unavailable and rendering falls through to the chart value, which is
+exactly the behaviour that exists today. So this is safe during the
+transition period while ArgoCD is still in play.
 */ -}}
 {{- if .Values.controlPlane.fleetDefaults.configMapName }}
+{{- $fd := .Values.controlPlane.fleetDefaults }}
+{{- $live := lookup "v1" "ConfigMap" (include "kyber.namespace" .) $fd.configMapName }}
+{{- $prev := dict }}
+{{- if $live }}{{- $prev = ($live.data | default dict) }}{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.controlPlane.fleetDefaults.configMapName }}
+  name: {{ $fd.configMapName }}
   namespace: {{ include "kyber.namespace" . }}
   labels:
     {{- include "kyber.labels" . | nindent 4 }}
   annotations:
     # ArgoCD: tolerate the PWA-driven Data drift. Without this, ArgoCD
     # would mark the chart "OutOfSync" the moment an operator edits a
-    # default and self-heal would clobber it.
+    # default and self-heal would clobber it. Retained while any cluster
+    # is still ArgoCD-managed; the `lookup` above is the Helm-native
+    # equivalent and is what protects the values once ArgoCD is retired.
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: Replace=false
 data:
-  defaultModel: {{ .Values.controlPlane.fleetDefaults.defaultModel | quote }}
-  defaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
-  codexDefaultModel: {{ .Values.controlPlane.fleetDefaults.codexDefaultModel | quote }}
-  codexDefaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
+  defaultModel: {{ index $prev "defaultModel" | default $fd.defaultModel | default "" | quote }}
+  defaultRuntimeVersion: {{ index $prev "defaultRuntimeVersion" | default $fd.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
+  codexDefaultModel: {{ index $prev "codexDefaultModel" | default $fd.codexDefaultModel | default "" | quote }}
+  codexDefaultRuntimeVersion: {{ index $prev "codexDefaultRuntimeVersion" | default $fd.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
 {{- end }}
