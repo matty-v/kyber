@@ -778,6 +778,29 @@ jobs:
       - name: Bump image tags in ${{ matrix.cluster }} environment
         working-directory: kyber-deploy
         run: |
+          # Advance the CHART pin in the same commit as the image pins.
+          #
+          # This is the convergence half of the chart-versioning change. Every
+          # Application used to set `targetRevision: main` for the chart source
+          # while pinning images to a release — images gated, templates not.
+          # Pinning the chart without also advancing it here would just invert
+          # the drift: images would march forward each release while the chart
+          # stayed frozen at whatever version it was pinned to. Both move
+          # together or neither is correct.
+          #
+          # The chart source is the entry whose repoURL is matty-v/kyber; the
+          # other source is kyber-deploy itself (the values ref), which must stay
+          # on `main`. Select by repoURL rather than by index so a reordering of
+          # `sources` can't silently pin the wrong one.
+          APP="environments/${CLUSTER}/application.yaml"
+          BEFORE=$(yq '.spec.sources[] | select(.repoURL == "https://github.com/matty-v/kyber.git") | .targetRevision' "$APP")
+          if [ -z "$BEFORE" ] || [ "$BEFORE" = "null" ]; then
+            echo "::error::No chart source (repoURL matty-v/kyber.git) found in ${APP} — cannot advance the chart pin. Refusing to open a bump PR that would move images without the chart."
+            exit 1
+          fi
+          yq -i "(.spec.sources[] | select(.repoURL == \"https://github.com/matty-v/kyber.git\") | .targetRevision) = \"${KYBER_TAG}\"" "$APP"
+          echo "chart pin (${CLUSTER}): ${BEFORE} -> ${KYBER_TAG}"
+
           # tag@digest form is canonical OCI grammar; the chart's
           # `kyber.image` helper printf-passes it through unchanged.
           yq -i ".image.controlPlane.tag  = \"${KYBER_TAG}@${CONTROL_PLANE_DIGEST}\""  "environments/${CLUSTER}/values.yaml"
@@ -791,7 +814,7 @@ jobs:
           git config user.name "kyber-app[bot]"
           git config user.email "kyber-app[bot]@users.noreply.github.com"
           git checkout -b "chore/bump-kyber-${KYBER_TAG}-${CLUSTER}"
-          git add "environments/${CLUSTER}/values.yaml"
+          git add "environments/${CLUSTER}/values.yaml" "environments/${CLUSTER}/application.yaml"
           echo "--- staged diff (${CLUSTER}) ---"
           git diff --cached
 
