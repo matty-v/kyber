@@ -34,7 +34,7 @@ RUN npm run build --workspace=apps/embedded-pwa
 
 # Stage 2: build the Go binary. Pull the PWA dist into pkg/api/pwa_dist/
 # before `go build` so //go:embed picks up the real assets.
-FROM golang:1.25-alpine AS go-builder
+FROM golang:1.26-alpine AS go-builder
 ARG BUILD_SHA=""
 ARG BUILD_DATE=""
 # BUILD_VERSION is the user-facing release version (kyber#482). Set from the
