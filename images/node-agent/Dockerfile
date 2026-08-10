@@ -3,7 +3,7 @@
 # Deployed as a DaemonSet via the Helm chart — mounts /proc readonly and runs
 # privileged so it can execute /sbin/shutdown for host actions.
 
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 WORKDIR /build
 
 # Download dependencies before copying source to maximise layer cache reuse.
