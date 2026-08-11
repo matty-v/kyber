@@ -51,6 +51,36 @@ spec:
                 configMapKeyRef:
                   name: {{ include "kyber.fullname" . }}-control-plane
                   key: KYBER_NAMESPACE
+            # Update checking (read-only). The checker polls the release feed
+            # and reports; it never installs anything in this build.
+            {{- if .Values.updates.enabled }}
+            - name: KYBER_UPDATES_ENABLED
+              value: "true"
+            - name: KYBER_UPDATES_REPO
+              value: {{ .Values.updates.repo | quote }}
+            - name: KYBER_UPDATES_CADENCE_SECONDS
+              value: {{ .Values.updates.cadenceSeconds | quote }}
+            - name: KYBER_UPDATE_POLICY_CONFIGMAP
+              value: {{ .Values.updates.policyConfigMapName | quote }}
+            # The control-plane must know its OWN Deployment name to read the
+            # ownership annotations that decide whether self-upgrade is safe
+            # here. Passed explicitly rather than derived from the pod's
+            # ownerReferences — one env var beats two extra API lookups, and an
+            # unset value fails closed (ownership reads as unknown, which
+            # forbids self-upgrade).
+            - name: KYBER_CONTROL_PLANE_DEPLOYMENT
+              value: {{ include "kyber.fullname" . }}-control-plane
+            {{- if .Values.updates.tokenSecretName }}
+            # Optional GitHub token for the release feed — required when the
+            # repo is private, and useful for rate-limit headroom. Referenced
+            # from a Secret, never a chart value: it is a credential.
+            - name: KYBER_UPDATES_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.updates.tokenSecretName }}
+                  key: {{ .Values.updates.tokenSecretKey | default "token" }}
+            {{- end }}
+            {{- end }}
             # StorageClass applied to new agent PVCs. Empty string means the
             # cluster's default StorageClass binds the volume (e.g. local-path
             # on k3s, standard on GKE) — the standalone-friendly choice.

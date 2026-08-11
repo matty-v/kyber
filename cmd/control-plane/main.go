@@ -62,6 +62,7 @@ import (
 	// PR-D). The named import at line 47 satisfies both: Go elides the
 	// duplicate package load and runs init() exactly once.
 	"github.com/matty-v/kyber/pkg/tokenstore"
+	"github.com/matty-v/kyber/pkg/updates"
 )
 
 var (
@@ -900,6 +901,58 @@ func main() {
 		setupLog.Info("runtimedetect: disabled (KYBER_RUNTIMEDETECT_ENABLED=false); /api/v1/available will serve empty contract")
 	}
 
+	// Update checking. Polls the release feed and reports; it never installs
+	// anything in this build (Status.ApplySupported is false and there is no
+	// apply route). See dave-agent spec 2026-08-10-kyber-owns-its-deployment.md.
+	var updateChecker *updates.Checker
+	var updateStore *updates.Store
+	if os.Getenv("KYBER_UPDATES_ENABLED") == "true" {
+		policyCM := os.Getenv("KYBER_UPDATE_POLICY_CONFIGMAP")
+		if policyCM == "" {
+			policyCM = updates.DefaultConfigMapName
+		}
+		updateStore = &updates.Store{
+			Client:        mgr.GetClient(),
+			Namespace:     kyberNamespace,
+			ConfigMapName: policyCM,
+		}
+		cadence := updates.DefaultCadence
+		if raw := os.Getenv("KYBER_UPDATES_CADENCE_SECONDS"); raw != "" {
+			if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+				cadence = time.Duration(secs) * time.Second
+			} else {
+				setupLog.Info("updates: ignoring unparseable KYBER_UPDATES_CADENCE_SECONDS", "value", raw)
+			}
+		}
+		updateChecker = &updates.Checker{
+			Feed: &updates.FeedClient{
+				Repo:  os.Getenv("KYBER_UPDATES_REPO"),
+				Token: os.Getenv("KYBER_UPDATES_TOKEN"),
+			},
+			Store:                  updateStore,
+			K8sClient:              mgr.GetClient(),
+			Namespace:              kyberNamespace,
+			ControlPlaneDeployment: os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"),
+			CurrentVersion:         resolveDisplayVersion(),
+			Cadence:                cadence,
+		}
+		if err := mgr.Add(manager.RunnableFunc(updateChecker.Start)); err != nil {
+			setupLog.Error(err, "unable to register update checker")
+			os.Exit(1)
+		}
+		setupLog.Info("updates: checker registered",
+			"repo", updateChecker.Feed.Repo,
+			"cadenceSeconds", int(cadence.Seconds()),
+			"policyConfigMap", policyCM,
+			"currentVersion", updateChecker.CurrentVersion,
+			// Empty here means ownership detection cannot run, so the cluster
+			// reports managedBy=unknown and refuses self-upgrade. Logged
+			// because that is a silent capability loss otherwise.
+			"controlPlaneDeployment", updateChecker.ControlPlaneDeployment)
+	} else {
+		setupLog.Info("updates: disabled (KYBER_UPDATES_ENABLED not \"true\"); /api/v1/updates will return 503")
+	}
+
 	// kyber#431/#437: durable archive log reader. Provider-agnostic — the backend
 	// is selected by KYBER_LOG_ARCHIVE_BACKEND (default "gcs", backward-compatible):
 	//   gcs (or unset) → GCS via node ADC (no static key).
@@ -1124,6 +1177,8 @@ func main() {
 		NodeStore:                  nodeStore,
 		StateChangeAccumulator:     stateChangeAccum,
 		FleetDefaultsConfigMapName: fleetDefaultsCM,
+		UpdateChecker:              updateChecker,
+		UpdateStore:                updateStore,
 		FleetDefaultsInvalidator:   fleetDefaultsResolver,
 		// #396: serve-time context-window resolution for the token-budget %.
 		// Same resolver the detection poller uses (built at ~:405) — one source
