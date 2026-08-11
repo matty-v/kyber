@@ -74,7 +74,15 @@ var defensiveSecretPaths = map[string]bool{
 // contents. They match the credential pattern below but must be kept — an
 // export missing `existingSecret` would not recreate the cluster.
 var referenceKeys = map[string]bool{
-	"existingsecret":            true,
+	"existingsecret":      true,
+	"imagepullsecrets":    true, // a LIST of Secret names
+	"githubappsecretname": true,
+	"devapikeysecretname": true,
+	// A NAMESPACE name that happens to contain "apikey". Found by the rot
+	// guard once it was made non-vacuous — redacting it breaks the preview
+	// bootstrap's source lookup.
+	"devapikeysourcenamespace":  true,
+	"copygithubappsecret":       true, // a bool toggle, not material
 	"existingcredentialssecret": true,
 	"credentialssecret":         true,
 	"credentialssecretname":     true,
@@ -94,12 +102,20 @@ var credentialSubstrings = []string{
 	"password", "token", "secret", "credential", "apikey", "privatekey", "passphrase",
 }
 
-// IsSecretPath reports whether a dotted value path should be redacted.
+// IsSecretPath reports whether a dotted value path should be redacted, given
+// the value at that path.
 //
-// path is the full dotted path ("api.apiKey"); leaf is its last segment. Both
-// are taken rather than derived so a caller walking a tree does not have to
-// re-split on every node.
-func IsSecretPath(path string) bool {
+// The value matters, not just the name. Redaction replaces a value with a
+// non-empty STRING, so redacting a bool silently changes what the chart does:
+// `preview.copyGithubAppSecret: false` became a non-empty string, which is
+// truthy in Go templates, and reinstalling from the export ENABLED a
+// secret-copying Job and its RBAC that the operator had deliberately turned
+// off. A credential is never a bool or a number, so the name-pattern catch-all
+// only ever fires on strings. Explicit paths still redact whatever they find.
+//
+// Pass nil for value when only the name is known; the catch-all then applies
+// as before.
+func IsSecretPath(path string, value any) bool {
 	if secretPaths[path] || defensiveSecretPaths[path] {
 		return true
 	}
@@ -111,12 +127,54 @@ func IsSecretPath(path string) bool {
 	if referenceKeys[lower] {
 		return false
 	}
+	if !patternRedactable(value) {
+		return false
+	}
+	return matchesCredentialPattern(lower)
+}
+
+// matchesCredentialPattern is the name half of the catch-all, split out so the
+// classification test can ask the question without also asking IsSecretPath —
+// which is what made the previous version of that test a tautology.
+func matchesCredentialPattern(lowerLeaf string) bool {
 	for _, sub := range credentialSubstrings {
-		if strings.Contains(lower, sub) {
+		if strings.Contains(lowerLeaf, sub) {
 			return true
 		}
 	}
 	return false
+}
+
+// patternRedactable reports whether a value is the KIND of thing the name
+// pattern may redact. Strings can hold credentials; bools and numbers cannot,
+// and rewriting them to a string changes chart semantics. An unknown/nil value
+// is treated as redactable so name-only callers keep failing closed.
+func patternRedactable(value any) bool {
+	switch value.(type) {
+	case bool, int, int32, int64, float32, float64:
+		return false
+	default:
+		return true
+	}
+}
+
+// ExplicitlyClassified reports whether a path is classified by NAME — either
+// declared secret or declared a reference. Used by the classification test to
+// find chart values that only the catch-all covers.
+func ExplicitlyClassified(path string) bool {
+	if secretPaths[path] || defensiveSecretPaths[path] {
+		return true
+	}
+	leaf := path
+	if i := strings.LastIndex(path, "."); i >= 0 {
+		leaf = path[i+1:]
+	}
+	return referenceKeys[strings.ToLower(leaf)]
+}
+
+// MatchesCredentialPatternForTest exposes the name-pattern check to tests.
+func MatchesCredentialPatternForTest(lowerLeaf string) bool {
+	return matchesCredentialPattern(lowerLeaf)
 }
 
 // RedactTree walks a decoded values tree and replaces every secret-bearing
@@ -131,6 +189,34 @@ func RedactTree(in map[string]any) map[string]any {
 	return redactMap(in, "")
 }
 
+// walkTree visits every SECRET path in the tree, using the same traversal as
+// redactMap/redactValue. Shared so the redactor and the "what was removed"
+// report can never disagree about what counts as redacted.
+func walkTree(in map[string]any, prefix string, visit func(path string, value any)) {
+	for k, v := range in {
+		path := k
+		if prefix != "" {
+			path = prefix + "." + k
+		}
+		if IsSecretPath(path, v) {
+			visit(path, v)
+			continue
+		}
+		walkTreeValue(v, path, visit)
+	}
+}
+
+func walkTreeValue(v any, path string, visit func(path string, value any)) {
+	switch t := v.(type) {
+	case map[string]any:
+		walkTree(t, path, visit)
+	case []any:
+		for _, item := range t {
+			walkTreeValue(item, path, visit)
+		}
+	}
+}
+
 func redactMap(in map[string]any, prefix string) map[string]any {
 	out := make(map[string]any, len(in))
 	for k, v := range in {
@@ -138,7 +224,7 @@ func redactMap(in map[string]any, prefix string) map[string]any {
 		if prefix != "" {
 			path = prefix + "." + k
 		}
-		if IsSecretPath(path) {
+		if IsSecretPath(path, v) {
 			out[k] = Redacted
 			continue
 		}
