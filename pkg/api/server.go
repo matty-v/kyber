@@ -27,6 +27,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/configexport"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
@@ -345,6 +346,17 @@ type Server struct {
 	// this accumulator first (Tier 1) before falling back to Prometheus.
 	StateChangeAccumulator statechangestore.Accumulator
 
+	// ConfigExporter renders the values file that recreates this cluster, with
+	// secrets removed — the infra-as-code artifact for an install that has no
+	// deploy repo. Nil makes GET /api/v1/config/export return 503.
+	//
+	// Read-only: it lists Helm's own release Secrets (narrowed by the
+	// owner=helm label so unrelated credentials never enter the process) and
+	// decodes the stored values. The redaction rules live in
+	// pkg/configexport, covered by a test that fails when a new
+	// credential-looking chart value appears unclassified.
+	ConfigExporter *configexport.Reader
+
 	// FleetDefaultsConfigMapName is the name of the ConfigMap that holds
 	// the cluster-wide fleet-default values consumed by the agent
 	// reconciler (defaultModel today; defaultRuntimeVersion plumbed for
@@ -642,6 +654,9 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// Update checking (read-only in this build — no apply path).
 	mux.HandleFunc("/api/v1/updates", s.handleUpdates)
 	mux.HandleFunc("/api/v1/updates/", s.handleUpdates)
+
+	// Export the values file that recreates this cluster (secrets removed).
+	mux.HandleFunc("/api/v1/config/export", s.handleConfigExport)
 
 	// Inbound debug (kyber#208 Phase 3) — operator-facing dry-run of the
 	// dispatcher pipeline against a synthetic payload + binding spec. No
