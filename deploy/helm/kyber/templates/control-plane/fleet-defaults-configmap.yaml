@@ -15,25 +15,29 @@ stable for compatibility:
 When `controlPlane.fleetDefaults.configMapName` is empty, the ConfigMap
 isn't rendered and the API endpoint returns 503.
 
-PRECEDENCE — the LIVE value wins; chart values are a first-install SEED.
+PRECEDENCE — and it DIFFERS by field, deliberately.
 
-  1. The live ConfigMap value, read via `lookup`. This is what the PWA
-     wrote, and it wins.
-  2. The chart value, used to seed the key on a first install.
-  3. The derived default (the pinned harness version) or empty.
+The two *Model keys are OPERATOR-AUTHORED: nothing derives them, so the live
+value wins and the chart value only seeds a first install. `hasKey` rather
+than truthiness, because empty is a real, documented setting ("no fleet
+default — every agent must set spec.model") and a `default` pipeline would
+treat the operator deliberately clearing it as "unset" and restore the chart
+value on the next upgrade.
 
-Live-wins is deliberate, and it is the direct consequence of "a cluster's
-config lives in the cluster" (Matt, 2026-08-10). The alternative —
-values-win-when-non-empty — cannot work here, because `defaultModel` and
-`codexDefaultModel` ship NON-EMPTY defaults in values.yaml. Helm cannot
-distinguish "the operator overrode this" from "this is the chart default",
-so a values-first rule would clobber every PWA edit to exactly the two
-fields most likely to be edited.
+The two *RuntimeVersion keys are DERIVED from the harness version the chart
+ships (`runtime.claudeCode.version` / `runtime.codex.version`), so the CHART
+wins. Live-wins was wrong for these and would have been a silent, permanent
+regression: a fresh install seeds the derived value, so from the second
+upgrade onward the live value always won and bumping the harness in values
+could never reach the fleet again. Every agent with an empty
+spec.runtimeVersion would keep booting the OLD harness inside the NEW image,
+forever, with no signal. Caught in review; the unit test could not see it
+because `lookup` is always empty under `helm template`.
 
-The cost, stated plainly: editing one of these in values.yaml has no effect
-on a cluster where the key already exists. Change it through the PWA or
-PUT /api/v1/fleet-defaults, which is the canonical path anyway. To force a
-chart value back in, delete the key from the live ConfigMap and upgrade.
+Cost of each choice, stated: a *Model edit in values.yaml does not affect a
+cluster where the key exists (change it in the PWA, or delete the live key
+and upgrade); a *RuntimeVersion edit in the PWA does not survive an upgrade
+(the chart is authoritative, because it must track the image).
 
 Why the live tier exists at all: this template used to render straight from
 `.Values`, so any `helm upgrade` reverted every PWA-written default back to
@@ -71,8 +75,11 @@ metadata:
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: Replace=false
 data:
-  defaultModel: {{ index $prev "defaultModel" | default $fd.defaultModel | default "" | quote }}
-  defaultRuntimeVersion: {{ index $prev "defaultRuntimeVersion" | default $fd.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
-  codexDefaultModel: {{ index $prev "codexDefaultModel" | default $fd.codexDefaultModel | default "" | quote }}
-  codexDefaultRuntimeVersion: {{ index $prev "codexDefaultRuntimeVersion" | default $fd.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
+  # Operator-authored: live wins, hasKey so a deliberate "" is preserved.
+  defaultModel: {{ if hasKey $prev "defaultModel" }}{{ index $prev "defaultModel" | quote }}{{ else }}{{ $fd.defaultModel | default "" | quote }}{{ end }}
+  codexDefaultModel: {{ if hasKey $prev "codexDefaultModel" }}{{ index $prev "codexDefaultModel" | quote }}{{ else }}{{ $fd.codexDefaultModel | default "" | quote }}{{ end }}
+  # Derived from the harness the chart ships: the CHART wins, or a bump here
+  # could never reach the fleet again. See the precedence note above.
+  defaultRuntimeVersion: {{ $fd.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
+  codexDefaultRuntimeVersion: {{ $fd.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
 {{- end }}

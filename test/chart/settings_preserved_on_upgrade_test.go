@@ -101,10 +101,17 @@ func TestFleetDefaults_SeedsFromChartValuesWhenNoLiveValue(t *testing.T) {
 	}
 }
 
-// defaultRuntimeVersion falls through TWO levels when unset: no live value, no
-// explicit chart value, so it derives from the pinned harness version. This
-// derivation predates the lookup change and must survive it — losing it would
-// render an empty runtime version and unpin every agent's harness.
+// defaultRuntimeVersion derives from the pinned harness version, and the CHART
+// must stay authoritative for it.
+//
+// This is the corrected rule. Live-wins was applied to this field in the first
+// pass and was a silent, permanent regression: a fresh install seeds the
+// derived value, so from the second upgrade onward the live value always won
+// and bumping runtime.claudeCode.version could never reach the fleet again —
+// every agent with an empty spec.runtimeVersion would keep booting the OLD
+// harness inside the NEW image, forever. `helm template` cannot see it (lookup
+// is always empty here), which is why it took a reviewer reading the
+// precedence rather than a test.
 func TestFleetDefaults_RuntimeVersionStillDerivesFromPinnedHarness(t *testing.T) {
 	rendered := helmTemplate(t, "runtime.claudeCode.version=9.9.9")
 	cm := findDoc(t, rendered, "ConfigMap", "kyber-fleet-defaults")
@@ -154,9 +161,16 @@ func TestAnthropicKey_EmptyWhenUnset(t *testing.T) {
 }
 
 // The ArgoCD drift annotations must stay while any cluster is still
-// ArgoCD-managed. The lookup change is the Helm-native equivalent, but it does
-// nothing under ArgoCD's repo-server (no cluster access) — so removing these
-// before the migration completes would let selfHeal clobber PWA edits again.
+// ArgoCD-managed.
+//
+// CORRECTED after review: these annotations are NOT what protects field-level
+// drift. `IgnoreExtraneous` covers extraneous RESOURCES, not fields, and
+// `Replace=false` is already the default — kyber-deploy's razer manifest says
+// so explicitly. The real protection is the per-cluster `ignoreDifferences` on
+// /data in each deploy repo. These are kept as defence in depth and because
+// removing them is churn, but do not read this test as proof that an ArgoCD
+// cluster is safe without its ignoreDifferences entry — it is not.
+//
 // Delete this test in the same change that retires the last ArgoCD cluster.
 func TestFleetDefaults_ArgoCDDriftAnnotationsRetainedDuringMigration(t *testing.T) {
 	rendered := helmTemplate(t)
@@ -172,7 +186,27 @@ func TestFleetDefaults_ArgoCDDriftAnnotationsRetainedDuringMigration(t *testing.
 		"argocd.argoproj.io/sync-options",
 	} {
 		if _, present := anns[want]; !present {
-			t.Errorf("annotation %q missing — ArgoCD selfHeal will clobber PWA-written fleet defaults on any still-ArgoCD-managed cluster", want)
+			t.Errorf("annotation %q missing; keep it while any cluster is still ArgoCD-managed (note: the real field-drift protection is the per-cluster ignoreDifferences on /data, not this annotation)", want)
 		}
+	}
+}
+
+// The precedence SPLIT is the whole point of the corrected design, and it is
+// easy to "simplify" back into a single rule. This pins which fields are
+// operator-authored (live wins) and which are derived (chart wins) by
+// asserting the chart-authoritative half — the half a unit test can observe,
+// since lookup is always empty under `helm template`.
+func TestFleetDefaults_RuntimeVersionsTrackTheChartNotTheCluster(t *testing.T) {
+	rendered := helmTemplate(t,
+		"runtime.claudeCode.version=9.9.9",
+		"runtime.codex.version=8.8.8",
+	)
+	cm := findDoc(t, rendered, "ConfigMap", "kyber-fleet-defaults")
+
+	if got := dataString(t, cm, "data", "defaultRuntimeVersion"); got != "9.9.9" {
+		t.Errorf("defaultRuntimeVersion = %q, want the chart's harness version %q — if this field ever starts preferring a live value, a harness bump can never reach the fleet again", got, "9.9.9")
+	}
+	if got := dataString(t, cm, "data", "codexDefaultRuntimeVersion"); got != "8.8.8" {
+		t.Errorf("codexDefaultRuntimeVersion = %q, want the chart's harness version %q", got, "8.8.8")
 	}
 }
