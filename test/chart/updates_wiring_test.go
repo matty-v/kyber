@@ -12,6 +12,8 @@ package chart
 import (
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 func TestUpdates_EnabledWiresEnvAndDeploymentName(t *testing.T) {
@@ -51,27 +53,67 @@ func TestUpdates_DisabledOmitsAllWiring(t *testing.T) {
 	}
 }
 
-// Read-only by construction. If a later change needs to WRITE Deployments it
-// should have to update this test deliberately, not inherit the permission.
-func TestUpdates_ClusterRoleGrantsGetOnlyForDeployments(t *testing.T) {
+// Read-only, but NOT get-only.
+//
+// The checker reads through the manager's cached client, and controller-runtime
+// registers an informer for any type the cached client touches — informers
+// LIST+WATCH. An earlier version of this rule granted get only; that wedges the
+// informer in WaitForCacheSync, so the startup check never returns and every
+// GET /api/v1/updates hangs. The clusterrole's own secrets and namespaces rules
+// document the same trap, one of them citing a production incident.
+//
+// Read-only is enforced by the ABSENCE of write verbs, which is what this test
+// asserts — not by withholding list/watch.
+func TestUpdates_ClusterRoleGrantsReadVerbsForDeployments(t *testing.T) {
 	rendered := helmTemplate(t)
 
-	var found bool
+	var rule map[string]any
 	for _, doc := range strings.Split(rendered, "\n---\n") {
-		if !strings.Contains(doc, "kind: ClusterRole") {
+		var m map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &m); err != nil || m == nil {
 			continue
 		}
-		if !strings.Contains(doc, `resources: ["deployments"]`) {
+		if m["kind"] != "ClusterRole" {
 			continue
 		}
-		found = true
-		if !strings.Contains(doc, `verbs: ["get"]`) {
-			t.Error("the deployments rule grants more than get; ownership detection only reads")
+		rules, _ := m["rules"].([]any)
+		for _, r := range rules {
+			rm, _ := r.(map[string]any)
+			if rm == nil {
+				continue
+			}
+			res, _ := rm["resources"].([]any)
+			groups, _ := rm["apiGroups"].([]any)
+			if !containsStr(res, "deployments") || !containsStr(groups, "apps") {
+				continue
+			}
+			rule = rm
 		}
 	}
-	if !found {
-		t.Error("no ClusterRole rule for apps/deployments — ownership detection would be denied by RBAC and every cluster would report managedBy=unknown")
+	if rule == nil {
+		t.Fatal("no ClusterRole rule for apps/deployments — ownership detection would be denied by RBAC and every cluster would report managedBy=unknown")
 	}
+
+	verbs, _ := rule["verbs"].([]any)
+	for _, want := range []string{"get", "list", "watch"} {
+		if !containsStr(verbs, want) {
+			t.Errorf("the deployments rule is missing %q — the cached client's informer needs LIST+WATCH or every read blocks forever", want)
+		}
+	}
+	for _, forbidden := range []string{"create", "update", "patch", "delete"} {
+		if containsStr(verbs, forbidden) {
+			t.Errorf("the deployments rule grants %q; ownership detection only reads", forbidden)
+		}
+	}
+}
+
+func containsStr(list []any, want string) bool {
+	for _, v := range list {
+		if s, _ := v.(string); s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // The policy ConfigMap must NOT be templated. The settings that govern

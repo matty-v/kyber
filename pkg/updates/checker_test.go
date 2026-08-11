@@ -246,3 +246,69 @@ func TestChecker_StatusRereadsPolicyBetweenPolls(t *testing.T) {
 		t.Error("Reason should reflect the newly-set pin without waiting for the next poll")
 	}
 }
+
+// Regression: pinning a cluster must take effect in the SAME response that
+// saves the pin. Status re-reads the policy between polls; if it does not also
+// recompute UpdateAvailable, the payload contradicts itself — updateAvailable
+// true alongside "this cluster is held at 1.0.1".
+func TestChecker_StatusRecomputesAvailabilityAfterAPolicyChange(t *testing.T) {
+	c := checkerWith(t, "1.0.1", releaseBody)
+	if got := c.Check(context.Background()); !got.UpdateAvailable {
+		t.Fatal("setup: expected an update before pinning")
+	}
+
+	if err := c.Store.Save(context.Background(), Policy{
+		Channel: ChannelStable, Mode: ModeNotify, PinnedVersion: "1.0.1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := c.Status(context.Background())
+	if got.UpdateAvailable {
+		t.Error("updateAvailable stayed true after pinning; the payload contradicts its own reason line")
+	}
+	if got.Reason == "" {
+		t.Error("reason is empty after pinning")
+	}
+
+	// And the reverse: clearing the pin must restore it without a fresh poll.
+	if err := c.Store.Save(context.Background(), Policy{Channel: ChannelStable, Mode: ModeNotify}); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Status(context.Background()); !got.UpdateAvailable {
+		t.Error("clearing the pin left updateAvailable false until the next poll")
+	}
+}
+
+// A caller going away mid-poll must not persist "context canceled" as the
+// cached error — that renders as "we stopped checking" on a healthy cluster
+// for the rest of the cadence.
+func TestChecker_CallerCancellationDoesNotPoisonTheCachedStatus(t *testing.T) {
+	c := checkerWith(t, "1.0.1", releaseBody)
+	if got := c.Check(context.Background()); !got.UpdateAvailable {
+		t.Fatal("setup: expected a good first check")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	c.Check(ctx)
+
+	got := c.Status(context.Background())
+	if got.LastError != "" {
+		t.Errorf("LastError = %q after a cancelled caller; want the previous good state left alone", got.LastError)
+	}
+	if !got.UpdateAvailable || got.LatestVersion != "1.2.0" {
+		t.Errorf("a cancelled caller discarded the last good result: %+v", got)
+	}
+}
+
+// A feed that is unreachable IS a real failure and must still be recorded —
+// the cancellation guard above must not swallow genuine errors.
+func TestChecker_RealFeedFailureIsStillRecorded(t *testing.T) {
+	c := checkerWith(t, "1.0.1", releaseBody)
+	c.Check(context.Background())
+	c.Feed = &FeedClient{BaseURL: "http://127.0.0.1:1", HTTPClient: &http.Client{}}
+
+	if got := c.Check(context.Background()); got.LastError == "" {
+		t.Error("a genuinely unreachable feed recorded no error")
+	}
+}

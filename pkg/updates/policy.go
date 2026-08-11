@@ -222,8 +222,28 @@ func (s *Store) Save(ctx context.Context, p Policy) error {
 		}
 		if createErr := s.Client.Create(ctx, created); createErr != nil {
 			if apierrors.IsAlreadyExists(createErr) {
-				// Lost a create race with another replica; re-drive as a patch.
-				return s.Save(ctx, p)
+				// Lost a create race. Patch the existing object directly
+				// rather than recursing into Save.
+				//
+				// Recursing was unbounded: reads come from the manager's
+				// cached client, so the Get at the top can keep returning
+				// NotFound for as long as the informer lags behind the Create
+				// that just landed — NotFound → Create → AlreadyExists →
+				// recurse, spinning with no backoff and no attempt counter.
+				// A second policy edit inside the cache-lag window of the
+				// first-ever write is enough to trigger it.
+				live := &corev1.ConfigMap{}
+				if getErr := s.Client.Get(ctx, key, live); getErr != nil {
+					return fmt.Errorf("policy ConfigMap already exists but could not be read back: %w", getErr)
+				}
+				before := live.DeepCopy()
+				if live.Data == nil {
+					live.Data = map[string]string{}
+				}
+				for k, v := range data {
+					live.Data[k] = v
+				}
+				return s.Client.Patch(ctx, live, client.MergeFrom(before))
 			}
 			return createErr
 		}

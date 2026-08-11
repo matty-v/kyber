@@ -47,16 +47,24 @@ func TestFeed_LatestParsesAPublishedRelease(t *testing.T) {
 	}
 }
 
-// A repo with no releases is a normal state (a fresh fork), not a failure to
-// put in front of an operator who cannot act on it.
-func TestFeed_LatestTreatsNoReleasesAsNoUpdate(t *testing.T) {
+// 404 must be an ERROR, not a quiet "no update".
+//
+// GitHub returns it for a repo with no releases, a typo'd `updates.repo`, and
+// a private repo read without a token — indistinguishable over the wire.
+// Returning nil,nil made the checker stamp a fresh LastChecked with no error,
+// so a cluster pointed at nothing rendered "checked just now, up to date"
+// forever. Silence reading as success is exactly what this feature exists to
+// prevent, so the benign case (a fresh fork) is the one that pays.
+func TestFeed_LatestErrorsOn404NamingEveryCause(t *testing.T) {
 	c, _ := feedServing(t, http.StatusNotFound, `{"message":"Not Found"}`)
-	rel, err := c.Latest(context.Background())
-	if err != nil {
-		t.Fatalf("404 should not be an error: %v", err)
+	_, err := c.Latest(context.Background())
+	if err == nil {
+		t.Fatal("404 returned no error; a misconfigured repo would silently report 'up to date' forever")
 	}
-	if rel != nil {
-		t.Errorf("Latest = %+v, want nil", rel)
+	for _, want := range []string{"no releases yet", "wrong", "private"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name the %q cause so it is diagnosable; got %q", want, err)
+		}
 	}
 }
 

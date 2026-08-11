@@ -97,10 +97,20 @@ func (c *FeedClient) Latest(ctx context.Context) (*Release, error) {
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusNotFound:
-		// Either the repo has no releases, or it does not exist / is private
-		// and we have no token. Both read the same over the wire. Say so
-		// rather than guessing, so a misconfigured `repo` is diagnosable.
-		return nil, nil
+		// Deliberately an ERROR, not a quiet "no update".
+		//
+		// GitHub returns 404 for all of: a repo with no releases yet, a typo'd
+		// `updates.repo`, and a private repo read without a token. They are
+		// indistinguishable over the wire. Returning (nil, nil) made the
+		// checker stamp a fresh LastChecked with no error, so a cluster
+		// pointed at nothing rendered "checked just now, up to date" forever —
+		// silence reading as success, which is the failure mode this whole
+		// feature exists to prevent.
+		//
+		// The cost is that a genuinely fresh fork with no releases shows a
+		// message instead of nothing. That is the right trade: it is benign,
+		// it is accurate, and it names its own fix.
+		return nil, fmt.Errorf("no published release found for %s — the repository has no releases yet, or `updates.repo` is wrong, or it is private and needs a token", c.repo())
 	case http.StatusForbidden, http.StatusTooManyRequests:
 		return nil, fmt.Errorf("release feed rate-limited (HTTP %d) for %s; set a GitHub token to raise the limit", resp.StatusCode, c.repo())
 	default:

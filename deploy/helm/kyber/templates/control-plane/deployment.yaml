@@ -70,6 +70,16 @@ spec:
             # forbids self-upgrade).
             - name: KYBER_CONTROL_PLANE_DEPLOYMENT
               value: {{ include "kyber.fullname" . }}-control-plane
+            {{- if .Values.updates.tokenSecretName }}
+            # Optional GitHub token for the release feed — required when the
+            # repo is private, and useful for rate-limit headroom. Referenced
+            # from a Secret, never a chart value: it is a credential.
+            - name: KYBER_UPDATES_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.updates.tokenSecretName }}
+                  key: {{ .Values.updates.tokenSecretKey | default "token" }}
+            {{- end }}
             {{- end }}
             # StorageClass applied to new agent PVCs. Empty string means the
             # cluster's default StorageClass binds the volume (e.g. local-path

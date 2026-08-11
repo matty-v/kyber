@@ -1,12 +1,18 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/updates"
 )
+
+// checkNowTimeout bounds a manual "Check now". Generous enough for a slow
+// feed, short enough that a wedged request cannot hold a goroutine for long.
+const checkNowTimeout = 30 * time.Second
 
 // handleUpdates serves the update-checking surface:
 //
@@ -51,7 +57,17 @@ func (s *Server) handleUpdates(w http.ResponseWriter, r *http.Request) {
 		}
 		// Synchronous on purpose: an operator who presses "Check now" wants
 		// the answer, not an acknowledgement they have to poll behind.
-		writeJSON(w, http.StatusOK, s.UpdateChecker.Check(r.Context()))
+		//
+		// Detached from the request context with its own deadline. If the
+		// operator navigates away mid-poll, the request context is cancelled;
+		// carrying that into the feed call aborts the poll and — worse —
+		// persists "context canceled" as the cached LastError, so the card
+		// reads "we stopped checking" on a healthy cluster until the next
+		// hourly tick. The poll should finish and update the cache regardless
+		// of whether anyone is still listening.
+		pollCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), checkNowTimeout)
+		defer cancel()
+		writeJSON(w, http.StatusOK, s.UpdateChecker.Check(pollCtx))
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "unknown updates route")
@@ -119,7 +135,12 @@ func (s *Server) handleUpdatePolicyPut(w http.ResponseWriter, r *http.Request) {
 	// Return the full status, not just the policy: changing a pin or a mode
 	// changes what the card should say, and a second round trip to find that
 	// out is a round trip the PWA should not have to make.
-	writeJSON(w, http.StatusOK, s.UpdateChecker.Status(r.Context()))
+	//
+	// Built from `next` — the policy we just validated and saved — rather than
+	// re-read. Reads go through the cached client and writes do not, so a
+	// re-read here can return the PRE-write policy and echo the operator's
+	// change back as if it had not applied.
+	writeJSON(w, http.StatusOK, s.UpdateChecker.StatusWithPolicy(r.Context(), next))
 }
 
 // overlayString applies a JSON string field when present. An explicit null is

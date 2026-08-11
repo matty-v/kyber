@@ -76,6 +76,15 @@ type Checker struct {
 	mu     sync.RWMutex
 	status Status
 	seeded bool
+
+	// checkMu serializes Check. Check is a read-modify-write around a network
+	// call: it snapshots the cached status, polls, then writes the whole
+	// struct back. Two overlapping calls — the hourly ticker and an operator
+	// pressing "Check now" — would race, and whichever finished last would
+	// discard the other wholesale, so a successful poll's result could be
+	// thrown away by a concurrent failing one. Serializing is simpler than
+	// merging field-by-field and costs nothing at this cadence.
+	checkMu sync.Mutex
 }
 
 func (c *Checker) logger() *slog.Logger {
@@ -109,6 +118,13 @@ func (c *Checker) Status(ctx context.Context) Status {
 		s.ManagedBy = c.detectOwner(ctx)
 		s.CanSelfUpgrade = s.ManagedBy.CanSelfUpgrade()
 		s.Reason = c.reasonFor(s.ManagedBy, s.Policy)
+		// UpdateAvailable must be recomputed against the policy we just read,
+		// not left at whatever the last poll decided. Otherwise pinning a
+		// cluster returns updateAvailable:true alongside "held at 1.0.1" in
+		// the same payload — the package promises a pinned cluster never
+		// reports an update, and a stale flag breaks that promise in the one
+		// response the operator sees right after making the change.
+		s.UpdateAvailable = c.availableUnder(s.LatestVersion, s.Policy)
 		return s
 	}
 	base := Status{
@@ -155,6 +171,9 @@ func (c *Checker) reasonFor(m ManagedBy, p Policy) string {
 // never clears LatestVersion: losing a known-good result on a transient network
 // blip would make the card flap between "update available" and "up to date".
 func (c *Checker) Check(ctx context.Context) Status {
+	c.checkMu.Lock()
+	defer c.checkMu.Unlock()
+
 	policy := c.loadPolicy(ctx, DefaultPolicy())
 	owner := c.detectOwner(ctx)
 
@@ -172,6 +191,14 @@ func (c *Checker) Check(ctx context.Context) Status {
 	rel, err := c.Feed.Latest(ctx)
 	switch {
 	case err != nil:
+		// A cancelled context means the CALLER went away (a PWA fetch aborted
+		// mid-poll), not that the cluster cannot reach the feed. Persisting it
+		// would leave the card reading "we stopped checking" on a healthy
+		// cluster until the next hourly tick.
+		if ctx.Err() != nil {
+			c.logger().Info("update check aborted by the caller; leaving the last result in place", "error", err)
+			return next
+		}
 		next.LastError = err.Error()
 		c.logger().Warn("update check failed", "error", err)
 	case rel == nil:
@@ -214,6 +241,37 @@ func (c *Checker) isNewer(latest Version, policy Policy) bool {
 		return false
 	}
 	return latest.GreaterThan(current)
+}
+
+// availableUnder re-answers "is an update available?" from an already-known
+// latest version and a possibly-changed policy, without re-polling. An
+// unparseable or absent latest means no — we do not guess.
+func (c *Checker) availableUnder(latestVersion string, policy Policy) bool {
+	if latestVersion == "" {
+		return false
+	}
+	latest, err := ParseVersion(latestVersion)
+	if err != nil {
+		return false
+	}
+	return c.isNewer(latest, policy)
+}
+
+// StatusWithPolicy renders the status against a policy the caller already has,
+// skipping the ConfigMap re-read.
+//
+// Exists because reads go through the manager's CACHED client while writes go
+// straight to the API server: re-reading immediately after a successful write
+// can return the PRE-write policy, so a PUT would echo back the setting the
+// operator just changed as unchanged. The caller passes what it saved.
+func (c *Checker) StatusWithPolicy(ctx context.Context, p Policy) Status {
+	s := c.Status(ctx)
+	s.Policy = p
+	s.ManagedBy = c.detectOwner(ctx)
+	s.CanSelfUpgrade = s.ManagedBy.CanSelfUpgrade()
+	s.Reason = c.reasonFor(s.ManagedBy, p)
+	s.UpdateAvailable = c.availableUnder(s.LatestVersion, p)
+	return s
 }
 
 // Start runs the poll loop until ctx is cancelled. Conforms to

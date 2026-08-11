@@ -97,11 +97,20 @@ rules:
   # decide who owns this cluster's resources: `argocd.argoproj.io/tracking-id`
   # means ArgoCD is reconciling and Kyber must not upgrade itself (selfHeal
   # would revert it), `meta.helm.sh/release-name` means a real Helm release.
-  # Get-only on purpose — nothing in this build writes Deployments, and the
-  # verb list is the enforcement of that.
+  #
+  # `list` and `watch` are REQUIRED even though this feature only ever Gets a
+  # single Deployment: the checker reads through the manager's CACHED client,
+  # and controller-runtime registers an informer for any type the cached client
+  # touches — informers LIST+WATCH. Same trap as the secrets and namespaces
+  # rules above. With get-only, the reflector loops "deployments is forbidden",
+  # the informer never syncs, and every read blocks in WaitForCacheSync: the
+  # startup check hangs before the ticker loop ever starts, and every
+  # GET /api/v1/updates hangs until the client gives up. No write verbs — the
+  # absence of create/update/patch/delete is what keeps this read-only, not the
+  # absence of list/watch.
   - apiGroups: ["apps"]
     resources: ["deployments"]
-    verbs: ["get"]
+    verbs: ["get", "list", "watch"]
   # Leader election coordination (controller-runtime)
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
