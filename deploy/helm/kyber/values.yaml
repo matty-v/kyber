@@ -307,8 +307,11 @@ controlPlane:
   # templates/control-plane/fleet-defaults-configmap.yaml) that the
   # control-plane reads at reconcile time and the PWA Settings panel
   # reads + edits via GET/PUT /api/v1/fleet-defaults. Edits persist on
-  # the ConfigMap, so they outlive PWA refreshes but are reverted by a
-  # subsequent `helm upgrade` unless captured back into chart values.
+  # the ConfigMap and now SURVIVE `helm upgrade`: the template looks up the
+  # live ConfigMap and the live value wins, so these chart values only seed
+  # a first install. Editing one here has no effect on a cluster where the
+  # key already exists — change it through the PWA, or delete the key from
+  # the live ConfigMap and upgrade.
   # See kyber#376 (PR-B of kyber#374); design doc
   # docs/design/2026-05-29-runtime-model-management-design.md §2.
   fleetDefaults:
