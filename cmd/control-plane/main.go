@@ -61,6 +61,7 @@ import (
 	// adapterRegistry and assign the context-window resolver — kyber#378
 	// PR-D). The named import at line 47 satisfies both: Go elides the
 	// duplicate package load and runs init() exactly once.
+	"github.com/matty-v/kyber/pkg/configexport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
 )
@@ -1179,6 +1180,7 @@ func main() {
 		FleetDefaultsConfigMapName: fleetDefaultsCM,
 		UpdateChecker:              updateChecker,
 		UpdateStore:                updateStore,
+		ConfigExporter:             &configexport.Reader{Client: mgr.GetClient(), Namespace: kyberNamespace},
 		FleetDefaultsInvalidator:   fleetDefaultsResolver,
 		// #396: serve-time context-window resolution for the token-budget %.
 		// Same resolver the detection poller uses (built at ~:405) — one source
