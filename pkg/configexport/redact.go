@@ -93,6 +93,12 @@ var referenceKeys = map[string]bool{
 	"secretname":                true,
 	"bootstrapsecrets":          true, // a bool toggle
 	"tokenratesconfigmapname":   true,
+	// The release-feed token is referenced by Secret name + key, never held
+	// in values. Caught by the rot guard the moment #43 merged — a live
+	// demonstration of it flagging a credential-looking value added by a
+	// DIFFERENT change, which is exactly what it is for.
+	"tokensecretname": true,
+	"tokensecretkey":  true,
 }
 
 // credentialSubstrings catch new secret-bearing keys by name. Lowercased
