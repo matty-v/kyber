@@ -52,13 +52,13 @@ jobs:
       - name: Mint a fresh GitHub App token
         id: app_token
         if: steps.creds.outputs.available == 'true'
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.KYBER_APP_ID }}
           private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
           # default: token scoped to this repo only — exactly what the tag push needs.
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Need the previous commit to detect whether the version changed.
           fetch-depth: 2
@@ -67,7 +67,7 @@ jobs:
           # tag push would auth as the contents:read GITHUB_TOKEN → 403.
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
           registry-url: 'https://npm.pkg.github.com'

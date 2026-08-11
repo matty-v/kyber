@@ -54,9 +54,9 @@ jobs:
       chart: ${{ steps.filter.outputs.chart }}
       anyImage: ${{ steps.derive.outputs.anyImage }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -195,9 +195,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.runtimeBase == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -239,18 +239,18 @@ jobs:
       # (deploy-to-dev and the stale-deploy guard key on marker.sha ==
       # pr.head.sha, kyber#534), so the content must BE the head sha. Empty on
       # push events → default behavior, unchanged.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || '' }}
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # Honest pre-release version for a main build, e.g. 1.0.1-22-gabc1234.
       # Leading "v" stripped for parity with the release path's bare X.Y.Z.
@@ -323,7 +323,7 @@ jobs:
           echo "Tags resolved:"; echo "${TAGS}"
 
       - name: Build and push control-plane image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/control-plane/Dockerfile
@@ -341,18 +341,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.nodeAgentImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push node-agent image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/node-agent/Dockerfile
@@ -368,18 +368,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.statusSidecarImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push status-sidecar image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/status-sidecar/Dockerfile
@@ -395,18 +395,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpDiscordImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push mcp-discord image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/mcp-discord/Dockerfile
@@ -422,15 +422,15 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpTelegramImage == 'true')
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build and push mcp-telegram image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/mcp-telegram/Dockerfile
@@ -448,18 +448,18 @@ jobs:
     needs: [changes, agent-base-integration]
     if: github.event_name == 'push' && needs.changes.outputs.runtimeBase == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push runtime-base image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: images/agent-base
           push: true
@@ -476,15 +476,15 @@ jobs:
     needs: [changes, push-runtime-base]
     if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.claudeCode == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # If runtime-base was rebuilt this run, pin to the new SHA tag so the
       # layer graph is reproducible. If it was skipped, fall back to :latest
@@ -514,7 +514,7 @@ jobs:
           echo "Pinned claude-code version: $version"
 
       - name: Build and push claude-code image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/claude-code/Dockerfile
@@ -534,13 +534,13 @@ jobs:
     needs: [changes, push-runtime-base]
     if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.codex == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Determine BASE_IMAGE tag
         id: base
         run: |
@@ -561,7 +561,7 @@ jobs:
           echo "Pinned codex version: $version"
 
       - name: Build and push Codex image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/codex/Dockerfile
