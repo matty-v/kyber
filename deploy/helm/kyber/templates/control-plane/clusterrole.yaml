@@ -91,6 +91,17 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Read-only Deployment access for update-ownership detection.
+  #
+  # The update checker reads the control-plane Deployment's ANNOTATIONS to
+  # decide who owns this cluster's resources: `argocd.argoproj.io/tracking-id`
+  # means ArgoCD is reconciling and Kyber must not upgrade itself (selfHeal
+  # would revert it), `meta.helm.sh/release-name` means a real Helm release.
+  # Get-only on purpose — nothing in this build writes Deployments, and the
+  # verb list is the enforcement of that.
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["get"]
   # Leader election coordination (controller-runtime)
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]

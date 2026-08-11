@@ -37,6 +37,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
+	"github.com/matty-v/kyber/pkg/updates"
 )
 
 // DefaultPublicPort is the default listen address for the public HTTP API.
@@ -353,6 +354,23 @@ type Server struct {
 	// dev/test installs. See kyber#376 / PR-B of #374.
 	FleetDefaultsConfigMapName string
 
+	// UpdateChecker answers GET /api/v1/updates: what this cluster runs, what
+	// release is available, and whether Kyber may install it here. Nil (the
+	// default in tests and on installs with update checking disabled) makes
+	// every /api/v1/updates route return 503.
+	//
+	// It only ever READS — from the release feed and from the cluster. There
+	// is no apply path in this build; the status contract says so explicitly
+	// via applySupported:false.
+	UpdateChecker *updates.Checker
+
+	// UpdateStore persists the operator's update policy. Separate from the
+	// checker because PUT writes through it directly, and because the policy
+	// deliberately lives in a control-plane-owned ConfigMap the Helm chart
+	// does not template — the settings governing upgrades must not be
+	// re-rendered by an upgrade.
+	UpdateStore *updates.Store
+
 	// FleetDefaultsInvalidator clears the reconciler-side cache after a
 	// successful PUT /api/v1/fleet-defaults so the operator sees their
 	// own edit take effect on the next reconcile rather than waiting up
@@ -620,6 +638,10 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 
 	// Build + chart version + substrate (Diagnostics card in the PWA Settings page).
 	mux.HandleFunc("/api/v1/version", s.handleVersion)
+
+	// Update checking (read-only in this build — no apply path).
+	mux.HandleFunc("/api/v1/updates", s.handleUpdates)
+	mux.HandleFunc("/api/v1/updates/", s.handleUpdates)
 
 	// Inbound debug (kyber#208 Phase 3) — operator-facing dry-run of the
 	// dispatcher pipeline against a synthetic payload + binding spec. No

@@ -871,6 +871,33 @@ runtime:
 # polls the npm registry + the Anthropic Models API on a cadence and writes
 # results into Redis. GET /api/v1/available reads from that cache so the
 # PWA picker stays current without a Kyber rebuild.
+# updates: operator-facing update checking (dave-agent spec
+# 2026-08-10-kyber-owns-its-deployment.md).
+#
+# The control plane polls the release feed and reports what is available via
+# GET /api/v1/updates. In this build it ONLY reports — there is no apply path,
+# and the status contract says so explicitly (applySupported: false).
+#
+# The operator's policy (channel / mode / pin / window) is NOT configured here.
+# It lives in a ConfigMap the control plane owns and this chart deliberately
+# does not template, so that an upgrade can never re-render the settings that
+# govern upgrades. Edit it through the PWA or PUT /api/v1/updates/policy.
+updates:
+  # enabled: false removes the env wiring; every /api/v1/updates route then
+  # returns 503. Use on air-gapped installs, which cannot reach the feed
+  # anyway.
+  enabled: true
+  # repo: "owner/name" whose GitHub Releases are the feed. Point a fork at
+  # itself; the default tracks upstream Kyber.
+  repo: "matty-v/kyber"
+  # cadenceSeconds: how often to poll. Hourly is far more frequent than Kyber
+  # releases and stays inside GitHub's unauthenticated rate limit
+  # (60/hour/IP) even with several clusters behind one address.
+  cadenceSeconds: 3600
+  # policyConfigMapName: where the operator's policy is stored. Created by the
+  # control plane on first write; absent reads as the default policy.
+  policyConfigMapName: "kyber-update-policy"
+
 runtimeDetect:
   # When false, the poller is not registered and /api/v1/available returns
   # the empty contract. Use this on air-gapped installs.
