@@ -83,7 +83,14 @@ func (v *DeploymentVerifier) Verify(ctx context.Context, targetVersion string) e
 		if err == nil {
 			return nil
 		}
-		last = err.Error()
+		// Once the deadline has passed, an in-flight probe fails with
+		// "context deadline exceeded" — an artifact of giving up, not a
+		// finding. Keep the last real reason instead: "503 from /healthz" or
+		// "still on 1.0.1" is what tells whoever reads the Job log which
+		// problem they have.
+		if ctx.Err() == nil || last == "" {
+			last = err.Error()
+		}
 		if state != "" {
 			v.log().Info("verifying upgrade", "state", state)
 		}
@@ -110,7 +117,7 @@ func (v *DeploymentVerifier) check(ctx context.Context, targetVersion string) (s
 
 	image := controlPlaneImage(dep)
 	tag := imageTag(image)
-	if tag != targetVersion {
+	if !tagMatchesVersion(tag, targetVersion) {
 		return fmt.Sprintf("image is %s, want tag %s", image, targetVersion),
 			fmt.Errorf("the control-plane Deployment still runs %s; the upgrade did not change the image to %s",
 				image, targetVersion)
@@ -166,6 +173,22 @@ func controlPlaneImage(dep *appsv1.Deployment) string {
 		return ""
 	}
 	return dep.Spec.Template.Spec.Containers[0].Image
+}
+
+// tagMatchesVersion reports whether an image tag names the target chart
+// version.
+//
+// The leading "v" is optional because the two sides genuinely disagree: chart
+// versions are bare semver (`1.0.2` — Helm requires it), while Kyber's images
+// are tagged `v1.0.2`. Comparing them literally would fail every single
+// upgrade, and the failure would look like "the image did not move" — sending
+// whoever reads the Job log to investigate a rollout that worked perfectly,
+// right after a healthy cluster rolled itself back for no reason.
+func tagMatchesVersion(tag, version string) bool {
+	if tag == "" || version == "" {
+		return false
+	}
+	return strings.TrimPrefix(tag, "v") == strings.TrimPrefix(version, "v")
 }
 
 // imageTag extracts the tag from a reference, tolerating a registry port and a

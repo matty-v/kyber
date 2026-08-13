@@ -34,6 +34,39 @@ func TestImageTag(t *testing.T) {
 	}
 }
 
+// Chart versions are bare semver; Kyber's images are tagged with a leading v.
+// A literal comparison would fail every upgrade and report it as "the image
+// did not move".
+func TestTagMatchesVersion(t *testing.T) {
+	for _, tc := range []struct {
+		tag, version string
+		want         bool
+	}{
+		{"v1.0.2", "1.0.2", true},
+		{"1.0.2", "1.0.2", true},
+		{"v1.0.2", "v1.0.2", true},
+		{"1.0.2", "v1.0.2", true},
+		{"v1.0.1", "1.0.2", false},
+		{"", "1.0.2", false},
+		{"v1.0.2", "", false},
+		{"latest", "1.0.2", false},
+	} {
+		if got := tagMatchesVersion(tc.tag, tc.version); got != tc.want {
+			t.Errorf("tagMatchesVersion(%q, %q) = %v, want %v", tc.tag, tc.version, got, tc.want)
+		}
+	}
+}
+
+// The real-world case: the chart tags images v1.0.2 for chart version 1.0.2.
+func TestVerify_AcceptsTheChartsVPrefixedImageTag(t *testing.T) {
+	v := newVerifier(t, deployment("ghcr.io/matty-v/kyber-control-plane:v1.0.2", 2, 2, 1, 1, 0), http.StatusOK)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := v.Verify(ctx, "1.0.2"); err != nil {
+		t.Fatalf("Verify() = %v, want nil — v1.0.2 IS chart version 1.0.2", err)
+	}
+}
+
 func deployment(image string, gen, observed int64, updated, ready, unavailable int32) *appsv1.Deployment {
 	replicas := int32(1)
 	return &appsv1.Deployment{
