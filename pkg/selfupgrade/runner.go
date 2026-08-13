@@ -174,18 +174,18 @@ func (r *Runner) now() time.Time {
 }
 
 // releaseStatus is the subset of `helm status -o json` we read.
+//
+// Only the revision and the status: `helm status` does NOT include the chart
+// metadata block, so fields for chartVersion/appVersion parsed as empty and
+// logged as empty — a line that looks like a failed read of something we never
+// actually asked for. The revision is the part that matters; it is the
+// rollback target.
 type releaseStatus struct {
 	Name    string `json:"name"`
 	Version int    `json:"version"`
 	Info    struct {
 		Status string `json:"status"`
 	} `json:"info"`
-	Chart struct {
-		Metadata struct {
-			Version    string `json:"version"`
-			AppVersion string `json:"appVersion"`
-		} `json:"metadata"`
-	} `json:"chart"`
 }
 
 // Run performs the upgrade. It returns nil only when the new version is
@@ -218,11 +218,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	log.Info("current release",
-		"revision", current.Version,
-		"chartVersion", current.Chart.Metadata.Version,
-		"appVersion", current.Chart.Metadata.AppVersion,
-		"status", current.Info.Status)
+	log.Info("current release", "revision", current.Version, "status", current.Info.Status)
 
 	// 2. Capture the operator's values explicitly. NOT `--reuse-values`:
 	// that flag carries values forward invisibly, so what a release is
