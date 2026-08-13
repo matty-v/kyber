@@ -11,6 +11,8 @@ vi.mock('../hooks/useAPI', () => {
   return {
     useAgents: () => emptyList,
     useMachines: () => emptyList,
+    // Layout renders UpgradeBanner, which watches the in-flight upgrade run.
+    useUpdates: () => ({ data: undefined, isError: false }),
   }
 })
 

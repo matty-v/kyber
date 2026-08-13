@@ -1,10 +1,16 @@
-import { useEffect, useId } from 'react'
+import { useEffect, useId, type ReactNode } from 'react'
 import { Button } from './Button'
 
 interface Props {
   open: boolean
   title: string
-  message: string
+  /**
+   * ReactNode rather than string so a confirmation can carry structure — an
+   * ordered list of consequences reads very differently from the same words
+   * run together in a paragraph, and the upgrade warning depends on that.
+   * Plain strings still work and render identically.
+   */
+  message: ReactNode
   confirmLabel?: string
   cancelLabel?: string
   dangerous?: boolean
@@ -47,10 +53,16 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative z-10 w-full max-w-sm rounded-xl border border-border-default bg-surface-overlay p-6 shadow-xl"
+        // max-h + scroll: `message` became a ReactNode, and the install warning
+        // (list + agent IDs) can exceed a phone viewport. The panel is
+        // vertically centred in a non-scrolling overlay, so without this it
+        // overflows off both ends and the buttons become unreachable.
+        className="relative z-10 flex max-h-[90vh] w-full max-w-sm flex-col overflow-y-auto rounded-xl border border-border-default bg-surface-overlay p-6 shadow-xl"
       >
         <h2 id={titleId} className="font-display text-base font-semibold text-text-primary">{title}</h2>
-        <p className="mt-2 text-sm text-text-muted">{message}</p>
+        {/* div, not p: a p may not legally contain the lists a structured
+            confirmation uses, and React will warn about the nesting. */}
+        <div className="mt-2 text-sm text-text-muted">{message}</div>
         <div className="mt-5 flex gap-3 justify-end">
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={loading}>
             {cancelLabel}

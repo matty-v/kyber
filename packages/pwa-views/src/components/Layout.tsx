@@ -15,6 +15,7 @@ import { ShortcutHelpOverlay } from './ShortcutHelpOverlay'
 import { CommandPalette } from './CommandPalette'
 import { useBackTo, usePrefixedPath } from '../lib/route-prefix'
 import { ClusterIdentifier } from './ClusterIdentifier'
+import { UpgradeBanner } from './UpgradeBanner'
 
 interface Props {
   children: ReactNode
@@ -127,6 +128,9 @@ export function Layout({ children }: Props) {
 
       {/* Main content */}
       <main className="flex-1 overflow-y-auto pb-20 lg:pb-0">
+        {/* App-wide, so an operator who navigated away mid-upgrade still sees
+            what is happening to the cluster under them. */}
+        <UpgradeBanner />
         <div className="mx-auto max-w-4xl px-4 py-6">{children}</div>
       </main>
 

@@ -54,13 +54,19 @@ describe('ClusterIdentifier', () => {
     expect(screen.queryByRole('button')).toBeNull()
   })
 
-  it('renders refresh affordance when stale', () => {
+  it('shows the live cluster version, not the one this tab loaded with', () => {
     setup({}, { isStale: true, liveChartVersion: 'v1.2.0' })
     render(<ClusterIdentifier />)
     const el = screen.getByTestId('cluster-identifier')
     expect(el).toHaveTextContent('kyber-falcon')
-    expect(el).toHaveTextContent('v1.1.1')
-    const btn = screen.getByRole('button', { name: /new version available/i })
+    // The cluster is on v1.2.0; this tab was served by v1.1.1. The header
+    // reports the CLUSTER, so it must show v1.2.0 — showing the load-time
+    // version would tell an operator their upgrade hadn't landed when it had.
+    expect(el).toHaveTextContent('v1.2.0')
+    expect(el).not.toHaveTextContent('v1.1.1')
+    // The refresh affordance remains: the page's own code is still the old
+    // build, and only a reload fixes that.
+    const btn = screen.getByRole('button', { name: /refresh to load the new interface/i })
     expect(btn).toBeInTheDocument()
   })
 
