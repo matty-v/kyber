@@ -1060,7 +1060,14 @@ export function useUpdates() {
     // staring at a stale "running".
     refetchInterval: (query) => {
       const phase = query.state.data?.lastRun?.phase
-      return phase === 'pending' || phase === 'running' ? 5000 : false
+      if (phase === 'pending' || phase === 'running') return 5000
+      // Keep polling through an error too. The control plane goes down DURING
+      // an upgrade, so the refetch that would have shown us the new run is
+      // exactly the one likely to fail — and stopping on that error leaves the
+      // cache showing the PREVIOUS run, which is terminal, which stops polling
+      // for good. Nothing recovers that but a refocus or a reload.
+      if (query.state.status === 'error') return 5000
+      return false
     },
   })
 }

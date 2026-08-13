@@ -11,6 +11,8 @@ vi.mock('../hooks/useAPI', () => ({
   useSetUpdatePolicy: vi.fn(() => ({ mutate: setPolicyMutate, isPending: false })),
   useCheckUpdates: vi.fn(() => ({ mutate: checkMutate, isPending: false })),
   useApplyUpdate: vi.fn(() => ({ mutate: applyMutate, isPending: false })),
+  // The install confirmation names the agents that will lose their sessions.
+  useAgents: vi.fn(() => ({ data: [], isLoading: false, error: null })),
 }))
 
 import * as useAPIModule from '../hooks/useAPI'
@@ -91,7 +93,83 @@ describe('UpdatesCard', () => {
 
     expect(screen.getByText(/Updates are never installed for you/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+
+    // Install opens a confirmation rather than upgrading on the first click:
+    // the consequence (every agent restarts and loses its session) is invisible
+    // from the button itself.
+    expect(applyMutate).not.toHaveBeenCalled()
+    expect(screen.getByText(/This restarts the whole cluster/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Install$/ }))
     expect(applyMutate).toHaveBeenCalled()
+  })
+
+  it('names the agents that will lose their sessions', () => {
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: [
+        { id: 'lando', phase: 'Running' },
+        { id: 'yoda', phase: 'Stopped' },
+      ],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+
+    // Only the live one is counted. A Stopped agent restarting costs nothing,
+    // and including it would overstate the blast radius.
+    expect(screen.getByText('lando')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Install — restart 1 agent$/ })).toBeInTheDocument()
+  })
+
+  it('installs the version it named, not whatever is latest at request time', () => {
+    // Set explicitly: clearAllMocks does not undo a mockReturnValue, so an
+    // earlier test's agent list would otherwise change this confirm label.
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+      isError: false,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Install$/ }))
+    // Sending undefined lets the server resolve latestVersion again, so a check
+    // landing between render and confirm would install something else.
+    expect(applyMutate).toHaveBeenCalledWith('1.0.2')
+  })
+
+  it('says it could not check the agents rather than implying none are at risk', () => {
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      isError: true,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    expect(screen.getByText(/Couldn't check which agents are running/)).toBeInTheDocument()
+  })
+
+  it('counts agents that are still booting — they are rolled too', () => {
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: [
+        { id: 'lando', phase: 'Running' },
+        { id: 'yoda', phase: 'Starting' },
+        { id: 'han', phase: 'Stopped' },
+      ],
+      isLoading: false,
+      error: null,
+      isError: false,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    expect(screen.getByRole('button', { name: /Install — restart 2 agents$/ })).toBeInTheDocument()
   })
 
   it('offers no install button when there is nothing newer', () => {

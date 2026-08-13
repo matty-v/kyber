@@ -18,6 +18,8 @@ vi.mock('../hooks/useAPI', () => ({
   usePutDiscordComms: vi.fn(),
   useGitHubRepos: vi.fn(),
   useGitHubRepoExists: vi.fn(),
+  // useUpgradeProgress gates the submit button on an in-flight upgrade.
+  useUpdates: vi.fn(() => ({ data: undefined, isError: false })),
 }))
 
 // Partially mock react-router-dom so MemoryRouter + useSearchParams come from
