@@ -117,25 +117,100 @@ func (v Version) Compare(other Version) int {
 
 // comparePrerelease orders the suffix of two otherwise-equal versions.
 //
-// Semver's rule that a pre-release ranks BELOW the matching release is
-// followed: 1.0.2-25-gabc < 1.0.2. That is what makes a canary tracking main
-// correctly see a freshly cut 1.0.2 release as newer than its own
-// 1.0.2-<n>-g<sha> build.
+// The suffix we actually produce is `git describe --tags` output —
+// `1.0.2-3-ga1717c8` — and it means "3 commits PAST the v1.0.2 tag" (see
+// build.yml, which stamps it). It is therefore strictly NEWER than 1.0.2, not
+// older. Semver reads the same string as a pre-release OF 1.0.2 and so ranks
+// it below, which is exactly backwards for this format.
 //
-// Within two pre-releases we deviate from strict semver on purpose. Our suffix
-// is git-describe's `<commits>-g<sha>`, a single identifier that is neither
-// purely numeric nor meaningfully lexical — and strict lexical comparison gets
-// it wrong exactly where it matters, ranking "9-gabc" above "10-gdef" and so
-// telling a canary it is up to date for the ninety commits between 9 and 100.
-// So a leading digit run is compared numerically and any remainder lexically.
-// The format this orders is the one an operator chose to keep (the git-describe
-// display string), so the comparison follows the format rather than the reverse.
+// Getting that wrong is not cosmetic. It broke the main channel outright:
+// ChartFeedClient.Latest picks the greatest accepted tag, so with 1.0.2 and
+// 1.0.2-4-g47b6a7a both published, semver ordering elects the plain 1.0.2 and
+// a canary tracking main is never offered a main build at all — while also
+// being told to "upgrade" backwards onto the release it already contains.
+// Caught on the canary 2026-08-13, which is what it exists for.
+//
+// So the offset is split off and compared numerically, and everything before
+// it keeps strict semver ordering:
+//
+//	1.0.2-rc1 < 1.0.2 < 1.0.2-3-ga1717c8 < 1.0.2-4-g47b6a7a < 1.0.3
+//	1.0.2-rc1 < 1.0.2-rc1-3-gabc1234 < 1.0.2
+//
+// Numeric comparison of the offset also fixes the lexical trap this code was
+// already worried about — "9-gabc" must not outrank "10-gdef".
+//
+// What this does NOT change is which versions a cluster may take: that is the
+// channel's job. A describe build still reports IsPrerelease, so the stable
+// channel still discards it and a production cluster can never be handed a
+// main build. See Channel.Accepts.
 func comparePrerelease(a, b string) int {
+	if a == b {
+		return 0
+	}
+	aBase, aAhead := splitDescribe(a)
+	bBase, bAhead := splitDescribe(b)
+	if c := compareBaseSuffix(aBase, bBase); c != 0 {
+		return c
+	}
+	// Same base: whichever sits more commits past it is newer. A plain
+	// release, and any suffix that is not git-describe output, is zero
+	// commits ahead — so 1.0.2 < 1.0.2-3-gabc1234 falls out of this.
+	return sign(aAhead - bAhead)
+}
+
+// splitDescribe separates a trailing git-describe offset from the rest of the
+// suffix, returning the remainder and the commit count. A suffix that is not
+// describe output comes back unchanged with a zero count.
+//
+// The shape matched is `<base>-<n>-g<sha>` with the base optional, so both
+// `3-ga1717c8` (describe from a release tag) and `rc1-3-gabc1234` (describe
+// from a pre-release tag) are handled. The `g` prefix is git's own marker and
+// the abbreviated sha is at least 7 hex digits, which is narrow enough that a
+// deliberate pre-release identifier will not be mistaken for one.
+func splitDescribe(pre string) (string, int) {
+	gDash := strings.LastIndex(pre, "-g")
+	if gDash < 0 {
+		return pre, 0
+	}
+	sha := pre[gDash+2:]
+	if !isAbbrevSHA(sha) {
+		return pre, 0
+	}
+	head := pre[:gDash] // "<base>-<n>" or "<n>"
+	nDash := strings.LastIndex(head, "-")
+	countStr := head[nDash+1:] // nDash < 0 leaves the whole string
+	ahead, err := strconv.Atoi(countStr)
+	if err != nil || ahead < 0 || countStr == "" {
+		return pre, 0
+	}
+	if nDash < 0 {
+		return "", ahead
+	}
+	return head[:nDash], ahead
+}
+
+// isAbbrevSHA reports whether s is a git abbreviated object name.
+func isAbbrevSHA(s string) bool {
+	if len(s) < 7 || len(s) > 40 {
+		return false
+	}
+	for _, r := range s {
+		isHex := (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')
+		if !isHex {
+			return false
+		}
+	}
+	return true
+}
+
+// compareBaseSuffix orders the part of two suffixes preceding any describe
+// offset, under strict semver rules: an empty suffix is the release itself and
+// outranks any pre-release of the same X.Y.Z.
+func compareBaseSuffix(a, b string) int {
 	switch {
 	case a == b:
 		return 0
 	case a == "":
-		// A release outranks any pre-release of the same X.Y.Z.
 		return 1
 	case b == "":
 		return -1
