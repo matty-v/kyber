@@ -111,3 +111,49 @@ func TestFakeComputeAdapterReplacesPreemptedInstance(t *testing.T) {
 		t.Fatalf("replacement observation = %+v", observation)
 	}
 }
+
+func TestFakeComputeAdapterRecoversPersistedInstanceAfterRestart(t *testing.T) {
+	ctx := context.Background()
+	beforeRestart := NewFakeComputeAdapter()
+	id, err := beforeRestart.CreateInstance(ctx, MachineSpec{Name: "restart-worker", Location: "local-a"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+
+	afterRestart := NewFakeComputeAdapter()
+	observation, err := afterRestart.Observe(ctx, id)
+	if err != nil {
+		t.Fatalf("Observe recovered instance: %v", err)
+	}
+	if observation.State != InstanceStateRunning {
+		t.Fatalf("recovered state = %q, want %q", observation.State, InstanceStateRunning)
+	}
+	if err := afterRestart.ApplySimulationScenario("restart-worker", SimulationFailed); err != nil {
+		t.Fatalf("ApplySimulationScenario recovered instance: %v", err)
+	}
+	observation, err = afterRestart.Observe(ctx, id)
+	if err != nil {
+		t.Fatalf("Observe failed scenario: %v", err)
+	}
+	if observation.State != InstanceStateFailed {
+		t.Fatalf("scenario state = %q, want %q", observation.State, InstanceStateFailed)
+	}
+}
+
+func TestFakeComputeAdapterRecoversLegacyPersistedInstanceAfterRestart(t *testing.T) {
+	adapter := NewFakeComputeAdapter()
+	const legacyID = "fake://instance/45ce8ed8-c8ab-4c30-928f-6a9532aacd29"
+	if _, err := adapter.Observe(context.Background(), legacyID); err != nil {
+		t.Fatalf("Observe legacy instance: %v", err)
+	}
+	if err := adapter.ApplySimulationScenario("legacy-worker", SimulationPreempted); err != nil {
+		t.Fatalf("ApplySimulationScenario legacy instance: %v", err)
+	}
+	observation, err := adapter.Observe(context.Background(), legacyID)
+	if err != nil {
+		t.Fatalf("Observe legacy scenario: %v", err)
+	}
+	if observation.Interruption != InterruptionPreempted {
+		t.Fatalf("legacy interruption = %q, want %q", observation.Interruption, InterruptionPreempted)
+	}
+}

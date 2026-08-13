@@ -59,6 +59,10 @@ The scenario endpoint exists only when explicitly enabled, remains behind the
 normal API key, and is disabled by production defaults. `fake` tests Kyber's
 shared lifecycle; `gce-emulator` adds the real GCE request, operation polling,
 native status, Spot, and error translation paths.
+Fake instance IDs are restart-safe: after a control-plane rollout, the adapter
+reconstructs its in-memory observation from the ID persisted on the Machine CR.
+Deleting a fake Machine removes only that simulated instance; its borrowed k3d
+node remains part of the cluster.
 `attach-node` creates a tainted, unschedulable synthetic Node; it never labels
 or risks the real k3d control-plane node. Agent pods are therefore tested in
 `fake` mode, while `gce-emulator` focuses on compute lifecycle fidelity.

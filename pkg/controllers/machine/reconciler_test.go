@@ -317,6 +317,14 @@ func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
 	if got.Status.Phase != kyberv1.MachinePhaseReady {
 		t.Fatalf("restarted phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseReady)
 	}
+	if err := adapter.ApplySimulationScenario(got.Name, adapters.SimulationPreempted); err != nil {
+		t.Fatalf("applying preempted scenario: %v", err)
+	}
+	reconcileN(t, r, req, 1)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhasePreempted {
+		t.Fatalf("preempted phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhasePreempted)
+	}
 
 	if err := k8sClient.Delete(context.Background(), got); err != nil {
 		t.Fatalf("deleting machine: %v", err)
@@ -324,6 +332,30 @@ func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
 	reconcileN(t, r, req, 1)
 	if adapter.InstanceCount() != 0 {
 		t.Errorf("instance count after delete = %d, want 0", adapter.InstanceCount())
+	}
+	borrowedNode := &corev1.Node{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "node-unassigned"}, borrowedNode); err != nil {
+		t.Fatalf("borrowed node was removed during fake Machine finalization: %v", err)
+	}
+}
+
+func TestClassifyExistingNodeProviderStateFailed(t *testing.T) {
+	adapter := adapters.NewFakeComputeAdapter()
+	id, err := adapter.CreateInstance(context.Background(), adapters.MachineSpec{Name: "failed-machine"})
+	if err != nil {
+		t.Fatalf("CreateInstance: %v", err)
+	}
+	if err := adapter.ApplySimulationScenario("failed-machine", adapters.SimulationFailed); err != nil {
+		t.Fatalf("ApplySimulationScenario: %v", err)
+	}
+	r := &MachineReconciler{ComputeAdapter: adapter}
+	machine := newTestMachine("failed-machine", "default")
+	machine.Spec.Provider = kyberv1.MachineProviderFake
+	machine.Status.Phase = kyberv1.MachinePhaseReady
+	machine.Status.InstanceId = id
+	event, requeueAfter := r.classifyExistingNodeProviderState(context.Background(), machine)
+	if event != EventNodeDisappearedFailed || requeueAfter != 0 {
+		t.Fatalf("classification = (%q, %s), want (%q, 0)", event, requeueAfter, EventNodeDisappearedFailed)
 	}
 }
 

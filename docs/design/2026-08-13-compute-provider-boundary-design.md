@@ -218,6 +218,13 @@ expected from a real cloud:
 5. interruption traverses Preempted/Replacing/Ready;
 6. delete invokes the provider and clears the finalizer.
 
+The fake provider encodes the Machine identity in its opaque provider ID and
+lazily reconstructs the default running observation after a control-plane
+restart. Because its existing node is borrowed rather than provider-owned,
+finalization never deletes that node. Ready and Running fake Machines observe
+provider state directly so failure and preemption scenarios remain visible
+without removing the real k3d node.
+
 The scenario routes are registered only when
 `compute.simulation.controlEnabled=true`. They use the normal Bearer API-key
 wall and production defaults leave them absent.

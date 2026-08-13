@@ -386,6 +386,9 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 
 // classifyReady determines the event when the machine is in Ready phase.
 func (r *MachineReconciler) classifyReady(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
+	if event, requeueAfter := r.classifyExistingNodeProviderState(ctx, machine); event != "" || requeueAfter != 0 {
+		return event, requeueAfter, nil
+	}
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
 		return "", 0, err
@@ -411,6 +414,9 @@ func (r *MachineReconciler) classifyReady(ctx context.Context, machine *kyberv1.
 
 // classifyRunning determines the event when the machine is in Running phase.
 func (r *MachineReconciler) classifyRunning(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
+	if event, requeueAfter := r.classifyExistingNodeProviderState(ctx, machine); event != "" || requeueAfter != 0 {
+		return event, requeueAfter, nil
+	}
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
 		return "", 0, err
@@ -431,6 +437,31 @@ func (r *MachineReconciler) classifyRunning(ctx context.Context, machine *kyberv
 
 	// Stable Running state — update agent count in status.
 	return "", 0, nil
+}
+
+// classifyExistingNodeProviderState makes provider state authoritative for
+// managed simulators that borrow a real cluster node. That node cannot safely
+// disappear during a simulated interruption, so relying only on node absence
+// would make preempted/failed/stopped scenarios invisible.
+func (r *MachineReconciler) classifyExistingNodeProviderState(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration) {
+	if r.ComputeAdapter.NodeAttachment() != adapters.NodeAttachmentExisting || machine.Status.InstanceId == "" {
+		return "", 0
+	}
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	if err != nil {
+		return "", requeueAfterForPhase(machine.Status.Phase)
+	}
+	if observation.Interruption == adapters.InterruptionPreempted && machine.Spec.Spot {
+		return EventNodeDisappearedPreempted, 0
+	}
+	switch observation.State {
+	case adapters.InstanceStateRunning:
+		return "", 0
+	case adapters.InstanceStatePending, adapters.InstanceStateUnknown:
+		return "", requeueAfterForPhase(machine.Status.Phase)
+	default:
+		return EventNodeDisappearedFailed, 0
+	}
 }
 
 // classifyStopping determines the event when the machine is in Stopping phase.
@@ -757,15 +788,18 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 		logger.Info("Compute instance deleted", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 	}
 
-	// Force-delete the lingering k8s node if it still exists.
-	node, err := r.getNodeForMachine(ctx, machine)
-	if err != nil {
-		logger.Error(err, "listing nodes during finalizer (non-fatal)", "machine", machine.Name)
-	} else if node != nil {
-		if err := r.Delete(ctx, node); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "deleting stale node during finalizer (non-fatal)", "machine", machine.Name)
-		} else {
-			logger.Info("stale k8s node deleted", "machine", machine.Name, "node", node.Name)
+	// Only managed-node providers own their Kubernetes Node. Existing-node
+	// providers borrow a real cluster node, which must survive Machine deletion.
+	if r.ComputeAdapter.NodeAttachment() == adapters.NodeAttachmentManaged {
+		node, err := r.getNodeForMachine(ctx, machine)
+		if err != nil {
+			logger.Error(err, "listing nodes during finalizer (non-fatal)", "machine", machine.Name)
+		} else if node != nil {
+			if err := r.Delete(ctx, node); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "deleting stale node during finalizer (non-fatal)", "machine", machine.Name)
+			} else {
+				logger.Info("stale k8s node deleted", "machine", machine.Name, "node", node.Name)
+			}
 		}
 	}
 

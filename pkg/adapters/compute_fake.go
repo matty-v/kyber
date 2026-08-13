@@ -3,6 +3,8 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -52,7 +54,10 @@ func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec)
 			return id, nil
 		}
 	}
-	id := "fake://instance/" + uuid.NewString()
+	// Keep the machine name in the otherwise opaque ID so a replacement
+	// control-plane process can reconstruct its in-memory simulator state from
+	// the InstanceId persisted on the Machine CR.
+	id := "fake://instance/" + url.PathEscape(spec.Name) + "/" + uuid.NewString()
 	f.instances[id] = &fakeInstance{
 		spec: spec,
 		observation: InstanceObservation{
@@ -108,9 +113,9 @@ func (f *FakeComputeAdapter) Observe(_ context.Context, instanceID string) (Inst
 	if err := f.consumeError("observe"); err != nil {
 		return InstanceObservation{}, err
 	}
-	instance, ok := f.instances[instanceID]
-	if !ok {
-		return InstanceObservation{}, fmt.Errorf("fake instance %q not found", instanceID)
+	instance, err := f.instance(instanceID)
+	if err != nil {
+		return InstanceObservation{}, err
 	}
 	return instance.observation, nil
 }
@@ -152,6 +157,12 @@ func (f *FakeComputeAdapter) ApplySimulationScenario(machineName string, scenari
 		return nil
 	}
 	for _, instance := range f.instances {
+		// IDs created by the first fake-provider implementation did not encode
+		// the Machine name. A restarted local stack can still adopt its sole
+		// legacy instance when the scenario request supplies that name.
+		if instance.spec.Name == "" && len(f.instances) == 1 {
+			instance.spec.Name = machineName
+		}
 		if instance.spec.Name != machineName {
 			continue
 		}
@@ -192,12 +203,46 @@ func (f *FakeComputeAdapter) InstanceCount() int {
 func (f *FakeComputeAdapter) update(instanceID string, update func(*InstanceObservation)) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	instance, ok := f.instances[instanceID]
-	if !ok {
-		return fmt.Errorf("fake instance %q not found", instanceID)
+	instance, err := f.instance(instanceID)
+	if err != nil {
+		return err
 	}
 	update(&instance.observation)
 	return nil
+}
+
+// instance returns an existing simulation record or reconstructs the default
+// running observation encoded by a fake provider ID. Machine CR status keeps
+// that ID across control-plane restarts, while this adapter is intentionally
+// in-memory; lazy reconstruction makes the local stack restart-safe.
+// f.mu must be held by the caller.
+func (f *FakeComputeAdapter) instance(instanceID string) (*fakeInstance, error) {
+	if instance, ok := f.instances[instanceID]; ok {
+		return instance, nil
+	}
+	const prefix = "fake://instance/"
+	remainder := strings.TrimPrefix(instanceID, prefix)
+	parts := strings.SplitN(remainder, "/", 2)
+	if remainder == instanceID || parts[0] == "" {
+		return nil, fmt.Errorf("fake instance %q not found", instanceID)
+	}
+	machineName := ""
+	if len(parts) == 2 {
+		var err error
+		machineName, err = url.PathUnescape(parts[0])
+		if err != nil || machineName == "" || parts[1] == "" {
+			return nil, fmt.Errorf("fake instance %q not found", instanceID)
+		}
+	}
+	instance := &fakeInstance{
+		spec: MachineSpec{Name: machineName},
+		observation: InstanceObservation{
+			State:        InstanceStateRunning,
+			Interruption: InterruptionNone,
+		},
+	}
+	f.instances[instanceID] = instance
+	return instance, nil
 }
 
 var _ ComputeAdapter = (*FakeComputeAdapter)(nil)
