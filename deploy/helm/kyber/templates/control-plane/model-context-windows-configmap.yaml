@@ -40,9 +40,32 @@ metadata:
     # fleet-defaults ConfigMap.
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: Replace=false
+{{- /*
+Live entries win over chart seeds, merged key-by-key.
+
+This ConfigMap's own header tells operators to edit it in place with
+`kubectl edit cm`, and values.yaml repeats the instruction — so it holds
+operator-written state exactly like the fleet-defaults ConfigMap, and the
+same `helm upgrade` revert applied. Wiping it drops every operator-added
+model to the 200K floor with contextWindowKnown:false, and the
+KYBER_MODEL_CONTEXT_WINDOW regression stops start-claude.sh's [1m] gate
+firing for 1M-context models.
+
+Merged rather than all-or-nothing so a chart seed for a NEW model still
+lands on a cluster that has operator overrides for other models.
+*/ -}}
+{{- $cwName := .Values.runtimeDetect.contextWindowsConfigMapName }}
+{{- $liveCW := lookup "v1" "ConfigMap" (include "kyber.namespace" .) $cwName }}
+{{- $liveCWData := dict }}
+{{- if $liveCW }}{{- $liveCWData = ($liveCW.data | default dict) }}{{- end }}
 data:
   {{- range $id, $tokens := .Values.runtimeDetect.contextWindows }}
+  {{ $id | quote }}: {{ if hasKey $liveCWData $id }}{{ index $liveCWData $id | quote }}{{ else }}{{ $tokens | quote }}{{ end }}
+  {{- end }}
+  {{- range $id, $tokens := $liveCWData }}
+  {{- if not (hasKey $.Values.runtimeDetect.contextWindows $id) }}
   {{ $id | quote }}: {{ $tokens | quote }}
+  {{- end }}
   {{- end }}
 {{- end }}
 {{- end }}

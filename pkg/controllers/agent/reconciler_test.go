@@ -391,6 +391,117 @@ func TestCreatePod_EnsuresOffsetsPVC_PreExistingAgent(t *testing.T) {
 	}
 }
 
+// TestCreatePod_EnsuresPersistPVC_WhenMissing is the companion guard for the
+// PERSIST PVC, and it exists because a real agent got permanently stuck without
+// it.
+//
+// On the canary, an agent's persist PVC had to be deleted to correct its
+// StorageClass. The reconciler then rebuilt the POD on every reconcile and
+// never the CLAIM — because the persist ensure lived only on the birth-time
+// ActionCreatePVAndPod path, while wake and retry call createPod directly. The
+// agent flapped Starting → Failed → Starting forever on
+// "persistentvolumeclaim not found", with no route back short of deleting the
+// agent or hand-writing the PVC. The offsets PVC was already immune, having
+// been fixed the same way in #467; the persist PVC was not.
+//
+// This fails if the persist ensure is removed from createPod.
+func TestCreatePod_EnsuresPersistPVC_WhenMissing(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	ctx := context.Background()
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-persist-pvc-heal"}}
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	agent := newTestAgent("dave", ns.Name)
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	agent = getAgent(t, k8sClient, types.NamespacedName{Name: "dave", Namespace: ns.Name})
+
+	persistKey := types.NamespacedName{Name: PVCName("dave"), Namespace: ns.Name}
+	if err := k8sClient.Get(ctx, persistKey, &corev1.PersistentVolumeClaim{}); !errors.IsNotFound(err) {
+		t.Fatalf("precondition: persist PVC must be absent, got err=%v", err)
+	}
+
+	// The recreation path — what wake and retry actually call.
+	if err := r.createPod(ctx, agent); err != nil {
+		t.Fatalf("createPod (recreation): %v", err)
+	}
+
+	persist := &corev1.PersistentVolumeClaim{}
+	if err := k8sClient.Get(ctx, persistKey, persist); err != nil {
+		t.Fatalf("persist PVC must be recreated by createPod, else the agent is stuck Pending forever: %v", err)
+	}
+	if len(persist.OwnerReferences) == 0 || persist.OwnerReferences[0].Name != "dave" {
+		t.Errorf("recreated persist PVC must be owner-referenced to the agent (for GC); got %v", persist.OwnerReferences)
+	}
+
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName("dave"), Namespace: ns.Name}, pod); err != nil {
+		t.Fatalf("recreated pod not found: %v", err)
+	}
+	var refsPersist bool
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == PVCName("dave") {
+			refsPersist = true
+		}
+	}
+	if !refsPersist {
+		t.Error("recreated pod must reference the persist PVC by claim name")
+	}
+}
+
+// TestCreatePod_LeavesExistingPersistPVCAlone guards the other direction: the
+// ensure must never touch a claim that already exists. A bound volume carries
+// the agent's data, and mutating a PVC's immutable fields fails the reconcile.
+func TestCreatePod_LeavesExistingPersistPVCAlone(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	ctx := context.Background()
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-persist-pvc-untouched"}}
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	agent := newTestAgent("dave", ns.Name)
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	agent = getAgent(t, k8sClient, types.NamespacedName{Name: "dave", Namespace: ns.Name})
+
+	// A pre-existing claim on a DIFFERENT StorageClass — the shape a cluster is
+	// in after an operator corrects storage.agentStorageClass. It must survive
+	// untouched; storageClassName is immutable and rewriting it would fail.
+	existing := BuildPVC(agent, "someone-elses-class")
+	if err := ctrl.SetControllerReference(agent, existing, scheme); err != nil {
+		t.Fatalf("owner ref: %v", err)
+	}
+	if err := k8sClient.Create(ctx, existing); err != nil {
+		t.Fatalf("creating persist PVC: %v", err)
+	}
+
+	r.AgentStorageClass = "a-new-class"
+	if err := r.createPod(ctx, agent); err != nil {
+		t.Fatalf("createPod: %v", err)
+	}
+
+	got := &corev1.PersistentVolumeClaim{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: PVCName("dave"), Namespace: ns.Name}, got); err != nil {
+		t.Fatalf("persist PVC disappeared: %v", err)
+	}
+	if got.Spec.StorageClassName == nil || *got.Spec.StorageClassName != "someone-elses-class" {
+		t.Errorf("existing PVC was modified: storageClassName = %v, want it left alone", got.Spec.StorageClassName)
+	}
+}
+
 // TestReconciler_NewAgent_DesiredSuspended_NoPod verifies that when a new
 // Agent CRD is created with spec.desiredPhase=Suspended, the reconciler
 // creates the PVC but NOT a pod, and parks the agent in the Suspended phase.

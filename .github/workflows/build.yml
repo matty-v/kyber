@@ -54,9 +54,9 @@ jobs:
       chart: ${{ steps.filter.outputs.chart }}
       anyImage: ${{ steps.derive.outputs.anyImage }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: dorny/paths-filter@v3
+      - uses: dorny/paths-filter@v4
         id: filter
         with:
           filters: |
@@ -195,9 +195,9 @@ jobs:
     needs: changes
     if: needs.changes.outputs.runtimeBase == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
           cache: true
@@ -239,35 +239,55 @@ jobs:
       # (deploy-to-dev and the stale-deploy guard key on marker.sha ==
       # pr.head.sha, kyber#534), so the content must BE the head sha. Empty on
       # push events → default behavior, unchanged.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || '' }}
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
-      # Honest pre-release version for the canary (:latest) image, e.g.
-      # 1.10.0-3-gabc1234 — razer runs ahead of releases, so this is the truth.
+      # Honest pre-release version for a main build, e.g. 1.0.1-22-gabc1234.
       # Leading "v" stripped for parity with the release path's bare X.Y.Z.
       # If no tags are reachable (should not happen with fetch-depth: 0), this
       # is empty and the binary falls back to the chart version — but we fail
       # loudly first so the fetch-depth regression can't slip back in silently.
+      #
+      # --match is REQUIRED, not cosmetic. `git describe --tags` takes the
+      # nearest tag of ANY namespace, and this repo also carries
+      # `pwa-views/vX.Y.Z` tags for the npm package. Those are usually more
+      # recent than the last Kyber release, so every main build was baking a
+      # PWA-package version in as the Kyber version:
+      #
+      #   $ git describe --tags
+      #   pwa-views/v0.21.1-7-gabe5dbe        <- shipped as the Kyber version
+      #   $ git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*'
+      #   v1.0.1-22-gabe5dbe                  <- correct
+      #
+      # Two consequences, both observed on the canary cluster: the PWA
+      # Diagnostics card showed a pwa-views version as the cluster's Kyber
+      # version, and the update checker could not parse it — so a cluster
+      # tracking main reported "no update available" unconditionally, which
+      # would have made the canary useless for the one job it exists to do.
+      # (The `#v` strip below never applied either, since the prefix was not "v".)
+      #
+      # Releases were unaffected: release.yml takes the version from
+      # GITHUB_REF_NAME, not from describe.
       - id: version
         name: Resolve build version from git describe
         run: |
-          DESCRIBE=$(git describe --tags 2>/dev/null || echo "")
+          DESCRIBE=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo "")
           if [ -z "$DESCRIBE" ]; then
             # Distinguish "tags exist but weren't fetched" (a fetch-depth
             # regression — fail loudly, kyber#482) from "the repository has no
             # release tags yet" (fresh clone/fork pre-first-release — fall back
             # to a truthful dev version instead of blocking every build).
-            if [ -z "$(git tag --list | head -1)" ]; then
+            if [ -z "$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' | head -1)" ]; then
               DESCRIBE="0.0.0-dev-g$(git rev-parse --short HEAD)"
               echo "::notice::No release tags exist yet — using ${DESCRIBE} as the build version."
             else
@@ -303,7 +323,7 @@ jobs:
           echo "Tags resolved:"; echo "${TAGS}"
 
       - name: Build and push control-plane image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/control-plane/Dockerfile
@@ -321,18 +341,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.nodeAgentImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push node-agent image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/node-agent/Dockerfile
@@ -348,18 +368,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.statusSidecarImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push status-sidecar image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/status-sidecar/Dockerfile
@@ -375,18 +395,18 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpDiscordImage == 'true')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push mcp-discord image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/mcp-discord/Dockerfile
@@ -402,15 +422,15 @@ jobs:
     needs: changes
     if: github.event_name == 'push' && (needs.changes.outputs.go == 'true' || needs.changes.outputs.mcpTelegramImage == 'true')
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Build and push mcp-telegram image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/mcp-telegram/Dockerfile
@@ -428,18 +448,18 @@ jobs:
     needs: [changes, agent-base-integration]
     if: github.event_name == 'push' && needs.changes.outputs.runtimeBase == 'true'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and push runtime-base image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: images/agent-base
           push: true
@@ -456,15 +476,15 @@ jobs:
     needs: [changes, push-runtime-base]
     if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.claudeCode == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # If runtime-base was rebuilt this run, pin to the new SHA tag so the
       # layer graph is reproducible. If it was skipped, fall back to :latest
@@ -494,7 +514,7 @@ jobs:
           echo "Pinned claude-code version: $version"
 
       - name: Build and push claude-code image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/claude-code/Dockerfile
@@ -514,13 +534,13 @@ jobs:
     needs: [changes, push-runtime-base]
     if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.codex == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/login-action@v3
+      - uses: actions/checkout@v7
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
       - name: Determine BASE_IMAGE tag
         id: base
         run: |
@@ -541,7 +561,7 @@ jobs:
           echo "Pinned codex version: $version"
 
       - name: Build and push Codex image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: images/codex/Dockerfile
@@ -561,3 +581,152 @@ jobs:
   # Deployment is managed by ArgoCD — see matty-v/kyber-deploy. The
   # Image Updater there polls GHCR every ~2 min, commits new image tags
   # into environments/*/values.yaml, and ArgoCD syncs the cluster.
+
+  # --------------------------------------------------------------------
+  # Publish a chart per merge to main — the `main` update channel.
+  #
+  # Matt, 2026-08-13: every cluster takes published releases; the canary takes
+  # every merge. That second half needs an artifact per commit, because a
+  # cluster cannot pull a git ref — it pulls a chart.
+  #
+  # The version is the SAME git-describe string the binaries are built with
+  # (1.0.1-25-gfd47d00), so a cluster's /api/v1/version and the chart it came
+  # from are the same string. Anything else and the update checker is comparing
+  # two different numbering schemes.
+  #
+  # WHY THE RETAG STEP: build.yml only rebuilds images whose code changed, so
+  # after a typical merge most images have no tag at this commit. A chart that
+  # pinned them per-image would be a mix of shas from different commits, and
+  # one that pinned `:latest` would be unpinnable and mutable — the thing razer
+  # was just taken off. Instead every image gets THIS version as an additional
+  # tag, retagged from `:latest` (a manifest pointer, no rebuild, no new
+  # blobs). The published chart then pins all eight to one version that
+  # provably exists, and the self-upgrade verifier's image check works
+  # unchanged.
+  #
+  # Pre-release by construction: the version carries a `-<n>-g<sha>` suffix, so
+  # `Channel.Accepts` keeps it away from any cluster on the release channel
+  # even though it sits in the same registry.
+  # --------------------------------------------------------------------
+  publish-main-chart:
+    runs-on: ubuntu-latest
+    needs:
+      - changes
+      - push-control-plane
+      - push-node-agent
+      - push-status-sidecar
+      - push-mcp-discord
+      - push-mcp-telegram
+      - push-runtime-base
+      - push-claude-code
+      - push-codex
+    # always(): most of those jobs SKIP on a typical merge (path filters), and
+    # a skipped dependency would otherwise skip this job too. Failures still
+    # block — a chart must never be published from a build that broke.
+    if: |
+      always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        && !contains(needs.*.result, 'failure')
+        && !contains(needs.*.result, 'cancelled')
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Tags are required for git describe — without them the version step
+          # below fails loudly rather than publishing a mislabelled chart.
+          fetch-depth: 0
+
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.3
+
+      - name: Resolve the main build version
+        id: version
+        run: |
+          set -euo pipefail
+          DESCRIBE=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' 2>/dev/null || echo "")
+          if [ -z "$DESCRIBE" ]; then
+            echo "::error::git describe returned empty — cannot version a main chart without release tags."
+            exit 1
+          fi
+          VERSION="${DESCRIBE#v}"
+          case "$VERSION" in
+            *-*) ;;
+            *)
+              # Exactly on a release tag: release.yml owns that version, and
+              # publishing it here would race it with a different artifact
+              # under the same name.
+              echo "::notice::HEAD is exactly ${VERSION} — release.yml publishes that chart. Nothing to do."
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              ;;
+          esac
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Main chart version: $VERSION"
+
+      - name: Log in to GHCR
+        if: steps.version.outputs.skip != 'true'
+        run: |
+          echo "${{ secrets.GHCR_PAT }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+
+      - name: Skip if this chart version is already published
+        if: steps.version.outputs.skip != 'true'
+        id: published
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if helm show chart oci://ghcr.io/matty-v/charts/kyber --version "$VERSION" >/dev/null 2>&1; then
+            echo "already=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Chart ${VERSION} already published — skipping."
+          else
+            echo "already=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Retag, never rebuild. imagetools create points a new tag at the
+      # existing manifest, so this costs a registry write per image and no
+      # storage.
+      - name: Tag every image with this version
+        if: steps.version.outputs.skip != 'true' && steps.published.outputs.already == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          for repo in kyber-control-plane kyber-node-agent kyber-status-sidecar \
+                      kyber-mcp-discord kyber-mcp-telegram kyber-runtime-base \
+                      kyber-claude-code kyber-codex; do
+            echo "::group::ghcr.io/matty-v/${repo}:${VERSION}"
+            docker buildx imagetools create \
+              --tag "ghcr.io/matty-v/${repo}:${VERSION}" \
+              "ghcr.io/matty-v/${repo}:latest"
+            echo "::endgroup::"
+          done
+
+      - name: Stamp the chart with this version and its images
+        if: steps.version.outputs.skip != 'true' && steps.published.outputs.already == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          yq -i ".version = \"${VERSION}\" | .appVersion = \"${VERSION}\"" deploy/helm/kyber/Chart.yaml
+          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar; do
+            yq -i ".image.${c}.tag = \"${VERSION}\"" deploy/helm/kyber/values.yaml
+          done
+          echo "Chart:"; yq '{"version": .version, "appVersion": .appVersion}' deploy/helm/kyber/Chart.yaml
+          echo "Images:"; yq '.image | to_entries | map({"component": .key, "tag": .value.tag})' deploy/helm/kyber/values.yaml
+
+      # The same assertion release.yml makes: never publish a chart that cannot
+      # render. This is what stops an unusable artifact reaching a cluster.
+      - name: Assert the packaged chart renders
+        if: steps.version.outputs.skip != 'true' && steps.published.outputs.already == 'false'
+        run: helm template kyber deploy/helm/kyber >/dev/null
+
+      - name: Package and push
+        if: steps.version.outputs.skip != 'true' && steps.published.outputs.already == 'false'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          helm package deploy/helm/kyber --destination dist
+          helm push "dist/kyber-${VERSION}.tgz" oci://ghcr.io/matty-v/charts
+          echo "::notice::Published oci://ghcr.io/matty-v/charts/kyber:${VERSION}"

@@ -41,15 +41,19 @@ type RestartMachineAgentsSkipped struct {
 // CreateMachineRequest is the JSON body for POST /api/v1/machines.
 type CreateMachineRequest struct {
 	Name     string `json:"name"`
-	Provider string `json:"provider"` // "gce" or "mock"
+	Provider string `json:"provider"` // "gce", "fake", "static", or compatibility "mock"
 
-	// GCE-only fields (ignored and rejected when provider=mock).
+	// Managed-provider fields (required for gce/fake; rejected for static/mock).
+	Profile       string `json:"profile,omitempty"`
+	Location      string `json:"location,omitempty"`
+	Interruptible *bool  `json:"interruptible,omitempty"`
+	// Deprecated compatibility aliases retained for older clients.
 	MachineType string `json:"machineType,omitempty"`
 	DiskSizeGb  int32  `json:"diskSizeGb,omitempty"`
 	Spot        bool   `json:"spot,omitempty"`
 	Zone        string `json:"zone,omitempty"`
 
-	// Mock-only field (ignored and rejected when provider=gce).
+	// Existing-node capacity (optional for static/mock; rejected for gce/fake).
 	Capacity *CreateMachineCapacity `json:"capacity,omitempty"`
 }
 
@@ -93,14 +97,14 @@ type machineAllocatableResponse struct {
 }
 
 type machineStatusResponse struct {
-	Phase           kyberv1.MachinePhase        `json:"phase,omitempty"`
-	Message         string                      `json:"message,omitempty"`
-	InstanceId      string                      `json:"instanceId,omitempty"`
-	ExternalIP      string                      `json:"externalIP,omitempty"`
-	InternalIP      string                      `json:"internalIP,omitempty"`
-	NodeName        string                      `json:"nodeName,omitempty"`
-	AgentCount      int32                       `json:"agentCount,omitempty"`
-	Allocatable     *machineAllocatableResponse `json:"allocatable,omitempty"`
+	Phase       kyberv1.MachinePhase        `json:"phase,omitempty"`
+	Message     string                      `json:"message,omitempty"`
+	InstanceId  string                      `json:"instanceId,omitempty"`
+	ExternalIP  string                      `json:"externalIP,omitempty"`
+	InternalIP  string                      `json:"internalIP,omitempty"`
+	NodeName    string                      `json:"nodeName,omitempty"`
+	AgentCount  int32                       `json:"agentCount,omitempty"`
+	Allocatable *machineAllocatableResponse `json:"allocatable,omitempty"`
 	// Three new capacity fields shipped by #140. Mirror the renamed
 	// Status.{Observed,Assignable,Available}Capacity. PWA #142 reads these
 	// directly; `allocatable` above is preserved as the legacy alias of
@@ -279,6 +283,12 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			"name must be lowercase alphanumeric + hyphens, 1-63 chars", "name")
 		return
 	}
+	if s.ComputeProvider != "" && !providerMatchesInstall(req.Provider, s.ComputeProvider) {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			fmt.Sprintf("provider %q does not match this installation's compute provider %q", req.Provider, s.ComputeProvider),
+			"provider")
+		return
+	}
 
 	spec := kyberv1.MachineSpec{
 		Provider:     kyberv1.MachineProvider(req.Provider),
@@ -286,32 +296,45 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch kyberv1.MachineProvider(req.Provider) {
-	case kyberv1.MachineProviderGCE:
+	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderFake:
+		provider := req.Provider
+		profile := req.Profile
+		if profile == "" {
+			profile = req.MachineType
+		}
+		location := req.Location
+		if location == "" {
+			location = req.Zone
+		}
+		interruptible := req.Spot
+		if req.Interruptible != nil {
+			interruptible = *req.Interruptible
+		}
 		if req.Capacity != nil {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=gce: capacity is derived from machineType; do not send it", "capacity")
+				fmt.Sprintf("provider=%s: capacity is derived from machineType; do not send it", provider), "capacity")
 			return
 		}
-		if req.MachineType == "" {
+		if profile == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=gce requires machineType", "machineType")
+				fmt.Sprintf("provider=%s requires profile", provider), "profile")
 			return
 		}
 		if req.DiskSizeGb < 10 {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=gce requires diskSizeGb >= 10", "diskSizeGb")
+				fmt.Sprintf("provider=%s requires diskSizeGb >= 10", provider), "diskSizeGb")
 			return
 		}
-		if req.Zone == "" {
+		if location == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=gce requires zone", "zone")
+				fmt.Sprintf("provider=%s requires location", provider), "location")
 			return
 		}
 		catalog := s.GCEVMTypeCatalog
 		if catalog == nil {
 			catalog = DefaultGCEVMTypeCatalog()
 		}
-		gceCap, ok := catalog[req.MachineType]
+		gceCap, ok := catalog[profile]
 		if !ok {
 			validTypes := make([]string, 0, len(catalog))
 			for t := range catalog {
@@ -319,36 +342,37 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			}
 			sort.Strings(validTypes)
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				fmt.Sprintf("unknown machineType %q; valid types: %s", req.MachineType, strings.Join(validTypes, ", ")),
-				"machineType")
+				fmt.Sprintf("unknown profile %q; valid profiles: %s", profile, strings.Join(validTypes, ", ")),
+				"profile")
 			return
 		}
-		spec.MachineType = req.MachineType
+		spec.MachineType = profile
 		spec.DiskSizeGb = req.DiskSizeGb
-		spec.Spot = req.Spot
-		spec.Zone = req.Zone
+		spec.Spot = interruptible
+		spec.Zone = location
 		spec.Capacity = gceCap
 
-	case kyberv1.MachineProviderMock:
+	case kyberv1.MachineProviderMock, kyberv1.MachineProviderStatic:
+		provider := req.Provider
 		// Reject any GCE-only field — emit one error per offending field.
-		if req.MachineType != "" {
+		if req.Profile != "" || req.Location != "" || req.Interruptible != nil || req.MachineType != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=mock: machineType/diskSizeGb/spot/zone must be absent", "machineType")
+				fmt.Sprintf("provider=%s: machineType/diskSizeGb/spot/zone must be absent", provider), "machineType")
 			return
 		}
 		if req.DiskSizeGb != 0 {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=mock: machineType/diskSizeGb/spot/zone must be absent", "diskSizeGb")
+				fmt.Sprintf("provider=%s: machineType/diskSizeGb/spot/zone must be absent", provider), "diskSizeGb")
 			return
 		}
 		if req.Spot {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=mock: machineType/diskSizeGb/spot/zone must be absent", "spot")
+				fmt.Sprintf("provider=%s: machineType/diskSizeGb/spot/zone must be absent", provider), "spot")
 			return
 		}
 		if req.Zone != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"provider=mock: machineType/diskSizeGb/spot/zone must be absent", "zone")
+				fmt.Sprintf("provider=%s: machineType/diskSizeGb/spot/zone must be absent", provider), "zone")
 			return
 		}
 		// Auto-fill capacity from the cluster's first Ready node when omitted
@@ -407,10 +431,10 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		for i := range existing.Items {
-			if existing.Items[i].Spec.Provider == kyberv1.MachineProviderMock {
+			if existing.Items[i].Spec.Provider == kyberv1.MachineProviderMock ||
+				existing.Items[i].Spec.Provider == kyberv1.MachineProviderStatic {
 				writeJSONError(w, http.StatusConflict, "conflict",
-					fmt.Sprintf("only one Machine is allowed when provider=mock (found %q)",
-						existing.Items[i].Name))
+					fmt.Sprintf("only one Machine is allowed when provider=%s (found %q)", provider, existing.Items[i].Name))
 				return
 			}
 		}
@@ -418,8 +442,22 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			fmt.Sprintf("unknown provider %q (must be gce or mock)", req.Provider), "provider")
+			fmt.Sprintf("unknown provider %q (must be gce, static, fake, or mock)", req.Provider), "provider")
 		return
+	}
+	if spec.Provider == kyberv1.MachineProviderFake {
+		var existing kyberv1.MachineList
+		if err := s.K8sClient.List(r.Context(), &existing, client.InNamespace(s.Namespace)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "list machines: "+err.Error())
+			return
+		}
+		for i := range existing.Items {
+			if existing.Items[i].Spec.Provider == kyberv1.MachineProviderFake {
+				writeJSONError(w, http.StatusConflict, "conflict",
+					fmt.Sprintf("only one Machine is allowed when provider=fake (found %q)", existing.Items[i].Name))
+				return
+			}
+		}
 	}
 
 	machine := &kyberv1.Machine{
@@ -441,6 +479,14 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusCreated, machineToResponse(machine))
+}
+
+func providerMatchesInstall(requested, configured string) bool {
+	if requested == configured {
+		return true
+	}
+	return (requested == string(kyberv1.MachineProviderMock) && configured == string(kyberv1.MachineProviderStatic)) ||
+		(requested == string(kyberv1.MachineProviderStatic) && configured == string(kyberv1.MachineProviderMock))
 }
 
 // enrichMachineResponse adds live available resource data to a MachineResponse.

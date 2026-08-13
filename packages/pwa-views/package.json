@@ -1,6 +1,6 @@
 {
   "name": "@matty-v/kyber-pwa-views",
-  "version": "0.21.1",
+  "version": "0.24.0",
   "type": "module",
   "description": "Kyber control-plane PWA views, hooks, API client, and ClusterContext. Consumed by apps/embedded-pwa (in-binary) and holocron (multi-install hub).",
   "license": "Apache-2.0",

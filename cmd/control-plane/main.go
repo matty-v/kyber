@@ -42,6 +42,7 @@ import (
 	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	machinecontroller "github.com/matty-v/kyber/pkg/controllers/machine"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
+	"github.com/matty-v/kyber/pkg/gceemulator"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/messagebuffer"
@@ -61,7 +62,9 @@ import (
 	// adapterRegistry and assign the context-window resolver — kyber#378
 	// PR-D). The named import at line 47 satisfies both: Go elides the
 	// duplicate package load and runs init() exactly once.
+	"github.com/matty-v/kyber/pkg/configexport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
+	"github.com/matty-v/kyber/pkg/updates"
 )
 
 var (
@@ -671,36 +674,48 @@ func main() {
 		}
 	}
 
-	// ComputeAdapter: use GCE if KYBER_COMPUTE_PROVIDER=gce and KYBER_GCE_PROJECT
-	// is set; otherwise fall back to the mock adapter for dev/k3d. The GCE
-	// adapter uses Application Default Credentials — on a GCE VM it auto-
-	// discovers the instance's service account via the metadata server, so no
-	// credential file or secret mount is required.
-	var computeAdapter adapters.ComputeAdapter
+	// Compute providers are constructed through the provider registry. An
+	// explicitly configured provider fails closed: substituting mock behavior
+	// for a broken real provider would make the process look healthy while
+	// silently changing Machine lifecycle semantics.
 	provider := os.Getenv("KYBER_COMPUTE_PROVIDER")
+	if provider == "" {
+		provider = "mock"
+	}
+	var computeSimulation adapters.SimulationController
+	gceEndpoint := os.Getenv("KYBER_GCE_ENDPOINT")
+	if os.Getenv("KYBER_GCE_EMULATOR") == "true" {
+		if provider != "gce" {
+			setupLog.Error(nil, "KYBER_GCE_EMULATOR requires compute provider gce", "provider", provider)
+			os.Exit(1)
+		}
+		emulator := gceemulator.New()
+		computeSimulation = emulator
+		gceEndpoint = "http://127.0.0.1:8083"
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			setupLog.Info("starting local GCE API emulator", "addr", ":8083")
+			return emulator.Start(ctx, ":8083")
+		})); err != nil {
+			setupLog.Error(err, "registering local GCE API emulator")
+			os.Exit(1)
+		}
+	}
 	gceProject := os.Getenv("KYBER_GCE_PROJECT")
 	gceNetwork := os.Getenv("KYBER_GCE_NETWORK")
 	gceSubnet := os.Getenv("KYBER_GCE_SUBNET")
-	if provider == "gce" && gceProject != "" {
-		gceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		gceAdapter, err := adapters.NewGCEAdapter(gceCtx, gceProject)
-		cancel()
-		if err != nil {
-			setupLog.Error(err, "creating GCEAdapter — falling back to MockComputeAdapter", "project", gceProject)
-			computeAdapter = adapters.NewMockComputeAdapter()
-		} else {
-			gceAdapter.Network = gceNetwork
-			gceAdapter.Subnet = gceSubnet
-			setupLog.Info("ComputeAdapter: using GCE",
-				"project", gceProject,
-				"network", gceNetwork,
-				"subnet", gceSubnet)
-			computeAdapter = gceAdapter
-		}
-	} else {
-		setupLog.Info("ComputeAdapter: using Mock (set KYBER_COMPUTE_PROVIDER=gce + KYBER_GCE_PROJECT for real VMs)")
-		computeAdapter = adapters.NewMockComputeAdapter()
+	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
+		adapters.GCEConfigProject:  gceProject,
+		adapters.GCEConfigNetwork:  gceNetwork,
+		adapters.GCEConfigSubnet:   gceSubnet,
+		adapters.GCEConfigEndpoint: gceEndpoint,
+	})
+	cancel()
+	if err != nil {
+		setupLog.Error(err, "creating compute provider", "provider", provider)
+		os.Exit(1)
 	}
+	setupLog.Info("compute provider initialized", "provider", computeAdapter.Type())
 
 	// Load the GCE VM type catalog from KYBER_GCE_VM_TYPE_CATALOG (a JSON array
 	// rendered by the Helm chart from compute.gce.vmTypeCatalog). Falls back to
@@ -898,6 +913,102 @@ func main() {
 			"keyPath", keyPath)
 	} else {
 		setupLog.Info("runtimedetect: disabled (KYBER_RUNTIMEDETECT_ENABLED=false); /api/v1/available will serve empty contract")
+	}
+
+	// Update checking, and — where the chart has enabled it — installing.
+	// The checker only ever reads; the applier creates a Job that does the
+	// upgrade, because the control plane cannot supervise its own replacement.
+	// See dave-agent spec 2026-08-10-kyber-owns-its-deployment.md.
+	var updateChecker *updates.Checker
+	var updateStore *updates.Store
+	var updateApplier *updates.Applier
+	if os.Getenv("KYBER_UPDATES_ENABLED") == "true" {
+		policyCM := os.Getenv("KYBER_UPDATE_POLICY_CONFIGMAP")
+		if policyCM == "" {
+			policyCM = updates.DefaultConfigMapName
+		}
+		updateStore = &updates.Store{
+			Client:        mgr.GetClient(),
+			Namespace:     kyberNamespace,
+			ConfigMapName: policyCM,
+		}
+		cadence := updates.DefaultCadence
+		if raw := os.Getenv("KYBER_UPDATES_CADENCE_SECONDS"); raw != "" {
+			if secs, err := strconv.Atoi(raw); err == nil && secs > 0 {
+				cadence = time.Duration(secs) * time.Second
+			} else {
+				setupLog.Info("updates: ignoring unparseable KYBER_UPDATES_CADENCE_SECONDS", "value", raw)
+			}
+		}
+		// Self-upgrade. Constructing the Applier does not grant anything: the
+		// Job it creates runs as a ServiceAccount the chart only provisions
+		// when selfUpgrade.enabled is true, so an install that has not opted
+		// in cannot start one even if these env vars were set by hand.
+		//
+		// Applier.Configured() is the single source of truth for whether the
+		// apply route and the applySupported flag are live, which is why every
+		// field is read here rather than defaulted deeper down — a half-set
+		// configuration must read as "off", not as a button that 500s.
+		updateApplier = &updates.Applier{
+			Client:                 mgr.GetClient(),
+			Namespace:              kyberNamespace,
+			ControlPlaneDeployment: os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"),
+			ReleaseName:            os.Getenv("KYBER_SELF_UPGRADE_RELEASE"),
+			ChartRef:               os.Getenv("KYBER_SELF_UPGRADE_CHART_REF"),
+			ServiceAccount:         os.Getenv("KYBER_SELF_UPGRADE_SERVICE_ACCOUNT"),
+			HealthURL:              os.Getenv("KYBER_SELF_UPGRADE_HEALTH_URL"),
+		}
+		if !updateApplier.Configured() {
+			setupLog.Info("updates: self-upgrade not configured; /api/v1/updates/apply will return 503 and applySupported will be false")
+			updateApplier = nil
+		} else {
+			setupLog.Info("updates: self-upgrade enabled",
+				"release", updateApplier.ReleaseName,
+				"chart", updateApplier.ChartRef,
+				"serviceAccount", updateApplier.ServiceAccount)
+		}
+
+		// The main channel reads the chart registry rather than GitHub
+		// releases: on that channel a commit is only an update once its chart
+		// exists to pull. A bad reference is logged and disables the main
+		// channel rather than failing startup — a cluster on stable should not
+		// be taken down by a value it never uses.
+		chartFeed, chartFeedErr := updates.ChartFeedFromRef(
+			os.Getenv("KYBER_UPDATES_CHART_REF"), os.Getenv("KYBER_UPDATES_TOKEN"))
+		if chartFeedErr != nil {
+			setupLog.Error(chartFeedErr, "updates: chart reference unusable; the main channel will report a failed check")
+			chartFeed = nil
+		}
+
+		updateChecker = &updates.Checker{
+			Feed: &updates.FeedClient{
+				Repo:  os.Getenv("KYBER_UPDATES_REPO"),
+				Token: os.Getenv("KYBER_UPDATES_TOKEN"),
+			},
+			ChartFeed:              chartFeed,
+			Applier:                updateApplier,
+			Store:                  updateStore,
+			K8sClient:              mgr.GetClient(),
+			Namespace:              kyberNamespace,
+			ControlPlaneDeployment: os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"),
+			CurrentVersion:         resolveDisplayVersion(),
+			Cadence:                cadence,
+		}
+		if err := mgr.Add(manager.RunnableFunc(updateChecker.Start)); err != nil {
+			setupLog.Error(err, "unable to register update checker")
+			os.Exit(1)
+		}
+		setupLog.Info("updates: checker registered",
+			"repo", updateChecker.Feed.Repo,
+			"cadenceSeconds", int(cadence.Seconds()),
+			"policyConfigMap", policyCM,
+			"currentVersion", updateChecker.CurrentVersion,
+			// Empty here means ownership detection cannot run, so the cluster
+			// reports managedBy=unknown and refuses self-upgrade. Logged
+			// because that is a silent capability loss otherwise.
+			"controlPlaneDeployment", updateChecker.ControlPlaneDeployment)
+	} else {
+		setupLog.Info("updates: disabled (KYBER_UPDATES_ENABLED not \"true\"); /api/v1/updates will return 503")
 	}
 
 	// kyber#431/#437: durable archive log reader. Provider-agnostic — the backend
@@ -1124,6 +1235,10 @@ func main() {
 		NodeStore:                  nodeStore,
 		StateChangeAccumulator:     stateChangeAccum,
 		FleetDefaultsConfigMapName: fleetDefaultsCM,
+		UpdateChecker:              updateChecker,
+		UpdateStore:                updateStore,
+		UpdateApplier:              updateApplier,
+		ConfigExporter:             &configexport.Reader{Client: mgr.GetClient(), Namespace: kyberNamespace},
 		FleetDefaultsInvalidator:   fleetDefaultsResolver,
 		// #396: serve-time context-window resolution for the token-budget %.
 		// Same resolver the detection poller uses (built at ~:405) — one source
@@ -1135,6 +1250,17 @@ func main() {
 			TokenRatesPath:               os.Getenv("KYBER_METRICS_TOKEN_RATES_PATH"),
 			PrometheusInsecureSkipVerify: os.Getenv("KYBER_METRICS_PROMETHEUS_INSECURE") == "true",
 		},
+	}
+	if os.Getenv("KYBER_DEV_COMPUTE_CONTROL") == "true" {
+		if computeSimulation == nil {
+			computeSimulation, _ = computeAdapter.(adapters.SimulationController)
+		}
+		if computeSimulation == nil {
+			setupLog.Error(nil, "KYBER_DEV_COMPUTE_CONTROL requires a simulated compute provider", "provider", provider)
+			os.Exit(1)
+		}
+		publicAPI.ComputeSimulation = computeSimulation
+		setupLog.Info("development compute scenario control enabled")
 	}
 	if publicAPI.APIKey == "" {
 		setupLog.Info("warning: KYBER_API_KEY not set — public API will reject all requests")

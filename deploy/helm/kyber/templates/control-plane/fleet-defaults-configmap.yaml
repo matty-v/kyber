@@ -12,38 +12,74 @@ stable for compatibility:
   codexDefaultModel          — fallback model for Codex agents.
   codexDefaultRuntimeVersion — fallback Codex harness version.
 
-When `defaultRuntimeVersion` is left empty in values.yaml, we derive it
-from `runtime.claudeCode.version` so existing installs see no behavior
-change until an operator opts in.
-
 When `controlPlane.fleetDefaults.configMapName` is empty, the ConfigMap
 isn't rendered and the API endpoint returns 503.
 
-The Helm-rendered values are seeds. The PWA's PUT path edits the same
-ConfigMap in place, so subsequent reads (and reconciles) see the
-operator's value. A `helm upgrade` that doesn't override the chart
-values will revert the ConfigMap to the seed — this is by design (the
-chart is the source of truth at install time) but operators who edit
-via the PWA should mirror the change into kyber-deploy values.yaml to
-survive the next upgrade.
+PRECEDENCE — and it DIFFERS by field, deliberately.
+
+The two *Model keys are OPERATOR-AUTHORED: nothing derives them, so the live
+value wins and the chart value only seeds a first install. `hasKey` rather
+than truthiness, because empty is a real, documented setting ("no fleet
+default — every agent must set spec.model") and a `default` pipeline would
+treat the operator deliberately clearing it as "unset" and restore the chart
+value on the next upgrade.
+
+The two *RuntimeVersion keys are DERIVED from the harness version the chart
+ships (`runtime.claudeCode.version` / `runtime.codex.version`), so the CHART
+wins. Live-wins was wrong for these and would have been a silent, permanent
+regression: a fresh install seeds the derived value, so from the second
+upgrade onward the live value always won and bumping the harness in values
+could never reach the fleet again. Every agent with an empty
+spec.runtimeVersion would keep booting the OLD harness inside the NEW image,
+forever, with no signal. Caught in review; the unit test could not see it
+because `lookup` is always empty under `helm template`.
+
+Cost of each choice, stated: a *Model edit in values.yaml does not affect a
+cluster where the key exists (change it in the PWA, or delete the live key
+and upgrade); a *RuntimeVersion edit in the PWA does not survive an upgrade
+(the chart is authoritative, because it must track the image).
+
+Why the live tier exists at all: this template used to render straight from
+`.Values`, so any `helm upgrade` reverted every PWA-written default back to
+the chart seed. That was harmless only because nothing ran `helm upgrade` —
+ArgoCD renders and applies manifests, and the argocd-specific annotations
+below told it to tolerate the drift. Making Kyber upgrade ITSELF via Helm
+turns that dormant bug into a live one: every self-upgrade would silently
+reset the operator's fleet defaults. See dave-agent spec
+2026-08-10-kyber-owns-its-deployment.md.
+
+`lookup` returns nothing when there is no cluster access — notably inside
+ArgoCD's repo-server, and under plain `helm template`. The live tier is then
+simply unavailable and rendering falls through to the chart value, which is
+exactly the behaviour that exists today. So this is safe during the
+transition period while ArgoCD is still in play.
 */ -}}
 {{- if .Values.controlPlane.fleetDefaults.configMapName }}
+{{- $fd := .Values.controlPlane.fleetDefaults }}
+{{- $live := lookup "v1" "ConfigMap" (include "kyber.namespace" .) $fd.configMapName }}
+{{- $prev := dict }}
+{{- if $live }}{{- $prev = ($live.data | default dict) }}{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: {{ .Values.controlPlane.fleetDefaults.configMapName }}
+  name: {{ $fd.configMapName }}
   namespace: {{ include "kyber.namespace" . }}
   labels:
     {{- include "kyber.labels" . | nindent 4 }}
   annotations:
     # ArgoCD: tolerate the PWA-driven Data drift. Without this, ArgoCD
     # would mark the chart "OutOfSync" the moment an operator edits a
-    # default and self-heal would clobber it.
+    # default and self-heal would clobber it. Retained while any cluster
+    # is still ArgoCD-managed; the `lookup` above is the Helm-native
+    # equivalent and is what protects the values once ArgoCD is retired.
     argocd.argoproj.io/compare-options: IgnoreExtraneous
     argocd.argoproj.io/sync-options: Replace=false
 data:
-  defaultModel: {{ .Values.controlPlane.fleetDefaults.defaultModel | quote }}
-  defaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
-  codexDefaultModel: {{ .Values.controlPlane.fleetDefaults.codexDefaultModel | quote }}
-  codexDefaultRuntimeVersion: {{ .Values.controlPlane.fleetDefaults.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
+  # Operator-authored: live wins, hasKey so a deliberate "" is preserved.
+  defaultModel: {{ if hasKey $prev "defaultModel" }}{{ index $prev "defaultModel" | quote }}{{ else }}{{ $fd.defaultModel | default "" | quote }}{{ end }}
+  codexDefaultModel: {{ if hasKey $prev "codexDefaultModel" }}{{ index $prev "codexDefaultModel" | quote }}{{ else }}{{ $fd.codexDefaultModel | default "" | quote }}{{ end }}
+  # Derived from the harness the chart ships: the CHART wins, or a bump here
+  # could never reach the fleet again. See the precedence note above.
+  defaultRuntimeVersion: {{ $fd.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
+  codexDefaultRuntimeVersion: {{ $fd.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
 {{- end }}

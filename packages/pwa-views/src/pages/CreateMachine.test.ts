@@ -1,37 +1,37 @@
 import { describe, it, expect } from 'vitest'
 import {
-  buildGceRequest,
+  buildManagedMachineRequest,
   buildMockRequest,
-  validateGceForm,
+  validateManagedMachineForm,
   validateMockForm,
 } from './CreateMachine.helpers'
 
-describe('buildGceRequest', () => {
+describe('buildManagedMachineRequest', () => {
   it('coerces diskSizeGb to number', () => {
-    const got = buildGceRequest({
+    const got = buildManagedMachineRequest({
       name: 'worker-1',
       machineType: 'n2-standard-4',
       diskSizeGb: '50',
       zone: 'us-central1-a',
       spot: false,
-    })
+    }, 'gce')
     expect(got).toEqual({
       name: 'worker-1',
       provider: 'gce',
-      machineType: 'n2-standard-4',
+      profile: 'n2-standard-4',
       diskSizeGb: 50,
-      zone: 'us-central1-a',
-      spot: false,
+      location: 'us-central1-a',
+      interruptible: false,
     })
   })
 
   it('preserves spot flag', () => {
-    const got = buildGceRequest({
+    const got = buildManagedMachineRequest({
       name: 'w', machineType: 'e2-small', diskSizeGb: '20',
       zone: 'us-west1-a', spot: true,
-    })
+    }, 'gce')
     expect(got.provider).toBe('gce')
-    if (got.provider === 'gce') expect(got.spot).toBe(true)
+    if (got.provider === 'gce') expect(got.interruptible).toBe(true)
   })
 })
 
@@ -60,15 +60,15 @@ describe('validateMockForm', () => {
   })
 })
 
-describe('validateGceForm', () => {
+describe('validateManagedMachineForm', () => {
   const ok = { name: 'w', machineType: 'e2-small', diskSizeGb: '50', zone: 'us-central1-a', spot: false }
   it('passes complete form', () => {
-    expect(validateGceForm(ok)).toBeNull()
+    expect(validateManagedMachineForm(ok)).toBeNull()
   })
   it('rejects disk < 10GB', () => {
-    expect(validateGceForm({ ...ok, diskSizeGb: '5' })).toMatch(/disk/i)
+    expect(validateManagedMachineForm({ ...ok, diskSizeGb: '5' })).toMatch(/disk/i)
   })
   it('rejects empty name', () => {
-    expect(validateGceForm({ ...ok, name: '' })).toMatch(/name/i)
+    expect(validateManagedMachineForm({ ...ok, name: '' })).toMatch(/name/i)
   })
 })

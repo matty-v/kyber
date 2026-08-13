@@ -26,7 +26,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/configexport"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
@@ -37,6 +39,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
+	"github.com/matty-v/kyber/pkg/updates"
 )
 
 // DefaultPublicPort is the default listen address for the public HTTP API.
@@ -47,6 +50,10 @@ const DefaultPublicPort = ":8080"
 type Server struct {
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
+
+	// ComputeSimulation is an explicitly enabled development-only scenario
+	// controller. It is nil in production and for real compute providers.
+	ComputeSimulation adapters.SimulationController
 
 	// MessageBuffer buffers Telegram messages for suspended agents.
 	MessageBuffer messagebuffer.MessageBuffer
@@ -344,6 +351,17 @@ type Server struct {
 	// this accumulator first (Tier 1) before falling back to Prometheus.
 	StateChangeAccumulator statechangestore.Accumulator
 
+	// ConfigExporter renders the values file that recreates this cluster, with
+	// secrets removed — the infra-as-code artifact for an install that has no
+	// deploy repo. Nil makes GET /api/v1/config/export return 503.
+	//
+	// Read-only: it lists Helm's own release Secrets (narrowed by the
+	// owner=helm label so unrelated credentials never enter the process) and
+	// decodes the stored values. The redaction rules live in
+	// pkg/configexport, covered by a test that fails when a new
+	// credential-looking chart value appears unclassified.
+	ConfigExporter *configexport.Reader
+
 	// FleetDefaultsConfigMapName is the name of the ConfigMap that holds
 	// the cluster-wide fleet-default values consumed by the agent
 	// reconciler (defaultModel today; defaultRuntimeVersion plumbed for
@@ -352,6 +370,30 @@ type Server struct {
 	// `controlPlane.fleetDefaults.configMapName` so this is unset only in
 	// dev/test installs. See kyber#376 / PR-B of #374.
 	FleetDefaultsConfigMapName string
+
+	// UpdateChecker answers GET /api/v1/updates: what this cluster runs, what
+	// release is available, and whether Kyber may install it here. Nil (the
+	// default in tests and on installs with update checking disabled) makes
+	// every /api/v1/updates route return 503.
+	//
+	// It only ever READS — from the release feed and from the cluster.
+	// Installing an update is the UpdateApplier's job.
+	UpdateChecker *updates.Checker
+
+	// UpdateApplier starts a self-upgrade: POST /api/v1/updates/apply creates
+	// a Job that pulls the target chart, applies its CRDs, runs the Helm
+	// upgrade and rolls back if the result does not verify. Nil (the default
+	// in tests, and on installs where selfUpgrade is not enabled in the chart)
+	// makes the apply route return 503 and the status report
+	// applySupported:false.
+	UpdateApplier *updates.Applier
+
+	// UpdateStore persists the operator's update policy. Separate from the
+	// checker because PUT writes through it directly, and because the policy
+	// deliberately lives in a control-plane-owned ConfigMap the Helm chart
+	// does not template — the settings governing upgrades must not be
+	// re-rendered by an upgrade.
+	UpdateStore *updates.Store
 
 	// FleetDefaultsInvalidator clears the reconciler-side cache after a
 	// successful PUT /api/v1/fleet-defaults so the operator sees their
@@ -595,6 +637,10 @@ func (s *Server) buildTopHandler() http.Handler {
 // registerProtectedRoutes registers all /api/v1/* routes on mux.
 // These routes require API key authentication (applied by the caller).
 func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
+	if s.ComputeSimulation != nil {
+		mux.HandleFunc("/api/v1/dev/compute/instances", s.handleComputeSimulation)
+		mux.HandleFunc("/api/v1/dev/compute/scenarios", s.handleComputeSimulation)
+	}
 	// Machines.
 	mux.HandleFunc("/api/v1/machines", s.handleMachines)
 	mux.HandleFunc("/api/v1/machines/", s.handleMachines)
@@ -620,6 +666,13 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 
 	// Build + chart version + substrate (Diagnostics card in the PWA Settings page).
 	mux.HandleFunc("/api/v1/version", s.handleVersion)
+
+	// Update checking (read-only in this build — no apply path).
+	mux.HandleFunc("/api/v1/updates", s.handleUpdates)
+	mux.HandleFunc("/api/v1/updates/", s.handleUpdates)
+
+	// Export the values file that recreates this cluster (secrets removed).
+	mux.HandleFunc("/api/v1/config/export", s.handleConfigExport)
 
 	// Inbound debug (kyber#208 Phase 3) — operator-facing dry-run of the
 	// dispatcher pipeline against a synthetic payload + binding spec. No

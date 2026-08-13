@@ -1,8 +1,9 @@
 # `scripts/devenv/` — one-command dev/test environment
 
-A deterministic, mock-backed Kyber instance any agent (or human) can bring up,
-drive over the API, and tear down — with **one command each way** and **no real
-cloud, auth, or prod-network access**.
+A deterministic Kyber instance any agent (or human) can bring up, drive over
+the API, and tear down—with **one command each way** and **no real cloud,
+cloud auth, or prod-network access**. Compute modes range from existing-node
+attachment to provider-neutral simulation and real-adapter GCE emulation.
 
 This is the shared primitive the per-agent empirical-capability work
 ([#402](https://github.com/matty-v/kyber/issues/402),
@@ -28,8 +29,60 @@ scripts/devenv/up.sh
 scripts/devenv/down.sh
 ```
 
+To exercise the managed Machine state machine without cloud credentials, use
+the deterministic fake provider:
+
+```bash
+scripts/devenv/up.sh --compute-provider fake
+scripts/devenv/smoke-fake-provider.sh   # Ready → Stopped → Ready → deleted
+scripts/devenv/compute-scenario.sh list
+scripts/devenv/down.sh
+```
+
+The default `mock` value is retained for compatibility and has the same
+existing-node behavior as the explicitly named `static` provider. `fake`
+creates an opaque in-memory instance, runs the normal provisioning/finalizer
+path, and attaches the single local Machine to the real k3d node so workloads
+remain schedulable.
+
+To exercise the real GCE adapter without credentials or GCP, use the local
+Compute Engine REST emulator:
+
+```bash
+scripts/devenv/up-full.sh --compute-provider gce-emulator
+# Create a gce Machine in the PWA, then attach a synthetic node once provisioned:
+scripts/devenv/compute-scenario.sh attach-node my-machine
+scripts/devenv/compute-scenario.sh apply my-machine preempted
+```
+
+The scenario endpoint exists only when explicitly enabled, remains behind the
+normal API key, and is disabled by production defaults. `fake` tests Kyber's
+shared lifecycle; `gce-emulator` adds the real GCE request, operation polling,
+native status, Spot, and error translation paths.
+Fake instance IDs are restart-safe: after a control-plane rollout, the adapter
+reconstructs its in-memory observation from the ID persisted on the Machine CR.
+Deleting a fake Machine removes only that simulated instance; its borrowed k3d
+node remains part of the cluster.
+`attach-node` creates a tainted, unschedulable synthetic Node; it never labels
+or risks the real k3d control-plane node. Agent pods are therefore tested in
+`fake` mode, while `gce-emulator` focuses on compute lifecycle fidelity.
+Only the emulator profile permits these explicitly labelled Nodes to remain
+Ready without kubelet heartbeats; production defaults retain normal readiness.
+
 `up.sh` prints the contract when the API is healthy. Re-running `up.sh` is
 idempotent — it reuses an existing cluster and re-converges via `helm upgrade`.
+
+## Choosing a compute mode
+
+| Mode | Compute behavior | Agent pods | Use it for |
+|---|---|---|---|
+| `mock` / `static` | Attaches a Machine directly to the real k3d node; no provider lifecycle | Runnable | Basic API/PWA and existing-node compatibility |
+| `fake` | Provider-neutral in-memory instances through the real Machine state machine; reuses the real k3d node | Runnable | Normal local development, live agents, stop/start, and shared lifecycle behavior |
+| `gce-emulator` | Real `GCEAdapter` against an in-process Compute Engine REST subset; Machines attach to synthetic Nodes | **Not runnable** | GCE request translation, operation polling, Spot/preemption, replacement, and injected API failures |
+
+Use `fake` for end-to-end agent testing. An agent assigned to a
+`gce-emulator` Machine remains Pending with a placement warning because its
+synthetic Node is deliberately tainted and unschedulable.
 
 ### Full local stack — live agent pods
 
@@ -41,6 +94,8 @@ run Claude Code, use [`up-full.sh`](./up-full.sh) — see
 ```bash
 scripts/devenv/up-full.sh            # cold (builds all images)
 scripts/devenv/up-full.sh --skip-build  # warm (reuse built :local images)
+scripts/devenv/up-full.sh --compute-provider fake # managed lifecycle + live agents
+scripts/devenv/up-full.sh --compute-provider gce-emulator # GCE lifecycle only; no agent pods
 ```
 
 To test App-minted credentials against real agent identity repos without
@@ -61,6 +116,7 @@ threat-modeled infra concern that `up-full.sh` does not touch.
 | `--recreate` | Delete an existing devenv cluster first, then build fresh. |
 | `--api-port N` | Local port to forward the API to (default `18080`). |
 | `--cluster-name NAME` | k3d cluster name (default `kyber-devenv`). |
+| `--compute-provider mock\|static\|fake\|gce-emulator` | Select existing-node behavior, the neutral simulator, or the real GCE adapter against its local REST emulator. |
 
 `down.sh` takes `--cluster-name` and is a clean no-op if the cluster is already gone.
 
@@ -90,7 +146,7 @@ environment is fast, isolated, and prod-free:
 
 | Dependency | In the dev env |
 |---|---|
-| Cloud compute (GCE) | **`MockComputeAdapter`** — in-memory fake instances (`compute.provider: mock`, the chart default). No GCP project, no ADC. |
+| Cloud compute | `mock`/`static` attaches to k3d; `fake` provides runnable managed lifecycle; `gce-emulator` drives the real GCE adapter against loopback REST with synthetic Nodes. No GCP project or ADC. |
 | PostgreSQL | Disabled — control-plane falls back to its in-memory store. |
 | Redis | Disabled — in-memory token/buffer store. |
 | Node agent DaemonSet | Disabled. |

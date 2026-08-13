@@ -391,7 +391,7 @@ export type MachinePhase =
   | 'Failed'
   | 'Deleted'
 
-export type MachineProvider = 'gce' | 'mock'
+export type MachineProvider = 'gce' | 'static' | 'fake' | 'mock'
 
 export interface MachineCapacitySpec {
   cpu: string
@@ -407,7 +407,7 @@ export interface MachineSpec {
   // gce, supplied by the user on mock). May be undefined on pre-Phase-B
   // Machine CRs that haven't been reconciled yet.
   capacity?: MachineCapacitySpec
-  // GCE-only fields. Present when provider === 'gce'; absent when 'mock'.
+  // Managed-provider fields. Present for gce/fake; absent for static/mock.
   machineType?: string
   diskSizeGb?: number
   spot?: boolean
@@ -471,14 +471,14 @@ export interface RestartMachineAgentsResponse {
 }
 
 // One of two shapes depending on provider. The server validates cross-field
-// compatibility (e.g., rejects capacity when provider=gce). Mock machines
+// compatibility (e.g., rejects capacity for gce/fake). Existing-node machines
 // can include `ephemeralStorage` in capacity since #129 PR-C; older clients
 // that omit it still work — the field is optional on the wire. The whole
 // `capacity` object is optional too since #240 — when omitted, the server
 // auto-fills from node.status.allocatable.
 export type CreateMachineRequest =
-  | { name: string; provider: 'gce'; machineType: string; diskSizeGb: number; spot: boolean; zone: string }
-  | { name: string; provider: 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string } }
+  | { name: string; provider: 'gce' | 'fake'; profile: string; diskSizeGb: number; interruptible: boolean; location: string }
+  | { name: string; provider: 'static' | 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string } }
 
 // ---- Fleet types ----
 
@@ -544,7 +544,7 @@ export interface TranscriptResult {
 // Used by the PWA to render provider-conditional forms (e.g., Create Machine
 // shows different fields on mock vs gce) and to drive the Create-Agent model
 // dropdown from the server's known-models list.
-export type ComputeProvider = 'gce' | 'mock' | ''
+export type ComputeProvider = 'gce' | 'static' | 'fake' | 'mock' | ''
 
 export type ModelInfo = {
   id: string
@@ -554,6 +554,12 @@ export type ModelInfo = {
 export type ComputeConfig = {
   compute: {
     provider: ComputeProvider
+    managed?: {
+      profiles: VMType[]
+      locations: string[]
+      diskSizesGb: number[]
+      supportsInterruptible: boolean
+    }
     // Catalog of GCE machine types accepted by the create-machine API.
     // Sourced from compute.gce.vmTypeCatalog in the chart. Server omits
     // this when provider !== 'gce', so the field is optional. Mirrors
@@ -785,4 +791,71 @@ export interface PutDiscordCommsRequest {
   /** Overrides the inbound binding's instruction text. Omit to keep whatever
    *  is already there, or to accept Kyber's working default on first setup. */
   action?: string
+}
+
+// ---------------------------------------------------------------------------
+// Updates (GET /api/v1/updates)
+// ---------------------------------------------------------------------------
+
+/** Which stream of builds a cluster watches. */
+export type UpdateChannel = 'stable' | 'main'
+
+/** What happens when an update is found. */
+export type UpdateMode = 'manual' | 'notify' | 'auto'
+
+export interface UpdatePolicy {
+  channel: UpdateChannel
+  mode: UpdateMode
+  /** Holds the cluster at an exact version; overrides channel and mode. */
+  pinnedVersion?: string
+  window?: string
+  timeZone?: string
+}
+
+/** Who owns this cluster's resources, which decides whether it may self-upgrade. */
+export type UpdateManagedBy = 'helm' | 'argocd' | 'unknown'
+
+export type UpdateRunPhase = 'pending' | 'running' | 'succeeded' | 'failed'
+
+/** One upgrade attempt. */
+export interface UpdateRun {
+  jobName: string
+  targetVersion: string
+  phase: UpdateRunPhase
+  startedAt?: string
+  finishedAt?: string
+  message?: string
+}
+
+/**
+ * Fields a policy PUT may carry. `null` clears a field — that is how the pin
+ * is removed — which `Partial<UpdatePolicy>` cannot express, hence a separate
+ * type rather than a cast at the call site.
+ */
+export interface UpdatePolicyPatch {
+  channel?: UpdateChannel
+  mode?: UpdateMode
+  pinnedVersion?: string | null
+  window?: string | null
+  timeZone?: string | null
+}
+
+export interface UpdateStatus {
+  currentVersion: string
+  latestVersion?: string
+  latestUrl?: string
+  /** True only when a newer version was positively identified. */
+  updateAvailable: boolean
+  policy: UpdatePolicy
+  managedBy: UpdateManagedBy
+  /** Whether THIS cluster may install an update (false under ArgoCD). */
+  canSelfUpgrade: boolean
+  /** Why it may not, in the operator's terms. Empty when it may. */
+  reason?: string
+  lastChecked?: string
+  /** Most recent check failure, cleared on success. */
+  lastError?: string
+  /** Whether the control plane has an apply path wired up at all. */
+  applySupported: boolean
+  lastRun?: UpdateRun
 }

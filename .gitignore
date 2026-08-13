@@ -10,6 +10,8 @@ coverage.out
 /token-reporter
 /kyber-mcp-telegram
 /kyber-mcp-discord
+/transcript-compact
+/kyber-upgrade
 
 # Vendor directory (dependencies managed by go modules)
 vendor/

@@ -1,5 +1,92 @@
 # @matty-v/kyber-pwa-views
 
+## 0.24.0 — 2026-08-13
+
+### Added
+- Machine provider types and creation forms now support the explicit `static`
+  existing-node provider and the local `fake` managed-provider simulator.
+  The legacy `mock` provider remains accepted as a compatibility alias for
+  `static`.
+
+### Changed
+- Managed-machine creation now consumes provider-neutral profiles, locations,
+  disk choices, and interruptible-instance capabilities from the control plane.
+  GCE-specific zone lists and request vocabulary no longer live in the PWA.
+
+## 0.23.0 — 2026-08-13
+
+### Added
+- **Upgrade confirmation.** Install now asks first, and the warning names the
+  consequence an operator actually feels: the control plane restarts and this
+  page goes offline for about a minute, then every agent restarts a few at a
+  time and loses its session. It lists the agents at risk by name and counts
+  them on the confirm button. Agents that are `Stopped` are excluded — nothing
+  is lost restarting them — but anything mid-boot is included, because it is
+  rolled too.
+- **In-app upgrade notifications** (`useUpgradeProgress`). Phase transitions
+  become toasts; failures never auto-dismiss. Both the phase source and the
+  dedupe store follow from one fact: the control plane being replaced is also
+  what serves this page, so the tab may reload mid-run. Phase is read from the
+  polled Job and the dedupe record lives in `sessionStorage`, so the
+  "upgrade finished" toast still fires on the far side of the reload. Terminal
+  outcomes are announced only while recent — finished Jobs are retained for a
+  week, and without that bound every new tab would re-announce days-old news.
+- **`UpgradeBanner`**, rendered app-wide, driven by `lastRun` rather than
+  component state so it is correct on a cold load mid-upgrade. The
+  control-plane blackout is labelled *expected*; an operator who reads
+  "connection lost" starts debugging a cluster that is working as intended.
+
+### Changed
+- `ConfirmDialog.message` accepts a `ReactNode` (was `string`), rendered in a
+  `div` since a `p` may not contain a list. The panel gained
+  `max-h-[90vh] overflow-y-auto` — a long message could otherwise push its own
+  buttons off a phone viewport.
+- The cluster header shows the **live** chart version rather than the one this
+  tab loaded with, polling every 3s while an upgrade lands. The refresh
+  affordance remains and now explains itself: the cluster has moved on, but
+  this tab's code is still the old build.
+- Update polling continues while the control plane is unreachable. It stops on a
+  terminal phase, and the refetch most likely to fail is the one during an
+  upgrade — stopping there left the banner and toasts permanently silent.
+- Policy controls and agent creation are disabled while an upgrade is in flight,
+  including the keyboard submit path.
+
+## 0.22.0 — 2026-08-13
+
+### Added
+- Settings → **Updates**: what version this cluster runs, what is available, and
+  how it takes new ones.
+  - **Source** is a choice between published releases (the default) and tracking
+    every change as it lands. Opting into the latter requires confirming a
+    warning that it means running unreleased code, and the warning stays visible
+    while it is selected. Switching back needs no confirmation — going back
+    takes on nothing.
+  - **Installing** is always operator-initiated: a button here, or
+    `POST /api/v1/updates/apply`. Nothing installs itself; automatic apply is
+    not offered because it is not implemented, and an option that silently did
+    nothing would be worse than its absence.
+  - Three distinct "cannot install" states are reported separately rather than
+    collapsed: the control plane has no apply path, this cluster may not use it
+    (ArgoCD), or there is simply nothing newer. Telling an operator the feature
+    does not exist when their cluster is managed by something else sends them to
+  the wrong place.
+  - A failed check is shown rather than rendering as "up to date".
+
+## 0.21.2 — 2026-08-12
+
+### Fixed
+- Settings → Model discovery no longer offers an Anthropic key field on installs
+  that cannot accept one. Where model discovery is off (`runtimeDetect.enabled:
+  false`) the control plane has no Secret to write into, so saving always failed
+  — and an operator learned this only after typing a live credential into the
+  form. The card now explains the state and names the value that turns it on.
+
+  Driven by a new `supported` field on `GET /api/v1/settings/anthropic-key`,
+  not by an HTTP status: a 503 can equally mean a rolling control plane or a
+  tunnel with no origin, and telling an operator to change their values over a
+  transient blip would be its own wrong answer. A control plane that predates
+  the field omits it, and the card behaves as it always has.
+
 ## 0.21.1 — 2026-08-10
 
 ### Changed

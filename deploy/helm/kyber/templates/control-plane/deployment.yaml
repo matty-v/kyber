@@ -51,11 +51,77 @@ spec:
                 configMapKeyRef:
                   name: {{ include "kyber.fullname" . }}-control-plane
                   key: KYBER_NAMESPACE
+            # Update checking (read-only). The checker polls the release feed
+            # and reports; it never installs anything in this build.
+            {{- if .Values.updates.enabled }}
+            - name: KYBER_UPDATES_ENABLED
+              value: "true"
+            - name: KYBER_UPDATES_REPO
+              value: {{ .Values.updates.repo | quote }}
+            - name: KYBER_UPDATES_CADENCE_SECONDS
+              value: {{ .Values.updates.cadenceSeconds | quote }}
+            - name: KYBER_UPDATE_POLICY_CONFIGMAP
+              value: {{ .Values.updates.policyConfigMapName | quote }}
+            {{- if .Values.updates.chartRef }}
+            # Source for the `main` channel only — the registry listing that
+            # says which head-of-main charts actually exist to pull.
+            - name: KYBER_UPDATES_CHART_REF
+              value: {{ .Values.updates.chartRef | quote }}
+            {{- end }}
+            # The control-plane must know its OWN Deployment name to read the
+            # ownership annotations that decide whether self-upgrade is safe
+            # here. Passed explicitly rather than derived from the pod's
+            # ownerReferences — one env var beats two extra API lookups, and an
+            # unset value fails closed (ownership reads as unknown, which
+            # forbids self-upgrade).
+            - name: KYBER_CONTROL_PLANE_DEPLOYMENT
+              value: {{ include "kyber.fullname" . }}-control-plane
+            {{- if .Values.selfUpgrade.enabled }}
+            # Self-upgrade. Every one of these must be present for the apply
+            # path to switch on — the Applier treats a partial configuration as
+            # "off" rather than as a button that fails when pressed.
+            #
+            # The release name is .Release.Name, not the fullname: it is what
+            # `helm upgrade` is given, and getting it wrong means the Job would
+            # try to upgrade a release that does not exist.
+            - name: KYBER_SELF_UPGRADE_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: KYBER_SELF_UPGRADE_CHART_REF
+              value: {{ .Values.selfUpgrade.chartRef | quote }}
+            - name: KYBER_SELF_UPGRADE_SERVICE_ACCOUNT
+              value: {{ include "kyber.fullname" . }}-self-upgrade
+            # In-cluster and unauthenticated on purpose: the Job probes this
+            # after the rollout, and making it read /api/v1/version instead
+            # would mean mounting the cluster's API credentials into the Job to
+            # learn what the Deployment's image tag already says.
+            - name: KYBER_SELF_UPGRADE_HEALTH_URL
+              value: http://{{ include "kyber.fullname" . }}-control-plane.{{ include "kyber.namespace" . }}.svc.cluster.local:8080/healthz
+            {{- end }}
+            {{- if .Values.updates.tokenSecretName }}
+            # Optional GitHub token for the release feed — required when the
+            # repo is private, and useful for rate-limit headroom. Referenced
+            # from a Secret, never a chart value: it is a credential.
+            - name: KYBER_UPDATES_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.updates.tokenSecretName }}
+                  key: {{ .Values.updates.tokenSecretKey | default "token" }}
+            {{- end }}
+            {{- end }}
             # StorageClass applied to new agent PVCs. Empty string means the
             # cluster's default StorageClass binds the volume (e.g. local-path
             # on k3s, standard on GKE) — the standalone-friendly choice.
+            # Empty means "bind against the cluster default", which is right
+            # everywhere except where this chart has provisioned a StorageClass
+            # of its own. gcePD.enabled creates `kyber-pd`; without this
+            # coupling an operator who enables it gets a StorageClass that is
+            # created and then never used, and their agents silently land on
+            # the cluster default instead of a PD — visible nowhere.
+            #
+            # An explicit agentStorageClass always wins, so this only fills in
+            # the value the operator would otherwise have to repeat.
             - name: KYBER_AGENT_STORAGE_CLASS
-              value: {{ .Values.storage.agentStorageClass | quote }}
+              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName "" .Values.storage.gcePD.enabled) | quote }}
             # Durable transcript-offsets PVC (kyber#467). StorageClass defaults to
             # empty (cluster default = local-path) on ALL targets — never kyber-pd,
             # whose 1Gi PD minimum wastes space for sub-1KB line-count checkpoints.
@@ -287,6 +353,16 @@ spec:
             # Compute adapter selection.
             - name: KYBER_COMPUTE_PROVIDER
               value: {{ .Values.compute.provider | default "mock" | quote }}
+            {{- if .Values.compute.simulation.controlEnabled }}
+            - name: KYBER_DEV_COMPUTE_CONTROL
+              value: "true"
+            {{- end }}
+            {{- if .Values.compute.gceEmulator.enabled }}
+            - name: KYBER_GCE_EMULATOR
+              value: "true"
+            - name: KYBER_ALLOW_SIMULATED_NODES
+              value: "true"
+            {{- end }}
             {{- if eq (.Values.compute.provider | default "mock") "gce" }}
             - name: KYBER_GCE_PROJECT
               value: {{ .Values.compute.gce.project | quote }}

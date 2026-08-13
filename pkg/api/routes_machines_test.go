@@ -491,6 +491,70 @@ func TestCreateMachine_GCE_StampsCapacity(t *testing.T) {
 	}
 }
 
+func TestCreateMachine_NewProviderKinds(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		body     map[string]interface{}
+	}{
+		{
+			name:     "fake uses managed inputs",
+			provider: "fake",
+			body: map[string]interface{}{
+				"name": "fake-worker", "provider": "fake", "machineType": "e2-small",
+				"diskSizeGb": 20, "spot": true, "zone": "local-a",
+			},
+		},
+		{
+			name:     "static uses declared capacity",
+			provider: "static",
+			body: map[string]interface{}{
+				"name": "static-worker", "provider": "static",
+				"capacity": map[string]interface{}{"cpu": "4", "memory": "8Gi"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
+			s := &api.Server{
+				K8sClient:       fakeClient,
+				MessageBuffer:   messagebuffer.NewMemoryBuffer(),
+				APIKey:          testAPIKey,
+				Namespace:       "kyber-system",
+				ComputeProvider: tc.provider,
+			}
+			req := authedRequest(t, http.MethodPost, "/api/v1/machines", tc.body)
+			rr := httptest.NewRecorder()
+			s.BuildHandler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateMachineRejectsProviderMismatchedToInstall(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
+	s := &api.Server{
+		K8sClient:       fakeClient,
+		MessageBuffer:   messagebuffer.NewMemoryBuffer(),
+		APIKey:          testAPIKey,
+		Namespace:       "kyber-system",
+		ComputeProvider: "fake",
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "wrong-provider", "provider": "gce", "machineType": "e2-small",
+		"diskSizeGb": 20, "zone": "local-a",
+	})
+	rr := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestCreateMachine_Mock_RejectsGCEFields verifies that POST /api/v1/machines with
 // provider=mock and GCE-only fields (e.g. machineType) returns 400.
 func TestCreateMachine_Mock_RejectsGCEFields(t *testing.T) {
@@ -611,6 +675,26 @@ func TestCreateMachine_GCE_CustomCatalog(t *testing.T) {
 	}
 }
 
+func TestCreateMachine_Fake_NeutralManagedFields(t *testing.T) {
+	h := buildMachineHandler(t, mustNewScheme(t))
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "fake-worker", "provider": "fake", "profile": "e2-medium",
+		"diskSizeGb": 20, "location": "local-a", "interruptible": true,
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("neutral fake request: want 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got kyberv1.Machine
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Spec.MachineType != "e2-medium" || got.Spec.Zone != "local-a" || !got.Spec.Spot {
+		t.Fatalf("translated spec = %+v", got.Spec)
+	}
+}
+
 // TestCreateMachine_GCE_UnknownMachineType verifies that an unknown machineType returns
 // 400 and includes the list of valid types in the error response.
 func TestCreateMachine_GCE_UnknownMachineType(t *testing.T) {
@@ -632,7 +716,7 @@ func TestCreateMachine_GCE_UnknownMachineType(t *testing.T) {
 	if !strings.Contains(body, "xyz-massive-999") {
 		t.Errorf("error body should echo the invalid type; got: %s", body)
 	}
-	if !strings.Contains(body, "valid types") {
+	if !strings.Contains(body, "valid profiles") {
 		t.Errorf("error body should list valid types; got: %s", body)
 	}
 }
@@ -649,7 +733,7 @@ func TestMachineToResponse_EmitsNewCapacityFields(t *testing.T) {
 			Capacity: kyberv1.MachineCapacity{CPU: apiresource.MustParse("4"), Memory: apiresource.MustParse("8Gi")},
 		},
 		Status: kyberv1.MachineStatus{
-			Phase: kyberv1.MachinePhaseRunning,
+			Phase:              kyberv1.MachinePhaseRunning,
 			ObservedCapacity:   &kyberv1.MachineCapacity{CPU: apiresource.MustParse("4"), Memory: apiresource.MustParse("8Gi")},
 			AssignableCapacity: &kyberv1.MachineCapacity{CPU: apiresource.MustParse("3"), Memory: apiresource.MustParse("7Gi")},
 			AvailableCapacity:  &kyberv1.MachineCapacity{CPU: apiresource.MustParse("2"), Memory: apiresource.MustParse("5Gi")},

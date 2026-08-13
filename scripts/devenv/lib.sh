@@ -18,6 +18,7 @@ HELM_CHART="${DEVENV_HELM_CHART:-deploy/helm/kyber}"
 VALUES_FILE="${DEVENV_VALUES_FILE:-test/e2e/values-test.yaml}"
 NAMESPACE="${DEVENV_NAMESPACE:-kyber-system}"
 API_PORT="${DEVENV_API_PORT:-18080}"
+COMPUTE_PROVIDER="${DEVENV_COMPUTE_PROVIDER:-mock}"
 CONTROL_PLANE_IMAGE="kyber/control-plane:local"
 SERVICE="svc/kyber-control-plane"
 # The control-plane Service listens on 8080 (api.service.port in the chart).
@@ -94,7 +95,7 @@ print_contract() {
 === devenv: ready — Kyber dev/test environment contract ===
   Cluster (k3d):     ${CLUSTER_NAME}
   Namespace:         ${NAMESPACE}
-  Compute provider:  mock (MockComputeAdapter — no real GCE/cloud calls)
+  Compute provider:  ${COMPUTE_PROVIDER} (local only — no real cloud calls)
   API base URL:      http://localhost:${API_PORT}
   Health endpoint:   http://localhost:${API_PORT}/healthz
   API key:           ${api_key:-<unset>}

@@ -307,8 +307,11 @@ controlPlane:
   # templates/control-plane/fleet-defaults-configmap.yaml) that the
   # control-plane reads at reconcile time and the PWA Settings panel
   # reads + edits via GET/PUT /api/v1/fleet-defaults. Edits persist on
-  # the ConfigMap, so they outlive PWA refreshes but are reverted by a
-  # subsequent `helm upgrade` unless captured back into chart values.
+  # the ConfigMap and now SURVIVE `helm upgrade`: the template looks up the
+  # live ConfigMap and the live value wins, so these chart values only seed
+  # a first install. Editing one here has no effect on a cluster where the
+  # key already exists — change it through the PWA, or delete the key from
+  # the live ConfigMap and upgrade.
   # See kyber#376 (PR-B of kyber#374); design doc
   # docs/design/2026-05-29-runtime-model-management-design.md §2.
   fleetDefaults:
@@ -637,14 +640,24 @@ metrics:
 
 # Compute adapter — selects which cloud the Machine Controller provisions VMs on.
 #
-#   provider: "mock" — default, creates fake instances in memory (dev/test)
-#   provider: "gce"  — uses Google Compute Engine via Application Default Credentials
+#   provider: "mock"   — deprecated compatibility alias for static
+#   provider: "static" — attach to an existing Kubernetes node
+#   provider: "fake"   — deterministic managed-provider simulator (dev/test)
+#   provider: "gce"    — Google Compute Engine via Application Default Credentials
 #
 # GCE requires the VM or pod to have a service account with compute.instanceAdmin.v1
 # or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the
 # instance's service account via the metadata server — no key file is needed.
 compute:
   provider: mock          # "mock" or "gce"
+  simulation:
+    # Development-only, API-key-protected scenario controls. Production
+    # installations must leave this disabled.
+    controlEnabled: false
+  gceEmulator:
+    # Starts an in-process local REST emulator and directs the real GCE adapter
+    # to it. Development only; no Google credentials are used.
+    enabled: false
   gce:
     project: ""           # GCP project ID, REQUIRED when provider=gce
     # network: VPC network name for new VMs. MUST match the k3s server's network
@@ -787,11 +800,19 @@ cloudflared:
 # set gcePD.enabled: true in their environment values.yaml.
 storage:
   # agentStorageClass: StorageClass name applied to new agent PVCs. Empty
-  # string means the cluster's default StorageClass binds the volume (e.g.
-  # local-path on k3s, standard on GKE) — the standalone-friendly choice.
-  # Defaults to "kyber-pd" for GCE back-compat. Standalone environments
-  # should set this to "".
-  agentStorageClass: kyber-pd
+  # means the cluster's default StorageClass binds the volume (e.g. local-path
+  # on k3s, standard on GKE), which is correct on every cluster that has a
+  # default — so it is the default here.
+  #
+  # This used to default to "kyber-pd" for GCE back-compat, and that class only
+  # exists where storage.gcePD.enabled is true. On any standalone install the
+  # first agent named a StorageClass that did not exist, so its PVC never bound
+  # and the pod was unschedulable forever with "unbound immediate
+  # PersistentVolumeClaims" — a broken first-run experience for everyone off
+  # GCE. GCE environments now opt in by setting this explicitly, the same way
+  # they already opt into gcePD below; a cluster-specific class belongs in that
+  # cluster's values, not in the chart's defaults.
+  agentStorageClass: ""
   # transcriptOffsets: the small durable per-agent PVC (kyber#467) that holds the
   # transcript-tailer's per-file line-count checkpoints so they survive pod
   # recreation (no full-backlog re-ship; the #466 incident). The data is
@@ -916,6 +937,79 @@ runtimeDetect:
 # cloudflare-tunnel Ingress for the control-plane Service so a per-PR
 # preview env can be reached via the substrate's preview tunnel.
 # Intended use: paired with matty-v/kyber-deploy's preview ApplicationSet.
+# updates: operator-facing update checking (dave-agent spec
+# 2026-08-10-kyber-owns-its-deployment.md).
+#
+# The control plane polls the release feed and reports what is available via
+# GET /api/v1/updates. In this build it ONLY reports — there is no apply path,
+# and the status contract says so explicitly (applySupported: false).
+#
+# The operator's policy (channel / mode / pin / window) is NOT configured here.
+# It lives in a ConfigMap the control plane owns and this chart deliberately
+# does not template, so that an upgrade can never re-render the settings that
+# govern upgrades. Edit it through the PWA or PUT /api/v1/updates/policy.
+updates:
+  # enabled: false removes the env wiring; every /api/v1/updates route then
+  # returns 503. Use on air-gapped installs, which cannot reach the feed
+  # anyway.
+  enabled: true
+  # repo: "owner/name" whose GitHub Releases are the feed. Point a fork at
+  # itself; the default tracks upstream Kyber.
+  repo: "matty-v/kyber"
+  # cadenceSeconds: how often to poll. Hourly is far more frequent than Kyber
+  # releases and stays inside GitHub's unauthenticated rate limit
+  # (60/hour/IP) even with several clusters behind one address.
+  cadenceSeconds: 3600
+  # policyConfigMapName: where the operator's policy is stored. Created by the
+  # control plane on first write; absent reads as the default policy.
+  policyConfigMapName: "kyber-update-policy"
+  # chartRef: the OCI repository the `main` channel lists to find head-of-main
+  # builds. The stable channel does not use it — that reads published GitHub
+  # releases, an explicit publishing decision rather than a registry listing.
+  #
+  # Empty disables the main channel: a cluster set to it reports a failed check
+  # rather than a silent "up to date", because "we cannot see the feed" and
+  # "there is nothing new" must never look the same.
+  chartRef: "oci://ghcr.io/matty-v/charts/kyber"
+  # tokenSecretName/tokenSecretKey: OPTIONAL pre-created Secret holding a
+  # GitHub token for the release feed. Needed when `repo` is private, and
+  # useful for rate-limit headroom when many clusters share an egress IP.
+  # Left empty the feed is read unauthenticated, which is fine for a public
+  # repo at an hourly cadence.
+  #
+  # A token is a credential, so it is referenced by Secret rather than pasted
+  # into values — the same rule the config export enforces.
+  tokenSecretName: ""
+  tokenSecretKey: "token"
+
+# selfUpgrade: let this cluster install its own updates.
+#
+# When enabled, POST /api/v1/updates/apply creates a Job that pulls the target
+# chart from `chartRef`, applies its CRDs (Helm never upgrades CRDs — it
+# installs crds/ once and never touches them again), runs `helm upgrade`, and
+# verifies the result against the running Deployment. Any failure rolls back to
+# the revision that was live when it started.
+#
+# OFF by default, and it should stay off unless you want it:
+#
+#   * It only works where Kyber is a real Helm release. On an ArgoCD-managed
+#     cluster the control plane detects that and refuses — ArgoCD would revert
+#     the upgrade on its next sync, so a self-upgrade would appear to work and
+#     then silently undo itself.
+#   * It creates a ServiceAccount bound to cluster-admin. A Helm upgrade
+#     rewrites this chart's RBAC and CRDs, so nothing smaller can do the job —
+#     see templates/self-upgrade-rbac.yaml for why a narrower role is an
+#     illusion rather than a saving.
+#   * Your values must NOT pin image tags. The chart version carries the
+#     images; values that override them would leave the upgrade rewriting
+#     templates while the old containers keep running. The Job refuses rather
+#     than performing that no-op, and names the offending keys.
+selfUpgrade:
+  enabled: false
+  # chartRef: the OCI repository holding the chart, WITHOUT a version. The
+  # version comes from the update the operator chooses to install.
+  chartRef: "oci://ghcr.io/matty-v/charts/kyber"
+
 preview:
   enabled: false
   # host: the flat hostname under example.com, e.g.

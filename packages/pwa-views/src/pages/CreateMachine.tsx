@@ -14,11 +14,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import {
-  buildGceRequest,
+  buildManagedMachineRequest,
   buildMockRequest,
-  validateGceForm,
+  validateManagedMachineForm,
   validateMockForm,
-  type GceFormState,
+  type ManagedMachineFormState,
   type MockFormState,
 } from './CreateMachine.helpers'
 import type { VMType } from '@/lib/types'
@@ -32,28 +32,6 @@ function formatVMTypeLabel(vt: VMType): string {
   return `${vt.type} (${vt.cpu} vCPU, ${vt.memory})`
 }
 
-const ZONES = [
-  'us-central1-a',
-  'us-central1-b',
-  'us-central1-c',
-  'us-east1-b',
-  'us-east1-c',
-  'us-west1-a',
-  'us-west1-b',
-  'europe-west1-b',
-  'europe-west1-c',
-  'asia-east1-a',
-]
-
-const DISK_SIZES = [
-  { value: '20', label: '20 GB' },
-  { value: '50', label: '50 GB' },
-  { value: '100', label: '100 GB' },
-  { value: '200', label: '200 GB' },
-  { value: '500', label: '500 GB' },
-]
-
-
 export function CreateMachine() {
   const navigate = useNavigate()
   const { data: config, isLoading: configLoading } = useComputeConfig()
@@ -64,11 +42,15 @@ export function CreateMachine() {
 
   switch (config.compute.provider) {
     case 'mock':
-      return <CreateMachineMock navigate={navigate} />
+    case 'static':
+      return <CreateMachineMock navigate={navigate} provider={config.compute.provider} />
+    case 'fake':
+      return <CreateManagedMachine navigate={navigate} provider="fake" capabilities={config.compute.managed} />
     case 'gce':
+      return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
     case '':
     default:
-      return <CreateMachineGce navigate={navigate} vmTypes={config.compute.gceVMTypes ?? []} />
+      return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
   }
 }
 
@@ -83,30 +65,34 @@ function LoadingState() {
   )
 }
 
-// GCE form — essentially the existing implementation, extracted into its own
-// component and using buildGceRequest + validateGceForm.
-function CreateMachineGce({
+// Managed-compute form — driven by capabilities advertised by the server.
+function CreateManagedMachine({
   navigate,
-  vmTypes,
+  provider,
+  capabilities,
 }: {
   navigate: ReturnType<typeof useNavigate>
-  vmTypes: VMType[]
+  provider: 'gce' | 'fake'
+  capabilities?: { profiles: VMType[]; locations: string[]; diskSizesGb: number[]; supportsInterruptible: boolean }
 }) {
   const createMachine = useCreateMachine()
   const prefixed = usePrefixedPath()
   // Initial machineType: first entry from the server-provided catalog so
   // the form is always submittable. If the catalog is unexpectedly empty
   // (server misconfig), seed an empty string and let validation surface it.
-  const [form, setForm] = useState<GceFormState>({
+  const profiles = capabilities?.profiles ?? []
+  const locations = capabilities?.locations ?? []
+  const diskSizes = capabilities?.diskSizesGb ?? []
+  const [form, setForm] = useState<ManagedMachineFormState>({
     name: '',
-    machineType: vmTypes[0]?.type ?? '',
-    diskSizeGb: '50',
-    zone: 'us-central1-a',
+    machineType: profiles[0]?.type ?? '',
+    diskSizeGb: String(diskSizes.includes(50) ? 50 : (diskSizes[0] ?? '')),
+    zone: locations[0] ?? '',
     spot: false,
   })
   const [fieldError, setFieldError] = useState<string | null>(null)
 
-  function set<K extends keyof GceFormState>(key: K, value: GceFormState[K]) {
+  function set<K extends keyof ManagedMachineFormState>(key: K, value: ManagedMachineFormState[K]) {
     setForm((prev) => ({ ...prev, [key]: value }))
     setFieldError(null)
   }
@@ -120,7 +106,7 @@ function CreateMachineGce({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    const err = validateGceForm(form)
+    const err = validateManagedMachineForm(form)
     if (err) {
       setFieldError(err)
       return
@@ -129,7 +115,7 @@ function CreateMachineGce({
       // Defense-in-depth strip on name — if the user submits without blurring
       // (e.g. via Enter while focused), strip leading/trailing hyphens here.
       // See #189.
-      await createMachine.mutateAsync(buildGceRequest({ ...form, name: toKebabCase(form.name) }))
+      await createMachine.mutateAsync(buildManagedMachineRequest({ ...form, name: toKebabCase(form.name) }, provider))
       navigate(prefixed('/machines'))
     } catch (err) {
       setFieldError(err instanceof Error ? err.message : 'Failed to create machine')
@@ -171,16 +157,16 @@ function CreateMachineGce({
                 <SelectValue placeholder="Select a machine type" />
               </SelectTrigger>
               <SelectContent>
-                {vmTypes.map((vt) => (
+                {profiles.map((vt) => (
                   <SelectItem key={vt.type} value={vt.type}>
                     {formatVMTypeLabel(vt)}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-            {vmTypes.length === 0 && (
+            {profiles.length === 0 && (
               <p className="mt-1.5 text-xs text-danger">
-                No VM types available — check the server's compute.gce.vmTypeCatalog config.
+                No machine profiles are available from this compute provider.
               </p>
             )}
           </div>
@@ -192,7 +178,7 @@ function CreateMachineGce({
                 <SelectValue placeholder="Select a zone" />
               </SelectTrigger>
               <SelectContent>
-                {ZONES.map((z) => (
+                {locations.map((z) => (
                   <SelectItem key={z} value={z}>
                     {z}
                   </SelectItem>
@@ -208,16 +194,16 @@ function CreateMachineGce({
                 <SelectValue placeholder="Select a disk size" />
               </SelectTrigger>
               <SelectContent>
-                {DISK_SIZES.map((d) => (
-                  <SelectItem key={d.value} value={d.value}>
-                    {d.label}
+                {diskSizes.map((size) => (
+                  <SelectItem key={size} value={String(size)}>
+                    {size} GB
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </div>
 
-          <div className="flex items-center gap-3 py-1">
+          {capabilities?.supportsInterruptible && <div className="flex items-center gap-3 py-1">
             <input
               type="checkbox"
               id="spot"
@@ -226,9 +212,9 @@ function CreateMachineGce({
               className="h-4 w-4 rounded border-border-strong bg-surface-overlay text-accent"
             />
             <label htmlFor="spot" className="text-sm text-text-secondary">
-              Spot instance (preemptible, ~60-90% cheaper)
+              Interruptible instance (provider may stop it)
             </label>
-          </div>
+          </div>}
 
           {fieldError && (
             <p className="text-sm text-danger bg-danger/10 rounded-lg px-3 py-2">{fieldError}</p>
@@ -263,7 +249,13 @@ function CreateMachineGce({
 // longer picks CPU/Memory/Disk numbers — the laptop's actual hardware
 // dictates what's available, with the control plane reserving a small
 // carve-out for itself.
-function CreateMachineMock({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
+function CreateMachineMock({
+  navigate,
+  provider,
+}: {
+  navigate: ReturnType<typeof useNavigate>
+  provider: 'static' | 'mock'
+}) {
   const createMachine = useCreateMachine()
   const prefixed = usePrefixedPath()
   const [form, setForm] = useState<MockFormState>({ name: '' })
@@ -287,7 +279,7 @@ function CreateMachineMock({ navigate }: { navigate: ReturnType<typeof useNaviga
     }
     try {
       // Defense-in-depth strip on name — see #189 + GCE submit comment above.
-      await createMachine.mutateAsync(buildMockRequest({ ...form, name: toKebabCase(form.name) }))
+      await createMachine.mutateAsync(buildMockRequest({ ...form, name: toKebabCase(form.name) }, provider))
       navigate(prefixed('/machines'))
     } catch (err) {
       setFieldError(err instanceof Error ? err.message : 'Failed to create machine')

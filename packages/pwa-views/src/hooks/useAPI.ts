@@ -17,6 +17,7 @@ import type {
   PutDiscordCommsRequest,
   PutTelegramCommsRequest,
   SetResourcesRequest,
+  UpdatePolicyPatch,
 } from '../lib/types'
 import type {
   CreateInboundBindingRequest,
@@ -1037,5 +1038,84 @@ export function useAvailable() {
     queryFn: () => api.getAvailable(),
     refetchInterval: 60000,
     staleTime: 30000,
+  })
+}
+
+// ---- Updates ----
+//
+// One query backs the whole card: status, policy, ownership and the last run
+// arrive together, so an upgrade in flight is followed by polling this rather
+// than stitching three endpoints.
+
+export function useUpdates() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'updates'],
+    queryFn: () => api.getUpdates(),
+    staleTime: 30000,
+    // Poll while an upgrade is running. The control plane is being replaced
+    // mid-upgrade, so requests will fail for a stretch — that is expected, and
+    // the polling has to survive it rather than give up and leave the operator
+    // staring at a stale "running".
+    refetchInterval: (query) => {
+      const phase = query.state.data?.lastRun?.phase
+      if (phase === 'pending' || phase === 'running') return 5000
+      // Keep polling through an error too. The control plane goes down DURING
+      // an upgrade, so the refetch that would have shown us the new run is
+      // exactly the one likely to fail — and stopping on that error leaves the
+      // cache showing the PREVIOUS run, which is terminal, which stops polling
+      // for good. Nothing recovers that but a refocus or a reload.
+      if (query.state.status === 'error') return 5000
+      return false
+    },
+  })
+}
+
+export function useSetUpdatePolicy() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (patch: UpdatePolicyPatch) => api.setUpdatePolicy(patch),
+    // The PUT returns the full status, so seed the cache with it rather than
+    // refetching: the control plane reads policy through a cache that can lag
+    // its own write, and a refetch here can echo back the PRE-write value.
+    onSuccess: (status) => {
+      queryClient.setQueryData(['cluster', cluster.id, 'updates'], status)
+    },
+    meta: {
+      successMessage: 'Update settings saved',
+      errorPrefix: 'Failed to save update settings',
+    },
+  })
+}
+
+export function useCheckUpdates() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.checkUpdates(),
+    onSuccess: (status) => {
+      queryClient.setQueryData(['cluster', cluster.id, 'updates'], status)
+    },
+    meta: { errorPrefix: 'Update check failed' },
+  })
+}
+
+export function useApplyUpdate() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (version?: string) => api.applyUpdate(version),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'updates'] })
+    },
+    meta: {
+      successMessage: 'Update started — watch the progress below',
+      errorPrefix: 'Could not start the update',
+    },
   })
 }

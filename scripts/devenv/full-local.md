@@ -4,13 +4,14 @@ The base [`scripts/devenv/`](./README.md) brings up a **control-plane / API only
 mock env (agent workloads are deferred there). This variant runs the **whole
 stack locally** — the node-agent DaemonSet plus **live agent pods** that
 schedule, mount whole-disk persistence, and run Claude Code — on the same k3d
-cluster, still with mock compute (no cloud).
+cluster, with no cloud credentials.
 
 ## One command
 
 ```bash
 scripts/devenv/up-full.sh              # cold (builds all images)
 scripts/devenv/up-full.sh --skip-build # warm (reuse the control-plane image)
+scripts/devenv/up-full.sh --compute-provider fake # recommended: managed lifecycle + runnable agents
 ```
 
 It creates the k3d cluster, builds + imports all images
@@ -24,6 +25,32 @@ It is self-contained rather than a wrapper around [`up.sh`](./up.sh): up.sh's
 `--skip-build` path skips importing the control-plane image, which would leave a
 fresh cluster with no runnable control-plane — so this script imports every
 image itself. Tear down with `scripts/devenv/down.sh` (deletes the k3d cluster).
+
+## Compute modes
+
+Use `--compute-provider fake` for normal full-stack testing. Fake instances
+traverse the managed Machine controller but attach to the real k3d node, so
+agents can schedule and run.
+
+Use `--compute-provider gce-emulator` only when testing GCE-specific behavior.
+It constructs the production `GCEAdapter` with a local REST endpoint and uses
+synthetic Nodes for node-registration signals. These Nodes are tainted,
+unschedulable, and accepted without kubelet heartbeats only under the explicit
+emulator flag. They cannot host agent pods.
+
+```bash
+scripts/devenv/up-full.sh --skip-build --compute-provider gce-emulator
+# Create a gce Machine in the PWA, then complete its simulated node join:
+scripts/devenv/compute-scenario.sh attach-node <machine>
+scripts/devenv/compute-scenario.sh apply <machine> preempted
+# Replacement creates a new VM; attach its replacement Node as well:
+scripts/devenv/compute-scenario.sh attach-node <machine>
+```
+
+If a GCE-emulator Machine remains Provisioning, run `compute-scenario.sh list`
+to verify its instance is Running and then `attach-node <machine>`. Do not
+assign an Agent to that Machine; switch the stack to `fake` and create a fake
+Machine for runnable-agent testing.
 
 ## Local GitHub App for identity-repo testing
 
@@ -57,7 +84,7 @@ template plus newly created repositories; follow the main installation guide's
 
 | Knob | Base | Full-local | Why |
 |---|---|---|---|
-| `storage.agentStorageClass` | `kyber-pd` (GCE) | `""` | k3d has no `kyber-pd`; empty ⇒ the `local-path` default binds agent PVCs |
+| `storage.agentStorageClass` | `""` (cluster default) | `""` | unchanged — stated explicitly because it used to default to `kyber-pd`, which k3d has no provisioner for |
 | `nodeAgent.enabled` | `false` | `true` | run the node-agent DaemonSet (no k3s join creds needed under mock compute) |
 | `image.{claudeCode,statusSidecar,agentBase}` | placeholder | `kyber/*:local`, `pullPolicy: Never` | live pods need the real runtime + sidecar images |
 | `internalAuth.graceMode` | off | `true` | let the in-pod status pipeline (:8082) work before every pod carries a token |
@@ -68,8 +95,9 @@ Prereqs already satisfied by k3d on a typical host: the node container exposes
 
 ## Create a live agent
 
-Agents need a Machine first (mock), then an Agent. The Machine maps to the k3d
-node:
+Agents need a runnable Machine first, then an Agent. With the recommended fake
+mode, create a fake Machine through the PWA; it maps to the real k3d node. The
+legacy mock request is also available:
 
 ```bash
 curl -sS -X POST http://localhost:8080/api/v1/machines \

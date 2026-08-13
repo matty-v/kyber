@@ -20,11 +20,11 @@ type Event string
 const (
 	// EventCRDCreated fires when a new Machine CRD is observed with no prior phase.
 	EventCRDCreated Event = "CRDCreated"
-	// EventInstanceRunningNodeReady fires when the GCE instance is RUNNING and the k8s node is Ready.
+	// EventInstanceRunningNodeReady fires when the provider instance is running and the k8s node is Ready.
 	EventInstanceRunningNodeReady Event = "InstanceRunningNodeReady"
-	// EventInstanceRunningNodeNotReady fires when the GCE instance is RUNNING but the k8s node is not yet Ready.
+	// EventInstanceRunningNodeNotReady fires when the provider instance is running but its k8s node is not yet Ready.
 	EventInstanceRunningNodeNotReady Event = "InstanceRunningNodeNotReady"
-	// EventInstanceCreationFailed fires when the GCE API returns an error creating the instance.
+	// EventInstanceCreationFailed fires when the provider returns an instance-creation error.
 	EventInstanceCreationFailed Event = "InstanceCreationFailed"
 	// EventProvisioningTimeout fires when the instance has been Provisioning for more than the timeout.
 	EventProvisioningTimeout Event = "ProvisioningTimeout"
@@ -40,7 +40,7 @@ const (
 	EventAllAgentsStoppedVMStopped Event = "AllAgentsStoppedVMStopped"
 	// EventStoppingTimeout fires when the machine has been Stopping for more than the timeout (5 min).
 	EventStoppingTimeout Event = "StoppingTimeout"
-	// EventNodeDisappearedPreempted fires when the k8s node disappears and GCE confirms preemption.
+	// EventNodeDisappearedPreempted fires when the node disappears and the provider confirms interruption.
 	EventNodeDisappearedPreempted Event = "NodeDisappearedPreempted"
 	// EventNodeDisappearedFailed fires when the k8s node disappears and it is NOT a preemption.
 	EventNodeDisappearedFailed Event = "NodeDisappearedFailed"
@@ -74,7 +74,7 @@ const (
 	ActionStartInstance Action = "StartInstance"
 	// ActionBeginReplacement means transition to Preempted state and trigger replacement.
 	ActionBeginReplacement Action = "BeginReplacement"
-	// ActionCreateReplacementInstance means provision a new VM in the same zone.
+	// ActionCreateReplacementInstance means provision a new VM in the same location.
 	ActionCreateReplacementInstance Action = "CreateReplacementInstance"
 	// ActionCompleteReplacement means update status with new instance ID and node name.
 	ActionCompleteReplacement Action = "CompleteReplacement"

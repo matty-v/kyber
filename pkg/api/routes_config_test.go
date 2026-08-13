@@ -98,6 +98,15 @@ func TestHandleConfig_GCEVMTypes_FromCatalog(t *testing.T) {
 			t.Errorf("GCEVMTypes[%d] = %+v, want %+v", i, g, w)
 		}
 	}
+	if got.Compute.Managed == nil {
+		t.Fatal("managed capabilities missing")
+	}
+	if len(got.Compute.Managed.Locations) == 0 || got.Compute.Managed.Locations[0] != "us-central1-a" {
+		t.Errorf("managed locations = %v, want GCE locations", got.Compute.Managed.Locations)
+	}
+	if !got.Compute.Managed.SupportsInterruptible {
+		t.Error("managed provider should advertise interruptible instances")
+	}
 }
 
 // TestHandleConfig_GCEVMTypes_FallsBackToDefault verifies that when the
@@ -143,6 +152,23 @@ func TestHandleConfig_GCEVMTypes_OmittedForMockProvider(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &got)
 	if len(got.Compute.GCEVMTypes) != 0 {
 		t.Errorf("GCEVMTypes should be omitted for non-gce providers; got=%v", got.Compute.GCEVMTypes)
+	}
+	if got.Compute.Managed != nil {
+		t.Errorf("managed capabilities should be omitted for existing-node provider; got=%+v", got.Compute.Managed)
+	}
+}
+
+func TestHandleConfig_FakeUsesLocalLocation(t *testing.T) {
+	s := &Server{ComputeProvider: "fake"}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+	s.handleConfig(rr, req)
+	var got ConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Compute.Managed == nil || len(got.Compute.Managed.Locations) != 1 || got.Compute.Managed.Locations[0] != "local-a" {
+		t.Fatalf("fake managed locations = %+v, want [local-a]", got.Compute.Managed)
 	}
 }
 

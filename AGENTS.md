@@ -52,8 +52,29 @@ testable without a cluster. Authoritative transition table:
   crash-loop; operator bumps memory first.
 - `Suspended` unifies spot-preemption parking and idle parking; a wake event
   (e.g. Telegram message) or replacement machine resumes it.
-- `pkg/controllers/machine/` mirrors the same pattern for VMs (GCE via
-  `pkg/adapters/compute_gce.go`; `compute_mock.go` for the mock provider).
+- `pkg/controllers/machine/` mirrors the same pattern for VMs. Compute
+  providers sit behind `pkg/adapters/compute.go`: GCE is the production
+  adapter, fake exercises managed lifecycle locally, and static attaches an
+  existing node (`mock` remains a compatibility alias).
+  Managed-provider UI/API discovery uses neutral capabilities (`profiles`,
+  `locations`, disk choices, interruptible support); GCE status strings,
+  metadata, networking, and Google API fields stay in `compute_gce.go`.
+  `--compute-provider gce-emulator` runs that real adapter against the local
+  REST subset in `pkg/gceemulator`; `scripts/devenv/compute-scenario.sh`
+  controls neutral scenarios in explicitly enabled devenv modes only. That
+  profile alone enables `KYBER_ALLOW_SIMULATED_NODES`, allowing Nodes labelled
+  `kyber.io/simulated=true` to stand in for kubelet heartbeats.
+  Compute adapters expose Kyber-owned `InstanceObservation` state rather than
+  provider-native status strings, and are constructed through the registry in
+  `pkg/adapters/compute_registry.go`. Explicit provider initialization fails
+  closed — never fall back from a broken real provider to mock behavior. The
+  `provider=static` means existing-node/standalone attachment;
+  `provider=fake` uses a deterministic in-memory instance but traverses the
+  normal managed Machine state machine and finalizer against one local Ready
+  node. `provider=mock` remains a compatibility alias for `static`. Verify the
+  fake lifecycle locally with `scripts/devenv/up.sh --compute-provider fake`
+  followed by `scripts/devenv/smoke-fake-provider.sh`. The contract is in
+  `docs/design/2026-08-13-compute-provider-boundary-design.md`.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
@@ -331,19 +352,32 @@ go test -tags e2e -timeout 25m ./test/e2e/... -cluster-name kyber-e2e   # needs 
 make helm-lint
 make helm-template              # pins placeholder image tags for you
 
-# Live mock-backed instance (no cloud creds; API on localhost:18080):
+# Local control-plane/API instance (no cloud creds; API on localhost:18080):
 scripts/devenv/up.sh            # control-plane/API only; see scripts/devenv/README.md
 scripts/devenv/down.sh
 
 # Full local stack — control-plane AND live agent pods (real runtime in a
-# pod, mock compute; the closest local mirror of prod). Needs docker + k3d.
-scripts/devenv/up-full.sh       # one command; then create an agent via the PWA
+# pod, fake managed compute; the closest runnable local mirror of prod).
+scripts/devenv/up-full.sh --compute-provider fake
+                                # one command; managed fake compute + live agent
+                                # pods; then create an agent via the PWA
                                 # wizard (OAuth). See scripts/devenv/full-local.md
 # Local GitHub App identity-repo testing: save credentials outside git with
 # scripts/devenv/setup-github-app.sh, then rerun up-full.sh --skip-build.
 # Hot-reload UI against that backend: bring up.sh/up-full.sh on --api-port 8080,
 # then `make pwa-dev` (embedded PWA at :5173, proxies /api → :8080). For the
 # holocron hub against local pwa-views, see holocron's README "Local development".
+
+# Managed compute lifecycle without cloud credentials:
+scripts/devenv/up.sh --compute-provider fake
+scripts/devenv/smoke-fake-provider.sh  # create → stop → start → delete
+scripts/devenv/down.sh
+
+# GCE adapter/API fidelity (synthetic Nodes; agent pods cannot schedule here):
+scripts/devenv/up-full.sh --compute-provider gce-emulator
+scripts/devenv/compute-scenario.sh attach-node <machine>
+scripts/devenv/compute-scenario.sh apply <machine> preempted
+scripts/devenv/compute-scenario.sh attach-node <machine>  # replacement join
 ```
 
 CI gates: `test.yml` (lint+test+pwa+pricing-feed preflight — a `changes` job

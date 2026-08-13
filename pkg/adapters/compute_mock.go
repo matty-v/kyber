@@ -16,11 +16,19 @@ import (
 	"github.com/google/uuid"
 )
 
+func init() {
+	RegisterComputeProvider("mock", func(_ context.Context, _ ProviderConfig) (ComputeAdapter, error) {
+		return NewMockComputeAdapter(), nil
+	})
+	RegisterComputeProvider("static", func(_ context.Context, _ ProviderConfig) (ComputeAdapter, error) {
+		return NewStaticComputeAdapter(), nil
+	})
+}
+
 // mockInstance holds the in-memory state of a mock VM instance.
 type mockInstance struct {
-	status     InstanceStatus
-	preempted  bool
-	spec       MachineSpec
+	observation InstanceObservation
+	spec        MachineSpec
 }
 
 // MockComputeAdapter implements ComputeAdapter using an in-memory map.
@@ -38,6 +46,23 @@ func NewMockComputeAdapter() *MockComputeAdapter {
 		ipCounter: 1,
 	}
 }
+
+// Type returns the registered provider identifier.
+func (m *MockComputeAdapter) Type() string { return "mock" }
+
+// NodeAttachment reports that compatibility mock Machines use an existing node.
+func (m *MockComputeAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentExisting }
+
+// StaticComputeAdapter preserves the existing-node behavior under its accurate
+// provider name. Its lifecycle methods are inherited for interface symmetry,
+// but the static reconciler path does not call them.
+type StaticComputeAdapter struct{ *MockComputeAdapter }
+
+func NewStaticComputeAdapter() *StaticComputeAdapter {
+	return &StaticComputeAdapter{MockComputeAdapter: NewMockComputeAdapter()}
+}
+
+func (s *StaticComputeAdapter) Type() string { return "static" }
 
 // SetCreateError configures CreateInstance to return the given error on every call.
 // Pass nil to clear the error and restore normal behavior.
@@ -65,12 +90,13 @@ func (m *MockComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec)
 
 	m.instances[id] = &mockInstance{
 		spec: spec,
-		status: InstanceStatus{
-			Status:     InstanceStatusRunning,
-			Zone:       spec.Zone,
-			InternalIP: ip,
-			ExternalIP: ip, // mock uses same IP for both
-			CreatedAt:  time.Now(),
+		observation: InstanceObservation{
+			State:        InstanceStateRunning,
+			Interruption: InterruptionNone,
+			Location:     spec.Location,
+			InternalIP:   ip,
+			ExternalIP:   ip, // mock uses same IP for both
+			CreatedAt:    time.Now(),
 		},
 	}
 	return id, nil
@@ -85,8 +111,8 @@ func (m *MockComputeAdapter) StartInstance(_ context.Context, instanceID string)
 	if !ok {
 		return fmt.Errorf("instance %q not found", instanceID)
 	}
-	inst.status.Status = InstanceStatusRunning
-	inst.preempted = false
+	inst.observation.State = InstanceStateRunning
+	inst.observation.Interruption = InterruptionNone
 	return nil
 }
 
@@ -99,7 +125,7 @@ func (m *MockComputeAdapter) StopInstance(_ context.Context, instanceID string) 
 	if !ok {
 		return fmt.Errorf("instance %q not found", instanceID)
 	}
-	inst.status.Status = InstanceStatusStopped
+	inst.observation.State = InstanceStateStopped
 	return nil
 }
 
@@ -115,30 +141,17 @@ func (m *MockComputeAdapter) DeleteInstance(_ context.Context, instanceID string
 	return nil
 }
 
-// GetInstanceStatus returns the current status of the mock instance.
+// Observe returns the current provider-neutral observation of the mock instance.
 // Returns an error if the instance is not found.
-func (m *MockComputeAdapter) GetInstanceStatus(_ context.Context, instanceID string) (InstanceStatus, error) {
+func (m *MockComputeAdapter) Observe(_ context.Context, instanceID string) (InstanceObservation, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	inst, ok := m.instances[instanceID]
 	if !ok {
-		return InstanceStatus{}, fmt.Errorf("instance %q not found", instanceID)
+		return InstanceObservation{}, fmt.Errorf("instance %q not found", instanceID)
 	}
-	return inst.status, nil
-}
-
-// IsPreempted returns whether the mock instance has been marked as preempted.
-// In tests, call SetPreempted to simulate a spot preemption.
-func (m *MockComputeAdapter) IsPreempted(_ context.Context, instanceID string) (bool, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	inst, ok := m.instances[instanceID]
-	if !ok {
-		return false, fmt.Errorf("instance %q not found", instanceID)
-	}
-	return inst.preempted, nil
+	return inst.observation, nil
 }
 
 // SetPreempted marks an instance as preempted and transitions it to TERMINATED.
@@ -151,20 +164,20 @@ func (m *MockComputeAdapter) SetPreempted(instanceID string) error {
 	if !ok {
 		return fmt.Errorf("instance %q not found", instanceID)
 	}
-	inst.preempted = true
-	inst.status.Status = InstanceStatusTerminated
+	inst.observation.State = InstanceStateStopped
+	inst.observation.Interruption = InterruptionPreempted
 	return nil
 }
 
 // Instances returns a snapshot of all mock instances (keyed by instance ID).
 // Intended for test assertions only.
-func (m *MockComputeAdapter) Instances() map[string]InstanceStatus {
+func (m *MockComputeAdapter) Instances() map[string]InstanceObservation {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	out := make(map[string]InstanceStatus, len(m.instances))
+	out := make(map[string]InstanceObservation, len(m.instances))
 	for id, inst := range m.instances {
-		out[id] = inst.status
+		out[id] = inst.observation
 	}
 	return out
 }
