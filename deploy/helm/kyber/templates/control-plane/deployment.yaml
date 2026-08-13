@@ -360,6 +360,8 @@ spec:
             {{- if .Values.compute.gceEmulator.enabled }}
             - name: KYBER_GCE_EMULATOR
               value: "true"
+            - name: KYBER_ALLOW_SIMULATED_NODES
+              value: "true"
             {{- end }}
             {{- if eq (.Values.compute.provider | default "mock") "gce" }}
             - name: KYBER_GCE_PROJECT

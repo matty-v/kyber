@@ -61,7 +61,9 @@ testable without a cluster. Authoritative transition table:
   metadata, networking, and Google API fields stay in `compute_gce.go`.
   `--compute-provider gce-emulator` runs that real adapter against the local
   REST subset in `pkg/gceemulator`; `scripts/devenv/compute-scenario.sh`
-  controls neutral scenarios in explicitly enabled devenv modes only.
+  controls neutral scenarios in explicitly enabled devenv modes only. That
+  profile alone enables `KYBER_ALLOW_SIMULATED_NODES`, allowing Nodes labelled
+  `kyber.io/simulated=true` to stand in for kubelet heartbeats.
   Compute adapters expose Kyber-owned `InstanceObservation` state rather than
   provider-native status strings, and are constructed through the registry in
   `pkg/adapters/compute_registry.go`. Explicit provider initialization fails

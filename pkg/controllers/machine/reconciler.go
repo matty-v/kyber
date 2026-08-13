@@ -64,6 +64,9 @@ type MachineReconciler struct {
 	Scheme         *runtime.Scheme
 	Recorder       record.EventRecorder
 	ComputeAdapter adapters.ComputeAdapter
+	// AllowSimulatedNodes accepts explicitly labelled synthetic Nodes without
+	// kubelet heartbeats. It is enabled only by the local GCE emulator profile.
+	AllowSimulatedNodes bool
 
 	// AlertSink receives alerts for notable machine events (e.g., Preempted, Failed).
 	// If nil, alerts are silently dropped.
@@ -115,12 +118,13 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 	}
 
 	return &MachineReconciler{
-		Client:         c,
-		Scheme:         scheme,
-		Recorder:       recorder,
-		ComputeAdapter: adapter,
-		K3sJoinToken:   joinToken,
-		K3sServerURL:   serverURL,
+		Client:              c,
+		Scheme:              scheme,
+		Recorder:            recorder,
+		ComputeAdapter:      adapter,
+		K3sJoinToken:        joinToken,
+		K3sServerURL:        serverURL,
+		AllowSimulatedNodes: os.Getenv("KYBER_ALLOW_SIMULATED_NODES") == "true",
 	}
 }
 
@@ -373,7 +377,7 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 	if err != nil {
 		return "", 0, err
 	}
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return EventInstanceRunningNodeNotReady, requeueProvisioning, nil
 	}
 
@@ -387,7 +391,7 @@ func (r *MachineReconciler) classifyReady(ctx context.Context, machine *kyberv1.
 		return "", 0, err
 	}
 
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		// Node disappeared — check if preempted.
 		return r.classifyNodeDisappeared(ctx, machine)
 	}
@@ -412,7 +416,7 @@ func (r *MachineReconciler) classifyRunning(ctx context.Context, machine *kyberv
 		return "", 0, err
 	}
 
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return r.classifyNodeDisappeared(ctx, machine)
 	}
 
@@ -491,7 +495,7 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	if err != nil {
 		return "", 0, err
 	}
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return "", requeueReplacing, nil
 	}
 
@@ -1111,6 +1115,13 @@ func isNodeReady(node *corev1.Node) bool {
 		}
 	}
 	return false
+}
+
+func (r *MachineReconciler) isManagedNodeReady(node *corev1.Node) bool {
+	if r.AllowSimulatedNodes && node.Labels["kyber.io/simulated"] == "true" {
+		return true
+	}
+	return isNodeReady(node)
 }
 
 // selectMockNode resolves the node a provider=mock Machine attaches to.

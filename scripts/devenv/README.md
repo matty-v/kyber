@@ -61,6 +61,8 @@ native status, Spot, and error translation paths.
 `attach-node` creates a tainted, unschedulable synthetic Node; it never labels
 or risks the real k3d control-plane node. Agent pods are therefore tested in
 `fake` mode, while `gce-emulator` focuses on compute lifecycle fidelity.
+Only the emulator profile permits these explicitly labelled Nodes to remain
+Ready without kubelet heartbeats; production defaults retain normal readiness.
 
 `up.sh` prints the contract when the API is healthy. Re-running `up.sh` is
 idempotent — it reuses an existing cluster and re-converges via `helm upgrade`.
