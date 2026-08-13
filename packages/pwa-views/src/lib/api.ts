@@ -48,7 +48,7 @@ import type {
 } from './types'
 import type { Cluster } from './cluster-context'
 
-const STORAGE_KEY_API_KEY = 'kyber_api_key'
+const LEGACY_STORAGE_KEY_API_KEY = 'kyber_api_key'
 const STORAGE_KEY_SERVER_URL = 'kyber_server_url'
 const STORAGE_KEY_LAST_API_CALL = 'kyber_last_api_call_ts'
 
@@ -688,19 +688,23 @@ export interface FleetDefaults {
   codexDefaultRuntimeVersion?: string
 }
 
-// Embedded-mode helpers — used only by the EmbeddedClusterProvider. Renamed
-// from getApiKey/setApiKey to clarify they're embedded-specific (holocron's
-// HubClusterProvider stores keys in its registry, not localStorage).
-export function getEmbeddedApiKey(): string {
-  return localStorage.getItem(STORAGE_KEY_API_KEY) ?? ''
+// Exchange a bearer API key for the embedded app's opaque HttpOnly session.
+// The raw key is deliberately not retained in browser-readable storage.
+export async function establishEmbeddedBrowserSession(key: string): Promise<void> {
+  const res = await fetch('/api/v1/browser-session', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${key}` },
+  })
+  if (!res.ok) throw new Error(`browser session failed: HTTP ${res.status}`)
 }
 
-export function setEmbeddedApiKey(key: string): void {
-  localStorage.setItem(STORAGE_KEY_API_KEY, key)
-  // Notify observers (EmbeddedClusterProvider) so the in-memory cluster.apiKey
-  // updates without requiring a page reload. Same-tab dispatch — the native
-  // 'storage' event only fires in OTHER tabs, not the writing tab.
-  window.dispatchEvent(new CustomEvent('kyber:apikey-changed'))
+// One-time migration for browsers that predate HttpOnly sessions. Read the
+// legacy value once, remove it before the network call, and never write it
+// back even if exchange fails.
+export function takeLegacyEmbeddedApiKey(): string {
+  const key = localStorage.getItem(LEGACY_STORAGE_KEY_API_KEY) ?? ''
+  localStorage.removeItem(LEGACY_STORAGE_KEY_API_KEY)
+  return key
 }
 
 export function getLastApiCall(): string | null {

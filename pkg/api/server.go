@@ -619,6 +619,9 @@ func (s *Server) buildTopHandler() http.Handler {
 	// Settings page to enter a key. Auth-required endpoints stay inside
 	// registerProtectedRoutes().
 	top.HandleFunc("/api/v1/cluster-info", s.handleClusterInfo)
+	// Browser-only API-key exchange. The handler authenticates the bearer key
+	// itself, then stores only an opaque session token in an HttpOnly cookie.
+	top.HandleFunc("/api/v1/browser-session", s.handleBrowserSession)
 	top.Handle("/webhooks/", webhookMux)
 	// Protected API routes — auth required.
 	top.Handle("/api/", protected)

@@ -62,12 +62,11 @@ export {
 // or via hooks (useFleet, useAgent, etc.) that read ClusterContext internally.
 export { createApiClient, type ApiClient } from './lib/api'
 
-// Embedded-mode localStorage helpers. EmbeddedClusterProvider uses
-// getEmbeddedApiKey to populate Cluster.apiKey; Settings page uses both to
-// let the user manage their key.
+// Embedded-mode browser-session helpers. Raw API keys are exchanged once and
+// are never retained in browser-readable storage.
 export {
-  getEmbeddedApiKey,
-  setEmbeddedApiKey,
+  establishEmbeddedBrowserSession,
+  takeLegacyEmbeddedApiKey,
   getLastApiCall,
 } from './lib/api'
 

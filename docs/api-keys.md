@@ -11,7 +11,8 @@ This doc is the operator reference for managing it: where it lives, how to rotat
 - **Generate**: `openssl rand -hex 32` at install time, stored in the `kyber-api-credentials` Kubernetes Secret under key `api-key`.
 - **Rotate (in-PWA, no downtime)**: `POST /api/v1/rotate-api-key` swaps the key in-memory and updates the Secret. Old key 401s on the next request.
 - **Rotate (manual, e.g. compromise)**: `kubectl edit secret kyber-api-credentials` + restart the control-plane pod.
-- **Cached client-side** in PWA `localStorage['kyber_api_key']`. Cleared via Settings → reset.
+- **Browser session**: the embedded PWA exchanges the pasted key for an opaque,
+  HttpOnly, same-site session cookie; it does not retain the key in readable storage.
 - **Single-tenant**: there is no per-key audit trail or RBAC. The key is a shared secret between operator and control-plane.
 
 ## Where the key lives
@@ -28,9 +29,11 @@ The control-plane pod's spec mounts the Secret value into the `KYBER_API_KEY` en
 
 ### In the PWA
 
-The PWA caches the key in browser `localStorage` under key `kyber_api_key`. It's sent with every API request as `Authorization: Bearer <key>`. Operators paste the key once on first visit (Settings); subsequent loads use the cached value.
-
-To clear the cached key (e.g. before handing off the browser to someone else): **Settings → Reset API key**. The cache is also cleared on any 401 response so a freshly-rotated key forces re-pasting.
+The embedded PWA exchanges the pasted key once at
+`POST /api/v1/browser-session`, then uses an opaque HttpOnly session cookie.
+The raw key is not retained in browser-readable storage. Sessions last at most
+12 hours and are invalidated by a control-plane restart or API-key rotation.
+Legacy `localStorage['kyber_api_key']` values are consumed once and removed.
 
 ### What the key grants
 

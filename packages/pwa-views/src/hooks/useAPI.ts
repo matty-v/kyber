@@ -4,9 +4,6 @@ import { useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { createApiClient } from '../lib/api'
 import { useCluster } from '../lib/cluster-context'
-import {
-  setEmbeddedApiKey as setApiKey,
-} from '../lib/api'
 import { parseTranscript } from '../lib/transcript'
 import type {
   AgentJob,
@@ -116,22 +113,13 @@ export function useCreateAgent() {
   })
 }
 
-// useRotateApiKey: rotates the control-plane API key and persists the new
-// key into localStorage via setEmbeddedApiKey() so the next request
-// authenticates successfully. The mutation result also carries the new key
-// so the caller can show it once in a copy-to-clipboard modal.
+// useRotateApiKey: rotates the control-plane API key. Cookie-authenticated
+// browsers receive a replacement HttpOnly session in the same response.
 export function useRotateApiKey() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   return useMutation({
-    mutationFn: async () => {
-      const resp = await api.rotateApiKey()
-      // Persist immediately — the old key has been revoked server-side; if
-      // the operator dismisses the post-rotation modal without copying,
-      // they're still authenticated on this device.
-      setApiKey(resp.apiKey)
-      return resp
-    },
+    mutationFn: () => api.rotateApiKey(),
     meta: {
       // No success toast — the post-rotation modal is the user-facing
       // confirmation. A toast would be redundant + would obscure the modal.
