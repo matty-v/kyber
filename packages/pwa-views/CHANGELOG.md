@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.24.1 — 2026-08-13
+
+### Changed
+- Dependency maintenance only: upgrade the development and embedded-app
+  React Router dependency from v6 to v7. The published library's peer range
+  already accepts both major versions.
+
 ## 0.24.0 — 2026-08-13
 
 ### Added
