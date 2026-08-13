@@ -731,20 +731,32 @@ jobs:
 
   # --------------------------------------------------------------------
   # B2b: Open AND auto-merge a bump PR on matty-v/kyber-deploy for each
-  # deployed cluster: [falcon, razer]. Both get the same digest-pinned
-  # release values. fail-fast:false keeps each leg atomic — a razer failure
-  # does not strand falcon, and vice-versa.
+  # PUSH-DELIVERED cluster: [falcon]. fail-fast:false keeps each leg atomic.
   #
   # Previously (pre-#449): falcon only, single job, no per-cluster signals.
   # Then [falcon, gcp] (kyber#449: gcp was never bumped; was stuck at v1.0.0
-  # while falcon tracked v1.7.x). Now [falcon, razer], changed 2026-08-10:
+  # while falcon tracked v1.7.x). Then [falcon, razer] (2026-08-10, when razer
+  # stopped being the canary). Now [falcon] again, changed 2026-08-13:
   #
-  #   - razer JOINED because it stopped being the canary. It used to take every
-  #     merge to main via Image Updater on :latest; that lane is gone and its
-  #     sync-razer-latest.yml cron is deleted, so this matrix is now the ONLY
-  #     thing that advances it. Adding the leg is not optional bookkeeping —
-  #     without it razer's eight images are pinned to digests nothing will ever
-  #     move, which is precisely how its Telegram bridge went stale (kyber#688).
+  #   - razer LEFT because it no longer receives a push at all. It is a
+  #     self-updating Helm release: the control plane checks the stable channel,
+  #     reports what it finds, and an OPERATOR chooses when to install. There is
+  #     no ArgoCD Application here to sync a pin into, so a bump PR would edit a
+  #     file nothing reads.
+  #
+  #     This leg is what made the removal urgent rather than tidy. On 2026-08-13
+  #     it opened and auto-merged a v1.0.2 bump that ArgoCD synced within
+  #     seconds, rolling Matt's own agents out from under a live session with no
+  #     human in the loop. That is the failure the pull model exists to prevent.
+  #
+  #     It would also now actively break razer: environments/razer/values.yaml
+  #     deliberately pins NO image tags, because the self-upgrade Job refuses to
+  #     run against values that override them. Re-adding pins here would silently
+  #     disable razer's ability to upgrade itself.
+  #
+  #     Adding a cluster back to this matrix means putting it back on push
+  #     delivery. Do not do it to "keep the values current" — for a pulling
+  #     cluster the chart version IS the image set.
   #
   #   - gcp LEFT because it is parked: the GCE VM is terminated, so every
   #     release was opening and auto-merging a PR against a cluster that could
@@ -770,7 +782,7 @@ jobs:
     if: ${{ !contains(needs.meta.outputs.tag_message, '[skip-publish]') && needs.meta.outputs.has_deploy_app == 'true' }}
     strategy:
       matrix:
-        cluster: [falcon, razer]
+        cluster: [falcon]
       fail-fast: false
     env:
       KYBER_TAG:              ${{ needs.meta.outputs.tag }}
