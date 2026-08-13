@@ -68,7 +68,7 @@ jobs:
       # kyber#457 delivery gate this relocates from release.yml).
       - name: Mint a fresh GitHub App token (kyber)
         id: app_token
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@v3
         with:
           app-id: ${{ secrets.KYBER_APP_ID }}
           private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
@@ -76,7 +76,7 @@ jobs:
           repositories: kyber
 
       - name: Checkout main
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: main
           fetch-depth: 0
