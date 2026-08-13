@@ -675,6 +675,26 @@ func TestCreateMachine_GCE_CustomCatalog(t *testing.T) {
 	}
 }
 
+func TestCreateMachine_Fake_NeutralManagedFields(t *testing.T) {
+	h := buildMachineHandler(t, mustNewScheme(t))
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "fake-worker", "provider": "fake", "profile": "e2-medium",
+		"diskSizeGb": 20, "location": "local-a", "interruptible": true,
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("neutral fake request: want 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got kyberv1.Machine
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Spec.MachineType != "e2-medium" || got.Spec.Zone != "local-a" || !got.Spec.Spot {
+		t.Fatalf("translated spec = %+v", got.Spec)
+	}
+}
+
 // TestCreateMachine_GCE_UnknownMachineType verifies that an unknown machineType returns
 // 400 and includes the list of valid types in the error response.
 func TestCreateMachine_GCE_UnknownMachineType(t *testing.T) {
@@ -696,7 +716,7 @@ func TestCreateMachine_GCE_UnknownMachineType(t *testing.T) {
 	if !strings.Contains(body, "xyz-massive-999") {
 		t.Errorf("error body should echo the invalid type; got: %s", body)
 	}
-	if !strings.Contains(body, "valid types") {
+	if !strings.Contains(body, "valid profiles") {
 		t.Errorf("error body should list valid types; got: %s", body)
 	}
 }

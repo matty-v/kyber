@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.23.0 — 2026-08-13
+
+### Changed
+- Managed-machine creation now consumes provider-neutral profiles, locations,
+  disk choices, and interruptible-instance capabilities from the control plane.
+  GCE-specific zone lists and request vocabulary no longer live in the PWA.
+
 ## 0.22.0 — 2026-08-13
 
 ### Added

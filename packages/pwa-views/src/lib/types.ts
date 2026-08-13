@@ -477,7 +477,7 @@ export interface RestartMachineAgentsResponse {
 // `capacity` object is optional too since #240 — when omitted, the server
 // auto-fills from node.status.allocatable.
 export type CreateMachineRequest =
-  | { name: string; provider: 'gce' | 'fake'; machineType: string; diskSizeGb: number; spot: boolean; zone: string }
+  | { name: string; provider: 'gce' | 'fake'; profile: string; diskSizeGb: number; interruptible: boolean; location: string }
   | { name: string; provider: 'static' | 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string } }
 
 // ---- Fleet types ----
@@ -554,6 +554,12 @@ export type ModelInfo = {
 export type ComputeConfig = {
   compute: {
     provider: ComputeProvider
+    managed?: {
+      profiles: VMType[]
+      locations: string[]
+      diskSizesGb: number[]
+      supportsInterruptible: boolean
+    }
     // Catalog of GCE machine types accepted by the create-machine API.
     // Sourced from compute.gce.vmTypeCatalog in the chart. Server omits
     // this when provider !== 'gce', so the field is optional. Mirrors

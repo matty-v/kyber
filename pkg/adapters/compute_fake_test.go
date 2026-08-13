@@ -10,7 +10,7 @@ import (
 func TestFakeComputeAdapterLifecycle(t *testing.T) {
 	ctx := context.Background()
 	adapter := NewFakeComputeAdapter()
-	id, err := adapter.CreateInstance(ctx, MachineSpec{Name: "local", Zone: "local-a", Spot: true})
+	id, err := adapter.CreateInstance(ctx, MachineSpec{Name: "local", Location: "local-a", Interruptible: true})
 	if err != nil {
 		t.Fatalf("CreateInstance: %v", err)
 	}

@@ -1,6 +1,6 @@
 import type { CreateMachineRequest } from '../lib/types'
 
-export type GceFormState = {
+export type ManagedMachineFormState = {
   name: string
   machineType: string
   diskSizeGb: string // stored as string for <select>, coerced on submit
@@ -12,14 +12,14 @@ export type MockFormState = {
   name: string
 }
 
-export function buildGceRequest(form: GceFormState, provider: 'gce' | 'fake' = 'gce'): CreateMachineRequest {
+export function buildManagedMachineRequest(form: ManagedMachineFormState, provider: 'gce' | 'fake'): CreateMachineRequest {
   return {
     name: form.name,
     provider,
-    machineType: form.machineType,
+    profile: form.machineType,
     diskSizeGb: parseInt(form.diskSizeGb, 10),
-    spot: form.spot,
-    zone: form.zone,
+    interruptible: form.spot,
+    location: form.zone,
   }
 }
 
@@ -41,8 +41,10 @@ export function validateMockForm(form: MockFormState): string | null {
   return null
 }
 
-export function validateGceForm(form: GceFormState): string | null {
+export function validateManagedMachineForm(form: ManagedMachineFormState): string | null {
   if (!form.name) return 'Name is required'
+  if (!form.machineType) return 'Machine profile is required'
+  if (!form.zone) return 'Location is required'
   const disk = parseInt(form.diskSizeGb, 10)
   if (isNaN(disk) || disk < 10) return 'Disk size must be at least 10 GB'
   return null

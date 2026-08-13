@@ -93,7 +93,7 @@ func (m *MockComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec)
 		observation: InstanceObservation{
 			State:        InstanceStateRunning,
 			Interruption: InterruptionNone,
-			Location:     spec.Zone,
+			Location:     spec.Location,
 			InternalIP:   ip,
 			ExternalIP:   ip, // mock uses same IP for both
 			CreatedAt:    time.Now(),

@@ -13,11 +13,11 @@ func TestMockComputeAdapter_CreateAndGet(t *testing.T) {
 	ctx := context.Background()
 
 	spec := MachineSpec{
-		Name:        "test-machine",
-		MachineType: "n2-standard-4",
-		DiskSizeGb:  50,
-		Spot:        true,
-		Zone:        "us-central1-a",
+		Name:          "test-machine",
+		Profile:       "n2-standard-4",
+		DiskSizeGb:    50,
+		Interruptible: true,
+		Location:      "us-central1-a",
 	}
 
 	id, err := m.CreateInstance(ctx, spec)
@@ -48,7 +48,7 @@ func TestMockComputeAdapter_UniqueIDs(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	spec := MachineSpec{Name: "test", Zone: "us-central1-a"}
+	spec := MachineSpec{Name: "test", Location: "us-central1-a"}
 
 	id1, _ := m.CreateInstance(ctx, spec)
 	id2, _ := m.CreateInstance(ctx, spec)
@@ -72,7 +72,7 @@ func TestMockComputeAdapter_StopAndStart(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Zone: "us-central1-a"})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Location: "us-central1-a"})
 
 	if err := m.StopInstance(ctx, id); err != nil {
 		t.Fatalf("StopInstance: %v", err)
@@ -96,7 +96,7 @@ func TestMockComputeAdapter_Delete(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Zone: "us-central1-a"})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Location: "us-central1-a"})
 
 	if err := m.DeleteInstance(ctx, id); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
@@ -118,7 +118,7 @@ func TestMockComputeAdapter_Preemption(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "spot-machine", Zone: "us-central1-a", Spot: true})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "spot-machine", Location: "us-central1-a", Interruptible: true})
 
 	observation, err := m.Observe(ctx, id)
 	if err != nil {
@@ -179,7 +179,7 @@ func TestMockComputeAdapter_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			defer func() { done <- struct{}{} }()
-			id, _ := m.CreateInstance(ctx, MachineSpec{Name: "concurrent", Zone: "us-central1-a"})
+			id, _ := m.CreateInstance(ctx, MachineSpec{Name: "concurrent", Location: "us-central1-a"})
 			_, _ = m.Observe(ctx, id)
 			_ = m.StopInstance(ctx, id)
 			_ = m.DeleteInstance(ctx, id)

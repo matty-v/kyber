@@ -230,11 +230,11 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				telemetry.MachinePreemptions.Add(ctx, 1,
 					metric.WithAttributes(
 						attribute.String("machine", machine.Name),
-						attribute.String("zone", machine.Spec.Zone),
+						attribute.String("location", machine.Spec.Zone),
 					))
 			}
 			r.fireAlert(ctx, machine, "warning", "Preempted",
-				map[string]string{"zone": machine.Spec.Zone, "instanceId": machine.Status.InstanceId})
+				map[string]string{"location": machine.Spec.Zone, "instanceId": machine.Status.InstanceId})
 		case kyberv1.MachinePhaseFailed:
 			r.fireAlert(ctx, machine, "critical", "Failed",
 				map[string]string{"from": string(machine.Status.Phase), "event": string(event)})
@@ -557,7 +557,7 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("instance created", "machine", machine.Name, "instanceID", instanceID)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceCreated",
-			"GCE instance created: %s", instanceID)
+			"Compute instance created: %s", instanceID)
 		return requeueProvisioning, "", nil
 
 	case ActionWaitForNode:
@@ -587,7 +587,7 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("stop issued to instance", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceStopping",
-			"GCE instance stop requested: %s", machine.Status.InstanceId)
+			"Compute instance stop requested: %s", machine.Status.InstanceId)
 		return requeueStopping, "", nil
 
 	case ActionForceStopVM:
@@ -609,16 +609,16 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("start issued to instance", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceStarting",
-			"GCE instance start requested: %s", machine.Status.InstanceId)
+			"Compute instance start requested: %s", machine.Status.InstanceId)
 		return requeueProvisioning, "", nil
 
 	case ActionBeginReplacement:
 		r.Recorder.Eventf(machine, corev1.EventTypeWarning, "PreemptionDetected",
-			"Spot instance preempted in zone %s (instanceID: %s) — initiating replacement",
+			"Interruptible instance reclaimed in location %s (instanceID: %s) — initiating replacement",
 			machine.Spec.Zone, machine.Status.InstanceId)
 		logger.Info("preemption detected — beginning replacement",
 			"machine", machine.Name,
-			"zone", machine.Spec.Zone)
+			"location", machine.Spec.Zone)
 		return requeueImmediate, "preempted — replacement pending", nil
 
 	case ActionCreateReplacementInstance:
@@ -639,7 +639,7 @@ func (r *MachineReconciler) executeAction(
 			logger.Error(err, "cleanupStaleNodeArtifacts failed (non-fatal)", "machine", machine.Name)
 		}
 
-		// Attempt the create. Replacement uses the same zone (PV locality requirement).
+		// Attempt the create. Replacement uses the same location (PV locality requirement).
 		spec := r.buildMachineSpec(machine)
 		instanceID, err := r.ComputeAdapter.CreateInstance(ctx, spec)
 		if err != nil {
@@ -684,7 +684,7 @@ func (r *MachineReconciler) executeAction(
 	case ActionMarkReplacementFailed:
 		r.Recorder.Eventf(machine, corev1.EventTypeWarning, "ReplacementExhausted",
 			"All %d replacement attempts failed — manual intervention required. "+
-				"Consider updating spec.zone or increasing quota.", MaxReplacementRetries)
+				"Consider changing the provider location or increasing quota.", MaxReplacementRetries)
 		return 0, fmt.Sprintf("replacement failed after %d attempts", MaxReplacementRetries), nil
 
 	default:
@@ -718,11 +718,11 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 				"machine", machine.Name,
 				"namespace", machine.Namespace,
 				"instanceId", machine.Status.InstanceId,
-				"zone", machine.Spec.Zone,
-				"cleanupHint", fmt.Sprintf("gcloud compute instances delete %s --zone=%s", machine.Status.InstanceId, machine.Spec.Zone))
+				"location", machine.Spec.Zone,
+				"provider", machine.Spec.Provider)
 			r.Recorder.Eventf(machine, corev1.EventTypeWarning, "ExternalResourceOrphaned",
-				"GCE instance %s (zone %s) left running: namespace %s teardown bypassed finalizer; run `gcloud compute instances delete %s --zone=%s` to reclaim",
-				machine.Status.InstanceId, machine.Spec.Zone, machine.Namespace, machine.Status.InstanceId, machine.Spec.Zone)
+				"Provider %s instance %s (location %s) left running: namespace %s teardown bypassed finalizer; reclaim it with provider tooling",
+				machine.Spec.Provider, machine.Status.InstanceId, machine.Spec.Zone, machine.Namespace)
 		} else {
 			logger.Info("namespace is Terminating; no external VM to orphan, self-removing finalizer",
 				"machine", machine.Name, "namespace", machine.Namespace)
@@ -737,7 +737,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 
 	logger.Info("running machine finalizer", "machine", machine.Name)
 
-	// Delete the GCE instance if one exists.
+	// Delete the provider instance if one exists.
 	if machine.Status.InstanceId != "" {
 		// Attempt stop first (graceful), then delete.
 		if err := r.ComputeAdapter.StopInstance(ctx, machine.Status.InstanceId); err != nil {
@@ -750,7 +750,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 				return ctrl.Result{}, fmt.Errorf("deleting instance during finalizer: %w", err)
 			}
 		}
-		logger.Info("GCE instance deleted", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
+		logger.Info("Compute instance deleted", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 	}
 
 	// Force-delete the lingering k8s node if it still exists.
@@ -773,7 +773,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 	}
 
 	r.Recorder.Eventf(machine, corev1.EventTypeNormal, "MachineDeleted",
-		"Machine cleanup complete — GCE instance deleted, finalizer removed")
+		"Machine cleanup complete — compute instance deleted, finalizer removed")
 
 	return ctrl.Result{}, nil
 }
@@ -1072,13 +1072,13 @@ func (r *MachineReconciler) HandlePreemptionNotice(ctx context.Context, machineN
 // adapter uses them to pass k3s join parameters to the VM startup script.
 func (r *MachineReconciler) buildMachineSpec(machine *kyberv1.Machine) adapters.MachineSpec {
 	return adapters.MachineSpec{
-		Name:        machine.Name,
-		MachineType: machine.Spec.MachineType,
-		DiskSizeGb:  int(machine.Spec.DiskSizeGb),
-		Spot:        machine.Spec.Spot,
-		Zone:        machine.Spec.Zone,
-		JoinToken:   r.K3sJoinToken,
-		ServerURL:   r.K3sServerURL,
+		Name:          machine.Name,
+		Profile:       machine.Spec.MachineType,
+		DiskSizeGb:    int(machine.Spec.DiskSizeGb),
+		Interruptible: machine.Spec.Spot,
+		Location:      machine.Spec.Zone,
+		JoinToken:     r.K3sJoinToken,
+		ServerURL:     r.K3sServerURL,
 		Labels: map[string]string{
 			"kyber-machine": machine.Name,
 		},

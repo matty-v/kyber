@@ -56,6 +56,9 @@ testable without a cluster. Authoritative transition table:
   providers sit behind `pkg/adapters/compute.go`: GCE is the production
   adapter, fake exercises managed lifecycle locally, and static attaches an
   existing node (`mock` remains a compatibility alias).
+  Managed-provider UI/API discovery uses neutral capabilities (`profiles`,
+  `locations`, disk choices, interruptible support); GCE status strings,
+  metadata, networking, and Google API fields stay in `compute_gce.go`.
   Compute adapters expose Kyber-owned `InstanceObservation` state rather than
   provider-native status strings, and are constructed through the registry in
   `pkg/adapters/compute_registry.go`. Explicit provider initialization fails

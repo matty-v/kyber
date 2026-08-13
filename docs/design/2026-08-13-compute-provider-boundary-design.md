@@ -5,6 +5,14 @@
 configuration, and local lifecycle testing. Agent runtimes and log-archive
 backends are out of scope.
 
+The second vertical slice exposes managed compute through neutral capabilities:
+profiles, opaque locations, disk choices, and interruptible-instance support.
+The public API retains `gceVMTypes` and the `machineType`/`zone`/`spot` request
+aliases temporarily for older clients, but the active PWA uses only the neutral
+contract. The compute-layer `MachineSpec` likewise uses `Profile`, `Location`,
+and `Interruptible`; only the GCE adapter translates those into Google API
+fields.
+
 ## 1. Problem
 
 Kyber has a `ComputeAdapter`, but the contract and its consumers still encode

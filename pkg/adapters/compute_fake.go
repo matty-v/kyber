@@ -54,7 +54,7 @@ func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec)
 		observation: InstanceObservation{
 			State:        InstanceStateRunning,
 			Interruption: InterruptionNone,
-			Location:     spec.Zone,
+			Location:     spec.Location,
 			InternalIP:   "192.0.2.10",
 			ExternalIP:   "198.51.100.10",
 			CreatedAt:    time.Now().UTC(),

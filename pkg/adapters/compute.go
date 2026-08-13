@@ -79,16 +79,16 @@ const MachineLabelKey = "kyber.io/machine"
 // This is the compute-layer representation; the controller converts
 // the Machine CRD spec into a MachineSpec before calling CreateInstance.
 type MachineSpec struct {
-	// Name is the logical machine name (used as a label and for naming the GCE instance).
+	// Name is the logical machine name used for provider resource identity.
 	Name string
-	// MachineType is the cloud provider machine type (e.g., "n2-standard-4").
-	MachineType string
+	// Profile is the provider-specific compute profile selected from its catalog.
+	Profile string
 	// DiskSizeGb is the boot disk size in gigabytes.
 	DiskSizeGb int
-	// Spot indicates whether to use spot/preemptible pricing.
-	Spot bool
-	// Zone is the zone to create the instance in (e.g., "us-central1-a").
-	Zone string
+	// Interruptible permits the provider to reclaim the instance.
+	Interruptible bool
+	// Location is an opaque provider location identifier.
+	Location string
 	// JoinToken is the k3s agent join token, passed as instance metadata for the startup script.
 	JoinToken string
 	// ServerURL is the k3s server URL, passed as instance metadata for the startup script.

@@ -51,6 +51,16 @@ type ConfigCompute struct {
 	// shows. Sorted alphabetically by type for stable rendering.
 	// Omitted when the provider does not use managed-instance inputs.
 	GCEVMTypes []ConfigVMType `json:"gceVMTypes,omitempty"`
+	// Managed describes provider-neutral inputs for providers that create and
+	// control instances. gceVMTypes remains above for older PWA clients.
+	Managed *ConfigManagedCompute `json:"managed,omitempty"`
+}
+
+type ConfigManagedCompute struct {
+	Profiles              []ConfigVMType `json:"profiles"`
+	Locations             []string       `json:"locations"`
+	DiskSizesGB           []int32        `json:"diskSizesGb"`
+	SupportsInterruptible bool           `json:"supportsInterruptible"`
 }
 
 // ConfigVMType is one entry in the GCE machine-type catalog as exposed to
@@ -89,7 +99,20 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		PublicURL: s.PublicURL,
 	}
 	if s.ComputeProvider == "gce" || s.ComputeProvider == "fake" {
-		resp.Compute.GCEVMTypes = activeGCEVMTypes(s.GCEVMTypeCatalog)
+		profiles := activeGCEVMTypes(s.GCEVMTypeCatalog)
+		resp.Compute.GCEVMTypes = profiles
+		locations := []string{"local-a"}
+		if s.ComputeProvider == "gce" {
+			locations = []string{
+				"us-central1-a", "us-central1-b", "us-central1-c",
+				"us-east1-b", "us-east1-c", "us-west1-a", "us-west1-b",
+				"europe-west1-b", "europe-west1-c", "asia-east1-a",
+			}
+		}
+		resp.Compute.Managed = &ConfigManagedCompute{
+			Profiles: profiles, Locations: locations,
+			DiskSizesGB: []int32{20, 50, 100, 200, 500}, SupportsInterruptible: true,
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

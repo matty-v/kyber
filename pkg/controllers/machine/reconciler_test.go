@@ -602,7 +602,7 @@ func TestReconciler_Delete_NamespaceTerminating_SkipsExternalCleanup(t *testing.
 	for drain {
 		select {
 		case ev := <-rec.Events:
-			if strings.Contains(ev, "ExternalResourceOrphaned") && strings.Contains(ev, "gcloud compute instances delete") {
+			if strings.Contains(ev, "ExternalResourceOrphaned") && strings.Contains(ev, "reclaim it with provider tooling") {
 				sawOrphanEvent = true
 			}
 		default:
@@ -610,7 +610,7 @@ func TestReconciler_Delete_NamespaceTerminating_SkipsExternalCleanup(t *testing.
 		}
 	}
 	if !sawOrphanEvent {
-		t.Error("expected Warning event ExternalResourceOrphaned with gcloud cleanup hint; none found")
+		t.Error("expected Warning event ExternalResourceOrphaned with provider cleanup hint; none found")
 	}
 
 	// Machine CRD should be gone (finalizer removed).

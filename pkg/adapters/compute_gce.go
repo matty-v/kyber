@@ -186,7 +186,7 @@ func (g *GCEAdapter) buildNetworkInterface(spec MachineSpec) *computepb.NetworkI
 		nic.Network = proto.String(fmt.Sprintf("projects/%s/global/networks/%s", g.ProjectID, g.Network))
 		if g.Subnet != "" {
 			nic.Subnetwork = proto.String(fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s",
-				g.ProjectID, regionFromZone(spec.Zone), g.Subnet))
+				g.ProjectID, regionFromZone(spec.Location), g.Subnet))
 		}
 	} else {
 		nic.Network = proto.String("global/networks/default")
@@ -217,9 +217,9 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 
 	diskSizeGb := int64(spec.DiskSizeGb)
 	scheduling := &computepb.Scheduling{
-		Preemptible: proto.Bool(spec.Spot),
+		Preemptible: proto.Bool(spec.Interruptible),
 	}
-	if spec.Spot {
+	if spec.Interruptible {
 		// Use SPOT provisioning model for GCE spot instances.
 		// ProvisioningModel is a *string field in the REST API representation.
 		spotModel := computepb.Scheduling_SPOT.String()
@@ -231,10 +231,10 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 
 	req := &computepb.InsertInstanceRequest{
 		Project: g.ProjectID,
-		Zone:    spec.Zone,
+		Zone:    spec.Location,
 		InstanceResource: &computepb.Instance{
 			Name:        proto.String(gceName),
-			MachineType: proto.String(fmt.Sprintf("zones/%s/machineTypes/%s", spec.Zone, spec.MachineType)),
+			MachineType: proto.String(fmt.Sprintf("zones/%s/machineTypes/%s", spec.Location, spec.Profile)),
 			Disks: []*computepb.AttachedDisk{
 				{
 					Boot:       proto.Bool(true),
@@ -272,13 +272,13 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 			break
 		}
 		if !isAlreadyExistsError(insertErr) {
-			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Zone, gceName, insertErr)
+			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Location, gceName, insertErr)
 		}
 
 		// 409 — inspect the existing instance to decide how to proceed.
 		existing, getErr := g.client.Get(ctx, &computepb.GetInstanceRequest{
 			Project:  g.ProjectID,
-			Zone:     spec.Zone,
+			Zone:     spec.Location,
 			Instance: gceName,
 		})
 		if getErr != nil {
@@ -303,7 +303,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 			// Delete the stale instance and retry Insert.
 			delOp, delErr := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{
 				Project:  g.ProjectID,
-				Zone:     spec.Zone,
+				Zone:     spec.Location,
 				Instance: gceName,
 			})
 			if delErr != nil {
@@ -319,7 +319,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 		}
 	}
 	if insertErr != nil {
-		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Zone, gceName, insertErr)
+		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Location, gceName, insertErr)
 	}
 
 	if err := op.Wait(ctx); err != nil {
@@ -329,7 +329,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 	// Fetch the created instance to get its numeric ID.
 	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
 		Project:  g.ProjectID,
-		Zone:     spec.Zone,
+		Zone:     spec.Location,
 		Instance: gceName,
 	})
 	if err != nil {

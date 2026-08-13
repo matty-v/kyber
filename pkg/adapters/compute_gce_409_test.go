@@ -124,11 +124,11 @@ func TestCreateInstance_AdoptsRunningInstance(t *testing.T) {
 	}
 
 	id, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name:    "test-machine",
-		Zone:    "us-central1-a",
-		Spot:    true,
-		DiskSizeGb: 50,
-		MachineType: "n2-standard-4",
+		Name:          "test-machine",
+		Location:      "us-central1-a",
+		Interruptible: true,
+		DiskSizeGb:    50,
+		Profile:       "n2-standard-4",
 	})
 	if err != nil {
 		t.Fatalf("CreateInstance: unexpected error: %v", err)
@@ -166,7 +166,7 @@ func TestCreateInstance_AdoptsStagingInstance(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	id, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "staging-machine", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "staging-machine", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err != nil {
 		t.Fatalf("CreateInstance: unexpected error: %v", err)
@@ -203,7 +203,7 @@ func TestCreateInstance_DeletesTerminatedAndRetries(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	id, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "terminated-machine", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "terminated-machine", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err != nil {
 		t.Fatalf("CreateInstance: unexpected error: %v", err)
@@ -247,7 +247,7 @@ func TestCreateInstance_DeletesStoppedAndRetries(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	id, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "stopped-machine", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "stopped-machine", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err != nil {
 		t.Fatalf("CreateInstance: unexpected error: %v", err)
@@ -274,7 +274,7 @@ func TestCreateInstance_AmbiguousStatusReturnsError(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	_, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "repairing-machine", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "repairing-machine", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err == nil {
 		t.Fatal("expected error for REPAIRING instance, got nil")
@@ -298,7 +298,7 @@ func TestCreateInstance_NonAlreadyExistsErrorPropagated(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	_, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "no-permission", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "no-permission", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -325,7 +325,7 @@ func TestCreateInstance_HappyPath(t *testing.T) {
 
 	adapter := &GCEAdapter{ProjectID: "test-project", client: fake}
 	id, err := adapter.CreateInstance(context.Background(), MachineSpec{
-		Name: "new-machine", Zone: "us-central1-a", DiskSizeGb: 50, MachineType: "n2-standard-4",
+		Name: "new-machine", Location: "us-central1-a", DiskSizeGb: 50, Profile: "n2-standard-4",
 	})
 	if err != nil {
 		t.Fatalf("CreateInstance: unexpected error: %v", err)

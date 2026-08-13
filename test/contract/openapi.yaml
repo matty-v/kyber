@@ -14,6 +14,21 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/config:
+    get:
+      operationId: getConfig
+      summary: Get public provider capabilities and runtime configuration
+      tags: [fleet]
+      responses:
+        '200':
+          description: Public installation configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /api/v1/available:
     get:
       operationId: getAvailableRuntimes
@@ -637,6 +652,10 @@ components:
           type: string
           description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: n2-standard-4
+        profile:
+          type: string
+          description: Provider-neutral managed compute profile. Preferred over the deprecated machineType alias.
+          example: n2-standard-4
         diskSizeGb:
           type: integer
           format: int32
@@ -651,6 +670,69 @@ components:
           type: string
           description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: us-central1-a
+        location:
+          type: string
+          description: Opaque provider location. Preferred over the deprecated zone alias.
+          example: us-central1-a
+        interruptible:
+          type: boolean
+          description: Permit provider-initiated reclamation. Preferred over the deprecated spot alias.
+
+    ConfigResponse:
+      type: object
+      required: [compute, models, identity]
+      properties:
+        compute:
+          type: object
+          required: [provider]
+          properties:
+            provider:
+              type: string
+              enum: [gce, static, fake, mock, ""]
+            managed:
+              $ref: '#/components/schemas/ManagedComputeCapabilities'
+            gceVMTypes:
+              type: array
+              deprecated: true
+              items:
+                $ref: '#/components/schemas/ComputeProfile'
+        models:
+          type: array
+          items:
+            type: object
+        identity:
+          type: object
+
+    ManagedComputeCapabilities:
+      type: object
+      required: [profiles, locations, diskSizesGb, supportsInterruptible]
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComputeProfile'
+        locations:
+          type: array
+          items:
+            type: string
+        diskSizesGb:
+          type: array
+          items:
+            type: integer
+            format: int32
+        supportsInterruptible:
+          type: boolean
+
+    ComputeProfile:
+      type: object
+      required: [type, cpu, memory]
+      properties:
+        type:
+          type: string
+        cpu:
+          type: string
+        memory:
+          type: string
 
     MachineCapacity:
       type: object
