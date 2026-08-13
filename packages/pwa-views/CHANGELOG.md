@@ -1,5 +1,43 @@
 # @matty-v/kyber-pwa-views
 
+## 0.23.0 — 2026-08-13
+
+### Added
+- **Upgrade confirmation.** Install now asks first, and the warning names the
+  consequence an operator actually feels: the control plane restarts and this
+  page goes offline for about a minute, then every agent restarts a few at a
+  time and loses its session. It lists the agents at risk by name and counts
+  them on the confirm button. Agents that are `Stopped` are excluded — nothing
+  is lost restarting them — but anything mid-boot is included, because it is
+  rolled too.
+- **In-app upgrade notifications** (`useUpgradeProgress`). Phase transitions
+  become toasts; failures never auto-dismiss. Both the phase source and the
+  dedupe store follow from one fact: the control plane being replaced is also
+  what serves this page, so the tab may reload mid-run. Phase is read from the
+  polled Job and the dedupe record lives in `sessionStorage`, so the
+  "upgrade finished" toast still fires on the far side of the reload. Terminal
+  outcomes are announced only while recent — finished Jobs are retained for a
+  week, and without that bound every new tab would re-announce days-old news.
+- **`UpgradeBanner`**, rendered app-wide, driven by `lastRun` rather than
+  component state so it is correct on a cold load mid-upgrade. The
+  control-plane blackout is labelled *expected*; an operator who reads
+  "connection lost" starts debugging a cluster that is working as intended.
+
+### Changed
+- `ConfirmDialog.message` accepts a `ReactNode` (was `string`), rendered in a
+  `div` since a `p` may not contain a list. The panel gained
+  `max-h-[90vh] overflow-y-auto` — a long message could otherwise push its own
+  buttons off a phone viewport.
+- The cluster header shows the **live** chart version rather than the one this
+  tab loaded with, polling every 3s while an upgrade lands. The refresh
+  affordance remains and now explains itself: the cluster has moved on, but
+  this tab's code is still the old build.
+- Update polling continues while the control plane is unreachable. It stops on a
+  terminal phase, and the refetch most likely to fail is the one during an
+  upgrade — stopping there left the banner and toasts permanently silent.
+- Policy controls and agent creation are disabled while an upgrade is in flight,
+  including the keyboard submit path.
+
 ## 0.22.0 — 2026-08-13
 
 ### Added
