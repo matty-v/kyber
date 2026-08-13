@@ -2,8 +2,8 @@ apiVersion: v2
 name: kyber
 description: Kyber agent fleet platform — control plane, node agent, and CRD lifecycle
 type: application
-version: 1.0.3
-appVersion: "1.0.3"
+version: 1.0.4
+appVersion: "1.0.4"
 keywords:
   - kyber
   - agents
