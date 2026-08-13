@@ -352,12 +352,12 @@ go test -tags e2e -timeout 25m ./test/e2e/... -cluster-name kyber-e2e   # needs 
 make helm-lint
 make helm-template              # pins placeholder image tags for you
 
-# Live mock-backed instance (no cloud creds; API on localhost:18080):
+# Local control-plane/API instance (no cloud creds; API on localhost:18080):
 scripts/devenv/up.sh            # control-plane/API only; see scripts/devenv/README.md
 scripts/devenv/down.sh
 
 # Full local stack — control-plane AND live agent pods (real runtime in a
-# pod, mock compute; the closest local mirror of prod). Needs docker + k3d.
+# pod, fake managed compute; the closest runnable local mirror of prod).
 scripts/devenv/up-full.sh --compute-provider fake
                                 # one command; managed fake compute + live agent
                                 # pods; then create an agent via the PWA
@@ -372,6 +372,12 @@ scripts/devenv/up-full.sh --compute-provider fake
 scripts/devenv/up.sh --compute-provider fake
 scripts/devenv/smoke-fake-provider.sh  # create → stop → start → delete
 scripts/devenv/down.sh
+
+# GCE adapter/API fidelity (synthetic Nodes; agent pods cannot schedule here):
+scripts/devenv/up-full.sh --compute-provider gce-emulator
+scripts/devenv/compute-scenario.sh attach-node <machine>
+scripts/devenv/compute-scenario.sh apply <machine> preempted
+scripts/devenv/compute-scenario.sh attach-node <machine>  # replacement join
 ```
 
 CI gates: `test.yml` (lint+test+pwa+pricing-feed preflight — a `changes` job

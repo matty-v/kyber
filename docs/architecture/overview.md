@@ -107,7 +107,7 @@ flowchart TB
     end
 
     subgraph adapt["Adapters — pkg/adapters"]
-        gce["compute providers<br/>(GCE / static / fake)"]
+        gce["compute providers<br/>(GCE / static / fake)<br/>+ local GCE REST emulator"]
         sm["Secret Manager"]
     end
 

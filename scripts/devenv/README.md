@@ -1,8 +1,9 @@
 # `scripts/devenv/` — one-command dev/test environment
 
-A deterministic, mock-backed Kyber instance any agent (or human) can bring up,
-drive over the API, and tear down — with **one command each way** and **no real
-cloud, auth, or prod-network access**.
+A deterministic Kyber instance any agent (or human) can bring up, drive over
+the API, and tear down—with **one command each way** and **no real cloud,
+cloud auth, or prod-network access**. Compute modes range from existing-node
+attachment to provider-neutral simulation and real-adapter GCE emulation.
 
 This is the shared primitive the per-agent empirical-capability work
 ([#402](https://github.com/matty-v/kyber/issues/402),
@@ -67,6 +68,18 @@ Ready without kubelet heartbeats; production defaults retain normal readiness.
 `up.sh` prints the contract when the API is healthy. Re-running `up.sh` is
 idempotent — it reuses an existing cluster and re-converges via `helm upgrade`.
 
+## Choosing a compute mode
+
+| Mode | Compute behavior | Agent pods | Use it for |
+|---|---|---|---|
+| `mock` / `static` | Attaches a Machine directly to the real k3d node; no provider lifecycle | Runnable | Basic API/PWA and existing-node compatibility |
+| `fake` | Provider-neutral in-memory instances through the real Machine state machine; reuses the real k3d node | Runnable | Normal local development, live agents, stop/start, and shared lifecycle behavior |
+| `gce-emulator` | Real `GCEAdapter` against an in-process Compute Engine REST subset; Machines attach to synthetic Nodes | **Not runnable** | GCE request translation, operation polling, Spot/preemption, replacement, and injected API failures |
+
+Use `fake` for end-to-end agent testing. An agent assigned to a
+`gce-emulator` Machine remains Pending with a placement warning because its
+synthetic Node is deliberately tainted and unschedulable.
+
 ### Full local stack — live agent pods
 
 `up.sh` is **control-plane/API only** (mock compute, no agent workloads). To run
@@ -78,6 +91,7 @@ run Claude Code, use [`up-full.sh`](./up-full.sh) — see
 scripts/devenv/up-full.sh            # cold (builds all images)
 scripts/devenv/up-full.sh --skip-build  # warm (reuse built :local images)
 scripts/devenv/up-full.sh --compute-provider fake # managed lifecycle + live agents
+scripts/devenv/up-full.sh --compute-provider gce-emulator # GCE lifecycle only; no agent pods
 ```
 
 To test App-minted credentials against real agent identity repos without
@@ -128,7 +142,7 @@ environment is fast, isolated, and prod-free:
 
 | Dependency | In the dev env |
 |---|---|
-| Cloud compute | Default `mock`/`static` attaches to the k3d node; optional `fake` uses in-memory instances through the managed lifecycle. No GCP project or ADC. |
+| Cloud compute | `mock`/`static` attaches to k3d; `fake` provides runnable managed lifecycle; `gce-emulator` drives the real GCE adapter against loopback REST with synthetic Nodes. No GCP project or ADC. |
 | PostgreSQL | Disabled — control-plane falls back to its in-memory store. |
 | Redis | Disabled — in-memory token/buffer store. |
 | Node agent DaemonSet | Disabled. |

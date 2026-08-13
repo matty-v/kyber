@@ -75,15 +75,18 @@ make helm-template    # pins placeholder image tags for you
 
 ## Local dev environment
 
-A deterministic, mock-backed Kyber instance — no cloud credentials required:
+A deterministic local Kyber instance — no cloud credentials required:
 
 ```bash
 scripts/devenv/up.sh      # k3d + mock-provider Kyber, API on localhost:18080
 scripts/devenv/down.sh    # tear down, no orphans
 ```
 
-`up.sh` is control-plane/API only (mock compute). For the full stack with live
-agent pods, use `scripts/devenv/up-full.sh`. See
+`up.sh` is control-plane/API only by default. For the full stack with live
+agent pods and managed lifecycle behavior, use
+`scripts/devenv/up-full.sh --compute-provider fake`. To exercise the real GCE
+adapter without GCP, use `--compute-provider gce-emulator`; its synthetic Nodes
+cannot run agents. See
 [`scripts/devenv/README.md`](scripts/devenv/README.md) for the entry-point
 contract (URLs, test credentials), what is mocked, and flags like
 `--skip-build`. For PWA work with hot reload, run `make pwa-dev` (dev server on

@@ -198,27 +198,54 @@ version, and changelog together.
 
 ## 9. Local verification modes
 
-### Runnable stack
+### Existing-node compatibility
 
-`scripts/devenv/up-full.sh` continues to use the compatibility `mock` alias for
-the `static` provider. It attaches a Machine to the real k3d node, so agent pods
-can run.
+The default `mock` alias and explicit `static` provider attach Machines directly
+to the real k3d node. They do not exercise managed provider operations.
 
-### Simulated cloud lifecycle
+### Provider-neutral managed stack
 
-A new local profile starts the full control plane with `provider=fake`. Tests
-create Machines and assert the same phases and status changes expected from a
-real cloud:
+`scripts/devenv/up-full.sh --compute-provider fake` runs in-memory instances
+through the normal managed Machine controller while reusing the real k3d node.
+It is the recommended local mode because both lifecycle transitions and real
+agent pods work. Tests create Machines and assert the phases and status changes
+expected from a real cloud:
 
 1. create → Provisioning;
 2. fake observation becomes Running;
-3. an explicitly controlled Node-ready signal completes Ready;
+3. the existing Ready k3d node completes Ready;
 4. stop/start traverse Stopping/Stopped/Provisioning;
 5. interruption traverses Preempted/Replacing/Ready;
 6. delete invokes the provider and clears the finalizer.
 
-The fake control surface is test-only, disabled by default, and available only
-inside the cluster. It must not be exposed through the public production API.
+The scenario routes are registered only when
+`compute.simulation.controlEnabled=true`. They use the normal Bearer API-key
+wall and production defaults leave them absent.
+
+### GCE adapter fidelity
+
+`scripts/devenv/up-full.sh --compute-provider gce-emulator` constructs the real
+GCE adapter with an unauthenticated loopback REST endpoint. The emulator
+implements the subset Kyber uses: insert, get, aggregated list, operation
+polling, start, stop, delete, native status, scheduling, and network addresses.
+
+GCE-emulator Machines require an explicit synthetic node-registration signal:
+
+```bash
+scripts/devenv/compute-scenario.sh attach-node <machine>
+```
+
+The resulting Node is labelled `kyber.io/simulated=true`, tainted, and marked
+unschedulable. Only the emulator profile sets `KYBER_ALLOW_SIMULATED_NODES`, so
+the Machine controller may treat that Node as present without kubelet
+heartbeats. This exception cannot affect production or an ordinary provider.
+Because synthetic Nodes do not run kubelets, agents must never be assigned to
+GCE-emulator Machines; use `fake` for runnable-agent testing.
+
+Applying `preempted` sets the provider state before deleting the synthetic
+Node, which reproduces the ordering the controller needs to classify a Spot
+interruption. Once replacement begins, `attach-node` completes the simulated
+replacement node join.
 
 ## 10. Test strategy
 
@@ -230,6 +257,10 @@ inside the cluster. It must not be exposed through the public production API.
 - Existing `up-full.sh` remains the runnable-agent smoke test.
 - A local fake-profile smoke command creates, transitions, and deletes a
   Machine against k3d.
+- GCE-emulator adapter tests drive the production GCE REST client against an
+  HTTP test server, including operation polling and injected errors.
+- Manual GCE-emulator smoke covers Ready → Preempted → Replacing → Ready with
+  distinct provider IDs and synthetic node joins.
 - Real-provider smoke tests remain small and provider-specific; the shared
   contract suite carries most lifecycle coverage.
 
@@ -241,9 +272,10 @@ inside the cluster. It must not be exposed through the public production API.
    alias.
 4. Add `fake` and run it through the normal reconciliation path.
 5. Add local fake-provider values and a smoke script.
-6. Generalize capabilities/offerings in the API and PWA.
-7. Extract node bootstrap generation and node-agent interruption detection.
-8. Remove compatibility names and GCE-specific fallbacks after a deprecation
+6. Generalize capabilities/offerings in the API and PWA. **Implemented.**
+7. Add provider-neutral scenarios and a real-adapter GCE REST emulator. **Implemented.**
+8. Extract node bootstrap generation and node-agent interruption detection.
+9. Remove compatibility names and GCE-specific fallbacks after a deprecation
    window.
 
 ## 12. CRD migration
