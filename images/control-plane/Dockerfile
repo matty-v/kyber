@@ -64,7 +64,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /build/transcript-compact ./cmd/transcr
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-upgrade ./cmd/kyber-upgrade
 
 # Stage 3: minimal runtime image.
-FROM alpine:3.20
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates
 
 # helm, for the self-upgrade Job (kyber-upgrade shells out to it).
