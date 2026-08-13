@@ -9,6 +9,7 @@ import {
   setEmbeddedApiKey as setApiKey,
 } from '../lib/api'
 import { DiagnosticsCard } from '../components/DiagnosticsCard'
+import { UpdatesCard } from '../components/UpdatesCard'
 import { useDensity, type Density } from '../contexts/DensityContext'
 import { useEffectiveModelList } from '../lib/models'
 import type { AvailableModel } from '../lib/types'
@@ -125,6 +126,7 @@ export function Settings() {
         </div>
       </Card>
 
+      <UpdatesCard />
       <DensityCard />
 
       <FleetDefaultsCard />
