@@ -14,10 +14,10 @@ RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/node-agent ./cmd/node-agent
 
-# Runtime image: Ubuntu 24.04 for the shutdown utility and compatibility with
+# Runtime image: Ubuntu 26.04 for the shutdown utility and compatibility with
 # host bind mounts (/proc, /sbin). Alpine's busybox shutdown would not match
 # the host's systemd-shutdown semantics.
-FROM ubuntu:24.04
+FROM ubuntu:26.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates \
