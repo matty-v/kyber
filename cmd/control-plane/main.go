@@ -42,6 +42,7 @@ import (
 	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	machinecontroller "github.com/matty-v/kyber/pkg/controllers/machine"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
+	"github.com/matty-v/kyber/pkg/gceemulator"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/messagebuffer"
@@ -681,14 +682,33 @@ func main() {
 	if provider == "" {
 		provider = "mock"
 	}
+	var computeSimulation adapters.SimulationController
+	gceEndpoint := os.Getenv("KYBER_GCE_ENDPOINT")
+	if os.Getenv("KYBER_GCE_EMULATOR") == "true" {
+		if provider != "gce" {
+			setupLog.Error(nil, "KYBER_GCE_EMULATOR requires compute provider gce", "provider", provider)
+			os.Exit(1)
+		}
+		emulator := gceemulator.New()
+		computeSimulation = emulator
+		gceEndpoint = "http://127.0.0.1:8083"
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			setupLog.Info("starting local GCE API emulator", "addr", ":8083")
+			return emulator.Start(ctx, ":8083")
+		})); err != nil {
+			setupLog.Error(err, "registering local GCE API emulator")
+			os.Exit(1)
+		}
+	}
 	gceProject := os.Getenv("KYBER_GCE_PROJECT")
 	gceNetwork := os.Getenv("KYBER_GCE_NETWORK")
 	gceSubnet := os.Getenv("KYBER_GCE_SUBNET")
 	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
-		adapters.GCEConfigProject: gceProject,
-		adapters.GCEConfigNetwork: gceNetwork,
-		adapters.GCEConfigSubnet:  gceSubnet,
+		adapters.GCEConfigProject:  gceProject,
+		adapters.GCEConfigNetwork:  gceNetwork,
+		adapters.GCEConfigSubnet:   gceSubnet,
+		adapters.GCEConfigEndpoint: gceEndpoint,
 	})
 	cancel()
 	if err != nil {
@@ -1230,6 +1250,17 @@ func main() {
 			TokenRatesPath:               os.Getenv("KYBER_METRICS_TOKEN_RATES_PATH"),
 			PrometheusInsecureSkipVerify: os.Getenv("KYBER_METRICS_PROMETHEUS_INSECURE") == "true",
 		},
+	}
+	if os.Getenv("KYBER_DEV_COMPUTE_CONTROL") == "true" {
+		if computeSimulation == nil {
+			computeSimulation, _ = computeAdapter.(adapters.SimulationController)
+		}
+		if computeSimulation == nil {
+			setupLog.Error(nil, "KYBER_DEV_COMPUTE_CONTROL requires a simulated compute provider", "provider", provider)
+			os.Exit(1)
+		}
+		publicAPI.ComputeSimulation = computeSimulation
+		setupLog.Info("development compute scenario control enabled")
 	}
 	if publicAPI.APIKey == "" {
 		setupLog.Info("warning: KYBER_API_KEY not set — public API will reject all requests")

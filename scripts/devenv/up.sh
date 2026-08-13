@@ -10,7 +10,7 @@
 #
 # Usage:
 #   scripts/devenv/up.sh [--skip-build] [--recreate] [--api-port N]
-#                        [--cluster-name NAME] [--compute-provider mock|static|fake]
+#                        [--cluster-name NAME] [--compute-provider mock|static|fake|gce-emulator]
 #                        [-h|--help]
 #
 # Flags:
@@ -50,9 +50,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 [[ "${API_PORT}" =~ ^[0-9]+$ ]] || die "--api-port must be numeric, got: ${API_PORT}" 2
+GCE_EMULATOR=""
 case "${COMPUTE_PROVIDER}" in
-    mock|static|fake) ;;
-    *) die "--compute-provider must be mock, static, or fake; got: ${COMPUTE_PROVIDER}" 2 ;;
+  mock|static|fake) ;;
+  gce-emulator) GCE_EMULATOR=1; COMPUTE_PROVIDER=gce ;;
+  *) die "--compute-provider must be mock, static, fake, or gce-emulator; got: ${COMPUTE_PROVIDER}" 2 ;;
 esac
 
 preflight_deps "${SKIP_BUILD}"
@@ -92,6 +94,9 @@ helm upgrade --install "${HELM_RELEASE}" "${HELM_CHART}" \
     --create-namespace \
     --set namespace.create=false \
     --set "compute.provider=${COMPUTE_PROVIDER}" \
+    --set "compute.simulation.controlEnabled=$([ "${COMPUTE_PROVIDER}" = fake ] || [ -n "${GCE_EMULATOR}" ] && echo true || echo false)" \
+    --set "compute.gceEmulator.enabled=$([ -n "${GCE_EMULATOR}" ] && echo true || echo false)" \
+    --set-string "compute.gce.project=$([ -n "${GCE_EMULATOR}" ] && echo local-emulator || echo '')" \
     --wait \
     --timeout 3m \
     || die "helm upgrade --install failed"

@@ -14,6 +14,44 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/dev/compute/instances:
+    get:
+      operationId: listSimulatedComputeInstances
+      summary: List explicitly enabled development compute instances
+      tags: [development]
+      responses:
+        '200':
+          description: Simulator instances
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [instances]
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimulatedInstance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/dev/compute/scenarios:
+    post:
+      operationId: applySimulatedComputeScenario
+      summary: Apply an explicitly enabled development compute scenario
+      tags: [development]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputeScenarioRequest'
+      responses:
+        '202':
+          description: Scenario accepted
+        '400':
+          description: Scenario rejected
+        '401':
+          $ref: '#/components/responses/Unauthorized'
   /api/v1/config:
     get:
       operationId: getConfig
@@ -486,6 +524,29 @@ components:
         example: dave
 
   schemas:
+    ComputeScenarioRequest:
+      type: object
+      required: [scenario]
+      properties:
+        machine:
+          type: string
+        scenario:
+          type: string
+          enum: [pending, running, stopped, preempted, failed, fail-next-create, fail-next-start, fail-next-stop, fail-next-delete, fail-next-observe]
+    SimulatedInstance:
+      type: object
+      required: [machineName, providerId, observation]
+      properties:
+        machineName:
+          type: string
+        providerId:
+          type: string
+        observation:
+          type: object
+          additionalProperties: true
+        spec:
+          type: object
+          additionalProperties: true
     DiscordConnection:
       type: object
       required: [status, ready, restartCount]

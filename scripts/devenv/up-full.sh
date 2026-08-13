@@ -21,7 +21,7 @@
 # Usage:
 #   scripts/devenv/up-full.sh [--skip-build] [--recreate] [--api-port N]
 #                             [--cluster-name NAME]
-#                             [--compute-provider mock|static|fake]
+#                             [--compute-provider mock|static|fake|gce-emulator]
 #     --skip-build   reuse already-built :local images (skips the slow builds)
 #
 # If .kyber-local/github-app/ exists (created by setup-github-app.sh), this
@@ -50,9 +50,11 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+GCE_EMULATOR=""
 case "${COMPUTE_PROVIDER}" in
   mock|static|fake) ;;
-  *) die "--compute-provider must be mock, static, or fake; got: ${COMPUTE_PROVIDER}" 2 ;;
+  gce-emulator) GCE_EMULATOR=1; COMPUTE_PROVIDER=gce ;;
+  *) die "--compute-provider must be mock, static, fake, or gce-emulator; got: ${COMPUTE_PROVIDER}" 2 ;;
 esac
 
 preflight_deps "${SKIP_BUILD}"
@@ -106,6 +108,12 @@ HELM_ARGS=(
   --namespace "${NAMESPACE}" --create-namespace --set namespace.create=false
   --set "compute.provider=${COMPUTE_PROVIDER}"
 )
+if [ "${COMPUTE_PROVIDER}" = "fake" ]; then
+  HELM_ARGS+=(--set "compute.simulation.controlEnabled=true")
+fi
+if [ -n "${GCE_EMULATOR}" ]; then
+  HELM_ARGS+=(--set "compute.simulation.controlEnabled=true" --set "compute.gceEmulator.enabled=true" --set-string "compute.gce.project=local-emulator")
+fi
 if [ -n "${GITHUB_APP_OWNER}" ]; then
   HELM_ARGS+=(--set-string "identityRepo.defaultOwner=${GITHUB_APP_OWNER}")
 fi

@@ -650,6 +650,14 @@ metrics:
 # instance's service account via the metadata server — no key file is needed.
 compute:
   provider: mock          # "mock" or "gce"
+  simulation:
+    # Development-only, API-key-protected scenario controls. Production
+    # installations must leave this disabled.
+    controlEnabled: false
+  gceEmulator:
+    # Starts an in-process local REST emulator and directs the real GCE adapter
+    # to it. Development only; no Google credentials are used.
+    enabled: false
   gce:
     project: ""           # GCP project ID, REQUIRED when provider=gce
     # network: VPC network name for new VMs. MUST match the k3s server's network

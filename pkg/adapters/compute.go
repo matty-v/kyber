@@ -29,6 +29,36 @@ type ComputeAdapter interface {
 	Observe(ctx context.Context, instanceID string) (InstanceObservation, error)
 }
 
+// SimulationController is an optional development-only control surface
+// implemented by deterministic provider simulators. Production adapters must
+// not implement it.
+type SimulationController interface {
+	ListSimulatedInstances() []SimulatedInstance
+	ApplySimulationScenario(machineName string, scenario SimulationScenario) error
+}
+
+type SimulationScenario string
+
+const (
+	SimulationPending         SimulationScenario = "pending"
+	SimulationRunning         SimulationScenario = "running"
+	SimulationStopped         SimulationScenario = "stopped"
+	SimulationPreempted       SimulationScenario = "preempted"
+	SimulationFailed          SimulationScenario = "failed"
+	SimulationFailNextCreate  SimulationScenario = "fail-next-create"
+	SimulationFailNextStart   SimulationScenario = "fail-next-start"
+	SimulationFailNextStop    SimulationScenario = "fail-next-stop"
+	SimulationFailNextDelete  SimulationScenario = "fail-next-delete"
+	SimulationFailNextObserve SimulationScenario = "fail-next-observe"
+)
+
+type SimulatedInstance struct {
+	MachineName string              `json:"machineName"`
+	ProviderID  string              `json:"providerId"`
+	Spec        MachineSpec         `json:"spec"`
+	Observation InstanceObservation `json:"observation"`
+}
+
 type NodeAttachmentMode string
 
 const (
@@ -80,19 +110,19 @@ const MachineLabelKey = "kyber.io/machine"
 // the Machine CRD spec into a MachineSpec before calling CreateInstance.
 type MachineSpec struct {
 	// Name is the logical machine name used for provider resource identity.
-	Name string
+	Name string `json:"name"`
 	// Profile is the provider-specific compute profile selected from its catalog.
-	Profile string
+	Profile string `json:"profile"`
 	// DiskSizeGb is the boot disk size in gigabytes.
-	DiskSizeGb int
+	DiskSizeGb int `json:"diskSizeGb"`
 	// Interruptible permits the provider to reclaim the instance.
-	Interruptible bool
+	Interruptible bool `json:"interruptible"`
 	// Location is an opaque provider location identifier.
-	Location string
+	Location string `json:"location"`
 	// JoinToken is the k3s agent join token, passed as instance metadata for the startup script.
-	JoinToken string
+	JoinToken string `json:"-"`
 	// ServerURL is the k3s server URL, passed as instance metadata for the startup script.
-	ServerURL string
+	ServerURL string `json:"-"`
 	// Labels are additional cloud provider labels to apply to the instance.
-	Labels map[string]string
+	Labels map[string]string `json:"labels,omitempty"`
 }

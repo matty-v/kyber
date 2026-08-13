@@ -1,6 +1,6 @@
 # Compute provider boundary and local simulator design
 
-**Status:** Accepted; first local-simulator vertical slice implemented 2026-08-13
+**Status:** Implemented through neutral scenarios and the local GCE REST emulator
 **Scope:** Machine provisioning, observation, interruption handling, provider
 configuration, and local lifecycle testing. Agent runtimes and log-archive
 backends are out of scope.
@@ -12,6 +12,16 @@ aliases temporarily for older clients, but the active PWA uses only the neutral
 contract. The compute-layer `MachineSpec` likewise uses `Profile`, `Location`,
 and `Interruptible`; only the GCE adapter translates those into Google API
 fields.
+
+The third slice adds two complementary local layers. The `fake` provider
+implements a provider-neutral `SimulationController` with deterministic state
+and one-shot operation failures. Development stacks expose that controller
+through API-key-protected `/api/v1/dev/compute/*` routes only when explicitly
+enabled. The `gce-emulator` devenv mode starts a local Compute Engine REST
+subset and directs the production `GCEAdapter` to it without ADC. This proves
+Google request construction, operation polling, aggregated ID lookup, native
+status translation, and Spot semantics. Future EC2 and Azure emulators can
+implement the same scenario contract.
 
 ## 1. Problem
 
@@ -252,3 +262,5 @@ the generated CRD is updated by `make generate` in the same change set.
 - A fake behavior is deterministic and explicitly configured by the test.
 - Runnable-agent testing never schedules workloads onto synthetic Nodes.
 - Existing `provider=mock` installations remain functional during migration.
+- Simulation controls are absent unless explicitly enabled and remain API-key protected.
+- The GCE emulator is an explicit local mode and never a production fallback.

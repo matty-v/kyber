@@ -84,3 +84,30 @@ func TestFakeComputeAdapterCreateFailure(t *testing.T) {
 		t.Errorf("CreateInstance error = %v, want %v", err, want)
 	}
 }
+
+func TestFakeComputeAdapterReplacesPreemptedInstance(t *testing.T) {
+	adapter := NewFakeComputeAdapter()
+	ctx := context.Background()
+	spec := MachineSpec{Name: "worker", Location: "local-a", Interruptible: true}
+	firstID, err := adapter.CreateInstance(ctx, spec)
+	if err != nil {
+		t.Fatalf("first CreateInstance: %v", err)
+	}
+	if err := adapter.ApplySimulationScenario("worker", SimulationPreempted); err != nil {
+		t.Fatalf("preempt: %v", err)
+	}
+	secondID, err := adapter.CreateInstance(ctx, spec)
+	if err != nil {
+		t.Fatalf("replacement CreateInstance: %v", err)
+	}
+	if secondID == firstID {
+		t.Fatalf("replacement reused preempted ID %q", firstID)
+	}
+	observation, err := adapter.Observe(ctx, secondID)
+	if err != nil {
+		t.Fatalf("Observe replacement: %v", err)
+	}
+	if observation.State != InstanceStateRunning || observation.Interruption != InterruptionNone {
+		t.Fatalf("replacement observation = %+v", observation)
+	}
+}

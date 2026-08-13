@@ -24,13 +24,13 @@ type fakeInstance struct {
 // the compatibility mock/static path, Machines using it traverse the normal
 // Machine state machine and finalizer.
 type FakeComputeAdapter struct {
-	mu          sync.Mutex
-	instances   map[string]*fakeInstance
-	createError error
+	mu         sync.Mutex
+	instances  map[string]*fakeInstance
+	nextErrors map[string]error
 }
 
 func NewFakeComputeAdapter() *FakeComputeAdapter {
-	return &FakeComputeAdapter{instances: map[string]*fakeInstance{}}
+	return &FakeComputeAdapter{instances: map[string]*fakeInstance{}, nextErrors: map[string]error{}}
 }
 
 func (f *FakeComputeAdapter) Type() string { return "fake" }
@@ -40,11 +40,15 @@ func (f *FakeComputeAdapter) NodeAttachment() NodeAttachmentMode { return NodeAt
 func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if f.createError != nil {
-		return "", f.createError
+	if err := f.consumeError("create"); err != nil {
+		return "", err
 	}
 	for id, instance := range f.instances {
 		if instance.spec.Name == spec.Name {
+			if instance.observation.Interruption == InterruptionPreempted {
+				delete(f.instances, id)
+				break
+			}
 			return id, nil
 		}
 	}
@@ -64,6 +68,12 @@ func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec)
 }
 
 func (f *FakeComputeAdapter) StartInstance(_ context.Context, instanceID string) error {
+	f.mu.Lock()
+	if err := f.consumeError("start"); err != nil {
+		f.mu.Unlock()
+		return err
+	}
+	f.mu.Unlock()
 	return f.update(instanceID, func(observation *InstanceObservation) {
 		observation.State = InstanceStateRunning
 		observation.Interruption = InterruptionNone
@@ -71,6 +81,12 @@ func (f *FakeComputeAdapter) StartInstance(_ context.Context, instanceID string)
 }
 
 func (f *FakeComputeAdapter) StopInstance(_ context.Context, instanceID string) error {
+	f.mu.Lock()
+	if err := f.consumeError("stop"); err != nil {
+		f.mu.Unlock()
+		return err
+	}
+	f.mu.Unlock()
 	return f.update(instanceID, func(observation *InstanceObservation) {
 		observation.State = InstanceStateStopped
 	})
@@ -79,6 +95,9 @@ func (f *FakeComputeAdapter) StopInstance(_ context.Context, instanceID string) 
 func (f *FakeComputeAdapter) DeleteInstance(_ context.Context, instanceID string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.consumeError("delete"); err != nil {
+		return err
+	}
 	delete(f.instances, instanceID)
 	return nil
 }
@@ -86,6 +105,9 @@ func (f *FakeComputeAdapter) DeleteInstance(_ context.Context, instanceID string
 func (f *FakeComputeAdapter) Observe(_ context.Context, instanceID string) (InstanceObservation, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if err := f.consumeError("observe"); err != nil {
+		return InstanceObservation{}, err
+	}
 	instance, ok := f.instances[instanceID]
 	if !ok {
 		return InstanceObservation{}, fmt.Errorf("fake instance %q not found", instanceID)
@@ -104,7 +126,61 @@ func (f *FakeComputeAdapter) SetObservation(instanceID string, observation Insta
 func (f *FakeComputeAdapter) SetCreateError(err error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.createError = err
+	f.nextErrors["create"] = err
+}
+
+func (f *FakeComputeAdapter) ListSimulatedInstances() []SimulatedInstance {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]SimulatedInstance, 0, len(f.instances))
+	for id, instance := range f.instances {
+		out = append(out, SimulatedInstance{MachineName: instance.spec.Name, ProviderID: id, Spec: instance.spec, Observation: instance.observation})
+	}
+	return out
+}
+
+func (f *FakeComputeAdapter) ApplySimulationScenario(machineName string, scenario SimulationScenario) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	operation := map[SimulationScenario]string{
+		SimulationFailNextCreate: "create", SimulationFailNextStart: "start",
+		SimulationFailNextStop: "stop", SimulationFailNextDelete: "delete",
+		SimulationFailNextObserve: "observe",
+	}[scenario]
+	if operation != "" {
+		f.nextErrors[operation] = fmt.Errorf("simulated %s failure", operation)
+		return nil
+	}
+	for _, instance := range f.instances {
+		if instance.spec.Name != machineName {
+			continue
+		}
+		instance.observation.Interruption = InterruptionNone
+		switch scenario {
+		case SimulationPending:
+			instance.observation.State = InstanceStatePending
+		case SimulationRunning:
+			instance.observation.State = InstanceStateRunning
+		case SimulationStopped:
+			instance.observation.State = InstanceStateStopped
+		case SimulationPreempted:
+			instance.observation.State = InstanceStateStopped
+			instance.observation.Interruption = InterruptionPreempted
+		case SimulationFailed:
+			instance.observation.State = InstanceStateFailed
+		default:
+			return fmt.Errorf("unknown simulation scenario %q", scenario)
+		}
+		return nil
+	}
+	return fmt.Errorf("fake machine %q not found", machineName)
+}
+
+// consumeError requires f.mu to be held.
+func (f *FakeComputeAdapter) consumeError(operation string) error {
+	err := f.nextErrors[operation]
+	delete(f.nextErrors, operation)
+	return err
 }
 
 func (f *FakeComputeAdapter) InstanceCount() int {
@@ -125,3 +201,4 @@ func (f *FakeComputeAdapter) update(instanceID string, update func(*InstanceObse
 }
 
 var _ ComputeAdapter = (*FakeComputeAdapter)(nil)
+var _ SimulationController = (*FakeComputeAdapter)(nil)

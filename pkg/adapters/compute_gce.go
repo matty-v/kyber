@@ -18,14 +18,19 @@ import (
 )
 
 const (
-	GCEConfigProject = "project"
-	GCEConfigNetwork = "network"
-	GCEConfigSubnet  = "subnet"
+	GCEConfigProject  = "project"
+	GCEConfigNetwork  = "network"
+	GCEConfigSubnet   = "subnet"
+	GCEConfigEndpoint = "endpoint"
 )
 
 func init() {
 	RegisterComputeProvider("gce", func(ctx context.Context, config ProviderConfig) (ComputeAdapter, error) {
-		adapter, err := NewGCEAdapter(ctx, config[GCEConfigProject])
+		var opts []option.ClientOption
+		if endpoint := config[GCEConfigEndpoint]; endpoint != "" {
+			opts = append(opts, option.WithEndpoint(endpoint), option.WithoutAuthentication())
+		}
+		adapter, err := NewGCEAdapter(ctx, config[GCEConfigProject], opts...)
 		if err != nil {
 			return nil, err
 		}

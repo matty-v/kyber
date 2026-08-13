@@ -34,6 +34,7 @@ the deterministic fake provider:
 ```bash
 scripts/devenv/up.sh --compute-provider fake
 scripts/devenv/smoke-fake-provider.sh   # Ready → Stopped → Ready → deleted
+scripts/devenv/compute-scenario.sh list
 scripts/devenv/down.sh
 ```
 
@@ -42,6 +43,24 @@ existing-node behavior as the explicitly named `static` provider. `fake`
 creates an opaque in-memory instance, runs the normal provisioning/finalizer
 path, and attaches the single local Machine to the real k3d node so workloads
 remain schedulable.
+
+To exercise the real GCE adapter without credentials or GCP, use the local
+Compute Engine REST emulator:
+
+```bash
+scripts/devenv/up-full.sh --compute-provider gce-emulator
+# Create a gce Machine in the PWA, then attach a synthetic node once provisioned:
+scripts/devenv/compute-scenario.sh attach-node my-machine
+scripts/devenv/compute-scenario.sh apply my-machine preempted
+```
+
+The scenario endpoint exists only when explicitly enabled, remains behind the
+normal API key, and is disabled by production defaults. `fake` tests Kyber's
+shared lifecycle; `gce-emulator` adds the real GCE request, operation polling,
+native status, Spot, and error translation paths.
+`attach-node` creates a tainted, unschedulable synthetic Node; it never labels
+or risks the real k3d control-plane node. Agent pods are therefore tested in
+`fake` mode, while `gce-emulator` focuses on compute lifecycle fidelity.
 
 `up.sh` prints the contract when the API is healthy. Re-running `up.sh` is
 idempotent — it reuses an existing cluster and re-converges via `helm upgrade`.
@@ -77,7 +96,7 @@ threat-modeled infra concern that `up-full.sh` does not touch.
 | `--recreate` | Delete an existing devenv cluster first, then build fresh. |
 | `--api-port N` | Local port to forward the API to (default `18080`). |
 | `--cluster-name NAME` | k3d cluster name (default `kyber-devenv`). |
-| `--compute-provider mock\|static\|fake` | Select existing-node compatibility behavior or the managed lifecycle simulator. |
+| `--compute-provider mock\|static\|fake\|gce-emulator` | Select existing-node behavior, the neutral simulator, or the real GCE adapter against its local REST emulator. |
 
 `down.sh` takes `--cluster-name` and is a clean no-op if the cluster is already gone.
 
