@@ -8,6 +8,7 @@ import {
   useSetUpdatePolicy,
   useCheckUpdates,
   useApplyUpdate,
+  useAgents,
 } from '../hooks/useAPI'
 import type { UpdateChannel, UpdateStatus } from '../lib/types'
 
@@ -35,7 +36,9 @@ export function UpdatesCard() {
   const setPolicy = useSetUpdatePolicy()
   const check = useCheckUpdates()
   const apply = useApplyUpdate()
+  const agents = useAgents()
   const [confirmMainOpen, setConfirmMainOpen] = useState(false)
+  const [confirmInstallOpen, setConfirmInstallOpen] = useState(false)
 
   if (updates.isLoading) {
     return (
@@ -63,6 +66,12 @@ export function UpdatesCard() {
   const onMain = s.policy.channel === 'main'
   const pinned = Boolean(s.policy.pinnedVersion)
   const running = s.lastRun?.phase === 'pending' || s.lastRun?.phase === 'running'
+
+  // Agents that will actually lose work. 'Running' is the phase where a session
+  // is live; a Stopped agent restarting costs nothing, and lumping them together
+  // would overstate the blast radius on a cluster with idle agents.
+  const liveAgents = (agents.data ?? []).filter((a) => a.phase === 'Running')
+  const target = s.latestVersion ?? 'the new version'
 
   function chooseChannel(next: UpdateChannel) {
     if (next === s.policy.channel) return
@@ -117,7 +126,7 @@ export function UpdatesCard() {
                 className="mt-1"
                 checked={!onMain}
                 onChange={() => chooseChannel('stable')}
-                disabled={setPolicy.isPending}
+                disabled={setPolicy.isPending || running}
               />
               <span className="text-xs">
                 <span className="text-text-primary">Published releases</span>
@@ -133,7 +142,7 @@ export function UpdatesCard() {
                 className="mt-1"
                 checked={onMain}
                 onChange={() => chooseChannel('main')}
-                disabled={setPolicy.isPending}
+                disabled={setPolicy.isPending || running}
               />
               <span className="text-xs">
                 <span className="text-text-primary">Every change as it lands</span>
@@ -176,7 +185,7 @@ export function UpdatesCard() {
                 type="button"
                 className="underline hover:text-text-primary"
                 onClick={() => setPolicy.mutate({ pinnedVersion: null })}
-                disabled={setPolicy.isPending}
+                disabled={setPolicy.isPending || running}
               >
                 Clear
               </button>
@@ -209,7 +218,7 @@ export function UpdatesCard() {
               <Button
                 variant="primary"
                 size="md"
-                onClick={() => apply.mutate(undefined)}
+                onClick={() => setConfirmInstallOpen(true)}
                 loading={apply.isPending}
                 disabled={apply.isPending || running || !s.updateAvailable}
               >
@@ -254,6 +263,59 @@ export function UpdatesCard() {
           setPolicy.mutate({ channel: 'main' })
         }}
         onCancel={() => setConfirmMainOpen(false)}
+      />
+
+      {/*
+        The install confirmation exists because the consequence an operator
+        actually feels is NOT "the control plane restarts" — it is "every agent
+        loses its session". That is invisible from the button, so the dialog
+        names it, orders it, and puts the live agent count in front of them.
+        Seeing "3 agents are working right now" is what makes this a decision
+        rather than a click.
+      */}
+      <ConfirmDialog
+        open={confirmInstallOpen}
+        title={`Install ${target}?`}
+        message={
+          <>
+            <p>This restarts the whole cluster, in this order:</p>
+            <ol className="mt-2 list-decimal space-y-1 pl-5">
+              <li>
+                The control plane restarts. <strong>This page goes offline for about a
+                minute</strong> and comes back on the new version.
+              </li>
+              <li>
+                Then every agent restarts, a few at a time.{' '}
+                <strong>Each one loses its current session and any work in progress.</strong>{' '}
+                They do not pick up where they left off.
+              </li>
+            </ol>
+            {liveAgents.length > 0 && (
+              <p className="mt-3">
+                Working right now:{' '}
+                <span className="font-mono text-text-primary">
+                  {liveAgents.map((a) => a.id).join(', ')}
+                </span>
+              </p>
+            )}
+            <p className="mt-3 text-text-disabled">
+              If the upgrade fails, Kyber returns the cluster to {s.currentVersion} on its own.
+            </p>
+          </>
+        }
+        confirmLabel={
+          liveAgents.length > 0
+            ? `Install — restart ${liveAgents.length} ${liveAgents.length === 1 ? 'agent' : 'agents'}`
+            : 'Install'
+        }
+        cancelLabel="Cancel"
+        dangerous
+        loading={apply.isPending}
+        onConfirm={() => {
+          setConfirmInstallOpen(false)
+          apply.mutate(undefined)
+        }}
+        onCancel={() => setConfirmInstallOpen(false)}
       />
     </>
   )

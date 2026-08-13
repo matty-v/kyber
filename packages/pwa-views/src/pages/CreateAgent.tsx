@@ -9,6 +9,7 @@ import {
   useMachines,
   usePutDiscordComms,
 } from '../hooks/useAPI'
+import { useUpgradeProgress } from '../hooks/useUpgradeProgress'
 import { useEffectiveModelList } from '../lib/models'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -45,6 +46,9 @@ export function CreateAgent() {
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
   const createAgent = useCreateAgent()
+  // Creating an agent while the control plane is mid-restart either fails or
+  // produces a pod that is immediately rolled again by the upgrade.
+  const { inFlight: upgradeInFlight } = useUpgradeProgress()
   // Discord is wired AFTER the agent exists, through the same endpoint the
   // Comms tab uses — so there is one implementation of "wire a channel"
   // rather than a second one hidden in the create path.
@@ -149,9 +153,10 @@ export function CreateAgent() {
     onEnter: () => {
       if (activeStep < MAX_STEP) {
         next()
-      } else if (fitCheckPasses && !createAgent.isPending) {
+      } else if (fitCheckPasses && !createAgent.isPending && !upgradeInFlight) {
         // On step 5 (Review), trigger form submit. fitCheckPasses + isPending
-        // guard against double-submit and unfit-resource submission.
+        // guard against double-submit and unfit-resource submission, and
+        // upgradeInFlight keeps Enter from bypassing the disabled button.
         void submit({ preventDefault: () => {} } as unknown as React.FormEvent)
       }
     },
@@ -374,7 +379,12 @@ export function CreateAgent() {
                 variant="primary"
                 size="md"
                 loading={createAgent.isPending}
-                disabled={!fitCheckPasses || createAgent.isPending}
+                disabled={!fitCheckPasses || createAgent.isPending || upgradeInFlight}
+                title={
+                  upgradeInFlight
+                    ? 'An upgrade is in progress — the control plane is restarting. Wait for it to finish.'
+                    : undefined
+                }
               >
                 Create Agent
               </Button>

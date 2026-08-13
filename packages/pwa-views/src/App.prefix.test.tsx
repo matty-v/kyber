@@ -39,6 +39,8 @@ vi.mock('./hooks/useAPI', () => {
     useAgentSecrets: () => emptyList,
     useGitHubRepos: () => emptyList,
     useGitHubRepoExists: () => empty,
+    // Layout renders UpgradeBanner, which watches the in-flight upgrade run.
+    useUpdates: () => ({ data: undefined, isError: false }),
     // Mutation hooks — pages call these on mount via useMutation; they must
     // exist in the mock even if the test doesn't exercise them.
     useCreateAgent: () => mutation,
