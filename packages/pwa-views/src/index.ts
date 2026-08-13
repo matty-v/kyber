@@ -25,7 +25,7 @@ export { Settings } from './pages/Settings'
 
 // Shared hook used by consumers that need to listen to cluster CRD updates.
 export { useWebSocket } from './hooks/useWebSocket'
-export { useUpgradeProgress } from './hooks/useUpgradeProgress'
+export { useUpgradeProgress, type UpgradeProgress } from './hooks/useUpgradeProgress'
 
 // Cluster name + version display component. Renders "{name} {version}" with
 // a refresh affordance when a new chart version is detected.

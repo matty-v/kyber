@@ -124,6 +124,54 @@ describe('UpdatesCard', () => {
     expect(screen.getByRole('button', { name: /Install — restart 1 agent$/ })).toBeInTheDocument()
   })
 
+  it('installs the version it named, not whatever is latest at request time', () => {
+    // Set explicitly: clearAllMocks does not undo a mockReturnValue, so an
+    // earlier test's agent list would otherwise change this confirm label.
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: [],
+      isLoading: false,
+      error: null,
+      isError: false,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    fireEvent.click(screen.getByRole('button', { name: /^Install$/ }))
+    // Sending undefined lets the server resolve latestVersion again, so a check
+    // landing between render and confirm would install something else.
+    expect(applyMutate).toHaveBeenCalledWith('1.0.2')
+  })
+
+  it('says it could not check the agents rather than implying none are at risk', () => {
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      isError: true,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    expect(screen.getByText(/Couldn't check which agents are running/)).toBeInTheDocument()
+  })
+
+  it('counts agents that are still booting — they are rolled too', () => {
+    vi.mocked(useAPIModule.useAgents).mockReturnValue({
+      data: [
+        { id: 'lando', phase: 'Running' },
+        { id: 'yoda', phase: 'Starting' },
+        { id: 'han', phase: 'Stopped' },
+      ],
+      isLoading: false,
+      error: null,
+      isError: false,
+    } as unknown as ReturnType<typeof useAPIModule.useAgents>)
+    mockUpdates({ data: status(), isLoading: false, error: null })
+    render(<UpdatesCard />)
+    fireEvent.click(screen.getByRole('button', { name: /Install 1\.0\.2/ }))
+    expect(screen.getByRole('button', { name: /Install — restart 2 agents$/ })).toBeInTheDocument()
+  })
+
   it('offers no install button when there is nothing newer', () => {
     mockUpdates({
       data: status({ updateAvailable: false, latestVersion: '1.0.1' }),

@@ -9,8 +9,9 @@ import type { UpdateRun } from '../lib/types'
  *
  * The whole design of this hook is shaped by one fact: **the control plane is
  * the process being replaced, and it is also what serves this page.** So during
- * an upgrade the API goes away for roughly a minute, and the tab may well be
- * reloaded (by us, once the new version is live) before the run finishes.
+ * an upgrade the API goes away for roughly a minute, and the operator may well
+ * reload the tab (the header offers a refresh once the cluster has moved on)
+ * before the run finishes. Nothing here reloads the page automatically.
  *
  * Two consequences:
  *
@@ -26,10 +27,26 @@ import type { UpdateRun } from '../lib/types'
  *     even across a reload, and re-mounting the hook does not re-announce a run
  *     the operator has already seen.
  *
+ *   - **Terminal phases are announced only while they are news.** `lastRun` is
+ *     not "a run that just happened" — it is the newest upgrade Job in the
+ *     namespace, and those are kept for seven days (`upgradeJobTTL`). Since
+ *     sessionStorage is per-tab-session, without a recency bound every new tab
+ *     and every cold start of the PWA would re-announce a week-old outcome —
+ *     including a `duration: Infinity` failure toast for an upgrade that was
+ *     resolved days ago.
+ *
  * sessionStorage rather than localStorage: an upgrade is a per-tab, per-session
  * concern, and a stale key surviving into next week would suppress a real
  * notification.
  */
+
+/**
+ * How recently a run must have finished for its outcome to still be worth
+ * announcing. Comfortably longer than an upgrade's own control-plane blackout,
+ * so a tab that reloads mid-run still reports the result on the way back; far
+ * shorter than the seven days the Job itself is retained.
+ */
+const TERMINAL_RECENCY_MS = 10 * 60 * 1000
 
 /** Key under which announced "<jobName>:<phase>" pairs are recorded. */
 const ANNOUNCED_KEY = 'kyber.upgrade.announced'
@@ -90,6 +107,19 @@ export function useUpgradeProgress(): UpgradeProgress {
     if (hasAnnounced(key)) return
 
     const version = run.targetVersion || 'the new version'
+
+    // A finished run stays on the API for a week. Only announce an outcome
+    // that is still news — otherwise every new tab for the next seven days
+    // reports Monday's failure as though it just happened.
+    if (phase === 'succeeded' || phase === 'failed') {
+      const finished = run.finishedAt ? Date.parse(run.finishedAt) : NaN
+      // No/unparseable timestamp: announce. A missing field should not silence
+      // a real failure, and the sessionStorage dedupe still caps it at once.
+      if (Number.isFinite(finished) && Date.now() - finished > TERMINAL_RECENCY_MS) {
+        markAnnounced(key)
+        return
+      }
+    }
 
     switch (phase) {
       case 'running':

@@ -26,6 +26,11 @@ export function UpgradeBanner() {
 
   if (!inFlight) return null
 
+  // The Job's target label is read straight from job.Labels with no fallback,
+  // so a Job written by an older control plane yields an empty string — very
+  // plausible here, since the control plane is the thing being upgraded.
+  const version = targetVersion || 'the new version'
+
   return (
     <div
       role="status"
@@ -36,12 +41,12 @@ export function UpgradeBanner() {
       <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-accent" aria-hidden />
       {reconnecting ? (
         <span>
-          <strong>Installing {targetVersion}</strong> — the control plane is restarting, so this
+          <strong>Installing {version}</strong> — the control plane is restarting, so this
           page is briefly disconnected. This is expected; it will reconnect on its own.
         </span>
       ) : (
         <span>
-          <strong>Installing {targetVersion}</strong> — agents are being restarted a few at a
+          <strong>Installing {version}</strong> — agents are being restarted a few at a
           time and will lose their current sessions. Avoid starting new work until this finishes.
         </span>
       )}

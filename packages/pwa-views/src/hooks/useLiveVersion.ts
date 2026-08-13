@@ -46,6 +46,12 @@ export function useLiveVersion(): LiveVersionState {
   // undefined and we simply fall back to the idle interval.
   const { data: updateStatus } = useQuery<UpdateStatus>({
     queryKey: ['cluster', cluster.id, 'updates'],
+    // Same queryFn as the owner, deliberately. An observer's options are copied
+    // wholesale onto the shared Query on every render, so omitting it would set
+    // queryFn: undefined on the query useUpdates owns — which only keeps working
+    // because Query.fetch has an internal rescue path that borrows a queryFn
+    // from some other observer. Supplying it costs nothing and leans on nothing.
+    queryFn: () => api.getUpdates(),
     enabled: false,
   })
   const upgrading =

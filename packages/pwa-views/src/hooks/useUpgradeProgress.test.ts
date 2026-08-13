@@ -89,8 +89,31 @@ describe('useUpgradeProgress', () => {
     expect(toastSuccess.mock.calls[0][0]).toContain('1.0.4')
   })
 
+  it('does not re-announce a week-old outcome to a fresh session', () => {
+    // Finished Jobs live for 7 days and lastRun returns the newest one. Without
+    // a recency bound, every new tab for a week fires a duration:Infinity error
+    // toast about an upgrade that was resolved days ago.
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString()
+    mockRun({ ...running, phase: 'failed', finishedAt: old })
+    renderHook(() => useUpgradeProgress())
+    expect(toastError).not.toHaveBeenCalled()
+  })
+
+  it('still announces an outcome that just landed', () => {
+    mockRun({ ...running, phase: 'succeeded', finishedAt: new Date().toISOString() })
+    renderHook(() => useUpgradeProgress())
+    expect(toastSuccess).toHaveBeenCalledTimes(1)
+  })
+
+  it('announces when the run carries no finish time rather than staying silent', () => {
+    // A missing timestamp must not swallow a real failure.
+    mockRun({ ...running, phase: 'failed' })
+    renderHook(() => useUpgradeProgress())
+    expect(toastError).toHaveBeenCalledTimes(1)
+  })
+
   it('makes a failure notification permanent', () => {
-    mockRun({ ...running, phase: 'failed', message: 'helm upgrade timed out' })
+    mockRun({ ...running, phase: 'failed', message: 'helm upgrade timed out', finishedAt: new Date().toISOString() })
     renderHook(() => useUpgradeProgress())
     expect(toastError).toHaveBeenCalledTimes(1)
     const opts = toastError.mock.calls[0][1] as { duration: number; description: string }

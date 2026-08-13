@@ -53,7 +53,11 @@ export function ConfirmDialog({
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
-        className="relative z-10 w-full max-w-sm rounded-xl border border-border-default bg-surface-overlay p-6 shadow-xl"
+        // max-h + scroll: `message` became a ReactNode, and the install warning
+        // (list + agent IDs) can exceed a phone viewport. The panel is
+        // vertically centred in a non-scrolling overlay, so without this it
+        // overflows off both ends and the buttons become unreachable.
+        className="relative z-10 flex max-h-[90vh] w-full max-w-sm flex-col overflow-y-auto rounded-xl border border-border-default bg-surface-overlay p-6 shadow-xl"
       >
         <h2 id={titleId} className="font-display text-base font-semibold text-text-primary">{title}</h2>
         {/* div, not p: a p may not legally contain the lists a structured
