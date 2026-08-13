@@ -275,11 +275,13 @@ feature branch → PR → test workflow green → merge to main
                     publishes the chart to oci://…/charts/kyber:X.Y.Z
                                          │
                                          ▼
-                    deploy-bump-pr matrix [falcon, razer] — digest-pinned
-                    bump PRs on kyber-deploy, auto-merged
+                    deploy-bump-pr matrix [falcon] — digest-pinned
+                    bump PR on kyber-deploy, auto-merged
                                          │
                                          ▼
-                    ArgoCD syncs falcon + razer to vX.Y.Z
+                    ArgoCD syncs falcon to vX.Y.Z
+
+                    (razer is NOT here — it pulls; see above)
 ```
 
 > No cluster sits between "merge to main" and "cut a tag" today. The canary that
@@ -290,11 +292,13 @@ feature branch → PR → test workflow green → merge to main
 
 The Helm chart (`deploy/helm/kyber/`) is the contract ArgoCD renders. Per-environment values and Application manifests live in [matty-v/kyber-deploy](https://github.com/matty-v/kyber-deploy).
 
-## Promoting a release to falcon and razer
+## Promoting a release to falcon
 
-Promotion is **automatic for both clusters in the matrix** once a tag is cut —
-`release.yml`'s `deploy-bump-pr` job runs a `matrix: cluster: [falcon, razer]`, and
+Promotion is **automatic for every cluster in the matrix** once a tag is cut —
+`release.yml`'s `deploy-bump-pr` job runs a `matrix: cluster: [falcon]`, and
 each leg opens and squash-merges a digest-pinned bump PR against kyber-deploy.
+**razer is deliberately not in the matrix**: it pulls its own updates, so a tag
+publishes a chart it can be told to install rather than pushing one at it.
 `fail-fast: false` keeps the legs independent, so one cluster failing doesn't
 strand the other. Per-cluster `cluster-promoted` / `cluster-promote-failed` signals
 can be sent to an inbound webhook (e.g. a release-automation agent) so progress
