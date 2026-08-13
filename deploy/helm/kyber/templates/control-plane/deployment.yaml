@@ -353,6 +353,16 @@ spec:
             # Compute adapter selection.
             - name: KYBER_COMPUTE_PROVIDER
               value: {{ .Values.compute.provider | default "mock" | quote }}
+            {{- if .Values.compute.simulation.controlEnabled }}
+            - name: KYBER_DEV_COMPUTE_CONTROL
+              value: "true"
+            {{- end }}
+            {{- if .Values.compute.gceEmulator.enabled }}
+            - name: KYBER_GCE_EMULATOR
+              value: "true"
+            - name: KYBER_ALLOW_SIMULATED_NODES
+              value: "true"
+            {{- end }}
             {{- if eq (.Values.compute.provider | default "mock") "gce" }}
             - name: KYBER_GCE_PROJECT
               value: {{ .Values.compute.gce.project | quote }}

@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/configexport"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
@@ -49,6 +50,10 @@ const DefaultPublicPort = ":8080"
 type Server struct {
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
+
+	// ComputeSimulation is an explicitly enabled development-only scenario
+	// controller. It is nil in production and for real compute providers.
+	ComputeSimulation adapters.SimulationController
 
 	// MessageBuffer buffers Telegram messages for suspended agents.
 	MessageBuffer messagebuffer.MessageBuffer
@@ -632,6 +637,10 @@ func (s *Server) buildTopHandler() http.Handler {
 // registerProtectedRoutes registers all /api/v1/* routes on mux.
 // These routes require API key authentication (applied by the caller).
 func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
+	if s.ComputeSimulation != nil {
+		mux.HandleFunc("/api/v1/dev/compute/instances", s.handleComputeSimulation)
+		mux.HandleFunc("/api/v1/dev/compute/scenarios", s.handleComputeSimulation)
+	}
 	// Machines.
 	mux.HandleFunc("/api/v1/machines", s.handleMachines)
 	mux.HandleFunc("/api/v1/machines/", s.handleMachines)

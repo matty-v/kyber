@@ -49,6 +49,19 @@ const queryClient = new QueryClient({
 const rootEl = document.getElementById('root')
 if (!rootEl) throw new Error('Root element not found')
 
+// An auto-updated service worker can take control while an already-open tab
+// continues executing the previous hashed JavaScript bundle. Reload once when
+// an existing controller is replaced so the UI and control plane stay on the
+// same local build. Do not reload on the app's first service-worker install.
+if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+  let refreshing = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (refreshing) return
+    refreshing = true
+    window.location.reload()
+  })
+}
+
 if (import.meta.env.VITE_ENABLE_MOCKS === '1') {
   ;(window as unknown as { __kyberQueryClient: typeof queryClient }).__kyberQueryClient = queryClient
 }

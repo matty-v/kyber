@@ -25,7 +25,8 @@
 
 ## Try it locally
 
-A deterministic, mock-backed Kyber you can bring up, drive over the API, and tear down. No cloud account, no credentials:
+A deterministic Kyber stack you can bring up, drive over the API, and tear
+down. No cloud account or cloud credentials are required:
 
 ```bash
 scripts/devenv/up.sh      # k3d + mock-provider Kyber, API on localhost:18080
@@ -34,11 +35,22 @@ scripts/devenv/down.sh    # tear down, no orphans
 
 `up.sh` prints the entry-point contract: API base URL, health check, throwaway test credentials. [`scripts/devenv/README.md`](scripts/devenv/README.md) covers what's mocked and how to drive it.
 
+For live agents plus managed-compute behavior, use the fake provider. For GCE
+API fidelity without GCP, use the real GCE adapter against its local emulator:
+
+```bash
+scripts/devenv/up-full.sh --compute-provider fake          # runnable agents
+scripts/devenv/up-full.sh --compute-provider gce-emulator  # compute lifecycle only
+```
+
+GCE-emulator Machines use synthetic, unschedulable Nodes and cannot host agent
+pods. See the [local mode matrix](scripts/devenv/README.md#choosing-a-compute-mode).
+
 ## Install
 
 | Path | For | Guide |
 |---|---|---|
-| **macOS / Linux, local** | Full stack on one machine via k3d (Docker Desktop on macOS): live agent pods with whole-disk persistence, mock cloud | [`scripts/devenv/full-local.md`](scripts/devenv/full-local.md) |
+| **macOS / Linux, local** | Full stack on k3d: live agent pods with fake managed compute, or GCE lifecycle testing through the local REST emulator | [`scripts/devenv/full-local.md`](scripts/devenv/full-local.md) |
 | **Windows, WSL2** | A Windows laptop as a standalone install; no cloud infra (native k3s + Tailscale Funnel) | [`docs/installation-wsl2.md`](docs/installation-wsl2.md) |
 | **GCP** | Production multi-VM install (Terraform + GCE) | [`docs/installation.md`](docs/installation.md) |
 | **Your own cluster** | You already run Kubernetes | Install the chart directly: [`deploy/helm/kyber`](deploy/helm/kyber) is the deployment contract, and every value is documented in [`values.yaml`](deploy/helm/kyber/values.yaml). The chart requires explicit image-tag pins. |
@@ -134,7 +146,7 @@ kyber/
 ├── images/            # Dockerfiles for the published container images
 ├── deploy/helm/kyber/ # Helm chart (+ generated CRD manifests)
 ├── infra/terraform/   # GCP infrastructure modules
-├── scripts/devenv/    # One-command mock-backed dev environment
+├── scripts/devenv/    # One-command local stack, compute simulators, and GCE emulator
 ├── docs/              # Product docs, architecture, operator runbooks, ADRs
 └── test/              # Contract, integration (envtest), and e2e (k3d) suites
 ```

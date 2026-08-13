@@ -14,6 +14,59 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/dev/compute/instances:
+    get:
+      operationId: listSimulatedComputeInstances
+      summary: List explicitly enabled development compute instances
+      tags: [development]
+      responses:
+        '200':
+          description: Simulator instances
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [instances]
+                properties:
+                  instances:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/SimulatedInstance'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/dev/compute/scenarios:
+    post:
+      operationId: applySimulatedComputeScenario
+      summary: Apply an explicitly enabled development compute scenario
+      tags: [development]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ComputeScenarioRequest'
+      responses:
+        '202':
+          description: Scenario accepted
+        '400':
+          description: Scenario rejected
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /api/v1/config:
+    get:
+      operationId: getConfig
+      summary: Get public provider capabilities and runtime configuration
+      tags: [fleet]
+      responses:
+        '200':
+          description: Public installation configuration
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfigResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /api/v1/available:
     get:
       operationId: getAvailableRuntimes
@@ -471,6 +524,29 @@ components:
         example: dave
 
   schemas:
+    ComputeScenarioRequest:
+      type: object
+      required: [scenario]
+      properties:
+        machine:
+          type: string
+        scenario:
+          type: string
+          enum: [pending, running, stopped, preempted, failed, fail-next-create, fail-next-start, fail-next-stop, fail-next-delete, fail-next-observe]
+    SimulatedInstance:
+      type: object
+      required: [machineName, providerId, observation]
+      properties:
+        machineName:
+          type: string
+        providerId:
+          type: string
+        observation:
+          type: object
+          additionalProperties: true
+        spec:
+          type: object
+          additionalProperties: true
     DiscordConnection:
       type: object
       required: [status, ready, restartCount]
@@ -629,33 +705,100 @@ components:
       properties:
         provider:
           type: string
-          enum: [gce, mock]
+          enum: [gce, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'
         machineType:
           type: string
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
+          example: n2-standard-4
+        profile:
+          type: string
+          description: Provider-neutral managed compute profile. Preferred over the deprecated machineType alias.
           example: n2-standard-4
         diskSizeGb:
           type: integer
           format: int32
           minimum: 10
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: 100
         spot:
           type: boolean
-          description: GCE-only. Ignored when provider=mock.
+          description: Managed-provider input. Absent for static/mock.
           example: false
         zone:
           type: string
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: us-central1-a
+        location:
+          type: string
+          description: Opaque provider location. Preferred over the deprecated zone alias.
+          example: us-central1-a
+        interruptible:
+          type: boolean
+          description: Permit provider-initiated reclamation. Preferred over the deprecated spot alias.
+
+    ConfigResponse:
+      type: object
+      required: [compute, models, identity]
+      properties:
+        compute:
+          type: object
+          required: [provider]
+          properties:
+            provider:
+              type: string
+              enum: [gce, static, fake, mock, ""]
+            managed:
+              $ref: '#/components/schemas/ManagedComputeCapabilities'
+            gceVMTypes:
+              type: array
+              deprecated: true
+              items:
+                $ref: '#/components/schemas/ComputeProfile'
+        models:
+          type: array
+          items:
+            type: object
+        identity:
+          type: object
+
+    ManagedComputeCapabilities:
+      type: object
+      required: [profiles, locations, diskSizesGb, supportsInterruptible]
+      properties:
+        profiles:
+          type: array
+          items:
+            $ref: '#/components/schemas/ComputeProfile'
+        locations:
+          type: array
+          items:
+            type: string
+        diskSizesGb:
+          type: array
+          items:
+            type: integer
+            format: int32
+        supportsInterruptible:
+          type: boolean
+
+    ComputeProfile:
+      type: object
+      required: [type, cpu, memory]
+      properties:
+        type:
+          type: string
+        cpu:
+          type: string
+        memory:
+          type: string
 
     MachineCapacity:
       type: object
       required: [cpu, memory]
-      description: Declared resource budget. Stamped from machineType on gce; user-supplied on mock.
+      description: Declared resource budget. Stamped from machineType on managed providers; user-supplied or detected on static/mock.
       properties:
         cpu:
           type: string
@@ -729,8 +872,8 @@ components:
       required: [name, provider]
       description: |-
         Provider-conditional request.
-        - provider=gce: machineType, diskSizeGb, zone are required; capacity is rejected (derived server-side).
-        - provider=mock: capacity is required; machineType, diskSizeGb, spot, zone are rejected.
+        - provider=gce/fake: machineType, diskSizeGb, zone are required; capacity is rejected (derived server-side).
+        - provider=static/mock: capacity may be detected; machineType, diskSizeGb, spot, zone are rejected.
       properties:
         name:
           type: string
@@ -738,7 +881,7 @@ components:
           example: worker-1
         provider:
           type: string
-          enum: [gce, mock]
+          enum: [gce, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'

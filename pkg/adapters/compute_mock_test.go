@@ -7,17 +7,17 @@ import (
 )
 
 // TestMockComputeAdapter_CreateAndGet verifies that CreateInstance stores an instance
-// and GetInstanceStatus returns it with RUNNING status.
+// and Observe returns it with provider-neutral Running state.
 func TestMockComputeAdapter_CreateAndGet(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
 	spec := MachineSpec{
-		Name:        "test-machine",
-		MachineType: "n2-standard-4",
-		DiskSizeGb:  50,
-		Spot:        true,
-		Zone:        "us-central1-a",
+		Name:          "test-machine",
+		Profile:       "n2-standard-4",
+		DiskSizeGb:    50,
+		Interruptible: true,
+		Location:      "us-central1-a",
 	}
 
 	id, err := m.CreateInstance(ctx, spec)
@@ -28,17 +28,17 @@ func TestMockComputeAdapter_CreateAndGet(t *testing.T) {
 		t.Errorf("instance ID should start with 'mock-', got %q", id)
 	}
 
-	status, err := m.GetInstanceStatus(ctx, id)
+	observation, err := m.Observe(ctx, id)
 	if err != nil {
-		t.Fatalf("GetInstanceStatus: %v", err)
+		t.Fatalf("Observe: %v", err)
 	}
-	if status.Status != InstanceStatusRunning {
-		t.Errorf("status: got %q, want %q", status.Status, InstanceStatusRunning)
+	if observation.State != InstanceStateRunning {
+		t.Errorf("state: got %q, want %q", observation.State, InstanceStateRunning)
 	}
-	if status.Zone != "us-central1-a" {
-		t.Errorf("zone: got %q, want %q", status.Zone, "us-central1-a")
+	if observation.Location != "us-central1-a" {
+		t.Errorf("location: got %q, want %q", observation.Location, "us-central1-a")
 	}
-	if status.InternalIP == "" {
+	if observation.InternalIP == "" {
 		t.Error("InternalIP should not be empty")
 	}
 }
@@ -48,7 +48,7 @@ func TestMockComputeAdapter_UniqueIDs(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	spec := MachineSpec{Name: "test", Zone: "us-central1-a"}
+	spec := MachineSpec{Name: "test", Location: "us-central1-a"}
 
 	id1, _ := m.CreateInstance(ctx, spec)
 	id2, _ := m.CreateInstance(ctx, spec)
@@ -56,8 +56,8 @@ func TestMockComputeAdapter_UniqueIDs(t *testing.T) {
 		t.Errorf("expected unique IDs, got %q twice", id1)
 	}
 
-	s1, _ := m.GetInstanceStatus(ctx, id1)
-	s2, _ := m.GetInstanceStatus(ctx, id2)
+	s1, _ := m.Observe(ctx, id1)
+	s2, _ := m.Observe(ctx, id2)
 	if s1.InternalIP == s2.InternalIP {
 		t.Errorf("expected unique IPs, got %q twice", s1.InternalIP)
 	}
@@ -72,22 +72,22 @@ func TestMockComputeAdapter_StopAndStart(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Zone: "us-central1-a"})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Location: "us-central1-a"})
 
 	if err := m.StopInstance(ctx, id); err != nil {
 		t.Fatalf("StopInstance: %v", err)
 	}
-	status, _ := m.GetInstanceStatus(ctx, id)
-	if status.Status != InstanceStatusStopped {
-		t.Errorf("after stop: got %q, want %q", status.Status, InstanceStatusStopped)
+	status, _ := m.Observe(ctx, id)
+	if status.State != InstanceStateStopped {
+		t.Errorf("after stop: got %q, want %q", status.State, InstanceStateStopped)
 	}
 
 	if err := m.StartInstance(ctx, id); err != nil {
 		t.Fatalf("StartInstance: %v", err)
 	}
-	status, _ = m.GetInstanceStatus(ctx, id)
-	if status.Status != InstanceStatusRunning {
-		t.Errorf("after start: got %q, want %q", status.Status, InstanceStatusRunning)
+	status, _ = m.Observe(ctx, id)
+	if status.State != InstanceStateRunning {
+		t.Errorf("after start: got %q, want %q", status.State, InstanceStateRunning)
 	}
 }
 
@@ -96,7 +96,7 @@ func TestMockComputeAdapter_Delete(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Zone: "us-central1-a"})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "test", Location: "us-central1-a"})
 
 	if err := m.DeleteInstance(ctx, id); err != nil {
 		t.Fatalf("DeleteInstance: %v", err)
@@ -105,27 +105,26 @@ func TestMockComputeAdapter_Delete(t *testing.T) {
 		t.Errorf("InstanceCount after delete: got %d, want 0", m.InstanceCount())
 	}
 
-	// GetInstanceStatus on deleted instance should return an error.
-	_, err := m.GetInstanceStatus(ctx, id)
+	// Observe on deleted instance should return an error.
+	_, err := m.Observe(ctx, id)
 	if err == nil {
 		t.Error("expected error for deleted instance, got nil")
 	}
 }
 
-// TestMockComputeAdapter_Preemption verifies that SetPreempted marks the instance as
-// TERMINATED and IsPreempted returns true.
+// TestMockComputeAdapter_Preemption verifies that one observation carries both
+// the lifecycle state and provider interruption.
 func TestMockComputeAdapter_Preemption(t *testing.T) {
 	m := NewMockComputeAdapter()
 	ctx := context.Background()
 
-	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "spot-machine", Zone: "us-central1-a", Spot: true})
+	id, _ := m.CreateInstance(ctx, MachineSpec{Name: "spot-machine", Location: "us-central1-a", Interruptible: true})
 
-	// Before preemption: IsPreempted should be false.
-	preempted, err := m.IsPreempted(ctx, id)
+	observation, err := m.Observe(ctx, id)
 	if err != nil {
-		t.Fatalf("IsPreempted before: %v", err)
+		t.Fatalf("Observe before: %v", err)
 	}
-	if preempted {
+	if observation.Interruption != InterruptionNone {
 		t.Error("expected not preempted before SetPreempted")
 	}
 
@@ -134,17 +133,14 @@ func TestMockComputeAdapter_Preemption(t *testing.T) {
 		t.Fatalf("SetPreempted: %v", err)
 	}
 
-	// After preemption: status should be TERMINATED, IsPreempted should be true.
-	status, _ := m.GetInstanceStatus(ctx, id)
-	if status.Status != InstanceStatusTerminated {
-		t.Errorf("status after preemption: got %q, want %q", status.Status, InstanceStatusTerminated)
-	}
-
-	preempted, err = m.IsPreempted(ctx, id)
+	observation, err = m.Observe(ctx, id)
 	if err != nil {
-		t.Fatalf("IsPreempted after: %v", err)
+		t.Fatalf("Observe after: %v", err)
 	}
-	if !preempted {
+	if observation.State != InstanceStateStopped {
+		t.Errorf("state after preemption: got %q, want %q", observation.State, InstanceStateStopped)
+	}
+	if observation.Interruption != InterruptionPreempted {
 		t.Error("expected preempted after SetPreempted")
 	}
 }
@@ -165,11 +161,8 @@ func TestMockComputeAdapter_ErrorsOnUnknownID(t *testing.T) {
 	if err := m.DeleteInstance(ctx, id); err == nil {
 		t.Error("DeleteInstance: expected error for unknown ID, got nil")
 	}
-	if _, err := m.GetInstanceStatus(ctx, id); err == nil {
-		t.Error("GetInstanceStatus: expected error for unknown ID, got nil")
-	}
-	if _, err := m.IsPreempted(ctx, id); err == nil {
-		t.Error("IsPreempted: expected error for unknown ID, got nil")
+	if _, err := m.Observe(ctx, id); err == nil {
+		t.Error("Observe: expected error for unknown ID, got nil")
 	}
 	if err := m.SetPreempted(id); err == nil {
 		t.Error("SetPreempted: expected error for unknown ID, got nil")
@@ -186,8 +179,8 @@ func TestMockComputeAdapter_ConcurrentAccess(t *testing.T) {
 	for i := 0; i < 10; i++ {
 		go func() {
 			defer func() { done <- struct{}{} }()
-			id, _ := m.CreateInstance(ctx, MachineSpec{Name: "concurrent", Zone: "us-central1-a"})
-			_, _ = m.GetInstanceStatus(ctx, id)
+			id, _ := m.CreateInstance(ctx, MachineSpec{Name: "concurrent", Location: "us-central1-a"})
+			_, _ = m.Observe(ctx, id)
 			_ = m.StopInstance(ctx, id)
 			_ = m.DeleteInstance(ctx, id)
 		}()

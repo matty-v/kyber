@@ -17,6 +17,29 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	GCEConfigProject  = "project"
+	GCEConfigNetwork  = "network"
+	GCEConfigSubnet   = "subnet"
+	GCEConfigEndpoint = "endpoint"
+)
+
+func init() {
+	RegisterComputeProvider("gce", func(ctx context.Context, config ProviderConfig) (ComputeAdapter, error) {
+		var opts []option.ClientOption
+		if endpoint := config[GCEConfigEndpoint]; endpoint != "" {
+			opts = append(opts, option.WithEndpoint(endpoint), option.WithoutAuthentication())
+		}
+		adapter, err := NewGCEAdapter(ctx, config[GCEConfigProject], opts...)
+		if err != nil {
+			return nil, err
+		}
+		adapter.Network = config[GCEConfigNetwork]
+		adapter.Subnet = config[GCEConfigSubnet]
+		return adapter, nil
+	})
+}
+
 // gceOperation abstracts the compute.Operation returned by GCE API calls.
 // This allows unit tests to inject fake operations without network calls.
 // The signature matches *compute.Operation.Wait which takes variadic gax.CallOption.
@@ -131,6 +154,12 @@ func NewGCEAdapter(ctx context.Context, projectID string, opts ...option.ClientO
 	}, nil
 }
 
+// Type returns the registered provider identifier.
+func (g *GCEAdapter) Type() string { return "gce" }
+
+// NodeAttachment reports that GCE instances bootstrap and register their own nodes.
+func (g *GCEAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentManaged }
+
 // Close releases the underlying GCE client connection.
 func (g *GCEAdapter) Close() error {
 	if g.client != nil {
@@ -162,7 +191,7 @@ func (g *GCEAdapter) buildNetworkInterface(spec MachineSpec) *computepb.NetworkI
 		nic.Network = proto.String(fmt.Sprintf("projects/%s/global/networks/%s", g.ProjectID, g.Network))
 		if g.Subnet != "" {
 			nic.Subnetwork = proto.String(fmt.Sprintf("projects/%s/regions/%s/subnetworks/%s",
-				g.ProjectID, regionFromZone(spec.Zone), g.Subnet))
+				g.ProjectID, regionFromZone(spec.Location), g.Subnet))
 		}
 	} else {
 		nic.Network = proto.String("global/networks/default")
@@ -193,9 +222,9 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 
 	diskSizeGb := int64(spec.DiskSizeGb)
 	scheduling := &computepb.Scheduling{
-		Preemptible: proto.Bool(spec.Spot),
+		Preemptible: proto.Bool(spec.Interruptible),
 	}
-	if spec.Spot {
+	if spec.Interruptible {
 		// Use SPOT provisioning model for GCE spot instances.
 		// ProvisioningModel is a *string field in the REST API representation.
 		spotModel := computepb.Scheduling_SPOT.String()
@@ -207,10 +236,10 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 
 	req := &computepb.InsertInstanceRequest{
 		Project: g.ProjectID,
-		Zone:    spec.Zone,
+		Zone:    spec.Location,
 		InstanceResource: &computepb.Instance{
 			Name:        proto.String(gceName),
-			MachineType: proto.String(fmt.Sprintf("zones/%s/machineTypes/%s", spec.Zone, spec.MachineType)),
+			MachineType: proto.String(fmt.Sprintf("zones/%s/machineTypes/%s", spec.Location, spec.Profile)),
 			Disks: []*computepb.AttachedDisk{
 				{
 					Boot:       proto.Bool(true),
@@ -248,13 +277,13 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 			break
 		}
 		if !isAlreadyExistsError(insertErr) {
-			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Zone, gceName, insertErr)
+			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Location, gceName, insertErr)
 		}
 
 		// 409 — inspect the existing instance to decide how to proceed.
 		existing, getErr := g.client.Get(ctx, &computepb.GetInstanceRequest{
 			Project:  g.ProjectID,
-			Zone:     spec.Zone,
+			Zone:     spec.Location,
 			Instance: gceName,
 		})
 		if getErr != nil {
@@ -279,7 +308,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 			// Delete the stale instance and retry Insert.
 			delOp, delErr := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{
 				Project:  g.ProjectID,
-				Zone:     spec.Zone,
+				Zone:     spec.Location,
 				Instance: gceName,
 			})
 			if delErr != nil {
@@ -295,7 +324,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 		}
 	}
 	if insertErr != nil {
-		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Zone, gceName, insertErr)
+		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Location, gceName, insertErr)
 	}
 
 	if err := op.Wait(ctx); err != nil {
@@ -305,7 +334,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 	// Fetch the created instance to get its numeric ID.
 	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
 		Project:  g.ProjectID,
-		Zone:     spec.Zone,
+		Zone:     spec.Location,
 		Instance: gceName,
 	})
 	if err != nil {
@@ -385,11 +414,11 @@ func (g *GCEAdapter) DeleteInstance(ctx context.Context, instanceID string) erro
 	return nil
 }
 
-// GetInstanceStatus fetches the current GCE status and network info for an instance.
-func (g *GCEAdapter) GetInstanceStatus(ctx context.Context, instanceID string) (InstanceStatus, error) {
+// Observe fetches the instance and translates GCE state into Kyber's domain.
+func (g *GCEAdapter) Observe(ctx context.Context, instanceID string) (InstanceObservation, error) {
 	gceName, zone, err := g.lookupInstanceByID(ctx, instanceID)
 	if err != nil {
-		return InstanceStatus{}, err
+		return InstanceObservation{}, err
 	}
 
 	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
@@ -398,52 +427,10 @@ func (g *GCEAdapter) GetInstanceStatus(ctx context.Context, instanceID string) (
 		Instance: gceName,
 	})
 	if err != nil {
-		return InstanceStatus{}, fmt.Errorf("GCE Get(%s): %w", gceName, err)
+		return InstanceObservation{}, fmt.Errorf("GCE Get(%s): %w", gceName, err)
 	}
 
-	return parseInstanceStatus(inst, zone), nil
-}
-
-// IsPreempted returns true if the GCE instance was preempted by GCE.
-// Preemption is indicated by TERMINATED status on a spot/preemptible instance.
-func (g *GCEAdapter) IsPreempted(ctx context.Context, instanceID string) (bool, error) {
-	gceName, zone, err := g.lookupInstanceByID(ctx, instanceID)
-	if err != nil {
-		return false, err
-	}
-
-	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
-		Project:  g.ProjectID,
-		Zone:     zone,
-		Instance: gceName,
-	})
-	if err != nil {
-		return false, fmt.Errorf("GCE Get(%s): %w", gceName, err)
-	}
-
-	// Preemptible instance must be TERMINATED to be considered preempted.
-	status := inst.GetStatus()
-	if status != "TERMINATED" {
-		return false, nil
-	}
-
-	// Check if instance has preemptible scheduling.
-	sched := inst.GetScheduling()
-	if sched == nil {
-		return false, nil
-	}
-
-	// Note: Preemptible is deprecated in favor of ProvisioningModel=SPOT but is still
-	// functional. We check both to be compatible with older Spot Fleet implementations
-	// and with GCE APIs that return only one field.
-	isPreemptible := sched.GetPreemptible() //nolint:staticcheck // deprecated but still functional
-	isSpot := sched.GetProvisioningModel() == computepb.Scheduling_SPOT.String()
-
-	// TERMINATED + (preemptible or SPOT) → preempted.
-	// Operator-stopped instances will have been stopped via StopInstance, which transitions
-	// them to STOPPED, not TERMINATED. TERMINATED on a preemptible instance reliably
-	// indicates GCE-initiated preemption.
-	return isPreemptible || isSpot, nil
+	return parseInstanceObservation(inst, zone), nil
 }
 
 // lookupInstanceByID finds a GCE instance's name and zone given its numeric
@@ -499,11 +486,15 @@ func (g *GCEAdapter) lookupInstanceByID(ctx context.Context, instanceID string) 
 	return "", "", fmt.Errorf("%w: instance with ID %q not found in project %s", ErrInstanceNotFound, instanceID, g.ProjectID)
 }
 
-// parseInstanceStatus converts a GCE Instance proto into an InstanceStatus.
-func parseInstanceStatus(inst *computepb.Instance, zone string) InstanceStatus {
-	s := InstanceStatus{
-		Status: inst.GetStatus(),
-		Zone:   zone,
+// parseInstanceObservation converts a GCE Instance into Kyber domain state.
+func parseInstanceObservation(inst *computepb.Instance, zone string) InstanceObservation {
+	s := InstanceObservation{
+		State:        gceInstanceState(inst.GetStatus()),
+		Interruption: InterruptionNone,
+		Location:     zone,
+	}
+	if inst.GetStatus() == "TERMINATED" && isGCEInterruptible(inst.GetScheduling()) {
+		s.Interruption = InterruptionPreempted
 	}
 
 	// Parse creation timestamp.
@@ -527,6 +518,27 @@ func parseInstanceStatus(inst *computepb.Instance, zone string) InstanceStatus {
 	}
 
 	return s
+}
+
+func gceInstanceState(status string) InstanceState {
+	switch status {
+	case "PROVISIONING", "STAGING", "STOPPING", "SUSPENDING", "REPAIRING":
+		return InstanceStatePending
+	case "RUNNING":
+		return InstanceStateRunning
+	case "STOPPED", "SUSPENDED", "TERMINATED":
+		return InstanceStateStopped
+	default:
+		return InstanceStateUnknown
+	}
+}
+
+func isGCEInterruptible(s *computepb.Scheduling) bool {
+	if s == nil {
+		return false
+	}
+	return s.GetPreemptible() || //nolint:staticcheck // compatibility with older instances
+		s.GetProvisioningModel() == computepb.Scheduling_SPOT.String()
 }
 
 // buildStartupScript returns the cloud-init startup script for the VM.

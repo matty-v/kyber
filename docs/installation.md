@@ -597,7 +597,12 @@ From the PWA:
 2. Fill in: name `laptop`, provider `gce` (or leave blank for local), machine type `e2-standard-2`, zone `us-central1-a`, spot `false`
 3. Click **Create**. The machine's phase should move Provisioning → Ready.
 
-> **V1 limitation:** the Machine Controller provisions GCE VMs via the GCE adapter when real credentials are configured. Without credentials, it uses the Mock adapter and the machine stays "virtual" — useful for testing the control plane but not for running real agent pods.
+> **Local testing:** production GCE still requires Application Default
+> Credentials. The k3d development stack offers separate credential-free
+> modes: `fake` exercises managed lifecycle and can run agent pods on the real
+> k3d node; `gce-emulator` drives the real GCE adapter against loopback REST but
+> uses unschedulable synthetic Nodes and cannot host agents. See
+> [`scripts/devenv/README.md`](../scripts/devenv/README.md#choosing-a-compute-mode).
 
 4. Go to **Agents** → **Create Agent**
 5. Fill in: name `dave`, machine `<the machine you just created>`, runtime `claude-code`, model `claude-sonnet-4-5`

@@ -1,5 +1,18 @@
 # @matty-v/kyber-pwa-views
 
+## 0.24.0 — 2026-08-13
+
+### Added
+- Machine provider types and creation forms now support the explicit `static`
+  existing-node provider and the local `fake` managed-provider simulator.
+  The legacy `mock` provider remains accepted as a compatibility alias for
+  `static`.
+
+### Changed
+- Managed-machine creation now consumes provider-neutral profiles, locations,
+  disk choices, and interruptible-instance capabilities from the control plane.
+  GCE-specific zone lists and request vocabulary no longer live in the PWA.
+
 ## 0.23.0 — 2026-08-13
 
 ### Added
@@ -56,7 +69,7 @@
     collapsed: the control plane has no apply path, this cluster may not use it
     (ArgoCD), or there is simply nothing newer. Telling an operator the feature
     does not exist when their cluster is managed by something else sends them to
-    the wrong place.
+  the wrong place.
   - A failed check is shown rather than rendering as "up to date".
 
 ## 0.21.2 — 2026-08-12

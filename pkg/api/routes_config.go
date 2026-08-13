@@ -38,10 +38,10 @@ type ConfigIdentity struct {
 }
 
 // ConfigCompute reports which ComputeAdapter the control plane is configured
-// to use. Values: "gce", "mock". Empty string if the server was started
+// to use. Values: "gce", "static", "fake", "mock". Empty string if the server was started
 // without KYBER_COMPUTE_PROVIDER (dev/test scenarios).
 type ConfigCompute struct {
-	// Provider is the ComputeAdapter type ("gce", "mock", or "").
+	// Provider is the configured ComputeAdapter type.
 	Provider string `json:"provider"`
 	// GCEVMTypes is the catalog of GCE machine types the control plane will
 	// accept on POST /api/v1/machines, sourced from compute.gce.vmTypeCatalog
@@ -49,8 +49,18 @@ type ConfigCompute struct {
 	// machine-type picker stays in sync with the server-side validator —
 	// without this, operators get "unknown VM type" 400s on types the picker
 	// shows. Sorted alphabetically by type for stable rendering.
-	// Omitted when Provider != "gce".
+	// Omitted when the provider does not use managed-instance inputs.
 	GCEVMTypes []ConfigVMType `json:"gceVMTypes,omitempty"`
+	// Managed describes provider-neutral inputs for providers that create and
+	// control instances. gceVMTypes remains above for older PWA clients.
+	Managed *ConfigManagedCompute `json:"managed,omitempty"`
+}
+
+type ConfigManagedCompute struct {
+	Profiles              []ConfigVMType `json:"profiles"`
+	Locations             []string       `json:"locations"`
+	DiskSizesGB           []int32        `json:"diskSizesGb"`
+	SupportsInterruptible bool           `json:"supportsInterruptible"`
 }
 
 // ConfigVMType is one entry in the GCE machine-type catalog as exposed to
@@ -88,8 +98,21 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Identity:  ConfigIdentity{RepoOwner: s.IdentityRepoOwner},
 		PublicURL: s.PublicURL,
 	}
-	if s.ComputeProvider == "gce" {
-		resp.Compute.GCEVMTypes = activeGCEVMTypes(s.GCEVMTypeCatalog)
+	if s.ComputeProvider == "gce" || s.ComputeProvider == "fake" {
+		profiles := activeGCEVMTypes(s.GCEVMTypeCatalog)
+		resp.Compute.GCEVMTypes = profiles
+		locations := []string{"local-a"}
+		if s.ComputeProvider == "gce" {
+			locations = []string{
+				"us-central1-a", "us-central1-b", "us-central1-c",
+				"us-east1-b", "us-east1-c", "us-west1-a", "us-west1-b",
+				"europe-west1-b", "europe-west1-c", "asia-east1-a",
+			}
+		}
+		resp.Compute.Managed = &ConfigManagedCompute{
+			Profiles: profiles, Locations: locations,
+			DiskSizesGB: []int32{20, 50, 100, 200, 500}, SupportsInterruptible: true,
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

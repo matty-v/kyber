@@ -19,8 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/adapters"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/telemetry"
 )
 
@@ -64,6 +64,9 @@ type MachineReconciler struct {
 	Scheme         *runtime.Scheme
 	Recorder       record.EventRecorder
 	ComputeAdapter adapters.ComputeAdapter
+	// AllowSimulatedNodes accepts explicitly labelled synthetic Nodes without
+	// kubelet heartbeats. It is enabled only by the local GCE emulator profile.
+	AllowSimulatedNodes bool
 
 	// AlertSink receives alerts for notable machine events (e.g., Preempted, Failed).
 	// If nil, alerts are silently dropped.
@@ -115,12 +118,13 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 	}
 
 	return &MachineReconciler{
-		Client:         c,
-		Scheme:         scheme,
-		Recorder:       recorder,
-		ComputeAdapter: adapter,
-		K3sJoinToken:   joinToken,
-		K3sServerURL:   serverURL,
+		Client:              c,
+		Scheme:              scheme,
+		Recorder:            recorder,
+		ComputeAdapter:      adapter,
+		K3sJoinToken:        joinToken,
+		K3sServerURL:        serverURL,
+		AllowSimulatedNodes: os.Getenv("KYBER_ALLOW_SIMULATED_NODES") == "true",
 	}
 }
 
@@ -153,9 +157,10 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.handleDeletion(ctx, machine)
 	}
 
-	// 2a. Short-circuit for mock provider: standalone single-box path.
-	if machine.Spec.Provider == kyberv1.MachineProviderMock {
-		return r.reconcileMock(ctx, machine)
+	// 2a. Short-circuit for existing-node providers: standalone/static path.
+	if machine.Spec.Provider == kyberv1.MachineProviderMock ||
+		machine.Spec.Provider == kyberv1.MachineProviderStatic {
+		return r.reconcileStatic(ctx, machine)
 	}
 
 	// 3. Ensure finalizer is registered.
@@ -229,11 +234,11 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 				telemetry.MachinePreemptions.Add(ctx, 1,
 					metric.WithAttributes(
 						attribute.String("machine", machine.Name),
-						attribute.String("zone", machine.Spec.Zone),
+						attribute.String("location", machine.Spec.Zone),
 					))
 			}
 			r.fireAlert(ctx, machine, "warning", "Preempted",
-				map[string]string{"zone": machine.Spec.Zone, "instanceId": machine.Status.InstanceId})
+				map[string]string{"location": machine.Spec.Zone, "instanceId": machine.Status.InstanceId})
 		case kyberv1.MachinePhaseFailed:
 			r.fireAlert(ctx, machine, "critical", "Failed",
 				map[string]string{"from": string(machine.Status.Phase), "event": string(event)})
@@ -356,24 +361,23 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 		return "", requeueProvisioning, nil
 	}
 
-	// Query the instance status.
-	status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+	// Query the provider-neutral instance observation.
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		// Instance not found or transient error — requeue.
 		return "", requeueProvisioning, nil
 	}
 
-	if status.Status != adapters.InstanceStatusRunning {
+	if observation.State != adapters.InstanceStateRunning {
 		// Still starting up.
 		return EventInstanceRunningNodeNotReady, requeueProvisioning, nil
 	}
-
 	// Instance is running — check if the k8s node is Ready.
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
 		return "", 0, err
 	}
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return EventInstanceRunningNodeNotReady, requeueProvisioning, nil
 	}
 
@@ -382,12 +386,15 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 
 // classifyReady determines the event when the machine is in Ready phase.
 func (r *MachineReconciler) classifyReady(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
+	if event, requeueAfter := r.classifyExistingNodeProviderState(ctx, machine); event != "" || requeueAfter != 0 {
+		return event, requeueAfter, nil
+	}
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
 		return "", 0, err
 	}
 
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		// Node disappeared — check if preempted.
 		return r.classifyNodeDisappeared(ctx, machine)
 	}
@@ -407,12 +414,15 @@ func (r *MachineReconciler) classifyReady(ctx context.Context, machine *kyberv1.
 
 // classifyRunning determines the event when the machine is in Running phase.
 func (r *MachineReconciler) classifyRunning(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
+	if event, requeueAfter := r.classifyExistingNodeProviderState(ctx, machine); event != "" || requeueAfter != 0 {
+		return event, requeueAfter, nil
+	}
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
 		return "", 0, err
 	}
 
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return r.classifyNodeDisappeared(ctx, machine)
 	}
 
@@ -427,6 +437,31 @@ func (r *MachineReconciler) classifyRunning(ctx context.Context, machine *kyberv
 
 	// Stable Running state — update agent count in status.
 	return "", 0, nil
+}
+
+// classifyExistingNodeProviderState makes provider state authoritative for
+// managed simulators that borrow a real cluster node. That node cannot safely
+// disappear during a simulated interruption, so relying only on node absence
+// would make preempted/failed/stopped scenarios invisible.
+func (r *MachineReconciler) classifyExistingNodeProviderState(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration) {
+	if r.ComputeAdapter.NodeAttachment() != adapters.NodeAttachmentExisting || machine.Status.InstanceId == "" {
+		return "", 0
+	}
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	if err != nil {
+		return "", requeueAfterForPhase(machine.Status.Phase)
+	}
+	if observation.Interruption == adapters.InterruptionPreempted && machine.Spec.Spot {
+		return EventNodeDisappearedPreempted, 0
+	}
+	switch observation.State {
+	case adapters.InstanceStateRunning:
+		return "", 0
+	case adapters.InstanceStatePending, adapters.InstanceStateUnknown:
+		return "", requeueAfterForPhase(machine.Status.Phase)
+	default:
+		return EventNodeDisappearedFailed, 0
+	}
 }
 
 // classifyStopping determines the event when the machine is in Stopping phase.
@@ -453,8 +488,8 @@ func (r *MachineReconciler) classifyStopping(ctx context.Context, machine *kyber
 
 	// No agents remain — check if VM is stopped.
 	if machine.Status.InstanceId != "" {
-		status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
-		if err == nil && status.Status == adapters.InstanceStatusStopped {
+		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+		if err == nil && observation.State == adapters.InstanceStateStopped {
 			return EventAllAgentsStoppedVMStopped, 0, nil
 		}
 	}
@@ -474,16 +509,16 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	}
 
 	// Check if the new instance is running and the node is Ready.
-	status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		return "", requeueReplacing, nil
 	}
 	// If the replacement instance was itself terminated (double preemption),
 	// fire ReplacementFailed so the state machine can retry with budget.
-	if status.Status == adapters.InstanceStatusTerminated {
+	if observation.Interruption == adapters.InterruptionPreempted {
 		return EventReplacementFailed, 0, nil
 	}
-	if status.Status != adapters.InstanceStatusRunning {
+	if observation.State != adapters.InstanceStateRunning {
 		return "", requeueReplacing, nil
 	}
 
@@ -491,27 +526,27 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	if err != nil {
 		return "", 0, err
 	}
-	if node == nil || !isNodeReady(node) {
+	if node == nil || !r.isManagedNodeReady(node) {
 		return "", requeueReplacing, nil
 	}
 
 	return EventReplacementSucceeded, 0, nil
 }
 
-// classifyNodeDisappeared checks GCE to determine if a missing node is due to
-// preemption or an unexpected failure.
+// classifyNodeDisappeared checks the provider observation to determine if a
+// missing node is due to interruption or an unexpected failure.
 func (r *MachineReconciler) classifyNodeDisappeared(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
 	if machine.Status.InstanceId == "" {
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	preempted, err := r.ComputeAdapter.IsPreempted(ctx, machine.Status.InstanceId)
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		// Can't determine — treat as failed.
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	if preempted && machine.Spec.Spot {
+	if observation.Interruption == adapters.InterruptionPreempted && machine.Spec.Spot {
 		return EventNodeDisappearedPreempted, 0, nil
 	}
 	return EventNodeDisappearedFailed, 0, nil
@@ -557,7 +592,7 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("instance created", "machine", machine.Name, "instanceID", instanceID)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceCreated",
-			"GCE instance created: %s", instanceID)
+			"Compute instance created: %s", instanceID)
 		return requeueProvisioning, "", nil
 
 	case ActionWaitForNode:
@@ -587,7 +622,7 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("stop issued to instance", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceStopping",
-			"GCE instance stop requested: %s", machine.Status.InstanceId)
+			"Compute instance stop requested: %s", machine.Status.InstanceId)
 		return requeueStopping, "", nil
 
 	case ActionForceStopVM:
@@ -609,16 +644,16 @@ func (r *MachineReconciler) executeAction(
 		}
 		logger.Info("start issued to instance", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 		r.Recorder.Eventf(machine, corev1.EventTypeNormal, "InstanceStarting",
-			"GCE instance start requested: %s", machine.Status.InstanceId)
+			"Compute instance start requested: %s", machine.Status.InstanceId)
 		return requeueProvisioning, "", nil
 
 	case ActionBeginReplacement:
 		r.Recorder.Eventf(machine, corev1.EventTypeWarning, "PreemptionDetected",
-			"Spot instance preempted in zone %s (instanceID: %s) — initiating replacement",
+			"Interruptible instance reclaimed in location %s (instanceID: %s) — initiating replacement",
 			machine.Spec.Zone, machine.Status.InstanceId)
 		logger.Info("preemption detected — beginning replacement",
 			"machine", machine.Name,
-			"zone", machine.Spec.Zone)
+			"location", machine.Spec.Zone)
 		return requeueImmediate, "preempted — replacement pending", nil
 
 	case ActionCreateReplacementInstance:
@@ -639,7 +674,7 @@ func (r *MachineReconciler) executeAction(
 			logger.Error(err, "cleanupStaleNodeArtifacts failed (non-fatal)", "machine", machine.Name)
 		}
 
-		// Attempt the create. Replacement uses the same zone (PV locality requirement).
+		// Attempt the create. Replacement uses the same location (PV locality requirement).
 		spec := r.buildMachineSpec(machine)
 		instanceID, err := r.ComputeAdapter.CreateInstance(ctx, spec)
 		if err != nil {
@@ -684,7 +719,7 @@ func (r *MachineReconciler) executeAction(
 	case ActionMarkReplacementFailed:
 		r.Recorder.Eventf(machine, corev1.EventTypeWarning, "ReplacementExhausted",
 			"All %d replacement attempts failed — manual intervention required. "+
-				"Consider updating spec.zone or increasing quota.", MaxReplacementRetries)
+				"Consider changing the provider location or increasing quota.", MaxReplacementRetries)
 		return 0, fmt.Sprintf("replacement failed after %d attempts", MaxReplacementRetries), nil
 
 	default:
@@ -718,11 +753,11 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 				"machine", machine.Name,
 				"namespace", machine.Namespace,
 				"instanceId", machine.Status.InstanceId,
-				"zone", machine.Spec.Zone,
-				"cleanupHint", fmt.Sprintf("gcloud compute instances delete %s --zone=%s", machine.Status.InstanceId, machine.Spec.Zone))
+				"location", machine.Spec.Zone,
+				"provider", machine.Spec.Provider)
 			r.Recorder.Eventf(machine, corev1.EventTypeWarning, "ExternalResourceOrphaned",
-				"GCE instance %s (zone %s) left running: namespace %s teardown bypassed finalizer; run `gcloud compute instances delete %s --zone=%s` to reclaim",
-				machine.Status.InstanceId, machine.Spec.Zone, machine.Namespace, machine.Status.InstanceId, machine.Spec.Zone)
+				"Provider %s instance %s (location %s) left running: namespace %s teardown bypassed finalizer; reclaim it with provider tooling",
+				machine.Spec.Provider, machine.Status.InstanceId, machine.Spec.Zone, machine.Namespace)
 		} else {
 			logger.Info("namespace is Terminating; no external VM to orphan, self-removing finalizer",
 				"machine", machine.Name, "namespace", machine.Namespace)
@@ -737,7 +772,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 
 	logger.Info("running machine finalizer", "machine", machine.Name)
 
-	// Delete the GCE instance if one exists.
+	// Delete the provider instance if one exists.
 	if machine.Status.InstanceId != "" {
 		// Attempt stop first (graceful), then delete.
 		if err := r.ComputeAdapter.StopInstance(ctx, machine.Status.InstanceId); err != nil {
@@ -750,18 +785,21 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 				return ctrl.Result{}, fmt.Errorf("deleting instance during finalizer: %w", err)
 			}
 		}
-		logger.Info("GCE instance deleted", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
+		logger.Info("Compute instance deleted", "machine", machine.Name, "instanceID", machine.Status.InstanceId)
 	}
 
-	// Force-delete the lingering k8s node if it still exists.
-	node, err := r.getNodeForMachine(ctx, machine)
-	if err != nil {
-		logger.Error(err, "listing nodes during finalizer (non-fatal)", "machine", machine.Name)
-	} else if node != nil {
-		if err := r.Delete(ctx, node); err != nil && !errors.IsNotFound(err) {
-			logger.Error(err, "deleting stale node during finalizer (non-fatal)", "machine", machine.Name)
-		} else {
-			logger.Info("stale k8s node deleted", "machine", machine.Name, "node", node.Name)
+	// Only managed-node providers own their Kubernetes Node. Existing-node
+	// providers borrow a real cluster node, which must survive Machine deletion.
+	if r.ComputeAdapter.NodeAttachment() == adapters.NodeAttachmentManaged {
+		node, err := r.getNodeForMachine(ctx, machine)
+		if err != nil {
+			logger.Error(err, "listing nodes during finalizer (non-fatal)", "machine", machine.Name)
+		} else if node != nil {
+			if err := r.Delete(ctx, node); err != nil && !errors.IsNotFound(err) {
+				logger.Error(err, "deleting stale node during finalizer (non-fatal)", "machine", machine.Name)
+			} else {
+				logger.Info("stale k8s node deleted", "machine", machine.Name, "node", node.Name)
+			}
 		}
 	}
 
@@ -773,7 +811,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 	}
 
 	r.Recorder.Eventf(machine, corev1.EventTypeNormal, "MachineDeleted",
-		"Machine cleanup complete — GCE instance deleted, finalizer removed")
+		"Machine cleanup complete — compute instance deleted, finalizer removed")
 
 	return ctrl.Result{}, nil
 }
@@ -885,12 +923,12 @@ func (r *MachineReconciler) updateNodeInfo(ctx context.Context, machine *kyberv1
 		machine.Status.AvailableCapacity = &available
 	}
 
-	// Update IPs from instance status.
+	// Update IPs from the provider observation.
 	if machine.Status.InstanceId != "" {
-		instStatus, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 		if err == nil {
-			machine.Status.InternalIP = instStatus.InternalIP
-			machine.Status.ExternalIP = instStatus.ExternalIP
+			machine.Status.InternalIP = observation.InternalIP
+			machine.Status.ExternalIP = observation.ExternalIP
 		}
 	}
 
@@ -975,6 +1013,21 @@ func (r *MachineReconciler) getNodeForMachine(ctx context.Context, machine *kybe
 		return nil, fmt.Errorf("listing nodes for machine %s: %w", machine.Name, err)
 	}
 	if len(nodeList.Items) == 0 {
+		// The fake provider deliberately reuses one real local node while still
+		// traversing managed lifecycle operations. It never mutates Node labels,
+		// which keeps the production control-plane RBAC read-only for this path.
+		if machine.Spec.Provider == kyberv1.MachineProviderFake &&
+			r.ComputeAdapter.NodeAttachment() == adapters.NodeAttachmentExisting {
+			var nodes corev1.NodeList
+			if err := r.List(ctx, &nodes); err != nil {
+				return nil, fmt.Errorf("listing existing nodes for fake machine %s: %w", machine.Name, err)
+			}
+			for i := range nodes.Items {
+				if isNodeReady(&nodes.Items[i]) {
+					return &nodes.Items[i], nil
+				}
+			}
+		}
 		return nil, nil
 	}
 	// Return the first node (there should only be one per machine).
@@ -1057,13 +1110,13 @@ func (r *MachineReconciler) HandlePreemptionNotice(ctx context.Context, machineN
 // adapter uses them to pass k3s join parameters to the VM startup script.
 func (r *MachineReconciler) buildMachineSpec(machine *kyberv1.Machine) adapters.MachineSpec {
 	return adapters.MachineSpec{
-		Name:        machine.Name,
-		MachineType: machine.Spec.MachineType,
-		DiskSizeGb:  int(machine.Spec.DiskSizeGb),
-		Spot:        machine.Spec.Spot,
-		Zone:        machine.Spec.Zone,
-		JoinToken:   r.K3sJoinToken,
-		ServerURL:   r.K3sServerURL,
+		Name:          machine.Name,
+		Profile:       machine.Spec.MachineType,
+		DiskSizeGb:    int(machine.Spec.DiskSizeGb),
+		Interruptible: machine.Spec.Spot,
+		Location:      machine.Spec.Zone,
+		JoinToken:     r.K3sJoinToken,
+		ServerURL:     r.K3sServerURL,
 		Labels: map[string]string{
 			"kyber-machine": machine.Name,
 		},
@@ -1096,6 +1149,13 @@ func isNodeReady(node *corev1.Node) bool {
 		}
 	}
 	return false
+}
+
+func (r *MachineReconciler) isManagedNodeReady(node *corev1.Node) bool {
+	if r.AllowSimulatedNodes && node.Labels["kyber.io/simulated"] == "true" {
+		return true
+	}
+	return isNodeReady(node)
 }
 
 // selectMockNode resolves the node a provider=mock Machine attaches to.
@@ -1136,7 +1196,7 @@ func (r *MachineReconciler) selectMockNode(ctx context.Context, m *kyberv1.Machi
 	return nil, nil
 }
 
-// reconcileMock is the short-circuit path for provider=mock Machines.
+// reconcileStatic is the short-circuit path for static and compatibility mock Machines.
 // Standalone installs have exactly one k3s node (the control-plane host
 // itself); mock Machines attach to it directly and never invoke a cloud
 // adapter.
@@ -1164,7 +1224,7 @@ func (r *MachineReconciler) selectMockNode(ctx context.Context, m *kyberv1.Machi
 // chosen node's status.allocatable. Without this, the standalone
 // MachineDetail page renders all-zero capacity bars even when the node
 // has plenty.
-func (r *MachineReconciler) reconcileMock(ctx context.Context, m *kyberv1.Machine) (ctrl.Result, error) {
+func (r *MachineReconciler) reconcileStatic(ctx context.Context, m *kyberv1.Machine) (ctrl.Result, error) {
 	node, err := r.selectMockNode(ctx, m)
 	if err != nil {
 		return ctrl.Result{}, err

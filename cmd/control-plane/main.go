@@ -42,6 +42,7 @@ import (
 	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	machinecontroller "github.com/matty-v/kyber/pkg/controllers/machine"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
+	"github.com/matty-v/kyber/pkg/gceemulator"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/messagebuffer"
@@ -673,36 +674,48 @@ func main() {
 		}
 	}
 
-	// ComputeAdapter: use GCE if KYBER_COMPUTE_PROVIDER=gce and KYBER_GCE_PROJECT
-	// is set; otherwise fall back to the mock adapter for dev/k3d. The GCE
-	// adapter uses Application Default Credentials — on a GCE VM it auto-
-	// discovers the instance's service account via the metadata server, so no
-	// credential file or secret mount is required.
-	var computeAdapter adapters.ComputeAdapter
+	// Compute providers are constructed through the provider registry. An
+	// explicitly configured provider fails closed: substituting mock behavior
+	// for a broken real provider would make the process look healthy while
+	// silently changing Machine lifecycle semantics.
 	provider := os.Getenv("KYBER_COMPUTE_PROVIDER")
+	if provider == "" {
+		provider = "mock"
+	}
+	var computeSimulation adapters.SimulationController
+	gceEndpoint := os.Getenv("KYBER_GCE_ENDPOINT")
+	if os.Getenv("KYBER_GCE_EMULATOR") == "true" {
+		if provider != "gce" {
+			setupLog.Error(nil, "KYBER_GCE_EMULATOR requires compute provider gce", "provider", provider)
+			os.Exit(1)
+		}
+		emulator := gceemulator.New()
+		computeSimulation = emulator
+		gceEndpoint = "http://127.0.0.1:8083"
+		if err := mgr.Add(manager.RunnableFunc(func(ctx context.Context) error {
+			setupLog.Info("starting local GCE API emulator", "addr", ":8083")
+			return emulator.Start(ctx, ":8083")
+		})); err != nil {
+			setupLog.Error(err, "registering local GCE API emulator")
+			os.Exit(1)
+		}
+	}
 	gceProject := os.Getenv("KYBER_GCE_PROJECT")
 	gceNetwork := os.Getenv("KYBER_GCE_NETWORK")
 	gceSubnet := os.Getenv("KYBER_GCE_SUBNET")
-	if provider == "gce" && gceProject != "" {
-		gceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		gceAdapter, err := adapters.NewGCEAdapter(gceCtx, gceProject)
-		cancel()
-		if err != nil {
-			setupLog.Error(err, "creating GCEAdapter — falling back to MockComputeAdapter", "project", gceProject)
-			computeAdapter = adapters.NewMockComputeAdapter()
-		} else {
-			gceAdapter.Network = gceNetwork
-			gceAdapter.Subnet = gceSubnet
-			setupLog.Info("ComputeAdapter: using GCE",
-				"project", gceProject,
-				"network", gceNetwork,
-				"subnet", gceSubnet)
-			computeAdapter = gceAdapter
-		}
-	} else {
-		setupLog.Info("ComputeAdapter: using Mock (set KYBER_COMPUTE_PROVIDER=gce + KYBER_GCE_PROJECT for real VMs)")
-		computeAdapter = adapters.NewMockComputeAdapter()
+	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
+		adapters.GCEConfigProject:  gceProject,
+		adapters.GCEConfigNetwork:  gceNetwork,
+		adapters.GCEConfigSubnet:   gceSubnet,
+		adapters.GCEConfigEndpoint: gceEndpoint,
+	})
+	cancel()
+	if err != nil {
+		setupLog.Error(err, "creating compute provider", "provider", provider)
+		os.Exit(1)
 	}
+	setupLog.Info("compute provider initialized", "provider", computeAdapter.Type())
 
 	// Load the GCE VM type catalog from KYBER_GCE_VM_TYPE_CATALOG (a JSON array
 	// rendered by the Helm chart from compute.gce.vmTypeCatalog). Falls back to
@@ -1237,6 +1250,17 @@ func main() {
 			TokenRatesPath:               os.Getenv("KYBER_METRICS_TOKEN_RATES_PATH"),
 			PrometheusInsecureSkipVerify: os.Getenv("KYBER_METRICS_PROMETHEUS_INSECURE") == "true",
 		},
+	}
+	if os.Getenv("KYBER_DEV_COMPUTE_CONTROL") == "true" {
+		if computeSimulation == nil {
+			computeSimulation, _ = computeAdapter.(adapters.SimulationController)
+		}
+		if computeSimulation == nil {
+			setupLog.Error(nil, "KYBER_DEV_COMPUTE_CONTROL requires a simulated compute provider", "provider", provider)
+			os.Exit(1)
+		}
+		publicAPI.ComputeSimulation = computeSimulation
+		setupLog.Info("development compute scenario control enabled")
 	}
 	if publicAPI.APIKey == "" {
 		setupLog.Info("warning: KYBER_API_KEY not set — public API will reject all requests")
