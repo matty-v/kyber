@@ -19,8 +19,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/adapters"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/telemetry"
 )
 
@@ -153,9 +153,10 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return r.handleDeletion(ctx, machine)
 	}
 
-	// 2a. Short-circuit for mock provider: standalone single-box path.
-	if machine.Spec.Provider == kyberv1.MachineProviderMock {
-		return r.reconcileMock(ctx, machine)
+	// 2a. Short-circuit for existing-node providers: standalone/static path.
+	if machine.Spec.Provider == kyberv1.MachineProviderMock ||
+		machine.Spec.Provider == kyberv1.MachineProviderStatic {
+		return r.reconcileStatic(ctx, machine)
 	}
 
 	// 3. Ensure finalizer is registered.
@@ -356,18 +357,17 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 		return "", requeueProvisioning, nil
 	}
 
-	// Query the instance status.
-	status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+	// Query the provider-neutral instance observation.
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		// Instance not found or transient error — requeue.
 		return "", requeueProvisioning, nil
 	}
 
-	if status.Status != adapters.InstanceStatusRunning {
+	if observation.State != adapters.InstanceStateRunning {
 		// Still starting up.
 		return EventInstanceRunningNodeNotReady, requeueProvisioning, nil
 	}
-
 	// Instance is running — check if the k8s node is Ready.
 	node, err := r.getNodeForMachine(ctx, machine)
 	if err != nil {
@@ -453,8 +453,8 @@ func (r *MachineReconciler) classifyStopping(ctx context.Context, machine *kyber
 
 	// No agents remain — check if VM is stopped.
 	if machine.Status.InstanceId != "" {
-		status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
-		if err == nil && status.Status == adapters.InstanceStatusStopped {
+		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+		if err == nil && observation.State == adapters.InstanceStateStopped {
 			return EventAllAgentsStoppedVMStopped, 0, nil
 		}
 	}
@@ -474,16 +474,16 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	}
 
 	// Check if the new instance is running and the node is Ready.
-	status, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		return "", requeueReplacing, nil
 	}
 	// If the replacement instance was itself terminated (double preemption),
 	// fire ReplacementFailed so the state machine can retry with budget.
-	if status.Status == adapters.InstanceStatusTerminated {
+	if observation.Interruption == adapters.InterruptionPreempted {
 		return EventReplacementFailed, 0, nil
 	}
-	if status.Status != adapters.InstanceStatusRunning {
+	if observation.State != adapters.InstanceStateRunning {
 		return "", requeueReplacing, nil
 	}
 
@@ -498,20 +498,20 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	return EventReplacementSucceeded, 0, nil
 }
 
-// classifyNodeDisappeared checks GCE to determine if a missing node is due to
-// preemption or an unexpected failure.
+// classifyNodeDisappeared checks the provider observation to determine if a
+// missing node is due to interruption or an unexpected failure.
 func (r *MachineReconciler) classifyNodeDisappeared(ctx context.Context, machine *kyberv1.Machine) (Event, time.Duration, error) {
 	if machine.Status.InstanceId == "" {
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	preempted, err := r.ComputeAdapter.IsPreempted(ctx, machine.Status.InstanceId)
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 	if err != nil {
 		// Can't determine — treat as failed.
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	if preempted && machine.Spec.Spot {
+	if observation.Interruption == adapters.InterruptionPreempted && machine.Spec.Spot {
 		return EventNodeDisappearedPreempted, 0, nil
 	}
 	return EventNodeDisappearedFailed, 0, nil
@@ -885,12 +885,12 @@ func (r *MachineReconciler) updateNodeInfo(ctx context.Context, machine *kyberv1
 		machine.Status.AvailableCapacity = &available
 	}
 
-	// Update IPs from instance status.
+	// Update IPs from the provider observation.
 	if machine.Status.InstanceId != "" {
-		instStatus, err := r.ComputeAdapter.GetInstanceStatus(ctx, machine.Status.InstanceId)
+		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 		if err == nil {
-			machine.Status.InternalIP = instStatus.InternalIP
-			machine.Status.ExternalIP = instStatus.ExternalIP
+			machine.Status.InternalIP = observation.InternalIP
+			machine.Status.ExternalIP = observation.ExternalIP
 		}
 	}
 
@@ -975,6 +975,21 @@ func (r *MachineReconciler) getNodeForMachine(ctx context.Context, machine *kybe
 		return nil, fmt.Errorf("listing nodes for machine %s: %w", machine.Name, err)
 	}
 	if len(nodeList.Items) == 0 {
+		// The fake provider deliberately reuses one real local node while still
+		// traversing managed lifecycle operations. It never mutates Node labels,
+		// which keeps the production control-plane RBAC read-only for this path.
+		if machine.Spec.Provider == kyberv1.MachineProviderFake &&
+			r.ComputeAdapter.NodeAttachment() == adapters.NodeAttachmentExisting {
+			var nodes corev1.NodeList
+			if err := r.List(ctx, &nodes); err != nil {
+				return nil, fmt.Errorf("listing existing nodes for fake machine %s: %w", machine.Name, err)
+			}
+			for i := range nodes.Items {
+				if isNodeReady(&nodes.Items[i]) {
+					return &nodes.Items[i], nil
+				}
+			}
+		}
 		return nil, nil
 	}
 	// Return the first node (there should only be one per machine).
@@ -1136,7 +1151,7 @@ func (r *MachineReconciler) selectMockNode(ctx context.Context, m *kyberv1.Machi
 	return nil, nil
 }
 
-// reconcileMock is the short-circuit path for provider=mock Machines.
+// reconcileStatic is the short-circuit path for static and compatibility mock Machines.
 // Standalone installs have exactly one k3s node (the control-plane host
 // itself); mock Machines attach to it directly and never invoke a cloud
 // adapter.
@@ -1164,7 +1179,7 @@ func (r *MachineReconciler) selectMockNode(ctx context.Context, m *kyberv1.Machi
 // chosen node's status.allocatable. Without this, the standalone
 // MachineDetail page renders all-zero capacity bars even when the node
 // has plenty.
-func (r *MachineReconciler) reconcileMock(ctx context.Context, m *kyberv1.Machine) (ctrl.Result, error) {
+func (r *MachineReconciler) reconcileStatic(ctx context.Context, m *kyberv1.Machine) (ctrl.Result, error) {
 	node, err := r.selectMockNode(ctx, m)
 	if err != nil {
 		return ctrl.Result{}, err

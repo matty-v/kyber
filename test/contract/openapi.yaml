@@ -629,33 +629,33 @@ components:
       properties:
         provider:
           type: string
-          enum: [gce, mock]
+          enum: [gce, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'
         machineType:
           type: string
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: n2-standard-4
         diskSizeGb:
           type: integer
           format: int32
           minimum: 10
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: 100
         spot:
           type: boolean
-          description: GCE-only. Ignored when provider=mock.
+          description: Managed-provider input. Absent for static/mock.
           example: false
         zone:
           type: string
-          description: GCE-only. Required when provider=gce; absent when provider=mock.
+          description: Managed-provider input. Required for gce/fake; absent for static/mock.
           example: us-central1-a
 
     MachineCapacity:
       type: object
       required: [cpu, memory]
-      description: Declared resource budget. Stamped from machineType on gce; user-supplied on mock.
+      description: Declared resource budget. Stamped from machineType on managed providers; user-supplied or detected on static/mock.
       properties:
         cpu:
           type: string
@@ -729,8 +729,8 @@ components:
       required: [name, provider]
       description: |-
         Provider-conditional request.
-        - provider=gce: machineType, diskSizeGb, zone are required; capacity is rejected (derived server-side).
-        - provider=mock: capacity is required; machineType, diskSizeGb, spot, zone are rejected.
+        - provider=gce/fake: machineType, diskSizeGb, zone are required; capacity is rejected (derived server-side).
+        - provider=static/mock: capacity may be detected; machineType, diskSizeGb, spot, zone are rejected.
       properties:
         name:
           type: string
@@ -738,7 +738,7 @@ components:
           example: worker-1
         provider:
           type: string
-          enum: [gce, mock]
+          enum: [gce, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'

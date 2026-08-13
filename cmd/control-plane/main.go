@@ -673,36 +673,29 @@ func main() {
 		}
 	}
 
-	// ComputeAdapter: use GCE if KYBER_COMPUTE_PROVIDER=gce and KYBER_GCE_PROJECT
-	// is set; otherwise fall back to the mock adapter for dev/k3d. The GCE
-	// adapter uses Application Default Credentials — on a GCE VM it auto-
-	// discovers the instance's service account via the metadata server, so no
-	// credential file or secret mount is required.
-	var computeAdapter adapters.ComputeAdapter
+	// Compute providers are constructed through the provider registry. An
+	// explicitly configured provider fails closed: substituting mock behavior
+	// for a broken real provider would make the process look healthy while
+	// silently changing Machine lifecycle semantics.
 	provider := os.Getenv("KYBER_COMPUTE_PROVIDER")
+	if provider == "" {
+		provider = "mock"
+	}
 	gceProject := os.Getenv("KYBER_GCE_PROJECT")
 	gceNetwork := os.Getenv("KYBER_GCE_NETWORK")
 	gceSubnet := os.Getenv("KYBER_GCE_SUBNET")
-	if provider == "gce" && gceProject != "" {
-		gceCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-		gceAdapter, err := adapters.NewGCEAdapter(gceCtx, gceProject)
-		cancel()
-		if err != nil {
-			setupLog.Error(err, "creating GCEAdapter — falling back to MockComputeAdapter", "project", gceProject)
-			computeAdapter = adapters.NewMockComputeAdapter()
-		} else {
-			gceAdapter.Network = gceNetwork
-			gceAdapter.Subnet = gceSubnet
-			setupLog.Info("ComputeAdapter: using GCE",
-				"project", gceProject,
-				"network", gceNetwork,
-				"subnet", gceSubnet)
-			computeAdapter = gceAdapter
-		}
-	} else {
-		setupLog.Info("ComputeAdapter: using Mock (set KYBER_COMPUTE_PROVIDER=gce + KYBER_GCE_PROJECT for real VMs)")
-		computeAdapter = adapters.NewMockComputeAdapter()
+	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
+		adapters.GCEConfigProject: gceProject,
+		adapters.GCEConfigNetwork: gceNetwork,
+		adapters.GCEConfigSubnet:  gceSubnet,
+	})
+	cancel()
+	if err != nil {
+		setupLog.Error(err, "creating compute provider", "provider", provider)
+		os.Exit(1)
 	}
+	setupLog.Info("compute provider initialized", "provider", computeAdapter.Type())
 
 	// Load the GCE VM type catalog from KYBER_GCE_VM_TYPE_CATALOG (a JSON array
 	// rendered by the Helm chart from compute.gce.vmTypeCatalog). Falls back to

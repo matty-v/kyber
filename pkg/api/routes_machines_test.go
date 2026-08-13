@@ -491,6 +491,70 @@ func TestCreateMachine_GCE_StampsCapacity(t *testing.T) {
 	}
 }
 
+func TestCreateMachine_NewProviderKinds(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider string
+		body     map[string]interface{}
+	}{
+		{
+			name:     "fake uses managed inputs",
+			provider: "fake",
+			body: map[string]interface{}{
+				"name": "fake-worker", "provider": "fake", "machineType": "e2-small",
+				"diskSizeGb": 20, "spot": true, "zone": "local-a",
+			},
+		},
+		{
+			name:     "static uses declared capacity",
+			provider: "static",
+			body: map[string]interface{}{
+				"name": "static-worker", "provider": "static",
+				"capacity": map[string]interface{}{"cpu": "4", "memory": "8Gi"},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
+			s := &api.Server{
+				K8sClient:       fakeClient,
+				MessageBuffer:   messagebuffer.NewMemoryBuffer(),
+				APIKey:          testAPIKey,
+				Namespace:       "kyber-system",
+				ComputeProvider: tc.provider,
+			}
+			req := authedRequest(t, http.MethodPost, "/api/v1/machines", tc.body)
+			rr := httptest.NewRecorder()
+			s.BuildHandler().ServeHTTP(rr, req)
+			if rr.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201: %s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestCreateMachineRejectsProviderMismatchedToInstall(t *testing.T) {
+	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
+	s := &api.Server{
+		K8sClient:       fakeClient,
+		MessageBuffer:   messagebuffer.NewMemoryBuffer(),
+		APIKey:          testAPIKey,
+		Namespace:       "kyber-system",
+		ComputeProvider: "fake",
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "wrong-provider", "provider": "gce", "machineType": "e2-small",
+		"diskSizeGb": 20, "zone": "local-a",
+	})
+	rr := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
+	}
+}
+
 // TestCreateMachine_Mock_RejectsGCEFields verifies that POST /api/v1/machines with
 // provider=mock and GCE-only fields (e.g. machineType) returns 400.
 func TestCreateMachine_Mock_RejectsGCEFields(t *testing.T) {
@@ -649,7 +713,7 @@ func TestMachineToResponse_EmitsNewCapacityFields(t *testing.T) {
 			Capacity: kyberv1.MachineCapacity{CPU: apiresource.MustParse("4"), Memory: apiresource.MustParse("8Gi")},
 		},
 		Status: kyberv1.MachineStatus{
-			Phase: kyberv1.MachinePhaseRunning,
+			Phase:              kyberv1.MachinePhaseRunning,
 			ObservedCapacity:   &kyberv1.MachineCapacity{CPU: apiresource.MustParse("4"), Memory: apiresource.MustParse("8Gi")},
 			AssignableCapacity: &kyberv1.MachineCapacity{CPU: apiresource.MustParse("3"), Memory: apiresource.MustParse("7Gi")},
 			AvailableCapacity:  &kyberv1.MachineCapacity{CPU: apiresource.MustParse("2"), Memory: apiresource.MustParse("5Gi")},

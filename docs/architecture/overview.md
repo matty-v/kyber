@@ -89,7 +89,7 @@ flowchart TB
 
     subgraph ctrl["Controllers — pkg/controllers"]
         agentc["agent/<br/>(state machine, pod builder,<br/>status sidecar, identity repo)"]
-        machinec["machine/<br/>(GCE + k8s reconciliation)"]
+        machinec["machine/<br/>(provider + k8s reconciliation)"]
     end
 
     subgraph inb["Inbound primitives — pkg/inbound"]
@@ -107,7 +107,7 @@ flowchart TB
     end
 
     subgraph adapt["Adapters — pkg/adapters"]
-        gce["GCE"]
+        gce["compute providers<br/>(GCE / static / fake)"]
         sm["Secret Manager"]
     end
 

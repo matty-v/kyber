@@ -11,6 +11,11 @@ import (
 // ComputeAdapter abstracts cloud VM operations.
 // V1 implements GCE. Future: AWS EC2, Azure VMs.
 type ComputeAdapter interface {
+	// Type returns the provider identifier implemented by this adapter.
+	Type() string
+	// NodeAttachment reports whether provider-created instances register their
+	// own Kubernetes nodes or use a Ready node supplied by the local cluster.
+	NodeAttachment() NodeAttachmentMode
 	// CreateInstance provisions a new VM with the given spec. Returns the provider-assigned instance ID.
 	CreateInstance(ctx context.Context, spec MachineSpec) (instanceID string, err error)
 	// StartInstance starts a stopped instance.
@@ -19,19 +24,44 @@ type ComputeAdapter interface {
 	StopInstance(ctx context.Context, instanceID string) error
 	// DeleteInstance permanently deletes an instance.
 	DeleteInstance(ctx context.Context, instanceID string) error
-	// GetInstanceStatus returns the current status of an instance.
-	GetInstanceStatus(ctx context.Context, instanceID string) (InstanceStatus, error)
-	// IsPreempted returns true if the instance was preempted by the cloud provider
-	// (i.e., it is a spot/preemptible instance that was forcibly terminated).
-	IsPreempted(ctx context.Context, instanceID string) (bool, error)
+	// Observe returns the provider-neutral observed state of an instance.
+	// Provider-native state strings must be translated at the adapter boundary.
+	Observe(ctx context.Context, instanceID string) (InstanceObservation, error)
 }
 
-// InstanceStatus holds the observed state of a cloud VM instance.
-type InstanceStatus struct {
-	// Status is the cloud provider status string (e.g., RUNNING, STOPPED, TERMINATED, STAGING).
-	Status string
-	// Zone is the zone where the instance is located.
-	Zone string
+type NodeAttachmentMode string
+
+const (
+	NodeAttachmentManaged  NodeAttachmentMode = "Managed"
+	NodeAttachmentExisting NodeAttachmentMode = "Existing"
+)
+
+// InstanceState is Kyber's provider-neutral view of a cloud VM lifecycle.
+type InstanceState string
+
+const (
+	InstanceStatePending InstanceState = "Pending"
+	InstanceStateRunning InstanceState = "Running"
+	InstanceStateStopped InstanceState = "Stopped"
+	InstanceStateFailed  InstanceState = "Failed"
+	InstanceStateUnknown InstanceState = "Unknown"
+)
+
+// InterruptionState records whether a provider initiated the instance stop.
+type InterruptionState string
+
+const (
+	InterruptionNone      InterruptionState = "None"
+	InterruptionPreempted InterruptionState = "Preempted"
+)
+
+// InstanceObservation holds the provider-neutral observed state of a VM.
+type InstanceObservation struct {
+	State        InstanceState
+	Interruption InterruptionState
+	// Location is the provider location containing the instance (for example,
+	// a GCE zone). Controllers treat it as an opaque display value.
+	Location string
 	// ExternalIP is the external IP address of the instance, if assigned.
 	ExternalIP string
 	// InternalIP is the internal IP address of the instance within the VPC.
@@ -39,15 +69,6 @@ type InstanceStatus struct {
 	// CreatedAt is the time the instance was created.
 	CreatedAt time.Time
 }
-
-// GCE instance status strings.
-const (
-	InstanceStatusRunning    = "RUNNING"
-	InstanceStatusStopped    = "STOPPED"
-	InstanceStatusTerminated = "TERMINATED"
-	InstanceStatusStaging    = "STAGING"
-	InstanceStatusProvisioning = "PROVISIONING"
-)
 
 // MachineLabelKey is the k8s node label applied by the VM startup script to identify
 // which Machine CRD corresponds to a given k8s node. Must match the value in the

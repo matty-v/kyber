@@ -1,15 +1,17 @@
 #!/usr/bin/env bash
-# scripts/devenv/up.sh — one-command bring-up of a local, mock-backed Kyber
+# scripts/devenv/up.sh — one-command bring-up of a local cloud-free Kyber
 # instance for agents to run and observe (kyber#399, Phase 1).
 #
 # Wraps the orchestration test/e2e/setup_test.go already performs, reusing the
 # mock-env Helm profile test/e2e/values-test.yaml (by reference — not forked)
-# and the chart's default compute.provider=mock (MockComputeAdapter). No real
+# and defaults to the compatibility existing-node provider. Pass
+# --compute-provider fake to exercise managed lifecycle reconciliation. No real
 # cloud, auth, or prod-network access is required or used.
 #
 # Usage:
 #   scripts/devenv/up.sh [--skip-build] [--recreate] [--api-port N]
-#                        [--cluster-name NAME] [-h|--help]
+#                        [--cluster-name NAME] [--compute-provider mock|static|fake]
+#                        [-h|--help]
 #
 # Flags:
 #   --skip-build        reuse an already-built/imported control-plane image
@@ -17,6 +19,8 @@
 #   --recreate          delete an existing devenv cluster first, then build fresh.
 #   --api-port N        local port to port-forward the API to (default 18080).
 #   --cluster-name NAME k3d cluster name (default kyber-devenv).
+#   --compute-provider  mock/static attach directly to the k3d node; fake
+#                       traverses the managed Machine lifecycle first.
 #
 # Exit codes: 0 ok | 2 usage error | 3 missing dependency.
 set -uo pipefail
@@ -38,6 +42,7 @@ while [ "$#" -gt 0 ]; do
         --recreate)     RECREATE=1 ;;
         --api-port)     shift; [ "$#" -gt 0 ] || die "--api-port needs a value" 2; API_PORT="$1" ;;
         --cluster-name) shift; [ "$#" -gt 0 ] || die "--cluster-name needs a value" 2; CLUSTER_NAME="$1" ;;
+        --compute-provider) shift; [ "$#" -gt 0 ] || die "--compute-provider needs a value" 2; COMPUTE_PROVIDER="$1" ;;
         -h|--help)      usage; exit 0 ;;
         *)              warn "unknown argument: $1"; usage; exit 2 ;;
     esac
@@ -45,6 +50,10 @@ while [ "$#" -gt 0 ]; do
 done
 
 [[ "${API_PORT}" =~ ^[0-9]+$ ]] || die "--api-port must be numeric, got: ${API_PORT}" 2
+case "${COMPUTE_PROVIDER}" in
+    mock|static|fake) ;;
+    *) die "--compute-provider must be mock, static, or fake; got: ${COMPUTE_PROVIDER}" 2 ;;
+esac
 
 preflight_deps "${SKIP_BUILD}"
 cd "${REPO_ROOT}" || die "cannot cd to repo root ${REPO_ROOT}"
@@ -76,15 +85,28 @@ else
 fi
 
 # --- Install Kyber via Helm with the mock profile (idempotent upgrade) -----
-log "installing Kyber via Helm (mock profile: ${VALUES_FILE})"
+log "installing Kyber via Helm (${COMPUTE_PROVIDER} provider; profile: ${VALUES_FILE})"
 helm upgrade --install "${HELM_RELEASE}" "${HELM_CHART}" \
     -f "${VALUES_FILE}" \
     --namespace "${NAMESPACE}" \
     --create-namespace \
     --set namespace.create=false \
+    --set "compute.provider=${COMPUTE_PROVIDER}" \
     --wait \
     --timeout 3m \
     || die "helm upgrade --install failed"
+
+# The local image deliberately keeps the stable :local spec string. On an
+# idempotent re-run Helm therefore sees no Deployment diff even though k3d has
+# imported new image bytes. Restart after a fresh build/import so the warm
+# cluster actually executes the current working tree.
+if [ -z "${SKIP_BUILD}" ]; then
+    log "restarting control plane to load the freshly imported local image"
+    kubectl rollout restart -n "${NAMESPACE}" deployment/kyber-control-plane \
+        || die "control-plane rollout restart failed"
+    kubectl rollout status -n "${NAMESPACE}" deployment/kyber-control-plane --timeout=2m \
+        || die "control-plane rollout did not become ready"
+fi
 
 # --- Port-forward the API in the background --------------------------------
 log "starting API port-forward localhost:${API_PORT} -> ${SERVICE}:${SERVICE_PORT}"

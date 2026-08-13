@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.22.0 — 2026-08-13
+
+### Added
+- Machine provider types and creation forms now support the explicit `static`
+  existing-node provider and the local `fake` managed-provider simulator.
+  The legacy `mock` provider remains accepted as a compatibility alias for
+  `static`.
+
 ## 0.21.2 — 2026-08-12
 
 ### Fixed

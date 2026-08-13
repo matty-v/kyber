@@ -640,8 +640,10 @@ metrics:
 
 # Compute adapter — selects which cloud the Machine Controller provisions VMs on.
 #
-#   provider: "mock" — default, creates fake instances in memory (dev/test)
-#   provider: "gce"  — uses Google Compute Engine via Application Default Credentials
+#   provider: "mock"   — deprecated compatibility alias for static
+#   provider: "static" — attach to an existing Kubernetes node
+#   provider: "fake"   — deterministic managed-provider simulator (dev/test)
+#   provider: "gce"    — Google Compute Engine via Application Default Credentials
 #
 # GCE requires the VM or pod to have a service account with compute.instanceAdmin.v1
 # or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the

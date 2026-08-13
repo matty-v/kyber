@@ -12,10 +12,10 @@ export type MockFormState = {
   name: string
 }
 
-export function buildGceRequest(form: GceFormState): CreateMachineRequest {
+export function buildGceRequest(form: GceFormState, provider: 'gce' | 'fake' = 'gce'): CreateMachineRequest {
   return {
     name: form.name,
-    provider: 'gce',
+    provider,
     machineType: form.machineType,
     diskSizeGb: parseInt(form.diskSizeGb, 10),
     spot: form.spot,
@@ -28,10 +28,10 @@ export function buildGceRequest(form: GceFormState): CreateMachineRequest {
 // (minus the controlPlane.platformReservation carve-out). The operator
 // no longer picks CPU/Memory/Disk numbers; the laptop's actual hardware
 // dictates what's available.
-export function buildMockRequest(form: MockFormState): CreateMachineRequest {
+export function buildMockRequest(form: MockFormState, provider: 'static' | 'mock' = 'mock'): CreateMachineRequest {
   return {
     name: form.name,
-    provider: 'mock',
+    provider,
   }
 }
 

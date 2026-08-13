@@ -48,52 +48,58 @@ const (
 )
 
 // MachineProvider identifies the cloud provider for this machine.
-// +kubebuilder:validation:Enum=gce;mock
+// +kubebuilder:validation:Enum=gce;static;fake;mock
 type MachineProvider string
 
 const (
 	// MachineProviderGCE is Google Compute Engine.
 	MachineProviderGCE MachineProvider = "gce"
+	// MachineProviderStatic attaches to a Kubernetes node provisioned outside
+	// Kyber and does not manage an external VM lifecycle.
+	MachineProviderStatic MachineProvider = "static"
+	// MachineProviderFake runs the managed Machine lifecycle against the local,
+	// deterministic fake compute provider.
+	MachineProviderFake MachineProvider = "fake"
 	// MachineProviderMock represents the in-process / in-cluster mock adapter.
-	// Used for standalone single-box installs — no real VMs are provisioned;
-	// the Machine attaches to the existing k3s control-plane node directly.
+	// Deprecated compatibility alias for MachineProviderStatic.
 	MachineProviderMock MachineProvider = "mock"
 )
 
 // MachineSpec defines the desired state of a Machine.
 type MachineSpec struct {
-	// Provider is the cloud provider for this machine. One of "gce" (cloud
-	// VMs) or "mock" (standalone — attach to the existing k3s node).
+	// Provider is the compute provider for this machine. "gce" provisions real
+	// cloud VMs; "fake" simulates that lifecycle locally; "static" attaches to
+	// an existing Kubernetes node; "mock" is a deprecated alias for "static".
 	Provider MachineProvider `json:"provider"`
 
 	// Capacity is the declared resource budget for this Machine. Optional at
 	// the CRD schema level for backward-compat; required at the REST API
-	// admission layer. Populated from Spec.MachineType on gce; user-supplied
-	// on mock.
+	// admission layer. Populated from Spec.MachineType for gce/fake; user-supplied
+	// for static/mock.
 	// +optional
 	Capacity MachineCapacity `json:"capacity,omitempty"`
 
-	// MachineType is the cloud provider machine type (e.g., "n2-standard-4" for GCE).
-	// Maps to the vCPU and memory configuration for the VM. Required when
-	// provider=gce; absent when provider=mock.
+	// MachineType is the provider machine type (e.g., "n2-standard-4" for GCE).
+	// Maps to the vCPU and memory configuration for the VM. Required for
+	// gce/fake and absent for static/mock.
 	// +optional
 	MachineType string `json:"machineType,omitempty"`
 
-	// DiskSizeGb is the boot disk size in gigabytes. Required when provider=gce;
-	// absent when provider=mock.
+	// DiskSizeGb is the boot disk size in gigabytes. Required for gce/fake;
+	// absent for static/mock.
 	// +optional
 	// +kubebuilder:validation:Minimum=10
 	DiskSizeGb int32 `json:"diskSizeGb,omitempty"`
 
 	// Spot indicates whether the VM should use spot (preemptible) pricing.
 	// Spot VMs are significantly cheaper but may be preempted at any time.
-	// Ignored when provider=mock.
+	// Rejected for static/mock.
 	// +optional
 	Spot bool `json:"spot,omitempty"`
 
-	// Zone is the cloud provider zone where the VM is created (e.g., "us-central1-a").
-	// Zone-local PVs require replacement VMs to use the same zone. Required when
-	// provider=gce; absent when provider=mock.
+	// Zone is the provider location where the VM is created (e.g., "us-central1-a").
+	// Zone-local PVs require replacement VMs to use the same zone. Required for
+	// gce/fake and absent for static/mock.
 	// +optional
 	Zone string `json:"zone,omitempty"`
 

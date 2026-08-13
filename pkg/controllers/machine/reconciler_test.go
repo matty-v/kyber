@@ -25,8 +25,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/adapters"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // envtestBinPath resolves the envtest binary path from the KUBEBUILDER_ASSETS env var
@@ -249,6 +249,81 @@ func TestReconciler_ProvisioningToReady(t *testing.T) {
 	updated = getMachine(t, k8sClient, req.NamespacedName)
 	if updated.Status.Phase != kyberv1.MachinePhaseReady {
 		t.Errorf("phase: got %q, want %q", updated.Status.Phase, kyberv1.MachinePhaseReady)
+	}
+}
+
+func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	scheme := buildTestScheme()
+	adapter := adapters.NewFakeComputeAdapter()
+	r := &MachineReconciler{
+		Client:         k8sClient,
+		Scheme:         scheme,
+		Recorder:       record.NewFakeRecorder(100),
+		ComputeAdapter: adapter,
+		AgentCountFn: func(_ context.Context, _ *kyberv1.Machine) (int, error) {
+			return 0, nil
+		},
+	}
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-fake-provider"}}
+	if err := k8sClient.Create(context.Background(), ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	createReadyNode(t, k8sClient, "unassigned")
+
+	machine := newTestMachine("fake-machine", ns.Name)
+	machine.Spec.Provider = kyberv1.MachineProviderFake
+	if err := k8sClient.Create(context.Background(), machine); err != nil {
+		t.Fatalf("creating machine: %v", err)
+	}
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: machine.Name, Namespace: ns.Name}}
+
+	reconcileN(t, r, req, 1)
+	got := getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseProvisioning {
+		t.Fatalf("create phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseProvisioning)
+	}
+	if adapter.InstanceCount() != 1 {
+		t.Fatalf("instance count = %d, want 1", adapter.InstanceCount())
+	}
+
+	reconcileN(t, r, req, 1)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseReady {
+		t.Fatalf("ready phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseReady)
+	}
+
+	patch := client.MergeFrom(got.DeepCopy())
+	got.Spec.DesiredPhase = kyberv1.MachinePhaseStopped
+	if err := k8sClient.Patch(context.Background(), got, patch); err != nil {
+		t.Fatalf("requesting stop: %v", err)
+	}
+	reconcileN(t, r, req, 2)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseStopped {
+		t.Fatalf("stopped phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseStopped)
+	}
+
+	patch = client.MergeFrom(got.DeepCopy())
+	got.Spec.DesiredPhase = kyberv1.MachinePhaseRunning
+	if err := k8sClient.Patch(context.Background(), got, patch); err != nil {
+		t.Fatalf("requesting start: %v", err)
+	}
+	reconcileN(t, r, req, 2)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseReady {
+		t.Fatalf("restarted phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseReady)
+	}
+
+	if err := k8sClient.Delete(context.Background(), got); err != nil {
+		t.Fatalf("deleting machine: %v", err)
+	}
+	reconcileN(t, r, req, 1)
+	if adapter.InstanceCount() != 0 {
+		t.Errorf("instance count after delete = %d, want 0", adapter.InstanceCount())
 	}
 }
 
@@ -803,11 +878,11 @@ func TestHandlePreemptionNotice_AnnotatesAgents(t *testing.T) {
 	runningAgent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-running", Namespace: ns},
 		Spec: kyberv1.AgentSpec{
-			Machine:  "preempted-machine",
-			Runtime:  "claude-code",
-			Model:    "claude-sonnet-4",
-			Scaling:  kyberv1.AgentScalingWarm,
-			Secrets:  kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
+			Machine:   "preempted-machine",
+			Runtime:   "claude-code",
+			Model:     "claude-sonnet-4",
+			Scaling:   kyberv1.AgentScalingWarm,
+			Secrets:   kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			Resources: kyberv1.AgentResources{},
 		},
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning},
@@ -817,11 +892,11 @@ func TestHandlePreemptionNotice_AnnotatesAgents(t *testing.T) {
 	startingAgent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-starting", Namespace: ns},
 		Spec: kyberv1.AgentSpec{
-			Machine:  "preempted-machine",
-			Runtime:  "claude-code",
-			Model:    "claude-sonnet-4",
-			Scaling:  kyberv1.AgentScalingWarm,
-			Secrets:  kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
+			Machine:   "preempted-machine",
+			Runtime:   "claude-code",
+			Model:     "claude-sonnet-4",
+			Scaling:   kyberv1.AgentScalingWarm,
+			Secrets:   kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			Resources: kyberv1.AgentResources{},
 		},
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseStarting},
@@ -831,11 +906,11 @@ func TestHandlePreemptionNotice_AnnotatesAgents(t *testing.T) {
 	stoppedAgent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-stopped", Namespace: ns},
 		Spec: kyberv1.AgentSpec{
-			Machine:  "preempted-machine",
-			Runtime:  "claude-code",
-			Model:    "claude-sonnet-4",
-			Scaling:  kyberv1.AgentScalingWarm,
-			Secrets:  kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
+			Machine:   "preempted-machine",
+			Runtime:   "claude-code",
+			Model:     "claude-sonnet-4",
+			Scaling:   kyberv1.AgentScalingWarm,
+			Secrets:   kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			Resources: kyberv1.AgentResources{},
 		},
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseStopped},
@@ -845,11 +920,11 @@ func TestHandlePreemptionNotice_AnnotatesAgents(t *testing.T) {
 	otherMachineAgent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-other-machine", Namespace: ns},
 		Spec: kyberv1.AgentSpec{
-			Machine:  "other-machine",
-			Runtime:  "claude-code",
-			Model:    "claude-sonnet-4",
-			Scaling:  kyberv1.AgentScalingWarm,
-			Secrets:  kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
+			Machine:   "other-machine",
+			Runtime:   "claude-code",
+			Model:     "claude-sonnet-4",
+			Scaling:   kyberv1.AgentScalingWarm,
+			Secrets:   kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			Resources: kyberv1.AgentResources{},
 		},
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning},

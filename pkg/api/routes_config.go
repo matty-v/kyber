@@ -38,10 +38,10 @@ type ConfigIdentity struct {
 }
 
 // ConfigCompute reports which ComputeAdapter the control plane is configured
-// to use. Values: "gce", "mock". Empty string if the server was started
+// to use. Values: "gce", "static", "fake", "mock". Empty string if the server was started
 // without KYBER_COMPUTE_PROVIDER (dev/test scenarios).
 type ConfigCompute struct {
-	// Provider is the ComputeAdapter type ("gce", "mock", or "").
+	// Provider is the configured ComputeAdapter type.
 	Provider string `json:"provider"`
 	// GCEVMTypes is the catalog of GCE machine types the control plane will
 	// accept on POST /api/v1/machines, sourced from compute.gce.vmTypeCatalog
@@ -49,7 +49,7 @@ type ConfigCompute struct {
 	// machine-type picker stays in sync with the server-side validator —
 	// without this, operators get "unknown VM type" 400s on types the picker
 	// shows. Sorted alphabetically by type for stable rendering.
-	// Omitted when Provider != "gce".
+	// Omitted when the provider does not use managed-instance inputs.
 	GCEVMTypes []ConfigVMType `json:"gceVMTypes,omitempty"`
 }
 
@@ -88,7 +88,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Identity:  ConfigIdentity{RepoOwner: s.IdentityRepoOwner},
 		PublicURL: s.PublicURL,
 	}
-	if s.ComputeProvider == "gce" {
+	if s.ComputeProvider == "gce" || s.ComputeProvider == "fake" {
 		resp.Compute.GCEVMTypes = activeGCEVMTypes(s.GCEVMTypeCatalog)
 	}
 	writeJSON(w, http.StatusOK, resp)

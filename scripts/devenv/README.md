@@ -28,6 +28,21 @@ scripts/devenv/up.sh
 scripts/devenv/down.sh
 ```
 
+To exercise the managed Machine state machine without cloud credentials, use
+the deterministic fake provider:
+
+```bash
+scripts/devenv/up.sh --compute-provider fake
+scripts/devenv/smoke-fake-provider.sh   # Ready → Stopped → Ready → deleted
+scripts/devenv/down.sh
+```
+
+The default `mock` value is retained for compatibility and has the same
+existing-node behavior as the explicitly named `static` provider. `fake`
+creates an opaque in-memory instance, runs the normal provisioning/finalizer
+path, and attaches the single local Machine to the real k3d node so workloads
+remain schedulable.
+
 `up.sh` prints the contract when the API is healthy. Re-running `up.sh` is
 idempotent — it reuses an existing cluster and re-converges via `helm upgrade`.
 
@@ -61,6 +76,7 @@ threat-modeled infra concern that `up-full.sh` does not touch.
 | `--recreate` | Delete an existing devenv cluster first, then build fresh. |
 | `--api-port N` | Local port to forward the API to (default `18080`). |
 | `--cluster-name NAME` | k3d cluster name (default `kyber-devenv`). |
+| `--compute-provider mock\|static\|fake` | Select existing-node compatibility behavior or the managed lifecycle simulator. |
 
 `down.sh` takes `--cluster-name` and is a clean no-op if the cluster is already gone.
 
@@ -90,7 +106,7 @@ environment is fast, isolated, and prod-free:
 
 | Dependency | In the dev env |
 |---|---|
-| Cloud compute (GCE) | **`MockComputeAdapter`** — in-memory fake instances (`compute.provider: mock`, the chart default). No GCP project, no ADC. |
+| Cloud compute | Default `mock`/`static` attaches to the k3d node; optional `fake` uses in-memory instances through the managed lifecycle. No GCP project or ADC. |
 | PostgreSQL | Disabled — control-plane falls back to its in-memory store. |
 | Redis | Disabled — in-memory token/buffer store. |
 | Node agent DaemonSet | Disabled. |

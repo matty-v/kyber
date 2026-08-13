@@ -64,11 +64,15 @@ export function CreateMachine() {
 
   switch (config.compute.provider) {
     case 'mock':
-      return <CreateMachineMock navigate={navigate} />
+    case 'static':
+      return <CreateMachineMock navigate={navigate} provider={config.compute.provider} />
+    case 'fake':
+      return <CreateMachineGce navigate={navigate} provider="fake" vmTypes={config.compute.gceVMTypes ?? []} />
     case 'gce':
+      return <CreateMachineGce navigate={navigate} provider="gce" vmTypes={config.compute.gceVMTypes ?? []} />
     case '':
     default:
-      return <CreateMachineGce navigate={navigate} vmTypes={config.compute.gceVMTypes ?? []} />
+      return <CreateMachineGce navigate={navigate} provider="gce" vmTypes={config.compute.gceVMTypes ?? []} />
   }
 }
 
@@ -87,9 +91,11 @@ function LoadingState() {
 // component and using buildGceRequest + validateGceForm.
 function CreateMachineGce({
   navigate,
+  provider,
   vmTypes,
 }: {
   navigate: ReturnType<typeof useNavigate>
+  provider: 'gce' | 'fake'
   vmTypes: VMType[]
 }) {
   const createMachine = useCreateMachine()
@@ -129,7 +135,7 @@ function CreateMachineGce({
       // Defense-in-depth strip on name — if the user submits without blurring
       // (e.g. via Enter while focused), strip leading/trailing hyphens here.
       // See #189.
-      await createMachine.mutateAsync(buildGceRequest({ ...form, name: toKebabCase(form.name) }))
+      await createMachine.mutateAsync(buildGceRequest({ ...form, name: toKebabCase(form.name) }, provider))
       navigate(prefixed('/machines'))
     } catch (err) {
       setFieldError(err instanceof Error ? err.message : 'Failed to create machine')
@@ -263,7 +269,13 @@ function CreateMachineGce({
 // longer picks CPU/Memory/Disk numbers — the laptop's actual hardware
 // dictates what's available, with the control plane reserving a small
 // carve-out for itself.
-function CreateMachineMock({ navigate }: { navigate: ReturnType<typeof useNavigate> }) {
+function CreateMachineMock({
+  navigate,
+  provider,
+}: {
+  navigate: ReturnType<typeof useNavigate>
+  provider: 'static' | 'mock'
+}) {
   const createMachine = useCreateMachine()
   const prefixed = usePrefixedPath()
   const [form, setForm] = useState<MockFormState>({ name: '' })
@@ -287,7 +299,7 @@ function CreateMachineMock({ navigate }: { navigate: ReturnType<typeof useNaviga
     }
     try {
       // Defense-in-depth strip on name — see #189 + GCE submit comment above.
-      await createMachine.mutateAsync(buildMockRequest({ ...form, name: toKebabCase(form.name) }))
+      await createMachine.mutateAsync(buildMockRequest({ ...form, name: toKebabCase(form.name) }, provider))
       navigate(prefixed('/machines'))
     } catch (err) {
       setFieldError(err instanceof Error ? err.message : 'Failed to create machine')

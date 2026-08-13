@@ -52,8 +52,21 @@ testable without a cluster. Authoritative transition table:
   crash-loop; operator bumps memory first.
 - `Suspended` unifies spot-preemption parking and idle parking; a wake event
   (e.g. Telegram message) or replacement machine resumes it.
-- `pkg/controllers/machine/` mirrors the same pattern for VMs (GCE via
-  `pkg/adapters/compute_gce.go`; `compute_mock.go` for the mock provider).
+- `pkg/controllers/machine/` mirrors the same pattern for VMs. Compute
+  providers sit behind `pkg/adapters/compute.go`: GCE is the production
+  adapter, fake exercises managed lifecycle locally, and static attaches an
+  existing node (`mock` remains a compatibility alias).
+  Compute adapters expose Kyber-owned `InstanceObservation` state rather than
+  provider-native status strings, and are constructed through the registry in
+  `pkg/adapters/compute_registry.go`. Explicit provider initialization fails
+  closed — never fall back from a broken real provider to mock behavior. The
+  `provider=static` means existing-node/standalone attachment;
+  `provider=fake` uses a deterministic in-memory instance but traverses the
+  normal managed Machine state machine and finalizer against one local Ready
+  node. `provider=mock` remains a compatibility alias for `static`. Verify the
+  fake lifecycle locally with `scripts/devenv/up.sh --compute-provider fake`
+  followed by `scripts/devenv/smoke-fake-provider.sh`. The contract is in
+  `docs/design/2026-08-13-compute-provider-boundary-design.md`.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
@@ -344,6 +357,11 @@ scripts/devenv/up-full.sh       # one command; then create an agent via the PWA
 # Hot-reload UI against that backend: bring up.sh/up-full.sh on --api-port 8080,
 # then `make pwa-dev` (embedded PWA at :5173, proxies /api → :8080). For the
 # holocron hub against local pwa-views, see holocron's README "Local development".
+
+# Managed compute lifecycle without cloud credentials:
+scripts/devenv/up.sh --compute-provider fake
+scripts/devenv/smoke-fake-provider.sh  # create → stop → start → delete
+scripts/devenv/down.sh
 ```
 
 CI gates: `test.yml` (lint+test+pwa+pricing-feed preflight — a `changes` job
