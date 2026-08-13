@@ -294,7 +294,10 @@ function HarnessDefaults(props: HarnessDefaultsProps) {
 // detection poller (kyber#375 PR-A). Write-only: the value is never
 // returned by the server, even to authenticated callers. The card only
 // reveals whether a key is configured + provides Save/Clear controls.
-function ModelDiscoveryCard() {
+// Exported for tests: the disabled state below is only reachable through a
+// specific server response, and asserting it through the whole Settings page
+// would mean mocking every unrelated card's hooks.
+export function ModelDiscoveryCard() {
   const available = useAvailable()
   const status = useAnthropicKeyStatus()
   const setKey = useSetAnthropicKey()
@@ -304,6 +307,13 @@ function ModelDiscoveryCard() {
   const [confirmClearOpen, setConfirmClearOpen] = useState(false)
 
   const configured = status.data?.configured ?? false
+
+  // The control plane returns 503 when it has no anthropic-key Secret to write
+  // into — model discovery is off on this install (runtimeDetect.enabled), so
+  // there is nowhere for a key to go. Without this the panel rendered a key
+  // field and a Save button that always failed, which means the operator finds
+  // out only AFTER typing a live credential into it.
+  const unavailable = (status.error as { status?: number } | null)?.status === 503
 
   async function save() {
     if (!draft) return
@@ -329,6 +339,20 @@ function ModelDiscoveryCard() {
         <div className="grid gap-3 md:grid-cols-2">
           <section className="rounded-lg border border-border-default bg-surface-overlay p-4">
             <h3 className="text-sm font-semibold text-text-primary">Anthropic</h3>
+            {unavailable ? (
+              <>
+                <p className="mt-1 text-xs text-text-muted">
+                  Model discovery is turned off on this install, so there is no
+                  Secret to store a platform key in.
+                </p>
+                <p className="mt-3 text-[11px] text-text-disabled">
+                  Set <code className="text-text-muted">runtimeDetect.enabled: true</code> in your
+                  values and upgrade to enable it. Claude Code versions are discovered
+                  from npm independently and are unaffected.
+                </p>
+              </>
+            ) : (
+              <>
             <p className="mt-1 text-xs text-text-muted">
               The Models API requires a platform key. It is stored write-only
               in a control-plane Secret. Status: {configured ? <span className="text-success">configured</span> : <span>not configured</span>}.
@@ -389,6 +413,8 @@ function ModelDiscoveryCard() {
             )}
           </div>
             </div>
+              </>
+            )}
           </section>
           <section className="rounded-lg border border-border-default bg-surface-overlay p-4">
             <h3 className="text-sm font-semibold text-text-primary">OpenAI</h3>

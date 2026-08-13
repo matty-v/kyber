@@ -1174,12 +1174,9 @@ func (r *AgentReconciler) executeAction(
 ) (time.Duration, error) {
 	switch action {
 	case ActionCreatePVAndPod:
-		if err := r.ensurePVC(ctx, agent); err != nil {
-			return 0, err
-		}
-		// kyber#467: the offsets PVC is ensured inside createPod (covers every
-		// pod-creation path, including wake/retry recreations), so no explicit
-		// call is needed here.
+		// Both PVCs are ensured inside createPod, which covers every
+		// pod-creation path including wake and retry recreations, so no
+		// explicit call is needed here.
 		if err := r.createPod(ctx, agent); err != nil {
 			return 0, err
 		}
@@ -1846,14 +1843,27 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		return err
 	}
 
-	// kyber#467: ensure the durable transcript-offsets PVC exists before building
-	// the pod — the pod spec references it as a volume (AppendTranscriptTailer),
-	// so a missing claim would leave the pod stuck Pending. This MUST live in
-	// createPod (not just the ActionCreatePVAndPod case) so EVERY pod-creation
-	// path is covered: an agent that pre-dates this change has its persist PVC but
-	// no offsets PVC, and is recreated via ActionWriteBriefAndCreatePod (wake) or
-	// ActionResetRetryAndCreatePod (retry) — paths that never run the birth-time
-	// ensure. Idempotent (Get-then-Create), so the birth path is unaffected.
+	// Ensure BOTH PVCs exist before building the pod — the pod spec references
+	// each as a volume, so a missing claim leaves the pod stuck Pending.
+	//
+	// kyber#467 established this for the offsets PVC: it MUST live in createPod
+	// rather than only in the ActionCreatePVAndPod case, so EVERY pod-creation
+	// path is covered — an agent recreated via ActionWriteBriefAndCreatePod
+	// (wake) or ActionResetRetryAndCreatePod (retry) never runs the birth-time
+	// ensure.
+	//
+	// The persist PVC needed the same treatment and did not have it, which made
+	// a missing volume unrecoverable: the reconciler rebuilt the POD forever
+	// while nothing recreated the CLAIM, so the agent flapped
+	// Starting → Failed → Starting with "persistentvolumeclaim not found" and
+	// no path back short of deleting the agent or hand-writing the PVC. Hit for
+	// real on the canary, recovering from the kyber-pd StorageClass default.
+	//
+	// Both are idempotent (Get-then-Create) and never touch an existing claim,
+	// so the birth path is unaffected and a bound volume is never modified.
+	if err := r.ensurePVC(ctx, agent); err != nil {
+		return err
+	}
 	if err := r.ensureOffsetsPVC(ctx, agent); err != nil {
 		return err
 	}

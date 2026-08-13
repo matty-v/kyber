@@ -1,5 +1,16 @@
 # @matty-v/kyber-pwa-views
 
+## 0.21.2 — 2026-08-12
+
+### Fixed
+- Settings → Model discovery no longer offers an Anthropic key field on installs
+  that cannot accept one. Where model discovery is off (`runtimeDetect.enabled:
+  false`) the control plane has no Secret to write into and returns 503, but the
+  panel still rendered the input and Save button — so an operator learned this
+  only after typing a live credential into it. The card now explains the state
+  and names the value that turns it on. The status query also stops retrying a
+  503, which is a property of the install rather than a blip.
+
 ## 0.21.1 — 2026-08-10
 
 ### Changed

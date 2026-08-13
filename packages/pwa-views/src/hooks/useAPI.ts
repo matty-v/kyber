@@ -992,6 +992,13 @@ export function useAnthropicKeyStatus() {
     queryKey: ['cluster', cluster.id, 'settings', 'anthropic-key'],
     queryFn: () => api.getAnthropicKey(),
     staleTime: 60000,
+    // A 503 here is a permanent property of the install, not a blip: the
+    // control plane has no anthropic-key Secret configured because model
+    // discovery is switched off. Retrying it three times just delays the
+    // Settings panel telling the operator that, during which the panel is
+    // still offering them a key field that cannot work.
+    retry: (failureCount, error) =>
+      (error as { status?: number } | null)?.status !== 503 && failureCount < 2,
   })
 }
 
