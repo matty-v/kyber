@@ -1,5 +1,26 @@
 # @matty-v/kyber-pwa-views
 
+## 0.22.0 — 2026-08-13
+
+### Added
+- Settings → **Updates**: what version this cluster runs, what is available, and
+  how it takes new ones.
+  - **Source** is a choice between published releases (the default) and tracking
+    every change as it lands. Opting into the latter requires confirming a
+    warning that it means running unreleased code, and the warning stays visible
+    while it is selected. Switching back needs no confirmation — going back
+    takes on nothing.
+  - **Installing** is always operator-initiated: a button here, or
+    `POST /api/v1/updates/apply`. Nothing installs itself; automatic apply is
+    not offered because it is not implemented, and an option that silently did
+    nothing would be worse than its absence.
+  - Three distinct "cannot install" states are reported separately rather than
+    collapsed: the control plane has no apply path, this cluster may not use it
+    (ArgoCD), or there is simply nothing newer. Telling an operator the feature
+    does not exist when their cluster is managed by something else sends them to
+    the wrong place.
+  - A failed check is shown rather than rendering as "up to date".
+
 ## 0.21.2 — 2026-08-12
 
 ### Fixed
