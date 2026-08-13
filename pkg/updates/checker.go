@@ -43,10 +43,23 @@ type Status struct {
 	// rather than looking permanently up to date.
 	LastError string `json:"lastError,omitempty"`
 
-	// ApplySupported is false in this build: the checker reports, it never
-	// installs. Explicit in the contract so the PWA can render the right
-	// affordance instead of inferring it from a missing endpoint.
+	// ApplySupported reports whether POST /api/v1/updates/apply will do
+	// anything on this cluster. False when the control plane has no applier
+	// configured (self-upgrade disabled in the chart). Explicit in the
+	// contract so the PWA renders the right affordance instead of inferring it
+	// from a missing endpoint.
+	//
+	// Note this is about the CONTROL PLANE's capability, not this cluster's
+	// permission — an ArgoCD-managed cluster reports applySupported:true and
+	// canSelfUpgrade:false, because the button exists but this cluster may not
+	// press it. Collapsing the two would tell an operator the feature does not
+	// exist when the truth is that their cluster is not eligible.
 	ApplySupported bool `json:"applySupported"`
+
+	// LastRun is the most recent upgrade attempt, present once there has been
+	// one. Carried on the status payload so the PWA can poll a single endpoint
+	// while an upgrade is in flight.
+	LastRun *Run `json:"lastRun,omitempty"`
 }
 
 // Checker polls the release feed and caches the answer. It never mutates the
@@ -62,6 +75,10 @@ type Checker struct {
 	// K8sClient is used for ownership detection. Optional; nil reports
 	// ManagedByUnknown.
 	K8sClient client.Client
+	// Applier reports whether this build can install an update, and what the
+	// last attempt did. Optional; nil means apply is not available and the
+	// status says so rather than offering a button that 503s.
+	Applier *Applier
 	// Namespace and ControlPlaneDeployment locate the Deployment whose
 	// ownership annotations decide whether self-upgrade is possible.
 	Namespace              string
@@ -125,13 +142,14 @@ func (c *Checker) Status(ctx context.Context) Status {
 		// reports an update, and a stale flag breaks that promise in the one
 		// response the operator sees right after making the change.
 		s.UpdateAvailable = c.availableUnder(s.LatestVersion, s.Policy)
+		s.ApplySupported, s.LastRun = c.applyState(ctx)
 		return s
 	}
 	base := Status{
 		CurrentVersion: c.CurrentVersion,
 		Policy:         c.loadPolicy(ctx, DefaultPolicy()),
-		ApplySupported: false,
 	}
+	base.ApplySupported, base.LastRun = c.applyState(ctx)
 	base.ManagedBy = c.detectOwner(ctx)
 	base.CanSelfUpgrade = base.ManagedBy.CanSelfUpgrade()
 	base.Reason = c.reasonFor(base.ManagedBy, base.Policy)
@@ -152,6 +170,24 @@ func (c *Checker) loadPolicy(ctx context.Context, fallback Policy) Policy {
 
 func (c *Checker) detectOwner(ctx context.Context) ManagedBy {
 	return DetectManagedBy(ctx, c.K8sClient, c.Namespace, c.ControlPlaneDeployment)
+}
+
+// applyState reports whether this control plane can install updates, and the
+// last attempt if there was one.
+//
+// A failure to read past runs is logged and swallowed: it must not take down
+// the status card, which is the surface an operator uses to work out what is
+// wrong in the first place.
+func (c *Checker) applyState(ctx context.Context) (bool, *Run) {
+	if c.Applier == nil || !c.Applier.Configured() {
+		return false, nil
+	}
+	last, err := c.Applier.Latest(ctx)
+	if err != nil {
+		c.logger().Warn("could not read previous upgrade runs", "error", err)
+		return true, nil
+	}
+	return true, last
 }
 
 // reasonFor explains why nothing will be installed. A pin outranks ownership:
@@ -186,7 +222,7 @@ func (c *Checker) Check(ctx context.Context) Status {
 	next.ManagedBy = owner
 	next.CanSelfUpgrade = owner.CanSelfUpgrade()
 	next.Reason = c.reasonFor(owner, policy)
-	next.ApplySupported = false
+	next.ApplySupported, next.LastRun = c.applyState(ctx)
 
 	rel, err := c.Feed.Latest(ctx)
 	switch {

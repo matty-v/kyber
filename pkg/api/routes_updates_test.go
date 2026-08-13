@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	appsv1 "k8s.io/api/apps/v1"
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -49,6 +50,15 @@ func helmOwnedDeployment() *appsv1.Deployment {
 			Annotations: map[string]string{"meta.helm.sh/release-name": "kyber"},
 		},
 	}
+}
+
+// helmOwnedDeploymentWithImage is helmOwnedDeployment plus a container, which
+// the applier needs: the upgrade Job runs the image the control plane is
+// running right now.
+func helmOwnedDeploymentWithImage(image string) *appsv1.Deployment {
+	d := helmOwnedDeployment()
+	d.Spec.Template.Spec.Containers = []corev1.Container{{Name: "control-plane", Image: image}}
+	return d
 }
 
 func doUpdates(t *testing.T, s *Server, method, path, body string) *httptest.ResponseRecorder {
@@ -103,17 +113,108 @@ func TestUpdates_GetAdvertisesThatApplyIsUnsupported(t *testing.T) {
 		t.Fatal("applySupported missing from the response; the PWA needs it to decide whether to offer an install button")
 	}
 	if v != false {
-		t.Errorf("applySupported = %v, want false — this build cannot install anything", v)
+		t.Errorf("applySupported = %v, want false — no applier is configured on this install", v)
 	}
 }
 
-// There must be no apply route. A 404 here is the guard against someone
-// wiring a button to an endpoint that would silently do nothing.
-func TestUpdates_NoApplyRouteExists(t *testing.T) {
+// With no applier the route still EXISTS and answers 503. A 404 would read as
+// "this version of Kyber has no such feature", which is a different diagnosis
+// from "this install has not enabled it" and sends the operator looking in the
+// wrong place.
+func TestUpdates_ApplyWithoutAnApplierIs503(t *testing.T) {
 	s, _ := updatesServer(t, "1.0.1", helmOwnedDeployment())
 	rr := doUpdates(t, s, http.MethodPost, "/api/v1/updates/apply", "")
-	if rr.Code != http.StatusNotFound {
-		t.Errorf("POST /api/v1/updates/apply = %d, want 404 (no apply path in this build)", rr.Code)
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("POST /api/v1/updates/apply = %d, want 503 when self-upgrade is not configured", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "selfUpgrade") {
+		t.Errorf("503 body should name the chart value to turn on, got: %s", rr.Body.String())
+	}
+}
+
+// withApplier wires a configured applier onto a server built by updatesServer,
+// sharing its fake client so the control-plane Deployment is visible to both.
+func withApplier(s *Server) *Server {
+	s.UpdateApplier = &updates.Applier{
+		Client:                 s.UpdateStore.Client,
+		Namespace:              updNS,
+		ControlPlaneDeployment: updDeploy,
+		ReleaseName:            "kyber",
+		ChartRef:               "oci://ghcr.io/matty-v/charts/kyber",
+		ServiceAccount:         "kyber-self-upgrade",
+		HealthURL:              "http://kyber-control-plane:8080/healthz",
+	}
+	s.UpdateChecker.Applier = s.UpdateApplier
+	return s
+}
+
+func TestUpdates_ApplyStartsAnUpgradeAndReports202(t *testing.T) {
+	s, _ := updatesServer(t, "1.0.1", helmOwnedDeploymentWithImage("ghcr.io/matty-v/kyber-control-plane:1.0.1"))
+	withApplier(s)
+
+	// Seed the checker so "latest" is known — apply with no body means
+	// "install the latest you have seen".
+	doUpdates(t, s, http.MethodPost, "/api/v1/updates/check", "")
+
+	rr := doUpdates(t, s, http.MethodPost, "/api/v1/updates/apply", "")
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202; body=%s", rr.Code, rr.Body.String())
+	}
+	var run updates.Run
+	if err := json.Unmarshal(rr.Body.Bytes(), &run); err != nil {
+		t.Fatalf("decode run: %v; body=%s", err, rr.Body.String())
+	}
+	if run.TargetVersion != "1.2.0" {
+		t.Errorf("targetVersion = %q, want the latest release 1.2.0", run.TargetVersion)
+	}
+	if run.JobName == "" {
+		t.Error("run has no job name; the operator has nothing to look at")
+	}
+
+	// The status payload must carry the run, so the PWA can poll one endpoint.
+	st := decodeStatus(t, doUpdates(t, s, http.MethodGet, "/api/v1/updates", ""))
+	if !st.ApplySupported {
+		t.Error("applySupported = false with an applier configured")
+	}
+	if st.LastRun == nil || st.LastRun.JobName != run.JobName {
+		t.Errorf("status.lastRun = %+v, want the run just started", st.LastRun)
+	}
+}
+
+// An ArgoCD-managed cluster reports applySupported:true (the control plane CAN
+// install) and canSelfUpgrade:false (this cluster may not). Collapsing the two
+// would tell the operator the feature does not exist.
+func TestUpdates_ApplyRefusedOnArgoCDClusterIs409(t *testing.T) {
+	argo := helmOwnedDeploymentWithImage("ghcr.io/matty-v/kyber-control-plane:1.0.1")
+	argo.Annotations = map[string]string{"argocd.argoproj.io/tracking-id": "kyber:apps/Deployment:kyber-system/cp"}
+	s, _ := updatesServer(t, "1.0.1", argo)
+	withApplier(s)
+	doUpdates(t, s, http.MethodPost, "/api/v1/updates/check", "")
+
+	rr := doUpdates(t, s, http.MethodPost, "/api/v1/updates/apply", `{"version":"1.2.0"}`)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "ArgoCD") {
+		t.Errorf("refusal should explain ArgoCD, got: %s", rr.Body.String())
+	}
+
+	st := decodeStatus(t, doUpdates(t, s, http.MethodGet, "/api/v1/updates", ""))
+	if !st.ApplySupported {
+		t.Error("applySupported = false; the control plane can install, this cluster just may not")
+	}
+	if st.CanSelfUpgrade {
+		t.Error("canSelfUpgrade = true on an ArgoCD-managed cluster")
+	}
+}
+
+func TestUpdates_ApplyWithNoKnownVersionIs400(t *testing.T) {
+	s, _ := updatesServer(t, "1.0.1", helmOwnedDeploymentWithImage("ghcr.io/matty-v/kyber-control-plane:1.0.1"))
+	withApplier(s)
+	// No check has run, so no latest version is known.
+	rr := doUpdates(t, s, http.MethodPost, "/api/v1/updates/apply", "")
+	if rr.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 when there is no version to install; body=%s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -371,10 +371,17 @@ type Server struct {
 	// default in tests and on installs with update checking disabled) makes
 	// every /api/v1/updates route return 503.
 	//
-	// It only ever READS — from the release feed and from the cluster. There
-	// is no apply path in this build; the status contract says so explicitly
-	// via applySupported:false.
+	// It only ever READS — from the release feed and from the cluster.
+	// Installing an update is the UpdateApplier's job.
 	UpdateChecker *updates.Checker
+
+	// UpdateApplier starts a self-upgrade: POST /api/v1/updates/apply creates
+	// a Job that pulls the target chart, applies its CRDs, runs the Helm
+	// upgrade and rolls back if the result does not verify. Nil (the default
+	// in tests, and on installs where selfUpgrade is not enabled in the chart)
+	// makes the apply route return 503 and the status report
+	// applySupported:false.
+	UpdateApplier *updates.Applier
 
 	// UpdateStore persists the operator's update policy. Separate from the
 	// checker because PUT writes through it directly, and because the policy

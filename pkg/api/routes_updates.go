@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -20,11 +21,11 @@ const checkNowTimeout = 30 * time.Second
 //	                               who manages this cluster, last check result
 //	PUT  /api/v1/updates/policy  — set channel / mode / pin / window
 //	POST /api/v1/updates/check   — poll the release feed now, off-schedule
+//	POST /api/v1/updates/apply   — install a version (creates the upgrade Job)
 //
-// There is deliberately NO apply endpoint in this build. The checker reports;
-// it never mutates the cluster. `applySupported: false` in the GET response is
-// the explicit signal for that, so the PWA renders an honest affordance rather
-// than discovering a 404 when someone presses a button.
+// `applySupported` in the GET response says whether apply is wired up at all,
+// and `canSelfUpgrade` says whether THIS cluster may use it. The PWA needs both
+// to render an honest affordance rather than discovering a 503 behind a button.
 func (s *Server) handleUpdates(w http.ResponseWriter, r *http.Request) {
 	if s.UpdateChecker == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "UPDATES_NOT_CONFIGURED",
@@ -68,6 +69,14 @@ func (s *Server) handleUpdates(w http.ResponseWriter, r *http.Request) {
 		pollCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), checkNowTimeout)
 		defer cancel()
 		writeJSON(w, http.StatusOK, s.UpdateChecker.Check(pollCtx))
+
+	case "/api/v1/updates/apply":
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED",
+				"only POST is supported on /api/v1/updates/apply")
+			return
+		}
+		s.handleUpdateApply(w, r)
 
 	default:
 		writeJSONError(w, http.StatusNotFound, "NOT_FOUND", "unknown updates route")
@@ -141,6 +150,59 @@ func (s *Server) handleUpdatePolicyPut(w http.ResponseWriter, r *http.Request) {
 	// re-read here can return the PRE-write policy and echo the operator's
 	// change back as if it had not applied.
 	writeJSON(w, http.StatusOK, s.UpdateChecker.StatusWithPolicy(r.Context(), next))
+}
+
+// handleUpdateApply starts an upgrade.
+//
+// Returns 202 with the run, not 200: the Job has been created, nothing has
+// been installed yet. The operator polls GET /api/v1/updates and watches
+// lastRun.
+//
+// The version is optional and defaults to the latest release the checker has
+// seen. Accepting an explicit one matters for the case the default cannot
+// serve: installing a specific version after a bad one, where "latest" is
+// exactly what you do not want.
+func (s *Server) handleUpdateApply(w http.ResponseWriter, r *http.Request) {
+	if s.UpdateApplier == nil || !s.UpdateApplier.Configured() {
+		writeJSONError(w, http.StatusServiceUnavailable, "UPDATE_APPLY_NOT_CONFIGURED",
+			"This control plane cannot install updates. Enable selfUpgrade in the chart, "+
+				"or upgrade with Helm directly.")
+		return
+	}
+
+	var body struct {
+		Version string `json:"version"`
+	}
+	// An empty body is valid — it means "the latest you know about".
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && err != io.EOF {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_BODY",
+				"request body is not valid JSON: "+err.Error())
+			return
+		}
+	}
+
+	status := s.UpdateChecker.Status(r.Context())
+	version := strings.TrimSpace(body.Version)
+	if version == "" {
+		version = status.LatestVersion
+	}
+	if version == "" {
+		writeJSONError(w, http.StatusBadRequest, "NO_TARGET_VERSION",
+			"No version to install: this cluster has not seen a release yet. "+
+				"Run a check first, or name a version explicitly.")
+		return
+	}
+
+	run, err := s.UpdateApplier.Start(r.Context(), version, status.Policy)
+	if err != nil {
+		// A refusal is the operator's problem to fix (wrong owner, pinned,
+		// already running), not a server fault — 409 rather than 500, with the
+		// applier's own wording, which already explains what to do instead.
+		writeJSONError(w, http.StatusConflict, "UPDATE_APPLY_REFUSED", err.Error())
+		return
+	}
+	writeJSON(w, http.StatusAccepted, run)
 }
 
 // overlayString applies a JSON string field when present. An explicit null is

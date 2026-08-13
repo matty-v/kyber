@@ -1,0 +1,47 @@
+{{- if .Values.selfUpgrade.enabled }}
+{{/*
+Identity for the self-upgrade Job.
+
+READ THIS BEFORE ENABLING. The Job runs `helm upgrade` against this release,
+which rewrites every resource the chart owns — Deployments, Services, RBAC,
+CRDs, cluster-scoped objects. There is no smaller permission set that can do
+that: a role able to rewrite this chart's ClusterRoles is, by construction,
+able to grant itself anything. Kubernetes also refuses to let a subject create
+RBAC rules it does not itself hold (privilege escalation prevention), so a
+"just enough" role would have to enumerate every permission the chart grants
+anyway, and would silently break the first time the chart gained a new one —
+failing halfway through an upgrade, which is the worst possible time.
+
+So: cluster-admin, granted only when the operator explicitly turns self-upgrade
+on, to a ServiceAccount that exists for nothing else and is used by nothing
+else. The honest trade is stated here rather than hidden behind a long rule
+list that looks tighter than it is.
+
+Leave selfUpgrade.enabled false and none of this is created; the cluster is
+upgraded by whoever runs helm, which is the right answer for most installs.
+*/}}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "kyber.fullname" . }}-self-upgrade
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: self-upgrade
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "kyber.fullname" . }}-self-upgrade
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: self-upgrade
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "kyber.fullname" . }}-self-upgrade
+    namespace: {{ include "kyber.namespace" . }}
+{{- end }}

@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -140,12 +141,21 @@ type Verifier interface {
 
 // Runner executes one upgrade.
 type Runner struct {
-	Cfg  Config
-	Cmd  Commander
-	K8s  client.Client
-	Ver  Verifier
-	Log  *slog.Logger
-	Now  func() time.Time
+	Cfg Config
+	Cmd Commander
+	K8s client.Client
+	Ver Verifier
+	Log *slog.Logger
+	Now func() time.Time
+
+	// ApplyCRDsFn overrides how CRDs are applied. Nil uses ApplyCRDs against
+	// K8s, which is what the Job does. The seam exists because the fake
+	// client's server-side-apply support does not match a real API server's,
+	// and a test that passes against a fake apply would be asserting the
+	// fake's behaviour rather than ours (see
+	// reference_kyber_silent_failure_wrong_cause_class).
+	ApplyCRDsFn func(ctx context.Context, crds []*unstructured.Unstructured) ([]string, error)
+
 	crds string // overridden in tests; defaults to <workdir>/kyber/crds
 }
 
@@ -359,10 +369,16 @@ func (r *Runner) applyCRDs(ctx context.Context, chartDir string) error {
 		r.log().Info("dry run: would apply CRDs", "crds", names)
 		return nil
 	}
-	if r.K8s == nil {
-		return errors.New("no Kubernetes client configured; cannot apply CRDs, and Helm will not apply them either")
+	apply := r.ApplyCRDsFn
+	if apply == nil {
+		if r.K8s == nil {
+			return errors.New("no Kubernetes client configured; cannot apply CRDs, and Helm will not apply them either")
+		}
+		apply = func(ctx context.Context, crds []*unstructured.Unstructured) ([]string, error) {
+			return ApplyCRDs(ctx, r.K8s, crds)
+		}
 	}
-	applied, err := ApplyCRDs(ctx, r.K8s, crds)
+	applied, err := apply(ctx, crds)
 	if err != nil {
 		return fmt.Errorf("apply CRDs before upgrading (nothing else has been changed): %w", err)
 	}

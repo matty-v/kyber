@@ -902,11 +902,13 @@ func main() {
 		setupLog.Info("runtimedetect: disabled (KYBER_RUNTIMEDETECT_ENABLED=false); /api/v1/available will serve empty contract")
 	}
 
-	// Update checking. Polls the release feed and reports; it never installs
-	// anything in this build (Status.ApplySupported is false and there is no
-	// apply route). See dave-agent spec 2026-08-10-kyber-owns-its-deployment.md.
+	// Update checking, and — where the chart has enabled it — installing.
+	// The checker only ever reads; the applier creates a Job that does the
+	// upgrade, because the control plane cannot supervise its own replacement.
+	// See dave-agent spec 2026-08-10-kyber-owns-its-deployment.md.
 	var updateChecker *updates.Checker
 	var updateStore *updates.Store
+	var updateApplier *updates.Applier
 	if os.Getenv("KYBER_UPDATES_ENABLED") == "true" {
 		policyCM := os.Getenv("KYBER_UPDATE_POLICY_CONFIGMAP")
 		if policyCM == "" {
@@ -925,11 +927,40 @@ func main() {
 				setupLog.Info("updates: ignoring unparseable KYBER_UPDATES_CADENCE_SECONDS", "value", raw)
 			}
 		}
+		// Self-upgrade. Constructing the Applier does not grant anything: the
+		// Job it creates runs as a ServiceAccount the chart only provisions
+		// when selfUpgrade.enabled is true, so an install that has not opted
+		// in cannot start one even if these env vars were set by hand.
+		//
+		// Applier.Configured() is the single source of truth for whether the
+		// apply route and the applySupported flag are live, which is why every
+		// field is read here rather than defaulted deeper down — a half-set
+		// configuration must read as "off", not as a button that 500s.
+		updateApplier = &updates.Applier{
+			Client:                 mgr.GetClient(),
+			Namespace:              kyberNamespace,
+			ControlPlaneDeployment: os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"),
+			ReleaseName:            os.Getenv("KYBER_SELF_UPGRADE_RELEASE"),
+			ChartRef:               os.Getenv("KYBER_SELF_UPGRADE_CHART_REF"),
+			ServiceAccount:         os.Getenv("KYBER_SELF_UPGRADE_SERVICE_ACCOUNT"),
+			HealthURL:              os.Getenv("KYBER_SELF_UPGRADE_HEALTH_URL"),
+		}
+		if !updateApplier.Configured() {
+			setupLog.Info("updates: self-upgrade not configured; /api/v1/updates/apply will return 503 and applySupported will be false")
+			updateApplier = nil
+		} else {
+			setupLog.Info("updates: self-upgrade enabled",
+				"release", updateApplier.ReleaseName,
+				"chart", updateApplier.ChartRef,
+				"serviceAccount", updateApplier.ServiceAccount)
+		}
+
 		updateChecker = &updates.Checker{
 			Feed: &updates.FeedClient{
 				Repo:  os.Getenv("KYBER_UPDATES_REPO"),
 				Token: os.Getenv("KYBER_UPDATES_TOKEN"),
 			},
+			Applier:                updateApplier,
 			Store:                  updateStore,
 			K8sClient:              mgr.GetClient(),
 			Namespace:              kyberNamespace,
@@ -1180,6 +1211,7 @@ func main() {
 		FleetDefaultsConfigMapName: fleetDefaultsCM,
 		UpdateChecker:              updateChecker,
 		UpdateStore:                updateStore,
+		UpdateApplier:              updateApplier,
 		ConfigExporter:             &configexport.Reader{Client: mgr.GetClient(), Namespace: kyberNamespace},
 		FleetDefaultsInvalidator:   fleetDefaultsResolver,
 		// #396: serve-time context-window resolution for the token-budget %.

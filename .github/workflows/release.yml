@@ -518,6 +518,45 @@ jobs:
           echo "${{ secrets.GHCR_PAT }}" | helm registry login ghcr.io \
             --username "${{ github.actor }}" --password-stdin
 
+      # Stamp this release's image tags into the chart being packaged.
+      #
+      # Without this the published artifact cannot install anything: the source
+      # values.yaml ships every tag as "" and `kyber.image` uses `required`,
+      # which explicitly refuses a Chart.AppVersion fallback (kyber#358/#457 —
+      # a silently-wrong tag once deleted running agent pods fleet-wide). So
+      # `helm template deploy/helm/kyber` fails today, and so would
+      # `helm install oci://…/kyber --version X.Y.Z`.
+      #
+      # Stamping here rather than defaulting in the template keeps that guard
+      # intact for anyone rendering from source, while making the RELEASED
+      # artifact self-describing — which is what the pull model needs. A
+      # cluster upgrading itself to chart X.Y.Z must get X.Y.Z's images from
+      # the chart; if the tags had to come from the operator's values instead,
+      # those values would override the new chart and the upgrade would rewrite
+      # templates while leaving the old images running.
+      #
+      # All eight, including the ones the source chart leaves empty on purpose
+      # (codex, discordSidecar, telegramSidecar). The release built those
+      # images, so the artifact should name them; they stay inert until an
+      # agent actually enables that runtime or channel. An operator who wants
+      # them off overrides the tag back to "" in their own values.
+      #
+      # Only the packaged copy is modified — never committed back.
+      - name: Stamp release image tags into the chart
+        run: |
+          set -euo pipefail
+          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar; do
+            yq -i ".image.${c}.tag = \"v${KYBER_VERSION}\"" deploy/helm/kyber/values.yaml
+          done
+          echo "Stamped image tags:"
+          yq '.image | to_entries | map({"component": .key, "tag": .value.tag})' deploy/helm/kyber/values.yaml
+
+      # Proves the artifact we are about to publish can actually render. This
+      # is the check whose absence let an uninstallable chart through: the
+      # publish job packaged and pushed without ever templating it.
+      - name: Assert the packaged chart renders
+        run: helm template kyber deploy/helm/kyber >/dev/null
+
       - name: Package chart
         run: helm package deploy/helm/kyber --destination dist
 

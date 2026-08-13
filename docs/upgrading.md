@@ -54,8 +54,22 @@ Consequences to know:
   one change covering both chart and images.
 - A standalone cluster can install and upgrade with no git repo and no ArgoCD:
   `helm upgrade --install kyber oci://ghcr.io/matty-v/charts/kyber --version X.Y.Z -f values.yaml`.
-  The chart carries `crds/`, so CRD changes ride along — which is why updates ship
-  as a chart and not as an image-tag patch on the Deployment.
+  The chart carries `crds/` and template changes, which is why updates ship as a
+  chart and not as an image-tag patch on the Deployment.
+- **`helm upgrade` does not upgrade CRDs.** Helm installs `crds/` once, at
+  install time, and never touches that directory again — by design. The CRDs
+  in a newer chart do *not* ride along with an upgrade. Apply them yourself
+  first:
+  `helm pull oci://ghcr.io/matty-v/charts/kyber --version X.Y.Z --untar && kubectl apply -f kyber/crds/`,
+  then upgrade. Skipping it ships new templates against an old schema, which
+  half-works and fails later somewhere else. The self-upgrade path below does
+  this step for you and refuses to continue if it fails.
+- **The published chart carries its own image tags.** `release.yml` stamps the
+  release version into all eight `image.*.tag` values before packaging, so the
+  artifact installs as-is. The chart *source* still requires tags explicitly and
+  refuses to guess from `Chart.AppVersion` (kyber#358/#457) — that guard is for
+  people rendering from this repo, and it is why a bare `helm template
+  deploy/helm/kyber` fails.
 - A new GHCR package is **private** by default. `charts/kyber` had to be flipped
   to public once, by hand, after the first publish — the same one-time step every
   `kyber-*` image package needed. If operators report a 401 that reads like a bad
@@ -242,6 +256,57 @@ CLI clients are unchanged. To adopt it (a per-cluster, 🚦-gated operator step)
    then on an under-scoped caller gets **403** on the verbs it lacks scope for.
 
 Rollback is instant: set `api.authz.enforce: false` and sync.
+
+## Letting a cluster upgrade itself
+
+A cluster that is a real Helm release can install its own updates. Turn it on in
+values:
+
+```yaml
+selfUpgrade:
+  enabled: true
+  chartRef: "oci://ghcr.io/matty-v/charts/kyber"
+```
+
+Then `POST /api/v1/updates/apply` (or the button in the PWA) creates a Job that:
+
+1. reads the release and captures its current values — explicitly, to a file,
+   never `--reuse-values`, which hides what a release is configured with;
+2. refuses if those values pin image tags (see below);
+3. pulls the target chart and **applies its `crds/`**, failing closed;
+4. runs `helm upgrade` with `--wait`;
+5. verifies against the *running* cluster — the control-plane Deployment is
+   rolled out, its container image is the version you asked for, and `/healthz`
+   answers;
+6. rolls back to the starting revision if any of that fails.
+
+The Job's log is the record: `kubectl logs -n kyber-system job/<release>-upgrade-<version>`.
+
+**It runs in a Job, not in the control plane**, because the control plane is the
+process being replaced. It runs the control plane's *current* image with a
+different entrypoint (`kyber-upgrade`), so there is no extra image to build or
+pin.
+
+### What it refuses, and why
+
+- **ArgoCD-managed clusters.** `canSelfUpgrade` is false there. ArgoCD would
+  revert the upgrade on its next sync, so it would appear to work and then
+  silently undo itself. Bump the chart version in kyber-deploy instead.
+- **Ownership it cannot determine.** Unknown is treated as "do not act".
+- **Values that pin image tags.** The chart version carries the images. Values
+  that set `image.<component>.tag` override the new chart, so the upgrade would
+  rewrite the templates and leave the old containers running — Helm reporting
+  success while nothing changed. The Job names the offending keys and stops.
+  Remove them and let the chart decide.
+- **A second upgrade while one is in flight**, and any version that is not a
+  clean `X.Y.Z`.
+
+`selfUpgrade.enabled: true` creates a ServiceAccount bound to **cluster-admin**.
+That is not laziness: a Helm upgrade rewrites this chart's own RBAC and CRDs, and
+Kubernetes forbids a subject from creating rules it does not hold, so a narrower
+role would have to enumerate everything the chart grants and would break the
+first time the chart gained a permission — mid-upgrade. Leave it off unless you
+want it.
 
 ## Rolling back
 
