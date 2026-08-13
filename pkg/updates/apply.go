@@ -120,7 +120,17 @@ func (a *Applier) Start(ctx context.Context, targetVersion string, policy Policy
 	}
 	version, err := ParseVersion(targetVersion)
 	if err != nil {
-		return nil, fmt.Errorf("target version %q is not a release version: %w", targetVersion, err)
+		return nil, fmt.Errorf("target version %q is not a version this cluster can install: %w", targetVersion, err)
+	}
+	// The channel decides what may be installed here, not the parser — a
+	// pre-release is a legitimate target on the canary and must never be one
+	// on a cluster tracking releases. Without this, naming a main build
+	// explicitly in the request body would bypass the channel entirely.
+	if !policy.Channel.Accepts(version) {
+		return nil, fmt.Errorf(
+			"%s is a head-of-main build and this cluster follows the %q channel, which takes published releases only. "+
+				"Switch the channel to %q if you meant to track main",
+			version, policy.Channel, ChannelMain)
 	}
 	target := version.String()
 

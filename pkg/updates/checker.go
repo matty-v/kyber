@@ -2,6 +2,7 @@ package updates
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -68,8 +69,15 @@ type Status struct {
 //
 // Runs as a controller-runtime Runnable: mgr.Add(manager.RunnableFunc(c.Start)).
 type Checker struct {
-	// Feed reads published releases. Required.
+	// Feed reads published GitHub releases — the stable channel's source.
+	// Required.
 	Feed *FeedClient
+	// ChartFeed lists published charts in the OCI registry — the main
+	// channel's source. Optional; without it a cluster set to `main` reports
+	// the check as failed rather than silently claiming to be up to date,
+	// because "we cannot see the feed" and "there is nothing new" must never
+	// render the same.
+	ChartFeed *ChartFeedClient
 	// Store loads the operator's policy. Required.
 	Store *Store
 	// K8sClient is used for ownership detection. Optional; nil reports
@@ -168,6 +176,21 @@ func (c *Checker) loadPolicy(ctx context.Context, fallback Policy) Policy {
 	return p
 }
 
+// latestFor asks the source that matches the channel.
+//
+// stable reads GitHub's /releases/latest — an explicit publishing decision,
+// not our idea of version ordering. main reads the chart registry, because on
+// that channel a commit is only an update once its chart exists to pull.
+func (c *Checker) latestFor(ctx context.Context, channel Channel) (*Release, error) {
+	if channel == ChannelMain {
+		if c.ChartFeed == nil {
+			return nil, fmt.Errorf("channel %q needs a chart registry to read and none is configured on this control plane", ChannelMain)
+		}
+		return c.ChartFeed.Latest(ctx, channel)
+	}
+	return c.Feed.Latest(ctx)
+}
+
 func (c *Checker) detectOwner(ctx context.Context) ManagedBy {
 	return DetectManagedBy(ctx, c.K8sClient, c.Namespace, c.ControlPlaneDeployment)
 }
@@ -224,7 +247,7 @@ func (c *Checker) Check(ctx context.Context) Status {
 	next.Reason = c.reasonFor(owner, policy)
 	next.ApplySupported, next.LastRun = c.applyState(ctx)
 
-	rel, err := c.Feed.Latest(ctx)
+	rel, err := c.latestFor(ctx, policy.Channel)
 	switch {
 	case err != nil:
 		// A cancelled context means the CALLER went away (a PWA fetch aborted
