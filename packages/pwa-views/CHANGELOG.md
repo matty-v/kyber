@@ -1,5 +1,18 @@
 # @matty-v/kyber-pwa-views
 
+## 0.24.0 — 2026-08-13
+
+### Added
+- Machine provider types and creation forms now support the explicit `static`
+  existing-node provider and the local `fake` managed-provider simulator.
+  The legacy `mock` provider remains accepted as a compatibility alias for
+  `static`.
+
+### Changed
+- Managed-machine creation now consumes provider-neutral profiles, locations,
+  disk choices, and interruptible-instance capabilities from the control plane.
+  GCE-specific zone lists and request vocabulary no longer live in the PWA.
+
 ## 0.23.0 — 2026-08-13
 
 ### Added
@@ -24,9 +37,6 @@
   "connection lost" starts debugging a cluster that is working as intended.
 
 ### Changed
-- Managed-machine creation now consumes provider-neutral profiles, locations,
-  disk choices, and interruptible-instance capabilities from the control plane.
-  GCE-specific zone lists and request vocabulary no longer live in the PWA.
 - `ConfirmDialog.message` accepts a `ReactNode` (was `string`), rendered in a
   `div` since a `p` may not contain a list. The panel gained
   `max-h-[90vh] overflow-y-auto` — a long message could otherwise push its own
@@ -44,10 +54,6 @@
 ## 0.22.0 — 2026-08-13
 
 ### Added
-- Machine provider types and creation forms now support the explicit `static`
-  existing-node provider and the local `fake` managed-provider simulator.
-  The legacy `mock` provider remains accepted as a compatibility alias for
-  `static`.
 - Settings → **Updates**: what version this cluster runs, what is available, and
   how it takes new ones.
   - **Source** is a choice between published releases (the default) and tracking
