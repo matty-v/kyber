@@ -57,7 +57,7 @@ template plus newly created repositories; follow the main installation guide's
 
 | Knob | Base | Full-local | Why |
 |---|---|---|---|
-| `storage.agentStorageClass` | `kyber-pd` (GCE) | `""` | k3d has no `kyber-pd`; empty ⇒ the `local-path` default binds agent PVCs |
+| `storage.agentStorageClass` | `""` (cluster default) | `""` | unchanged — stated explicitly because it used to default to `kyber-pd`, which k3d has no provisioner for |
 | `nodeAgent.enabled` | `false` | `true` | run the node-agent DaemonSet (no k3s join creds needed under mock compute) |
 | `image.{claudeCode,statusSidecar,agentBase}` | placeholder | `kyber/*:local`, `pullPolicy: Never` | live pods need the real runtime + sidecar images |
 | `internalAuth.graceMode` | off | `true` | let the in-pod status pipeline (:8082) work before every pod carries a token |

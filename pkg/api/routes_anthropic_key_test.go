@@ -182,6 +182,47 @@ func TestAnthropicKey_UnsetSecretName_GETReturnsUnconfigured(t *testing.T) {
 	if got.Configured {
 		t.Errorf("expected configured=false on unconfigured server, got true")
 	}
+	// supported=false is the signal the PWA needs to stop offering a key
+	// field on an install that cannot store one. Without it, "no Secret
+	// configured" and "Secret configured but empty" were both
+	// {configured:false} with a 200 — indistinguishable — and the operator
+	// learned the difference by typing a live credential into a form that
+	// always failed.
+	if got.Supported {
+		t.Errorf("expected supported=false when no Secret name is configured, got true")
+	}
+}
+
+// The other half of the contract: an install that CAN store a key must say so,
+// or the PWA hides the field on every healthy cluster.
+func TestAnthropicKey_GET_SupportedTrueWhenSecretConfigured(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		key  string
+	}{
+		{"no key set", ""},
+		{"key set", "sk-ant-test"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := anthropicKeyTestServer(tc.key)
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/settings/anthropic-key", nil)
+			rr := httptest.NewRecorder()
+			s.handleAnthropicKeySetting(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+			}
+			var got anthropicKeyStatusResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if !got.Supported {
+				t.Error("expected supported=true when a Secret name is configured")
+			}
+			if want := tc.key != ""; got.Configured != want {
+				t.Errorf("configured = %v, want %v", got.Configured, want)
+			}
+		})
+	}
 }
 
 func TestAnthropicKey_PUT_RejectsOversizedBody(t *testing.T) {

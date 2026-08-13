@@ -790,11 +790,19 @@ cloudflared:
 # set gcePD.enabled: true in their environment values.yaml.
 storage:
   # agentStorageClass: StorageClass name applied to new agent PVCs. Empty
-  # string means the cluster's default StorageClass binds the volume (e.g.
-  # local-path on k3s, standard on GKE) — the standalone-friendly choice.
-  # Defaults to "kyber-pd" for GCE back-compat. Standalone environments
-  # should set this to "".
-  agentStorageClass: kyber-pd
+  # means the cluster's default StorageClass binds the volume (e.g. local-path
+  # on k3s, standard on GKE), which is correct on every cluster that has a
+  # default — so it is the default here.
+  #
+  # This used to default to "kyber-pd" for GCE back-compat, and that class only
+  # exists where storage.gcePD.enabled is true. On any standalone install the
+  # first agent named a StorageClass that did not exist, so its PVC never bound
+  # and the pod was unschedulable forever with "unbound immediate
+  # PersistentVolumeClaims" — a broken first-run experience for everyone off
+  # GCE. GCE environments now opt in by setting this explicitly, the same way
+  # they already opt into gcePD below; a cluster-specific class belongs in that
+  # cluster's values, not in the chart's defaults.
+  agentStorageClass: ""
   # transcriptOffsets: the small durable per-agent PVC (kyber#467) that holds the
   # transcript-tailer's per-file line-count checkpoints so they survive pod
   # recreation (no full-backlog re-ship; the #466 incident). The data is

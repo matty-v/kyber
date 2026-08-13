@@ -10,9 +10,10 @@
 # Prereqs: build + k3d-import kyber/{control-plane,node-agent,status-sidecar,
 # claude-code}:local first (scripts/devenv/build-local-images.sh).
 
-# Agent PVCs: the chart default storageClass is `kyber-pd` (a GCE class that
-# does not exist on k3d), which leaves agent pods Pending on an unbound PVC.
-# Empty string => the cluster default (local-path) binds the volume.
+# Agent PVCs bind against the cluster default (local-path on k3d). This now
+# matches the chart default and is kept explicit only to say so out loud —
+# the chart used to default to `kyber-pd`, a GCE class that does not exist
+# here, which left agent pods Pending forever on an unbound PVC.
 storage:
   agentStorageClass: ""
   gcePD:

@@ -105,8 +105,17 @@ spec:
             # StorageClass applied to new agent PVCs. Empty string means the
             # cluster's default StorageClass binds the volume (e.g. local-path
             # on k3s, standard on GKE) — the standalone-friendly choice.
+            # Empty means "bind against the cluster default", which is right
+            # everywhere except where this chart has provisioned a StorageClass
+            # of its own. gcePD.enabled creates `kyber-pd`; without this
+            # coupling an operator who enables it gets a StorageClass that is
+            # created and then never used, and their agents silently land on
+            # the cluster default instead of a PD — visible nowhere.
+            #
+            # An explicit agentStorageClass always wins, so this only fills in
+            # the value the operator would otherwise have to repeat.
             - name: KYBER_AGENT_STORAGE_CLASS
-              value: {{ .Values.storage.agentStorageClass | quote }}
+              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName "" .Values.storage.gcePD.enabled) | quote }}
             # Durable transcript-offsets PVC (kyber#467). StorageClass defaults to
             # empty (cluster default = local-path) on ALL targets — never kyber-pd,
             # whose 1Gi PD minimum wastes space for sub-1KB line-count checkpoints.
