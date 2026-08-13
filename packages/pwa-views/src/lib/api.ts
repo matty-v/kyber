@@ -42,6 +42,9 @@ import type {
   MetricsNodeResources,
   MetricsStateChange,
   AvailableResponse,
+  UpdateStatus,
+  UpdatePolicyPatch,
+  UpdateRun,
 } from './types'
 import type { Cluster } from './cluster-context'
 
@@ -158,6 +161,22 @@ export function createApiClient(cluster: Cluster) {
       request<void>('PUT', '/api/v1/settings/anthropic-key', { key }),
     clearAnthropicKey: (): Promise<void> =>
       request<void>('DELETE', '/api/v1/settings/anthropic-key'),
+
+    // Updates. getUpdates carries everything the card renders — status, policy,
+    // ownership and the last run — so an upgrade in flight is followed by
+    // polling one endpoint rather than three.
+    getUpdates: (): Promise<UpdateStatus> =>
+      request<UpdateStatus>('GET', '/api/v1/updates'),
+    setUpdatePolicy: (patch: UpdatePolicyPatch): Promise<UpdateStatus> =>
+      request<UpdateStatus>('PUT', '/api/v1/updates/policy', patch),
+    // Synchronous on the server: an operator pressing "Check now" wants the
+    // answer, not an acknowledgement to poll behind.
+    checkUpdates: (): Promise<UpdateStatus> =>
+      request<UpdateStatus>('POST', '/api/v1/updates/check'),
+    // 202 — the Job has been created, nothing is installed yet. Progress comes
+    // from getUpdates().lastRun.
+    applyUpdate: (version?: string): Promise<UpdateRun> =>
+      request<UpdateRun>('POST', '/api/v1/updates/apply', version ? { version } : {}),
 
     // Detection poller output (kyber#375 PR-A). PR-D layers the
     // operator override map onto this.

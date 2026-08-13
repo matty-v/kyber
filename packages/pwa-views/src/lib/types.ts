@@ -786,3 +786,70 @@ export interface PutDiscordCommsRequest {
    *  is already there, or to accept Kyber's working default on first setup. */
   action?: string
 }
+
+// ---------------------------------------------------------------------------
+// Updates (GET /api/v1/updates)
+// ---------------------------------------------------------------------------
+
+/** Which stream of builds a cluster watches. */
+export type UpdateChannel = 'stable' | 'main'
+
+/** What happens when an update is found. */
+export type UpdateMode = 'manual' | 'notify' | 'auto'
+
+export interface UpdatePolicy {
+  channel: UpdateChannel
+  mode: UpdateMode
+  /** Holds the cluster at an exact version; overrides channel and mode. */
+  pinnedVersion?: string
+  window?: string
+  timeZone?: string
+}
+
+/** Who owns this cluster's resources, which decides whether it may self-upgrade. */
+export type UpdateManagedBy = 'helm' | 'argocd' | 'unknown'
+
+export type UpdateRunPhase = 'pending' | 'running' | 'succeeded' | 'failed'
+
+/** One upgrade attempt. */
+export interface UpdateRun {
+  jobName: string
+  targetVersion: string
+  phase: UpdateRunPhase
+  startedAt?: string
+  finishedAt?: string
+  message?: string
+}
+
+/**
+ * Fields a policy PUT may carry. `null` clears a field — that is how the pin
+ * is removed — which `Partial<UpdatePolicy>` cannot express, hence a separate
+ * type rather than a cast at the call site.
+ */
+export interface UpdatePolicyPatch {
+  channel?: UpdateChannel
+  mode?: UpdateMode
+  pinnedVersion?: string | null
+  window?: string | null
+  timeZone?: string | null
+}
+
+export interface UpdateStatus {
+  currentVersion: string
+  latestVersion?: string
+  latestUrl?: string
+  /** True only when a newer version was positively identified. */
+  updateAvailable: boolean
+  policy: UpdatePolicy
+  managedBy: UpdateManagedBy
+  /** Whether THIS cluster may install an update (false under ArgoCD). */
+  canSelfUpgrade: boolean
+  /** Why it may not, in the operator's terms. Empty when it may. */
+  reason?: string
+  lastChecked?: string
+  /** Most recent check failure, cleared on success. */
+  lastError?: string
+  /** Whether the control plane has an apply path wired up at all. */
+  applySupported: boolean
+  lastRun?: UpdateRun
+}
