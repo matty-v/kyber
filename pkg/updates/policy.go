@@ -55,13 +55,27 @@ const (
 	// a chart artifact today, because release.yml publishes the chart on tag.
 	ChannelStable Channel = "stable"
 
-	// ChannelMain watches head-of-main. Reserved, and rejected at validation:
-	// nothing publishes a chart per main-commit yet, so a cluster set to this
-	// channel would poll forever and never find anything. Enabling it means
-	// teaching build.yml to publish a prerelease chart per main push, which is
-	// what the dev-box canary will need.
+	// ChannelMain watches head-of-main: every merge, published as a
+	// pre-release chart by build.yml. This is the canary's channel and
+	// deliberately nobody else's — a cluster on main moves on unreviewed code,
+	// which is precisely what razer was taken off.
 	ChannelMain Channel = "main"
 )
+
+// Accepts reports whether a version may be offered on this channel.
+//
+// This is the guard that keeps head-of-main out of production, and it lives
+// here rather than in the parser because the same version string is correct on
+// the canary and wrong everywhere else. A stable cluster never sees a
+// pre-release; a main cluster sees both, because a freshly cut release IS
+// newer than the main builds that preceded it and refusing it would strand the
+// canary behind a version it should take.
+func (c Channel) Accepts(v Version) bool {
+	if c == ChannelMain {
+		return true
+	}
+	return !v.IsPrerelease()
+}
 
 // Mode selects what happens when an update is found.
 type Mode string
@@ -104,9 +118,7 @@ func DefaultPolicy() Policy {
 // the cluster will do is worse than a rejected write.
 func (p Policy) Validate() error {
 	switch p.Channel {
-	case ChannelStable:
-	case ChannelMain:
-		return fmt.Errorf("channel %q is not available yet: nothing publishes a chart per main-commit, so this cluster would never find a build. Use %q", ChannelMain, ChannelStable)
+	case ChannelStable, ChannelMain:
 	case "":
 		return fmt.Errorf("channel is required (%s)", strings.Join(validChannels(), ", "))
 	default:
@@ -124,14 +136,25 @@ func (p Policy) Validate() error {
 	}
 
 	if p.PinnedVersion != "" {
-		if _, err := ParseVersion(p.PinnedVersion); err != nil {
+		pinned, err := ParseVersion(p.PinnedVersion)
+		if err != nil {
 			return fmt.Errorf("pinnedVersion: %w", err)
+		}
+		// A pin the channel would never offer is a contradiction the operator
+		// should hear about now, not discover as a cluster that silently never
+		// moves. Pinning a head-of-main build on the release channel is the
+		// case that matters.
+		if !p.Channel.Accepts(pinned) {
+			return fmt.Errorf(
+				"pinnedVersion %s is a pre-release and the %q channel takes published releases only; "+
+					"pin a release, or switch the channel to %q",
+				pinned, p.Channel, ChannelMain)
 		}
 	}
 	return nil
 }
 
-func validChannels() []string { return []string{string(ChannelStable)} }
+func validChannels() []string { return []string{string(ChannelStable), string(ChannelMain)} }
 func validModes() []string    { return []string{string(ModeManual), string(ModeNotify)} }
 
 // Store reads and writes the policy ConfigMap.

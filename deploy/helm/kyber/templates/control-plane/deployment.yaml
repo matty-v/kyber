@@ -62,6 +62,12 @@ spec:
               value: {{ .Values.updates.cadenceSeconds | quote }}
             - name: KYBER_UPDATE_POLICY_CONFIGMAP
               value: {{ .Values.updates.policyConfigMapName | quote }}
+            {{- if .Values.updates.chartRef }}
+            # Source for the `main` channel only — the registry listing that
+            # says which head-of-main charts actually exist to pull.
+            - name: KYBER_UPDATES_CHART_REF
+              value: {{ .Values.updates.chartRef | quote }}
+            {{- end }}
             # The control-plane must know its OWN Deployment name to read the
             # ownership annotations that decide whether self-upgrade is safe
             # here. Passed explicitly rather than derived from the pod's

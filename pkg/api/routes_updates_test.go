@@ -308,14 +308,30 @@ func TestUpdates_PutPolicyRejectsAutoWithAnExplanation(t *testing.T) {
 	}
 }
 
-func TestUpdates_PutPolicyRejectsMainChannelWithAnExplanation(t *testing.T) {
+// The main channel is the canary's, and switching to it is a supported
+// operator action now that build.yml publishes a chart per merge.
+func TestUpdates_PutPolicyAcceptsMainChannel(t *testing.T) {
 	s, _ := updatesServer(t, "1.0.1", helmOwnedDeployment())
 	rr := doUpdates(t, s, http.MethodPut, "/api/v1/updates/policy", `{"channel":"main"}`)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("status = %d, want 400", rr.Code)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "never find a build") {
-		t.Errorf("rejection should explain WHY main is refused; got %s", rr.Body.String())
+	if st := decodeStatus(t, rr); st.Policy.Channel != updates.ChannelMain {
+		t.Errorf("policy.channel = %q, want %q", st.Policy.Channel, updates.ChannelMain)
+	}
+}
+
+// A pin the channel would never offer is refused with an explanation rather
+// than accepted into a cluster that then silently never moves.
+func TestUpdates_PutPolicyRejectsPrereleasePinOnStable(t *testing.T) {
+	s, _ := updatesServer(t, "1.0.1", helmOwnedDeployment())
+	rr := doUpdates(t, s, http.MethodPut, "/api/v1/updates/policy",
+		`{"channel":"stable","pinnedVersion":"1.0.2-25-gfd47d00"}`)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "pre-release") {
+		t.Errorf("rejection should explain why; got %s", rr.Body.String())
 	}
 }
 
