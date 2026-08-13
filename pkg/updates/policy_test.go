@@ -143,15 +143,27 @@ func TestPolicy_ValidateRejectsAutoUntilApplyExists(t *testing.T) {
 	}
 }
 
-// Same rule for the main channel: no chart is published per main-commit, so a
-// cluster set to it would poll forever and never find a build.
-func TestPolicy_ValidateRejectsMainChannelUntilChartsArePublished(t *testing.T) {
-	err := Policy{Channel: ChannelMain, Mode: ModeNotify}.Validate()
-	if err == nil {
-		t.Fatal("Validate accepted channel=main, but nothing publishes a chart per main-commit")
+// The main channel is the canary's: build.yml publishes a chart per merge, so
+// a cluster set to it has something real to find.
+func TestPolicy_ValidateAcceptsMainChannel(t *testing.T) {
+	if err := (Policy{Channel: ChannelMain, Mode: ModeNotify}).Validate(); err != nil {
+		t.Fatalf("Validate rejected channel=main: %v", err)
 	}
-	if !strings.Contains(err.Error(), "never find a build") {
-		t.Errorf("error should explain WHY main is refused; got %q", err)
+}
+
+// A pin the channel would never offer is a contradiction, and saying so beats
+// a cluster that silently never moves.
+func TestPolicy_ValidateRejectsPrereleasePinOnStable(t *testing.T) {
+	err := (Policy{Channel: ChannelStable, Mode: ModeNotify, PinnedVersion: "1.0.2-25-gfd47d00"}).Validate()
+	if err == nil {
+		t.Fatal("Validate accepted a head-of-main pin on the release channel")
+	}
+	if !strings.Contains(err.Error(), "pre-release") {
+		t.Errorf("error should say why; got %q", err)
+	}
+	// The same pin is legitimate on the canary's channel.
+	if err := (Policy{Channel: ChannelMain, Mode: ModeNotify, PinnedVersion: "1.0.2-25-gfd47d00"}).Validate(); err != nil {
+		t.Errorf("Validate rejected a head-of-main pin on the main channel: %v", err)
 	}
 }
 

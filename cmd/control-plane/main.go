@@ -948,11 +948,24 @@ func main() {
 				"serviceAccount", updateApplier.ServiceAccount)
 		}
 
+		// The main channel reads the chart registry rather than GitHub
+		// releases: on that channel a commit is only an update once its chart
+		// exists to pull. A bad reference is logged and disables the main
+		// channel rather than failing startup — a cluster on stable should not
+		// be taken down by a value it never uses.
+		chartFeed, chartFeedErr := updates.ChartFeedFromRef(
+			os.Getenv("KYBER_UPDATES_CHART_REF"), os.Getenv("KYBER_UPDATES_TOKEN"))
+		if chartFeedErr != nil {
+			setupLog.Error(chartFeedErr, "updates: chart reference unusable; the main channel will report a failed check")
+			chartFeed = nil
+		}
+
 		updateChecker = &updates.Checker{
 			Feed: &updates.FeedClient{
 				Repo:  os.Getenv("KYBER_UPDATES_REPO"),
 				Token: os.Getenv("KYBER_UPDATES_TOKEN"),
 			},
+			ChartFeed:              chartFeed,
 			Applier:                updateApplier,
 			Store:                  updateStore,
 			K8sClient:              mgr.GetClient(),

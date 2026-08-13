@@ -955,6 +955,14 @@ updates:
   # policyConfigMapName: where the operator's policy is stored. Created by the
   # control plane on first write; absent reads as the default policy.
   policyConfigMapName: "kyber-update-policy"
+  # chartRef: the OCI repository the `main` channel lists to find head-of-main
+  # builds. The stable channel does not use it — that reads published GitHub
+  # releases, an explicit publishing decision rather than a registry listing.
+  #
+  # Empty disables the main channel: a cluster set to it reports a failed check
+  # rather than a silent "up to date", because "we cannot see the feed" and
+  # "there is nothing new" must never look the same.
+  chartRef: "oci://ghcr.io/matty-v/charts/kyber"
   # tokenSecretName/tokenSecretKey: OPTIONAL pre-created Secret holding a
   # GitHub token for the release feed. Needed when `repo` is private, and
   # useful for rate-limit headroom when many clusters share an egress IP.

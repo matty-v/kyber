@@ -1,6 +1,6 @@
 # Compute provider boundary and local simulator design
 
-**Status:** Accepted; first local-simulator vertical slice implemented 2026-08-13  
+**Status:** Accepted; first local-simulator vertical slice implemented 2026-08-13
 **Scope:** Machine provisioning, observation, interruption handling, provider
 configuration, and local lifecycle testing. Agent runtimes and log-archive
 backends are out of scope.

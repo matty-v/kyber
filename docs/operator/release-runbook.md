@@ -14,6 +14,27 @@ This document describes the release process for Kyber, including which steps are
 >
 > A forked or self-hosted setup that *does* keep a canary should read this runbook as written and ignore this note.
 
+> **⚠️ Upstream status (2026-08-13): a release no longer reaches every cluster.**
+>
+> Clusters now advance by one of **two** models, and the runbook's promotion step
+> only describes the first:
+>
+> - **Push (`kyber-falcon`)** — `deploy-bump-pr` opens and auto-merges a
+>   digest-pinned bump on the deploy repo, and ArgoCD syncs it. Unchanged.
+> - **Pull (`kyber-razer`)** — a self-updating Helm release with no ArgoCD. The
+>   control plane checks the stable channel and reports what it finds; **an
+>   operator chooses when to install**, from the PWA or
+>   `POST /api/v1/updates/apply`. Nothing applies on its own.
+>
+> `release.yml`'s `deploy-bump-pr` matrix is therefore **`[falcon]`**. Cutting a
+> tag does **not** deploy to razer — it publishes a chart that razer can then be
+> told to install. **Do not treat a green release as meaning razer is running it.**
+> Check the cluster's reported `currentVersion`.
+>
+> Why razer moved: on 2026-08-13 the auto-merged bump reached it within seconds of
+> the tag and rolled the operator's own agents out from under a live session, with
+> no human and no Kyber in the loop.
+
 ---
 
 ## Overview
@@ -39,7 +60,7 @@ When the tag push reaches `release.yml`, CI then:
 6. **Creates a GitHub Release** with an auto-generated changelog.
 7. **Fires the release notification webhook** via the `release-notify` inbound binding (HMAC-signed) *(operator-specific — the upstream setup uses it to log the release, clear `pending-release.json`, and kick off release-notes drafting; safe to leave unconfigured)*.
 8. **Chains pwa-views publish** — pushes a `pwa-views/vX.Y.Z` tag which triggers `publish-pwa-views.yml` to build and publish `@matty-v/kyber-pwa-views` to GitHub Packages. *(Automated — the build + Release must succeed first.)*
-9. **Resolves all 8 GHCR manifest digests once** (`resolve-digests`), then **opens AND auto-merges a deploy-repo bump PR per production cluster** on `matty-v/kyber-deploy` — a `matrix: cluster: [falcon, gcp]`, both legs pinning the same digests. *(Automated — falcon and GCP both promote automatically once the release is cut. Each PR is opened for the audit trail, then squash-merged immediately.)* `fail-fast: false` keeps the legs atomic: a GCP failure does not strand falcon, or vice-versa. Each leg emits `cluster-promoted` / `cluster-promote-failed` to the release-notification inbound so per-cluster progress shows up in chat without opening CI *(operator-specific)*.
+9. **Resolves all 8 GHCR manifest digests once** (`resolve-digests`), then **opens AND auto-merges a deploy-repo bump PR per production cluster** on `matty-v/kyber-deploy` — a `matrix: cluster: [falcon]` as of 2026-08-13 (it has been `[falcon, gcp]` and `[falcon, razer]` at different times — gcp is parked, razer now pulls). *(Automated — falcon promotes automatically once the release is cut. The PR is opened for the audit trail, then squash-merged immediately.)* `fail-fast: false` keeps the legs atomic when there is more than one. Each leg emits `cluster-promoted` / `cluster-promote-failed` to the release-notification inbound so per-cluster progress shows up in chat without opening CI *(operator-specific)*.
 
 Steps 8 and 9 run in parallel after the GitHub Release is created. **The chart-version bump no longer runs here** — it now precedes the tag in `prepare-release.yml` (P1 above), which is what makes the canary's `git describe` resolve to the clean tag (kyber#591).
 
