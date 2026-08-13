@@ -58,11 +58,40 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
 # in the same image so the helm-gated compaction Job can run it via this image
 # with a different entrypoint. Not started by the default ENTRYPOINT.
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/transcript-compact ./cmd/transcript-compact
+# kyber-upgrade: the entrypoint of the self-upgrade Job. Same image, different
+# binary, same reasoning as transcript-compact — the Job that replaces the
+# control plane must not need an image of its own to build, publish and pin.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-upgrade ./cmd/kyber-upgrade
 
 # Stage 3: minimal runtime image.
 FROM alpine:3.20
 RUN apk add --no-cache ca-certificates
+
+# helm, for the self-upgrade Job (kyber-upgrade shells out to it).
+#
+# The CLI rather than the Helm Go SDK, deliberately: the SDK would pull ~100
+# transitive modules (oras, containerd, docker) into a control plane whose
+# dependency set is currently tight, quadrupling the supply-chain surface and
+# the Dependabot load — to reimplement, less well, what the operator already
+# runs by hand. Shelling out also makes the Job log literally the `helm upgrade`
+# output, which is the upgrade record the design asks for.
+#
+# Version-pinned and checksum-verified: this binary rewrites the cluster, so a
+# silently-swapped download is not an acceptable failure mode. amd64-only,
+# matching the rest of this pipeline — build.yml sets no buildx `platforms`.
+ARG HELM_VERSION=3.16.3
+ARG HELM_SHA256=f5355c79190951eed23c5432a3b920e071f4c00a64f75e077de0dd4cb7b294ea
+RUN apk add --no-cache --virtual .helm-deps curl \
+  && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+  && echo "${HELM_SHA256}  /tmp/helm.tgz" | sha256sum -c - \
+  && tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
+  && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
+  && rm -rf /tmp/helm.tgz /tmp/linux-amd64 \
+  && apk del .helm-deps \
+  && helm version --short
+
 COPY --from=go-builder /build/control-plane /usr/local/bin/control-plane
 COPY --from=go-builder /build/transcript-compact /usr/local/bin/transcript-compact
+COPY --from=go-builder /build/kyber-upgrade /usr/local/bin/kyber-upgrade
 EXPOSE 8080 8081 8082 9090
 ENTRYPOINT ["/usr/local/bin/control-plane"]

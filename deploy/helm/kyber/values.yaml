@@ -956,6 +956,34 @@ updates:
   tokenSecretName: ""
   tokenSecretKey: "token"
 
+# selfUpgrade: let this cluster install its own updates.
+#
+# When enabled, POST /api/v1/updates/apply creates a Job that pulls the target
+# chart from `chartRef`, applies its CRDs (Helm never upgrades CRDs — it
+# installs crds/ once and never touches them again), runs `helm upgrade`, and
+# verifies the result against the running Deployment. Any failure rolls back to
+# the revision that was live when it started.
+#
+# OFF by default, and it should stay off unless you want it:
+#
+#   * It only works where Kyber is a real Helm release. On an ArgoCD-managed
+#     cluster the control plane detects that and refuses — ArgoCD would revert
+#     the upgrade on its next sync, so a self-upgrade would appear to work and
+#     then silently undo itself.
+#   * It creates a ServiceAccount bound to cluster-admin. A Helm upgrade
+#     rewrites this chart's RBAC and CRDs, so nothing smaller can do the job —
+#     see templates/self-upgrade-rbac.yaml for why a narrower role is an
+#     illusion rather than a saving.
+#   * Your values must NOT pin image tags. The chart version carries the
+#     images; values that override them would leave the upgrade rewriting
+#     templates while the old containers keep running. The Job refuses rather
+#     than performing that no-op, and names the offending keys.
+selfUpgrade:
+  enabled: false
+  # chartRef: the OCI repository holding the chart, WITHOUT a version. The
+  # version comes from the update the operator chooses to install.
+  chartRef: "oci://ghcr.io/matty-v/charts/kyber"
+
 preview:
   enabled: false
   # host: the flat hostname under example.com, e.g.

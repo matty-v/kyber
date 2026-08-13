@@ -115,3 +115,20 @@ rules:
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  {{- if .Values.selfUpgrade.enabled }}
+  # Self-upgrade Jobs. The control plane CREATES the upgrade Job and reads its
+  # status to report the run; it never runs Helm itself.
+  #
+  # `list` and `watch` for the same cached-client reason as the deployments
+  # rule above — the Applier lists Jobs by label, which registers an informer.
+  #
+  # No `delete`: a finished upgrade Job is the record of what happened, and the
+  # TTL controller reaps it on schedule. Deleting the evidence on the control
+  # plane's own initiative is not a power this needs.
+  #
+  # Gated on selfUpgrade.enabled so an install that has not opted in cannot
+  # create Jobs at all, independent of any env var.
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create"]
+  {{- end }}
