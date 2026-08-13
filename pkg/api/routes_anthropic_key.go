@@ -7,8 +7,8 @@
 // Secret on each cycle (via the file mount), so a rotation propagates on
 // the next poll without a control-plane restart.
 //
-// GET returns only a `configured: bool` — never the key itself, even to
-// authenticated callers. Write-only from the UI is an explicit AC
+// GET returns `supported` and `configured` booleans — never the key itself,
+// even to authenticated callers. Write-only from the UI is an explicit AC
 // (kyber#375).
 
 package api
@@ -42,9 +42,24 @@ type anthropicKeyPutRequest struct {
 	Key string `json:"key"`
 }
 
-// anthropicKeyStatusResponse is what GET returns. configured=true when the
-// Secret holds a non-empty value. The key itself is never echoed.
+// anthropicKeyStatusResponse is what GET returns. The key itself is never
+// echoed.
+//
+// The two fields answer different questions and both are needed:
+//
+//   - Supported: CAN this control plane store a key at all? False when no
+//     anthropic-key Secret is configured, which is what an install with
+//     runtimeDetect disabled looks like. PUT and DELETE return 503 there.
+//   - Configured: IS a key currently set?
+//
+// Without Supported, a client cannot tell "no key yet, go ahead and enter one"
+// from "there is nowhere to put one" — both used to be `configured:false` with
+// a 200 — so the PWA offered a key field on installs where saving always
+// failed, and the operator found out after typing a live credential into it.
 type anthropicKeyStatusResponse struct {
+	// Supported is omitted-safe for older clients, which ignore it and behave
+	// as they always have.
+	Supported  bool `json:"supported"`
 	Configured bool `json:"configured"`
 }
 
@@ -63,7 +78,13 @@ func (s *Server) handleAnthropicKeySetting(w http.ResponseWriter, r *http.Reques
 
 func (s *Server) getAnthropicKey(w http.ResponseWriter, r *http.Request) {
 	if s.AnthropicKeySecretName == "" {
-		writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Configured: false})
+		// Deliberately 200 and not 503: the question "can this install store a
+		// key?" was answered successfully, and the answer is no. A 503 would
+		// be indistinguishable from the control plane being briefly
+		// unreachable — a pod roll or a tunnel with no origin — and a client
+		// that treated that as "the feature is off here" would tell the
+		// operator to change their values over a transient blip.
+		writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Supported: false, Configured: false})
 		return
 	}
 	if s.K8sClient == nil {
@@ -75,7 +96,10 @@ func (s *Server) getAnthropicKey(w http.ResponseWriter, r *http.Request) {
 	key := types.NamespacedName{Name: s.AnthropicKeySecretName, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, secret); err != nil {
 		if k8serrors.IsNotFound(err) {
-			writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Configured: false})
+			// The Secret is configured but has not been created yet — the
+			// chart creates it, so this is a first-render race, not an
+			// unsupported install. Storing a key here will work.
+			writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Supported: true, Configured: false})
 			return
 		}
 		slog.ErrorContext(r.Context(), "anthropic-key: secret get failed",
@@ -85,7 +109,7 @@ func (s *Server) getAnthropicKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	val := secret.Data[anthropicKeySecretField]
-	writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Configured: len(val) > 0})
+	writeJSON(w, http.StatusOK, anthropicKeyStatusResponse{Supported: true, Configured: len(val) > 0})
 }
 
 func (s *Server) putAnthropicKey(w http.ResponseWriter, r *http.Request) {

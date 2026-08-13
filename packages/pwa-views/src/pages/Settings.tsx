@@ -308,12 +308,18 @@ export function ModelDiscoveryCard() {
 
   const configured = status.data?.configured ?? false
 
-  // The control plane returns 503 when it has no anthropic-key Secret to write
-  // into — model discovery is off on this install (runtimeDetect.enabled), so
-  // there is nowhere for a key to go. Without this the panel rendered a key
-  // field and a Save button that always failed, which means the operator finds
-  // out only AFTER typing a live credential into it.
-  const unavailable = (status.error as { status?: number } | null)?.status === 503
+  // supported:false means the control plane has no anthropic-key Secret to
+  // write into — model discovery is off on this install (runtimeDetect.enabled)
+  // — so there is nowhere for a key to go and PUT would 503. Without this the
+  // panel rendered a key field and a Save button that always failed, and the
+  // operator found out only AFTER typing a live credential into it.
+  //
+  // Keyed on the response body, not on an HTTP status: a 503 can equally come
+  // from a rolling control plane or a tunnel with no origin, and telling an
+  // operator to change their values because of a transient blip would be its
+  // own wrong answer. An older control plane omits the field, which reads as
+  // undefined and leaves the field on — today's behaviour.
+  const unavailable = status.data?.supported === false
 
   async function save() {
     if (!draft) return

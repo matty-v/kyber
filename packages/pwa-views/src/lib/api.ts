@@ -147,8 +147,13 @@ export function createApiClient(cluster: Cluster) {
     // server stores the key in a control-plane-namespace Secret and
     // NEVER returns it via API. getAnthropicKey only reveals whether
     // a key is configured.
-    getAnthropicKey: (): Promise<{ configured: boolean }> =>
-      request<{ configured: boolean }>('GET', '/api/v1/settings/anthropic-key'),
+    // `supported` says whether this control plane can store a key at all
+    // (false when no anthropic-key Secret is configured, i.e. model discovery
+    // is off); `configured` says whether one is currently set. Optional so a
+    // newer PWA against an older control plane, which omits it, keeps today's
+    // behaviour instead of hiding the field.
+    getAnthropicKey: (): Promise<{ supported?: boolean; configured: boolean }> =>
+      request<{ supported?: boolean; configured: boolean }>('GET', '/api/v1/settings/anthropic-key'),
     setAnthropicKey: (key: string): Promise<void> =>
       request<void>('PUT', '/api/v1/settings/anthropic-key', { key }),
     clearAnthropicKey: (): Promise<void> =>

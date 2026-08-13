@@ -1789,6 +1789,24 @@ func (r *AgentReconciler) ensurePVC(ctx context.Context, agent *kyberv1.Agent) e
 	if err := r.Create(ctx, newPVC); err != nil && !errors.IsAlreadyExists(err) {
 		return fmt.Errorf("creating PVC: %w", err)
 	}
+
+	// Creating this claim for an agent that has ALREADY RUN means its previous
+	// volume is gone, and the agent is about to boot Running with an empty
+	// /persist: no identity-repo checkout, no session state, nothing it wrote
+	// before. Sometimes that is intended (an operator deleted the claim to
+	// change its immutable StorageClass); sometimes it is a local-path volume
+	// that went with a node, or a mis-targeted `kubectl delete pvc`.
+	//
+	// The reconciler cannot tell those apart, and it should still recreate the
+	// claim either way — an agent stuck forever is worse. But silence would
+	// mean data loss presenting as a perfectly healthy agent, with every status
+	// surface green. So say it out loud, once, where an operator will see it.
+	if r.Recorder != nil && (agent.Status.RestartCount > 0 || agent.Status.Phase != "") {
+		r.Recorder.Eventf(agent, corev1.EventTypeWarning, "PersistVolumeRecreated",
+			"Recreated missing persistent volume %q for an agent that has run before — it will start with empty storage. "+
+				"If you did not delete this claim deliberately, its previous contents are gone.",
+			PVCName(agent.Name))
+	}
 	return nil
 }
 
