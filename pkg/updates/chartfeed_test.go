@@ -41,16 +41,18 @@ func chartRegistry(t *testing.T, tags []string, tagStatus int) *ChartFeedClient 
 // The registry is shared with released charts, so the channel has to do the
 // filtering — otherwise the canary's own builds would be offered to everyone.
 func TestChartFeed_LatestPicksNewestForChannel(t *testing.T) {
-	tags := []string{"1.0.1", "1.0.2-9-gaaa", "1.0.2-10-gbbb", "1.0.2"}
+	tags := []string{"1.0.1", "1.0.2-9-gaaaaaaa", "1.0.2-10-gbbbbbbb", "1.0.2"}
 
 	c := chartRegistry(t, tags, http.StatusOK)
 	main, err := c.Latest(context.Background(), ChannelMain)
 	if err != nil {
 		t.Fatalf("Latest(main) = %v", err)
 	}
-	// 1.0.2 outranks every 1.0.2-* pre-release.
-	if main.Version.String() != "1.0.2" {
-		t.Errorf("Latest(main) = %s, want 1.0.2", main.Version)
+	// A describe build is commits PAST the tag it names, so it outranks the
+	// bare release. Electing 1.0.2 here is what left the canary permanently
+	// "up to date" and offered it a move backwards.
+	if main.Version.String() != "1.0.2-10-gbbbbbbb" {
+		t.Errorf("Latest(main) = %s, want 1.0.2-10-gbbbbbbb", main.Version)
 	}
 
 	stable, err := c.Latest(context.Background(), ChannelStable)
@@ -62,16 +64,47 @@ func TestChartFeed_LatestPicksNewestForChannel(t *testing.T) {
 	}
 }
 
+// TestChartFeed_MainElectsDescribeBuildOverTheReleaseItContains reproduces the
+// exact registry contents that exposed the bug on the canary: v1.0.2 was cut,
+// then more commits landed on main and published charts beside it. The main
+// channel must elect the newest of those, not the release they contain.
+func TestChartFeed_MainElectsDescribeBuildOverTheReleaseItContains(t *testing.T) {
+	tags := []string{"1.0.2", "1.0.2-1-gf71b116", "1.0.2-3-ga1717c8", "1.0.2-4-g47b6a7a"}
+
+	c := chartRegistry(t, tags, http.StatusOK)
+	got, err := c.Latest(context.Background(), ChannelMain)
+	if err != nil {
+		t.Fatalf("Latest(main) = %v", err)
+	}
+	if got.Version.String() != "1.0.2-4-g47b6a7a" {
+		t.Errorf("Latest(main) = %s, want 1.0.2-4-g47b6a7a", got.Version)
+	}
+
+	// And a cluster running one of those builds must not be told a plain
+	// 1.0.2 is an upgrade — that is the downgrade the operator was offered.
+	current, err := ParseVersion("1.0.2-3-ga1717c8")
+	if err != nil {
+		t.Fatalf("parse current: %v", err)
+	}
+	release, err := ParseVersion("1.0.2")
+	if err != nil {
+		t.Fatalf("parse release: %v", err)
+	}
+	if release.GreaterThan(current) {
+		t.Errorf("1.0.2 ranked above 1.0.2-3-ga1717c8, which would offer a downgrade")
+	}
+}
+
 func TestChartFeed_MainPrefersNewestPrereleaseWhenNoNewerRelease(t *testing.T) {
-	c := chartRegistry(t, []string{"1.0.1", "1.0.2-9-gaaa", "1.0.2-10-gbbb"}, http.StatusOK)
+	c := chartRegistry(t, []string{"1.0.1", "1.0.2-9-gaaaaaaa", "1.0.2-10-gbbbbbbb"}, http.StatusOK)
 	got, err := c.Latest(context.Background(), ChannelMain)
 	if err != nil {
 		t.Fatalf("Latest = %v", err)
 	}
 	// 10 beats 9 numerically; lexically it would not, and the canary would
 	// sit still for ninety commits.
-	if got.Version.String() != "1.0.2-10-gbbb" {
-		t.Errorf("Latest(main) = %s, want 1.0.2-10-gbbb", got.Version)
+	if got.Version.String() != "1.0.2-10-gbbbbbbb" {
+		t.Errorf("Latest(main) = %s, want 1.0.2-10-gbbbbbbb", got.Version)
 	}
 }
 

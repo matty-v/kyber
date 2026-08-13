@@ -157,23 +157,40 @@ func TestVersion_ComparePrereleases(t *testing.T) {
 		a, b string
 		want int
 	}{
-		// A pre-release ranks below the matching release, so a canary on main
-		// correctly sees a freshly cut 1.0.2 as newer than its own build.
-		{"1.0.2-25-gfd47d00", "1.0.2", -1},
-		{"1.0.2", "1.0.2-25-gfd47d00", 1},
+		// `git describe --tags` counts commits PAST the tag, so a describe
+		// build is NEWER than the release it names — the opposite of semver's
+		// reading. Ordering these the semver way broke the main channel: with
+		// 1.0.2 and 1.0.2-4-g47b6a7a both in the registry, Latest() elected
+		// the plain release and the canary was never offered a main build,
+		// while being told to move backwards onto 1.0.2 (found 2026-08-13).
+		{"1.0.2-25-gfd47d00", "1.0.2", 1},
+		{"1.0.2", "1.0.2-25-gfd47d00", -1},
 		// The commit count must compare numerically. Lexically "9-g..." beats
 		// "10-g...", which would tell a canary it was up to date for the
 		// ninety commits between them.
-		{"1.0.2-10-gaaa", "1.0.2-9-gbbb", 1},
-		{"1.0.2-9-gbbb", "1.0.2-10-gaaa", -1},
-		{"1.0.2-26-gaaa", "1.0.2-25-gbbb", 1},
-		{"1.0.2-25-gaaa", "1.0.2-25-gaaa", 0},
+		{"1.0.2-10-gaaaaaaa", "1.0.2-9-gbbbbbbb", 1},
+		{"1.0.2-9-gbbbbbbb", "1.0.2-10-gaaaaaaa", -1},
+		{"1.0.2-26-gaaaaaaa", "1.0.2-25-gbbbbbbb", 1},
+		{"1.0.2-25-gaaaaaaa", "1.0.2-25-gaaaaaaa", 0},
+		// The live pair that exposed the bug.
+		{"1.0.2-4-g47b6a7a", "1.0.2-3-ga1717c8", 1},
+		{"1.0.2-3-ga1717c8", "1.0.2", 1},
+		// A real pre-release still ranks below its release, and a describe
+		// build taken from that pre-release tag sits between the two.
+		{"1.0.2-rc1", "1.0.2", -1},
+		{"1.0.2-rc1-3-gabc1234", "1.0.2-rc1", 1},
+		{"1.0.2-rc1-3-gabc1234", "1.0.2", -1},
+		{"1.0.2-rc2", "1.0.2-rc1", 1},
+		// A suffix that merely looks describe-ish is not one: too few hex
+		// digits, and no `-g` marker at all. Both keep semver ordering.
+		{"1.0.2-3-gaaa", "1.0.2", -1},
+		{"1.0.2-25", "1.0.2", -1},
 		// X.Y.Z still dominates everything.
-		{"1.0.3-1-gaaa", "1.0.2", 1},
-		{"1.0.2-99-gaaa", "1.0.3", -1},
+		{"1.0.3-1-gaaaaaaa", "1.0.2", 1},
+		{"1.0.2-99-gaaaaaaa", "1.0.3", -1},
 		// The renumber guard is untouched: a major bump still wins outright,
 		// which is what keeps a stale v2.x from outranking v1.x.
-		{"2.0.0-1-gaaa", "1.9.9", 1},
+		{"2.0.0-1-gaaaaaaa", "1.9.9", 1},
 	} {
 		a, err := ParseVersion(tc.a)
 		if err != nil {
