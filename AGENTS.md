@@ -350,7 +350,9 @@ scripts/devenv/down.sh
 
 # Full local stack — control-plane AND live agent pods (real runtime in a
 # pod, mock compute; the closest local mirror of prod). Needs docker + k3d.
-scripts/devenv/up-full.sh       # one command; then create an agent via the PWA
+scripts/devenv/up-full.sh --compute-provider fake
+                                # one command; managed fake compute + live agent
+                                # pods; then create an agent via the PWA
                                 # wizard (OAuth). See scripts/devenv/full-local.md
 # Local GitHub App identity-repo testing: save credentials outside git with
 # scripts/devenv/setup-github-app.sh, then rerun up-full.sh --skip-build.

@@ -19,7 +19,9 @@
 #   - port-forward the API and wait for /healthz
 #
 # Usage:
-#   scripts/devenv/up-full.sh [--skip-build] [--recreate] [--api-port N] [--cluster-name NAME]
+#   scripts/devenv/up-full.sh [--skip-build] [--recreate] [--api-port N]
+#                             [--cluster-name NAME]
+#                             [--compute-provider mock|static|fake]
 #     --skip-build   reuse already-built :local images (skips the slow builds)
 #
 # If .kyber-local/github-app/ exists (created by setup-github-app.sh), this
@@ -43,9 +45,15 @@ while [ $# -gt 0 ]; do
     --recreate)     RECREATE=1; shift ;;
     --api-port)     API_PORT="$2"; shift 2 ;;
     --cluster-name) CLUSTER_NAME="$2"; shift 2 ;;
+    --compute-provider) COMPUTE_PROVIDER="$2"; shift 2 ;;
     *) die "unknown arg: $1" 2 ;;
   esac
 done
+
+case "${COMPUTE_PROVIDER}" in
+  mock|static|fake) ;;
+  *) die "--compute-provider must be mock, static, or fake; got: ${COMPUTE_PROVIDER}" 2 ;;
+esac
 
 preflight_deps "${SKIP_BUILD}"
 
@@ -96,6 +104,7 @@ HELM_ARGS=(
   -f "${VALUES_FILE}"
   -f "${OVERLAY}"
   --namespace "${NAMESPACE}" --create-namespace --set namespace.create=false
+  --set "compute.provider=${COMPUTE_PROVIDER}"
 )
 if [ -n "${GITHUB_APP_OWNER}" ]; then
   HELM_ARGS+=(--set-string "identityRepo.defaultOwner=${GITHUB_APP_OWNER}")

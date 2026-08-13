@@ -56,6 +56,7 @@ run Claude Code, use [`up-full.sh`](./up-full.sh) — see
 ```bash
 scripts/devenv/up-full.sh            # cold (builds all images)
 scripts/devenv/up-full.sh --skip-build  # warm (reuse built :local images)
+scripts/devenv/up-full.sh --compute-provider fake # managed lifecycle + live agents
 ```
 
 To test App-minted credentials against real agent identity repos without
