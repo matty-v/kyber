@@ -34,6 +34,20 @@ export function agentActionConfirmMessage(action: string, agentName: string): st
       `for a lighter-weight context reset that keeps the pod up.`
     )
   }
+  if (action === 'retry-startup') {
+    // kyber#26: the NeedsAuth "try again with what you have" control. Worded
+    // for a pod that is usually already gone (the agent exited on a credential
+    // failure), so it promises a rebuild rather than a roll — and points at the
+    // Re-authorize panel as the other half of the choice, since the operator
+    // has to decide whether the credential is actually bad.
+    return (
+      `Rebuild the pod for "${agentName}" using the credentials it already ` +
+      `has? Use this when you have already supplied a working credential and ` +
+      `the agent is still parked. If the credential is genuinely bad, use the ` +
+      `Re-authorize panel instead — this will just land back in NeedsAuth. ` +
+      `Memory and identity files on disk are not affected.`
+    )
+  }
   if (action === 'force-needs-auth') {
     // #395: wedged-agent recovery. Tears down a running pod and parks the
     // agent until an operator re-authorizes — hence the confirm gate.

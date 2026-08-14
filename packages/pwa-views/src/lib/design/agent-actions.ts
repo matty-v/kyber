@@ -38,6 +38,11 @@ export type AgentLifecycleKind =
   // Operator-forced re-auth for a wedged agent (#395): drops it to NeedsAuth
   // (deleting any live pod) so it can be re-authorized from scratch.
   | 'force-needs-auth'
+  // Operator "try again with what you have" for a NeedsAuth agent (kyber#26).
+  // Distinct kind rather than reusing 'start' because the label, icon and
+  // confirm copy are different — but it fires the SAME /start endpoint, which
+  // is the one that actually works out of NeedsAuth (see below).
+  | 'retry-startup'
 
 // Per-phase lifecycle subsets. Rules:
 //   - Don't offer Start on a Running agent; don't offer Stop/Suspend on a
@@ -57,6 +62,21 @@ export type AgentLifecycleKind =
 //     agent can be stuck in — including Starting (a stuck-Starting agent is a
 //     prime re-auth target) and the crashed phases. NeedsAuth itself is excluded
 //     (can't re-force what's already there); Deleted has nothing actionable.
+//   - NeedsAuth offers 'retry-startup' (kyber#26). It used to be actionless, so
+//     an agent parked on a credential that was already good had no control in
+//     the PWA at all and needed a cluster-admin `kubectl annotate` to unwedge
+//     (the `lando` incident, 2026-08-09). The item is 'retry-startup' and NOT
+//     'restart' because #599's rule still binds: EventDesiredRestarting has no
+//     transition out of NeedsAuth, so a "Restart pod" wired to /restart would be
+//     a dead button. 'retry-startup' fires POST /start → desiredPhase=Running,
+//     which the API pairs with clearing status.recoveryInput (routes_agents.go,
+//     setAgentDesiredPhase) so the kyber#684 latch opens for exactly one attempt
+//     — even when the credential Secret's resourceVersion is unchanged, which is
+//     precisely how `lando` was stuck. The controller's AUTOMATIC path is
+//     untouched: it still refuses to self-retry on an unchanged credential.
+//     One click = one pod create; a still-dead credential lands back here.
+//     MemoryExhausted needs nothing equivalent — it already offers 'start',
+//     which goes through the same latch-clearing endpoint.
 export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
   switch (phase) {
     case 'Running':
@@ -69,10 +89,11 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
       return ['start', 'force-needs-auth']
     case 'Starting':
       return ['force-needs-auth']
+    case 'NeedsAuth':
+      return ['retry-startup']
     case 'Stopping':
     case 'Restarting':
     case 'Creating':
-    case 'NeedsAuth':
     case 'Deleted':
       return []
   }
