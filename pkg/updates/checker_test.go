@@ -1,10 +1,13 @@
 package updates
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -310,5 +313,63 @@ func TestChecker_RealFeedFailureIsStillRecorded(t *testing.T) {
 
 	if got := c.Check(context.Background()); got.LastError == "" {
 		t.Error("a genuinely unreachable feed recorded no error")
+	}
+}
+
+// The publish date is what turns "1.2.0 is out" into a decision — an operator
+// weighs a release differently at one hour old and at three months old. It is
+// parsed off the feed already; these lock down that it survives onto the
+// status an operator actually reads.
+const datedReleaseBody = `{"tag_name":"v1.2.0","html_url":"https://example.invalid/r","published_at":"2026-08-12T09:30:00Z","draft":false,"prerelease":false}`
+
+func TestChecker_CarriesTheReleasePublishDate(t *testing.T) {
+	c := checkerWith(t, "1.0.1", datedReleaseBody)
+	got := c.Check(context.Background())
+
+	if got.LatestPublishedAt == nil {
+		t.Fatal("LatestPublishedAt = nil, want the feed's published_at")
+	}
+	if want := "2026-08-12T09:30:00Z"; got.LatestPublishedAt.UTC().Format(time.RFC3339) != want {
+		t.Errorf("LatestPublishedAt = %s, want %s", got.LatestPublishedAt.UTC().Format(time.RFC3339), want)
+	}
+}
+
+// The chart registry the `main` channel reads publishes no date at all. Absent
+// has to stay absent: a client that receives 0001-01-01 renders "released 2025
+// years ago" unless every one of them special-cases the zero time.
+func TestChecker_PublishDateIsAbsentWhenTheSourceHasNone(t *testing.T) {
+	c := checkerWith(t, "1.0.1", releaseBody)
+	got := c.Check(context.Background())
+
+	if got.LatestPublishedAt != nil {
+		t.Errorf("LatestPublishedAt = %v, want nil when the feed carries no published_at", got.LatestPublishedAt)
+	}
+
+	blob, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if bytes.Contains(blob, []byte("latestPublishedAt")) {
+		t.Errorf("an absent publish date was serialized anyway: %s", blob)
+	}
+}
+
+// Switching channels must not leave the previous source's date behind. A
+// cluster that moves from releases to main would otherwise show a real release
+// date next to a chart build that has none.
+func TestChecker_PublishDateIsClearedWhenTheNewSourceHasNone(t *testing.T) {
+	c := checkerWith(t, "1.0.1", datedReleaseBody)
+	if got := c.Check(context.Background()); got.LatestPublishedAt == nil {
+		t.Fatal("setup: expected a publish date from the dated feed")
+	}
+
+	undated := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(releaseBody))
+	}))
+	t.Cleanup(undated.Close)
+	c.Feed = &FeedClient{BaseURL: undated.URL, HTTPClient: undated.Client()}
+
+	if got := c.Check(context.Background()); got.LatestPublishedAt != nil {
+		t.Errorf("LatestPublishedAt = %v after polling a source with no date, want nil", got.LatestPublishedAt)
 	}
 }

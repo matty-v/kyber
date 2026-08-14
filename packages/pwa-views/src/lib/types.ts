@@ -844,6 +844,12 @@ export interface UpdateStatus {
   currentVersion: string
   latestVersion?: string
   latestUrl?: string
+  /**
+   * When the latest version was published. Absent when the source does not
+   * publish one — the chart registry behind the `main` channel carries no
+   * date, so an unreleased build legitimately has none.
+   */
+  latestPublishedAt?: string
   /** True only when a newer version was positively identified. */
   updateAvailable: boolean
   policy: UpdatePolicy

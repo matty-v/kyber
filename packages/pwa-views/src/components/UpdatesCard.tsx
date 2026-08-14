@@ -3,14 +3,14 @@ import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { Card } from './Card'
 import { Button } from './Button'
 import { ConfirmDialog } from './ConfirmDialog'
+import { UpdateDialog, canInstallUpdate } from './UpdateDialog'
 import {
   useUpdates,
   useSetUpdatePolicy,
   useCheckUpdates,
   useApplyUpdate,
-  useAgents,
 } from '../hooks/useAPI'
-import type { AgentPhase, UpdateChannel, UpdateStatus } from '../lib/types'
+import type { UpdateChannel, UpdateStatus } from '../lib/types'
 
 /**
  * UpdatesCard — how an operator sees and controls what version this cluster
@@ -36,7 +36,6 @@ export function UpdatesCard() {
   const setPolicy = useSetUpdatePolicy()
   const check = useCheckUpdates()
   const apply = useApplyUpdate()
-  const agents = useAgents()
   const [confirmMainOpen, setConfirmMainOpen] = useState(false)
   const [confirmInstallOpen, setConfirmInstallOpen] = useState(false)
 
@@ -66,17 +65,6 @@ export function UpdatesCard() {
   const onMain = s.policy.channel === 'main'
   const pinned = Boolean(s.policy.pinnedVersion)
   const running = s.lastRun?.phase === 'pending' || s.lastRun?.phase === 'running'
-
-  // Agents that will actually lose work. Stopped agents are excluded because
-  // restarting them costs nothing, but anything mid-boot IS rolled and loses
-  // that boot — counting only 'Running' understates the radius on a cluster
-  // that is actively spinning agents up.
-  const AT_RISK: AgentPhase[] = ['Running', 'Starting', 'Creating', 'Restarting']
-  const liveAgents = (agents.data ?? []).filter((a) => AT_RISK.includes(a.phase))
-  // 3: "no agents" and "we couldn't find out" are different answers, and only
-  // one of them justifies telling the operator nothing is at risk.
-  const agentsUnknown = agents.isLoading || agents.isError
-  const target = s.latestVersion ?? 'the new version'
 
   function chooseChannel(next: UpdateChannel) {
     if (next === s.policy.channel) return
@@ -219,7 +207,7 @@ export function UpdatesCard() {
               <RefreshCw className="h-3.5 w-3.5 mr-1" aria-hidden />
               Check now
             </Button>
-            {s.applySupported && s.canSelfUpgrade && !pinned && (
+            {canInstallUpdate(s) && (
               <Button
                 variant="primary"
                 size="md"
@@ -271,67 +259,15 @@ export function UpdatesCard() {
       />
 
       {/*
-        The install confirmation exists because the consequence an operator
+        Shared with the header indicator on purpose. The consequence an operator
         actually feels is NOT "the control plane restarts" — it is "every agent
-        loses its session". That is invisible from the button, so the dialog
-        names it, orders it, and puts the live agent count in front of them.
-        Seeing "3 agents are working right now" is what makes this a decision
-        rather than a click.
+        loses its session" — and that warning has to be identical whichever way
+        they arrived, or one of the two entry points is the dangerous one.
       */}
-      <ConfirmDialog
+      <UpdateDialog
         open={confirmInstallOpen}
-        title={`Install ${target}?`}
-        message={
-          <>
-            <p>This restarts the whole cluster, in this order:</p>
-            <ol className="mt-2 list-decimal space-y-1 pl-5">
-              <li>
-                The control plane restarts. <strong>This page goes offline for about a
-                minute</strong> and comes back on the new version.
-              </li>
-              <li>
-                Then every agent restarts, a few at a time.{' '}
-                <strong>Each one loses its current session and any work in progress.</strong>{' '}
-                They do not pick up where they left off.
-              </li>
-            </ol>
-            {agentsUnknown ? (
-              <p className="mt-3 text-warning">
-                Couldn't check which agents are running — assume any that are will be
-                restarted and lose their sessions.
-              </p>
-            ) : (
-              liveAgents.length > 0 && (
-                <p className="mt-3">
-                  Working right now:{' '}
-                  <span className="font-mono text-text-primary">
-                    {liveAgents.map((a) => a.id).join(', ')}
-                  </span>
-                </p>
-              )
-            )}
-            <p className="mt-3 text-text-disabled">
-              If the upgrade fails, Kyber returns the cluster to {s.currentVersion} on its own.
-            </p>
-          </>
-        }
-        confirmLabel={
-          !agentsUnknown && liveAgents.length > 0
-            ? `Install — restart ${liveAgents.length} ${liveAgents.length === 1 ? 'agent' : 'agents'}`
-            : 'Install'
-        }
-        cancelLabel="Cancel"
-        dangerous
-        loading={apply.isPending}
-        onConfirm={() => {
-          setConfirmInstallOpen(false)
-          // Pin the version the dialog just named. With no version the server
-          // resolves latestVersion at request time, so an hourly check landing
-          // between render and confirm would install something other than what
-          // the operator agreed to.
-          apply.mutate(s.latestVersion)
-        }}
-        onCancel={() => setConfirmInstallOpen(false)}
+        status={s}
+        onClose={() => setConfirmInstallOpen(false)}
       />
     </>
   )

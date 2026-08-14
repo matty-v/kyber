@@ -13,6 +13,13 @@ interface Props {
   message: ReactNode
   confirmLabel?: string
   cancelLabel?: string
+  /**
+   * Drops the confirm button, leaving cancel as the only way out. For a dialog
+   * that has something to SAY but nothing to authorize — an update an operator
+   * has been told about on a cluster that may not install it. A confirm button
+   * wired to "close" would read as consent to something.
+   */
+  hideConfirm?: boolean
   dangerous?: boolean
   loading?: boolean
   onConfirm: () => void
@@ -25,6 +32,7 @@ export function ConfirmDialog({
   message,
   confirmLabel = 'Confirm',
   cancelLabel = 'Cancel',
+  hideConfirm = false,
   dangerous = false,
   loading = false,
   onConfirm,
@@ -67,14 +75,16 @@ export function ConfirmDialog({
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={loading}>
             {cancelLabel}
           </Button>
-          <Button
-            variant={dangerous ? 'danger' : 'primary'}
-            size="sm"
-            onClick={onConfirm}
-            loading={loading}
-          >
-            {confirmLabel}
-          </Button>
+          {!hideConfirm && (
+            <Button
+              variant={dangerous ? 'danger' : 'primary'}
+              size="sm"
+              onClick={onConfirm}
+              loading={loading}
+            >
+              {confirmLabel}
+            </Button>
+          )}
         </div>
       </div>
     </div>
