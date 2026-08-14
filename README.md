@@ -9,80 +9,88 @@
 
 **Kyber runs teams of AI coding agents on hardware you own.**
 
-Each agent gets its own sandboxed computer — its own disk, tools, repos, and
-memory — that keeps everything across restarts, upgrades, and crashes. Come back
-tomorrow and your agent still has the repo it cloned, the packages it installed,
-and everything it learned. You run the whole team from a web console, or from
-Telegram and Discord on your phone.
+Each agent gets its own sandboxed computer with its own disk, tools, repos and
+memory, and keeps all of it across restarts. You run the team from a web
+console, or from Telegram and Discord on your phone.
 
 ![The Kyber fleet console: dashboard with agent status, per-agent context pressure, and a live terminal peek](docs/assets/pwa-dashboard.png)
 
 ## What you can do
 
-**Run a team of long-lived agents, each in its own sandbox.**
-An agent isn't a chat window that forgets — it's a persistent machine in a
-Kubernetes cluster. It installs what it needs, keeps its own working copies of
-your repos, and picks up where it left off after a restart or a hardware
-failure.
+- **Run teams of long-lived agents, each sandboxed.** An agent keeps its whole
+  filesystem across restarts, upgrades and preemption: installed packages,
+  cloned repos, credentials, memory.
+- **Run them anywhere.** Any Kubernetes cluster: a Windows laptop, a spare box,
+  or any cloud. On GCP, Kyber provisions the VMs for you, preemptible included.
+- **Control agents from your phone.** Two-way Telegram and Discord chat with any
+  agent. No terminal needed.
+- **Own the environment, not just the agent.** Choose each agent's machine, VM
+  type, disk, CPU and memory. Reboot it, stop it, or open a shell into the
+  running agent from the console.
+- **Put agents on schedules, and let them hand work to each other.** Cron inside
+  each agent survives restarts. Agents send each other signed messages, so one
+  agent's output becomes another's next prompt and can wake it from sleep.
+- **Use the subscriptions you already pay for.** Claude Code agents sign in with
+  your Claude subscription, Codex agents with your ChatGPT subscription, instead
+  of paying per token. API keys work too.
 
-**Run them wherever you want — a laptop, a spare box, or any cloud.**
-Kyber installs the same way on a Windows laptop, a home server, or a managed
-Kubernetes cluster at any cloud provider. On GCP it goes a step further and
-creates the VMs for you, cheap preemptible ones included.
+## Quickstart
 
-**Drive your agents from your phone.**
-Connect Telegram or Discord and talk to any agent from wherever you are — hand
-it work, read what it's doing, answer its questions, approve its next move. You
-don't need a terminal to run your team.
+Kyber installs from a published Helm chart that carries its own image tags.
+Nothing to pin, no registry credentials, no fork.
 
-**Own the environment, not just the agent.**
-You choose the machine each agent lives on: the VM type, the disk, the CPU and
-memory, what's installed on it. You can reboot it, stop it to save money, or
-open a shell straight into the running agent from the console.
+```bash
+kubectl create namespace kyber-system
+kubectl -n kyber-system create secret generic kyber-internal-signing-key \
+  --from-literal=signing-key="$(openssl rand -hex 32)"
 
-**Put agents on a schedule, and let them hand work to each other.**
-Every agent has its own cron that survives restarts, so it can wake up and do
-something on its own. Agents can also send signed messages to each other — one
-agent's finished work becomes another agent's next prompt, and can wake a
-sleeping agent to do it. This is what makes real multi-agent loops possible
-instead of one-off prompts.
+# Keep this. It is how you log in to the PWA and the API.
+export KYBER_API_KEY=$(openssl rand -hex 32)
 
-**Use the subscription you already pay for.**
-Claude Code agents sign in with your Claude subscription and Codex agents with
-your ChatGPT subscription, so a team of agents doesn't turn into a per-token
-API bill. (API keys work too, if you'd rather.)
+helm install kyber oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.5 \
+  --namespace kyber-system \
+  --set namespace.create=false \
+  --set api.apiKey="$KYBER_API_KEY" \
+  --set api.webhookSecret="$(openssl rand -hex 32)" \
+  --wait --timeout 10m
+```
 
-## Get started
+Use the newest version from
+[Releases](https://github.com/matty-v/kyber/releases) in place of `1.0.5`.
 
-| I want to… | Start here |
+[**docs/quickstart.md**](docs/quickstart.md) wraps this in the full 15-minute
+path, from an empty cluster (or a k3d one-liner) to a fleet console with one
+live Claude Code agent, with a verify step at every stage. No cloud account
+required.
+
+## Install
+
+| I want to | Start here |
 |---|---|
-| Try Kyber on a cluster (or a local one-liner) — ~15 minutes to a live agent | [Quickstart](docs/quickstart.md) |
+| Try it on a cluster I already have, or a local one | [Quickstart](docs/quickstart.md) |
 | Have an AI assistant do the install for me | [Install with an AI assistant](docs/install-with-an-ai-assistant.md) |
-| Run it on my Windows laptop, no cloud account | [WSL2 install guide](docs/installation-wsl2.md) |
-| Run it properly on GCP, with managed VMs and HTTPS | [GCP install guide](docs/installation.md) |
+| Run it on my Windows laptop, no cloud account | [WSL2 guide](docs/installation-wsl2.md) |
+| Run it on GCP with managed VMs and HTTPS | [GCP guide](docs/installation.md) |
 
-Installing is one `helm install` from a published chart — nothing to pin, no
-registry credentials, no fork. Upgrades come from inside the console.
-
-One thing to know before you start: agents are powerful on purpose, and their
-pods run with elevated privileges so they can keep a whole persistent disk. Give
-Kyber a cluster you're comfortable trusting the agents with, not a shared
-production one — the [threat model](.github/SECURITY.md#deployment-threat-model)
-explains why.
+Agent pods run with elevated privileges so each agent can keep a whole
+persistent disk. Give Kyber a cluster you are comfortable trusting the agents
+with, not a shared production one. The
+[threat model](.github/SECURITY.md#deployment-threat-model) explains why.
 
 ## Learn more
 
 | | |
 |---|---|
-| **What Kyber does**, in plain operator terms | [docs/product/](docs/product/README.md) |
-| **How it's built** — components, CRDs, agent lifecycle | [docs/architecture/overview.md](docs/architecture/overview.md) |
-| **Agent capabilities** — [chat channels](docs/agents-comms.md), [git-backed memory & persona](docs/agents-identity-repos.md), [scheduled jobs](docs/agents-scheduled-jobs.md), [runtimes & sign-in](docs/runtimes.md) | [docs/](docs/) |
-| **Operating Kyber** — [upgrading](docs/upgrading.md), [releases](docs/operator/release-runbook.md), [recovery](docs/operator/wedged-agent-recovery.md), [API keys](docs/api-keys.md) | [docs/operator/](docs/operator/) |
-| **Contributing** — dev environment, test gates, PR conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
-| **Security policy and threat model** — what to trust an agent with, and how to report a vulnerability | [.github/SECURITY.md](.github/SECURITY.md) |
+| **What Kyber does**, in operator terms | [docs/product/](docs/product/README.md) |
+| **How it is built**: components, CRDs, agent lifecycle | [docs/architecture/overview.md](docs/architecture/overview.md) |
+| **Agent capabilities**: [chat channels](docs/agents-comms.md), [git-backed memory and persona](docs/agents-identity-repos.md), [scheduled jobs](docs/agents-scheduled-jobs.md), [runtimes and sign-in](docs/runtimes.md) | [docs/](docs/) |
+| **Operating Kyber**: [upgrading](docs/upgrading.md), [releases](docs/operator/release-runbook.md), [recovery](docs/operator/wedged-agent-recovery.md), [API keys](docs/api-keys.md) | [docs/operator/](docs/operator/) |
+| **Contributing**: dev environment, test gates, PR conventions | [CONTRIBUTING.md](CONTRIBUTING.md) |
+| **Security policy and threat model** | [.github/SECURITY.md](.github/SECURITY.md) |
 | **What changed** | [CHANGELOG.md](CHANGELOG.md) · [Releases](https://github.com/matty-v/kyber/releases) |
 
-## Status & license
+## Status and license
 
 Kyber is v1.x, solo-maintained, and runs the maintainer's own fleets every day.
 The CRDs and REST API are still evolving; breaking changes land in minor

@@ -1,14 +1,14 @@
 # Kyber documentation
 
-Start here if you're new: [Quickstart](quickstart.md) — any Kubernetes cluster
-to a running fleet console with one live agent, in about 15 minutes. Not a
-developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
+New here? Start with the [Quickstart](quickstart.md). It takes any Kubernetes
+cluster to a running fleet console with one live agent in about 15 minutes. Not
+a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 
 ## Install
 
 | Guide | For |
 |---|---|
-| [quickstart.md](quickstart.md) | Any cluster (or a local k3d one-liner) — the short path |
+| [quickstart.md](quickstart.md) | Any cluster (or a local k3d one-liner), the short path |
 | [install-with-an-ai-assistant.md](install-with-an-ai-assistant.md) | Let an AI assistant drive the install for you |
 | [installation.md](installation.md) | GCP: production multi-VM install, Terraform, HTTPS |
 | [installation-wsl2.md](installation-wsl2.md) | A Windows laptop, no cloud account |
