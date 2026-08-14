@@ -10,6 +10,26 @@
 
 import type { AgentPhase } from '../types'
 
+// Actions that operate on the agent's live session and leave the pod alone.
+// The "Agent actions" section of the More menu.
+export type AgentSessionKind = 'compact-session' | 'restart-session'
+
+// Per-phase session actions. Both need a live runtime to talk to, so both
+// are Running-only — on any other phase there is no tmux session to act on
+// and the section renders nothing (no empty header).
+//
+// Order is deliberate and is the order rendered: compact before restart,
+// because compacting is the smaller move and the one an operator should
+// reach for first. Restart session is the escalation when compaction isn't
+// enough.
+//
+// Runtime capability is NOT decided here — a runtime without compaction
+// answers 501 from the API. Hiding the item per-runtime would mean teaching
+// the PWA the runtime registry, which the server deliberately owns.
+export function sessionItemsInMore(phase: AgentPhase): AgentSessionKind[] {
+  return phase === 'Running' ? ['compact-session', 'restart-session'] : []
+}
+
 export type AgentLifecycleKind =
   | 'start'
   | 'stop'

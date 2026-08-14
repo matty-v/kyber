@@ -46,7 +46,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { lifecycleItemsInMore } from '../lib/design/agent-actions'
+import { lifecycleItemsInMore, sessionItemsInMore } from '../lib/design/agent-actions'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
@@ -519,11 +519,14 @@ export function AgentDetail() {
   // pod) move into the More dropdown — filtered per the existing
   // lifecycleItemsInMore helper so inapplicable items (e.g. Start on a
   // Running agent) stay hidden.
-  const canRestartSession = agent.phase === 'Running'
-  // Same precondition — there has to be a live session to act on. Kept as
-  // its own name rather than reusing canRestartSession so the two can
-  // diverge without a rename hunt.
-  const canCompactSession = agent.phase === 'Running'
+  // Section occupancy. Each section renders its label only when it has at
+  // least one item — a header with nothing under it reads as a bug, and on
+  // non-Running phases the agent-actions section is legitimately empty.
+  // Both per-phase sets are owned by lib/design/agent-actions so they can be
+  // tested without mounting this page.
+  const sessionActions = sessionItemsInMore(agent.phase)
+  const hasAgentActions = sessionActions.length > 0
+  const hasPodActions = lifecycleItemsInMore(agent.phase).length > 0
 
   return (
     <div>
@@ -548,33 +551,44 @@ export function AgentDetail() {
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              <DropdownMenuLabel>Lifecycle</DropdownMenuLabel>
-              {canRestartSession && (
-                <DropdownMenuItem
-                  onSelect={() => setPending('restart-session')}
-                  aria-label="Restart session"
-                >
-                  <RotateCcw className="h-3.5 w-3.5" />
-                  Restart session
-                </DropdownMenuItem>
+              {/* Three sections, ordered by blast radius: things that touch
+                  only the conversation, then things that touch the pod, then
+                  things that change the agent's definition. Each label is
+                  conditional on its section having items — a header with
+                  nothing under it reads as a bug, and on non-Running phases
+                  the agent-actions section is legitimately empty. */}
+              {hasAgentActions && (
+                <>
+                  <DropdownMenuLabel>Agent actions</DropdownMenuLabel>
+                  {sessionActions.includes('compact-session') && (
+                    <DropdownMenuItem
+                      onSelect={() => setPending('compact-session')}
+                      aria-label="Compact session"
+                    >
+                      <Minimize2 className="h-3.5 w-3.5" />
+                      Compact session
+                    </DropdownMenuItem>
+                  )}
+                  {sessionActions.includes('restart-session') && (
+                    <DropdownMenuItem
+                      onSelect={() => setPending('restart-session')}
+                      aria-label="Restart session"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Restart session
+                    </DropdownMenuItem>
+                  )}
+                </>
               )}
-              {/* Compact sits directly above Restart session: same
-                  precondition (a live session), and it is the move to reach
-                  for first — it reduces the context instead of losing it.
-                  Runtimes without compaction answer 501; both shipped
-                  runtimes support it, so the item is not phase-gated any
-                  further than restart-session is. */}
-              {canCompactSession && (
-                <DropdownMenuItem
-                  onSelect={() => setPending('compact-session')}
-                  aria-label="Compact session"
-                >
-                  <Minimize2 className="h-3.5 w-3.5" />
-                  Compact session
-                </DropdownMenuItem>
+              {hasPodActions && (
+                <>
+                  {hasAgentActions && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel>Pod actions</DropdownMenuLabel>
+                  <LifecycleMenuItems phase={agent.phase} onSelect={setPending} />
+                </>
               )}
-              <LifecycleMenuItems phase={agent.phase} onSelect={setPending} />
-              <DropdownMenuLabel>Configure</DropdownMenuLabel>
+              {(hasAgentActions || hasPodActions) && <DropdownMenuSeparator />}
+              <DropdownMenuLabel>Agent configuration</DropdownMenuLabel>
               <DropdownMenuItem
                 onSelect={() => {
                   setNewModel(agent.model)
