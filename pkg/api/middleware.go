@@ -38,6 +38,10 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	if !rw.wrote {
 		rw.wrote = true
 	}
+	// This is a transparent interface adapter, not an HTML sink: the originating
+	// handler owns its Content-Type and encoding. Escaping here would corrupt
+	// JSON, WebSocket handshakes, and binary responses.
+	// codeql[go/reflected-xss]
 	return rw.ResponseWriter.Write(b)
 }
 

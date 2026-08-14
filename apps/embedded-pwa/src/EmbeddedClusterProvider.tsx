@@ -1,7 +1,8 @@
 import { useEffect, useState, type PropsWithChildren } from 'react'
 import {
   ClusterProvider,
-  getEmbeddedApiKey,
+  establishEmbeddedBrowserSession,
+  takeLegacyEmbeddedApiKey,
   type Cluster,
 } from '@matty-v/kyber-pwa-views'
 
@@ -32,14 +33,11 @@ export function EmbeddedClusterProvider({ children }: PropsWithChildren) {
     let cancelled = false
     void (async () => {
       try {
-        // cluster-info is mounted on the *unprotected* mux (see Task A4) so a
-        // fresh install with no API key still resolves and lands the user on
-        // Settings to enter one. We still send the key if present so a bad key
-        // can be detected here rather than per-request.
-        const apiKey = getEmbeddedApiKey()
-        const headers: Record<string, string> = {}
-        if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`
-        const r = await fetch(`${window.location.origin}/api/v1/cluster-info`, { headers })
+        // Migrate the pre-session localStorage key once, then discard it. New
+        // installs establish the same HttpOnly session from Settings.
+        const legacyKey = takeLegacyEmbeddedApiKey()
+        if (legacyKey) await establishEmbeddedBrowserSession(legacyKey)
+        const r = await fetch(`${window.location.origin}/api/v1/cluster-info`)
         if (!r.ok) {
           throw new Error(`status ${r.status}`)
         }
@@ -51,7 +49,7 @@ export function EmbeddedClusterProvider({ children }: PropsWithChildren) {
             id: 'local',
             name: info.name,
             baseURL: window.location.origin + '/',
-            apiKey: getEmbeddedApiKey(),
+            apiKey: '',
             version: info.version,
             capabilities: info.capabilities,
           },
@@ -64,26 +62,6 @@ export function EmbeddedClusterProvider({ children }: PropsWithChildren) {
     })()
     return () => {
       cancelled = true
-    }
-  }, [])
-
-  // C1 fix: keep cluster.apiKey fresh after Settings → Save or useRotateApiKey.
-  // Pre-Phase A every API call read localStorage fresh; post-Phase A the value
-  // is captured in the Cluster object at mount. Dispatch 'kyber:apikey-changed'
-  // from setEmbeddedApiKey (same-tab) + native 'storage' (other tabs) to bump it.
-  useEffect(() => {
-    const refresh = () => {
-      setState(s =>
-        s.status === 'ready'
-          ? { ...s, cluster: { ...s.cluster, apiKey: getEmbeddedApiKey() } }
-          : s,
-      )
-    }
-    window.addEventListener('storage', refresh)
-    window.addEventListener('kyber:apikey-changed', refresh)
-    return () => {
-      window.removeEventListener('storage', refresh)
-      window.removeEventListener('kyber:apikey-changed', refresh)
     }
   }, [])
 

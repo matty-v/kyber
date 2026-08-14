@@ -4,13 +4,11 @@ import { Card } from '../components/Card'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Input } from '@/components/ui/input'
-import {
-  getEmbeddedApiKey as getApiKey,
-  setEmbeddedApiKey as setApiKey,
-} from '../lib/api'
+import { establishEmbeddedBrowserSession } from '../lib/api'
 import { DiagnosticsCard } from '../components/DiagnosticsCard'
 import { UpdatesCard } from '../components/UpdatesCard'
 import { useDensity, type Density } from '../contexts/DensityContext'
+import { useCluster } from '../lib/cluster-context'
 import { useEffectiveModelList } from '../lib/models'
 import type { AvailableModel } from '../lib/types'
 import {
@@ -32,19 +30,51 @@ function maskedPreview(key: string): string {
 }
 
 export function Settings() {
+  const cluster = useCluster()
+
+  return (
+    <div>
+      <h1 className="text-xl font-bold text-text-primary mb-6">Settings</h1>
+
+      {cluster.id === 'local' && <APIConnectionCard />}
+
+      <UpdatesCard />
+      <DensityCard />
+
+      <FleetDefaultsCard />
+
+      <RotateApiKeyCard />
+
+      <ModelDiscoveryCard />
+
+      <DiagnosticsCard />
+    </div>
+  )
+}
+
+function APIConnectionCard() {
   const [apiKey, setApiKeyState] = useState('')
   const [saved, setSaved] = useState(false)
   const [revealed, setRevealed] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
 
-  useEffect(() => {
-    setApiKeyState(getApiKey())
-  }, [])
-
-  function save() {
-    setApiKey(apiKey)
-    setSaved(true)
-    setTimeout(() => setSaved(false), 2000)
+  async function save() {
+    if (!apiKey) return
+    setSaving(true)
+    setSaveError('')
+    try {
+      await establishEmbeddedBrowserSession(apiKey)
+      setApiKeyState('')
+      setRevealed(false)
+      setSaved(true)
+      setTimeout(() => setSaved(false), 2000)
+    } catch {
+      setSaveError('The API key was rejected or the control plane could not be reached.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function copyKey() {
@@ -62,11 +92,12 @@ export function Settings() {
   const hasKey = apiKey.length > 0
 
   return (
-    <div>
-      <h1 className="text-xl font-bold text-text-primary mb-6">Settings</h1>
-
       <Card className="max-w-lg">
         <h2 className="text-sm font-medium text-text-muted mb-4">API Connection</h2>
+        <p className="mb-4 text-xs text-text-muted">
+          Paste the key to establish an HttpOnly browser session. Kyber does
+          not retain the raw key in browser-readable storage.
+        </p>
         <div className="space-y-4">
           <div>
             <label className="block text-sm text-text-muted mb-1">API Key</label>
@@ -116,27 +147,16 @@ export function Settings() {
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="primary" size="md" onClick={save}>
+            <Button variant="primary" size="md" onClick={() => void save()} loading={saving} disabled={saving || !hasKey}>
               Save
             </Button>
             {saved && (
-              <span className="text-sm text-success">Saved</span>
+              <span className="text-sm text-success">Session established</span>
             )}
           </div>
+          {saveError && <p className="text-sm text-danger">{saveError}</p>}
         </div>
       </Card>
-
-      <UpdatesCard />
-      <DensityCard />
-
-      <FleetDefaultsCard />
-
-      <RotateApiKeyCard onRotated={(k) => setApiKeyState(k)} />
-
-      <ModelDiscoveryCard />
-
-      <DiagnosticsCard />
-    </div>
   )
 }
 
@@ -506,13 +526,7 @@ function DensityCard() {
   )
 }
 
-interface RotateApiKeyCardProps {
-  /** Called after a successful rotation so the parent's revealed-key state
-   *  reflects the new key. */
-  onRotated: (newKey: string) => void
-}
-
-function RotateApiKeyCard({ onRotated }: RotateApiKeyCardProps) {
+function RotateApiKeyCard() {
   const rotate = useRotateApiKey()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [newKey, setNewKey] = useState<string | null>(null)
@@ -523,7 +537,6 @@ function RotateApiKeyCard({ onRotated }: RotateApiKeyCardProps) {
     try {
       const resp = await rotate.mutateAsync()
       setNewKey(resp.apiKey)
-      onRotated(resp.apiKey)
     } catch {
       // Error toast is fired by the mutation's meta.errorPrefix path.
     }
@@ -609,7 +622,8 @@ function RotateApiKeyCard({ onRotated }: RotateApiKeyCardProps) {
               </button>
             </div>
             <p className="mt-3 text-xs text-text-muted">
-              Stored in this browser's localStorage automatically.
+              This browser continues with a refreshed HttpOnly session. The raw
+              key is not stored in browser-readable storage.
             </p>
             <div className="mt-5 flex justify-end">
               <Button variant="primary" size="sm" onClick={() => setNewKey(null)}>

@@ -251,11 +251,20 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 
 	// Send a close frame, optionally carrying the exit error.
 	if streamErr != nil {
-		_ = conn.WriteMessage(websocket.TextMessage,
-			[]byte(`{"type":"exit","error":"`+jsonEscape(streamErr.Error())+`"}`))
+		payload, err := encodeExecExitPayload(streamErr.Error())
+		if err == nil {
+			_ = conn.WriteMessage(websocket.TextMessage, payload)
+		}
 	} else {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
 	}
+}
+
+func encodeExecExitPayload(message string) ([]byte, error) {
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Error string `json:"error"`
+	}{Type: "exit", Error: message})
 }
 
 // terminalSizeQueue implements remotecommand.TerminalSizeQueue.
@@ -344,14 +353,4 @@ func ParseExecCommandForTest(r *http.Request) []string {
 func validateMode(r *http.Request) bool {
 	m := r.URL.Query().Get("mode")
 	return m == "" || m == "attach" || m == "shell" || m == "history" || m == "device-auth"
-}
-
-// jsonEscape escapes a string for safe embedding in a JSON string literal.
-func jsonEscape(s string) string {
-	b, err := json.Marshal(s)
-	if err != nil {
-		return ""
-	}
-	// Marshal returns `"..."` — strip the quotes.
-	return string(b[1 : len(b)-1])
 }

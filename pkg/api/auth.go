@@ -2,12 +2,16 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -147,16 +151,22 @@ type scopedKey struct {
 // against the legacy shared key (full scope, mutable via SetKey for rotation
 // #143) and an optional set of named scoped keys (kyber#474).
 type APIKeyAuthenticator struct {
-	mu      sync.RWMutex
-	key     string // legacy full-scope key (rotatable)
-	callers []scopedKey
+	mu       sync.RWMutex
+	key      string // legacy full-scope key (rotatable)
+	callers  []scopedKey
+	sessions map[string]browserSession
+}
+
+type browserSession struct {
+	caller    Caller
+	expiresAt time.Time
 }
 
 // NewAPIKeyAuthenticator returns an Authenticator that accepts the legacy key
 // (resolving to a full-scope caller) plus any scoped callers. Existing callers
 // pass no scoped callers and get exactly the prior behavior.
 func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenticator {
-	a := &APIKeyAuthenticator{key: key}
+	a := &APIKeyAuthenticator{key: key, sessions: make(map[string]browserSession)}
 	for _, c := range callers {
 		scopes := make([]Scope, 0, len(c.Scopes))
 		for _, sc := range c.Scopes {
@@ -168,6 +178,69 @@ func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenti
 		})
 	}
 	return a
+}
+
+const browserSessionCookie = "kyber_browser_session"
+
+const (
+	browserSessionTTL  = 12 * time.Hour
+	maxBrowserSessions = 256
+)
+
+// CreateBrowserSession issues an opaque, process-local browser credential.
+// The API key never becomes the cookie value and sessions disappear when the
+// control plane restarts.
+func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error) {
+	token, err := generateBrowserSessionToken()
+	if err != nil {
+		return "", err
+	}
+	a.storeBrowserSession(token, caller)
+	return token, nil
+}
+
+func generateBrowserSessionToken() (string, error) {
+	buf := make([]byte, 32)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generating browser session: %w", err)
+	}
+	return hex.EncodeToString(buf), nil
+}
+
+func (a *APIKeyAuthenticator) storeBrowserSession(token string, caller Caller) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	now := time.Now()
+	for existing, session := range a.sessions {
+		if now.After(session.expiresAt) {
+			delete(a.sessions, existing)
+		}
+	}
+	if len(a.sessions) >= maxBrowserSessions {
+		for existing := range a.sessions {
+			delete(a.sessions, existing)
+			break
+		}
+	}
+	a.sessions[token] = browserSession{caller: caller, expiresAt: now.Add(browserSessionTTL)}
+}
+
+// ReplaceBrowserSessions revokes all browser sessions and installs one
+// pre-generated replacement for the caller that initiated a key rotation.
+func (a *APIKeyAuthenticator) ReplaceBrowserSessions(token string, caller Caller) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessions = map[string]browserSession{
+		token: {caller: caller, expiresAt: time.Now().Add(browserSessionTTL)},
+	}
+}
+
+// ClearBrowserSessions revokes every browser session, used when the legacy
+// key rotates so other signed-in browsers lose access immediately.
+func (a *APIKeyAuthenticator) ClearBrowserSessions() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.sessions = make(map[string]browserSession)
 }
 
 // SetKey atomically replaces the accepted legacy key. After this returns, the
@@ -189,9 +262,10 @@ func (a *APIKeyAuthenticator) currentKey() string {
 // Authenticate returns the resolved *Caller when the request carries a valid
 // key, or an error (mapped to 401 Unauthorized) otherwise.
 //
-// Auth is accepted from two sources (first present wins):
+// Auth is accepted from three sources (first present wins):
 //  1. Authorization: Bearer <key> header — used by REST clients.
-//  2. ?token=<key> query parameter — accepted ONLY on WebSocket upgrade
+//  2. Opaque HttpOnly browser-session cookie — used by the embedded PWA.
+//  3. ?token=<key> query parameter — accepted ONLY on WebSocket upgrade
 //     requests, because browsers cannot set custom headers during the HTTP
 //     upgrade handshake. Plain REST requests must use the Bearer header:
 //     keys in URLs leak into proxy/ingress access logs and browser history.
@@ -201,6 +275,17 @@ func (a *APIKeyAuthenticator) currentKey() string {
 // scopes; the legacy key resolves to a full-scope caller. To avoid a timing
 // oracle on WHICH key matched, all comparisons run before a decision is made.
 func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
+	if r.Header.Get("Authorization") == "" {
+		if cookie, err := r.Cookie(browserSessionCookie); err == nil && cookie.Value != "" {
+			a.mu.RLock()
+			session, ok := a.sessions[cookie.Value]
+			a.mu.RUnlock()
+			if ok && time.Now().Before(session.expiresAt) {
+				return &session.caller, nil
+			}
+			return nil, errUnauthorized("invalid browser session")
+		}
+	}
 	presented, err := presentedKey(r)
 	if err != nil {
 		return nil, err
@@ -269,6 +354,12 @@ func callerFrom(ctx context.Context) *Caller {
 // that fail receive 401.
 func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") == "" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if _, err := r.Cookie(browserSessionCookie); err == nil && !sameOriginRequest(r) {
+				writeJSONError(w, http.StatusForbidden, "forbidden_origin", "browser session requests require a same-origin Origin header")
+				return
+			}
+		}
 		caller, err := auth.Authenticate(r)
 		if err != nil {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
@@ -277,4 +368,20 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 		ctx := context.WithValue(r.Context(), callerCtxKey{}, caller)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+func sameOriginRequest(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+		return false
+	}
+	scheme := "http"
+	if r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https") {
+		scheme = "https"
+	}
+	return strings.EqualFold(u.Scheme, scheme) && strings.EqualFold(u.Host, r.Host)
 }

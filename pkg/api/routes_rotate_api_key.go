@@ -58,6 +58,27 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Generate a replacement browser credential before changing persistent or
+	// in-memory state. This keeps a random-source failure from leaving the
+	// initiating browser signed out after an otherwise successful rotation.
+	_, cookieErr := r.Cookie(browserSessionCookie)
+	usedBrowserSession := cookieErr == nil
+	var browserCaller *Caller
+	var replacementToken string
+	if usedBrowserSession {
+		browserCaller = callerFrom(r.Context())
+		if browserCaller == nil {
+			writeJSONError(w, http.StatusInternalServerError, "session_creation_failed", "authenticated caller missing")
+			return
+		}
+		var err error
+		replacementToken, err = generateBrowserSessionToken()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "session_creation_failed", "failed to refresh browser session")
+			return
+		}
+	}
+
 	newKey, err := generateAPIKey()
 	if err != nil {
 		slog.ErrorContext(r.Context(), "rotate-api-key: generate failed", "err", err)
@@ -87,6 +108,16 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// value.
 	s.auth.SetKey(newKey)
 	s.APIKey = newKey
+
+	// Rotation revokes every browser session along with the old legacy key.
+	// If this request itself used a browser session, immediately issue a fresh
+	// session for the authenticated caller so the initiating browser stays in.
+	if usedBrowserSession {
+		s.auth.ReplaceBrowserSessions(replacementToken, *browserCaller)
+		setBrowserSessionCookie(w, r, replacementToken)
+	} else {
+		s.auth.ClearBrowserSessions()
+	}
 
 	// Audit trail via k8s Event. Target the Secret since that's the object
 	// that just changed; reason "ApiKeyRotated" is greppable in `kubectl get

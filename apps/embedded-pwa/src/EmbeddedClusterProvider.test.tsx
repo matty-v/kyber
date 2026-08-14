@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import { EmbeddedClusterProvider } from './EmbeddedClusterProvider'
 import { useCluster } from '@matty-v/kyber-pwa-views'
 
@@ -13,11 +13,6 @@ function ShowCluster() {
   )
 }
 
-function ShowApiKey() {
-  const c = useCluster()
-  return <span data-testid="apikey">{c.apiKey}</span>
-}
-
 const validResponse = {
   name: 'kyber-local',
   version: '1.6.0',
@@ -28,6 +23,9 @@ beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('kyber_api_key', 'sk-test')
   vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo) => {
+    if (String(input).endsWith('/api/v1/browser-session')) {
+      return new Response(null, { status: 204 })
+    }
     if (String(input).endsWith('/api/v1/cluster-info')) {
       return new Response(JSON.stringify(validResponse), { status: 200 })
     }
@@ -72,24 +70,19 @@ describe('EmbeddedClusterProvider', () => {
     })
   })
 
-  it('updates cluster.apiKey when setEmbeddedApiKey dispatches the kyber:apikey-changed event', async () => {
+  it('exchanges and removes a legacy localStorage API key', async () => {
     render(
       <EmbeddedClusterProvider>
-        <ShowApiKey />
+        <ShowCluster />
       </EmbeddedClusterProvider>,
     )
     await waitFor(() => {
-      expect(screen.getByTestId('apikey').textContent).toBe('sk-test')
+      expect(screen.getByTestId('name').textContent).toBe('kyber-local')
     })
-
-    // Simulate a Save: write to localStorage and dispatch the event.
-    await act(async () => {
-      localStorage.setItem('kyber_api_key', 'sk-rotated')
-      window.dispatchEvent(new CustomEvent('kyber:apikey-changed'))
-    })
-
-    await waitFor(() => {
-      expect(screen.getByTestId('apikey').textContent).toBe('sk-rotated')
+    expect(localStorage.getItem('kyber_api_key')).toBeNull()
+    expect(fetch).toHaveBeenCalledWith('/api/v1/browser-session', {
+      method: 'POST',
+      headers: { Authorization: 'Bearer sk-test' },
     })
   })
 

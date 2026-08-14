@@ -3,7 +3,8 @@ info:
   title: Kyber Control Plane API
   description: >
     Public HTTP API for the Kyber agent fleet control plane.
-    All /api/v1/* endpoints require Bearer authentication.
+    Protected /api/v1/* endpoints accept Bearer authentication or an opaque
+    embedded-browser session established from a bearer key.
     Webhook endpoints at /webhooks/* bypass Bearer auth.
   version: 0.1.0
 
@@ -14,6 +15,21 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/browser-session:
+    post:
+      operationId: createBrowserSession
+      summary: Exchange a bearer API key for an opaque HttpOnly browser session
+      tags: [authentication]
+      responses:
+        '204':
+          description: Browser session established
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /api/v1/dev/compute/instances:
     get:
       operationId: listSimulatedComputeInstances

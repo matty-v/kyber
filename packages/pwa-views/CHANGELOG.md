@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.24.2 — 2026-08-13
+
+### Security
+- The embedded PWA exchanges its API key for an opaque HttpOnly, same-site
+  browser session and removes legacy keys from localStorage. Raw control-plane
+  credentials are no longer retained in browser-readable storage.
+
 ## 0.24.1 — 2026-08-13
 
 ### Changed
