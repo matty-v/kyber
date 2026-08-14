@@ -79,6 +79,42 @@ class KyberAPIError extends Error {
   }
 }
 
+// Error code the control plane returns when a browser-session cookie is no
+// longer valid (pkg/api/auth.go ErrCodeSessionExpired). Distinct from the
+// generic "unauthorized" precisely so this case can be recovered in place.
+export const ERR_SESSION_EXPIRED = 'session_expired'
+
+// Subscribers notified when the control plane reports an expired browser
+// session. A module-level notifier rather than React state because the 401
+// can surface from any query, mutation, or poll in the tree, and every one
+// of them should produce the same single prompt.
+const sessionExpiredListeners = new Set<() => void>()
+
+/**
+ * Subscribe to browser-session expiry. Returns an unsubscribe function.
+ *
+ * Only meaningful for the embedded app, which authenticates with the
+ * HttpOnly cookie. Hub mode sends a bearer key on every request, so the
+ * control plane never emits session_expired there.
+ */
+export function onSessionExpired(listener: () => void): () => void {
+  sessionExpiredListeners.add(listener)
+  return () => {
+    sessionExpiredListeners.delete(listener)
+  }
+}
+
+function notifySessionExpired(): void {
+  for (const listener of sessionExpiredListeners) {
+    try {
+      listener()
+    } catch {
+      // A throwing subscriber must not stop the others from being told, and
+      // must not turn an auth prompt into an unhandled rejection.
+    }
+  }
+}
+
 export type ApiClient = ReturnType<typeof createApiClient>
 
 export function createApiClient(cluster: Cluster) {
@@ -111,6 +147,13 @@ export function createApiClient(cluster: Cluster) {
         message = err.error?.message ?? message
       } catch {
         // ignore parse failure
+      }
+      // Announce a dead browser session before throwing, so the app can put
+      // up a re-auth prompt instead of leaving the caller's error to render
+      // as a dead end the operator can't act on. Still throws — callers keep
+      // their existing error handling.
+      if (res.status === 401 && code === ERR_SESSION_EXPIRED) {
+        notifySessionExpired()
       }
       throw new KyberAPIError(res.status, code, message)
     }
@@ -199,6 +242,16 @@ export function createApiClient(cluster: Cluster) {
       request<RestartSessionResponse>(
         'POST',
         `/api/v1/agents/${encodeURIComponent(name)}/restart-session`,
+      ),
+
+    // compactAgentSession fires POST /compact-session. Same error shape as
+    // restartAgentSession, plus a 501 when the agent's runtime has no
+    // compaction command — callers should treat that as "not available on
+    // this runtime", not as a failure to report loudly.
+    compactAgentSession: (name: string): Promise<CompactSessionResponse> =>
+      request<CompactSessionResponse>(
+        'POST',
+        `/api/v1/agents/${encodeURIComponent(name)}/compact-session`,
       ),
 
     suspendAgent: (name: string): Promise<void> =>
@@ -740,6 +793,18 @@ export interface RestartSessionResponse {
   runtime: string
   stdout: string
   stderr: string
+}
+
+// compactAgentSession response type. `delivered` is deliberately not the
+// same claim as "compacted": the server pastes the slash command into the
+// running runtime and returns — compaction itself finishes later.
+export interface CompactSessionResponse {
+  agent: string
+  runtime: string
+  stdout: string
+  stderr: string
+  delivered: boolean
+  detail: string
 }
 
 // runAgentJob response type.

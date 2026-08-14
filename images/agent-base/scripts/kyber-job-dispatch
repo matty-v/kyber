@@ -47,6 +47,13 @@ TMUX_SESSION="${KYBER_JOBS_TMUX_SESSION:-agent}"
 # markers are short-lived (created here, cleared by the hook on the next Stop).
 CRON_COMPLETE_DIR="${KYBER_CRON_COMPLETE_DIR:-/persist/var/run/kyber-cron-complete}"
 
+# Shared tmux delivery helper, resolved next to this script (same directory in
+# the image and in the repo). Sourced, not executed. Loaded further down —
+# AFTER emit_event exists — so a missing helper is reported through the same
+# channels as any other delivery failure instead of vanishing.
+KYBER_JOB_DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PASTE_HELPER="$KYBER_JOB_DISPATCH_DIR/kyber-tmux-paste.sh"
+
 # Ensure log + lock dirs exist on every boot. /persist is the PV, so these
 # live-survive pod restarts; we only mkdir on the first run.
 mkdir -p "$(dirname "$LOG_FILE")" "$LOCK_DIR" 2>/dev/null || true
@@ -144,6 +151,17 @@ emit_event() {
         -d "$body" >/dev/null 2>&1 || true
 }
 
+# ---- Shared delivery helper ----
+# Sourced here, after emit_event is defined, so an absent or unreadable helper
+# records outcome=failed on the CR and in the job log like every other failure
+# mode. Exiting before this point would make every cron fire and every inbound
+# prompt disappear with nothing but cron stderr to show for it.
+# shellcheck source=./kyber-tmux-paste.sh
+if ! . "$PASTE_HELPER" 2>/dev/null; then
+    emit_event "failed" "paste_helper_missing"
+    exit 0
+fi
+
 # ---- Session-lock guard ----
 # If the session-restart handler (#128) holds the session lock, defer.
 if [ -f "$SESSION_LOCK" ] && ! flock -n "$SESSION_LOCK" true 2>/dev/null; then
@@ -193,24 +211,11 @@ dispatch() {
     else
         prompt="$(cat "$PROMPT_FILE")"
     fi
-    # Use tmux's explicit bracketed-paste path instead of a rapid send-keys
-    # burst. Codex's TUI can keep a heuristic paste burst open long enough to
-    # absorb the following Enter, leaving the entire inbound envelope stranded
-    # in its editor. paste-buffer -p supplies an unambiguous paste-end marker.
-    local buffer_name="kyber-$JOB_NAME"
-    if ! printf '%s' "$prompt" | tmux load-buffer -b "$buffer_name" -; then
-        emit_event "failed" "tmux_load_buffer_failed"
-        return 1
-    fi
-    if ! tmux paste-buffer -p -d -b "$buffer_name" -t "$TMUX_SESSION"; then
-        tmux delete-buffer -b "$buffer_name" 2>/dev/null || true
-        emit_event "failed" "tmux_paste_buffer_failed"
-        return 1
-    fi
-    # Let the TUI render the completed bracketed paste before submitting.
-    sleep 0.1
-    if ! tmux send-keys -t "$TMUX_SESSION" Enter; then
-        emit_event "failed" "tmux_send_keys_enter_failed"
+    # Delivery (bracketed paste + Enter) lives in the shared helper so the
+    # compact-session path can't drift from this one. The helper's failure
+    # reasons are the same tokens this script has always emitted.
+    if ! kyber_tmux_paste "$TMUX_SESSION" "kyber-$JOB_NAME" "$prompt"; then
+        emit_event "failed" "$KYBER_TMUX_PASTE_REASON"
         return 1
     fi
     # Drop a completion marker for NAMED scheduled jobs so the Stop hook can

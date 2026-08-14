@@ -1,6 +1,7 @@
 import { useEffect, useState, type PropsWithChildren } from 'react'
 import {
   ClusterProvider,
+  SessionExpiredDialog,
   establishEmbeddedBrowserSession,
   takeLegacyEmbeddedApiKey,
   type Cluster,
@@ -81,5 +82,13 @@ export function EmbeddedClusterProvider({ children }: PropsWithChildren) {
       </div>
     )
   }
-  return <ClusterProvider value={state.cluster}>{children}</ClusterProvider>
+  // SessionExpiredDialog sits inside the provider but outside the routed
+  // tree, so a dead session prompts for the key once — not once per query
+  // that happened to be in flight when it died.
+  return (
+    <ClusterProvider value={state.cluster}>
+      {children}
+      <SessionExpiredDialog />
+    </ClusterProvider>
+  )
 }

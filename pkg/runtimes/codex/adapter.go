@@ -92,4 +92,17 @@ func (a *Adapter) ModelEnvVar() string            { return "CODEX_MODEL" }
 func (a *Adapter) RestartSessionCommand() []string {
 	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/bin/bash", "/persist/last-codex-launch.sh"}
 }
+
+// CompactSessionCommand pastes "/compact" into the live tmux session. Codex
+// uses the same slash command as Claude Code, so both runtimes share the
+// in-pod script and differ only in this argv.
+//
+// The bracketed-paste delivery in kyber-tmux-paste.sh matters more here than
+// anywhere else: Codex's TUI is the reason that helper exists, since it can
+// absorb a following Enter into a heuristic paste burst.
+//
+// runuser -u kyber for the same per-uid tmux socket reason as claude-code.
+func (a *Adapter) CompactSessionCommand() []string {
+	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/usr/sbin/runuser", "-u", "kyber", "--", "/usr/local/bin/kyber-compact-session", "/compact"}
+}
 func (a *Adapter) PreStopCommand() []string { return nil }

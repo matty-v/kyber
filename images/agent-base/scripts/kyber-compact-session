@@ -1,0 +1,91 @@
+#!/bin/bash
+# kyber-compact-session — ask the agent's running runtime to compact its
+# own context, without restarting the session or rolling the pod.
+#
+# Usage:  kyber-compact-session [<command-text>]
+#
+# <command-text> defaults to "/compact", which is the slash command in both
+# Claude Code and Codex. It is an argument rather than a constant so a
+# runtime whose command diverges can pass its own from
+# Adapter.CompactSessionCommand() without a new script.
+#
+# Contract:
+#   - Refuses (exit 3) if the session-restart handler holds
+#     /persist/var/lock/session.lock — a compact must not race a relaunch,
+#     for the same reason a scheduled job must not (#128 / #135 D9).
+#   - Refuses (exit 4) if the tmux session is absent — there is no live
+#     context to compact. This is the "agent is mid-crash or still
+#     bootstrapping" case, and it is a real error, not a no-op.
+#   - Delivers the command as a bracketed paste followed by Enter, via the
+#     shared helper the inbound/cron dispatcher uses.
+#
+# Exit status is meaningful here (unlike kyber-job-dispatch, which is
+# cron-driven and always exits 0): the control-plane execs this over SPDY
+# and surfaces a non-zero exit to the operator as a failed request.
+#
+#   0  command delivered
+#   2  malformed invocation
+#   3  session lock held (restart in progress)
+#   4  tmux session absent
+#   5  tmux delivery failed
+#
+# What this does NOT do: wait for the compaction to finish, or verify it
+# happened. Compaction is the runtime's own operation and can take a while;
+# the honest report is "the command was delivered", and the operator reads
+# the outcome from the agent's activity. Claiming more would be a lie the
+# exit code cannot back up.
+
+set -u
+
+LOCK_DIR="${KYBER_JOBS_LOCK_DIR:-/persist/var/lock}"
+SESSION_LOCK="$LOCK_DIR/session.lock"
+TMUX_SESSION="${KYBER_JOBS_TMUX_SESSION:-agent}"
+
+# Resolve the shared paste helper next to this script. Both land in
+# /usr/local/bin in the image and in scripts/ in the repo, so the same
+# lookup works in production and under test.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=./kyber-tmux-paste.sh
+if ! . "$SCRIPT_DIR/kyber-tmux-paste.sh"; then
+    echo "kyber-compact-session: cannot load $SCRIPT_DIR/kyber-tmux-paste.sh" >&2
+    exit 2
+fi
+
+if [ $# -gt 1 ]; then
+    echo "usage: kyber-compact-session [<command-text>]" >&2
+    exit 2
+fi
+# ${1-...} not ${1:-...}: the colon form also substitutes on an EMPTY
+# argument, which would silently turn a caller's bug (an unresolved
+# variable expanding to "") into a real /compact. Only an ABSENT argument
+# gets the default; an explicitly empty one falls through to the guard
+# below and is refused.
+COMMAND_TEXT="${1-/compact}"
+if [ -z "$COMMAND_TEXT" ]; then
+    echo "kyber-compact-session: empty command text" >&2
+    exit 2
+fi
+
+# ---- Session-lock guard ----
+# flock -n returns non-zero without running the inner command when the lock
+# is held. Held == the restart handler is mid kill+relaunch; the session we
+# would paste into is about to disappear.
+if [ -f "$SESSION_LOCK" ] && ! flock -n "$SESSION_LOCK" true 2>/dev/null; then
+    echo "kyber-compact-session: session restart in progress; not compacting" >&2
+    exit 3
+fi
+
+# ---- tmux session presence ----
+if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+    echo "kyber-compact-session: tmux session '$TMUX_SESSION' is absent" >&2
+    exit 4
+fi
+
+# ---- Deliver ----
+if ! kyber_tmux_paste "$TMUX_SESSION" "kyber-compact" "$COMMAND_TEXT"; then
+    echo "kyber-compact-session: delivery failed ($KYBER_TMUX_PASTE_REASON)" >&2
+    exit 5
+fi
+
+echo "kyber-compact-session: sent '$COMMAND_TEXT' to tmux session '$TMUX_SESSION'"
+exit 0

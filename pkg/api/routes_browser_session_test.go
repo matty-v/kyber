@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -105,5 +106,78 @@ func TestEncodeExecExitPayloadUsesJSONEncoding(t *testing.T) {
 	}
 	if got.Type != "exit" || got.Error != message {
 		t.Errorf("decoded payload = %+v", got)
+	}
+}
+
+// TestExpiredBrowserSessionReturnsDistinctCode: a dead session cookie must
+// answer with its own error code, not the generic "unauthorized".
+//
+// The distinction is what lets the PWA re-prompt for the key in place
+// instead of rendering a dead-end error. Sessions are process-local, so
+// every control-plane restart invalidates every open browser — this is the
+// single most common 401 an operator will ever see, and it is fully
+// recoverable.
+func TestExpiredBrowserSessionReturnsDistinctCode(t *testing.T) {
+	s := &Server{APIKey: "legacy-key"}
+	h := s.BuildHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	// A well-formed cookie the server has never issued — indistinguishable
+	// from one whose session was wiped by a restart.
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: "stale-token-from-a-previous-process"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v (%s)", err, rr.Body.String())
+	}
+	if body.Error.Code != ErrCodeSessionExpired {
+		t.Errorf("code = %q, want %q", body.Error.Code, ErrCodeSessionExpired)
+	}
+	// The message is what a human reads when the prompt fails to appear, so
+	// it should name the remedy rather than just the symptom.
+	if !strings.Contains(body.Error.Message, "sign in again") {
+		t.Errorf("message = %q, want it to name the remedy", body.Error.Message)
+	}
+}
+
+// TestBadAPIKeyKeepsGenericUnauthorized: the new code must NOT leak onto
+// the wrong failure. A bad bearer key is not recoverable by re-prompting
+// for a session — the caller's credential itself is wrong — and a PWA that
+// re-prompted on it would loop.
+func TestBadAPIKeyKeepsGenericUnauthorized(t *testing.T) {
+	s := &Server{APIKey: "legacy-key"}
+	h := s.BuildHandler()
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.Header.Set("Authorization", "Bearer not-the-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+	var body struct {
+		Error struct {
+			Code string `json:"code"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code == ErrCodeSessionExpired {
+		t.Errorf("bad API key must not report %q", ErrCodeSessionExpired)
+	}
+	if body.Error.Code != "unauthorized" {
+		t.Errorf("code = %q, want \"unauthorized\"", body.Error.Code)
 	}
 }

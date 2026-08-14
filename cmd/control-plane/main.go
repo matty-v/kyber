@@ -796,6 +796,9 @@ func main() {
 	// return nil from RestartSessionCommand() are omitted so the API's 501
 	// branch fires for them (#128 D5).
 	restartSessionCommands := make(map[string][]string, len(adapterRegistry))
+	// compactSessionCommands is the same idea for in-session compaction —
+	// runtimes returning nil are omitted so the API answers 501 for them.
+	compactSessionCommands := make(map[string][]string, len(adapterRegistry))
 	// runtimeImages lets the API reject an agent whose runtime is registered
 	// but has no image pinned on this install (kyber#674). Registration alone
 	// is not enough: the codex adapter self-registers unconditionally, so
@@ -814,6 +817,9 @@ func main() {
 		}
 		if cmd := ad.RestartSessionCommand(); len(cmd) > 0 {
 			restartSessionCommands[rt] = cmd
+		}
+		if cmd := ad.CompactSessionCommand(); len(cmd) > 0 {
+			compactSessionCommands[rt] = cmd
 		}
 	}
 
@@ -1200,6 +1206,7 @@ func main() {
 		ValidRuntimes:            validRuntimes,
 		RuntimeImages:            runtimeImages,
 		RestartSessionCommands:   restartSessionCommands,
+		CompactSessionCommands:   compactSessionCommands,
 		Clientset:                clientset,
 		ArchiveReader:            archiveReader,
 		ArchiveDisabledReason:    archiveDisabledReason,

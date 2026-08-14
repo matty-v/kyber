@@ -66,4 +66,5 @@ func (s *stubAdapter) SessionBriefPath() string                    { return s.br
 func (s *stubAdapter) SessionStatePath() string                    { return s.statePath }
 func (s *stubAdapter) ModelEnvVar() string                         { return s.modelEnvVar }
 func (s *stubAdapter) RestartSessionCommand() []string             { return nil }
+func (s *stubAdapter) CompactSessionCommand() []string             { return nil }
 func (s *stubAdapter) PreStopCommand() []string                    { return nil }

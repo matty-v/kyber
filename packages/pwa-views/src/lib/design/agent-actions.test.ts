@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { lifecycleItemsInMore } from './agent-actions'
+import { lifecycleItemsInMore, sessionItemsInMore } from './agent-actions'
 
 // Per-phase lifecycle menu contents (#128 — post-restructure: Restart
 // session is the lone header primary, everything else lives in More).
@@ -52,5 +52,41 @@ describe('lifecycleItemsInMore', () => {
 
   it.each(['NeedsAuth', 'Deleted'] as const)('no lifecycle actions for %s', (phase) => {
     expect(lifecycleItemsInMore(phase)).toEqual([])
+  })
+})
+
+// Per-phase "Agent actions" section — the session-scoped half of the More
+// menu (compact / restart session), split out from the pod-scoped half when
+// the menu grew sections. Both need a live runtime to paste into, so both
+// are Running-only; every other phase returns [] and the section's header
+// is suppressed rather than rendering an empty group.
+describe('sessionItemsInMore', () => {
+  it('Running: compact before restart — the smaller move comes first', () => {
+    expect(sessionItemsInMore('Running')).toEqual(['compact-session', 'restart-session'])
+  })
+
+  it.each([
+    'Stopped',
+    'Suspended',
+    'Failed',
+    'MemoryExhausted',
+    'Starting',
+    'Stopping',
+    'Restarting',
+    'Creating',
+    'NeedsAuth',
+    'Deleted',
+  ] as const)('no session actions for %s — there is no live session to act on', (phase) => {
+    expect(sessionItemsInMore(phase)).toEqual([])
+  })
+
+  // The section header is driven off this array's length, so a non-empty
+  // result on a phase with no runtime would render actions that can only
+  // 409. Stated as its own assertion because it is the failure the
+  // conditional header exists to prevent.
+  it('is empty on exactly the phases where the API would answer 409', () => {
+    const running = sessionItemsInMore('Running')
+    expect(running.length).toBeGreaterThan(0)
+    expect(sessionItemsInMore('MemoryExhausted')).toHaveLength(0)
   })
 })

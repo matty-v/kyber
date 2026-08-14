@@ -16,6 +16,17 @@ export function agentActionConfirmMessage(action: string, agentName: string): st
       `not affected.`
     )
   }
+  if (action === 'compact-session') {
+    // The non-destructive sibling of restart-session: the conversation is
+    // summarized rather than discarded, so the confirm should not borrow
+    // restart's context-loss warning.
+    return (
+      `Compact the session for "${agentName}"? The agent summarizes its ` +
+      `conversation so far and keeps working with a smaller context. Nothing ` +
+      `is discarded outright and the pod stays up. Compaction runs on the ` +
+      `agent's side and may take a minute.`
+    )
+  }
   if (action === 'restart') {
     return (
       `Restart the pod for "${agentName}"? This rolls the container (fresh ` +
