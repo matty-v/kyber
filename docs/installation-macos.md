@@ -13,18 +13,24 @@ chart.
 
 ## Does Kyber support macOS?
 
-Kyber's container images are published for `linux/amd64` only. That single fact
-drives everything below.
+As of v1.0.5, Kyber's container images are published for `linux/amd64` only.
+That single fact drives everything below.
 
 | Mac | Status | What it means |
 |---|---|---|
 | Intel | Works natively | The VM is `x86_64`, so the published images run as-is. |
 | Apple Silicon (M1 and later) | Works through an `x86_64` VM | Run the Linux VM as `x86_64`. On macOS 13 and later, Apple's Virtualization framework plus Rosetta translates the images fast enough to be usable. An `arm64` VM cannot run the images at all: pods fail with `exec format error`. |
 
-Native `arm64` images are not published yet. Until they are, an Apple Silicon
-Mac is running translated `x86_64` code, which costs performance and is the
-least-tested way to run Kyber. If you have a spare Linux box or a cloud cluster,
-that remains the smoother path: see [quickstart.md](./quickstart.md).
+Native `arm64` images land in the release after v1.0.5. Until you are on a
+version that has them, an Apple Silicon Mac is running translated `x86_64` code,
+which costs performance and is the least-tested way to run Kyber. Check what a
+version actually ships before assuming:
+
+```bash
+docker buildx imagetools inspect ghcr.io/matty-v/kyber-control-plane:v1.0.5
+```
+
+If the output lists only `linux/amd64`, the `x86_64` VM below is required.
 
 ## What you need
 
