@@ -7,11 +7,12 @@
 [![release](https://img.shields.io/github/v/release/matty-v/kyber)](https://github.com/matty-v/kyber/releases)
 [![license](https://img.shields.io/github/license/matty-v/kyber)](LICENSE)
 
-**Kyber runs teams of AI coding agents on hardware you own.**
+**Run and manage your fleet of AI agents on a Kubernetes cluster.**
 
-Each agent gets its own sandboxed computer with its own disk, tools, repos and
-memory, and keeps all of it across restarts. You run the team from a web
-console, or from Telegram and Discord on your phone.
+Each agent gets full autonomous access to its own sandboxed pod, including disk,
+tools, repos and memory, and keeps all of it across restarts. You can manage the
+fleet from a web console, the API, or from Telegram and Discord on your phone.
+Made to run with your existing Claude or ChatGPT subscription.
 
 ![The Kyber fleet console: dashboard with agent status, per-agent context pressure, and a live terminal peek](docs/assets/pwa-dashboard.png)
 
