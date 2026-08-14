@@ -66,7 +66,14 @@ export function isLifecycleKind(kind: string): kind is AgentLifecycleKind {
   return (LIFECYCLE_KINDS as readonly string[]).includes(kind)
 }
 
-export function lifecycleActionEndpoint(kind: AgentLifecycleKind): string {
+// The return type is narrowed to the real sub-actions rather than `string` so a
+// typo'd dispatch literal at the call site is a tsc error instead of a branch
+// that silently never runs — `if (action === 'stpo')` compiles fine against
+// `string`. 'retry-startup' is excluded because it is a UI kind, never an
+// endpoint: it is precisely the value this function exists to translate away.
+export type AgentLifecycleEndpoint = Exclude<AgentLifecycleKind, 'retry-startup'>
+
+export function lifecycleActionEndpoint(kind: AgentLifecycleKind): AgentLifecycleEndpoint {
   switch (kind) {
     case 'retry-startup':
       return 'start'
