@@ -12,14 +12,17 @@ token, an approval).
 ```
 You're helping me install Kyber. Kyber is a self-hosted AI agent fleet
 platform. Repo: https://github.com/matty-v/kyber.
-My install target: <one of: WSL2 on my Windows laptop / a GCP project /
-a Kubernetes cluster I already have>
+My install target: <one of: my Mac / WSL2 on my Windows laptop /
+a GCP project / a Kubernetes cluster I already have>
 
 Read the guide for my target end-to-end before starting. Your job is to
 drive the install, not improvise one:
 - Any existing cluster, or just trying Kyber out: docs/quickstart.md,
   the shortest path, ~15 minutes, one helm install and a first agent.
   Start here if you are unsure.
+- macOS: docs/installation-macos.md, which starts a Linux VM with
+  Kubernetes on the Mac and then hands off to the quickstart. Read its
+  support table first: on Apple Silicon the VM must be x86_64.
 - WSL2 (Windows laptop): docs/installation-wsl2.md, a numbered runbook
   with explicit verify steps and recovery paths. Start at § 0, proceed
   sequentially.
@@ -48,6 +51,8 @@ Operating principles:
 
 - [Quickstart](quickstart.md): any Kubernetes cluster (or a k3d one-liner) to a
   running fleet console with one live agent
+- [macOS install guide](installation-macos.md): a Mac, via a Linux VM with
+  Kubernetes
 - [WSL2 install guide](installation-wsl2.md): a Windows laptop, no cloud account
 - [GCP install guide](installation.md): production multi-VM install with HTTPS
 - [Local dev stack](../scripts/devenv/full-local.md): for hacking on Kyber

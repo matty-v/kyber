@@ -11,6 +11,7 @@ a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 | [quickstart.md](quickstart.md) | Any cluster (or a local k3d one-liner), the short path |
 | [install-with-an-ai-assistant.md](install-with-an-ai-assistant.md) | Let an AI assistant drive the install for you |
 | [installation.md](installation.md) | GCP: production multi-VM install, Terraform, HTTPS |
+| [installation-macos.md](installation-macos.md) | A Mac, via a Linux VM with Kubernetes |
 | [installation-wsl2.md](installation-wsl2.md) | A Windows laptop, no cloud account |
 | [upgrading.md](upgrading.md) | Moving an existing install to a new version |
 

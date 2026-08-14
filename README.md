@@ -71,6 +71,7 @@ required.
 |---|---|
 | Try it on a cluster I already have, or a local one | [Quickstart](docs/quickstart.md) |
 | Have an AI assistant do the install for me | [Install with an AI assistant](docs/install-with-an-ai-assistant.md) |
+| Run it on my Mac | [macOS guide](docs/installation-macos.md) |
 | Run it on my Windows laptop, no cloud account | [WSL2 guide](docs/installation-wsl2.md) |
 | Run it on GCP with managed VMs and HTTPS | [GCP guide](docs/installation.md) |
 
