@@ -81,7 +81,7 @@ with, not a shared production one. The
 
 ## Learn more
 
-| | |
+| Topic | Where |
 |---|---|
 | **What Kyber does**, in operator terms | [docs/product/](docs/product/README.md) |
 | **How it is built**: components, CRDs, agent lifecycle | [docs/architecture/overview.md](docs/architecture/overview.md) |
