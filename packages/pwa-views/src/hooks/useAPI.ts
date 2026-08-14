@@ -1074,7 +1074,12 @@ export function useUpdates() {
       // cache showing the PREVIOUS run, which is terminal, which stops polling
       // for good. Nothing recovers that but a refocus or a reload.
       if (query.state.status === 'error') return 5000
-      return false
+      // Idle: keep a slow poll going so the header's update indicator appears
+      // on its own, without the operator reloading or visiting Settings. Five
+      // minutes because this only re-reads a value the control plane already
+      // has cached — its own feed poll is hourly, so asking faster cannot
+      // learn anything sooner, it just costs a request.
+      return 300_000
     },
   })
 }

@@ -1,5 +1,52 @@
 # @matty-v/kyber-pwa-views
 
+## 0.27.0 — 2026-08-14
+
+### Added
+- **An available update is now visible from every page**, not only from
+  Settings → Updates. The refresh icon beside the cluster version in the header
+  appears when a newer version is available and opens a dialog describing it.
+  The control plane has polled the release feed hourly for some time, but the
+  only surface that read the answer was a card an operator has no reason to
+  visit, so a cluster could sit months behind without anything saying so.
+
+- **`UpdateDialog`**, the single component behind both entry points. It leads
+  with the three facts an operator needs before deciding — which version, when
+  it was released, and a link to the release notes — and then states what
+  installing costs: the control plane restarts, and every agent loses its
+  current session. Those consequences were previously written inline in
+  `UpdatesCard`; sharing them is what keeps the header and the card from
+  drifting into two differently-worded warnings, one of which would eventually
+  be the dangerous one.
+
+  On a cluster that may not install its own update (ArgoCD-managed, or
+  `selfUpgrade` off, or pinned) the dialog drops the Install button and becomes
+  an announcement that names what owns the cluster. Telling an operator nothing
+  at all would mean a GitOps cluster never mentions being behind.
+
+  On the `main` channel there is no release and therefore no notes and no
+  publish date — the chart registry publishes neither. The dialog says so
+  rather than rendering blanks.
+
+### Changed
+- `useUpdates` now polls every 5 minutes while idle instead of not at all, so
+  the indicator appears without a reload. The control plane's own feed check is
+  hourly, so this only re-reads a cached answer.
+- `ConfirmDialog` gained `hideConfirm`, for a dialog that has something to say
+  but nothing to authorize.
+
+### Removed
+- The header refresh icon no longer offers to reload a tab whose bundle is
+  behind the cluster. One glyph, one meaning, and the meaning is now updates
+  (Matt, 2026-08-14). The header still reports the cluster's live version, so a
+  stale tab still tells the truth about the cluster.
+- **`LiveVersionState.isStale`.** It existed only to drive that reload
+  affordance and had no consumer left in either `kyber` or `holocron` — a
+  computed value nobody reads is worse than no value. `useLiveVersion` still
+  returns `versionInfo`, `liveChartVersion`, and `unreachable`. Technically a
+  breaking change to the published type; permitted under 0.x, and noted here
+  in case an unknown host destructures it.
+
 ## 0.26.0 — 2026-08-14
 
 ### Added

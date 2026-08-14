@@ -45,19 +45,18 @@ beforeEach(() => {
 })
 
 describe('useLiveVersion', () => {
-  it('returns liveChartVersion and not stale when version matches cluster.version', async () => {
+  it('returns the version the cluster is running', async () => {
     const getVersion = vi.fn<() => Promise<VersionInfo>>().mockResolvedValue(baseVersionInfo)
     mockCreateApiClient.mockReturnValue({ getVersion } as ReturnType<typeof createApiClient>)
 
     const { result } = renderHook(() => useLiveVersion(), { wrapper: makeWrapper() })
 
     await waitFor(() => expect(result.current.liveChartVersion).toBe('v1.1.1'))
-    expect(result.current.isStale).toBe(false)
     expect(result.current.unreachable).toBe(false)
     expect(result.current.versionInfo).toEqual(baseVersionInfo)
   })
 
-  it('returns isStale=true when liveChartVersion differs from cluster.version', async () => {
+  it('reports the cluster version even when this tab loaded with a different one', async () => {
     const newerVersion: VersionInfo = { ...baseVersionInfo, chartVersion: 'v1.2.0' }
     const getVersion = vi.fn<() => Promise<VersionInfo>>().mockResolvedValue(newerVersion)
     mockCreateApiClient.mockReturnValue({ getVersion } as ReturnType<typeof createApiClient>)
@@ -65,11 +64,10 @@ describe('useLiveVersion', () => {
     const { result } = renderHook(() => useLiveVersion(), { wrapper: makeWrapper() })
 
     await waitFor(() => expect(result.current.liveChartVersion).toBe('v1.2.0'))
-    expect(result.current.isStale).toBe(true)
     expect(result.current.unreachable).toBe(false)
   })
 
-  it('returns unreachable=true and isStale=false when getVersion throws', async () => {
+  it('returns unreachable=true when getVersion throws', async () => {
     const getVersion = vi.fn<() => Promise<VersionInfo>>().mockRejectedValue(new Error('network error'))
     mockCreateApiClient.mockReturnValue({ getVersion } as ReturnType<typeof createApiClient>)
 
@@ -84,23 +82,7 @@ describe('useLiveVersion', () => {
     const { result } = renderHook(() => useLiveVersion(), { wrapper })
 
     await waitFor(() => expect(result.current.unreachable).toBe(true))
-    expect(result.current.isStale).toBe(false)
     expect(result.current.liveChartVersion).toBeNull()
     expect(result.current.versionInfo).toBeNull()
-  })
-
-  it('returns isStale=false when cluster.version is empty (no baseline for comparison)', async () => {
-    const clusterNoVersion: Cluster = { ...baseCluster, version: '' }
-    const newerVersion: VersionInfo = { ...baseVersionInfo, chartVersion: 'v1.2.0' }
-    const getVersion = vi.fn<() => Promise<VersionInfo>>().mockResolvedValue(newerVersion)
-    mockCreateApiClient.mockReturnValue({ getVersion } as ReturnType<typeof createApiClient>)
-
-    const { result } = renderHook(
-      () => useLiveVersion(),
-      { wrapper: makeWrapper(clusterNoVersion) },
-    )
-
-    await waitFor(() => expect(result.current.liveChartVersion).toBe('v1.2.0'))
-    expect(result.current.isStale).toBe(false)
   })
 })

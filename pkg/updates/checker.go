@@ -23,6 +23,18 @@ type Status struct {
 	LatestVersion  string `json:"latestVersion,omitempty"`
 	LatestURL      string `json:"latestUrl,omitempty"`
 
+	// LatestPublishedAt is when the latest version was published, when the
+	// source knows. An operator deciding whether to take an update reads the
+	// age of it first — "released three weeks ago" and "released an hour ago"
+	// are different decisions.
+	//
+	// A pointer, not a time.Time, because absent has to be expressible: the
+	// chart registry the `main` channel reads carries no publish date at all,
+	// and a zero time.Time is NOT dropped by omitempty — it serializes as
+	// 0001-01-01, which every client then has to special-case. nil means the
+	// source does not publish one.
+	LatestPublishedAt *time.Time `json:"latestPublishedAt,omitempty"`
+
 	// UpdateAvailable is true only when a newer version was positively
 	// identified. A failed check leaves it false — "we don't know" must never
 	// render as "an update is waiting".
@@ -270,6 +282,7 @@ func (c *Checker) Check(ctx context.Context) Status {
 		next.LastChecked = time.Now().UTC()
 		next.LatestVersion = rel.Version.String()
 		next.LatestURL = rel.URL
+		next.LatestPublishedAt = publishedAt(rel)
 		next.UpdateAvailable = c.isNewer(rel.Version, policy)
 	}
 
@@ -278,6 +291,21 @@ func (c *Checker) Check(ctx context.Context) Status {
 	c.seeded = true
 	c.mu.Unlock()
 	return next
+}
+
+// publishedAt lifts a release's publish time onto the status, or nil when the
+// source did not supply one.
+//
+// It returns nil rather than leaving the previous value in place, because the
+// channel can change between polls: a cluster that switches from releases to
+// main would otherwise keep showing the last RELEASE's date next to a chart
+// build that has no date at all.
+func publishedAt(rel *Release) *time.Time {
+	if rel.PublishedAt.IsZero() {
+		return nil
+	}
+	t := rel.PublishedAt
+	return &t
 }
 
 // isNewer decides whether to flag the release as an available update.
