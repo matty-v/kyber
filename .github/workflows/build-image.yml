@@ -3,8 +3,9 @@ name: build-image
 # Reusable multi-architecture image build, called once per Kyber image.
 #
 # Why this exists: Kyber's images were linux/amd64 only, so an arm64 cluster
-# (an Apple Silicon Mac being the common case, see docs/installation-macos.md)
-# could not run any of them — every pod dies with "exec format error". This
+# (an Apple Silicon Mac being the common case — see the macOS install guide,
+# docs/installation-macos.md, added alongside this in kyber#73) could not run
+# any of them — every pod dies with "exec format error". This
 # builds each image for both architectures and publishes one manifest list per
 # tag, so `docker pull`, kubelet, and helm all resolve the right variant with
 # no per-arch tags to plumb through the chart.
@@ -48,7 +49,11 @@ on:
         type: string
         default: ''
       cache-scope:
-        description: 'GitHub Actions cache scope. Suffixed per architecture.'
+        description: >-
+          Unique key for this call. Scopes the build cache and namespaces the
+          digest artifacts the merge job collects, so two calls that build the
+          same `image` (different Dockerfiles, different tags) cannot pick up
+          each other's digests. Must differ between calls in one run.
         required: true
         type: string
       ref:
@@ -118,9 +123,13 @@ jobs:
           mkdir -p /tmp/digests
           touch "/tmp/digests/${DIGEST#sha256:}"
 
+      # Named for the call, not the image: several calls in one run can target
+      # the same GHCR repository under different tags (the arch probe did), and
+      # an artifact namespace keyed on the image alone would let one call's
+      # digests satisfy another call's merge.
       - uses: actions/upload-artifact@v4
         with:
-          name: digests-${{ inputs.image }}-${{ matrix.arch }}
+          name: digests-${{ inputs.cache-scope }}-${{ matrix.arch }}
           path: /tmp/digests/*
           retention-days: 1
           if-no-files-found: error
@@ -131,11 +140,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # Downloaded by exact name, one directory per architecture, so the merge
+      # can assert it has exactly one digest from each rather than counting a
+      # glob that a stray artifact could satisfy.
       - uses: actions/download-artifact@v4
         with:
-          path: /tmp/digests
-          pattern: digests-${{ inputs.image }}-*
-          merge-multiple: true
+          name: digests-${{ inputs.cache-scope }}-amd64
+          path: /tmp/digests/amd64
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: digests-${{ inputs.cache-scope }}-arm64
+          path: /tmp/digests/arm64
 
       - uses: docker/login-action@v4
         with:
@@ -163,13 +179,14 @@ jobs:
           fi
 
           SOURCE_ARGS=()
-          for digest_file in /tmp/digests/*; do
-            SOURCE_ARGS+=( "${IMAGE}@sha256:$(basename "${digest_file}")" )
+          for arch in amd64 arm64; do
+            mapfile -t found < <(find "/tmp/digests/${arch}" -type f -printf '%f\n')
+            if [ ${#found[@]} -ne 1 ]; then
+              echo "::error::expected exactly one ${arch} digest, found ${#found[@]}"
+              exit 1
+            fi
+            SOURCE_ARGS+=( "${IMAGE}@sha256:${found[0]}" )
           done
-          if [ ${#SOURCE_ARGS[@]} -ne 2 ]; then
-            echo "::error::expected 2 per-architecture digests, found ${#SOURCE_ARGS[@]}"
-            exit 1
-          fi
 
           docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCE_ARGS[@]}"
 

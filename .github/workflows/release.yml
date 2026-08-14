@@ -139,8 +139,9 @@ jobs:
   # FROM another Kyber image).
   #
   # Every image is published as a linux/amd64 + linux/arm64 manifest list, so
-  # an arm64 cluster (an Apple Silicon Mac being the common case — see
-  # docs/installation-macos.md) can run Kyber at all. The per-architecture
+  # an arm64 cluster (an Apple Silicon Mac being the common case — see the macOS
+  # install guide, docs/installation-macos.md, added in kyber#73) can run Kyber
+  # at all. The per-architecture
   # matrix, the digest merge, and the assertion that a tag really does resolve
   # for both architectures live in the reusable .github/workflows/build-image.yml.
   # --------------------------------------------------------------------
@@ -182,7 +183,10 @@ jobs:
   #
   # Its own job since kyber-control-plane moved to the reusable build workflow,
   # which owns its own steps. imagetools create copies the whole manifest list,
-  # so :latest stays multi-architecture too.
+  # so :latest is multi-architecture — until the next merge to main, where
+  # build.yml republishes an amd64-only :latest. That is fine while every
+  # :latest consumer is x86, and it is the reason to move build.yml onto this
+  # same reusable workflow the moment one is not.
   refresh-control-plane-latest:
     needs: [meta, build-control-plane]
     if: needs.meta.outputs.is_test == 'false'

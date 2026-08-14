@@ -1,0 +1,65 @@
+name: arch-probe
+
+# TEMPORARY, DELETED BEFORE MERGE.
+#
+# Proves the multi-architecture pipeline end to end before it is trusted with a
+# release. release.yml only fires on a vX.Y.Z tag, and -test tags skip the image
+# builds entirely (they depend on preflight-check-tags, which is skipped for
+# them), so there is no existing way to exercise build-image.yml without cutting
+# a real release. This runs the same reusable workflow against a scratch package
+# on a branch push instead.
+#
+# It covers the three things that can actually fail:
+#   1. the arm64 hosted runner label resolves and builds natively
+#   2. the control-plane image builds on arm64 with the per-arch helm download
+#   3. the heaviest agent image (apt, node, bun, gh, kubectl) builds on arm64,
+#      pulling its base from a manifest list produced by the same workflow
+#
+# Everything lands under ghcr.io/matty-v/kyber-arch-probe, which is deleted
+# once the run is green.
+
+on:
+  push:
+    branches: [ci/multi-arch-images]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  probe-control-plane:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-arch-probe
+      file: images/control-plane/Dockerfile
+      cache-scope: arch-probe-control-plane
+      tags: probe-control-plane
+      build-args: |
+        BUILD_SHA=${{ github.sha }}
+        BUILD_VERSION=0.0.0-arch-probe
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  probe-runtime-base:
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-arch-probe
+      context: images/agent-base
+      cache-scope: arch-probe-runtime-base
+      tags: probe-runtime-base
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  probe-claude-code:
+    needs: probe-runtime-base
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-arch-probe
+      file: images/claude-code/Dockerfile
+      cache-scope: arch-probe-claude-code
+      tags: probe-claude-code
+      build-args: |
+        BASE_IMAGE=ghcr.io/matty-v/kyber-arch-probe:probe-runtime-base
+        CLAUDE_CODE_VERSION=2.1.119
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
