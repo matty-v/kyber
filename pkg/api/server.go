@@ -596,6 +596,20 @@ func (s *Server) buildTopHandler() http.Handler {
 	// fall through to index.html. The browser then tried to execute HTML as
 	// JavaScript and the React app never mounted — the symptom was a blank
 	// white page. See docs/installation.md § Troubleshooting.
+	// buildArtifactExts are the extensions the PWA build emits under
+	// content-hashed names. A request for one of these that does not exist is
+	// a stale client, never a client-side route — React Router paths are
+	// extensionless.
+	buildArtifactExts := []string{".js", ".mjs", ".css", ".map", ".wasm"}
+	isBuildArtifactPath := func(p string) bool {
+		for _, ext := range buildArtifactExts {
+			if strings.HasSuffix(p, ext) {
+				return true
+			}
+		}
+		return false
+	}
+
 	// serveIndex writes index.html with caching disabled.
 	//
 	// index.html is the version pointer for the whole app: it names the
@@ -621,10 +635,9 @@ func (s *Server) buildTopHandler() http.Handler {
 		}
 		f, ferr := pwaFS.Open(reqPath)
 		if ferr != nil {
-			// /assets/* holds build-hashed bundles, never client-side routes.
-			// A miss there means the CLIENT is stale — it is running an
-			// index.html from a previous build and asking for a file that
-			// build produced. Answer 404.
+			// A miss on a build artifact means the CLIENT is stale — it is
+			// running an index.html from a previous build and asking for a
+			// file that build produced. Answer 404.
 			//
 			// Falling back to index.html here is actively harmful: the
 			// browser receives HTML with a 200 and a JavaScript content
@@ -633,7 +646,14 @@ func (s *Server) buildTopHandler() http.Handler {
 			// so a stale client keeps working long after the deploy. A 404
 			// is what the service worker and the browser both know how to
 			// recover from.
-			if strings.HasPrefix(reqPath, "assets/") {
+			//
+			// Keyed on the extension rather than on the assets/ directory:
+			// vite-plugin-pwa emits hashed JS at the dist ROOT too
+			// (workbox-<hash>.js, since inlineWorkboxRuntime defaults to
+			// false), and a stale service worker's
+			// importScripts('/workbox-OLDHASH.js') hits exactly the failure
+			// above. Client-side routes never carry these extensions.
+			if isBuildArtifactPath(reqPath) {
 				http.NotFound(w, r)
 				return
 			}

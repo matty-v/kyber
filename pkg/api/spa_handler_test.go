@@ -29,6 +29,15 @@ func TestSPA_MissingAssetReturns404(t *testing.T) {
 		"/assets/index-DEADBEEF.js",
 		"/assets/index-DEADBEEF.css",
 		"/assets/nested/thing.js",
+		// vite-plugin-pwa emits hashed JS at the dist ROOT too
+		// (inlineWorkboxRuntime defaults to false), so a stale service
+		// worker's importScripts('/workbox-OLDHASH.js') lands here. Scoping
+		// the 404 to /assets/ alone would hand it index.html with a 200 and
+		// a JavaScript content type — exactly the failure this guards.
+		"/workbox-DEADBEEF.js",
+		"/sw-OLDHASH.js",
+		"/index-DEADBEEF.css",
+		"/bundle.js.map",
 	} {
 		t.Run(path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, path, nil)

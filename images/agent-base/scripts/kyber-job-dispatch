@@ -47,14 +47,12 @@ TMUX_SESSION="${KYBER_JOBS_TMUX_SESSION:-agent}"
 # markers are short-lived (created here, cleared by the hook on the next Stop).
 CRON_COMPLETE_DIR="${KYBER_CRON_COMPLETE_DIR:-/persist/var/run/kyber-cron-complete}"
 
-# Shared tmux delivery helper, resolved next to this script (same directory
-# in the image and in the repo). Sourced, not executed.
+# Shared tmux delivery helper, resolved next to this script (same directory in
+# the image and in the repo). Sourced, not executed. Loaded further down —
+# AFTER emit_event exists — so a missing helper is reported through the same
+# channels as any other delivery failure instead of vanishing.
 KYBER_JOB_DISPATCH_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./kyber-tmux-paste.sh
-if ! . "$KYBER_JOB_DISPATCH_DIR/kyber-tmux-paste.sh"; then
-    echo "kyber-job-dispatch: cannot load $KYBER_JOB_DISPATCH_DIR/kyber-tmux-paste.sh" >&2
-    exit 2
-fi
+PASTE_HELPER="$KYBER_JOB_DISPATCH_DIR/kyber-tmux-paste.sh"
 
 # Ensure log + lock dirs exist on every boot. /persist is the PV, so these
 # live-survive pod restarts; we only mkdir on the first run.
@@ -152,6 +150,17 @@ emit_event() {
         "$CONTROL_PLANE_URL/internal/agents/$AGENT_NAME/job-events" \
         -d "$body" >/dev/null 2>&1 || true
 }
+
+# ---- Shared delivery helper ----
+# Sourced here, after emit_event is defined, so an absent or unreadable helper
+# records outcome=failed on the CR and in the job log like every other failure
+# mode. Exiting before this point would make every cron fire and every inbound
+# prompt disappear with nothing but cron stderr to show for it.
+# shellcheck source=./kyber-tmux-paste.sh
+if ! . "$PASTE_HELPER" 2>/dev/null; then
+    emit_event "failed" "paste_helper_missing"
+    exit 0
+fi
 
 # ---- Session-lock guard ----
 # If the session-restart handler (#128) holds the session lock, defer.

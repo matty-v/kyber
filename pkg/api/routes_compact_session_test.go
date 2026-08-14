@@ -6,6 +6,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -234,12 +235,50 @@ func TestCompactSession_CooldownIsPerAgent(t *testing.T) {
 	}
 }
 
-// TestCompactSession_CooldownRaceSerializes: the check and the stamp are
-// atomic, so N concurrent requests produce exactly one claim winner. Same
-// regression guard as the restart-session race test — a check-then-stamp
-// pair would let several requests through the gap and deliver several
-// /compact keystrokes into one TUI.
-func TestCompactSession_CooldownRaceSerializes(t *testing.T) {
+// TestCompactSession_CooldownClaimIsAtomic: the check and the stamp happen
+// under one lock, so N concurrent claims produce exactly one winner. A
+// check-then-stamp pair would let several requests through the gap and
+// deliver several /compact keystrokes into one TUI.
+//
+// Driven against the claim directly rather than through HTTP: a failed
+// delivery now RELEASES the claim, so concurrent requests that all fail all
+// end up claiming in turn, and the HTTP status can no longer stand in for
+// "who won the claim".
+func TestCompactSession_CooldownClaimIsAtomic(t *testing.T) {
+	api.ResetCompactSessionCooldown()
+
+	const parallel = 32
+	var winners atomic.Int32
+	var wg sync.WaitGroup
+	start := make(chan struct{})
+	now := time.Now()
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start // maximize overlap
+			if _, claimed := api.TryClaimCompactForTest("chewie", now); claimed {
+				winners.Add(1)
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := winners.Load(); got != 1 {
+		t.Errorf("claim winners: got %d, want 1 (cooldown not atomic — race present)", got)
+	}
+}
+
+// TestCompactSession_FailedDeliveryReleasesCooldown is the regression guard
+// for the nastiest version of the bug: the 501 tells the operator to roll
+// the agent onto a newer image, and their retry — after doing exactly that —
+// used to be refused for 60s over a compaction that never happened. Nothing
+// was delivered, so nothing should be throttled.
+//
+// Uses the 503 branch (no clientset) as the stand-in for any post-claim
+// failure; it is past the claim and delivers nothing, same as the rest.
+func TestCompactSession_FailedDeliveryReleasesCooldown(t *testing.T) {
 	api.ResetCompactSessionCooldown()
 	agent := runningCompactAgent("chewie", "claude-code")
 
@@ -247,39 +286,20 @@ func TestCompactSession_CooldownRaceSerializes(t *testing.T) {
 	ts := httptest.NewServer(srv.BuildHandler())
 	defer ts.Close()
 
-	const parallel = 32
-	var claimWinners, throttled atomic.Int32
-	var wg sync.WaitGroup
-	for i := 0; i < parallel; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			req, _ := http.NewRequest(http.MethodPost,
-				ts.URL+"/api/v1/agents/chewie/compact-session", nil)
-			req.Header.Set("Authorization", "Bearer "+testAPIKey)
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				t.Errorf("POST: %v", err)
-				return
-			}
-			resp.Body.Close()
-			switch resp.StatusCode {
-			case http.StatusServiceUnavailable:
-				claimWinners.Add(1)
-			case http.StatusTooManyRequests:
-				throttled.Add(1)
-			default:
-				t.Errorf("unexpected status %d", resp.StatusCode)
-			}
-		}()
+	resp := postCompact(t, ts, "chewie")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("first call: got %d, want 503", resp.StatusCode)
 	}
-	wg.Wait()
+	if api.HasCompactClaimForTest("chewie") {
+		t.Error("a failed delivery must not hold the cooldown")
+	}
 
-	if got := claimWinners.Load(); got != 1 {
-		t.Errorf("claim winners: got %d, want 1 (cooldown not atomic — race present)", got)
-	}
-	if got := throttled.Load(); got != parallel-1 {
-		t.Errorf("throttled: got %d, want %d", got, parallel-1)
+	// The retry must reach the same branch, not a 429.
+	resp2 := postCompact(t, ts, "chewie")
+	resp2.Body.Close()
+	if resp2.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("retry: got %d, want 503 (cooldown held after a failed delivery)", resp2.StatusCode)
 	}
 }
 
@@ -349,9 +369,18 @@ func TestCompactSession_MissingScriptDetection(t *testing.T) {
 			want:   true,
 		},
 		{
-			name:   "shell reports command not found",
+			name:   "shell cannot execute the script itself",
 			stderr: "bash: /usr/local/bin/kyber-compact-session: command not found\n",
 			want:   true,
+		},
+		{
+			// The script RAN and something it calls is missing. Both the
+			// script's name and "command not found" appear, but the line
+			// number proves it executed — telling this operator to roll onto
+			// a newer image sends them to fix the one thing that isn't broken.
+			name:   "script ran but a command it needs is missing",
+			stderr: "/usr/local/bin/kyber-compact-session: line 60: flock: command not found\n",
+			want:   false,
 		},
 		{
 			name:   "empty stderr is not a missing script",
