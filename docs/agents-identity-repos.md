@@ -110,7 +110,7 @@ To delete the repo: use the GitHub web UI or `gh repo delete owner/repo`.
 ## GitHub App setup
 
 Identity repos require a one-time GitHub App registration. See
-[installation.md § 5b](./installation.md#5b-register-the-kyber-github-app) for the full step-by-step (create App → generate key → install → apply `kyber-github-app` Secret).
+[installation.md § 6](./installation.md#6-register-the-kyber-github-app-optional) for the full step-by-step (create App → generate key → install → apply `kyber-github-app` Secret).
 
 If the `kyber-github-app` Secret is absent, identity-repo management is disabled and the two creation modes differ: an agent requesting a **new** repo from a template shows `phase=Failed` in `status.identityRepo` (scaffolding needs the App), while an agent **linked** to an existing repo reconciles to `Ready` but its identity-repo git fails loudly at runtime (no PAT fallback). Agents without identity repos are unaffected.
 

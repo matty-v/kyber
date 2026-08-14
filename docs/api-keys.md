@@ -129,7 +129,7 @@ Rolling back first takes all scoped callers dark until the doc is reverted.
 
 ## Generation (install time)
 
-The install path is documented in [`docs/installation.md` § 2](installation.md#2-generate-secrets) and [`docs/installation-wsl2.md`](installation-wsl2.md). The relevant command:
+The install path is documented in [`docs/installation.md` § 1](installation.md#1-generate-secrets) and [`docs/installation-wsl2.md`](installation-wsl2.md). The relevant command:
 
 ```bash
 KYBER_API_KEY=$(openssl rand -hex 32)
