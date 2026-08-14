@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -283,7 +284,7 @@ func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 			if ok && time.Now().Before(session.expiresAt) {
 				return &session.caller, nil
 			}
-			return nil, errUnauthorized("invalid browser session")
+			return nil, errSessionExpired("browser session expired or no longer valid — sign in again")
 		}
 	}
 	presented, err := presentedKey(r)
@@ -331,12 +332,44 @@ func presentedKey(r *http.Request) (string, error) {
 	return "", errUnauthorized("missing Authorization header")
 }
 
-// authError is a sentinel type for authentication failures.
-type authError struct{ msg string }
+// ErrCodeSessionExpired is the error code returned when a request carried a
+// browser-session cookie that is no longer valid — expired, evicted, or
+// (the common one) wiped by a control-plane restart, since sessions are
+// process-local.
+//
+// It exists as its OWN code rather than sharing "unauthorized" because the
+// client's response differs: an expired session is recoverable in place by
+// re-authenticating, whereas a bad API key means the caller's credential is
+// wrong. The embedded PWA keys its re-auth prompt on this code, and matching
+// on the human-readable message instead would break the moment the wording
+// changes.
+const ErrCodeSessionExpired = "session_expired"
+
+// authError is a sentinel type for authentication failures. code carries the
+// machine-readable error code for the response body; empty means the generic
+// "unauthorized".
+type authError struct {
+	msg  string
+	code string
+}
 
 func (e *authError) Error() string { return e.msg }
 
+// Code returns the response error code, defaulting to "unauthorized".
+func (e *authError) Code() string {
+	if e.code == "" {
+		return "unauthorized"
+	}
+	return e.code
+}
+
 func errUnauthorized(msg string) error { return &authError{msg: msg} }
+
+// errSessionExpired is errUnauthorized for the specific recoverable case of
+// a dead browser session.
+func errSessionExpired(msg string) error {
+	return &authError{msg: msg, code: ErrCodeSessionExpired}
+}
 
 // callerCtxKey is the unexported context key under which the authenticated
 // Caller is stashed by authMiddleware.
@@ -362,7 +395,14 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 		}
 		caller, err := auth.Authenticate(r)
 		if err != nil {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
+			// Preserve the specific code when the authenticator supplied one
+			// (session_expired); everything else stays "unauthorized".
+			code := "unauthorized"
+			var aErr *authError
+			if errors.As(err, &aErr) {
+				code = aErr.Code()
+			}
+			writeJSONError(w, http.StatusUnauthorized, code, err.Error())
 			return
 		}
 		ctx := context.WithValue(r.Context(), callerCtxKey{}, caller)

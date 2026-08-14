@@ -68,7 +68,14 @@ export {
   establishEmbeddedBrowserSession,
   takeLegacyEmbeddedApiKey,
   getLastApiCall,
+  onSessionExpired,
+  ERR_SESSION_EXPIRED,
 } from './lib/api'
+
+// Re-auth prompt for an expired browser session. Mount once near the app
+// root in embedded mode; it opens itself when the control plane reports
+// session_expired. Hub mode never triggers it (bearer auth per request).
+export { SessionExpiredDialog } from './components/SessionExpiredDialog'
 
 // Types consumers may want.
 export type * from './lib/types'

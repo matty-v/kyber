@@ -596,15 +596,50 @@ func (s *Server) buildTopHandler() http.Handler {
 	// fall through to index.html. The browser then tried to execute HTML as
 	// JavaScript and the React app never mounted — the symptom was a blank
 	// white page. See docs/installation.md § Troubleshooting.
+	// serveIndex writes index.html with caching disabled.
+	//
+	// index.html is the version pointer for the whole app: it names the
+	// hashed bundle to load. A cached copy — in the browser, in a CDN, in a
+	// corporate proxy — pins that client to whatever build was current when
+	// it was stored, and no amount of reloading dislodges it because the
+	// reload is answered from the cache. The bundles it points at are
+	// content-hashed and safe to cache forever; this one file must not be.
+	serveIndex := func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		http.ServeFileFS(w, r, pwaFS, "index.html")
+	}
+
 	spaHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		reqPath := strings.TrimPrefix(r.URL.Path, "/")
 		if reqPath == "" {
 			reqPath = "index.html"
 		}
+		// The service worker and its registration shim are version pointers
+		// too — a stale sw.js is a worker that can never be replaced.
+		if reqPath == "index.html" || reqPath == "sw.js" || reqPath == "registerSW.js" {
+			w.Header().Set("Cache-Control", "no-store, must-revalidate")
+		}
 		f, ferr := pwaFS.Open(reqPath)
 		if ferr != nil {
-			// File not found — serve index.html so React Router can handle it.
-			http.ServeFileFS(w, r, pwaFS, "index.html")
+			// /assets/* holds build-hashed bundles, never client-side routes.
+			// A miss there means the CLIENT is stale — it is running an
+			// index.html from a previous build and asking for a file that
+			// build produced. Answer 404.
+			//
+			// Falling back to index.html here is actively harmful: the
+			// browser receives HTML with a 200 and a JavaScript content
+			// type, which either throws a syntax error or — worse, and what
+			// happened on the dev instance — lets a CDN cache the response
+			// so a stale client keeps working long after the deploy. A 404
+			// is what the service worker and the browser both know how to
+			// recover from.
+			if strings.HasPrefix(reqPath, "assets/") {
+				http.NotFound(w, r)
+				return
+			}
+			// Anything else — a deep link like /agents/bob — is a real
+			// client-side route. Serve index.html so React Router handles it.
+			serveIndex(w, r)
 			return
 		}
 		_ = f.Close()

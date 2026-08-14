@@ -14,6 +14,24 @@ export default defineConfig({
     react(),
     tailwindcss(),
     VitePWA({
+      // Development instances (kyber-dev) build with
+      // KYBER_PWA_SELF_DESTROYING=true. The generated worker then
+      // unregisters itself and drops its caches instead of precaching the
+      // app shell.
+      //
+      // Why this exists: the production worker precaches index.html, which
+      // is exactly right for an installed PWA and exactly wrong for an
+      // instance that gets redeployed every few minutes. A browser with the
+      // worker installed serves the old index.html from disk and never asks
+      // the server, so a fresh deploy is invisible no matter how many times
+      // the operator reloads.
+      //
+      // selfDestroying rather than disable: `disable` merely stops shipping
+      // a worker, which leaves any ALREADY-registered worker in place
+      // serving stale content forever with no way out but manually clearing
+      // site data. The self-destroying worker actively cleans up the
+      // installs that are already out there.
+      selfDestroying: process.env.KYBER_PWA_SELF_DESTROYING === 'true',
       registerType: 'autoUpdate',
       includeAssets: ['icon-192.png', 'icon-512.png', 'icon-maskable-512.png', 'apple-touch-icon.png'],
       manifest: {
