@@ -1,0 +1,193 @@
+name: build-image
+
+# Reusable multi-architecture image build, called once per Kyber image.
+#
+# Why this exists: Kyber's images were linux/amd64 only, so an arm64 cluster
+# (an Apple Silicon Mac being the common case, see docs/installation-macos.md)
+# could not run any of them — every pod dies with "exec format error". This
+# builds each image for both architectures and publishes one manifest list per
+# tag, so `docker pull`, kubelet, and helm all resolve the right variant with
+# no per-arch tags to plumb through the chart.
+#
+# Why native runners instead of `platforms: linux/amd64,linux/arm64` on one
+# runner: that route needs QEMU, and the agent images (apt, npm, bun) are slow
+# enough emulated to blow past the release job timeouts. GitHub's arm64 hosted
+# runners are free on public repositories, so each architecture builds natively
+# on its own runner, in parallel. Wall-clock is roughly one single-arch build.
+#
+# The shape is Docker's documented push-by-digest pattern: each architecture
+# pushes an untagged manifest, hands its digest to the merge job through an
+# artifact, and the merge job assembles the tags. Nothing is tagged until both
+# architectures have succeeded, so a half-published release tag is not
+# reachable through a failure of one arm of the matrix.
+
+on:
+  workflow_call:
+    inputs:
+      image:
+        description: 'GHCR repository name under ghcr.io/matty-v, e.g. kyber-control-plane.'
+        required: true
+        type: string
+      tags:
+        description: 'Newline-separated tag names (not full refs), e.g. "v1.0.6" or "latest".'
+        required: true
+        type: string
+      context:
+        description: 'Docker build context.'
+        required: false
+        type: string
+        default: '.'
+      file:
+        description: 'Dockerfile path. Empty means <context>/Dockerfile.'
+        required: false
+        type: string
+        default: ''
+      build-args:
+        description: 'Newline-separated build args, passed through verbatim.'
+        required: false
+        type: string
+        default: ''
+      cache-scope:
+        description: 'GitHub Actions cache scope. Suffixed per architecture.'
+        required: true
+        type: string
+      ref:
+        description: 'Commit or ref to check out. Empty means the default for the event.'
+        required: false
+        type: string
+        default: ''
+    secrets:
+      GHCR_PAT:
+        required: true
+
+env:
+  REGISTRY: ghcr.io/matty-v
+
+jobs:
+  build:
+    name: ${{ inputs.image }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      # push-by-digest: no tags here. The merge job below owns every tag, so a
+      # failed architecture cannot leave a usable tag pointing at half a build.
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.file }}
+          platforms: ${{ matrix.platform }}
+          build-args: ${{ inputs.build-args }}
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ inputs.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ inputs.cache-scope }}-${{ matrix.arch }}
+          cache-to: type=gha,scope=${{ inputs.cache-scope }}-${{ matrix.arch }},mode=max
+
+      # The digest travels as a filename: the merge job only needs the set of
+      # digests, and an empty file per digest is the cheapest way to carry it.
+      - name: Export the digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DIGEST}" ]; then
+            echo "::error::buildx returned no digest for ${{ inputs.image }} (${{ matrix.arch }})"
+            exit 1
+          fi
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${DIGEST#sha256:}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ inputs.image }}-${{ matrix.arch }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    name: ${{ inputs.image }} (manifest list)
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-${{ inputs.image }}-*
+          merge-multiple: true
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Assemble the manifest list
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ inputs.image }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+
+          TAG_ARGS=()
+          while IFS= read -r tag; do
+            [ -n "${tag}" ] || continue
+            TAG_ARGS+=( --tag "${IMAGE}:${tag}" )
+          done <<< "${TAGS}"
+          if [ ${#TAG_ARGS[@]} -eq 0 ]; then
+            echo "::error::no tags supplied for ${IMAGE}"
+            exit 1
+          fi
+
+          SOURCE_ARGS=()
+          for digest_file in /tmp/digests/*; do
+            SOURCE_ARGS+=( "${IMAGE}@sha256:$(basename "${digest_file}")" )
+          done
+          if [ ${#SOURCE_ARGS[@]} -ne 2 ]; then
+            echo "::error::expected 2 per-architecture digests, found ${#SOURCE_ARGS[@]}"
+            exit 1
+          fi
+
+          docker buildx imagetools create "${TAG_ARGS[@]}" "${SOURCE_ARGS[@]}"
+
+      # A tag that resolves for only one architecture is the failure this whole
+      # workflow exists to prevent, and it is invisible until a pod on the other
+      # architecture refuses to start. Assert it here instead.
+      - name: Verify both architectures resolve
+        env:
+          IMAGE: ${{ env.REGISTRY }}/${{ inputs.image }}
+          TAGS: ${{ inputs.tags }}
+        run: |
+          set -euo pipefail
+          FIRST_TAG=$(printf '%s\n' "${TAGS}" | sed '/^$/d' | head -1)
+          ARCHES=$(docker buildx imagetools inspect "${IMAGE}:${FIRST_TAG}" --raw \
+            | jq -r '[.manifests[].platform.architecture]
+                     | map(select(. != "unknown")) | unique | join(",")')
+          echo "${IMAGE}:${FIRST_TAG} resolves for: ${ARCHES}"
+          if [ "${ARCHES}" != "amd64,arm64" ]; then
+            echo "::error::${IMAGE}:${FIRST_TAG} should carry amd64 and arm64, got '${ARCHES}'"
+            exit 1
+          fi

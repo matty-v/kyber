@@ -135,13 +135,59 @@ jobs:
 
   # --------------------------------------------------------------------
   # Build independent leaf images in parallel: control-plane, node-agent,
-  # status-sidecar, mcp-discord, and mcp-telegram. Each is a leaf image (no FROM another
-  # Kyber image).
+  # status-sidecar, mcp-discord, and mcp-telegram. Each is a leaf image (no
+  # FROM another Kyber image).
+  #
+  # Every image is published as a linux/amd64 + linux/arm64 manifest list, so
+  # an arm64 cluster (an Apple Silicon Mac being the common case — see
+  # docs/installation-macos.md) can run Kyber at all. The per-architecture
+  # matrix, the digest merge, and the assertion that a tag really does resolve
+  # for both architectures live in the reusable .github/workflows/build-image.yml.
   # --------------------------------------------------------------------
   build-control-plane:
     needs: [meta, preflight-check-tags]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-control-plane
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/control-plane/Dockerfile
+      cache-scope: control-plane
+      tags: ${{ needs.meta.outputs.tag }}
+      build-args: |
+        BUILD_SHA=${{ needs.meta.outputs.sha }}
+        BUILD_DATE=${{ github.event.head_commit.timestamp }}
+        BUILD_VERSION=${{ needs.meta.outputs.version }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
+  # kyber#591: refresh the mutable control-plane :latest tag to THIS release's
+  # image so a canary tracking :latest via ArgoCD Image Updater reports the
+  # clean release label immediately, instead of the stale pre-tag
+  # git-describe string baked into whatever :latest build happened to run last
+  # (the v2.2.0 bug: razer stuck on 2.1.1-7-gd64fbbd because no canary build
+  # ran after the tag). Re-points the tag to the same manifest list just
+  # published — no rebuild. Cutting the tag inside release.yml is impossible
+  # (it fires ON the tag), so producing :latest here, after the tag exists, is
+  # the only place the clean canary label is reachable.
+  #
+  # 2026-08-10: razer was that canary and no longer is, so this step has no
+  # consumer at the moment. KEPT deliberately rather than deleted — a
+  # replacement canary is being stood up, and it will want exactly this
+  # behaviour. If that plan is abandoned, delete this job; a maintained
+  # workflow job with no consumer is worse than an absent one.
+  #
+  # Guard: only move :latest when the release commit is STILL origin/main HEAD,
+  # so a main merge racing the ~10-min release build can never move the canary
+  # backward. Skipped for -test tags (must not touch the live canary tag).
+  #
+  # Its own job since kyber-control-plane moved to the reusable build workflow,
+  # which owns its own steps. imagetools create copies the whole manifest list,
+  # so :latest stays multi-architecture too.
+  refresh-control-plane-latest:
+    needs: [meta, build-control-plane]
+    if: needs.meta.outputs.is_test == 'false'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7
         with:
@@ -151,41 +197,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/control-plane/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-control-plane:${{ needs.meta.outputs.tag }}
-          build-args: |
-            BUILD_SHA=${{ needs.meta.outputs.sha }}
-            BUILD_DATE=${{ github.event.head_commit.timestamp }}
-            BUILD_VERSION=${{ needs.meta.outputs.version }}
-          cache-from: type=gha,scope=control-plane
-          cache-to: type=gha,scope=control-plane,mode=max
-
-      # kyber#591: refresh the mutable control-plane :latest tag to THIS release's
-      # image so a canary tracking :latest via ArgoCD Image Updater reports the
-      # clean release label immediately, instead of the stale pre-tag
-      # git-describe string baked into whatever :latest build happened to run last
-      # (the v2.2.0 bug: razer stuck on 2.1.1-7-gd64fbbd because no canary build
-      # ran after the tag). Re-points the tag to the same digest just pushed — no
-      # rebuild. Cutting the tag inside release.yml is impossible (it fires ON the
-      # tag), so producing :latest here, after the tag exists, is the only place
-      # the clean canary label is reachable.
-      #
-      # 2026-08-10: razer was that canary and no longer is, so this step has no
-      # consumer at the moment. KEPT deliberately rather than deleted — a
-      # replacement canary is being stood up, and it will want exactly this
-      # behaviour. If that plan is abandoned, delete this step; a maintained
-      # workflow step with no consumer is worse than an absent one.
-      #
-      # Guard: only move :latest when the release commit is STILL origin/main HEAD,
-      # so a main merge racing the ~10-min release build can never move the canary
-      # backward. Skipped for -test tags (must not touch the live canary tag).
       - name: Refresh control-plane :latest to the release image (guarded)
-        if: needs.meta.outputs.is_test == 'false'
         env:
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
           RELEASE_SHA: ${{ needs.meta.outputs.sha }}
@@ -202,56 +214,34 @@ jobs:
             echo ":latest NOT refreshed — release commit ${RELEASE_SHA} is no longer origin/main HEAD (${MAIN_SHA}); skipping to avoid moving the canary backward."
             exit 0
           fi
-          echo "Release commit is still origin/main HEAD — refreshing :latest → ${RELEASE_TAG} image (same digest, no rebuild)."
+          echo "Release commit is still origin/main HEAD — refreshing :latest → ${RELEASE_TAG} image (same digests, no rebuild)."
           docker buildx imagetools create \
             --tag "${REGISTRY}/kyber-control-plane:latest" \
             "${REGISTRY}/kyber-control-plane:${RELEASE_TAG}"
 
   build-node-agent:
     needs: [meta, preflight-check-tags]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/node-agent/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-node-agent:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=node-agent
-          cache-to: type=gha,scope=node-agent,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-node-agent
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/node-agent/Dockerfile
+      cache-scope: node-agent
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   build-status-sidecar:
     needs: [meta, preflight-check-tags]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/status-sidecar/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-status-sidecar:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=status-sidecar
-          cache-to: type=gha,scope=status-sidecar,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-status-sidecar
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/status-sidecar/Dockerfile
+      cache-scope: status-sidecar
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   # kyber-mcp-discord (kyber#646): the two-way Discord channel sidecar. Built
   # for every release even though it is injected only into agents that enable
@@ -259,127 +249,76 @@ jobs:
   # deploy-bump below pins it alongside the rest.
   build-mcp-discord:
     needs: [meta, preflight-check-tags]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/mcp-discord/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-mcp-discord:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=mcp-discord
-          cache-to: type=gha,scope=mcp-discord,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-mcp-discord
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/mcp-discord/Dockerfile
+      cache-scope: mcp-discord
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   build-mcp-telegram:
     needs: [meta, preflight-check-tags]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/mcp-telegram/Dockerfile
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-mcp-telegram:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=mcp-telegram
-          cache-to: type=gha,scope=mcp-telegram,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-mcp-telegram
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/mcp-telegram/Dockerfile
+      cache-scope: mcp-telegram
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   # --------------------------------------------------------------------
   # runtime-base must publish before claude-code so the latter can FROM it.
+  # Its tag is a manifest list, so each architecture's claude-code build pulls
+  # the matching base without the Dockerfile knowing anything about arches.
   # --------------------------------------------------------------------
   build-runtime-base:
     needs: [meta, preflight-check-tags]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: images/agent-base
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=runtime-base
-          cache-to: type=gha,scope=runtime-base,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-runtime-base
+      ref: ${{ needs.meta.outputs.sha }}
+      context: images/agent-base
+      cache-scope: runtime-base
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   # --------------------------------------------------------------------
   # claude-code FROM runtime-base — wait for the tagged base image to exist.
   # --------------------------------------------------------------------
   build-claude-code:
     needs: [meta, preflight-check-tags, build-runtime-base]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/claude-code/Dockerfile
-          build-args: |
-            BASE_IMAGE=${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
-            CLAUDE_CODE_VERSION=${{ needs.meta.outputs.cc_version }}
-          push: true
-          tags: ${{ env.REGISTRY }}/kyber-claude-code:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=claude-code
-          cache-to: type=gha,scope=claude-code,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-claude-code
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/claude-code/Dockerfile
+      cache-scope: claude-code
+      tags: ${{ needs.meta.outputs.tag }}
+      build-args: |
+        BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+        CLAUDE_CODE_VERSION=${{ needs.meta.outputs.cc_version }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   build-codex:
     needs: [meta, preflight-check-tags, build-runtime-base]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ needs.meta.outputs.sha }}
-      - uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
-      - uses: docker/setup-buildx-action@v4
-      - uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: images/codex/Dockerfile
-          push: true
-          build-args: BASE_IMAGE=${{ env.REGISTRY }}/kyber-runtime-base:${{ needs.meta.outputs.tag }}
-          tags: ${{ env.REGISTRY }}/kyber-codex:${{ needs.meta.outputs.tag }}
-          cache-from: type=gha,scope=codex
-          cache-to: type=gha,scope=codex,mode=max
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-codex
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/codex/Dockerfile
+      cache-scope: codex
+      tags: ${{ needs.meta.outputs.tag }}
+      build-args: |
+        BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   # --------------------------------------------------------------------
   # Once all 8 images are pushed: create the GitHub Release + notify Lando.
@@ -676,6 +615,7 @@ jobs:
           PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
           RELEASE_TAG: ${{ needs.meta.outputs.tag }}
         run: |
+          echo "Test release ${RELEASE_TAG}: not pushing pwa-views/v${PWA_VERSION}."
 
   # --------------------------------------------------------------------
   # B2a/B2b (resolve-digests + deploy-bump-pr) REMOVED 2026-08-13.
