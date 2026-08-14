@@ -23,37 +23,61 @@
 - **Runs cheap.** Spot/preemptible VMs, machine capacity management, per-agent context-window budgets.
 - **Observable.** OpenTelemetry metrics, activity states, session transcripts and history.
 
-## Try it locally
+## Quickstart
 
-A deterministic Kyber stack you can bring up, drive over the API, and tear
-down. No cloud account or cloud credentials are required:
-
-```bash
-scripts/devenv/up.sh      # k3d + mock-provider Kyber, API on localhost:18080
-scripts/devenv/down.sh    # tear down, no orphans
-```
-
-`up.sh` prints the entry-point contract: API base URL, health check, throwaway test credentials. [`scripts/devenv/README.md`](scripts/devenv/README.md) covers what's mocked and how to drive it.
-
-For live agents plus managed-compute behavior, use the fake provider. For GCE
-API fidelity without GCP, use the real GCE adapter against its local emulator:
+Kyber installs from a published Helm chart that carries its own image tags, so
+there is nothing to pin, no registry credentials, and no fork:
 
 ```bash
-scripts/devenv/up-full.sh --compute-provider fake          # runnable agents
-scripts/devenv/up-full.sh --compute-provider gce-emulator  # compute lifecycle only
+kubectl create namespace kyber-system
+kubectl -n kyber-system create secret generic kyber-internal-signing-key \
+  --from-literal=signing-key="$(openssl rand -hex 32)"
+
+# Keep this — it is how you log in to the PWA and the API.
+export KYBER_API_KEY=$(openssl rand -hex 32)
+
+helm install kyber oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 --namespace kyber-system \
+  --set namespace.create=false \
+  --set api.apiKey="$KYBER_API_KEY" --wait
 ```
 
-GCE-emulator Machines use synthetic, unschedulable Nodes and cannot host agent
-pods. See the [local mode matrix](scripts/devenv/README.md#choosing-a-compute-mode).
+[**docs/quickstart.md**](docs/quickstart.md) wraps that in the full ~15-minute
+path — any Kubernetes cluster (or a k3d one-liner) to a running fleet console
+with one live Claude Code agent, with a verify gate at every step. No cloud
+account required.
 
 ## Install
 
 | Path | For | Guide |
 |---|---|---|
-| **macOS / Linux, local** | Full stack on k3d: live agent pods with fake managed compute, or GCE lifecycle testing through the local REST emulator | [`scripts/devenv/full-local.md`](scripts/devenv/full-local.md) |
+| **Any cluster** | The short path: `helm install` from the published chart, first agent running in ~15 min | [`docs/quickstart.md`](docs/quickstart.md) |
+| **GCP** | Production multi-VM install (Terraform + GCE, HTTPS, cloud machine provisioning) | [`docs/installation.md`](docs/installation.md) |
 | **Windows, WSL2** | A Windows laptop as a standalone install; no cloud infra (native k3s + Tailscale Funnel) | [`docs/installation-wsl2.md`](docs/installation-wsl2.md) |
-| **GCP** | Production multi-VM install (Terraform + GCE) | [`docs/installation.md`](docs/installation.md) |
-| **Your own cluster** | You already run Kubernetes | Install the chart directly: [`deploy/helm/kyber`](deploy/helm/kyber) is the deployment contract, and every value is documented in [`values.yaml`](deploy/helm/kyber/values.yaml). The chart requires explicit image-tag pins. |
+| **Hacking on Kyber** | Full stack on k3d from your working tree: live agent pods, fake managed compute, or GCE lifecycle against a local REST emulator | [`scripts/devenv/full-local.md`](scripts/devenv/full-local.md) |
+
+Every install path is the same `helm install` underneath; the guides differ only
+in what they put around it. The chart is the deployment contract and every value
+is documented in [`values.yaml`](deploy/helm/kyber/values.yaml).
+
+> **Install from `oci://`, not from the git tree.** [`deploy/helm/kyber`](deploy/helm/kyber)
+> is the same chart *before* release stamping: its image tags are deliberately
+> empty and it refuses to render until you supply every one of them. That is
+> correct for a GitOps repo pinning digests, and wrong for an install.
+
+### Developing against a local stack
+
+```bash
+scripts/devenv/up.sh                                       # control-plane/API only, on k3d
+scripts/devenv/up-full.sh --compute-provider fake          # + runnable agent pods
+scripts/devenv/up-full.sh --compute-provider gce-emulator  # compute lifecycle only
+scripts/devenv/down.sh                                     # tear down, no orphans
+```
+
+`up.sh` prints the entry-point contract: API base URL, health check, throwaway
+test credentials. GCE-emulator Machines use synthetic, unschedulable Nodes and
+cannot host agent pods. See the
+[local mode matrix](scripts/devenv/README.md#choosing-a-compute-mode).
 
 <details>
 <summary><b>Installing with an AI assistant</b> (recommended for non-developers) — click to expand</summary>
@@ -64,20 +88,18 @@ Open your AI assistant of choice (Claude Code, Cursor, ChatGPT, etc.), fill in t
 You're helping me install Kyber. Kyber is a self-hosted AI agent fleet
 platform. Repo: https://github.com/matty-v/kyber.
 My install target: <one of: WSL2 on my Windows laptop / a GCP project /
-my Mac or Linux machine, locally on k3d>
+a Kubernetes cluster I already have>
 
 Read the guide for my target end-to-end before starting — your job is to
 drive the install, not improvise one:
+- Any existing cluster, or just trying Kyber out: docs/quickstart.md —
+  the shortest path, ~15 minutes, one helm install and a first agent.
+  Start here if you are unsure.
 - WSL2 (Windows laptop): docs/installation-wsl2.md — a numbered runbook
   with explicit verify steps and recovery paths. Start at § 0, proceed
   sequentially.
-- GCP: docs/installation.md — numbered steps from image availability
-  through Terraform provisioning to first agent. Where a step involves a
-  private deploy repo or GitOps tooling, prefer the plain helm-install
-  route and confirm the choice with me.
-- Mac/Linux local: scripts/devenv/full-local.md — a one-command full
-  stack on k3d (Docker required). Shorter and with fewer verify gates
-  than the other guides; good for evaluating Kyber before a real install.
+- GCP: docs/installation.md — numbered steps from secrets through
+  Terraform provisioning to first agent and an HTTPS URL.
 
 Operating principles:
 1. I'm not a developer. Before each step, tell me in one plain-language
@@ -129,7 +151,7 @@ Full detail: [`docs/architecture/overview.md`](docs/architecture/overview.md).
 | Events | Redis |
 | Orchestration | Kubernetes (k3s / GKE) |
 | Infrastructure | Terraform (GCP-first) |
-| Deployment | Helm chart in-repo ([`deploy/helm/kyber`](deploy/helm/kyber)); optionally GitOps via ArgoCD |
+| Deployment | Helm chart, published per release to `oci://ghcr.io/matty-v/charts/kyber` (source: [`deploy/helm/kyber`](deploy/helm/kyber)); self-upgrade from the UI, or optionally GitOps |
 | Telemetry | OpenTelemetry |
 | Agent runtimes | Claude Code, Codex |
 | Secrets | Kubernetes Secrets; GCP Secret Manager integration on GCP installs |
@@ -171,7 +193,8 @@ CI builds and publishes all container images to GHCR (`ghcr.io/matty-v/kyber-*`)
 
 **Operating Kyber:**
 
-- [`docs/installation.md`](docs/installation.md) / [`docs/installation-wsl2.md`](docs/installation-wsl2.md) — install guides (see [Install](#install))
+- [`docs/quickstart.md`](docs/quickstart.md) — shortest path to a running Kyber with one live agent
+- [`docs/installation.md`](docs/installation.md) / [`docs/installation-wsl2.md`](docs/installation-wsl2.md) — full install guides (see [Install](#install))
 - [`docs/upgrading.md`](docs/upgrading.md) — chart and image upgrade flow
 - [`docs/operator/release-runbook.md`](docs/operator/release-runbook.md) — cutting releases, promotion, rollback
 - [`docs/operator/wedged-agent-recovery.md`](docs/operator/wedged-agent-recovery.md) — recovering a wedged agent via forced re-auth

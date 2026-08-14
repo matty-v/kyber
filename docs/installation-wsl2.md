@@ -1,10 +1,12 @@
 # Installing Kyber on WSL2 (Standalone)
 
-Step-by-step guide for the standalone single-box deployment shape: native k3s in WSL2, Tailscale Funnel for HTTPS, and the same ArgoCD + Image Updater stack as GCP prod. Companion to [installation.md](./installation.md) (GCP multi-VM install).
+Step-by-step guide for the standalone single-box deployment shape: native k3s in WSL2, Tailscale Funnel for HTTPS, and Kyber installed from the published Helm chart. Companion to [installation.md](./installation.md) (GCP multi-VM install).
 
-> **Aside.** Cluster naming: this guide installs the `kyber-laptop` cluster. Helm release and ArgoCD Application both use that same name. See [clusters.md](./clusters.md) for the naming convention.
+> **Just want to see Kyber run first?** [quickstart.md](./quickstart.md) gets you a working instance with one live agent in ~15 minutes on any cluster. This guide is the permanent, laptop-shaped version of the same install, with a public HTTPS URL and verify gates at every step.
 
-> **Release lane:** this profile follows the **canary** lane — chart from `main` HEAD plus `latest@sha256:…` image pins, advanced automatically (ArgoCD Image Updater for control-plane/node-agent; a scheduled latest-sync job in the deploy repo for the controller-injected runtime images). Suited to dev clusters where the newest behavior is what you want. For production-like installs that move only on a cut release, see the GCP install in [installation.md](./installation.md), which pins semver digests. There is no `stable` branch or `:stable` tag — see [upgrading.md](./upgrading.md) § "Release lanes".
+> **Aside.** Cluster naming: this guide installs the `kyber-laptop` cluster, which is also the Helm release name. See [clusters.md](./clusters.md) for the naming convention.
+
+> **How this install gets new versions:** it pulls a released chart, and stays on that version until you move it. Upgrades happen from the Kyber UI (Settings → Updates) or by re-running `helm upgrade` with a newer `--version`. Nothing watches a registry or a branch on your behalf. See [upgrading.md](./upgrading.md).
 
 > **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and agent runtime with privileged pods (Phase C) are documented separately.
 
@@ -24,9 +26,6 @@ Step-by-step guide for the standalone single-box deployment shape: native k3s in
 │  │            → https://kyber-wsl.<tailnet>.ts.net           │  │
 │  │                                                                    │  │
 │  │  ┌────────── k3s (single server, traefik disabled) ─────────────┐  │  │
-│  │  │  namespace argocd/                                            │  │  │
-│  │  │  ├─ argocd-server, repo-server, application-controller, …    │  │  │
-│  │  │  └─ argocd-image-updater                                      │  │  │
 │  │  │  namespace kyber-system/                                      │  │  │
 │  │  │  ├─ kyber-laptop-control-plane   (Deployment, 1 replica)      │  │  │
 │  │  │  ├─ kyber-laptop-control-plane   (Service, type=LB :8080)     │  │  │
@@ -57,11 +56,11 @@ Port 6443 is not exposed outside WSL2 in Phase A (mock compute adapter; no exter
 
 ## Prerequisites
 
-**External accounts and tokens (gather before starting — § 0 verifies they exist):**
+**External accounts (gather before starting — § 0 verifies they exist):**
 - A Tailscale account with Funnel enabled (free on all plans). Sign up at https://login.tailscale.com if you don't have one.
-- A GitHub Personal Access Token with `read:packages` scope (for ArgoCD Image Updater to poll GHCR).
-- A GitHub Personal Access Token with `repo` read scope (for ArgoCD to read `matty-v/kyber` and `matty-v/kyber-deploy`).
-- A GitHub account on which you are willing to install the Kyber GitHub App (for agent identity-repos). Same account or a different one is fine; § 5a walks through the App registration.
+- *Optional:* a GitHub account on which you are willing to install the Kyber GitHub App, if you want agent identity-repos. Same account or a different one is fine; § 5.3 walks through the App registration, and skipping it costs you nothing else.
+
+You do **not** need a GitHub Personal Access Token, and you do not need access to any private repository. The Helm chart and every container image are published publicly and pull anonymously.
 
 **Workstation / WSL2 environment:** § 0 brings WSL2 up. Skip Prerequisites if you have not yet completed § 0 — the verify gates inside § 0 are authoritative.
 
@@ -232,9 +231,9 @@ Expected output: `port free` (or no output before that line).
 
 **Human input needed:** None.
 
-## 1. Verify CI images are public
+## 1. Verify the published chart is reachable
 
-**What this does:** Confirms the four kyber images CI publishes to GHCR are publicly pullable. The chart pulls them with no pull secret.
+**What this does:** Confirms the Helm chart the install pulls is published and readable without credentials, and that it carries stamped image tags. This is the artifact § 6 installs, so if this step passes, the install has everything it needs from the internet.
 
 **Preconditions:**
 - § 0 complete (tools installed, working bash inside Ubuntu).
@@ -243,23 +242,18 @@ Expected output: `port free` (or no output before that line).
 
 **Verify:**
 ```bash
-for img in kyber-control-plane kyber-node-agent kyber-runtime-base kyber-claude-code; do
-  if curl -fsI "https://ghcr.io/v2/matty-v/$img/manifests/latest" >/dev/null 2>&1; then
-    echo "$img: public"
-  else
-    echo "$img: NOT public or missing"
-  fi
-done
+helm show chart oci://ghcr.io/matty-v/charts/kyber --version 1.0.4 \
+  | grep -E '^(name|version):'
+helm show values oci://ghcr.io/matty-v/charts/kyber --version 1.0.4 \
+  | grep -c 'tag: "v1.0.4"'
 ```
-Expected output: every line ends with `public` (no `NOT public` or `missing`).
+Expected output: `name: kyber` and `version: 1.0.4`, then `8` — the eight container images the chart pins for you.
 
-**If it fails:** → § Troubleshooting / "GHCR images private or missing".
+**If it fails:** → § Troubleshooting / "published chart unreachable".
 
-**Human input needed** *(only if any image is missing or private)*:
-- If missing: CI is broken or hasn't published yet. Direct the operator to https://github.com/matty-v/kyber/actions to confirm the latest `build.yml` run finished.
-- If private: ask the operator (or someone with admin on `matty-v`) to make the package public via the GitHub UI: visit `https://github.com/users/matty-v/packages/container/<image-name>/settings`, scroll to "Danger Zone", click "Change visibility", choose Public, type the package name to confirm. Repeat for each private image.
+**Human input needed:** None.
 
-**Notes:** *(aside)* This step is identical for both prod and laptop installs — both pull from the same public GHCR namespace.
+**Notes:** *(aside)* Do **not** substitute a `curl` against `https://ghcr.io/v2/...` here. That endpoint returns `401` for anonymous callers whether or not the package is public, so a curl failure proves nothing about visibility — only a real pull does. `helm show` is a real pull.
 
 ## 2. Generate secrets
 
@@ -390,30 +384,9 @@ Expected output: `OK`.
 
 **Human input needed:** None.
 
-## 5. Clone kyber-deploy and create the API credentials Secret
+## 5. Create the cluster Secrets
 
-### 5.1 Clone kyber-deploy
-
-**What this does:** Clones the kyber-deploy repo so ArgoCD can read the laptop environment's values.
-
-**Preconditions:** § 0.5 (`git` installed).
-
-**Run:**
-```bash
-git clone https://github.com/matty-v/kyber-deploy.git ~/dev/kyber-deploy
-```
-
-**Verify:**
-```bash
-test -f ~/dev/kyber-deploy/environments/laptop/values.yaml && echo OK
-```
-Expected output: `OK`.
-
-**If it fails:** → § Troubleshooting / "kyber-deploy clone failed".
-
-**Human input needed:** None.
-
-### 5.2 Create the kyber-api-credentials Secret
+### 5.1 Create the kyber-api-credentials Secret
 
 **What this does:** Creates one Kubernetes Secret in the `kyber-system` namespace holding the API key, webhook secret, k3s join token, and k3s server URL. The chart's `kyber.k3sSecretName` helper falls through from an empty `k3s.existingSecret` to `api.existingSecret`, so this single Secret satisfies both.
 
@@ -444,13 +417,41 @@ Expected output: `api-key,k3s-join-token,k3s-server-url,webhook-secret`.
 
 **Human input needed:** None.
 
-### 5a. Register the Kyber GitHub App
+### 5.2 Create the internal signing-key Secret
+
+**What this does:** Creates the `kyber-internal-signing-key` Secret. This key authenticates the internal API on `:8082`, which is how every agent pod reports its status back to the control plane. The chart does not generate it — it is delivered out of band by design, so a cluster's signing key never lives in a values file. Without it that API **fails closed**: the control plane starts and serves normally, but agents stay blank and never report activity.
+
+**Preconditions:** § 5.1 complete (`kyber-system` namespace exists).
+
+**Run:**
+```bash
+kubectl -n kyber-system create secret generic kyber-internal-signing-key \
+  --from-literal=signing-key="$(openssl rand -hex 32)" \
+  --dry-run=client -o yaml | kubectl apply -f -
+```
+
+**Verify:**
+```bash
+kubectl -n kyber-system get secret kyber-internal-signing-key \
+  -o jsonpath='{.data}' | jq -r 'keys | join(",")'
+```
+Expected output: `signing-key`.
+
+**If it fails:** → § Troubleshooting / "kyber-internal-signing-key Secret missing".
+
+**Human input needed:** None.
+
+**Notes:** *(aside)* Unlike the API key, this one never needs to leave the cluster — nothing outside it ever presents this key, so there is no reason to save a copy. See [internal-api-auth.md](./architecture/internal-api-auth.md).
+
+### 5.3 Register the Kyber GitHub App (optional)
 
 **What this does:** Registers a GitHub App on the operator's GitHub account, captures App ID + Installation ID + private key, creates a Kubernetes Secret holding all three, and points `identityRepo.defaultOwner` at that account. Each agent gets a private **identity repo** (memory, skills, `SOUL.md`, session state) managed **exclusively** by this per-install **Kyber Platform GitHub App**: the control plane mints a **short-lived token scoped to just that one repo** (`contents:write`, ~1h) on demand, which the agent uses for both reads and writes of its own identity repo — no per-agent PATs, and **no PAT fallback** (a broken App flow fails loudly rather than silently succeeding on a broad credential). See [agents-identity-repos.md](./agents-identity-repos.md) for the full credential model.
 
 Both parts are required to enable the feature: the `kyber-github-app` Secret **and** a non-empty `identityRepo.defaultOwner`. If either is absent the identity-repo feature **disables cleanly** — agents are still created and run, just without a managed identity repo (never backfilled with a PAT).
 
-**Preconditions:** § 5.2 complete (`kyber-system` namespace exists); `~/dev/kyber-deploy` cloned (§ 5.1).
+This section is optional — skip it if you don't want git-backed agent identity. The rest of the install works either way.
+
+**Preconditions:** § 5.1 complete (`kyber-system` namespace exists).
 
 **Run** *(after the human-input block below has produced `APP_ID`, `INSTALLATION_ID`, `PEM_PATH`, and `IDENTITY_OWNER`)*:
 ```bash
@@ -460,15 +461,10 @@ kubectl -n kyber-system create secret generic kyber-github-app \
   --from-file=private-key.pem="$PEM_PATH" \
   --dry-run=client -o yaml | kubectl apply -f -
 
-# Point identityRepo.defaultOwner at the account the App is installed on.
-# This flows to the control plane as KYBER_IDENTITY_REPO_OWNER; the chart
-# default is empty (feature disabled). ArgoCD picks it up on the next sync.
-cd ~/dev/kyber-deploy
-sed -i "s|^\(  defaultOwner:\).*|\1 \"$IDENTITY_OWNER\"|" environments/laptop/values.yaml
-git add environments/laptop/values.yaml
-git -c user.email=kyber-install@local -c user.name=Kyber-Install \
-  commit -m "feat(laptop): set identityRepo.defaultOwner"
-git push origin "$(git branch --show-current)"
+# Remember IDENTITY_OWNER — § 6.1 writes it into the values file as
+# identityRepo.defaultOwner, which flows to the control plane as
+# KYBER_IDENTITY_REPO_OWNER. The chart default is empty (feature disabled).
+echo "IDENTITY_OWNER=$IDENTITY_OWNER" >> ~/.config/kyber/laptop-secrets.env
 
 # After applying, shred the local PEM:
 shred -u "$PEM_PATH"
@@ -478,9 +474,8 @@ shred -u "$PEM_PATH"
 ```bash
 kubectl -n kyber-system get secret kyber-github-app \
   -o jsonpath='{.data}' | jq -r 'keys | join(",")'
-grep -E '^\s*defaultOwner:' ~/dev/kyber-deploy/environments/laptop/values.yaml
 ```
-Expected output: first line `app-id,installation-id,private-key.pem`; second line shows `defaultOwner: "<your-account>"` (non-empty).
+Expected output: `app-id,installation-id,private-key.pem`.
 
 **If it fails:** → § Troubleshooting / "kyber-github-app Secret missing keys".
 
@@ -516,172 +511,124 @@ After the variables are bound, run the **Run** block above.
 
 **Notes:** *(aside)* "All repositories" at install time is safe — installation tokens are minted per-call and scoped to the single repo each agent needs. The App can be reused across multiple Kyber clusters; only the **Run** block (creating the Secret in the cluster) is per-cluster.
 
-## 6. Install ArgoCD + Image Updater and apply the Application
+## 6. Install Kyber
 
-> **Aside.** This section is near-identical to [installation.md § 6](./installation.md#6-install-argocd--image-updater-and-apply-the-application). If you change the ArgoCD/Image Updater bootstrap flow here, update the sibling too.
+> **Aside.** This section is the same `helm install` as [installation.md § 7](./installation.md#7-install-kyber), minus the GCE-specific values. If you change the install flow here, update the sibling too.
 
 > **Shell prerequisite.** Every `kubectl` and `helm` command in this section (and § 5 onward) assumes `KUBECONFIG=~/.kube/kyber-laptop.yaml` is set in the shell. § 4b set this up in the operator's interactive bash, but agents invoking commands via non-interactive shells (e.g. `wsl -e bash -c '...'`) do not auto-source `~/.bashrc`. In that case, prefix each command with `KUBECONFIG=~/.kube/kyber-laptop.yaml`, or run `export KUBECONFIG=~/.kube/kyber-laptop.yaml` once per shell invocation.
 
-### 6a. Bootstrap ArgoCD
+### 6.1 Write the values file
 
-**What this does:** Installs ArgoCD 9.5.1 and ArgoCD Image Updater 0.14.0 via Helm into the `argocd` namespace using the `bootstrap/install-argocd.sh` script in kyber-deploy.
+**What this does:** Writes the per-cluster Helm values to a local file. This holds no secrets — every credential is already a Secret in the cluster from § 5, and the values file only names them. Nothing here is committed anywhere.
 
-**Preconditions:**
-- § 5.2 complete (`kyber-system` namespace + `kyber-api-credentials` Secret exist).
-- `kyber-deploy` is cloned to `~/dev/kyber-deploy` (§ 5.1).
+**Preconditions:** § 5.1 and § 5.2 complete.
 
 **Run:**
 ```bash
-cd ~/dev/kyber-deploy
-bash bootstrap/install-argocd.sh
+mkdir -p ~/.config/kyber
+cat > ~/.config/kyber/values-laptop.yaml <<'EOF'
+namespace:
+  create: false
+
+api:
+  # The Secret from § 5.1. Carries the API key, webhook secret, and — because
+  # k3s.existingSecret is left empty — the k3s join credentials too.
+  existingSecret: kyber-api-credentials
+  # Externally-reachable HTTPS URL, needed for Telegram webhook
+  # auto-registration. § 10 replaces this with the Tailscale Funnel URL.
+  publicURL: ""
+  service:
+    # LoadBalancer so klipper-lb binds the host's port 8080. The chart
+    # default is ClusterIP, which is not reachable from Windows.
+    type: LoadBalancer
+
+# Standalone laptop: agents run on this machine's own k3s node, and no cloud
+# VMs are ever provisioned. Releases after 1.0.4 also accept "static", which
+# is the same thing under a clearer name.
+compute:
+  provider: mock
+
+# Agent volumes bind against k3s's default local-path StorageClass. Do not
+# set kyber-pd here — that is a GCE StorageClass that does not exist on a
+# laptop, and an agent whose PVC names a missing class stays Pending forever.
+storage:
+  agentStorageClass: ""
+  gcePD:
+    enabled: false
+
+# Set only if § 5.3 was completed. Leave empty to keep identity repos off.
+identityRepo:
+  defaultOwner: ""
+EOF
+```
+
+If you completed § 5.3, set the owner now:
+
+```bash
+source ~/.config/kyber/laptop-secrets.env
+sed -i "s|^  defaultOwner:.*|  defaultOwner: \"$IDENTITY_OWNER\"|" \
+  ~/.config/kyber/values-laptop.yaml
 ```
 
 **Verify:**
 ```bash
-for i in {1..18}; do
-  ready=$(kubectl -n argocd get pods --no-headers 2>/dev/null | awk '$3=="Running"' | wc -l)
-  echo "$i: $ready / 5 running"
-  [ "$ready" -ge 5 ] && echo OK && break
-  sleep 10
-done
-```
-Expected output: ends with a line `OK` (5 pods running: `argocd-server`, `argocd-application-controller`, `argocd-repo-server`, `argocd-redis`, `argocd-image-updater`).
+grep -E '(existingSecret|provider|type|defaultOwner):' ~/.config/kyber/values-laptop.yaml
 
-**If it fails:** → § Troubleshooting / "ArgoCD bootstrap failed".
+helm template kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 -n kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml >/dev/null && echo "renders OK"
+```
+Expected output: four lines — `existingSecret: kyber-api-credentials`, `type: LoadBalancer`, `provider: mock`, and `defaultOwner:` (empty unless § 5.3 was done) — then `renders OK`.
+
+The second command is a dry run against the real chart. If it prints `renders OK`, § 6.2 will not fail on a values problem.
+
+**If it fails:** → § Troubleshooting / "values file missing or malformed".
 
 **Human input needed:** None.
 
-### 6b. Create GHCR credentials and configure Image Updater
+### 6.2 Install the chart
 
-**What this does:** Creates the `ghcr-creds` Secret in the `argocd` namespace and patches the Image Updater ConfigMap so it polls GHCR every ~2 minutes for new image digests.
+**What this does:** Installs Kyber from the published Helm chart on GHCR. The chart carries all eight of its image tags, stamped at release time, so nothing has to be pinned by hand and no registry credentials are needed — the chart and every image pull anonymously.
 
-**Preconditions:** 6a complete.
-
-**Run** *(after the human-input block below has produced `GHCR_READ_TOKEN`)*:
-```bash
-kubectl -n argocd create secret generic ghcr-creds \
-  --from-literal=creds="matty-v:${GHCR_READ_TOKEN}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl -n argocd patch configmap argocd-image-updater-config --type merge \
-  -p '{"data":{"registries.conf":"registries:\n- name: ghcr\n  api_url: https://ghcr.io\n  prefix: ghcr.io\n  credentials: secret:argocd/ghcr-creds#creds\n  default: true\n"}}'
-
-kubectl -n argocd rollout restart deploy/argocd-image-updater
-kubectl -n argocd rollout status deploy/argocd-image-updater --timeout=120s
-
-unset GHCR_READ_TOKEN
-```
-
-**Verify:**
-```bash
-kubectl -n argocd get cm argocd-image-updater-config -o jsonpath='{.data.registries\.conf}' | grep -q 'ghcr' && \
-  kubectl -n argocd get pods -l app.kubernetes.io/name=argocd-image-updater \
-    --no-headers | awk '$3=="Running" && $2=="1/1"{print "OK"}'
-```
-Expected output: `OK`.
-
-**If it fails:** → § Troubleshooting / "Image Updater configuration not applied".
-
-**Human input needed:** This step needs a GitHub Personal Access Token with `read:packages` scope.
-
-1. Walk the operator to https://github.com/settings/tokens/new (signed in as the GitHub account that owns the kyber fork — for the upstream install on `matty-v/kyber`, this is the operator's own GitHub account, used only to authenticate against GHCR).
-2. Set:
-   - Note: `kyber-ghcr-read`
-   - Expiration: `90 days`
-   - Permissions section → check **`read:packages`**.
-3. Click `Generate token`. Ask the operator to copy the token value (it's shown only once) and paste it back to you.
-4. Bind the value:
-   ```bash
-   GHCR_READ_TOKEN=<paste from operator>
-   ```
-   Do not invent this value. Do not log it.
-
-After the variable is bound, run the **Run** block above. The trailing `unset GHCR_READ_TOKEN` clears it from the agent's shell after use.
-
-### 6c. Create GitHub repo credentials for ArgoCD
-
-**What this does:** Creates the `github-repo-creds` Secret in the `argocd` namespace and labels it as a repo-creds template so ArgoCD can read both `matty-v/kyber` (Helm chart source) and `matty-v/kyber-deploy` (values + Application manifest).
-
-**Preconditions:** 6a complete.
-
-**Run** *(after the human-input block below has produced `GITHUB_PAT`)*:
-```bash
-kubectl -n argocd create secret generic github-repo-creds \
-  --from-literal=url=https://github.com/matty-v \
-  --from-literal=username=matty-v \
-  --from-literal=password="${GITHUB_PAT}" \
-  --dry-run=client -o yaml | kubectl apply -f -
-
-kubectl -n argocd label secret github-repo-creds \
-  argocd.argoproj.io/secret-type=repo-creds --overwrite
-
-unset GITHUB_PAT
-```
-
-**Verify:**
-```bash
-kubectl -n argocd get secret github-repo-creds \
-  -o jsonpath='{.metadata.labels.argocd\.argoproj\.io/secret-type}'
-```
-Expected output: `repo-creds`.
-
-**If it fails:** → § Troubleshooting / "github-repo-creds Secret missing or unlabeled".
-
-**Human input needed:** This step needs a second GitHub Personal Access Token, distinct from 6b's, with `repo` (read) scope.
-
-1. Walk the operator to https://github.com/settings/tokens/new (in a browser, signed in as the same account).
-2. Set:
-   - Note: `kyber-argocd-repo`
-   - Expiration: `90 days`
-   - Permissions section → check **`repo`** (the top-level checkbox; the four sub-scopes auto-select).
-3. Click `Generate token`, copy the token, paste back to you.
-4. Bind the value:
-   ```bash
-   GITHUB_PAT=<paste from operator>
-   ```
-   Do not invent. Do not log.
-
-After the variable is bound, run the **Run** block. The trailing `unset GITHUB_PAT` clears it.
-
-### 6d. Apply the ArgoCD Application
-
-**What this does:** Applies the ArgoCD Application manifest from `kyber-deploy/environments/laptop/application.yaml`. ArgoCD then syncs the manifest, renders the Helm chart, and creates the Kyber resources (control plane, node-agent, Postgres, Redis, services) inside `kyber-system`.
-
-**Preconditions:**
-- 6a, 6b, 6c complete.
-- § 1 verify passed (GHCR images public).
+**Preconditions:** § 6.1 complete.
 
 **Run:**
 ```bash
-kubectl apply -f ~/dev/kyber-deploy/environments/laptop/application.yaml
+helm install kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 \
+  --namespace kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml \
+  --wait --timeout 15m
 ```
+
+Use the newest version from https://github.com/matty-v/kyber/releases in place of `1.0.4` — the chart version and the release tag are the same number.
 
 **Verify:**
 ```bash
 for i in {1..30}; do
-  status=$(kubectl -n argocd get application kyber-laptop \
-    -o jsonpath='{.status.sync.status}/{.status.health.status}' 2>/dev/null)
-  echo "$i: $status"
-  [ "$status" = "Synced/Healthy" ] && echo OK && break
+  ready=$(kubectl -n kyber-system get pods --no-headers 2>/dev/null \
+    | awk '$3=="Running"' | wc -l)
+  echo "$i: $ready / 4 running"
+  [ "$ready" -ge 4 ] && echo OK && break
   sleep 10
 done
 ```
-Expected output: ends with a line `OK` (the Application reaches `Synced/Healthy` — first sync typically 60–180 seconds).
+Expected output: ends with a line `OK` — four pods `Running`: `kyber-laptop-control-plane`, `kyber-laptop-node-agent`, `kyber-laptop-postgres-0`, `kyber-laptop-redis-0`.
 
-**If it fails:** → § Troubleshooting / "ArgoCD sync stuck on OutOfSync".
+**If it fails:** → § Troubleshooting / "Pods stuck in ImagePullBackOff" or "Control plane CrashLoopBackOff".
 
 **Human input needed:** None.
 
-**Notes:** *(aside)* Once the Application is `Synced/Healthy`, `kubectl -n kyber-system get pods,svc` should show the control plane Deployment, node-agent DaemonSet, Postgres + Redis StatefulSets, and a LoadBalancer Service. If the Service stays in `Pending`, see Troubleshooting / "LoadBalancer stuck in Pending".
+**Notes:** *(aside)* Resources are prefixed with the release name, so everything is `kyber-laptop-*`. This is a plain `helm install` — there is no GitOps controller, no deploy repo, and no Personal Access Token anywhere in the install. Upgrades are handled from the Kyber UI itself (§ Upgrading, below).
 
 ## 7. Verify
 
-> **Aside.** The verify steps here are near-identical to [installation.md § 7](./installation.md#7-verify) — keep healthz/fleet-summary assertions in sync across both docs.
+> **Aside.** The verify steps here are near-identical to [installation.md § 8](./installation.md#8-verify) — keep healthz/fleet-summary assertions in sync across both docs.
 
 **What this does:** Confirms the control plane is reachable on WSL2 localhost and answers an authenticated API call with the expected zero-state JSON.
 
 **Preconditions:**
-- § 6d verify passed (Application `Synced/Healthy`).
+- § 6.2 verify passed (four pods `Running`).
 - `KUBECONFIG=~/.kube/kyber-laptop.yaml` set in the shell (see § 6 Shell prerequisite).
 
 **Run:** *(no command — verify-only)*
@@ -734,7 +681,7 @@ Expected output:
 
 ## 9. Create your first Machine and Agent
 
-> **Aside.** This section is distinct from [installation.md § 9](./installation.md#9-create-your-first-agent) — on standalone there is no VM to provision; the Machine is a `provider=mock` reference to the WSL2 host itself.
+> **Aside.** This section is distinct from [installation.md § 10](./installation.md#10-create-your-first-agent) — on standalone there is no VM to provision; the Machine is a `provider=mock` reference to the WSL2 host itself.
 
 ### 9.1 Create the Machine
 
@@ -854,7 +801,7 @@ Once an agent is Running, it has cron available out of the box. See [docs/agents
 
 ## 10. HTTPS via Tailscale Funnel
 
-> **Aside.** This setup is near-identical to [installation.md § 10](./installation.md#10-https-via-tailscale-funnel). When changing `tailscale up` flags or Funnel config, update both — past sync drift has cost us debugging time.
+> **Aside.** This setup is near-identical to [installation.md § 11](./installation.md#11-https-via-tailscale-funnel). When changing `tailscale up` flags or Funnel config, update both — past sync drift has cost us debugging time.
 
 Tailscale Funnel gives you a public HTTPS URL with automatic Let's Encrypt cert provisioning — no domain purchase, no cert rotation, no DNS setup.
 
@@ -930,11 +877,11 @@ Expected output: a single line containing the public Funnel URL, like `https://k
 
 **Human input needed:** None.
 
-### 10.3 Set api.publicURL in kyber-deploy values
+### 10.3 Set api.publicURL and apply it
 
-**What this does:** Updates `api.publicURL` in the operator's clone of `kyber-deploy/environments/laptop/values.yaml` so the control plane knows its public URL, then commits and pushes the change. ArgoCD picks up the change within ~2 minutes and triggers a rolling restart of the control-plane pod with the new `KYBER_PUBLIC_URL`.
+**What this does:** Writes the Funnel URL into the local values file and runs `helm upgrade` so the control plane learns its own public URL. That value becomes `KYBER_PUBLIC_URL`, which Kyber uses to auto-register Telegram webhooks when agents are created.
 
-**Preconditions:** 10.2 captured the public URL.
+**Preconditions:** 10.2 captured the public URL; § 6.1 wrote `~/.config/kyber/values-laptop.yaml`.
 
 **Run:**
 ```bash
@@ -942,34 +889,30 @@ TAILNET_URL=$(tailscale funnel status 2>/dev/null \
   | grep -oE 'https://kyber-wsl\.[a-z0-9]+\.ts\.net' | head -1)
 test -n "$TAILNET_URL" || { echo "ERR: TAILNET_URL not captured"; exit 1; }
 
-cd ~/dev/kyber-deploy
-sed -i "s|publicURL: .*|publicURL: \"$TAILNET_URL\"|" environments/laptop/values.yaml
-git add environments/laptop/values.yaml
-git -c user.email=kyber-install@local -c user.name=Kyber-Install \
-  commit -m "feat(laptop): set publicURL"
-git push origin "$(git branch --show-current)"
+sed -i "s|^  publicURL: .*|  publicURL: \"$TAILNET_URL\"|" \
+  ~/.config/kyber/values-laptop.yaml
+
+helm upgrade kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 \
+  --namespace kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml \
+  --wait --timeout 10m
 ```
 
 **Verify:**
 ```bash
-for i in {1..15}; do
-  pub=$(kubectl -n kyber-system get deploy kyber-laptop-control-plane \
-    -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KYBER_PUBLIC_URL")].value}' 2>/dev/null)
-  echo "$i: $pub"
-  [ "$pub" = "$TAILNET_URL" ] && echo OK && break
-  sleep 20
-done
+pub=$(kubectl -n kyber-system get deploy kyber-laptop-control-plane \
+  -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="KYBER_PUBLIC_URL")].value}')
+echo "$pub"
+[ "$pub" = "$TAILNET_URL" ] && echo OK
 ```
-Expected output: ends with a line `OK` (the control-plane Deployment's `KYBER_PUBLIC_URL` env var matches `$TAILNET_URL`).
+Expected output: the Funnel URL, then `OK`.
 
 **If it fails:** → § Troubleshooting / "publicURL did not propagate to control plane".
 
-**Human input needed:** The `git push` will prompt for the operator's GitHub credentials if the local git config doesn't already have them. If prompted, ask the operator to provide a Personal Access Token with `repo` scope (it can be the same `kyber-argocd-repo` PAT created in 6c, *or* a new one — the operator may have rotated). Walk the operator to set the credentials inline before retrying:
-```bash
-cd ~/dev/kyber-deploy
-git remote set-url origin "https://${GH_USER}:${GH_PAT}@github.com/${GH_USER}/kyber-deploy.git"
-```
-Where `GH_USER` is the operator's GitHub handle and `GH_PAT` is a `repo`-scoped PAT. Do not invent the PAT.
+**Human input needed:** None. Because `helm upgrade` applies the change directly, there is no git push and no credential prompt — keep using the same values file and `--version` for every later upgrade.
+
+**Notes:** *(aside)* `--wait` means the command returns only once the restarted control-plane pod is Ready, so a successful exit is itself most of the verification.
 
 ### 10.4 Verify external HTTPS reachability
 
@@ -1153,16 +1096,6 @@ If `$KUBECONFIG` is empty, re-export it. If k3s isn't running, restart it: `sudo
 
 **Verify the fix:** Re-run step 4c's verify.
 
-### kyber-deploy clone failed
-
-**Symptom:** Step 5.1 verify fails: `~/dev/kyber-deploy/environments/laptop/values.yaml` is missing.
-
-**Likely cause:** Network failure mid-clone, or `~/dev/` doesn't exist as a writable directory.
-
-**Fix:** `mkdir -p ~/dev && rm -rf ~/dev/kyber-deploy`, then re-run step 5.1.
-
-**Verify the fix:** Re-run step 5.1's verify.
-
 ### kyber-api-credentials Secret missing keys
 
 **Symptom:** Step 5.2 verify shows fewer than four key names, or the comma-separated list is in a different order from expected.
@@ -1191,75 +1124,71 @@ Any var that prints `=…` (empty value) is the culprit. Re-do step 2 or 4c as n
 echo "APP_ID=$APP_ID INSTALLATION_ID=$INSTALLATION_ID"
 ls -la "$PEM_PATH"
 ```
-Fix any empty/missing value (return to the relevant numbered item in 5a's Human input block) and re-run the Run block.
+Fix any empty/missing value (return to the relevant numbered item in 5.3's Human input block) and re-run the Run block.
 
-**Verify the fix:** Re-run step 5a's verify.
+**Verify the fix:** Re-run step 5.3's verify.
 
-### ArgoCD bootstrap failed
+### published chart unreachable
 
-**Symptom:** Step 6a verify counts fewer than 5 pods Running after several minutes, or the bootstrap script exits non-zero.
+**Symptom:** Step 1 verify fails — `helm show chart` errors instead of printing `name: kyber`.
 
-**Likely cause:** Helm install partial-failure (network, name collision with a previous install) or the script's prerequisite checks failed.
-
-**Fix:**
-```bash
-kubectl -n argocd get pods                        # see which pods are unhealthy
-kubectl -n argocd describe pod <unhealthy-pod>    # check Events
-```
-
-If a previous ArgoCD install left orphaned resources, clean before retrying:
-```bash
-helm uninstall argocd -n argocd 2>/dev/null
-kubectl delete namespace argocd
-```
-Then re-run step 6a.
-
-**Verify the fix:** Re-run step 6a's verify.
-
-### Image Updater configuration not applied
-
-**Symptom:** Step 6b verify produces no `OK` (the `registries.conf` patch didn't land or the Image Updater pod isn't Running 1/1).
-
-**Likely cause:** The `kubectl patch configmap` command's JSON merge failed (typo in the patch payload) or the Image Updater pod failed to roll cleanly.
+**Likely cause:** No outbound network from WSL2, an old Helm without OCI support, or the version you asked for doesn't exist.
 
 **Fix:**
 ```bash
-kubectl -n argocd get cm argocd-image-updater-config -o yaml
-kubectl -n argocd describe deploy argocd-image-updater | tail -30
+helm version --short          # must be >= 3.14
+curl -sfI https://ghcr.io >/dev/null && echo "network OK"
+```
+Then confirm the version you are asking for is real: https://github.com/matty-v/kyber/releases. Use the newest tag's number for both `--version` here and in § 6.2.
+
+Do not conclude from a `curl https://ghcr.io/v2/...` returning `401` that the package is private — that endpoint always 401s for anonymous callers. `helm show` is the authoritative check.
+
+**Verify the fix:** Re-run step 1's verify.
+
+### values file missing or malformed
+
+**Symptom:** Step 6.1 verify prints fewer than four lines, or § 6.2 fails with a YAML parse error.
+
+**Likely cause:** The heredoc was interrupted, or the `sed` for `defaultOwner` ran against a file that didn't have that key.
+
+**Fix:** Re-run the whole `cat > ~/.config/kyber/values-laptop.yaml <<'EOF' … EOF` block from 6.1 — it overwrites cleanly. Then check it parses:
+```bash
+helm template kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 -n kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml >/dev/null && echo "renders OK"
 ```
 
-If the `registries.conf` is empty or malformed, re-run the `patch configmap` block from step 6b. If the deploy didn't roll, run `kubectl -n argocd rollout restart deploy/argocd-image-updater` and `kubectl -n argocd rollout status deploy/argocd-image-updater --timeout=120s`.
+**Verify the fix:** Re-run step 6.1's verify.
 
-**Verify the fix:** Re-run step 6b's verify.
+### helm install times out
 
-### github-repo-creds Secret missing or unlabeled
+**Symptom:** Step 6.2 exits with `context deadline exceeded` or fewer than 4 pods reach Running.
 
-**Symptom:** Step 6c verify outputs nothing instead of `repo-creds`, or the Secret doesn't exist.
+**Likely cause:** Image pulls are slow on a first install (several hundred MB), or a pod is genuinely failing.
 
-**Likely cause:** The Secret was created but not labeled, or the create command failed silently because `$GITHUB_PAT` was empty when it ran.
+**Fix:** `--wait` failing does not roll the install back — inspect what is actually stuck:
+```bash
+kubectl -n kyber-system get pods
+kubectl -n kyber-system describe pod <not-running-pod> | tail -30
+```
+If pods are still `ContainerCreating` and events show image pulling, just wait and re-run the § 6.2 verify loop. If a pod is `CrashLoopBackOff`, go to "Control plane CrashLoopBackOff" below. Re-running `helm install` after a timeout fails with "cannot re-use a name" — use `helm upgrade --install` instead, which is idempotent.
+
+**Verify the fix:** Re-run step 6.2's verify.
+
+### agents stay blank and never report activity
+
+**Symptom:** The control plane is healthy and the PWA works, but an agent shows no status, no activity, and no context usage.
+
+**Likely cause:** The `kyber-internal-signing-key` Secret (§ 5.2) is missing, or the control plane started before it existed. The internal API on `:8082` fails closed without that key, and a Secret created *after* a pod starts never reaches that pod.
 
 **Fix:**
 ```bash
-kubectl -n argocd get secret github-repo-creds -o yaml
+kubectl -n kyber-system get secret kyber-internal-signing-key   # must exist
+kubectl -n kyber-system rollout restart deploy/kyber-laptop-control-plane
+kubectl -n kyber-system rollout status deploy/kyber-laptop-control-plane
 ```
 
-If the Secret is missing, return to 6c's Human input block and confirm `$GITHUB_PAT` is set, then re-run the Run block. If the Secret exists without the label, just re-run the `kubectl label` command from 6c.
-
-**Verify the fix:** Re-run step 6c's verify.
-
-### ArgoCD sync stuck on OutOfSync
-
-```bash
-kubectl -n argocd describe application kyber-laptop | tail -40
-```
-
-If `Sync Status` is `OutOfSync`, check whether the repo credentials are working:
-```bash
-kubectl -n argocd get secret github-repo-creds \
-  -o jsonpath='{.metadata.labels}' | jq .
-```
-
-The label `argocd.argoproj.io/secret-type: repo-creds` must be present. If it's missing, re-run the label command from step 6c.
+**Verify the fix:** Open an agent in the PWA — its status and context usage populate within ~30 seconds.
 
 ### Control plane CrashLoopBackOff
 
@@ -1280,25 +1209,15 @@ source ~/.config/kyber/laptop-secrets.env
 echo $KYBER_API_KEY
 ```
 
-### GHCR images private or missing
-
-**Symptom:** Step 1's verify reports `NOT public` for one or more images, or `manifests/latest` returns 404.
-
-**Likely cause:** GHCR packages default to private; first-time forks must explicitly make them public.
-
-**Fix:** Visit each affected package's settings page in the GitHub UI and change visibility to Public. URLs:
-- https://github.com/users/matty-v/packages/container/kyber-control-plane/settings
-- https://github.com/users/matty-v/packages/container/kyber-node-agent/settings
-- https://github.com/users/matty-v/packages/container/kyber-runtime-base/settings
-- https://github.com/users/matty-v/packages/container/kyber-claude-code/settings
-
-Scroll to Danger Zone → Change visibility → Public → confirm.
-
-**Verify the fix:** Re-run step 1's verify.
-
 ### Pods stuck in ImagePullBackOff
 
-The GHCR packages aren't public. See [installation.md § 1](./installation.md#1-verify-ci-has-published-images-and-make-them-public) for the visibility steps. Package visibility changes take effect immediately — no pod restart needed, just wait for the next pull attempt (~30 seconds).
+**Likely cause:** a hand-pinned image tag that was never published. The published chart's own tags always exist and pull anonymously, so this should not happen on a stock install.
+
+```bash
+kubectl -n kyber-system get pods -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.containers[*].image}{"\n"}{end}'
+```
+
+Check whether `~/.config/kyber/values-laptop.yaml` overrides any `image.*.tag`. If it does, remove the override and re-run the § 10.3 `helm upgrade` so the chart's stamped tags apply. If it doesn't, confirm the tag exists at https://github.com/matty-v/kyber/releases.
 
 ### LoadBalancer stuck in Pending
 
@@ -1321,7 +1240,7 @@ Free the port or change `api.service.port` in `environments/laptop/values.yaml`.
 kubectl -n kube-system logs -l app=svclb-kyber-laptop-control-plane --tail=50
 ss -tlnp | grep ':8080 '
 ```
-- If `ss` shows another PID bound to 8080: stop it (see § Troubleshooting / "Port 8080 already in use") and re-run § 6d's polling verify.
+- If `ss` shows another PID bound to 8080: stop it (see § Troubleshooting / "Port 8080 already in use") and re-run § 6.2's verify.
 - If the svclb logs show errors: restart the LB DaemonSet — `kubectl -n kube-system rollout restart daemonset/svclb-kyber-laptop-control-plane`.
 
 **Verify the fix:** Re-run step 7's verify.
@@ -1379,7 +1298,7 @@ Then rerun `wsl --shutdown` from Windows.
 kubectl -n kyber-system logs deploy/kyber-laptop-control-plane --tail=80 | grep -i machine
 kubectl get nodes -o wide
 ```
-If `kubectl get nodes` shows no Ready node, return to § 3. If the control plane logs show "machine reconciler" errors, return to § 6d's verify.
+If `kubectl get nodes` shows no Ready node, return to § 3. If the control plane logs show "machine reconciler" errors, return to § 6.2's verify.
 
 **Verify the fix:** Re-run step 9.1's verify.
 
@@ -1455,19 +1374,18 @@ If Funnel is not available on the tailnet, the operator must enable it: https://
 
 **Symptom:** Step 10.3's polling verify never lands on `OK` — the control-plane Deployment's `KYBER_PUBLIC_URL` env var stays empty or shows an old value.
 
-**Likely cause:** The `git push` to kyber-deploy did not succeed (auth failure), or ArgoCD has not yet synced the change.
+**Likely cause:** The `sed` did not match (so the values file still has the old value), or `helm upgrade` did not actually run.
 
 **Fix:**
 ```bash
-cd ~/dev/kyber-deploy
-git log -1 --oneline                                # confirm the publicURL commit landed locally
-git status                                          # confirm clean
-git push origin "$(git branch --show-current)"      # retry push if local commit isn't pushed
-
-kubectl -n argocd get application kyber-laptop -o jsonpath='{.status.sync.status}'
-# If "OutOfSync", trigger a manual sync:
-kubectl -n argocd patch application kyber-laptop --type merge \
-  -p '{"operation":{"sync":{"prune":true}}}'
+grep publicURL ~/.config/kyber/values-laptop.yaml   # must show the Funnel URL
+helm -n kyber-system history kyber-laptop | tail -3 # a new revision should exist
+```
+If the values file is wrong, fix it and re-run the § 10.3 `helm upgrade`. If the file is right but the Deployment still shows the old value, the upgrade did not roll the pod:
+```bash
+helm upgrade kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version 1.0.4 -n kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml --wait
 ```
 
 **Verify the fix:** Re-run step 10.3's verify.
@@ -1491,12 +1409,40 @@ sudo tailscale funnel status
 
 **Verify the fix:** Re-run step 10.4's verify.
 
+## Upgrading
+
+Once installed, this instance can upgrade **itself**: Settings → Updates in the
+PWA shows the current version, the latest on your channel, and an Install button.
+There is no automatic apply — nothing installs an update on its own.
+
+To enable it, add `selfUpgrade: {enabled: true}` to
+`~/.config/kyber/values-laptop.yaml` and re-run the § 10.3 `helm upgrade`. That
+setting is what creates the upgrade Job's ServiceAccount.
+
+To upgrade by hand instead, re-run the install command with a newer `--version`:
+
+```bash
+helm upgrade kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
+  --version <newer> -n kyber-system \
+  -f ~/.config/kyber/values-laptop.yaml --wait
+```
+
+> **Helm never upgrades CRDs.** `helm upgrade` installs CRDs only when they are
+> absent and silently leaves existing ones alone — so a cluster keeps the CRD
+> schema it was first installed with, and fields added in later versions get
+> rejected by the API server with no obvious cause. When a release notes a CRD
+> change, apply them explicitly:
+> ```bash
+> helm pull oci://ghcr.io/matty-v/charts/kyber --version <newer> --untar
+> kubectl apply -f kyber/crds/
+> ```
+
+Full detail, including what the self-upgrade guards check and how to recover a
+failed upgrade, is in [upgrading.md](./upgrading.md).
+
 ## Destroying the install
 
 ```bash
-# Remove the ArgoCD Application (stops ArgoCD from managing Kyber)
-kubectl -n argocd delete application kyber-laptop
-
 # Uninstall k3s — wipes the entire cluster state including all PVCs
 # (this deletes all Postgres and Redis data)
 sudo /usr/local/bin/k3s-uninstall.sh
@@ -1509,11 +1455,32 @@ sudo systemctl disable tailscaled
 
 `k3s-uninstall.sh` is installed automatically by the k3s installer — it removes k3s binaries, config, and all cluster state. The Postgres and Redis PVCs stored in `/var/lib/rancher/k3s/storage/` are deleted along with it.
 
-If you want to keep the cluster but remove just Kyber:
+If you want to keep the cluster but remove just Kyber, delete the Agents and
+Machines **first**. Each Agent carries a `kyber.io/agent-cleanup` finalizer that
+only the control plane can clear — uninstall the release while Agents still
+exist and you delete the controller that would release them, leaving the
+namespace stuck in `Terminating` forever:
 ```bash
+kubectl -n kyber-system delete agent --all
+kubectl -n kyber-system delete machine --all
+
 helm uninstall kyber-laptop -n kyber-system
 kubectl delete namespace kyber-system
-# Optionally remove ArgoCD
-helm uninstall argocd -n argocd
-kubectl delete namespace argocd
+```
+
+If you already stranded a namespace that way, clear the finalizer by hand and
+the delete finishes on its own:
+```bash
+kubectl -n kyber-system patch agent <name> --type merge -p '{"metadata":{"finalizers":[]}}'
+```
+
+(The full `k3s-uninstall.sh` above does not hit this — it removes the whole
+cluster, API server included, so no finalizer ever needs to run.)
+
+Helm does not delete CRDs. If you plan to reinstall from scratch rather than
+walk away, remove them too — otherwise the next install silently inherits this
+install's CRD schema, and fields added in later versions are rejected by the API
+server with no obvious cause:
+```bash
+kubectl delete crd agents.kyber.io machines.kyber.io
 ```

@@ -128,7 +128,7 @@ flowchart TB
 ```
 
 A subsystem-by-subsystem index of `pkg/` lives in the
-[README § Repository Structure](../../README.md#repository-structure). Read the focused docs (§ 8) before touching a subsystem that has one.
+[README § Repository layout](../../README.md#repository-layout). Read the focused docs (§ 8) before touching a subsystem that has one.
 
 ### API authorization
 
@@ -354,7 +354,7 @@ displayed version.
 
 There is **no `:stable` tag and no `promote-stable` branch/workflow** — that
 framing is retired. The kyber-side mechanics are in the
-[README § How deployment works](../../README.md#how-deployment-works) and the
+[README § CI & releases](../../README.md#ci--releases) and the
 [release runbook](../operator/release-runbook.md). The deploy-repo internals
 (ArgoCD Applications, per-env values) are kyber-deploy's deep-dive, not this one.
 

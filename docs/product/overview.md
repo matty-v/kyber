@@ -31,7 +31,7 @@ Two core concepts an operator creates and manages:
   memory, and session state — so its identity is versioned and survives even a
   full teardown. Kyber manages that repo on the agent's behalf through a
   **Kyber Platform GitHub App** the operator configures once per install
-  (see [`../installation.md` § 5b](../installation.md#5b-register-the-kyber-github-app)
+  (see [`../installation.md` § 6](../installation.md#6-register-the-kyber-github-app-optional)
   and [`../agents-identity-repos.md`](../agents-identity-repos.md)); an install
   without that App simply runs agents without a managed identity repo.
 - **Machine** — a cloud VM that Kyber manages on the operator's behalf (its type,

@@ -55,7 +55,7 @@ Machine for runnable-agent testing.
 ## Local GitHub App for identity-repo testing
 
 Your GitHub App credentials must never be committed. Register and install an
-App using [the standard permissions and click path](../../docs/installation.md#5b-register-the-kyber-github-app),
+App using [the standard permissions and click path](../../docs/installation.md#6-register-the-kyber-github-app-optional),
 then save its values into the git-ignored local bundle:
 
 ```bash
@@ -100,7 +100,7 @@ mode, create a fake Machine through the PWA; it maps to the real k3d node. The
 legacy mock request is also available:
 
 ```bash
-curl -sS -X POST http://localhost:8080/api/v1/machines \
+curl -sS -X POST http://localhost:18080/api/v1/machines \
   -H "Authorization: Bearer test-api-key-e2e" -H "Content-Type: application/json" \
   -d '{"name":"local","provider":"mock","capacity":{"cpu":"2","memory":"4Gi"}}'
 # poll GET /api/v1/machines/local until status.phase == "Ready"
@@ -108,7 +108,7 @@ curl -sS -X POST http://localhost:8080/api/v1/machines \
 
 For a **working Claude agent** use OAuth (an API key also works for non-Telegram
 agents; Telegram *requires* OAuth). Easiest: the **PWA creation wizard** at
-`http://localhost:8080/` (or the hot-reload UI at `:5173`) — it runs the PKCE
+`http://localhost:18080/` (or the hot-reload UI at `:5173`) — it runs the PKCE
 flow, you log in at claude.ai, paste the code, and it creates the agent.
 
 The pod should reach `4/4 Running`; confirm real auth in its log:
@@ -122,15 +122,35 @@ kubectl logs -n kyber-system agent-<name> -c agent | grep -iE "model probe|crede
 ### Telegram
 
 Create the agent with `secrets.telegramEnabled: true` +
-`secrets.telegramBotToken: <BotFather token>` (OAuth auth required). The agent
-pre-seeds an owner allowlist and Claude Code auto-installs the
-`telegram@claude-plugins-official` plugin on launch, which polls getUpdates
-in-pod (no inbound webhook needed). Message the bot from the owner account to
-test.
+`secrets.telegramBotToken: <BotFather token>` (OAuth auth required). The control
+plane injects a `kyber-mcp-telegram` **sidecar** into the agent's pod, which
+bridges the chat to the agent session over MCP. `build-local-images.sh` builds
+`kyber/mcp-telegram:local` and `values-full-local.yaml` already points
+`image.telegramSidecar` at it, so nothing extra is needed here.
 
-> Note: the owner chat ID currently falls back to a hardcoded default in
-> `images/claude-code/start-claude.sh` — set `OWNER_TELEGRAM_CHAT_ID` for your
-> own account until that default is removed.
+The pod gains one container when Telegram is enabled — confirm the sidecar is
+actually there before concluding the bot is broken:
+
+```bash
+kubectl -n kyber-system get pod agent-<name> \
+  -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}'
+# expect: agent, kyber-mcp-telegram
+```
+
+(The channel sidecar is a normal container. Kyber's other sidecars — status,
+transcript-tailer, session-saver, transcript-pruner — are `initContainers` with
+`restartPolicy: Always`, so they show up in a different list.)
+
+Message the bot from an account on the agent's allowlist to test. Messages from
+anyone not on the allowlist are ignored silently — that is the primary access
+control, not a bug.
+
+> **This replaced an in-process plugin.** Claude Code used to carry a native
+> `telegram@claude-plugins-official` plugin that polled getUpdates from inside
+> the runtime container. That is retired (kyber#684): the runtime no longer
+> receives a bot token, and the sidecar is now the only Telegram implementation
+> for **both** runtimes. If you find docs or scripts referring to the plugin or
+> to `OWNER_TELEGRAM_CHAT_ID`, they are stale.
 
 ## Notes
 
