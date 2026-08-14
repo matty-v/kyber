@@ -44,6 +44,41 @@ export type AgentLifecycleKind =
   // is the one that actually works out of NeedsAuth (see below).
   | 'retry-startup'
 
+// The API sub-action each lifecycle kind fires. Lives here, beside the
+// per-phase rules, because "which endpoint" and "which phases" are the same
+// decision: an action is only safe to offer on a phase where its endpoint
+// actually transitions (the #599 rule). Splitting them across two files is how
+// a menu item and its handler drift into a dead button.
+//
+// 'retry-startup' → 'start' is the whole point of the kyber#26 kind: it reads
+// as "Restart pod" to the operator but must fire desiredPhase=Running, the only
+// edge out of NeedsAuth. Wiring it to 'restart' would be the silent no-op.
+const LIFECYCLE_KINDS: readonly AgentLifecycleKind[] = [
+  'start',
+  'stop',
+  'restart',
+  'suspend',
+  'force-needs-auth',
+  'retry-startup',
+]
+
+export function isLifecycleKind(kind: string): kind is AgentLifecycleKind {
+  return (LIFECYCLE_KINDS as readonly string[]).includes(kind)
+}
+
+export function lifecycleActionEndpoint(kind: AgentLifecycleKind): string {
+  switch (kind) {
+    case 'retry-startup':
+      return 'start'
+    case 'start':
+    case 'stop':
+    case 'restart':
+    case 'suspend':
+    case 'force-needs-auth':
+      return kind
+  }
+}
+
 // Per-phase lifecycle subsets. Rules:
 //   - Don't offer Start on a Running agent; don't offer Stop/Suspend on a
 //     Stopped or Suspended agent.

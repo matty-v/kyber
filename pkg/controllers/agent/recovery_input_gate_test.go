@@ -240,9 +240,27 @@ func TestRecoveryGate_NeedsAuth_OperatorRestartReopensGateOnce(t *testing.T) {
 		t.Fatalf("precondition: gate must be shut on an unchanged credential; got %q, err %v", ev, err)
 	}
 
-	// What POST /start does to the object.
+	// What POST /start does to the object. This must be PERSISTED, not just set
+	// on the local copy: seeding the clear in memory only would leave the stored
+	// object still holding the original claim, so the "was it re-claimed?"
+	// assertion below would be comparing against the seed and would pass even if
+	// recoveryInputChanged never wrote anything at all.
+	clearPatch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.RecoveryInput = ""
+	if err := r.Status().Patch(context.Background(), agent, clearPatch); err != nil {
+		t.Fatalf("clearing recovery input the way POST /start does: %v", err)
+	}
+	var cleared kyberv1.Agent
+	if err := r.Get(context.Background(),
+		client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &cleared); err != nil {
+		t.Fatalf("re-reading agent after clear: %v", err)
+	}
+	if cleared.Status.RecoveryInput != "" {
+		t.Fatalf("precondition: the clear did not persist, stored %q — the re-claim assertion below would be vacuous", cleared.Status.RecoveryInput)
+	}
 
+	// Reconcile off the STORED object, as a real reconcile does.
+	agent = &cleared
 	ev, err := r.classifyEvent(context.Background(), agent, nil)
 	if err != nil {
 		t.Fatalf("classifyEvent after operator restart: %v", err)

@@ -46,7 +46,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { lifecycleItemsInMore, sessionItemsInMore } from '../lib/design/agent-actions'
+import {
+  isLifecycleKind,
+  lifecycleActionEndpoint,
+  lifecycleItemsInMore,
+  sessionItemsInMore,
+} from '../lib/design/agent-actions'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
@@ -464,17 +469,20 @@ export function AgentDetail() {
   async function executeAction() {
     if (!pending) return
     try {
-      if (pending === 'start') await startAgent.mutateAsync(name)
-      // kyber#26: deliberately the /start mutation, not /restart.
-      // desiredPhase=Running is the edge that fires out of NeedsAuth, and the
-      // API clears status.recoveryInput on it so the one-attempt latch opens.
-      if (pending === 'retry-startup') await startAgent.mutateAsync(name)
-      if (pending === 'stop') await stopAgent.mutateAsync(name)
-      if (pending === 'restart') await restartAgent.mutateAsync(name)
-      if (pending === 'restart-session') await restartAgentSession.mutateAsync(name)
-      if (pending === 'compact-session') await compactAgentSession.mutateAsync(name)
-      if (pending === 'suspend') await suspendAgent.mutateAsync(name)
-      if (pending === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
+      // Lifecycle kinds resolve to their API sub-action through
+      // lifecycleActionEndpoint, which owns the kind→endpoint mapping beside
+      // the per-phase rules (kyber#26). 'retry-startup' resolves to 'start'
+      // there — reading it through the helper instead of repeating the mapping
+      // here is what stops a menu item and its handler drifting into a dead
+      // button. Non-lifecycle kinds (sessions, setters, delete) pass through.
+      const action = isLifecycleKind(pending) ? lifecycleActionEndpoint(pending) : pending
+      if (action === 'start') await startAgent.mutateAsync(name)
+      if (action === 'stop') await stopAgent.mutateAsync(name)
+      if (action === 'restart') await restartAgent.mutateAsync(name)
+      if (action === 'restart-session') await restartAgentSession.mutateAsync(name)
+      if (action === 'compact-session') await compactAgentSession.mutateAsync(name)
+      if (action === 'suspend') await suspendAgent.mutateAsync(name)
+      if (action === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
       if (pending === 'set-model' && newModel) {
         await setAgentModel.mutateAsync({ name, model: newModel })
         setNewModel('')
