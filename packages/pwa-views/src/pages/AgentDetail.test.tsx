@@ -313,3 +313,31 @@ describe('AgentDetail LifecycleMenuItems (kyber#599)', () => {
     expect(screen.getByRole('menuitem', { name: /Restart pod/ })).toBeInTheDocument()
   })
 })
+
+// kyber#26 — NeedsAuth used to render an empty More menu, so an agent parked
+// on a credential that was already valid had no PWA control at all and needed
+// a cluster-admin `kubectl annotate` to unwedge it.
+describe('AgentDetail LifecycleMenuItems — NeedsAuth (kyber#26)', () => {
+  it('offers Restart pod, so the More menu is no longer empty', () => {
+    renderLifecycleMenu('NeedsAuth')
+    expect(screen.getByRole('menuitem', { name: /Restart pod/ })).toBeInTheDocument()
+  })
+
+  it('the Restart pod item fires retry-startup — the /start path, not the dead /restart one', async () => {
+    const user = userEvent.setup()
+    const onSelect = renderLifecycleMenu('NeedsAuth')
+    await user.click(screen.getByRole('menuitem', { name: /Restart pod/ }))
+    // 'retry-startup' is dispatched to the start mutation. Firing 'restart'
+    // here would set desiredPhase=Restarting, which matches no transition out
+    // of NeedsAuth — a visibly-clickable no-op, the #599 defect.
+    expect(onSelect).toHaveBeenCalledWith('retry-startup')
+    expect(onSelect).not.toHaveBeenCalledWith('restart')
+  })
+
+  it('does not offer Require re-auth, Stop or Suspend — the agent is already parked', () => {
+    renderLifecycleMenu('NeedsAuth')
+    expect(screen.queryByRole('menuitem', { name: /Require re-auth/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /^Stop$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Suspend/ })).not.toBeInTheDocument()
+  })
+})

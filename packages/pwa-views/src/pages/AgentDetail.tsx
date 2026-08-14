@@ -46,7 +46,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { lifecycleItemsInMore, sessionItemsInMore } from '../lib/design/agent-actions'
+import {
+  isLifecycleKind,
+  lifecycleActionEndpoint,
+  lifecycleItemsInMore,
+  sessionItemsInMore,
+} from '../lib/design/agent-actions'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
@@ -84,6 +89,7 @@ type ActionKind =
   | 'compact-session' // in-session context compaction, pod and session both stay up
   | 'suspend'
   | 'force-needs-auth' // operator-forced re-auth for a wedged agent (#395)
+  | 'retry-startup' // NeedsAuth "try again with what you have" (kyber#26); POSTs /start
   | 'delete'
   | 'set-model'
   | 'set-runtime-version'
@@ -393,6 +399,17 @@ export function LifecycleMenuItems({
           Require re-auth
         </DropdownMenuItem>
       )}
+      {/* kyber#26: the only lifecycle control a NeedsAuth agent gets. Labelled
+          for what the operator sees happen (the pod is rebuilt) rather than for
+          the endpoint it calls (/start) — see agent-actions.ts for why it is
+          not the 'restart' kind. Sits beside, and does not replace, the
+          Re-authorize panel further down the page. */}
+      {items.includes('retry-startup') && (
+        <DropdownMenuItem onSelect={() => onSelect('retry-startup')}>
+          <RotateCcw className="h-3.5 w-3.5" />
+          Restart pod
+        </DropdownMenuItem>
+      )}
     </>
   )
 }
@@ -452,13 +469,20 @@ export function AgentDetail() {
   async function executeAction() {
     if (!pending) return
     try {
-      if (pending === 'start') await startAgent.mutateAsync(name)
-      if (pending === 'stop') await stopAgent.mutateAsync(name)
-      if (pending === 'restart') await restartAgent.mutateAsync(name)
-      if (pending === 'restart-session') await restartAgentSession.mutateAsync(name)
-      if (pending === 'compact-session') await compactAgentSession.mutateAsync(name)
-      if (pending === 'suspend') await suspendAgent.mutateAsync(name)
-      if (pending === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
+      // Lifecycle kinds resolve to their API sub-action through
+      // lifecycleActionEndpoint, which owns the kind→endpoint mapping beside
+      // the per-phase rules (kyber#26). 'retry-startup' resolves to 'start'
+      // there — reading it through the helper instead of repeating the mapping
+      // here is what stops a menu item and its handler drifting into a dead
+      // button. Non-lifecycle kinds (sessions, setters, delete) pass through.
+      const action = isLifecycleKind(pending) ? lifecycleActionEndpoint(pending) : pending
+      if (action === 'start') await startAgent.mutateAsync(name)
+      if (action === 'stop') await stopAgent.mutateAsync(name)
+      if (action === 'restart') await restartAgent.mutateAsync(name)
+      if (action === 'restart-session') await restartAgentSession.mutateAsync(name)
+      if (action === 'compact-session') await compactAgentSession.mutateAsync(name)
+      if (action === 'suspend') await suspendAgent.mutateAsync(name)
+      if (action === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
       if (pending === 'set-model' && newModel) {
         await setAgentModel.mutateAsync({ name, model: newModel })
         setNewModel('')
@@ -1047,6 +1071,10 @@ function confirmTitle(kind: ActionKind): string {
     case 'compact-session':
       return 'Compact session?'
     case 'restart':
+      return 'Restart pod?'
+    case 'retry-startup':
+      // Same header as 'restart' on purpose — from the operator's side it is
+      // the same move; only the endpoint underneath differs (kyber#26).
       return 'Restart pod?'
     case 'force-needs-auth':
       return 'Require re-auth?'

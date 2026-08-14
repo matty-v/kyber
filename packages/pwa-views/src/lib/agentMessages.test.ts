@@ -60,4 +60,19 @@ describe('agentActionConfirmMessage', () => {
     // Reassurance on what is NOT touched.
     expect(msg).toContain('Memory and identity files on disk are not affected')
   })
+
+  it('returns NeedsAuth retry wording for retry-startup, not the generic fallback (kyber#26)', () => {
+    const msg = agentActionConfirmMessage('retry-startup', 'lando')
+    expect(msg).toContain('Rebuild the pod for "lando"')
+    // The copy has to say WHICH credentials, because the whole point is that
+    // the operator is retrying with what is already there.
+    expect(msg).toContain('credentials it already has')
+    // And it has to point at the other half of the choice — this control is an
+    // addition beside the Re-authorize panel, not a replacement for it.
+    expect(msg).toContain('Re-authorize panel')
+    expect(msg).toContain('Memory and identity files on disk are not affected')
+    // The generic `This will <action> agent` fallback reads as
+    // "This will retry-startup agent" — the failure this case exists to avoid.
+    expect(msg).not.toContain('This will retry-startup')
+  })
 })

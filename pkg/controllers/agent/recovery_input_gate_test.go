@@ -214,3 +214,106 @@ func TestRecoveryGate_MemoryExhausted_HoldsUntilLimitChanges(t *testing.T) {
 		t.Fatalf("bumping memory must recover the agent; got %q", ev)
 	}
 }
+
+// kyber#26: the operator's Restart pod button in NeedsAuth. The PWA fires
+// POST /start, and the API clears status.recoveryInput on that path before
+// setting desiredPhase=Running (routes_agents.go, setAgentDesiredPhase). This
+// pins the controller half of that contract: a cleared claim reopens the gate
+// even though the credential Secret has NOT changed, and the very next
+// reconcile re-claims it so the click buys exactly one attempt.
+//
+// The unchanged-credential part is the whole point. `lando` (kyber-falcon,
+// 2026-08-09) sat in NeedsAuth with a valid credential whose resourceVersion
+// already equalled the recorded claim; the gate held, and only a cluster-admin
+// `kubectl annotate` unwedged it. Nothing in the automatic path is relaxed —
+// TestRecoveryGate_NeedsAuth_HoldsWhenCredentialUnchanged still pins that the
+// controller refuses to self-retry on the same input.
+func TestRecoveryGate_NeedsAuth_OperatorRestartReopensGateOnce(t *testing.T) {
+	const rv = "100"
+	secret := credentialSecret(rv)
+	// Exactly the lando shape: the claim already matches the live Secret, so
+	// the automatic path is (correctly) shut.
+	agent := needsAuthAgent("rv:" + rigAgent + "-codex-auth:" + rv)
+	r := newGateReconciler(t, agent, secret)
+
+	if ev, err := r.classifyEvent(context.Background(), agent, nil); err != nil || ev != "" {
+		t.Fatalf("precondition: gate must be shut on an unchanged credential; got %q, err %v", ev, err)
+	}
+
+	// What POST /start does to the object. This must be PERSISTED, not just set
+	// on the local copy: seeding the clear in memory only would leave the stored
+	// object still holding the original claim, so the "was it re-claimed?"
+	// assertion below would be comparing against the seed and would pass even if
+	// recoveryInputChanged never wrote anything at all.
+	clearPatch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.RecoveryInput = ""
+	if err := r.Status().Patch(context.Background(), agent, clearPatch); err != nil {
+		t.Fatalf("clearing recovery input the way POST /start does: %v", err)
+	}
+	var cleared kyberv1.Agent
+	if err := r.Get(context.Background(),
+		client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &cleared); err != nil {
+		t.Fatalf("re-reading agent after clear: %v", err)
+	}
+	if cleared.Status.RecoveryInput != "" {
+		t.Fatalf("precondition: the clear did not persist, stored %q — the re-claim assertion below would be vacuous", cleared.Status.RecoveryInput)
+	}
+
+	// Reconcile off the STORED object, as a real reconcile does.
+	agent = &cleared
+	ev, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent after operator restart: %v", err)
+	}
+	if ev != EventDesiredRunning {
+		t.Fatalf("an operator restart must recover a NeedsAuth agent even on an unchanged credential; got %q want %q", ev, EventDesiredRunning)
+	}
+
+	// Re-read from the API server the way a real reconcile does: the claim must
+	// have been persisted, or the gate reopens next pass and one click becomes
+	// the kyber#684 loop.
+	var stored kyberv1.Agent
+	if err := r.Get(context.Background(),
+		client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &stored); err != nil {
+		t.Fatalf("re-reading agent: %v", err)
+	}
+	if want := "rv:" + rigAgent + "-codex-auth:" + rv; stored.Status.RecoveryInput != want {
+		t.Fatalf("operator restart did not re-claim the input: stored %q, want %q", stored.Status.RecoveryInput, want)
+	}
+
+	// Holding the button down (or the controller simply reconciling again) must
+	// not create a second pod.
+	for i := 0; i < 3; i++ {
+		ev, err := r.classifyEvent(context.Background(), &stored, nil)
+		if err != nil {
+			t.Fatalf("follow-up reconcile %d: %v", i, err)
+		}
+		if ev != "" {
+			t.Fatalf("follow-up reconcile %d raised %q — one click must mean one pod create (kyber#684)", i, ev)
+		}
+	}
+}
+
+// The transition the button ultimately rides on. Stated separately from the
+// gate so a future edit that removes the row fails here with a readable
+// message rather than as a mystery "invalid transition" at runtime.
+func TestStateMachine_NeedsAuth_DesiredRunningRecreatesPod(t *testing.T) {
+	tr, err := NextPhase(kyberv1.AgentPhaseNeedsAuth, EventDesiredRunning)
+	if err != nil {
+		t.Fatalf("no {NeedsAuth, EventDesiredRunning} transition — the PWA's Restart pod action in NeedsAuth (kyber#26) has nothing to fire: %v", err)
+	}
+	if tr.Action != ActionResetRetryAndCreatePod {
+		t.Fatalf("NeedsAuth recovery must rebuild the pod; got action %q want %q", tr.Action, ActionResetRetryAndCreatePod)
+	}
+	if tr.NextPhase != kyberv1.AgentPhaseStarting {
+		t.Fatalf("NeedsAuth recovery must land in Starting; got %q", tr.NextPhase)
+	}
+
+	// The dead-button check (#599): desiredPhase=Restarting still has no edge
+	// out of NeedsAuth, which is why the PWA action is 'retry-startup' (→
+	// /start) and not 'restart' (→ /restart). If someone adds this row, they
+	// must also clear the sticky Restarting intent or NeedsAuth loops.
+	if _, err := NextPhase(kyberv1.AgentPhaseNeedsAuth, EventDesiredRestarting); err == nil {
+		t.Fatal("a {NeedsAuth, EventDesiredRestarting} row now exists — spec.desiredPhase=Restarting is sticky and is only cleared by ActionCaptureStateAndDeletePod, so this row will re-fire every reconcile unless it clears the intent too (kyber#684, kyber#26)")
+	}
+}

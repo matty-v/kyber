@@ -1,5 +1,30 @@
 # @matty-v/kyber-pwa-views
 
+## 0.26.0 — 2026-08-14
+
+### Added
+- **Restart pod** action on the agent detail page for an agent in `NeedsAuth`.
+  That phase previously returned no lifecycle actions at all, so the More menu
+  rendered empty and an agent parked on a credential that was already valid had
+  no control in the UI — recovering it took a cluster-admin `kubectl annotate`
+  on the Agent object to force a reconcile. The action rebuilds the pod using
+  the credentials the agent already has.
+
+  It is a new lifecycle kind, `retry-startup`, rather than the existing
+  `restart`, and it fires `POST /api/v1/agents/{name}/start`. This is
+  deliberate: `restart` sets `desiredPhase=Restarting`, which matches no state
+  machine transition out of `NeedsAuth` and would have shipped a visibly
+  clickable no-op — the same defect that removed Restart pod from the crashed
+  phases. `desiredPhase=Running` is the edge that exists, and the control plane
+  clears the recovery latch on that path, so the click recovers the agent even
+  when the credential Secret is unchanged. One click is one pod rebuild; a
+  still-bad credential lands back in `NeedsAuth` rather than looping.
+
+  The Re-authorize panel is unchanged and remains the control for a credential
+  that is genuinely bad — this sits beside it, not in place of it.
+  `MemoryExhausted` needed no equivalent: it already offers Start, which goes
+  through the same endpoint.
+
 ## 0.25.0 — 2026-08-14
 
 ### Added

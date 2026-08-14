@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { lifecycleItemsInMore, sessionItemsInMore } from './agent-actions'
+import {
+  isLifecycleKind,
+  lifecycleActionEndpoint,
+  lifecycleItemsInMore,
+  sessionItemsInMore,
+} from './agent-actions'
 
 // Per-phase lifecycle menu contents (#128 — post-restructure: Restart
 // session is the lone header primary, everything else lives in More).
@@ -8,6 +13,9 @@ import { lifecycleItemsInMore, sessionItemsInMore } from './agent-actions'
 // #599: a crashed agent (Failed/MemoryExhausted) now offers the WORKING
 // recovery — 'start' (desiredPhase=Running) — and no longer the no-op
 // 'restart' (Restarting only transitions from Running; state_machine.go:213).
+// kyber#26 applies the same correction to NeedsAuth, which was actionless: it
+// gains 'retry-startup', which fires /start (the edge that exists) rather than
+// /restart (the edge that does not).
 
 describe('lifecycleItemsInMore', () => {
   it('Running: Stop + Restart pod + Suspend + Require re-auth (no Start)', () => {
@@ -43,6 +51,38 @@ describe('lifecycleItemsInMore', () => {
     expect(lifecycleItemsInMore('Starting')).toEqual(['force-needs-auth'])
   })
 
+  it('NeedsAuth: retry-startup — the wedged-agent control that used to require kubectl (kyber#26)', () => {
+    expect(lifecycleItemsInMore('NeedsAuth')).toEqual(['retry-startup'])
+  })
+
+  it('NeedsAuth does NOT offer restart — EventDesiredRestarting has no edge out of NeedsAuth (#599 rule)', () => {
+    // The whole point of the separate kind. 'restart' POSTs
+    // desiredPhase=Restarting, which matches no transition row from NeedsAuth
+    // (state_machine.go — the only Restarting row is {Running → Restarting}),
+    // so offering it here would ship the dead button #599 removed elsewhere.
+    expect(lifecycleItemsInMore('NeedsAuth')).not.toContain('restart')
+  })
+
+  it('retry-startup is offered ONLY from NeedsAuth — every other phase reaches /start by its own action', () => {
+    const others = [
+      'Running',
+      'Stopped',
+      'Suspended',
+      'Failed',
+      'MemoryExhausted',
+      'Starting',
+      'Stopping',
+      'Restarting',
+      'Creating',
+      'Deleted',
+    ] as const
+    for (const phase of others) {
+      expect(lifecycleItemsInMore(phase), `${phase} must not offer retry-startup`).not.toContain(
+        'retry-startup',
+      )
+    }
+  })
+
   it.each(['Stopping', 'Restarting', 'Creating'] as const)(
     'no actions during transient phase %s',
     (phase) => {
@@ -50,8 +90,66 @@ describe('lifecycleItemsInMore', () => {
     },
   )
 
-  it.each(['NeedsAuth', 'Deleted'] as const)('no lifecycle actions for %s', (phase) => {
-    expect(lifecycleItemsInMore(phase)).toEqual([])
+  it('no lifecycle actions for Deleted', () => {
+    expect(lifecycleItemsInMore('Deleted')).toEqual([])
+  })
+})
+
+// The kind→endpoint mapping. Chewie's review of kyber#69 caught that nothing
+// pinned this: the menu item fired 'retry-startup' and a test proved it, but
+// the handler's choice of mutation was untested, so swapping it to the restart
+// mutation left all 661 tests green — reintroducing exactly the dead button
+// this issue exists to prevent.
+describe('lifecycleActionEndpoint', () => {
+  it('retry-startup fires /start — the edge that exists out of NeedsAuth (kyber#26)', () => {
+    expect(lifecycleActionEndpoint('retry-startup')).toBe('start')
+  })
+
+  it('retry-startup must NOT fire /restart — that is the silent no-op (#599)', () => {
+    // desiredPhase=Restarting matches no transition row from NeedsAuth, so this
+    // assertion is the guard against a one-word edit turning the button dead.
+    expect(lifecycleActionEndpoint('retry-startup')).not.toBe('restart')
+  })
+
+  it.each(['start', 'stop', 'restart', 'suspend', 'force-needs-auth'] as const)(
+    '%s fires its own like-named endpoint',
+    (kind) => {
+      expect(lifecycleActionEndpoint(kind)).toBe(kind)
+    },
+  )
+
+  it('every kind offered on any phase resolves to an endpoint', () => {
+    const phases = [
+      'Running',
+      'Stopped',
+      'Suspended',
+      'Failed',
+      'MemoryExhausted',
+      'Starting',
+      'NeedsAuth',
+      'Stopping',
+      'Restarting',
+      'Creating',
+      'Deleted',
+    ] as const
+    for (const phase of phases) {
+      for (const kind of lifecycleItemsInMore(phase)) {
+        expect(lifecycleActionEndpoint(kind), `${phase} → ${kind}`).toBeTruthy()
+      }
+    }
+  })
+})
+
+describe('isLifecycleKind', () => {
+  it('accepts every lifecycle kind and rejects the session/setter kinds', () => {
+    for (const kind of ['start', 'stop', 'restart', 'suspend', 'force-needs-auth', 'retry-startup']) {
+      expect(isLifecycleKind(kind), kind).toBe(true)
+    }
+    // These must fall through the guard untouched — routing them through
+    // lifecycleActionEndpoint would be a category error.
+    for (const kind of ['restart-session', 'compact-session', 'delete', 'set-model']) {
+      expect(isLifecycleKind(kind), kind).toBe(false)
+    }
   })
 })
 
