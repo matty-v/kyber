@@ -20,6 +20,28 @@
   Unrelated to the `transcriptCompaction` Helm values key, which reclaims
   duplicate archive objects in the log bucket.
 
+- **Re-authentication prompt for an expired browser session**
+  (`SessionExpiredDialog`, exported for embedded mode). Browser sessions are
+  process-local to the control plane, so every restart invalidates every open
+  browser. That previously surfaced as "invalid browser session" rendered
+  inline by whichever query failed first — no explanation, no way out, on a
+  page whose data would never load. The dialog opens on the control plane's
+  new `session_expired` code, takes the API key, and reloads. A rejected key
+  keeps the dialog open with an error rather than dropping the operator back
+  onto the broken page; a generic 401 (bad API key) does not open it at all,
+  since re-prompting there would loop.
+
+### Changed
+
+- **Agent detail More menu is grouped into three labelled sections** — Agent
+  actions (compact / restart session), Pod actions (start, stop, restart pod,
+  suspend, require re-auth), and Agent configuration (model, harness version,
+  resources), with Delete unchanged below a separator. Each label renders only
+  when its section has items, so a non-Running agent no longer shows an empty
+  heading. Adds `sessionItemsInMore(phase)` beside `lifecycleItemsInMore` so
+  both halves of the menu are pure, per-phase, and testable without mounting
+  the detail page.
+
 ## 0.24.2 — 2026-08-13
 
 ### Security
