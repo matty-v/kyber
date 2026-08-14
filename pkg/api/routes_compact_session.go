@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -134,8 +135,28 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 	if err != nil {
 		slog.Error("compact-session exec failed",
 			"agent", agentName, "error", err, "stderr", stderr)
+
+		// The overwhelmingly likely failure on a fleet mid-rollout: the
+		// agent is running an image built before this feature, so the
+		// in-pod script simply isn't there. Without this branch the
+		// operator gets "exec failed: command terminated with exit code 1",
+		// which names no cause and points at nothing — and the natural
+		// reading ("compaction is broken") is wrong. Say what is actually
+		// missing and what fixes it.
+		if isMissingInPodScript(stderr) {
+			writeJSONError(w, http.StatusNotImplemented, "runtime_image_too_old",
+				fmt.Sprintf("agent '%s' is running a runtime image that predates session compaction "+
+					"(the in-pod kyber-compact-session script is not installed). Restart the agent onto a "+
+					"newer image to enable it; restart-session works in the meantime.", agentName))
+			return
+		}
+
+		// Otherwise pass the in-pod stderr through. The script's messages
+		// are written to be read by an operator ("session restart in
+		// progress", "tmux session 'agent' is absent") and are far more
+		// useful than the bare exit code.
 		writeJSONError(w, http.StatusInternalServerError, "exec_failed",
-			fmt.Sprintf("exec failed: %v", err))
+			fmt.Sprintf("exec failed: %v%s", err, formatExecStderr(stderr)))
 		return
 	}
 
@@ -153,6 +174,46 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 		"delivered": true,
 		"detail":    "compaction requested; the runtime performs it asynchronously and the context shrinks when it finishes",
 	})
+}
+
+// maxExecStderrInError bounds how much in-pod stderr is echoed into an API
+// error body. The script's own messages are one line; anything much larger
+// is a runaway and does not belong in a JSON error.
+const maxExecStderrInError = 512
+
+// isMissingInPodScript reports whether stderr says the command itself could
+// not be executed, as opposed to the command running and failing.
+//
+// Matched on the exec wrapper's message rather than an exit code because the
+// code is an unhelpful 1: `runuser` reports "failed to execute <path>: No
+// such file or directory" and exits 1, indistinguishable by status from a
+// script that ran and returned 1.
+func isMissingInPodScript(stderr string) bool {
+	s := strings.ToLower(stderr)
+	if !strings.Contains(s, "kyber-compact-session") {
+		return false
+	}
+	return strings.Contains(s, "no such file or directory") ||
+		strings.Contains(s, "command not found") ||
+		strings.Contains(s, "failed to execute")
+}
+
+// IsMissingInPodScriptForTest exposes the stderr classifier to the
+// package's external test. Test-only seam; production code calls the
+// unexported form directly.
+func IsMissingInPodScriptForTest(stderr string) bool { return isMissingInPodScript(stderr) }
+
+// formatExecStderr renders in-pod stderr for an error body, or "" when there
+// is nothing worth adding.
+func formatExecStderr(stderr string) string {
+	s := strings.TrimSpace(stderr)
+	if s == "" {
+		return ""
+	}
+	if len(s) > maxExecStderrInError {
+		s = s[:maxExecStderrInError] + "…"
+	}
+	return " — " + s
 }
 
 // tryClaimCompact atomically checks the cooldown window AND stamps the claim

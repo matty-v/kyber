@@ -328,6 +328,65 @@ func TestCompactSession_CooldownIndependentOfRestart(t *testing.T) {
 	}
 }
 
+// TestCompactSession_MissingScriptDetection covers the stderr classifier
+// that turns "exit code 1" into an actionable answer. The real message is
+// the one runuser produced on a live codex pod:
+//
+//	runuser: failed to execute /usr/local/bin/kyber-compact-session: No such file or directory
+//
+// Getting this wrong in either direction is bad: a false negative sends the
+// operator back to "compaction is broken", and a false positive tells them
+// to upgrade an image that is already fine.
+func TestCompactSession_MissingScriptDetection(t *testing.T) {
+	cases := []struct {
+		name   string
+		stderr string
+		want   bool
+	}{
+		{
+			name:   "runuser cannot execute the script",
+			stderr: "runuser: failed to execute /usr/local/bin/kyber-compact-session: No such file or directory\n",
+			want:   true,
+		},
+		{
+			name:   "shell reports command not found",
+			stderr: "bash: /usr/local/bin/kyber-compact-session: command not found\n",
+			want:   true,
+		},
+		{
+			name:   "empty stderr is not a missing script",
+			stderr: "",
+			want:   false,
+		},
+		{
+			// The script ran and refused — a real, different condition with
+			// its own remedy (wait for the restart to finish).
+			name:   "script ran and reported a restart in progress",
+			stderr: "kyber-compact-session: session restart in progress; not compacting\n",
+			want:   false,
+		},
+		{
+			name:   "script ran and reported an absent tmux session",
+			stderr: "kyber-compact-session: tmux session 'agent' is absent\n",
+			want:   false,
+		},
+		{
+			// Some other binary is missing. Still broken, but telling the
+			// operator to roll the agent image would be a guess.
+			name:   "a different missing file",
+			stderr: "nsenter: failed to execute /usr/sbin/runuser: No such file or directory\n",
+			want:   false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := api.IsMissingInPodScriptForTest(tc.stderr); got != tc.want {
+				t.Errorf("got %v, want %v for stderr %q", got, tc.want, tc.stderr)
+			}
+		})
+	}
+}
+
 // TestCompactSession_405OnGet guards the method check — compaction is a
 // mutation and must not be reachable by a GET (a prefetch or a link crawler
 // would otherwise trigger it).
