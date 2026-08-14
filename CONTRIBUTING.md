@@ -16,6 +16,8 @@ By contributing you agree that your contributions are licensed under the
 - [`docs/contributing/code-quality.md`](docs/contributing/code-quality.md) documents the Go and TypeScript
   conventions CI actually gates on; [`docs/contributing/reviewing.md`](docs/contributing/reviewing.md) lists known
   fragile areas.
+- [`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md) covers what is
+  expected of everyone taking part, maintainers included.
 - For non-trivial changes, open an issue first. Ask before adding new
   dependencies (Go/npm/Helm), changing CRD schemas, or touching RBAC/CI
   permissions.

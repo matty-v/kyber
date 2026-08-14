@@ -27,7 +27,7 @@ both start from the same `helm install` you run here.
 Plus **a Kubernetes cluster you can create privileged pods in**. Agent pods run
 `privileged: true` and mount `/dev/fuse` from the host — that is what makes
 whole-disk persistence work, and it is why Kyber wants a cluster of its own
-rather than a shared one. See [Security & threat model](../README.md#security--threat-model).
+rather than a shared one. See the [deployment threat model](../.github/SECURITY.md#deployment-threat-model).
 
 No cluster? [k3d](https://k3d.io) gives you one on Docker in about 30 seconds,
 and satisfies both requirements on a typical host:

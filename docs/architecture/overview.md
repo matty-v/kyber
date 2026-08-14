@@ -34,9 +34,8 @@ preemption and restart, gates inbound prompts to them, and reports their state.
 
 ## 2. The three runtime components
 
-Kyber ships as three runtime components. (This mirrors the README's
-[§ Architecture](../../README.md#architecture) framing; here we add the
-internal module view in the sections below.)
+Kyber ships as three runtime components. (The README names them for a first-time
+reader; here we add the internal module view in the sections below.)
 
 | Component | Form | Responsibility |
 |---|---|---|
@@ -47,9 +46,10 @@ internal module view in the sections below.)
 The Control Plane is the brain and the only component this overview decomposes
 further (§ 4). The Node Agent is intentionally thin. The Agent Runtime's
 persistence dispatcher (kernel overlayfs → fuse-overlayfs → bind-mount HOME) and
-pod requirements (`Privileged: true`, `/dev/fuse`) are documented in the
-[README § Architecture](../../README.md#architecture) and
-[`docs/installation.md`](../installation.md).
+pod requirements (`Privileged: true`, `/dev/fuse`) are documented in
+[`docs/installation.md`](../installation.md) and, for what they mean for the
+cluster you run them on, the [deployment threat
+model](../../.github/SECURITY.md#deployment-threat-model).
 
 ---
 
@@ -127,8 +127,9 @@ flowchart TB
     agentc -.-> svc
 ```
 
-A subsystem-by-subsystem index of `pkg/` lives in the
-[README § Repository layout](../../README.md#repository-layout). Read the focused docs (§ 8) before touching a subsystem that has one.
+A subsystem-by-subsystem index of `pkg/` lives in
+[`AGENTS.md`](../../AGENTS.md), the maintained repository map. Read the focused
+docs (§ 8) before touching a subsystem that has one.
 
 ### API authorization
 
@@ -354,7 +355,6 @@ displayed version.
 
 There is **no `:stable` tag and no `promote-stable` branch/workflow** — that
 framing is retired. The kyber-side mechanics are in the
-[README § CI & releases](../../README.md#ci--releases) and the
 [release runbook](../operator/release-runbook.md). The deploy-repo internals
 (ArgoCD Applications, per-env values) are kyber-deploy's deep-dive, not this one.
 
