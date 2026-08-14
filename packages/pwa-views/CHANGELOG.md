@@ -1,5 +1,25 @@
 # @matty-v/kyber-pwa-views
 
+## 0.25.0 — 2026-08-14
+
+### Added
+- **Compact session** action on the agent detail page, sitting directly above
+  Restart session in the More menu and gated on the same `phase === 'Running'`
+  precondition. Fires `POST /api/v1/agents/{name}/compact-session`, which asks
+  the agent's running runtime to summarize its own conversation and continue
+  with a smaller context — the non-destructive alternative to a session reset.
+  Works on both Claude Code and Codex agents (both use `/compact`).
+
+  The confirm copy deliberately does not reuse restart-session's context-loss
+  warning, and the success toast says "Compaction requested", not "Compacted":
+  the API confirms the command was delivered to the runtime, and compaction
+  itself completes asynchronously afterwards. Runtimes with no compaction
+  support answer 501; the server also applies a 60s per-agent cooldown, which
+  surfaces as the existing 429 error toast.
+
+  Unrelated to the `transcriptCompaction` Helm values key, which reclaims
+  duplicate archive objects in the log bucket.
+
 ## 0.24.2 — 2026-08-13
 
 ### Security

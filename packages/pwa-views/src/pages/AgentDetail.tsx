@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, Pause, KeyRound, Cpu, Trash2, MoreHorizontal } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, Pause, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2 } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
   useStopAgent,
   useRestartAgent,
   useRestartAgentSession,
+  useCompactAgentSession,
   useSuspendAgent,
   useForceNeedsAuthAgent,
   useSetAgentModel,
@@ -80,6 +81,7 @@ type ActionKind =
   | 'stop'
   | 'restart' // pod-level roll (renamed "Restart pod" in the UI)
   | 'restart-session' // in-pod tmux kill + relaunch (#128)
+  | 'compact-session' // in-session context compaction, pod and session both stay up
   | 'suspend'
   | 'force-needs-auth' // operator-forced re-auth for a wedged agent (#395)
   | 'delete'
@@ -424,6 +426,7 @@ export function AgentDetail() {
   const stopAgent = useStopAgent()
   const restartAgent = useRestartAgent()
   const restartAgentSession = useRestartAgentSession()
+  const compactAgentSession = useCompactAgentSession()
   const suspendAgent = useSuspendAgent()
   const forceNeedsAuthAgent = useForceNeedsAuthAgent()
   const setAgentModel = useSetAgentModel()
@@ -438,6 +441,7 @@ export function AgentDetail() {
     stopAgent.isPending ||
     restartAgent.isPending ||
     restartAgentSession.isPending ||
+    compactAgentSession.isPending ||
     suspendAgent.isPending ||
     forceNeedsAuthAgent.isPending ||
     setAgentModel.isPending ||
@@ -452,6 +456,7 @@ export function AgentDetail() {
       if (pending === 'stop') await stopAgent.mutateAsync(name)
       if (pending === 'restart') await restartAgent.mutateAsync(name)
       if (pending === 'restart-session') await restartAgentSession.mutateAsync(name)
+      if (pending === 'compact-session') await compactAgentSession.mutateAsync(name)
       if (pending === 'suspend') await suspendAgent.mutateAsync(name)
       if (pending === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
       if (pending === 'set-model' && newModel) {
@@ -515,6 +520,10 @@ export function AgentDetail() {
   // lifecycleItemsInMore helper so inapplicable items (e.g. Start on a
   // Running agent) stay hidden.
   const canRestartSession = agent.phase === 'Running'
+  // Same precondition — there has to be a live session to act on. Kept as
+  // its own name rather than reusing canRestartSession so the two can
+  // diverge without a rename hunt.
+  const canCompactSession = agent.phase === 'Running'
 
   return (
     <div>
@@ -547,6 +556,21 @@ export function AgentDetail() {
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                   Restart session
+                </DropdownMenuItem>
+              )}
+              {/* Compact sits directly above Restart session: same
+                  precondition (a live session), and it is the move to reach
+                  for first — it reduces the context instead of losing it.
+                  Runtimes without compaction answer 501; both shipped
+                  runtimes support it, so the item is not phase-gated any
+                  further than restart-session is. */}
+              {canCompactSession && (
+                <DropdownMenuItem
+                  onSelect={() => setPending('compact-session')}
+                  aria-label="Compact session"
+                >
+                  <Minimize2 className="h-3.5 w-3.5" />
+                  Compact session
                 </DropdownMenuItem>
               )}
               <LifecycleMenuItems phase={agent.phase} onSelect={setPending} />
@@ -1006,6 +1030,8 @@ function confirmTitle(kind: ActionKind): string {
   switch (kind) {
     case 'restart-session':
       return 'Restart session?'
+    case 'compact-session':
+      return 'Compact session?'
     case 'restart':
       return 'Restart pod?'
     case 'force-needs-auth':

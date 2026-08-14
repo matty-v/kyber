@@ -394,6 +394,28 @@ func (a *ClaudeCodeAdapter) RestartSessionCommand() []string {
 	}
 }
 
+// CompactSessionCommand returns the argv for kyber-compact-session, which
+// pastes "/compact" into the live tmux session. Claude Code treats that as
+// the in-TUI compaction command; there is no headless equivalent for an
+// already-running session, so delivering the keystrokes IS the API.
+//
+// Same `nsenter --target 1 …` wrapper as RestartSessionCommand — the tmux
+// socket lives inside PID 1's chroot. The extra `runuser -u kyber` is
+// required on top of it: the exec lands as root, and tmux resolves its
+// default socket path per-uid (/tmp/tmux-0 for root, /tmp/tmux-1001 for the
+// agent), so a root invocation would report "no server running" against a
+// perfectly healthy session.
+func (a *ClaudeCodeAdapter) CompactSessionCommand() []string {
+	return []string{
+		"nsenter", "--target", "1",
+		"--mount", "--uts", "--ipc", "--net", "--pid",
+		"--root", "--wd",
+		"--",
+		"/usr/sbin/runuser", "-u", "kyber", "--",
+		"/usr/local/bin/kyber-compact-session", "/compact",
+	}
+}
+
 // PreStopCommand SIGTERMs the Telegram channel plugin (`bun server.ts`) so it
 // releases Telegram's single getUpdates slot via bot.stop() before the pod is
 // torn down. Without this, the plugin — a grandchild of the *detached* tmux

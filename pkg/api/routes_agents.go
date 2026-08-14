@@ -651,6 +651,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.handleCodexDeviceAuth(w, r, name)
 	case "restart-session":
 		s.handleRestartSession(w, r, name)
+	case "compact-session":
+		s.handleCompactSession(w, r, name)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "unknown action")
 	}

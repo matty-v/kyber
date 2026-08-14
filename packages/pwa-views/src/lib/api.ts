@@ -201,6 +201,16 @@ export function createApiClient(cluster: Cluster) {
         `/api/v1/agents/${encodeURIComponent(name)}/restart-session`,
       ),
 
+    // compactAgentSession fires POST /compact-session. Same error shape as
+    // restartAgentSession, plus a 501 when the agent's runtime has no
+    // compaction command — callers should treat that as "not available on
+    // this runtime", not as a failure to report loudly.
+    compactAgentSession: (name: string): Promise<CompactSessionResponse> =>
+      request<CompactSessionResponse>(
+        'POST',
+        `/api/v1/agents/${encodeURIComponent(name)}/compact-session`,
+      ),
+
     suspendAgent: (name: string): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${name}/suspend`),
 
@@ -740,6 +750,18 @@ export interface RestartSessionResponse {
   runtime: string
   stdout: string
   stderr: string
+}
+
+// compactAgentSession response type. `delivered` is deliberately not the
+// same claim as "compacted": the server pastes the slash command into the
+// running runtime and returns — compaction itself finishes later.
+export interface CompactSessionResponse {
+  agent: string
+  runtime: string
+  stdout: string
+  stderr: string
+  delivered: boolean
+  detail: string
 }
 
 // runAgentJob response type.

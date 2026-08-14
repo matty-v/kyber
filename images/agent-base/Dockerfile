@@ -43,6 +43,16 @@ COPY --chmod=0644 tmux.conf /etc/tmux.conf
 # scripts/kyber-job-dispatch for contract and failure modes.
 COPY --chmod=0755 scripts/kyber-job-dispatch /usr/local/bin/kyber-job-dispatch
 
+# Shared tmux delivery helper, sourced by kyber-job-dispatch and
+# kyber-compact-session. Must land in the same directory as both — they
+# resolve it relative to their own path. Not executable: it is a library.
+COPY --chmod=0644 scripts/kyber-tmux-paste.sh /usr/local/bin/kyber-tmux-paste.sh
+
+# Session compaction (kyber#TBD) — asks the running runtime to compact its
+# own context in place. Exec'd by the control-plane over SPDY via
+# Adapter.CompactSessionCommand(); see scripts/kyber-compact-session.
+COPY --chmod=0755 scripts/kyber-compact-session /usr/local/bin/kyber-compact-session
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Agent controller overrides CMD with args: [/usr/local/bin/start-claude.sh] on
 # every claude-code pod — this placeholder is used only for bare-container dev/test.

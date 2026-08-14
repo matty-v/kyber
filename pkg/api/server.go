@@ -229,6 +229,14 @@ type Server struct {
 	// and pulling RestartSessionCommand() off each adapter (kyber#250).
 	RestartSessionCommands map[string][]string
 
+	// CompactSessionCommands maps runtime identifier → argv for the in-pod
+	// session-compaction command. nil/absent = 501 Not Implemented for that
+	// runtime. Populated the same way as RestartSessionCommands (main.go
+	// iterating runtimes.All()), and kept a separate map rather than a
+	// richer per-runtime struct so adding the next in-pod action stays a
+	// one-line change on both sides.
+	CompactSessionCommands map[string][]string
+
 	// ComputeProvider identifies which ComputeAdapter backs this control plane.
 	// Populated from the KYBER_COMPUTE_PROVIDER env var at startup. Exposed
 	// to the PWA via GET /api/v1/config so the UI can render provider-

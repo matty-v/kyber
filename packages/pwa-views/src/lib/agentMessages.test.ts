@@ -40,6 +40,18 @@ describe('agentActionConfirmMessage', () => {
     expect(msg).toContain('Memory and identity files on disk are not affected')
   })
 
+  it('returns non-destructive wording for compact-session', () => {
+    const msg = agentActionConfirmMessage('compact-session', 'han')
+    expect(msg).toContain('Compact the session for "han"')
+    expect(msg).toContain('summarizes')
+    expect(msg).toContain('keeps working')
+    // The whole point of a separate confirm: compaction is NOT a context
+    // reset, so it must not borrow restart-session's loss warning.
+    expect(msg).not.toContain('context is lost')
+    // Sets the expectation that 200 != finished.
+    expect(msg).toContain('may take a minute')
+  })
+
   it('returns wedged-agent-recovery wording for force-needs-auth (#395)', () => {
     const msg = agentActionConfirmMessage('force-needs-auth', 'han')
     expect(msg).toContain('Force "han" into re-authorization')

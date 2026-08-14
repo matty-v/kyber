@@ -223,6 +223,25 @@ export function useRestartAgentSession() {
   })
 }
 
+export function useCompactAgentSession() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.compactAgentSession(name),
+    onSuccess: (_data, name) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+    },
+    meta: {
+      // "Requested", not "Compacted": the server confirms delivery of the
+      // command, and the runtime compacts on its own clock afterwards.
+      // Claiming completion here would be a toast the API can't back up.
+      successMessage: (_d: unknown, name: unknown) => `Compaction requested for ${String(name)}`,
+      errorPrefix: 'Failed to compact session',
+    },
+  })
+}
+
 export function useSuspendAgent() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

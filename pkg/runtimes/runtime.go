@@ -115,6 +115,31 @@ type Adapter interface {
 	// (see #135 D9) and for not leaving orphan processes behind.
 	RestartSessionCommand() []string
 
+	// CompactSessionCommand returns the argv to exec inside the agent pod to
+	// make the running runtime compact its own context — summarize the
+	// conversation so far and continue with a smaller one — without killing
+	// the session or rolling the pod.
+	//
+	// This is the light end of the same spectrum as RestartSessionCommand:
+	// restart discards the context, compact reduces it and keeps working.
+	//
+	// Return nil (not an empty slice) when the runtime cannot compact; the
+	// API handler translates nil to 501, exactly as it does for
+	// RestartSessionCommand. A runtime with no compaction is a normal state,
+	// not a defect — "restart session" remains the heavier alternative.
+	//
+	// Note this is unrelated to `transcriptCompaction` in the Helm values,
+	// which reclaims duplicate archive objects in the log bucket. That one
+	// is about disk in the object store; this one is about the agent's live
+	// context window. See docs/operator/transcript-compaction.md for the
+	// other sense of the word.
+	//
+	// The returned argv must be non-blocking with respect to the compaction
+	// itself: it delivers the request and exits. Compaction can take a long
+	// time and the caller holds an exec stream open, so waiting for
+	// completion here would tie an API request to model latency.
+	CompactSessionCommand() []string
+
 	// PreStopCommand returns the argv for the pod's container preStop lifecycle
 	// hook, or nil when the runtime needs no pre-stop action. Kubelet runs it
 	// synchronously (within the termination grace period) BEFORE sending SIGTERM
