@@ -608,7 +608,7 @@ func (g *GCSArchiveReader) scanObject(ctx context.Context, bkt *storage.BucketHa
 
 // s3ObjectStore is the minimal object-store surface the S3 reader needs: list
 // the keys under a prefix, and fetch one object's bytes by key. Abstracting it
-// behind this interface (defined at the consumer, per CODE_QUALITY.md § Naming)
+// behind this interface (defined at the consumer, per docs/contributing/code-quality.md § Naming)
 // keeps the reader's list+fetch+delegate logic unit-testable without a live
 // MinIO — the real implementation wraps a minio.Client; tests inject a fake.
 type s3ObjectStore interface {

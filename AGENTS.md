@@ -1,8 +1,8 @@
 # AGENTS.md — Kyber (self-hosted AI-agent fleet platform)
 
 AI-reader orientation file. Dense and explicit by design. Deeper truth lives in
-`docs/architecture/` (HOW), `docs/product/` (WHAT), `CODE_QUALITY.md`, and
-`REVIEWING.md` — read the relevant one BEFORE touching a subsystem. When this
+`docs/architecture/` (HOW), `docs/product/` (WHAT), `docs/contributing/code-quality.md`, and
+`docs/contributing/reviewing.md` — read the relevant one BEFORE touching a subsystem. When this
 file and code/CI disagree, code/CI wins.
 
 This is the canonical repository instruction file. `CLAUDE.md` is only a
@@ -213,7 +213,7 @@ Displayed version is BUILD-INJECTED via `-ldflags "-X main.Version=…"`
 
 ---
 
-## 3. Conventions (cite CODE_QUALITY.md § in reviews)
+## 3. Conventions (cite docs/contributing/code-quality.md § in reviews)
 
 Go:
 - Wrap errors with `%w`, lowercase verb-phrase prefix, no trailing period:
@@ -249,7 +249,7 @@ Cross-cutting:
 
 ## 4. Gotchas (the ones that have already burned this repo)
 
-Full living list: `REVIEWING.md` (append-on-discovery). Highest-value subset:
+Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highest-value subset:
 
 1. **Image equality is a STRING comparison, not digest.** kubelet's
    `status.containerStatuses[].imageID` is the per-arch manifest digest; the
@@ -262,14 +262,14 @@ Full living list: `REVIEWING.md` (append-on-discovery). Highest-value subset:
    switches; an early `return` in the first switch pre-empts pod-death
    detection in the second. New kill switches go at the top with an explicit
    allowlist; new early returns in `case Running/Starting` must consider a
-   simultaneously-dead pod (REVIEWING.md #10, #11).
+   simultaneously-dead pod (docs/contributing/reviewing.md #10, #11).
 3. **Reconciler steps 5c→5d share a concurrency budget of 1** via
    `countAgentPodsBeingDeleted`; the call order in `Reconcile()` is what
-   enforces the cap. Reordering doubles rollout rate (REVIEWING.md #7).
+   enforces the cap. Reordering doubles rollout rate (docs/contributing/reviewing.md #7).
 4. **`ensure*` for any pod-spec-referenced resource belongs INSIDE
    `createPod`** (idempotent Get-then-Create), not only in birth-time actions —
    recreation paths skip birth ensures and pre-existing agents wedge Pending
-   (REVIEWING.md #10/kyber#467).
+   (docs/contributing/reviewing.md #10/kyber#467).
 5. **Both runtime start scripts run `set -euo pipefail`.** A bare
    `VAR=$(cmd)` that fails kills boot, and a `${VAR:-default}` on the next line
    is dead code; guard inside the substitution (`$(cmd || true)`). Also:
@@ -315,7 +315,7 @@ Full living list: `REVIEWING.md` (append-on-discovery). Highest-value subset:
 - **`deploy/helm/kyber/files/provider-rates.generated.{yaml,meta}`** —
   generator output (`cmd/fetch-provider-rates`, weekly refresh bot). No manual
   cost data ever; code-owner review required; regeneration is provable
-  byte-for-byte (REVIEWING.md #14).
+  byte-for-byte (docs/contributing/reviewing.md #14).
 - **`pkg/api/pwa_dist/`** — build artifact of `make pwa-build`.
 - **Controller cache scope** (`cmd/control-plane/main.go`
   `cache.Options{DefaultNamespaces}`) — namespace-scoped on purpose (PR #118).
@@ -389,7 +389,7 @@ CI gates: `test.yml` (lint+test+pwa+pricing-feed preflight — a `changes` job
 skips the heavy Go/PWA steps on docs-/`scripts/devenv/`-only PRs, but the jobs
 still run green so the merge gate never wedges), `integration.yml`, `e2e.yml`,
 `build.yml` (images), `design-lint.yml` (advisory, PWA paths only).
-If CODE_QUALITY.md's table and `test.yml` disagree, the workflow wins.
+If docs/contributing/code-quality.md's table and `test.yml` disagree, the workflow wins.
 
 ---
 

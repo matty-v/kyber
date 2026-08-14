@@ -1,14 +1,14 @@
-# REVIEWING.md — Reviewer gotchas & focus map
+# Reviewing — reviewer gotchas & focus map
 
 > **Update cadence: append-on-discovery.** This is a living map of where review
 > attention pays off — fragile areas, known landmines, and past-incident traps.
 > A reviewer appends an entry whenever a new landmine surfaces in review or QA.
 > It grows organically; that's the point — the project compounds hard-won
 > knowledge instead of relearning it. For forward-looking code standards, see
-> [CODE_QUALITY.md](CODE_QUALITY.md).
+> [code-quality.md](code-quality.md).
 
 **Location note:** this file lives at the **repo root** (not `.github/`) on
-purpose — it sits beside its sibling [CODE_QUALITY.md](CODE_QUALITY.md) so the
+purpose — it sits beside its sibling [code-quality.md](code-quality.md) so the
 working-knowledge docs are discovered together, and because it's edited often
 (append-on-discovery) by reviewers rather than being GitHub machinery.
 
@@ -62,7 +62,7 @@ one-word label. This file is the *reviewer's* lens — "where to aim attention."
 > deploy repo — is **retired**. Don't go hunting for that ApplicationSet; it no
 > longer exists. The dev-test model is now a single shared **devenv-kyber**
 > instance (deploy-to-dev → test-in-dev → dev-lock); see
-> [`docs/operator/kyber-dev-verification.md`](docs/operator/kyber-dev-verification.md).
+> [`docs/operator/kyber-dev-verification.md`](../operator/kyber-dev-verification.md).
 > The guard below is still a **live chart fence**, however — the
 > `preview.enabled` value path remains in the chart and must stay fenced.
 
@@ -127,7 +127,7 @@ _Added 2026-06-01 — caused review holds across kyber#336 / #337 / #341._
   **Look harder at:** any `packages/pwa-views/src/` diff without a matching
   `packages/pwa-views/package.json` version bump. If both are absent, the
   change is incomplete — hold until they're paired. See
-  [CONTRIBUTING.md](CONTRIBUTING.md) for the publish checklist.
+  [CONTRIBUTING.md](../../CONTRIBUTING.md) for the publish checklist.
 
 ### 7. Reconciler step ordering: 5c and 5d share a concurrency budget, 5c runs first
 
@@ -154,9 +154,9 @@ _Added 2026-06-01 — observed during kyber#371 design review._
 - **API ↔ PWA type parity is hand-verified.** There is no OpenAPI→TS codegen.
   On any API-shape change, read the Go shape, `test/contract/openapi.yaml`, and
   the hand-written PWA type side-by-side. See
-  [CODE_QUALITY.md](CODE_QUALITY.md) § Wire-contract round-trip.
+  [code-quality.md](code-quality.md) § Wire-contract round-trip.
 - **PWA source changes need a version bump** (`packages/pwa-views/`) or the
-  change never publishes to Holocron — [CONTRIBUTING.md](CONTRIBUTING.md).
+  change never publishes to Holocron — [CONTRIBUTING.md](../../CONTRIBUTING.md).
 - **Subagent-written docs invent plausible claims.** If a PR's prose came from a
   subagent, grep the diff and cross-check every concrete claim (paths, function
   names, line refs) against current code before approving. (This very file's
