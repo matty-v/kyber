@@ -40,6 +40,12 @@
   behind the cluster. One glyph, one meaning, and the meaning is now updates
   (Matt, 2026-08-14). The header still reports the cluster's live version, so a
   stale tab still tells the truth about the cluster.
+- **`LiveVersionState.isStale`.** It existed only to drive that reload
+  affordance and had no consumer left in either `kyber` or `holocron` — a
+  computed value nobody reads is worse than no value. `useLiveVersion` still
+  returns `versionInfo`, `liveChartVersion`, and `unreachable`. Technically a
+  breaking change to the published type; permitted under 0.x, and noted here
+  in case an unknown host destructures it.
 
 ## 0.26.0 — 2026-08-14
 

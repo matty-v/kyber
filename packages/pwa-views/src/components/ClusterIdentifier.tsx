@@ -70,7 +70,15 @@ export function ClusterIdentifier({ inline = false }: Props) {
         )}
       </span>
 
-      {status && (
+      {/*
+        Gated on updateAvailable, not on status — the same condition as the
+        icon. UpdateDialog calls useAgents() at the top level, so mounting it
+        whenever a status exists would run a full agent-list poll every 30s from
+        the header, on every page, forever, for a dialog that can never open on
+        an up-to-date cluster. Mounting it alongside the icon keeps the agent
+        list warm exactly while the dialog is reachable.
+      */}
+      {status && updateAvailable && (
         <UpdateDialog open={dialogOpen} status={status} onClose={() => setDialogOpen(false)} />
       )}
     </>

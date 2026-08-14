@@ -4,12 +4,7 @@ import { Card } from './Card'
 import { Button } from './Button'
 import { ConfirmDialog } from './ConfirmDialog'
 import { UpdateDialog, canInstallUpdate } from './UpdateDialog'
-import {
-  useUpdates,
-  useSetUpdatePolicy,
-  useCheckUpdates,
-  useApplyUpdate,
-} from '../hooks/useAPI'
+import { useUpdates, useSetUpdatePolicy, useCheckUpdates } from '../hooks/useAPI'
 import type { UpdateChannel, UpdateStatus } from '../lib/types'
 
 /**
@@ -35,7 +30,6 @@ export function UpdatesCard() {
   const updates = useUpdates()
   const setPolicy = useSetUpdatePolicy()
   const check = useCheckUpdates()
-  const apply = useApplyUpdate()
   const [confirmMainOpen, setConfirmMainOpen] = useState(false)
   const [confirmInstallOpen, setConfirmInstallOpen] = useState(false)
 
@@ -212,8 +206,11 @@ export function UpdatesCard() {
                 variant="primary"
                 size="md"
                 onClick={() => setConfirmInstallOpen(true)}
-                loading={apply.isPending}
-                disabled={apply.isPending || running || !s.updateAvailable}
+                // No apply.isPending here: this button opens the dialog, and
+                // the dialog owns the mutation. `running` — read from the
+                // server's lastRun — is what reports an install in progress,
+                // and it survives a reload, which local mutation state does not.
+                disabled={running || !s.updateAvailable}
               >
                 {running ? 'Installing…' : `Install ${s.latestVersion ?? ''}`.trim()}
               </Button>

@@ -18,7 +18,7 @@ vi.mock('../hooks/useAPI', () => ({
 
 import { useCluster } from '../lib/cluster-context'
 import { useLiveVersion } from '../hooks/useLiveVersion'
-import { useUpdates } from '../hooks/useAPI'
+import { useUpdates, useAgents } from '../hooks/useAPI'
 const mockUseCluster = vi.mocked(useCluster)
 const mockUseLiveVersion = vi.mocked(useLiveVersion)
 const mockUseUpdates = vi.mocked(useUpdates)
@@ -55,7 +55,6 @@ function setup(
   mockUseLiveVersion.mockReturnValue({
     versionInfo: null,
     liveChartVersion: 'v1.1.1',
-    isStale: false,
     unreachable: false,
     ...liveOverrides,
   })
@@ -85,7 +84,7 @@ describe('ClusterIdentifier', () => {
   })
 
   it('shows the live cluster version, not the one this tab loaded with', () => {
-    setup({}, { isStale: true, liveChartVersion: 'v1.2.0' })
+    setup({}, { liveChartVersion: 'v1.2.0' })
     render(<ClusterIdentifier />)
     const el = screen.getByTestId('cluster-identifier')
     expect(el).toHaveTextContent('kyber-falcon')
@@ -94,14 +93,9 @@ describe('ClusterIdentifier', () => {
     // version would tell an operator their upgrade hadn't landed when it had.
     expect(el).toHaveTextContent('v1.2.0')
     expect(el).not.toHaveTextContent('v1.1.1')
-  })
-
-  // The icon now means exactly one thing: an update is available. A tab whose
-  // own bundle is behind the cluster is not that, and must not light it up
-  // (Matt, 2026-08-14).
-  it('does not offer anything just because this tab is behind the cluster', () => {
-    setup({}, { isStale: true, liveChartVersion: 'v1.2.0' })
-    render(<ClusterIdentifier />)
+    // ...and it offers nothing. The icon now means exactly one thing — an
+    // update is available — and a tab whose own bundle is behind the cluster
+    // is not that (Matt, 2026-08-14).
     expect(screen.queryByRole('button')).toBeNull()
   })
 
@@ -148,6 +142,24 @@ describe('ClusterIdentifier', () => {
     setup({}, {}, status({ updateAvailable: false, latestVersion: 'v1.1.1' }))
     render(<ClusterIdentifier />)
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  // The dialog is mounted alongside the icon, not alongside the status. It
+  // calls useAgents() at the top level, so mounting it on any status at all
+  // would run a 30s agent-list poll from the header, on every page, forever,
+  // for a dialog that can never open here. Caught in review (Chewie, kyber#71).
+  it('does not poll the agent list when there is no update to offer', () => {
+    setup({}, {}, status({ updateAvailable: false, latestVersion: 'v1.1.1' }))
+    render(<ClusterIdentifier />)
+    expect(vi.mocked(useAgents)).not.toHaveBeenCalled()
+  })
+
+  it('does poll the agent list while an update is on offer', () => {
+    setup({}, {}, status())
+    render(<ClusterIdentifier />)
+    // The dialog names the agents that will lose their sessions, so the list
+    // has to be warm by the time it opens.
+    expect(vi.mocked(useAgents)).toHaveBeenCalled()
   })
 
   // The app-wide banner already narrates a running upgrade. A second control

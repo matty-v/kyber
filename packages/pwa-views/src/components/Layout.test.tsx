@@ -17,7 +17,7 @@ vi.mock('../hooks/useAPI', () => {
 })
 
 vi.mock('../hooks/useLiveVersion', () => ({
-  useLiveVersion: () => ({ isStale: false, unreachable: false }),
+  useLiveVersion: () => ({ unreachable: false }),
 }))
 
 import { Layout } from './Layout'

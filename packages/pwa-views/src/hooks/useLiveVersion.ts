@@ -7,12 +7,6 @@ import type { UpdateStatus, VersionInfo } from '../lib/types'
 export interface LiveVersionState {
   versionInfo: VersionInfo | null
   liveChartVersion: string | null
-  /**
-   * True when the loaded UI bundle was served by a different version than the
-   * control plane is now running — i.e. the cluster moved on and this tab is
-   * running yesterday's JavaScript.
-   */
-  isStale: boolean
   unreachable: boolean
 }
 
@@ -22,10 +16,13 @@ export interface LiveVersionState {
  *
  * The two diverge every time the cluster upgrades, because the PWA is served by
  * the control plane being replaced: the bundle in this browser is a snapshot of
- * the old version and cannot update itself in place. So there are two distinct
- * facts, and the UI needs both — the live cluster version (what the operator
- * asked about) and whether this tab's code is behind it (why a reload is
- * offered).
+ * the old version and cannot update itself in place. The header reports the
+ * CLUSTER, so it has to ask rather than trust what it loaded with.
+ *
+ * It used to also report whether this tab's own bundle was behind, which drove
+ * a reload affordance in the header. That affordance was removed when the
+ * header's icon became the update indicator (Matt, 2026-08-14), and the flag
+ * went with it rather than being left as a computed value nobody reads.
  */
 export function useLiveVersion(): LiveVersionState {
   const cluster = useCluster()
@@ -72,16 +69,9 @@ export function useLiveVersion(): LiveVersionState {
 
   const liveChartVersion = data?.chartVersion ?? null
 
-  const isStale =
-    !isError &&
-    liveChartVersion !== null &&
-    cluster.version !== '' &&
-    liveChartVersion !== cluster.version
-
   return {
     versionInfo: data ?? null,
     liveChartVersion,
-    isStale,
     unreachable: isError,
   }
 }
