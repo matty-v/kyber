@@ -8,10 +8,15 @@ The logical name is what shows up in the PWA, runbooks, dashboards, and
 alerts, so pick it before the first deployment and keep it stable.
 
 **The logical name is the Helm release name.** That is the whole convention —
-`helm install kyber-gcp …` makes the logical name real, and every in-cluster
-resource is prefixed with it (`kyber-gcp-control-plane`, `kyber-gcp-postgres`).
-Getting it right at install time matters because renaming a release later means
+`helm install kyber-gcp …` makes the logical name real, and the workloads are
+named after it (`kyber-gcp-control-plane`, `kyber-gcp-postgres`). Getting it
+right at install time matters because renaming a release later means
 reinstalling.
+
+A few shared ConfigMaps keep a fixed `kyber-` name at any release name
+(`kyber-fleet-defaults`, `kyber-model-context-windows`,
+`kyber-provider-rates`), so don't rely on the release prefix to select
+everything the chart owns — use the chart's labels for that.
 
 ## Example clusters
 

@@ -33,10 +33,13 @@ kubectl create namespace kyber-system
 kubectl -n kyber-system create secret generic kyber-internal-signing-key \
   --from-literal=signing-key="$(openssl rand -hex 32)"
 
+# Keep this — it is how you log in to the PWA and the API.
+export KYBER_API_KEY=$(openssl rand -hex 32)
+
 helm install kyber oci://ghcr.io/matty-v/charts/kyber \
   --version 1.0.4 --namespace kyber-system \
   --set namespace.create=false \
-  --set api.apiKey="$(openssl rand -hex 32)" --wait
+  --set api.apiKey="$KYBER_API_KEY" --wait
 ```
 
 [**docs/quickstart.md**](docs/quickstart.md) wraps that in the full ~15-minute

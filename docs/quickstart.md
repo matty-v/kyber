@@ -91,7 +91,7 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
 Use the newest version from [Releases](https://github.com/matty-v/kyber/releases)
 in place of `1.0.4`; the chart version and the release tag are the same number.
 
-Every other default is already right for this install: compute is `static`,
+Every other default is already right for this install: compute is `mock`,
 the node-agent DaemonSet is on, agent volumes bind against your cluster's
 default StorageClass, and the internal API starts in grace mode.
 
@@ -139,6 +139,14 @@ http://localhost:8080/
 On first load it asks for the API key. Paste `$KYBER_API_KEY`. It is stored in
 your browser's `localStorage`, so use a browser you trust on a machine you
 trust.
+
+Lost the key already? It is in the cluster — the Secret is named after the Helm
+release, so it is `kyber-api-credentials` for the `kyber` release used here:
+
+```bash
+kubectl -n kyber-system get secret kyber-api-credentials \
+  -o jsonpath='{.data.api-key}' | base64 -d; echo
+```
 
 You should land on the Fleet Overview with zero machines and zero agents.
 
@@ -201,9 +209,10 @@ kubectl -n kyber-system get pod agent-dave
 Expected: the Agent's phase moves `Creating` → `Starting` → `Running`, and the
 pod's `READY` column shows both numbers equal.
 
-Don't be surprised by the count. One container is the agent itself; the rest are
-sidecars Kyber injects — status reporting, transcript tailing, session saving —
-plus one more per chat channel you enable. A channel-free agent is `5/5` today.
+Don't be surprised by the count. One container is the agent itself; the other
+four are sidecars Kyber injects — status reporting, transcript tailing, session
+saving, and transcript pruning — so a channel-free agent is `5/5` today, plus
+one more container per chat channel you enable.
 
 Confirm it really authenticated rather than merely started:
 
