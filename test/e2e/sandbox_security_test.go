@@ -431,3 +431,37 @@ func applyManifest(t *testing.T, ctx context.Context, manifest string) {
 		t.Fatalf("kubectl apply: %v", err)
 	}
 }
+
+// TestSandboxHarness_ExecInSandboxTargetsTheDurableRoot checks the test harness
+// itself before anything trusts it.
+//
+// execInSandbox has to land in the agent's chroot, on its PersistentVolume. An
+// earlier version omitted nsenter's -r flag and landed in the container's
+// ephemeral image overlay instead. Everything still "worked" — apt installed,
+// files were written — and then none of it survived a pod restart, because none
+// of it was ever on the volume. The autonomy suite reported a broken persistence
+// mechanism that was in fact fine.
+//
+// So: write through execInSandbox, then look for the file on the volume from
+// the container side. If these two views disagree, every autonomy result in
+// this package is meaningless and the suite should say so loudly.
+func TestSandboxHarness_ExecInSandboxTargetsTheDurableRoot(t *testing.T) {
+	agent := requireAgent(t, "KYBER_E2E_AGENT_A")
+
+	marker := fmt.Sprintf("harness-%d", time.Now().UnixNano())
+	path := "/etc/kyber-harness-probe"
+
+	mustExecInSandbox(t, agent, fmt.Sprintf("echo %s > %s", marker, path))
+	t.Cleanup(func() { _, _ = execInSandbox(t, agent, "rm -f "+path) })
+
+	// From the container's own root, the durable root is a plain directory.
+	out, err := execInContainer(t, agent, "cat /persist/agentroot"+path+" 2>/dev/null || echo MISSING")
+	if err != nil {
+		t.Fatalf("reading the durable root from the container: %v", err)
+	}
+	if !strings.Contains(out, marker) {
+		t.Fatalf("a write through execInSandbox did not land on the agent's volume "+
+			"(got %q). The harness is targeting the container's ephemeral root, so "+
+			"every persistence result in this package is invalid.", strings.TrimSpace(out))
+	}
+}

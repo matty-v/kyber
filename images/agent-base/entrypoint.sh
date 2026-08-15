@@ -53,24 +53,19 @@ EOF
     exit 1
 }
 
-# ---- Three-tier overlay dispatcher ----
+# ---- Legacy overlay dispatcher (rollback path only) ----
 #
-# Attempts mounts in priority order:
-#   1. Kernel overlayfs — fastest, but fails when the container root is
-#      already on overlayfs (k3s/containerd nested-overlay case; kernel
-#      rejects with "cannot mount overlay read-only").
-#   2. fuse-overlayfs — userspace overlay, works on top of any FS
-#      including another overlay. Requires /dev/fuse exposed to the pod
-#      (added in commit f7d5798) and the fuse-overlayfs binary (added
-#      in commit 4090a33). No kernel restriction on nesting.
-#   3. Bind-mount HOME — last resort. System-level installs (apt,
-#      /usr/lib) do NOT persist, but the agent user's HOME directory
-#      (and everything under $PERSIST_DIR) does — sufficient for Claude
-#      Code state.
+# Reached only when KYBER_PERSISTENCE_MODE=overlay. The default is the durable
+# root below; this is kept so an operator can go back to the pre-#78 model
+# without a new image.
 #
-# Each attempt logs its outcome to /persist/overlay-mount.log so we can
-# diagnose failures in the field. The kernel-overlay error was previously
-# silenced with 2>/dev/null — that's gone now.
+# It cannot run inside a user namespace: neither kernel overlayfs nor /dev/fuse
+# is available there, which is the whole reason the durable root exists. The
+# dispatcher tries kernel overlayfs, then fuse-overlayfs, then falls back to
+# bind-mounting $HOME — and that last tier is the dangerous one, because
+# system-level installs silently stop persisting while the agent looks healthy.
+#
+# Each attempt logs its outcome to /persist/overlay-mount.log.
 mkdir -p "$PERSIST_DIR"
 echo "=== boot $(date -Iseconds) ===" >> "$PERSIST_DIR/overlay-mount.log"
 
@@ -161,11 +156,15 @@ fi
 if [ "$USE_OVERLAY" = true ]; then
     # ---- Overlay mode: chroot into merged root ----
 
-    # Reuse or initialize upper layer
-    if [ -d "$UPPER_DIR" ] && [ "$(ls -A "$UPPER_DIR" 2>/dev/null)" ]; then
-        echo "[kyber] Returning pod — upper layer has state"
-    else
-        echo "[kyber] First boot — overlay upper is empty"
+    # Legacy overlay bookkeeping. In durable-root mode kyber-rootfs has already
+    # reported what it did, and talking about an "overlay upper layer" there is
+    # actively misleading when no overlay exists.
+    if [ "$KYBER_PERSISTENCE_MODE" = "overlay" ]; then
+        if [ -d "$UPPER_DIR" ] && [ "$(ls -A "$UPPER_DIR" 2>/dev/null)" ]; then
+            echo "[kyber] Returning pod — upper layer has state"
+        else
+            echo "[kyber] First boot — overlay upper is empty"
+        fi
     fi
 
     # Bind mount the PV into merged so /persist is accessible inside the chroot

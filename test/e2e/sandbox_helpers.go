@@ -29,6 +29,7 @@ import (
 
 const (
 	defaultSandboxNamespace = "kyber-system"
+	runtimeContainer        = "agent"
 	sandboxExecTimeout      = 60 * time.Second
 )
 
@@ -63,19 +64,29 @@ func execInContainer(t *testing.T, agent string, script string) (string, error) 
 	return kubectlExec(t, agent, []string{"/bin/bash", "-c", script})
 }
 
-// execInSandbox runs a command inside the agent's chroot — the durable root it
-// actually lives in.
+// execInSandbox runs a command inside the agent's chroot — the durable root on
+// its PersistentVolume, which is where the agent actually lives.
 //
-// This distinction is load-bearing and easy to get wrong. `kubectl exec` enters
-// the container but NOT the chroot that PID 1 pivoted into, so a test that
-// checks for an installed package through plain exec is looking at the base
-// image and will report "not installed" for software that is installed, or
-// "installed" for something the image happened to ship. nsenter into PID 1's
-// mount and PID namespaces puts us where the agent lives.
+// The `-r` flag is the load-bearing part, and leaving it out produces a test
+// suite that passes while proving nothing.
+//
+// `kubectl exec` enters the container but not the chroot. `nsenter -t 1 -m`
+// enters PID 1's MOUNT NAMESPACE — and lands at that namespace's root, which is
+// still the container's ephemeral image overlay, because chroot(2) changes a
+// process's root without changing the mount namespace. So the obvious
+// invocation silently targets the wrong filesystem: an `apt install` through it
+// succeeds, writes into the container overlay, and vanishes when the pod is
+// replaced. The first run of the autonomy suite did exactly that and reported
+// "package did not survive pod recreation" for a mechanism that was working.
+//
+// `-r` (--root) sets the root to PID 1's root — the chroot — so writes land on
+// the volume. `-w` follows its working directory, which also silences a getcwd
+// warning. TestSandboxHarness_ExecInSandboxTargetsTheDurableRoot below asserts
+// this is still true, so the mistake cannot come back quietly.
 func execInSandbox(t *testing.T, agent string, script string) (string, error) {
 	t.Helper()
 	return kubectlExec(t, agent, []string{
-		"nsenter", "-t", "1", "-m", "-p", "--", "/bin/bash", "-c", script,
+		"nsenter", "-t", "1", "-m", "-p", "-r", "-w", "--", "/bin/bash", "-c", script,
 	})
 }
 
@@ -84,8 +95,11 @@ func kubectlExec(t *testing.T, agent string, argv []string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sandboxExecTimeout)
 	defer cancel()
 
+	// The runtime container is named "agent"; the sidecars are native
+	// sidecars (initContainers with restartPolicy: Always), so `-c` must be
+	// explicit or kubectl picks the first init container.
 	args := append([]string{
-		"exec", "-n", sandboxNamespace(), agentPod(agent), "-c", "runtime", "--",
+		"exec", "-n", sandboxNamespace(), agentPod(agent), "-c", runtimeContainer, "--",
 	}, argv...)
 
 	cmd := exec.CommandContext(ctx, "kubectl", args...)
@@ -199,7 +213,7 @@ func restartAgentPod(t *testing.T, agent string, timeout time.Duration) {
 			return false, nil
 		}
 		phase := podFieldNoFail(agent, "{.status.phase}")
-		ready := podFieldNoFail(agent, "{.status.containerStatuses[?(@.name==\"runtime\")].ready}")
+		ready := podFieldNoFail(agent, "{.status.containerStatuses[?(@.name==\"agent\")].ready}")
 		return phase == "Running" && ready == "true", nil
 	})
 	if err != nil {

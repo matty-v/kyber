@@ -76,10 +76,21 @@ die() { echo "[kyber-rootfs] FATAL: $*" >&2; exit 1; }
 # manifest — one line per path: <type>\t<size>\t<mtime>\t<mode>\t<path>
 #
 # Used to answer the only question that matters during an upgrade: has the
-# agent touched this file since we last wrote it? type+size+mtime+mode is
-# enough. tar and cp -a both preserve mtime, so an untouched file compares
-# equal cheaply, and anything the agent wrote gets a fresh mtime.
+# agent touched this file since we last wrote it? For files, type+size+mtime+
+# mode is enough — tar and cp -a both preserve mtime, so an untouched file
+# compares equal cheaply and anything the agent wrote gets a fresh one.
+#
+# DIRECTORIES record no size or mtime, and that is deliberate. A directory's
+# mtime changes whenever anything is created inside it, so the container root
+# `.` alone differed between two otherwise identical pods (the entrypoint
+# creates /merged before this runs). That one line made every boot look like a
+# base-image change and ran a full three-way merge on every single start.
+# Directory mtimes carry no information about whether the IMAGE changed, so
+# they are normalised away.
 # ---------------------------------------------------------------------------
+manifest_printf='%y\t%s\t%T@\t%m\t%p\n'
+manifest_dir_printf='%y\t-\t-\t%m\t%p\n'
+
 write_manifest() {
     local root="$1" out="$2"
     local -a args=(.)
@@ -87,7 +98,7 @@ write_manifest() {
     for e in "${EXCLUDE_DIRS[@]}" "${MANIFEST_EXCLUDE_FILES[@]}"; do
         args+=(-path "$e" -prune -o)
     done
-    args+=(-printf '%y\t%s\t%T@\t%m\t%p\n')
+    args+=(-type d -printf "$manifest_dir_printf" -o -printf "$manifest_printf")
     (
         cd "$root" || exit 1
         find "${args[@]}" 2>/dev/null
@@ -208,10 +219,17 @@ upgrade_rootfs() {
     done < "$new_manifest"
 
     # Does the agent's copy still match what Kyber last installed there?
+    # Same normalisation as write_manifest: directories compare on type+mode
+    # only, so an unrelated write inside a directory never reads as "the agent
+    # modified this directory".
     agent_untouched() {
         local p="$1" want="${old_entry[$1]:-}" h
         [ -n "$want" ] || return 1
-        h=$(cd "$root" && find "$p" -maxdepth 0 -printf '%y\t%s\t%T@\t%m' 2>/dev/null) || return 1
+        if [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
+            h=$(cd "$root" && find "$p" -maxdepth 0 -printf '%y\t-\t-\t%m' 2>/dev/null) || return 1
+        else
+            h=$(cd "$root" && find "$p" -maxdepth 0 -printf '%y\t%s\t%T@\t%m' 2>/dev/null) || return 1
+        fi
         [ "$h" = "$want" ]
     }
 

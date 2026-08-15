@@ -370,3 +370,34 @@ func TestRootfs_SeedsWhenEtcMtabIsASymlink(t *testing.T) {
 		t.Errorf("second boot mode = %q, want rootfs", mode)
 	}
 }
+
+// TestRootfs_UnrelatedDirectoryWritesDoNotLookLikeAnUpgrade is a regression
+// test for the second bug the dev-env run surfaced.
+//
+// A directory's mtime changes whenever anything is created inside it. The
+// container root `.` therefore differed between two otherwise identical pods —
+// the entrypoint creates /merged before the manifest is taken — and that single
+// line was enough to make `cmp` disagree, so EVERY boot ran a full three-way
+// merge and logged spurious conflicts on `.` and `./kyber`.
+//
+// A directory mtime says nothing about whether the base image changed, so the
+// manifest must not record one.
+func TestRootfs_UnrelatedDirectoryWritesDoNotLookLikeAnUpgrade(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	// Touch the image root the way a runtime does — a new directory at the top
+	// level, no change to any file the image ships.
+	mustMkdirAll(t, filepath.Join(e.image, "merged"))
+	now := time.Now()
+	if err := os.Chtimes(e.image, now, now); err != nil {
+		t.Fatalf("bumping the image root mtime: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("mode = %q, want rootfs: a directory mtime change is not a base-image "+
+			"change, and treating it as one runs a full merge on every boot", mode)
+	}
+}
