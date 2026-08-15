@@ -2,6 +2,38 @@
 
 How to roll out new features, bug fixes, and schema changes to a running Kyber instance. This document is the source of truth — if a step doesn't match reality, fix the doc.
 
+## Before upgrading past the agent-sandbox release: check your Kubernetes version
+
+Agents now run in a Linux user namespace, and they **refuse to start** without
+one (kyber#78). This needs **Kubernetes >= 1.33 and containerd >= 2.0** on every
+node that schedules agents.
+
+```bash
+kubectl get nodes -o custom-columns=\
+NAME:.metadata.name,K8S:.status.nodeInfo.kubeletVersion,RUNTIME:.status.nodeInfo.containerRuntimeVersion
+```
+
+If any agent-scheduling node is below that, upgrading will stop every agent on
+the cluster. The agents fail with a message naming the cause, and the control
+plane reports them Failed — nothing is lost, and the volumes are untouched — but
+they will not run until you either upgrade the nodes or opt out deliberately:
+
+```yaml
+agent:
+  security:
+    requireUserNamespace: false   # accept unisolated agents, knowingly
+```
+
+That is a real choice, not a formality: without a user namespace an agent's
+in-pod root and `CAP_SYS_ADMIN` are valid against the node. Kyber will not make
+that choice silently on your behalf, which is why the default is to stop rather
+than to continue.
+
+The first boot after the upgrade also seeds each agent's durable root from the
+base image (~1.3 GB, a minute or two) and migrates any existing overlay upper
+layer into it. The old upper layer is left in place, so
+`agent.security.persistenceMode=overlay` remains a working rollback.
+
 ## Two delivery models
 
 A cluster gets a new version by exactly one of two routes, and which one applies
