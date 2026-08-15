@@ -20,6 +20,34 @@ import (
 	"testing"
 )
 
+
+// dockerSandboxEnv is what these tests must pass so the entrypoint will run at
+// all under plain `docker run`.
+//
+// Since kyber#78 the entrypoint refuses to start outside a user namespace,
+// because Kubernetes accepts pod.spec.hostUsers: false and silently ignores it
+// on a cluster that cannot honour it — an agent that believes it is isolated
+// and is not is the exact failure AC7 forbids. Docker gives these tests no user
+// namespace, so they take the deliberate, explicit opt-out. That is the same
+// escape hatch an operator gets, exercised here on purpose rather than by
+// weakening the guard.
+func dockerSandboxEnv() []string {
+	return []string{"-e", "KYBER_REQUIRE_USER_NAMESPACE=false"}
+}
+
+// dockerLegacyOverlayEnv additionally selects the pre-#78 overlay persistence
+// mode, for the tests that exist specifically to cover that rollback path.
+func dockerLegacyOverlayEnv() []string {
+	return append(dockerSandboxEnv(), "-e", "KYBER_PERSISTENCE_MODE=overlay")
+}
+
+// dockerRun builds `docker run --rm <env...> <args...>`.
+func dockerRun(env []string, args ...string) *exec.Cmd {
+	full := append([]string{"run", "--rm"}, env...)
+	full = append(full, args...)
+	return exec.Command("docker", full...)
+}
+
 const testImageTag = "kyber-agent-base-test:home-persistence"
 
 // buildAgentBaseImage builds the agent-base image once and registers a
@@ -73,7 +101,7 @@ func TestHomePersistence_BindMountSurvivesRestart(t *testing.T) {
 
 	// Boot 1: write a marker file under $HOME.
 	// --privileged lets the entrypoint attempt overlay or bind-mount as needed.
-	boot1 := exec.Command("docker", "run", "--rm",
+	boot1 := dockerRun(dockerSandboxEnv(),
 		"--privileged",
 		"-v", persistDir+":/persist",
 		testImageTag,
@@ -90,7 +118,7 @@ func TestHomePersistence_BindMountSurvivesRestart(t *testing.T) {
 	t.Logf("boot 1 output:\n%s", out1)
 
 	// Boot 2: same persist volume, read the marker back.
-	boot2 := exec.Command("docker", "run", "--rm",
+	boot2 := dockerRun(dockerSandboxEnv(),
 		"--privileged",
 		"-v", persistDir+":/persist",
 		testImageTag,
@@ -140,7 +168,7 @@ func TestHomePersistence_FirstBootSeedsBashrc(t *testing.T) {
 	// mode. The entrypoint seeds /persist/home before attempting the bind
 	// mount, so the seed artifacts reach the host volume regardless of
 	// whether the bind mount itself succeeds.
-	boot := exec.Command("docker", "run", "--rm",
+	boot := dockerRun(dockerLegacyOverlayEnv(),
 		"-v", persistDir+":/persist",
 		testImageTag,
 		"/usr/bin/true",
@@ -173,7 +201,7 @@ func TestHomePersistence_FirstBootSeedsBashrc(t *testing.T) {
 
 	// Second boot with the same persist dir: the .bashrc already exists, so
 	// the seed step must be skipped (idempotency).
-	boot2 := exec.Command("docker", "run", "--rm",
+	boot2 := dockerRun(dockerLegacyOverlayEnv(),
 		"-v", persistDir+":/persist",
 		testImageTag,
 		"/usr/bin/true",
@@ -218,4 +246,53 @@ func repoRootDir(t *testing.T) string {
 		t.Fatalf("git rev-parse --show-toplevel: %v", err)
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// TestEntrypoint_RefusesToRunOutsideAUserNamespace is the positive proof for
+// kyber#78 AC7.
+//
+// Every other docker test in this file passes KYBER_REQUIRE_USER_NAMESPACE=false
+// because docker gives them no user namespace. That opt-out is only safe if the
+// guard it disables actually fires — otherwise these tests would be quietly
+// exercising a boundary that was never enforced. So this one runs WITHOUT the
+// opt-out and requires the container to die.
+func TestEntrypoint_RefusesToRunOutsideAUserNamespace(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	buildAgentBaseImage(t)
+
+	persistDir, err := os.MkdirTemp("", "kyber-failclosed-*")
+	if err != nil {
+		t.Fatalf("mkdir tmp: %v", err)
+	}
+	if err := os.Chmod(persistDir, 0o777); err != nil {
+		t.Fatalf("chmod persist dir: %v", err)
+	}
+	t.Cleanup(func() {
+		exec.Command("sudo", "rm", "-rf", persistDir).Run() //nolint:errcheck
+		os.RemoveAll(persistDir)                            //nolint:errcheck
+	})
+
+	// No dockerSandboxEnv() here — that is the whole point.
+	cmd := dockerRun(nil,
+		"--privileged",
+		"-v", persistDir+":/persist",
+		testImageTag,
+		"/bin/sh", "-c", "echo THE_AGENT_STARTED",
+	)
+	out, err := cmd.CombinedOutput()
+
+	if err == nil {
+		t.Fatalf("the entrypoint started with no user namespace and exit 0 — the "+
+			"fail-closed guard is not working, and every agent on an unsupported "+
+			"cluster would run unisolated while looking healthy. Output:\n%s", out)
+	}
+	if strings.Contains(string(out), "THE_AGENT_STARTED") {
+		t.Errorf("the runtime command ran despite the missing user namespace:\n%s", out)
+	}
+	if !strings.Contains(string(out), "not running in a user namespace") {
+		t.Errorf("container failed, but not with the user-namespace assertion — the "+
+			"cause may be unrelated:\n%s", out)
+	}
 }

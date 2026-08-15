@@ -22,7 +22,7 @@ import (
 // docker invocation used by the home-persistence tests.
 func runAgentBase(t *testing.T, persistDir, script string) (string, error) {
 	t.Helper()
-	cmd := exec.Command("docker", "run", "--rm",
+	cmd := dockerRun(dockerSandboxEnv(),
 		"--privileged",
 		"-v", persistDir+":/persist",
 		testImageTag,
