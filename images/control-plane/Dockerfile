@@ -77,16 +77,28 @@ RUN apk add --no-cache ca-certificates
 # output, which is the upgrade record the design asks for.
 #
 # Version-pinned and checksum-verified: this binary rewrites the cluster, so a
-# silently-swapped download is not an acceptable failure mode. amd64-only,
-# matching the rest of this pipeline — build.yml sets no buildx `platforms`.
+# silently-swapped download is not an acceptable failure mode.
+#
+# Per-architecture, because this is the one download in the image that is not
+# arch-neutral. TARGETARCH is supplied by buildx (`amd64`, `arm64`) and matches
+# helm's own asset naming, so it selects both the tarball and its checksum. An
+# unknown value fails the build rather than silently skipping helm — the
+# self-upgrade Job would otherwise be broken only at upgrade time.
 ARG HELM_VERSION=3.16.3
-ARG HELM_SHA256=f5355c79190951eed23c5432a3b920e071f4c00a64f75e077de0dd4cb7b294ea
+ARG HELM_SHA256_AMD64=f5355c79190951eed23c5432a3b920e071f4c00a64f75e077de0dd4cb7b294ea
+ARG HELM_SHA256_ARM64=5bd34ed774df6914b323ff84a0a156ea6ff2ba1eaf0113962fa773f3f9def798
+ARG TARGETARCH
 RUN apk add --no-cache --virtual .helm-deps curl \
-  && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+  && case "${TARGETARCH}" in \
+       amd64) HELM_SHA256="${HELM_SHA256_AMD64}" ;; \
+       arm64) HELM_SHA256="${HELM_SHA256_ARM64}" ;; \
+       *) echo "unsupported TARGETARCH='${TARGETARCH}' for the pinned helm download" >&2; exit 1 ;; \
+     esac \
+  && curl -fsSL -o /tmp/helm.tgz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
   && echo "${HELM_SHA256}  /tmp/helm.tgz" | sha256sum -c - \
-  && tar -xzf /tmp/helm.tgz -C /tmp linux-amd64/helm \
-  && mv /tmp/linux-amd64/helm /usr/local/bin/helm \
-  && rm -rf /tmp/helm.tgz /tmp/linux-amd64 \
+  && tar -xzf /tmp/helm.tgz -C /tmp "linux-${TARGETARCH}/helm" \
+  && mv "/tmp/linux-${TARGETARCH}/helm" /usr/local/bin/helm \
+  && rm -rf /tmp/helm.tgz "/tmp/linux-${TARGETARCH}" \
   && apk del .helm-deps \
   && helm version --short
 
