@@ -2,7 +2,8 @@
 
 **Status:** Phase 1 (de-privileging) implemented and default-on; Phase 2 (user
 namespaces) implemented behind a per-cluster toggle, default-off pending
-per-cluster validation.
+per-cluster validation. Both phases validated end-to-end on the local
+full-stack (k3d) — see §5 findings.
 **Scope:** The security envelope of the main agent runtime container and its
 pod — the `Privileged`/capability/seccomp posture, host-device exposure, and
 user-namespace remapping. Whole-disk persistence semantics are preserved, not
@@ -153,16 +154,28 @@ Phase-1 escape surface closes while the agent still runs as root in-pod.
 Default off because enabling it safely depends on properties this change cannot
 verify from the control plane:
 
-- **Runtime/kernel support.** Kubernetes 1.36 (this repo's client-go line) has
-  user namespaces GA, but transparent access to the pre-existing persist PVC
-  requires **idmapped mounts** (kernel ≥ 6.3 and a runtime that requests them).
-  Without idmap, files on an existing PVC — written as real host uid 0/1001 by
-  a pre-Phase-2 pod — appear as `nobody` inside the namespace and are not
-  writable, so the overlay upper layer becomes inaccessible and the agent loses
-  its persisted state.
-- **fuse-overlayfs under userns** is the rootless-podman configuration and is
-  expected to work, but the overlay-upper-on-PVC + uid-remap combination must be
-  proven on each target.
+- **Runtime/kernel support.** Kubernetes ≥ 1.33 has user namespaces GA, but
+  transparent access to the pre-existing persist PVC requires **idmapped mounts**
+  (kernel ≥ 6.3 and a runtime that requests them). Without idmap, files on an
+  existing PVC — written as real host uid 0/1001 by a pre-Phase-2 pod — appear
+  as `nobody` inside the namespace and are not writable, so the overlay upper
+  layer becomes inaccessible and the agent loses its persisted state.
+- **Overlay under userns is environment-dependent** (see the validation findings
+  in §5). Two behaviors were observed and must be checked per target:
+  - **Unprivileged FUSE may be unavailable.** Opening the host `/dev/fuse` from
+    inside a user namespace can return `EPERM` where the host has no
+    unprivileged-FUSE / `fusermount3` setuid enablement, so `fuse-overlayfs`
+    cannot mount.
+  - **Kernel overlayfs under userns restricts `redirect_dir`/`metacopy`**, so a
+    `dpkg` install that renames a directory across the copy-up boundary can fail
+    with `EXDEV` ("Invalid cross-device link") for a minority of packages.
+
+The entrypoint dispatcher (`images/agent-base/entrypoint.sh`) accommodates both:
+under a user namespace it tries `fuse-overlayfs` **first** (it renames
+correctly), but **falls back to kernel overlayfs** if FUSE cannot mount — kernel
+overlayfs still persists whole-`/` and handles the large majority of installs —
+rather than collapsing to the bind-mount-HOME tier. Only if both overlays fail
+does it degrade to HOME-only persistence.
 
 Rollout is therefore per-cluster and staged (§5): validate on a canary
 (ideally a fresh agent, avoiding the migration edge), then enable fleet-wide on
@@ -209,6 +222,34 @@ is the break-glass revert to today's behavior):
 Because `helm upgrade --reuse-values` silently ignores new chart defaults
 (AGENTS.md gotcha #6), verify the rendered env on live control-plane pods after
 each step (`kubectl set env --list` / `helm get values`).
+
+### Validation findings (local full-stack, 2026-08-15)
+
+Validated end-to-end on the `up-full.sh --compute-provider fake` stack (k3d,
+k3s v1.35, kernel 6.12-linuxkit, containerd 2.2) with a live Claude Code agent:
+
+- **Phase 1 (default, userns off) — clean.** The agent container came up
+  `privileged:false`, `SYS_ADMIN` retained, `seccompProfile:RuntimeDefault`;
+  `/proc/self/status` showed `Seccomp: 2` (active filter) and `CapBnd` reduced to
+  `a82425fb` (default set + `SYS_ADMIN`, vs the issue's `1ffffffffff`). Overlay
+  mounted (kernel tier). `apt-get install` of `cowsay`, `sl`, **and** `figlet`
+  all succeeded and **survived a pod restart** (verified via the same PVC). The
+  agent user (`kyber`, uid 1001) could `sudo` and install software autonomously.
+- **Host escape closed.** `/dev/sd*` absent; the issue's `mount /dev/sda`
+  reproduction failed ("special device does not exist"); the harder `mknod` a
+  block device + `mount` it was **`permission denied`** — the device cgroup
+  blocks the hand-crafted device even with `SYS_ADMIN`.
+- **Phase 2 (userns on) — works, with the caveats above.** `pod.spec.hostUsers`
+  set; in-pod `id`=0 while `/proc/self/uid_map` mapped in-pod root to a host base
+  in the ~10^9 range (`0 <hostbase> 65536`). Persistence and existing state
+  survived the transition (idmapped mounts made the pre-existing PVC readable).
+  `fuse-overlayfs` could **not** open `/dev/fuse` here (`EPERM`), so the
+  dispatcher fell back to kernel overlayfs (persists, most installs work). The
+  one package that failed was `figlet` under kernel-overlay-userns (`EXDEV` on
+  `/etc/emacs` directory rename) — the documented minority-package caveat; it
+  installs fine under Phase 1 and would install under Phase 2 on a host with
+  unprivileged FUSE. `mknod` itself was denied under userns (stronger than
+  Phase 1, where only the subsequent `mount` was blocked).
 
 ## 6. Gap dispositions (kyber#76 "Done when")
 

@@ -60,16 +60,47 @@ try_fuse_overlay() {
     return 1
 }
 
+# Detect whether we are running inside a Linux user namespace (kyber#76 Phase 2,
+# agent.security.userNamespaces). uid_map line "0 <host> <count>": a non-zero
+# host base means in-pod root is remapped, i.e. we are in a user namespace.
+in_user_namespace() {
+    [ -r /proc/self/uid_map ] || return 1
+    awk 'NR==1 { exit !($1 == 0 && $2 != 0) }' /proc/self/uid_map
+}
+
+# Prefer fuse-overlayfs over kernel overlayfs when in a user namespace — but
+# keep kernel overlayfs as a fallback, never skip it. Rationale (kyber#76 Phase
+# 2, validated on k3d/linuxkit): with root remapped, kernel overlayfs restricts
+# redirect_dir/metacopy, so a dpkg install that renames a directory across the
+# copy-up boundary can fail with EXDEV ("Invalid cross-device link") — e.g.
+# `apt-get install figlet` (ships /etc/emacs). fuse-overlayfs implements rename
+# correctly, so it is tried first under userns. HOWEVER, unprivileged FUSE mounts
+# are not available on every host (opening /dev/fuse inside a user namespace
+# returns EPERM where the kernel/fusermount setup does not permit it), so when
+# fuse-overlayfs cannot mount we fall back to kernel overlayfs — which still
+# persists whole-/ and handles the large majority of installs — rather than
+# collapsing to bind-mount-HOME. Outside userns, kernel overlayfs stays the fast
+# default. See the pod-isolation design doc's Phase-2 validation notes.
+PREFER_FUSE=false
+if in_user_namespace; then
+    PREFER_FUSE=true
+    echo "[kyber] user namespace detected — trying fuse-overlayfs first, kernel overlayfs as fallback" \
+        >> "$PERSIST_DIR/overlay-mount.log"
+fi
+
 OVERLAY_MODE=""
 USE_OVERLAY=true
 
 if mountpoint -q "$MERGED_DIR" 2>/dev/null; then
     echo "[kyber] Overlay already mounted — skipping"
     OVERLAY_MODE="already-mounted"
+elif [ "$PREFER_FUSE" = true ] && try_fuse_overlay; then
+    echo "[kyber] Overlay mounted (fuse-overlayfs, userns-preferred)"
+    OVERLAY_MODE="fuse"
 elif try_kernel_overlay; then
     echo "[kyber] Overlay mounted (kernel overlayfs)"
     OVERLAY_MODE="kernel"
-elif try_fuse_overlay; then
+elif [ "$PREFER_FUSE" != true ] && try_fuse_overlay; then
     echo "[kyber] Overlay mounted (fuse-overlayfs)"
     OVERLAY_MODE="fuse"
 else
