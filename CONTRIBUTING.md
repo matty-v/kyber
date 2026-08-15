@@ -13,9 +13,11 @@ By contributing you agree that your contributions are licensed under the
 - Read [`AGENTS.md`](AGENTS.md) — the canonical repository orientation file:
   architecture, conventions, gotchas, and do-not-touch zones. It links deeper
   docs in `docs/architecture/` (HOW) and `docs/product/` (WHAT).
-- [`CODE_QUALITY.md`](CODE_QUALITY.md) documents the Go and TypeScript
-  conventions CI actually gates on; [`REVIEWING.md`](REVIEWING.md) lists known
+- [`docs/contributing/code-quality.md`](docs/contributing/code-quality.md) documents the Go and TypeScript
+  conventions CI actually gates on; [`docs/contributing/reviewing.md`](docs/contributing/reviewing.md) lists known
   fragile areas.
+- [`.github/CODE_OF_CONDUCT.md`](.github/CODE_OF_CONDUCT.md) covers what is
+  expected of everyone taking part, maintainers included.
 - For non-trivial changes, open an issue first. Ask before adding new
   dependencies (Go/npm/Helm), changing CRD schemas, or touching RBAC/CI
   permissions.
@@ -139,4 +141,4 @@ Then bump the dependency in any external host that pins the published package.
 ## Security issues
 
 Please don't open public issues for vulnerabilities — see
-[SECURITY.md](SECURITY.md).
+[.github/SECURITY.md](.github/SECURITY.md).

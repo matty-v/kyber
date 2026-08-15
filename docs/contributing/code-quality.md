@@ -1,15 +1,15 @@
-# CODE_QUALITY.md — Repo-local code standards
+# Code quality — repo-local code standards
 
 > **Update cadence: deliberate.** Changes to this file are proposed in a PR and
 > reviewed/agreed before landing — it is a forward-looking standard, not a
 > scratchpad. Contributors read it before coding; reviewers enforce it at
 > review and cite the specific rule (objective, not taste). For reviewer
-> *gotchas* and fragile-area hotspots, see [REVIEWING.md](REVIEWING.md). For
-> pipeline/process rules, see [CONTRIBUTING.md](CONTRIBUTING.md) and
-> [AGENTS.md](AGENTS.md) — this file is code-level.
+> *gotchas* and fragile-area hotspots, see [reviewing.md](reviewing.md). For
+> pipeline/process rules, see [CONTRIBUTING.md](../../CONTRIBUTING.md) and
+> [AGENTS.md](../../AGENTS.md) — this file is code-level.
 
 These are the conventions already in force in this repo. Each rule is phrased
-so a reviewer can point to it ("CODE_QUALITY.md § Go/Errors") rather than
+so a reviewer can point to it ("code-quality.md § Go/Errors") rather than
 appeal to taste, and each maps to code you can read today.
 
 ---
@@ -65,7 +65,7 @@ appeal to taste, and each maps to code you can read today.
   ```
 
   Don't introduce testify (or any new assertion lib) without a separate,
-  agreed dependency change — see [AGENTS.md](AGENTS.md) § Do-not-touch zones
+  agreed dependency change — see [AGENTS.md](../../AGENTS.md) § Do-not-touch zones
   ("Ask first").
 
 - **What "done" means for a controller or API change:**
@@ -95,7 +95,7 @@ appeal to taste, and each maps to code you can read today.
   `Adapter`, `Probe` (`pkg/runtimes/runtime.go`). Keep interfaces small and
   defined at the consumer.
 - **Env vars the control plane / node-agent read are `KYBER_*`-prefixed**
-  (e.g. `KYBER_STATUS_SIDECAR_IMAGE`). See [AGENTS.md](AGENTS.md) § Conventions
+  (e.g. `KYBER_STATUS_SIDECAR_IMAGE`). See [AGENTS.md](../../AGENTS.md) § Conventions
   for the secret and Helm-helper naming rules.
 
 ---
@@ -136,9 +136,9 @@ automatically enforced across the language boundary. The standard:
 - **Reviewers verify the round-trip by hand** until codegen exists: read the Go
   shape and the TS type side-by-side and confirm field names, optionality, and
   enums match. This is a named review hotspot — see
-  [REVIEWING.md](REVIEWING.md).
+  [reviewing.md](reviewing.md).
 - A PWA source change to `packages/pwa-views/` additionally requires a version
-  bump per [CONTRIBUTING.md](CONTRIBUTING.md) (the Holocron publish guard).
+  bump per [CONTRIBUTING.md](../../CONTRIBUTING.md) (the Holocron publish guard).
 
 ---
 

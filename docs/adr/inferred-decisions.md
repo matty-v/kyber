@@ -421,12 +421,12 @@ per-agent git credentials.
 ## Honorable mentions (recorded elsewhere or too small for full entries)
 
 - **Git-backed markdown memory over vector/memory platforms** — formal
-  [ADR 0001](docs/adr/0001-memory-system.md); "do nothing" with reopen triggers. Sound.
-- **No file-anatomy index** — formal [ADR 0002](docs/adr/0002-file-anatomy-index.md);
+  [ADR 0001](0001-memory-system.md); "do nothing" with reopen triggers. Sound.
+- **No file-anatomy index** — formal [ADR 0002](0002-file-anatomy-index.md);
   rejected after an honest A/B spike that showed tokens going *up*. The spike-before-adopt
   method is worth more than the decision.
 - **HOW/WHAT doc split** (`docs/architecture/` vs `docs/product/`, #397/#398) plus
-  REVIEWING.md gotcha accumulation — a deliberate institutional-memory system for
+  docs/contributing/reviewing.md gotcha accumulation — a deliberate institutional-memory system for
   agent-driven development. Sound, and unusual.
 - **Off-cluster backups (kyber#171) remain unimplemented** — not a decision so much as a
   standing risk: k3s state.db on WSL2 plus no GCS backups means a laptop install's

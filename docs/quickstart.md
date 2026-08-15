@@ -27,7 +27,7 @@ both start from the same `helm install` you run here.
 Plus **a Kubernetes cluster you can create privileged pods in**. Agent pods run
 `privileged: true` and mount `/dev/fuse` from the host — that is what makes
 whole-disk persistence work, and it is why Kyber wants a cluster of its own
-rather than a shared one. See [Security & threat model](../README.md#security--threat-model).
+rather than a shared one. See the [deployment threat model](../.github/SECURITY.md#deployment-threat-model).
 
 No cluster? [k3d](https://k3d.io) gives you one on Docker in about 30 seconds,
 and satisfies both requirements on a typical host:
@@ -80,7 +80,7 @@ stamped at release time, so there is nothing to pin by hand.
 
 ```bash
 helm install kyber oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.4 \
+  --version 1.0.5 \
   --namespace kyber-system \
   --set namespace.create=false \
   --set api.apiKey="$KYBER_API_KEY" \
@@ -89,7 +89,7 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
 ```
 
 Use the newest version from [Releases](https://github.com/matty-v/kyber/releases)
-in place of `1.0.4`; the chart version and the release tag are the same number.
+in place of `1.0.5`; the chart version and the release tag are the same number.
 
 Every other default is already right for this install: compute is `mock`,
 the node-agent DaemonSet is on, agent volumes bind against your cluster's

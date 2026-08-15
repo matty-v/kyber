@@ -41,7 +41,7 @@ jobs:
           {
             echo "## 🎨 Design lint (advisory) — ${count} finding(s)"
             echo ""
-            echo "_Warn-first: advisory only, does not block. See DESIGN_QUALITY.md._"
+            echo "_Warn-first: advisory only, does not block. See docs/contributing/design-quality.md._"
             echo ""
             if [ "${count}" -gt 0 ]; then
               node -e "JSON.parse(require('fs').readFileSync('findings.json','utf8')).forEach(f=>console.log('- \`'+f.file.split('/').slice(-2).join('/')+':'+f.line+'\` **'+f.antipattern+'** — '+f.name))"

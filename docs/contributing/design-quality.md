@@ -1,6 +1,6 @@
-# DESIGN_QUALITY.md — front-end design standard (Kyber PWA)
+# Design quality — front-end design standard (Kyber PWA)
 
-Read this **when a change touches the frontend** (`packages/pwa-views/`, `apps/embedded-pwa/`). It's the design-quality companion to `CODE_QUALITY.md`: correct code that *looks* generic or sloppy isn't done. The goal is UI that an operator trusts at a glance — not "AI-default" frontend.
+Read this **when a change touches the frontend** (`packages/pwa-views/`, `apps/embedded-pwa/`). It's the design-quality companion to `code-quality.md`: correct code that *looks* generic or sloppy isn't done. The goal is UI that an operator trusts at a glance — not "AI-default" frontend.
 
 > Distilled and adapted from **Impeccable** (https://impeccable.style, github.com/pbakaus/impeccable, Apache-2.0) — its open anti-pattern catalog + design vocabulary. Attribution per `NOTICE`. The deterministic detector (`impeccable detect`) is what review runs against this.
 
