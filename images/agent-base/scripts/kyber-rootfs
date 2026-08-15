@@ -1,0 +1,281 @@
+#!/bin/bash
+#
+# kyber-rootfs — prepare the agent's durable root filesystem.
+#
+# Kyber agents own their root filesystem: they install packages, edit /etc,
+# and expect all of it to survive pod replacement. Historically that was an
+# overlayfs mount performed inside the pod, which required a host-valid
+# CAP_SYS_ADMIN and made the agent a host-escape risk (kyber#76).
+#
+# Under a user namespace neither kernel overlayfs nor FUSE is available at all
+# (see docs/adr/0003-agent-sandbox-isolation.md for the measurements), so the
+# overlay is gone. The agent's root is now an ordinary directory tree on its
+# PersistentVolume, seeded from the base image on first boot and entered with
+# chroot. Every mount the entrypoint still performs — bind, proc, tmpfs — is
+# permitted to a *namespaced* CAP_SYS_ADMIN, which carries no host authority.
+#
+# The interesting problem this creates is upgrades. With an overlay, a new base
+# image arrived for free as a new lower layer. With a real root, delivering a
+# new base image to a root the agent has been editing for months is a
+# three-way merge, and that is most of what this script does.
+#
+# Usage:
+#   kyber-rootfs prepare <rootfs-dir>     seed, migrate, or upgrade in place
+#   kyber-rootfs manifest <root> <out>    write a manifest of <root>
+#
+# `prepare` prints the resulting mode on stdout. Every other message goes to
+# stderr so the caller can capture the mode cleanly.
+#
+# Exit status is non-zero on any failure that would leave the agent running on
+# the wrong filesystem. Callers must treat that as fatal — silently continuing
+# on an ephemeral root is how an agent loses a month of state.
+
+set -euo pipefail
+
+PERSIST_DIR="${PERSIST_DIR:-/persist}"
+STATE_DIR="$PERSIST_DIR/kyber"
+MANIFEST="$STATE_DIR/rootfs-image-manifest.tsv"
+CONFLICT_LOG="$STATE_DIR/rootfs-upgrade-conflicts.log"
+LEGACY_UPPER="${LEGACY_UPPER:-$PERSIST_DIR/overlay/upper}"
+
+# Never part of the durable root: kernel filesystems, the volume itself, and
+# the directories the entrypoint bind-mounts over once the chroot is
+# assembled. Seeded as empty directories so the bind targets exist.
+EXCLUDE_DIRS=(
+    ./proc ./sys ./dev ./persist ./merged ./run ./tmp
+    ./secrets ./user-secrets ./kyber/jobs-src
+)
+
+# Seeded normally, but never allowed to drive an upgrade: kubelet rewrites
+# these on every pod, so they differ from the recorded image on every boot and
+# would otherwise make every boot look like a base-image change.
+MANIFEST_EXCLUDE_FILES=(
+    ./etc/resolv.conf ./etc/hosts ./etc/hostname ./etc/mtab
+)
+
+log() { echo "[kyber-rootfs] $*" >&2; }
+die() { echo "[kyber-rootfs] FATAL: $*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# manifest — one line per path: <type>\t<size>\t<mtime>\t<mode>\t<path>
+#
+# Used to answer the only question that matters during an upgrade: has the
+# agent touched this file since we last wrote it? type+size+mtime+mode is
+# enough. tar and cp -a both preserve mtime, so an untouched file compares
+# equal cheaply, and anything the agent wrote gets a fresh mtime.
+# ---------------------------------------------------------------------------
+write_manifest() {
+    local root="$1" out="$2"
+    local -a args=(.)
+    local e
+    for e in "${EXCLUDE_DIRS[@]}" "${MANIFEST_EXCLUDE_FILES[@]}"; do
+        args+=(-path "$e" -prune -o)
+    done
+    args+=(-printf '%y\t%s\t%T@\t%m\t%p\n')
+    (
+        cd "$root" || exit 1
+        find "${args[@]}" 2>/dev/null
+    ) | LC_ALL=C sort -t$'\t' -k5 > "$out.tmp"
+    mv "$out.tmp" "$out"
+}
+
+# ---------------------------------------------------------------------------
+# seed — first boot. Copy the image root onto the volume.
+# ---------------------------------------------------------------------------
+seed_rootfs() {
+    local root="$1"
+    log "first boot — seeding durable root from image"
+    mkdir -p "$root"
+    local -a tar_excludes=()
+    local e
+    for e in "${EXCLUDE_DIRS[@]}"; do
+        tar_excludes+=("--exclude=$e")
+    done
+    # numeric-owner keeps uid/gid stable regardless of how the target volume
+    # reports ownership; --xattrs carries file capabilities on binaries such
+    # as ping. Failure here is fatal: a half-seeded root is worse than none.
+    tar -C / "${tar_excludes[@]}" --numeric-owner --xattrs -cf - . \
+        | tar -C "$root" --numeric-owner --xattrs -xf - \
+        || die "seeding the durable root failed"
+    ensure_mount_targets "$root"
+    log "durable root seeded ($(du -sh "$root" 2>/dev/null | cut -f1))"
+}
+
+ensure_mount_targets() {
+    local root="$1" e
+    for e in "${EXCLUDE_DIRS[@]}"; do
+        mkdir -p "$root/${e#./}"
+    done
+    chmod 1777 "$root/tmp" 2>/dev/null || true
+    # Bind targets for the kubelet-injected files. Must exist as regular
+    # files or the entrypoint's bind mounts have nowhere to land.
+    for e in "${MANIFEST_EXCLUDE_FILES[@]}"; do
+        [ -e "$root/${e#./}" ] || : > "$root/${e#./}"
+    done
+}
+
+# ---------------------------------------------------------------------------
+# migrate — an agent arriving from the overlay era. /persist/overlay/upper
+# holds everything it ever changed; compose that over a fresh image seed.
+#
+# The upper layer is left untouched so rollback to the overlay entrypoint is
+# a flag flip, not a restore.
+# ---------------------------------------------------------------------------
+migrate_from_overlay() {
+    local root="$1"
+    log "migrating overlay upper layer into the durable root"
+    seed_rootfs "$root"
+
+    # Overlay whiteouts are 0/0 character devices meaning "deleted in the
+    # upper layer". Apply them as deletions before copying the rest over.
+    local whiteouts=0 wh rel
+    while IFS= read -r -d '' wh; do
+        rel="${wh#"$LEGACY_UPPER"/}"
+        rm -rf "${root:?}/$rel"
+        whiteouts=$((whiteouts + 1))
+    done < <(find "$LEGACY_UPPER" -type c -size 0 -print0 2>/dev/null)
+
+    # Opaque directories (trusted.overlay.opaque=y) replace the lower
+    # directory entirely — clear the seeded copy first.
+    local dir opaque=0
+    while IFS= read -r -d '' dir; do
+        if getfattr -n trusted.overlay.opaque --only-values "$dir" 2>/dev/null \
+            | grep -q '^y$'; then
+            rel="${dir#"$LEGACY_UPPER"/}"
+            rm -rf "${root:?}/$rel"
+            mkdir -p "${root:?}/$rel"
+            opaque=$((opaque + 1))
+        fi
+    done < <(find "$LEGACY_UPPER" -type d -print0 2>/dev/null)
+
+    tar -C "$LEGACY_UPPER" --numeric-owner --xattrs -cf - . 2>/dev/null \
+        | tar -C "$root" --numeric-owner --xattrs -xf - \
+        || die "copying the overlay upper layer failed"
+
+    # Whiteout device nodes ride along in the tar; strip them from the result.
+    find "$root" -type c -size 0 -delete 2>/dev/null || true
+    ensure_mount_targets "$root"
+    log "migration complete ($whiteouts whiteouts, $opaque opaque dirs applied)"
+}
+
+# ---------------------------------------------------------------------------
+# upgrade — a new base image against a root the agent has been living in.
+#
+# Three-way merge against the manifest written at the last seed/upgrade:
+#
+#   image changed + agent untouched  -> take the image's version
+#   image changed + agent modified   -> keep the agent's, record a conflict
+#   image added                      -> add it, unless the agent already has it
+#   image removed + agent untouched  -> remove it
+#   image removed + agent modified   -> keep the agent's
+#
+# The rule is the one an operator would expect: Kyber may update anything the
+# agent has not claimed, and never silently overwrites the agent's work.
+# ---------------------------------------------------------------------------
+upgrade_rootfs() {
+    local root="$1" old_manifest="$2" new_manifest="$3"
+    local updated=0 added=0 removed=0 conflicts=0
+    local type size mtime mode path new old have
+
+    mkdir -p "$STATE_DIR"
+    : > "$CONFLICT_LOG"
+
+    declare -A old_entry=() new_entry=()
+    while IFS=$'\t' read -r type size mtime mode path; do
+        old_entry["$path"]="$type	$size	$mtime	$mode"
+    done < "$old_manifest"
+    while IFS=$'\t' read -r type size mtime mode path; do
+        new_entry["$path"]="$type	$size	$mtime	$mode"
+    done < "$new_manifest"
+
+    # Does the agent's copy still match what Kyber last installed there?
+    agent_untouched() {
+        local p="$1" want="${old_entry[$1]:-}" h
+        [ -n "$want" ] || return 1
+        h=$(cd "$root" && find "$p" -maxdepth 0 -printf '%y\t%s\t%T@\t%m' 2>/dev/null) || return 1
+        [ "$h" = "$want" ]
+    }
+
+    # cp --parents resolves its source relative to the current directory, and
+    # every manifest path is relative to the image root.
+    cd /
+
+    for path in "${!new_entry[@]}"; do
+        new="${new_entry[$path]}"
+        old="${old_entry[$path]:-}"
+        if [ -z "$old" ]; then
+            # New in this image. Only add if the agent has not made its own.
+            if [ ! -e "$root/$path" ] && [ ! -L "$root/$path" ]; then
+                cp -a --parents "$path" "$root/" 2>/dev/null && added=$((added + 1))
+            fi
+            continue
+        fi
+        [ "$new" = "$old" ] && continue   # image did not change this path
+        if agent_untouched "$path"; then
+            rm -rf "${root:?}/$path" 2>/dev/null || true
+            cp -a --parents "$path" "$root/" 2>/dev/null && updated=$((updated + 1))
+        else
+            echo "kept agent copy: $path" >> "$CONFLICT_LOG"
+            conflicts=$((conflicts + 1))
+        fi
+    done
+
+    for path in "${!old_entry[@]}"; do
+        [ -n "${new_entry[$path]:-}" ] && continue   # still shipped by the image
+        if agent_untouched "$path"; then
+            rm -rf "${root:?}/$path" 2>/dev/null || true
+            removed=$((removed + 1))
+        else
+            echo "kept agent copy of removed path: $path" >> "$CONFLICT_LOG"
+            conflicts=$((conflicts + 1))
+        fi
+    done
+
+    log "base-image upgrade merged: $updated updated, $added added, $removed removed, $conflicts kept by agent"
+    [ "$conflicts" -gt 0 ] && log "conflict detail: $CONFLICT_LOG"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+
+cmd_prepare() {
+    local root="${1:?usage: kyber-rootfs prepare <rootfs-dir>}"
+    local mode new_manifest="$STATE_DIR/rootfs-image-manifest.new"
+
+    mkdir -p "$STATE_DIR"
+    write_manifest / "$new_manifest"
+
+    if [ ! -d "$root/usr" ]; then
+        if [ -d "$LEGACY_UPPER" ] && [ -n "$(ls -A "$LEGACY_UPPER" 2>/dev/null)" ]; then
+            migrate_from_overlay "$root"
+            mode="rootfs-migrated"
+        else
+            seed_rootfs "$root"
+            mode="rootfs-seeded"
+        fi
+    elif [ ! -f "$MANIFEST" ]; then
+        # A durable root that predates manifest tracking. Adopt it as-is and
+        # record the running image, so the NEXT upgrade has a baseline. We
+        # cannot merge safely without knowing what the previous image held.
+        log "durable root present without a manifest — adopting, no merge this boot"
+        ensure_mount_targets "$root"
+        mode="rootfs-adopted"
+    elif cmp -s "$MANIFEST" "$new_manifest"; then
+        ensure_mount_targets "$root"
+        mode="rootfs"
+    else
+        log "base image changed since last boot — merging"
+        upgrade_rootfs "$root" "$MANIFEST" "$new_manifest"
+        ensure_mount_targets "$root"
+        mode="rootfs-upgraded"
+    fi
+
+    mv "$new_manifest" "$MANIFEST"
+    echo "$mode"
+}
+
+case "${1:-}" in
+    prepare)  shift; cmd_prepare "$@" ;;
+    manifest) shift; write_manifest "${1:?root}" "${2:?out}" ;;
+    *)        die "usage: kyber-rootfs {prepare <dir>|manifest <root> <out>}" ;;
+esac

@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -99,21 +100,35 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 		wantSeccomp    *corev1.SeccompProfileType
 	}{
 		{
+			// kyber#78: user namespaces are the DEFAULT, not an opt-in. Without
+			// them the agent's SYS_ADMIN is valid against the node.
 			name:           "secure defaults",
 			wantPrivileged: false,
+			wantHostUsers:  ptrTo(false),
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
 		},
 		{
 			name:           "unconfined seccomp compatibility fallback",
 			seccomp:        "unconfined",
 			wantPrivileged: false,
+			wantHostUsers:  ptrTo(false),
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeUnconfined),
 		},
 		{
-			name:           "user namespaces enabled",
+			name:           "user namespaces explicitly enabled",
 			userNamespaces: "true",
 			wantPrivileged: false,
 			wantHostUsers:  ptrTo(false),
+			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+		},
+		{
+			// The conspicuous, deliberate opt-out. An operator can still run
+			// agents on a cluster that cannot do user namespaces, but only by
+			// saying so — nothing falls back to this on its own.
+			name:           "user namespaces explicitly disabled",
+			userNamespaces: "false",
+			wantPrivileged: false,
+			wantHostUsers:  nil,
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
 		},
 		{
@@ -480,49 +495,91 @@ func TestBuildPodSpec_InitContainer(t *testing.T) {
 	}
 }
 
-func TestBuildPodSpec_FuseDev(t *testing.T) {
-	agent := testAgent()
-	adapter := testAdapter()
-
-	pod, err := BuildPodSpec(agent, adapter, "node-01")
+// kyber#78: agent pods get NO host device and NO hostPath volume at all.
+//
+// This replaced the old TestBuildPodSpec_FuseDev, which asserted the opposite.
+// /dev/fuse went away with the overlay: persistence is now a durable directory
+// on the agent's own PVC, and a hostPath device could not be delivered to a
+// user-namespaced pod anyway — the kubelet idmaps hostPath volumes and
+// devtmpfs rejects idmapped mounts, so the pod failed to start.
+func TestBuildPodSpec_NoHostDevices(t *testing.T) {
+	pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
 	if err != nil {
 		t.Fatalf("BuildPodSpec: %v", err)
 	}
 
-	// Check that the fuse-dev hostPath volume is declared with CharDev type.
-	var volFound bool
 	for _, v := range pod.Volumes {
-		if v.Name == "fuse-dev" {
-			if v.HostPath == nil {
-				t.Fatal("fuse-dev volume has no HostPath source")
-			}
-			if v.HostPath.Path != "/dev/fuse" {
-				t.Errorf("fuse-dev HostPath.Path: got %q, want /dev/fuse", v.HostPath.Path)
-			}
-			if v.HostPath.Type == nil || *v.HostPath.Type != corev1.HostPathCharDev {
-				t.Errorf("fuse-dev HostPath.Type: got %v, want HostPathCharDev", v.HostPath.Type)
-			}
-			volFound = true
-			break
+		if v.HostPath != nil {
+			t.Errorf("agent pod declares hostPath volume %q -> %s; agents must not reach the node filesystem",
+				v.Name, v.HostPath.Path)
 		}
 	}
-	if !volFound {
-		t.Error("fuse-dev volume not found in pod volumes")
+	for _, vm := range pod.Containers[0].VolumeMounts {
+		if strings.HasPrefix(vm.MountPath, "/dev/") {
+			t.Errorf("agent container mounts %q at %s; agents get no host devices", vm.Name, vm.MountPath)
+		}
+	}
+}
+
+// The entrypoint must be told which persistence model to run and whether an
+// unisolated start is acceptable. It re-derives the boundary from
+// /proc/self/uid_map regardless, but these are what distinguish an operator's
+// deliberate opt-out from an unnoticed regression.
+func TestBuildPodSpec_PersistenceAndSandboxEnv(t *testing.T) {
+	tests := []struct {
+		name              string
+		privileged        string
+		userNamespaces    string
+		persistenceMode   string
+		wantMode          string
+		wantRequireUserNS string
+	}{
+		{
+			name:              "secure defaults",
+			wantMode:          "rootfs",
+			wantRequireUserNS: "true",
+		},
+		{
+			name:              "user namespaces opted out",
+			userNamespaces:    "false",
+			wantMode:          "rootfs",
+			wantRequireUserNS: "false",
+		},
+		{
+			name:              "privileged rollback",
+			privileged:        "true",
+			wantMode:          "rootfs",
+			wantRequireUserNS: "false",
+		},
+		{
+			name:              "overlay persistence rollback",
+			persistenceMode:   "overlay",
+			wantMode:          "overlay",
+			wantRequireUserNS: "true",
+		},
 	}
 
-	// Check that the fuse-dev volume mount exists at /dev/fuse.
-	var mountFound bool
-	for _, vm := range pod.Containers[0].VolumeMounts {
-		if vm.Name == "fuse-dev" {
-			if vm.MountPath != "/dev/fuse" {
-				t.Errorf("fuse-dev MountPath: got %q, want /dev/fuse", vm.MountPath)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KYBER_AGENT_PRIVILEGED", tc.privileged)
+			t.Setenv("KYBER_AGENT_USER_NAMESPACES", tc.userNamespaces)
+			t.Setenv("KYBER_AGENT_PERSISTENCE_MODE", tc.persistenceMode)
+
+			pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
+			if err != nil {
+				t.Fatalf("BuildPodSpec: %v", err)
 			}
-			mountFound = true
-			break
-		}
-	}
-	if !mountFound {
-		t.Error("fuse-dev volume mount not found in container volumeMounts")
+			env := map[string]string{}
+			for _, e := range pod.Containers[0].Env {
+				env[e.Name] = e.Value
+			}
+			if got := env["KYBER_PERSISTENCE_MODE"]; got != tc.wantMode {
+				t.Errorf("KYBER_PERSISTENCE_MODE = %q, want %q", got, tc.wantMode)
+			}
+			if got := env["KYBER_REQUIRE_USER_NAMESPACE"]; got != tc.wantRequireUserNS {
+				t.Errorf("KYBER_REQUIRE_USER_NAMESPACE = %q, want %q", got, tc.wantRequireUserNS)
+			}
+		})
 	}
 }
 

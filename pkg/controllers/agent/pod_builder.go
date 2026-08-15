@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -37,8 +38,49 @@ func agentPodsPrivileged() bool {
 	return strings.EqualFold(os.Getenv("KYBER_AGENT_PRIVILEGED"), "true")
 }
 
+// agentPodUserNamespacesEnabled reports whether agent pods run with
+// pod.spec.hostUsers: false, which is what makes in-pod root and SYS_ADMIN
+// worthless against the node (kyber#78, ADR 0003).
+//
+// This is the DEFAULT since #78. It is skipped only when the operator has
+// deliberately restored privileged mode, where a user namespace would be
+// pointless, or explicitly opted out.
+//
+// Setting the field is not proof it took effect: Kubernetes admits the pod and
+// ignores hostUsers when the cluster cannot honour it. The entrypoint re-checks
+// the effective uid map from inside the container and refuses to start.
 func agentPodUserNamespacesEnabled() bool {
-	return !agentPodsPrivileged() && strings.EqualFold(os.Getenv("KYBER_AGENT_USER_NAMESPACES"), "true")
+	if agentPodsPrivileged() {
+		return false
+	}
+	if v := os.Getenv("KYBER_AGENT_USER_NAMESPACES"); v != "" {
+		return strings.EqualFold(v, "true")
+	}
+	return true
+}
+
+// agentPersistenceMode selects how the agent's root filesystem is made
+// durable. "rootfs" is the durable-root design from ADR 0003. "overlay" is the
+// pre-#78 in-pod overlayfs mount, kept as a rollback path only — it cannot run
+// inside a user namespace and needs host-valid CAP_SYS_ADMIN.
+func agentPersistenceMode() string {
+	if v := os.Getenv("KYBER_AGENT_PERSISTENCE_MODE"); strings.EqualFold(v, "overlay") {
+		return "overlay"
+	}
+	return "rootfs"
+}
+
+// agentPodRequiresUserNamespace reports whether the agent should refuse to
+// start when it finds itself outside a user namespace. Default true: an agent
+// that silently runs unisolated is the failure kyber#78 AC7 forbids.
+func agentPodRequiresUserNamespace() bool {
+	if agentPodsPrivileged() || !agentPodUserNamespacesEnabled() {
+		return false
+	}
+	if v := os.Getenv("KYBER_AGENT_REQUIRE_USER_NAMESPACE"); v != "" {
+		return strings.EqualFold(v, "true")
+	}
+	return true
 }
 
 func agentPodSeccompProfile() corev1.SeccompProfileType {
@@ -207,18 +249,11 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	// to deliver or mount anymore.
 	identityRepoConfigured := agent.Spec.IdentityRepo.Repo != ""
 
-	// /dev/fuse for fuse-overlayfs (whole-disk persistence fallback when kernel
-	// overlayfs is rejected by nested overlay scenarios — see entrypoint.sh).
-	fuseDevType := corev1.HostPathCharDev
-	volumes = append(volumes, corev1.Volume{
-		Name: "fuse-dev",
-		VolumeSource: corev1.VolumeSource{
-			HostPath: &corev1.HostPathVolumeSource{
-				Path: "/dev/fuse",
-				Type: &fuseDevType,
-			},
-		},
-	})
+	// No /dev/fuse. Persistence is a durable root directory on the agent's own
+	// PVC (ADR 0003) rather than an overlay mounted in-pod, so the agent needs
+	// no host device at all. Delivering one was also impossible under a user
+	// namespace: the kubelet idmaps hostPath volumes and devtmpfs rejects
+	// idmapped mounts, so the pod failed to start outright.
 
 	// User file-secrets volume (#75). Mounted unconditionally — the controller
 	// eagerly creates an empty Secret alongside the Agent CR, so the reference
@@ -274,10 +309,6 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 			Name:      "persist",
 			MountPath: "/persist",
 		},
-		{
-			Name:      "fuse-dev",
-			MountPath: "/dev/fuse",
-		},
 	}
 	for _, sm := range secretMounts {
 		containerMounts = append(containerMounts, corev1.VolumeMount{
@@ -320,6 +351,12 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		{Name: "AGENT_NAME", Value: agent.Name},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 		{Name: "KYBER_REFRESH_TOKEN_URL", Value: fmt.Sprintf("%s/internal/agents/%s/refresh-token", controlPlaneInternalURL(), agent.Name)},
+		// Persistence model and the fail-closed sandbox check (kyber#78).
+		// The entrypoint re-derives the boundary from /proc/self/uid_map rather
+		// than trusting these, but they are what tells it whether an unisolated
+		// start is an operator's deliberate choice or an unnoticed regression.
+		{Name: "KYBER_PERSISTENCE_MODE", Value: agentPersistenceMode()},
+		{Name: "KYBER_REQUIRE_USER_NAMESPACE", Value: strconv.FormatBool(agentPodRequiresUserNamespace())},
 	}
 	// TZ controls the pod-wide timezone — cron daemon, dispatcher logs, and
 	// any process that calls localtime(3). Setting it here is strictly more
@@ -355,10 +392,10 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 			corev1.ResourceMemory: agent.Spec.Resources.Memory,
 		},
 	}
-	// fuse-overlayfs needs /dev/fuse plus CAP_SYS_ADMIN for mount(2), but it
-	// does not require Kubernetes privileged mode. Keeping the capability while
-	// dropping privileged mode removes implicit host-device access and restores
-	// the runtime's device allow-list. See docs/design/agent-pod-isolation.md.
+	// SYS_ADMIN is still required for the bind/proc/tmpfs mounts the entrypoint
+	// performs while assembling the chroot — but inside a user namespace it is
+	// a NAMESPACED capability with no authority over the node. That is the
+	// whole isolation argument; see docs/adr/0003-agent-sandbox-isolation.md.
 	securityContext := agentContainerSecurityContext()
 
 	// User kv-secrets envFrom (#75). Projected from {name}-user-secrets-kv

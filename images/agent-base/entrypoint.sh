@@ -5,6 +5,53 @@ PERSIST_DIR="/persist"
 UPPER_DIR="$PERSIST_DIR/overlay/upper"
 WORK_DIR="$PERSIST_DIR/overlay/work"
 MERGED_DIR="/merged"
+ROOTFS_DIR="$PERSIST_DIR/agentroot"
+
+# Persistence model. "rootfs" is the durable-root design from ADR 0003: the
+# agent's root filesystem is a real directory on its PersistentVolume, seeded
+# from the base image and entered with chroot. "overlay" is the pre-#78
+# overlayfs dispatcher, kept only as a rollback path — it cannot run inside a
+# user namespace and requires host-valid CAP_SYS_ADMIN.
+KYBER_PERSISTENCE_MODE="${KYBER_PERSISTENCE_MODE:-rootfs}"
+
+# Fail closed (kyber#78 AC7). Kubernetes SILENTLY IGNORES pod.spec.hostUsers on
+# a cluster without user-namespace support: the pod is admitted, runs with no
+# user namespace, and reports nothing. A control plane that trusted the PodSpec
+# would report an isolated agent that is not isolated, so the only honest check
+# is the effective uid map, read here, inside the running container.
+KYBER_REQUIRE_USER_NAMESPACE="${KYBER_REQUIRE_USER_NAMESPACE:-true}"
+
+in_user_namespace() {
+    [ -r /proc/self/uid_map ] || return 1
+    awk 'NR == 1 { found = 1; remapped = ($1 == 0 && $2 != 0) } END { exit !(found && remapped) }' /proc/self/uid_map
+}
+
+assert_sandbox_boundary() {
+    if in_user_namespace; then
+        echo "[kyber] user namespace active: $(tr -s ' ' < /proc/self/uid_map | sed 's/^ //')"
+        return 0
+    fi
+    if [ "$KYBER_REQUIRE_USER_NAMESPACE" != "true" ]; then
+        echo "[kyber] WARNING: no user namespace — in-pod root is HOST-VALID root." >&2
+        echo "[kyber] WARNING: running anyway because KYBER_REQUIRE_USER_NAMESPACE=$KYBER_REQUIRE_USER_NAMESPACE." >&2
+        return 0
+    fi
+    cat >&2 <<'EOF'
+[kyber] FATAL: this agent is not running in a user namespace.
+
+  /proc/self/uid_map reports no remapping, so in-pod uid 0 is uid 0 on the
+  node and CAP_SYS_ADMIN here is valid against the host.
+
+  Kubernetes accepts pod.spec.hostUsers: false and then ignores it when the
+  cluster cannot honour it, which is why this is checked from inside the pod
+  rather than trusted from the PodSpec.
+
+  Fix the cluster (Kubernetes >= 1.33 and containerd >= 2.0 on every node that
+  schedules agents), or set agent.security.requireUserNamespace=false to accept
+  an unisolated agent deliberately. Kyber will not do that silently.
+EOF
+    exit 1
+}
 
 # ---- Three-tier overlay dispatcher ----
 #
@@ -51,28 +98,57 @@ try_fuse_overlay() {
     return 1
 }
 
-in_user_namespace() {
-    [ -r /proc/self/uid_map ] || return 1
-    awk 'NR == 1 { found = 1; remapped = ($1 == 0 && $2 != 0) } END { exit !(found && remapped) }' /proc/self/uid_map
-}
-
 OVERLAY_MODE=""
 USE_OVERLAY=true
 
-if mountpoint -q "$MERGED_DIR" 2>/dev/null; then
-    echo "[kyber] Overlay already mounted — skipping"
+# ---- Durable-root mode (ADR 0003, kyber#78) ----
+#
+# No mount of the root at all: kyber-rootfs seeds /persist/agentroot from the
+# image (or migrates a legacy overlay upper layer into it, or merges a new base
+# image into it), and we bind that directory to $MERGED_DIR. Everything below
+# this block — the bind mounts, the chroot, the drop to the kyber user — is
+# unchanged, because $MERGED_DIR still ends up being the root we chroot into.
+#
+# The whole point is what is NOT here: no overlayfs, no fuse-overlayfs, no
+# /dev/fuse, and therefore no need for a capability that means anything on the
+# host. `apt` works because the root is an ordinary filesystem.
+prepare_rootfs() {
+    local mode
+    if ! mode=$(kyber-rootfs prepare "$ROOTFS_DIR"); then
+        return 1
+    fi
+    mkdir -p "$MERGED_DIR"
+    if ! mountpoint -q "$MERGED_DIR" 2>/dev/null; then
+        mount --bind "$ROOTFS_DIR" "$MERGED_DIR" || return 1
+    fi
+    OVERLAY_MODE="$mode"
+    return 0
+}
+
+if mountpoint -q "$MERGED_DIR" 2>/dev/null && [ -d "$MERGED_DIR/usr" ]; then
+    echo "[kyber] Root already prepared — skipping"
     OVERLAY_MODE="already-mounted"
-elif in_user_namespace && try_fuse_overlay; then
-    # Kernel overlayfs inside a user namespace restricts some cross-layer
-    # directory renames. Prefer the userspace implementation there, while
-    # retaining kernel overlayfs as the next fallback when FUSE is unavailable.
-    echo "[kyber] Overlay mounted (fuse-overlayfs, user namespace)"
-    OVERLAY_MODE="fuse"
+elif [ "$KYBER_PERSISTENCE_MODE" = "rootfs" ]; then
+    assert_sandbox_boundary
+    if prepare_rootfs; then
+        echo "[kyber] Durable root ready ($OVERLAY_MODE)"
+    else
+        # Fail closed. The bind-mount-HOME fallback silently stops persisting
+        # system-level state, which is exactly the class of failure kyber#78
+        # forbids: the agent looks healthy and quietly loses every apt install.
+        echo "[kyber] FATAL: could not prepare the durable root at $ROOTFS_DIR." >&2
+        echo "[kyber] Refusing to start on an ephemeral root — see $PERSIST_DIR/kyber/." >&2
+        exit 1
+    fi
+elif in_user_namespace; then
+    echo "[kyber] FATAL: KYBER_PERSISTENCE_MODE=overlay cannot work in a user namespace." >&2
+    echo "[kyber] Neither kernel overlayfs nor /dev/fuse is available there (ADR 0003)." >&2
+    exit 1
 elif try_kernel_overlay; then
-    echo "[kyber] Overlay mounted (kernel overlayfs)"
+    echo "[kyber] Overlay mounted (kernel overlayfs, legacy rollback mode)"
     OVERLAY_MODE="kernel"
-elif ! in_user_namespace && try_fuse_overlay; then
-    echo "[kyber] Overlay mounted (fuse-overlayfs)"
+elif try_fuse_overlay; then
+    echo "[kyber] Overlay mounted (fuse-overlayfs, legacy rollback mode)"
     OVERLAY_MODE="fuse"
 else
     echo "[kyber] Both kernel + fuse overlay failed — falling back to bind-mount HOME"
@@ -340,10 +416,20 @@ if [ "$USE_OVERLAY" = true ]; then
     # bind-mount-home-with-kyber-user branch below: chroot → dbus-run-session
     # → unlock keyring → su to kyber → run bootstrap with pipefail + tee.
     if id kyber &>/dev/null; then
-        # Make /persist writable by kyber (the bind-mount-home branch already
-        # does this; replicate here so the chroot's su-to-kyber can write the
-        # bootstrap log + everything else under /persist).
-        chown -R kyber:kyber "$PERSIST_DIR" 2>/dev/null || true
+        # Make /persist writable by kyber so the chroot's su-to-kyber can write
+        # the bootstrap log and its own state.
+        #
+        # NOT recursive over $PERSIST_DIR any more. In durable-root mode the
+        # agent's entire root filesystem lives under $PERSIST_DIR/agentroot, and
+        # a recursive chown would hand /usr, /etc and every setuid binary to the
+        # kyber user on every single boot — both a broken system and a trivial
+        # privilege escalation inside the sandbox. Chown the volume's own
+        # directories and let the root keep the ownership the image shipped.
+        chown kyber:kyber "$PERSIST_DIR" 2>/dev/null || true
+        for d in "$PERSIST_DIR"/*; do
+            [ "$d" = "$ROOTFS_DIR" ] && continue
+            chown -R kyber:kyber "$d" 2>/dev/null || true
+        done
         KYBER_AGENT_CMD="$(printf '%q ' "$@")"
         export KYBER_AGENT_CMD
         exec chroot "$MERGED_DIR" env \

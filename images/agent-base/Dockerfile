@@ -16,8 +16,7 @@ RUN for i in 1 2 3; do apt-get update && break || { echo "apt-get update failed 
     dbus \
     gnome-keyring \
     libsecret-1-0 \
-    fuse3 \
-    fuse-overlayfs \
+    attr \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
@@ -28,8 +27,18 @@ RUN for i in 1 2 3; do apt-get update && break || { echo "apt-get update failed 
 RUN useradd -m -s /bin/bash kyber \
     && echo "kyber ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/kyber
 
-# Overlay entrypoint (runs as root for mount privileges, drops to kyber user)
+# Entrypoint (runs as root for mount privileges, drops to kyber user).
+# fuse3/fuse-overlayfs are deliberately absent: under a user namespace
+# /dev/fuse cannot be delivered to the pod at all, so the FUSE stack is dead
+# weight that only makes the persistence story look more capable than it is.
+# See docs/adr/0003-agent-sandbox-isolation.md.
 COPY --chmod=0755 entrypoint.sh /usr/local/bin/entrypoint.sh
+
+# Durable-root manager (kyber#78) — seeds /persist/agentroot from this image,
+# migrates legacy overlay upper layers into it, and three-way-merges a new base
+# image into a root the agent has been editing. `attr` above provides getfattr,
+# which the migration path needs to read overlay opaque-directory markers.
+COPY --chmod=0755 scripts/kyber-rootfs /usr/local/bin/kyber-rootfs
 
 # Debug helpers — sourced by every login shell (root or kyber user).
 COPY --chmod=0644 profile-kyber.sh /etc/profile.d/kyber.sh
