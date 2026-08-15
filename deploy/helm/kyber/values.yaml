@@ -888,6 +888,18 @@ runtime:
     # @openai/codex npm version baked into the Kyber Codex image.
     version: "0.146.0"
 
+agent:
+  security:
+    # De-privileged is the safe default. Restore full privileged mode only as
+    # a temporary rollback if a target cannot mount the persistence overlay.
+    privileged: false
+    # Requires Kubernetes/runtime support and idmapped mounts for every volume.
+    # Validate existing agent PVCs on a canary before enabling per cluster.
+    userNamespaces: false
+    # RuntimeDefault admits mount when SYS_ADMIN is present in containerd's
+    # capability-aware profile. Unconfined is a compatibility fallback.
+    seccompProfile: RuntimeDefault
+
 # Runtime detection (kyber#375 / PR-A of #374). A control-plane goroutine
 # polls the npm registry + the Anthropic Models API on a cadence and writes
 # results into Redis. GET /api/v1/available reads from that cache so the

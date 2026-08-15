@@ -91,7 +91,7 @@ Kubernetes round-trip on the hot path.
   `pkg/controllers/agent`, and the reconciler must *sign*, so the shared
   sign/verify primitive cannot live in `pkg/api` without an import cycle — hence
   `pkg/podtoken`. The HTTP-layer authenticator stays in `pkg/api/internal_auth.go`.
-- **A NetworkPolicy can never isolate agent-from-agent.** Every agent pod must be
+- **The internal-API NetworkPolicy cannot authorize agent identities.** Every agent pod must be
   allowed to reach `:8082` (its own sidecar/init call it), so the NP is strictly a
   second layer; the authz above is what isolates agents.
 

@@ -141,8 +141,13 @@ a session-brief boot container. The sidecar/tailer/pruner are appended AFTER
 `transcript_pruner.go`) so runtime stays index 0.
 Persistence: a three-tier dispatcher in `images/agent-base/entrypoint.sh` —
 (1) kernel overlayfs, (2) fuse-overlayfs (prod default on k3s), (3) bind-mount
-$HOME fallback. Requires `Privileged: true` + `/dev/fuse`. This is why agents
-survive preemption/restarts with full filesystem continuity. `kubectl exec`
+$HOME fallback. The runtime container is de-privileged by default and retains
+`CAP_SYS_ADMIN` + `/dev/fuse` for mounts and disables ServiceAccount token
+automount; cluster-level break-glass privilege, seccomp fallback, and opt-in
+user namespaces are under `agent.security.*`. Agent pods default-deny ingress
+via NetworkPolicy.
+See `docs/design/agent-pod-isolation.md`. This is why agents survive
+preemption/restarts with full filesystem continuity. `kubectl exec`
 does NOT land inside the agent's chroot — use nsenter.
 
 Identity repos are dual-runtime. The template's canonical contract is
@@ -301,6 +306,12 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     (named Claude Code + blank Codex registration are deliberate);
     `helm template` requiring explicit image tags (kyber#358 — no AppVersion
     fallback, intentional fail-loud).
+13. **User namespaces can break whole-disk package installs.** In local k3d,
+    `hostUsers:false` prevents opening `/dev/fuse` (`EPERM`), forcing kernel
+    overlayfs; dpkg directory replacement can then fail with `EXDEV` (verified
+    with `figlet`). Keep `agent.security.userNamespaces` opt-in until the target
+    validates FUSE plus representative apt installs. Do not make it default-on
+    without changing the persistence/runtime boundary.
 
 ---
 

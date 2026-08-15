@@ -26,15 +26,17 @@ coordinate disclosure timing in the report thread.
 ## Deployment threat model
 
 Kyber runs long-lived AI coding agents as Kubernetes pods with substantial
-power by design: agent runtime pods run `Privileged: true` and mount
-`/dev/fuse` from the host to achieve whole-disk persistence, and agents accept
-prompts from connected chat channels (Telegram/Discord), so anyone who can
-message a bound channel can influence what an agent does. Deploy Kyber on a
-dedicated cluster whose workloads and credentials you are willing to trust the
-agents with — not on a shared production cluster — and treat the cluster as
-the blast radius of the agents it hosts. Reports that assume a hostile agent
-escaping an *appropriately dedicated* cluster, or abuse by a user who was
-deliberately granted a chat binding, may be treated as configuration guidance
-rather than vulnerabilities; bypasses of Kyber's own boundaries (API
-authentication, webhook HMAC verification, secret handling, sidecar
-forwarding) are always in scope.
+power by design: agent runtime pods are not privileged by default, but retain
+`CAP_SYS_ADMIN` and mount `/dev/fuse` from the host to achieve whole-disk
+persistence. Agents also accept prompts from connected chat channels
+(Telegram/Discord), so anyone who can message a bound channel can influence
+what an agent does. Deploy Kyber on a dedicated cluster whose workloads and
+credentials you are willing to trust the agents with — not on a shared
+production cluster — and treat the cluster as the blast radius of the agents
+it hosts. Reports that assume a hostile agent escaping an *appropriately
+dedicated* cluster, or abuse by a user who was deliberately granted a chat
+binding, may be treated as configuration guidance rather than vulnerabilities;
+bypasses of Kyber's own boundaries (API authentication, webhook HMAC
+verification, secret handling, sidecar forwarding) are always in scope. See
+the [agent pod isolation design](../docs/design/agent-pod-isolation.md) for the
+exact default security context and its remaining gap.

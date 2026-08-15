@@ -46,7 +46,7 @@ reader; here we add the internal module view in the sections below.)
 The Control Plane is the brain and the only component this overview decomposes
 further (§ 4). The Node Agent is intentionally thin. The Agent Runtime's
 persistence dispatcher (kernel overlayfs → fuse-overlayfs → bind-mount HOME) and
-pod requirements (`Privileged: true`, `/dev/fuse`) are documented in
+pod requirements (`CAP_SYS_ADMIN`, `/dev/fuse`) are documented in
 [`docs/installation.md`](../installation.md) and, for what they mean for the
 cluster you run them on, the [deployment threat
 model](../../.github/SECURITY.md#deployment-threat-model).

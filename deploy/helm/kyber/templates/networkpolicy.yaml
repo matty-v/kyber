@@ -1,12 +1,35 @@
 {{- if .Values.networkPolicy.enabled }}
+---
+# Agent pods accept no pod-network ingress. Runtime/sidecar communication uses
+# loopback inside one pod and is unaffected. Applying this policy to every
+# kyber.io/agent-labelled pod prevents agent-to-agent connections while leaving
+# outbound access available for autonomous work.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kyber.fullname" . }}-agent-default-deny-ingress
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-isolation
+spec:
+  podSelector:
+    matchExpressions:
+      - key: kyber.io/agent
+        operator: Exists
+  policyTypes:
+    - Ingress
+  ingress: []
+---
 # Internal-API NetworkPolicy (kyber#566, C1 — defense-in-depth).
 #
 # This is the SECOND of the two controls. The load-bearing control is the
-# per-agent authz on :8082 (pkg/api/internal_auth.go) — a NetworkPolicy can
-# never isolate agent-from-agent because every agent pod must be allowed to
-# reach :8082 (its own sidecar + init container call it). What this policy adds
-# is attack-surface reduction: a compromised NON-agent workload elsewhere in the
-# cluster cannot even open a socket to the internal API.
+# per-agent authz on :8082 (pkg/api/internal_auth.go). This control-plane policy
+# cannot distinguish one agent identity from another because every agent pod
+# must reach :8082; the separate agent-default-deny-ingress policy above blocks
+# direct connections to agent pods. What this policy adds is attack-surface
+# reduction: a compromised NON-agent workload elsewhere in the cluster cannot
+# even open a socket to the internal API.
 #
 # Scope: :8082 only (Matt-locked decision #3 — :8082-scoped, not a broad
 # default-deny). Selecting the control-plane pod with a NetworkPolicy would,

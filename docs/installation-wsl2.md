@@ -8,7 +8,7 @@ Step-by-step guide for the standalone single-box deployment shape: native k3s in
 
 > **How this install gets new versions:** it pulls a released chart, and stays on that version until you move it. Upgrades happen from the Kyber UI (Settings → Updates) or by re-running `helm upgrade` with a newer `--version`. Nothing watches a registry or a branch on your behalf. See [upgrading.md](./upgrading.md).
 
-> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and agent runtime with privileged pods (Phase C) are documented separately.
+> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and the agent runtime's `CAP_SYS_ADMIN` + `/dev/fuse` requirements (Phase C) are documented separately.
 
 ## Architecture
 
@@ -793,7 +793,7 @@ Expected output: ends with a line `OK` (Agent reached `Running` within ~6 minute
 
 **Human input needed:** None.
 
-**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on `/dev/fuse` + `Privileged: true` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
+**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on `/dev/fuse` + `CAP_SYS_ADMIN` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
 
 ### Scheduling recurring work on an agent
 

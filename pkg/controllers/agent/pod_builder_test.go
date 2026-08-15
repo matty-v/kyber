@@ -88,6 +88,82 @@ func testAdapter() pkgruntimes.Adapter {
 	)
 }
 
+func TestBuildPodSpec_AgentIsolation(t *testing.T) {
+	tests := []struct {
+		name           string
+		privileged     string
+		userNamespaces string
+		seccomp        string
+		wantPrivileged bool
+		wantHostUsers  *bool
+		wantSeccomp    *corev1.SeccompProfileType
+	}{
+		{
+			name:           "secure defaults",
+			wantPrivileged: false,
+			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+		},
+		{
+			name:           "unconfined seccomp compatibility fallback",
+			seccomp:        "unconfined",
+			wantPrivileged: false,
+			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeUnconfined),
+		},
+		{
+			name:           "user namespaces enabled",
+			userNamespaces: "true",
+			wantPrivileged: false,
+			wantHostUsers:  ptrTo(false),
+			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+		},
+		{
+			name:           "legacy privileged rollback disables user namespaces",
+			privileged:     "true",
+			userNamespaces: "true",
+			seccomp:        "RuntimeDefault",
+			wantPrivileged: true,
+			wantHostUsers:  nil,
+			wantSeccomp:    nil,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("KYBER_AGENT_PRIVILEGED", tc.privileged)
+			t.Setenv("KYBER_AGENT_USER_NAMESPACES", tc.userNamespaces)
+			t.Setenv("KYBER_AGENT_SECCOMP_PROFILE", tc.seccomp)
+
+			pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
+			if err != nil {
+				t.Fatalf("BuildPodSpec: %v", err)
+			}
+			securityContext := pod.Containers[0].SecurityContext
+			if securityContext == nil || securityContext.Privileged == nil {
+				t.Fatal("agent security context must set privileged explicitly")
+			}
+			if got := *securityContext.Privileged; got != tc.wantPrivileged {
+				t.Errorf("privileged = %v, want %v", got, tc.wantPrivileged)
+			}
+			if !reflect.DeepEqual(pod.HostUsers, tc.wantHostUsers) {
+				t.Errorf("hostUsers = %v, want %v", pod.HostUsers, tc.wantHostUsers)
+			}
+			var gotSeccomp *corev1.SeccompProfileType
+			if securityContext.SeccompProfile != nil {
+				gotSeccomp = &securityContext.SeccompProfile.Type
+			}
+			if !reflect.DeepEqual(gotSeccomp, tc.wantSeccomp) {
+				t.Errorf("seccomp = %v, want %v", gotSeccomp, tc.wantSeccomp)
+			}
+			if got := securityContext.Capabilities.Add; !reflect.DeepEqual(got, []corev1.Capability{"SYS_ADMIN"}) {
+				t.Errorf("added capabilities = %v, want [SYS_ADMIN]", got)
+			}
+			if pod.AutomountServiceAccountToken == nil || *pod.AutomountServiceAccountToken {
+				t.Error("agent pod must disable ServiceAccount token automount")
+			}
+		})
+	}
+}
+
 // TestBuildPodSpec_PreStopHook verifies the container's preStop lifecycle hook
 // is wired from the adapter: absent when the adapter returns nil, and set to the
 // adapter's exact argv otherwise. The real Claude Code adapter returns the
