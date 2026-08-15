@@ -263,36 +263,69 @@ upgrade_rootfs() {
     # every manifest path is relative to the image root.
     cd "$IMAGE_ROOT"
 
+    # Install one path from the image. Directories are updated in place — never
+    # deleted and re-copied — because `cp -a --parents` on a directory copies it
+    # RECURSIVELY, so "the image changed this directory's mode" would otherwise
+    # overwrite everything the agent had put inside it.
+    install_from_image() {
+        local p="$1"
+        if [ -d "$IMAGE_ROOT/$p" ] && [ ! -L "$IMAGE_ROOT/$p" ]; then
+            mkdir -p "$root/$p" || return 1
+            chmod --reference="$IMAGE_ROOT/$p" "$root/$p" 2>/dev/null || true
+            chown --reference="$IMAGE_ROOT/$p" "$root/$p" 2>/dev/null || true
+            return 0
+        fi
+        rm -f "${root:?}/$p" 2>/dev/null || true
+        cp -a --parents "$p" "$root/" 2>/dev/null
+    }
+
     for path in "${!new_entry[@]}"; do
         new="${new_entry[$path]}"
         old="${old_entry[$path]:-}"
         if [ -z "$old" ]; then
             # New in this image. Only add if the agent has not made its own.
             if [ ! -e "$root/$path" ] && [ ! -L "$root/$path" ]; then
-                cp -a --parents "$path" "$root/" 2>/dev/null && added=$((added + 1))
+                install_from_image "$path" && added=$((added + 1))
             fi
             continue
         fi
         [ "$new" = "$old" ] && continue   # image did not change this path
         if agent_untouched "$path"; then
-            rm -rf "${root:?}/$path" 2>/dev/null || true
-            cp -a --parents "$path" "$root/" 2>/dev/null && updated=$((updated + 1))
+            install_from_image "$path" && updated=$((updated + 1))
         else
             echo "kept agent copy: $path" >> "$CONFLICT_LOG"
             conflicts=$((conflicts + 1))
         fi
     done
 
-    for path in "${!old_entry[@]}"; do
-        [ -n "${new_entry[$path]:-}" ] && continue   # still shipped by the image
+    # Removals run DEEPEST-FIRST, and a directory is removed with rmdir rather
+    # than rm -rf.
+    #
+    # Bash iterates an associative array in no particular order, so a parent
+    # directory could otherwise be reached before its children — and `rm -rf` on
+    # it would take an agent-modified file inside it with no conflict logged and
+    # nothing to show it happened. Sorting deepest-first means every child is
+    # judged on its own first, and rmdir then refuses to remove a directory that
+    # still holds anything the agent kept.
+    local removal
+    while IFS= read -r path; do
+        [ -n "$path" ] || continue
         if agent_untouched "$path"; then
-            rm -rf "${root:?}/$path" 2>/dev/null || true
-            removed=$((removed + 1))
+            if [ -d "$root/$path" ] && [ ! -L "$root/$path" ]; then
+                rmdir "${root:?}/$path" 2>/dev/null && removed=$((removed + 1))
+            else
+                rm -f "${root:?}/$path" 2>/dev/null && removed=$((removed + 1))
+            fi
         else
             echo "kept agent copy of removed path: $path" >> "$CONFLICT_LOG"
             conflicts=$((conflicts + 1))
         fi
-    done
+    done < <(
+        for removal in "${!old_entry[@]}"; do
+            [ -n "${new_entry[$removal]:-}" ] && continue   # still shipped
+            printf '%s\t%s\n' "$(awk -F/ '{print NF}' <<<"$removal")" "$removal"
+        done | sort -rn -k1,1 | cut -f2-
+    )
 
     log "base-image upgrade merged: $updated updated, $added added, $removed removed, $conflicts kept by agent"
     [ "$conflicts" -gt 0 ] && log "conflict detail: $CONFLICT_LOG"

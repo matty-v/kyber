@@ -447,3 +447,73 @@ func TestRootfs_UnreadableManifestAdoptsRatherThanMerging(t *testing.T) {
 		t.Errorf("mode after adopting = %q, want rootfs", mode)
 	}
 }
+
+// TestRootfs_DroppedDirectoryDoesNotTakeAgentFilesWithIt is the data-loss case.
+//
+// Bash iterates an associative array in no particular order, so when the image
+// drops a whole directory the parent could be reached before its children. The
+// first version removed it with `rm -rf`, which would delete an agent-modified
+// file inside it — silently, with no conflict logged and nothing to show it had
+// happened. Exactly the outcome the keep-the-agent's-work rule exists to
+// prevent, arriving through the back door.
+//
+// Removals now run deepest-first and directories go through rmdir, which
+// refuses to remove one that still holds anything.
+func TestRootfs_DroppedDirectoryDoesNotTakeAgentFilesWithIt(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("opt/tool/config", "image config\n", v1)
+	e.writeImage("opt/tool/readme", "image readme\n", v1)
+	e.prepare()
+
+	// The agent edits one file inside that directory, and adds one of its own.
+	e.writeAgent("opt/tool/config", "AGENT EDITED THIS\n")
+	e.writeAgent("opt/tool/mine", "agent created this\n")
+
+	// The image drops the whole directory.
+	e.removeImage("opt/tool/config")
+	e.removeImage("opt/tool/readme")
+	if err := os.Remove(filepath.Join(e.image, "opt", "tool")); err != nil {
+		t.Fatalf("removing the image directory: %v", err)
+	}
+	if err := os.Remove(filepath.Join(e.image, "opt")); err != nil {
+		t.Fatalf("removing the image parent directory: %v", err)
+	}
+	e.prepare()
+
+	if got, ok := e.rootContent("opt/tool/config"); !ok || got != "AGENT EDITED THIS\n" {
+		t.Errorf("opt/tool/config = %q (present=%v), want the agent's edit kept", got, ok)
+	}
+	if got, ok := e.rootContent("opt/tool/mine"); !ok || got != "agent created this\n" {
+		t.Errorf("opt/tool/mine = %q (present=%v), want the agent's own file kept", got, ok)
+	}
+	// The file the agent never touched is the image's to remove.
+	if _, ok := e.rootContent("opt/tool/readme"); ok {
+		t.Error("opt/tool/readme should have been removed: the image dropped it and the agent never touched it")
+	}
+}
+
+// The mirror case: a directory whose metadata changed in the image must not be
+// re-copied recursively over the agent's contents.
+func TestRootfs_ChangedDirectoryModeDoesNotWipeItsContents(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	mustMkdirAll(t, filepath.Join(e.image, "opt", "data"))
+	e.writeImage("opt/data/shipped", "image file\n", v1)
+	e.prepare()
+
+	e.writeAgent("opt/data/agent-file", "agent created this\n")
+
+	// The image changes the directory's mode — nothing else about it.
+	if err := os.Chmod(filepath.Join(e.image, "opt", "data"), 0o700); err != nil {
+		t.Fatalf("chmod on the image directory: %v", err)
+	}
+	e.prepare()
+
+	if _, ok := e.rootContent("opt/data/agent-file"); !ok {
+		t.Error("a directory mode change in the image wiped the agent's file inside it — " +
+			"cp -a --parents on a directory copies it recursively")
+	}
+}
