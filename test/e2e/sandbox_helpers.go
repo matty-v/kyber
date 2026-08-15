@@ -193,6 +193,17 @@ func podNode(t *testing.T, agent string) string {
 
 // restartAgentPod deletes the agent's pod and waits for its replacement to be
 // running again — the durability check that matters most.
+//
+// Kyber bounds the Failed → Starting restart loop at three attempts (kyber#75),
+// and a deliberate pod deletion spends one of them. That budget is shared with
+// every other restart the agent has had, so on a cluster where the agent has
+// already been recreated a few times this test would otherwise hang until
+// timeout and then fail with nothing useful — which is exactly what it did the
+// first time it ran twice in a session.
+//
+// So: if the agent lands in Failed with the retry limit reached, recover it the
+// way an operator would (POST .../start clears the count and buys a fresh
+// budget) and carry on. The recovery is logged, never silent.
 func restartAgentPod(t *testing.T, agent string, timeout time.Duration) {
 	t.Helper()
 	ns := sandboxNamespace()
@@ -207,7 +218,18 @@ func restartAgentPod(t *testing.T, agent string, timeout time.Duration) {
 		t.Fatalf("deleting %s: %v", pod, err)
 	}
 
+	recovered := false
 	err := WaitForCondition(ctx, timeout, fmt.Sprintf("%s recreated and running", pod), func() (bool, error) {
+		if agentCRPhase(agent) == "Failed" && !recovered {
+			t.Logf("agent %s hit Kyber's restart-retry limit; clearing it via the API "+
+				"(this test spends one restart from a budget of 3)", agent)
+			c := newAPIClient(t)
+			if _, _, err := c.PostRaw("/api/v1/agents/"+agent+"/start", map[string]any{}); err != nil {
+				return false, fmt.Errorf("clearing the restart limit for %s: %w", agent, err)
+			}
+			recovered = true
+			return false, nil
+		}
 		uid := podFieldNoFail(agent, "{.metadata.uid}")
 		if uid == "" || uid == oldUID {
 			return false, nil
@@ -217,8 +239,23 @@ func restartAgentPod(t *testing.T, agent string, timeout time.Duration) {
 		return phase == "Running" && ready == "true", nil
 	})
 	if err != nil {
-		t.Fatalf("waiting for %s to come back: %v", pod, err)
+		t.Fatalf("waiting for %s to come back: %v (agent phase: %s)", pod, err, agentCRPhase(agent))
 	}
+}
+
+// agentCRPhase reads the Agent CR's phase, which is where Kyber records a
+// retry-limit failure — the pod is simply absent at that point, so pod status
+// alone cannot tell you why nothing is coming back.
+func agentCRPhase(agent string) string {
+	ctx, cancel := context.WithTimeout(context.Background(), sandboxExecTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "kubectl", "get", "agents.kyber.io", agent,
+		"-n", sandboxNamespace(), "-o", "jsonpath={.status.phase}")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func podField(t *testing.T, agent, jsonpath string) string {
