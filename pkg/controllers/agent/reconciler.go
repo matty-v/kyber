@@ -915,8 +915,33 @@ func (r *AgentReconciler) classifyEvent(
 			return EventDesiredRunning, nil
 		}
 
+	// Failed is a phase an agent can sit in indefinitely, so — like NeedsAuth
+	// and MemoryExhausted below — it must not leave on the bare
+	// desiredPhase==Running. That value is permanently true for every agent an
+	// operator has ever started, so the unguarded edge fired on EVERY reconcile,
+	// and because {Failed, EventDesiredRunning} runs ActionResetRetryAndCreatePod
+	// (which zeroes restartCount on the way through) the retry cap below could
+	// never be reached. A crash-looping agent rebuilt its pod forever. Same bug
+	// as kyber#684, same shape of fix: require the operator's input to have
+	// actually CHANGED since the pod we last built.
+	//
+	// The claim here is metadata.generation vs status.observedGeneration —
+	// createPod stamps the latter, so "generation is ahead" means precisely
+	// "the operator edited the spec since that pod was built" and it is
+	// self-clearing on the very next createPod. That keeps the two real
+	// operator-override paths working unchanged: /set-resources on a Failed
+	// agent patches spec.resources (kyber#149), and any lifecycle verb that
+	// genuinely changes desiredPhase bumps the generation itself. A bare Start
+	// on an agent already carrying desiredPhase==Running does not bump anything,
+	// which is why setAgentDesiredPhase clears restartCount for that case — it
+	// buys a fresh retry budget, not a loop.
+	//
+	// Falling through to the retry cap is the safe direction: the agent still
+	// auto-restarts up to maxRestartRetries, then holds in Failed with a
+	// RetryLimitReached alert instead of hammering the node. The counter resets
+	// itself after 5 stable minutes in Running (step 4 of Reconcile).
 	case kyberv1.AgentPhaseFailed:
-		if desired == kyberv1.AgentPhaseRunning {
+		if desired == kyberv1.AgentPhaseRunning && specChangedSinceLastPod(agent) {
 			return EventDesiredRunning, nil
 		}
 		// Auto-restart: if retry count < max, trigger auto-restart.
@@ -2067,6 +2092,24 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			"agent", agent.Name, "generation", agent.Generation)
 	}
 	return nil
+}
+
+// specChangedSinceLastPod reports whether the operator has edited the Agent
+// spec since the reconciler last rolled it into a pod — the same
+// generation > observedGeneration signal the PWA renders as its "restart
+// required" badge (kyber#157), read here as a one-shot claim.
+//
+// It is one-shot because createPod stamps observedGeneration back up to
+// generation, so the next reconcile sees no change and holds. That is what
+// bounds the Failed → Starting edge in classifyEvent: a standing
+// desiredPhase==Running cannot re-fire it, only a genuinely new spec write can.
+//
+// The observedGeneration > 0 guard means "we have stamped at least once".
+// An agent that has never had a pod built has nothing to compare against, so
+// it holds and takes the retry-cap path instead — the conservative direction.
+func specChangedSinceLastPod(agent *kyberv1.Agent) bool {
+	return agent.Status.ObservedGeneration > 0 &&
+		agent.Generation > agent.Status.ObservedGeneration
 }
 
 // stampObservedGeneration patches agent.status.observedGeneration to the

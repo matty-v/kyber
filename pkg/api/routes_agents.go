@@ -1192,6 +1192,28 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		}
 	}
 
+	// Re-arm the retry budget on an explicit Start of a Failed agent — the
+	// same shape as the NeedsAuth/MemoryExhausted block above, for the same
+	// reason. The controller no longer leaves Failed on the standing
+	// desiredPhase==Running (it would never reach maxRestartRetries, so a
+	// crash-looping agent rebuilt its pod forever). A Start on an agent whose
+	// desiredPhase is ALREADY Running writes no spec change at all, so nothing
+	// downstream would notice it; clearing restartCount is what keeps the
+	// button working. It buys one fresh budget of maxRestartRetries attempts,
+	// not a loop: if the agent keeps crashing it lands back in Failed and holds
+	// there until a human acts again.
+	if phase == kyberv1.AgentPhaseRunning &&
+		agent.Status.Phase == kyberv1.AgentPhaseFailed &&
+		agent.Status.RestartCount > 0 {
+		statusPatch := client.MergeFrom(agent.DeepCopy())
+		agent.Status.RestartCount = 0
+		if err := s.K8sClient.Status().Patch(r.Context(), agent, statusPatch); err != nil {
+			slog.Error("failed to clear restart count", "name", name, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
+			return
+		}
+	}
+
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.DesiredPhase = phase
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
