@@ -401,3 +401,49 @@ func TestRootfs_UnrelatedDirectoryWritesDoNotLookLikeAnUpgrade(t *testing.T) {
 			"change, and treating it as one runs a full merge on every boot", mode)
 	}
 }
+
+// TestRootfs_UnreadableManifestAdoptsRatherThanMerging covers the format-change
+// path.
+//
+// A manifest written by an older version of this script cannot be compared
+// entry-for-entry with a new one. When the directory-mtime normalisation landed,
+// the first boot afterwards compared new-format directory entries against
+// old-format ones and logged a conflict for all 3980 directories in the image —
+// harmless in that instance, but the same shape as "deliver no base-image
+// updates ever, and say nothing".
+//
+// A manifest it cannot read must make the script adopt the root and re-record,
+// never merge against a format it does not understand.
+func TestRootfs_UnreadableManifestAdoptsRatherThanMerging(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	manifest := filepath.Join(e.persist, "kyber", "rootfs-image-manifest.tsv")
+	body, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("reading the manifest: %v", err)
+	}
+	// Strip the version header, leaving a manifest in the old unversioned shape.
+	lines := strings.SplitN(string(body), "\n", 2)
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "#kyber-rootfs-manifest") {
+		t.Fatalf("manifest has no version header; first line was %q", lines[0])
+	}
+	if err := os.WriteFile(manifest, []byte(lines[1]), 0o644); err != nil {
+		t.Fatalf("rewriting the manifest: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs-adopted" {
+		t.Errorf("mode = %q, want rootfs-adopted for an unreadable manifest", mode)
+	}
+	if c := e.conflicts(); strings.TrimSpace(c) != "" {
+		t.Errorf("adopting should log no conflicts, got:\n%s", c)
+	}
+
+	// And the boot after that is a clean no-op, because the re-recorded
+	// manifest is now readable.
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("mode after adopting = %q, want rootfs", mode)
+	}
+}

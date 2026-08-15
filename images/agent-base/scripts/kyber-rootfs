@@ -91,6 +91,13 @@ die() { echo "[kyber-rootfs] FATAL: $*" >&2; exit 1; }
 manifest_printf='%y\t%s\t%T@\t%m\t%p\n'
 manifest_dir_printf='%y\t-\t-\t%m\t%p\n'
 
+# Bump when the manifest format changes. A recorded manifest in an older format
+# cannot be compared entry-for-entry with a new one — the first attempt at this
+# logged a conflict for all 3980 directories in the image on the boot after the
+# format changed. A version mismatch means "adopt this root as-is and record the
+# current image", never "merge against something you cannot read".
+MANIFEST_VERSION=2
+
 write_manifest() {
     local root="$1" out="$2"
     local -a args=(.)
@@ -102,8 +109,25 @@ write_manifest() {
     (
         cd "$root" || exit 1
         find "${args[@]}" 2>/dev/null
-    ) | LC_ALL=C sort -t$'\t' -k5 > "$out.tmp"
+    ) | LC_ALL=C sort -t$'\t' -k5 > "$out.body"
+    {
+        echo "#kyber-rootfs-manifest v$MANIFEST_VERSION"
+        cat "$out.body"
+    } > "$out.tmp"
+    rm -f "$out.body"
     mv "$out.tmp" "$out"
+}
+
+# Reads the version header off a recorded manifest. A manifest with no header
+# predates versioning and is treated as unreadable.
+manifest_version() {
+    local f="$1" line
+    [ -f "$f" ] || { echo 0; return; }
+    line=$(head -1 "$f")
+    case "$line" in
+        "#kyber-rootfs-manifest v"*) echo "${line##*v}" ;;
+        *) echo 0 ;;
+    esac
 }
 
 # ---------------------------------------------------------------------------
@@ -212,9 +236,11 @@ upgrade_rootfs() {
 
     declare -A old_entry=() new_entry=()
     while IFS=$'\t' read -r type size mtime mode path; do
+        [ -n "$path" ] || continue          # skips the version header
         old_entry["$path"]="$type	$size	$mtime	$mode"
     done < "$old_manifest"
     while IFS=$'\t' read -r type size mtime mode path; do
+        [ -n "$path" ] || continue
         new_entry["$path"]="$type	$size	$mtime	$mode"
     done < "$new_manifest"
 
@@ -290,6 +316,15 @@ cmd_prepare() {
             seed_rootfs "$root"
             mode="rootfs-seeded"
         fi
+    elif [ "$(manifest_version "$MANIFEST")" != "$MANIFEST_VERSION" ]; then
+        # Either no manifest at all (a root that predates tracking) or one
+        # written in a format this version cannot compare against. Adopt the
+        # root as-is and record the running image, so the NEXT upgrade has a
+        # baseline it can actually read. Merging here would mark every entry as
+        # agent-modified and deliver no base-image updates at all.
+        log "no comparable manifest — adopting the durable root, no merge this boot"
+        ensure_mount_targets "$root"
+        mode="rootfs-adopted"
     elif [ ! -f "$MANIFEST" ]; then
         # A durable root that predates manifest tracking. Adopt it as-is and
         # record the running image, so the NEXT upgrade has a baseline. We

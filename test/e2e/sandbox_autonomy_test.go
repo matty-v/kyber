@@ -58,16 +58,26 @@ func TestSandboxAutonomy_PackageManagement(t *testing.T) {
 	})
 
 	t.Run("apt_remove", func(t *testing.T) {
+		// Asserted through dpkg, not `command -v`. figlet registers itself with
+		// update-alternatives, which leaves /usr/bin/figlet as a dangling
+		// symlink after removal — so a PATH lookup still "finds" a package that
+		// is gone, and the first version of this test failed a working uninstall.
 		out := mustExecInSandbox(t, agent, fmt.Sprintf(`
 			export DEBIAN_FRONTEND=noninteractive
-			if apt-get remove -y %s >/dev/null 2>&1 && ! command -v %s >/dev/null 2>&1; then
-			  echo REMOVED; else echo FAILED; fi`, canaryPackage, canaryBinary))
+			apt-get remove -y %s >/dev/null 2>&1
+			if dpkg -s %s 2>/dev/null | grep -q "^Status: install ok installed"; then
+			  echo FAILED; else echo REMOVED; fi`, canaryPackage, canaryPackage))
 		if !strings.Contains(out, "REMOVED") {
 			t.Error("apt remove did not take effect — AC1 requires uninstall, not just install")
 		}
 		// Put it back; the persistence test below needs something to persist.
-		mustExecInSandbox(t, agent, fmt.Sprintf(
-			`DEBIAN_FRONTEND=noninteractive apt-get install -y %s >/dev/null 2>&1; echo done`, canaryPackage))
+		// The index refresh is required, not belt-and-braces: this image clears
+		// /var/lib/apt/lists after an install, so a second apt-get install with
+		// no update in between fails with "Unable to locate package".
+		mustExecInSandbox(t, agent, fmt.Sprintf(`
+			export DEBIAN_FRONTEND=noninteractive
+			apt-get update -qq >/dev/null 2>&1
+			apt-get install -y %s >/dev/null 2>&1; echo done`, canaryPackage))
 	})
 }
 
@@ -78,7 +88,10 @@ func TestSandboxAutonomy_Toolchains(t *testing.T) {
 	t.Run("compile_and_run_native_code", func(t *testing.T) {
 		out := mustExecInSandbox(t, agent, `
 			export DEBIAN_FRONTEND=noninteractive
-			command -v cc >/dev/null 2>&1 || apt-get install -y build-essential >/dev/null 2>&1
+			if ! command -v cc >/dev/null 2>&1; then
+			  apt-get update -qq >/dev/null 2>&1
+			  apt-get install -y build-essential >/dev/null 2>&1
+			fi
 			d=$(mktemp -d)
 			printf '#include <stdio.h>\nint main(void){puts("COMPILED");return 0;}\n' > "$d/t.c"
 			cc -o "$d/t" "$d/t.c" 2>/dev/null && "$d/t" || echo FAILED`)
@@ -88,10 +101,15 @@ func TestSandboxAutonomy_Toolchains(t *testing.T) {
 	})
 
 	t.Run("npm_global_install", func(t *testing.T) {
+		// Verified with `npm ls -g`, not by requiring the module: a global
+		// install is not on NODE_PATH for an arbitrary script, so `require`
+		// fails for a package that installed perfectly well. That is a fact
+		// about node's resolution, not about the sandbox.
 		out := mustExecInSandbox(t, agent, `
 			if ! command -v npm >/dev/null 2>&1; then echo SKIP; exit 0; fi
 			npm install -g --silent left-pad >/dev/null 2>&1 \
-			  && node -e 'require("left-pad"); console.log("NPM_OK")' 2>/dev/null || echo FAILED`)
+			  && npm ls -g --depth=0 2>/dev/null | grep -q left-pad \
+			  && echo NPM_OK || echo FAILED`)
 		if strings.Contains(out, "SKIP") {
 			t.Skip("no npm in this image")
 		}
@@ -102,7 +120,7 @@ func TestSandboxAutonomy_Toolchains(t *testing.T) {
 
 	t.Run("pip_install", func(t *testing.T) {
 		out := mustExecInSandbox(t, agent, `
-			if ! command -v pip3 >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then echo SKIP; exit 0; fi
+			if ! command -v pip3 >/dev/null 2>&1; then echo SKIP; exit 0; fi
 			pip3 install --quiet --break-system-packages six >/dev/null 2>&1 \
 			  && python3 -c 'import six; print("PIP_OK")' 2>/dev/null || echo FAILED`)
 		if strings.Contains(out, "SKIP") {
@@ -167,7 +185,10 @@ func TestSandboxAutonomy_SurvivesPodRecreation(t *testing.T) {
 	// file, and a binary on PATH.
 	setup := mustExecInSandbox(t, agent, fmt.Sprintf(`
 		export DEBIAN_FRONTEND=noninteractive
-		command -v %s >/dev/null 2>&1 || apt-get install -y %s >/dev/null 2>&1
+		if ! command -v %s >/dev/null 2>&1; then
+		  apt-get update -qq >/dev/null 2>&1
+		  apt-get install -y %s >/dev/null 2>&1
+		fi
 		echo %s > /etc/kyber-persistence-probe
 		printf '#!/bin/sh\necho %s\n' > /usr/local/bin/kyber-persist-probe
 		chmod +x /usr/local/bin/kyber-persist-probe
