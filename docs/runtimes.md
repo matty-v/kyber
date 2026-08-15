@@ -30,10 +30,11 @@ agent to switch modes.
 Codex V1 models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Sol is
 the default. Kyber runs Codex with non-interactive approvals and its unrestricted
 sandbox because the Kubernetes pod is the agent's host-isolation boundary.
-Agent containers are de-privileged by default, retain only the mount capability
-needed for whole-disk persistence, and do not receive Kubernetes ServiceAccount
-tokens. Linux user namespaces are available after target validation. Agent pods
-also default-deny pod-network ingress when NetworkPolicy is enabled. See
+Agent containers are de-privileged by default, run in a Linux user namespace so
+in-pod root maps to an unprivileged host uid, retain only the mount capability
+needed to assemble their chroot, and do not receive Kubernetes ServiceAccount
+tokens. Agent pods also default-deny pod-network ingress and are denied the
+infrastructure ranges outbound when NetworkPolicy is enabled. See
 [`design/agent-pod-isolation.md`](design/agent-pod-isolation.md). Codex's
 startup update check is disabled because Kyber centrally manages the pinned
 harness: use **Set harness version** in the agent action menu to upgrade or

@@ -20,6 +20,102 @@ spec:
   policyTypes:
     - Ingress
   ingress: []
+{{- if .Values.agent.security.egress.enabled }}
+---
+# Agent egress (kyber#78, AC3/AC4/AC6).
+#
+# #77 denied ingress only, which left three criteria unmet: from an ordinary
+# pod on this cluster the kubelet (:10250) and the API server (:443) were both
+# reachable, and an agent could still scan the pod CIDR to find its neighbours.
+# Denying ingress stops connections INTO an agent; it does nothing about what
+# the agent reaches out to.
+#
+# The shape is allow-the-internet, deny-the-infrastructure: an agent keeps
+# unrestricted outbound access for its actual work (package registries, git
+# forges, model APIs) and loses the private ranges where the node, the control
+# interfaces, the cloud metadata service and its neighbouring agents live.
+#
+# The DNS and control-plane rules are separate allow rules, so they still apply
+# even though their addresses fall inside the blocked private ranges — a
+# NetworkPolicy is the union of its rules, not a sequence of overrides.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kyber.fullname" . }}-agent-egress
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: agent-isolation
+spec:
+  podSelector:
+    matchExpressions:
+      - key: kyber.io/agent
+        operator: Exists
+  policyTypes:
+    - Egress
+  egress:
+    # Cluster DNS. Without this an agent cannot resolve anything at all.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # The control plane. The runtime, the status sidecar and the transcript
+    # tailer all call it; per-agent authz on :8082 is the load-bearing control.
+    - to:
+        - podSelector:
+            matchLabels:
+              {{- include "kyber.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: control-plane
+      ports:
+        - protocol: TCP
+          port: {{ .Values.api.service.port }}
+        - protocol: TCP
+          port: {{ .Values.api.service.internalPort }}
+    # Everything else, minus the infrastructure ranges.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              {{- range .Values.agent.security.egress.blockedCIDRs }}
+              - {{ . | quote }}
+              {{- end }}
+{{- range .Values.agent.security.egress.platformTrustAgents }}
+---
+# Platform-trust exemption for agent {{ . | quote }}.
+#
+# kyber#78's non-goal is explicit: intentional host administration must not be
+# folded into the normal agent profile. This is that separate tier, and it is
+# deliberately noisy — an agent only reaches the infrastructure ranges if an
+# operator named it here, in values, where it shows up in every diff and
+# render. Rescue agents that hold cluster credentials belong here; nothing
+# else does.
+#
+# NetworkPolicies union, so this restores unrestricted egress for this one
+# agent without weakening the default policy above for any other.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kyber.fullname" $ }}-agent-egress-platform-{{ . }}
+  namespace: {{ include "kyber.namespace" $ }}
+  labels:
+    {{- include "kyber.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: agent-isolation
+    kyber.io/trust-tier: platform
+spec:
+  podSelector:
+    matchLabels:
+      kyber.io/agent: {{ . | quote }}
+  policyTypes:
+    - Egress
+  egress:
+    - {}
+{{- end }}
+{{- end }}
 ---
 # Internal-API NetworkPolicy (kyber#566, C1 — defense-in-depth).
 #

@@ -32,6 +32,10 @@
 
 set -euo pipefail
 
+# The base image's own root. Overridable so the merge logic can be exercised
+# against synthetic trees in tests — the merge is the riskiest code here and
+# "it looked right" is not evidence.
+IMAGE_ROOT="${IMAGE_ROOT:-/}"
 PERSIST_DIR="${PERSIST_DIR:-/persist}"
 STATE_DIR="$PERSIST_DIR/kyber"
 MANIFEST="$STATE_DIR/rootfs-image-manifest.tsv"
@@ -94,7 +98,7 @@ seed_rootfs() {
     # numeric-owner keeps uid/gid stable regardless of how the target volume
     # reports ownership; --xattrs carries file capabilities on binaries such
     # as ping. Failure here is fatal: a half-seeded root is worse than none.
-    tar -C / "${tar_excludes[@]}" --numeric-owner --xattrs -cf - . \
+    tar -C "$IMAGE_ROOT" "${tar_excludes[@]}" --numeric-owner --xattrs -cf - . \
         | tar -C "$root" --numeric-owner --xattrs -xf - \
         || die "seeding the durable root failed"
     ensure_mount_targets "$root"
@@ -198,7 +202,7 @@ upgrade_rootfs() {
 
     # cp --parents resolves its source relative to the current directory, and
     # every manifest path is relative to the image root.
-    cd /
+    cd "$IMAGE_ROOT"
 
     for path in "${!new_entry[@]}"; do
         new="${new_entry[$path]}"
@@ -243,7 +247,7 @@ cmd_prepare() {
     local mode new_manifest="$STATE_DIR/rootfs-image-manifest.new"
 
     mkdir -p "$STATE_DIR"
-    write_manifest / "$new_manifest"
+    write_manifest "$IMAGE_ROOT" "$new_manifest"
 
     if [ ! -d "$root/usr" ]; then
         if [ -d "$LEGACY_UPPER" ] && [ -n "$(ls -A "$LEGACY_UPPER" 2>/dev/null)" ]; then

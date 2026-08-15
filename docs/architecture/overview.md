@@ -41,12 +41,13 @@ reader; here we add the internal module view in the sections below.)
 |---|---|---|
 | **Control Plane** | modular-monolith Go binary (`cmd/control-plane`) | REST API, agent + machine lifecycle, telemetry, background workers, inbound dispatch |
 | **Node Agent** | DaemonSet, one pod per k8s node (`cmd/node-agent`) | machine-level concerns only: node metrics → OpenTelemetry, machine actions (reboot/stop) on control-plane instruction |
-| **Agent Runtime** | one pod per `Agent` CRD (`images/`) | the running agent: a three-tier whole-disk-persistence dispatcher entrypoint wraps the runtime (Claude Code in V1) so the agent survives pod recreation, spot preemption, and restarts with full filesystem continuity |
+| **Agent Runtime** | one pod per `Agent` CRD (`images/`) | the running agent: an entrypoint prepares a durable root filesystem on the agent's own volume and chroots the runtime (Claude Code in V1) into it, so the agent survives pod recreation and restarts with full filesystem continuity |
 
 The Control Plane is the brain and the only component this overview decomposes
 further (§ 4). The Node Agent is intentionally thin. The Agent Runtime's
-persistence dispatcher (kernel overlayfs → fuse-overlayfs → bind-mount HOME) and
-pod requirements (`CAP_SYS_ADMIN`, `/dev/fuse`) are documented in
+durable root (`/persist/agentroot`, seeded from the base image and merged
+forward on upgrade) and pod requirements (user namespaces, `CAP_SYS_ADMIN`) are
+documented in
 [`docs/installation.md`](../installation.md) and, for what they mean for the
 cluster you run them on, the [deployment threat
 model](../../.github/SECURITY.md#deployment-threat-model).

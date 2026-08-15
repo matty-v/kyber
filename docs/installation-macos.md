@@ -45,8 +45,8 @@ If the output lists only `linux/amd64`, the `x86_64` VM below is required.
 
 Colima runs a Linux VM with k3s inside it. This is the shape closest to the
 maintainer's own Linux installs: agent pods sit directly on the VM's kernel
-rather than nested inside Docker, which is where `/dev/fuse` and bind mounts
-behave best. If you would rather use Docker Desktop or OrbStack, see
+rather than nested inside Docker, which is where user namespaces and bind
+mounts behave best. If you would rather use Docker Desktop or OrbStack, see
 [Alternative: k3d on Docker Desktop or OrbStack](#alternative-k3d-on-docker-desktop-or-orbstack).
 
 ## 1. Start the cluster VM
@@ -83,24 +83,26 @@ running natively and Kyber's images will not start. Delete it
 
 ## 2. Check the node can host agent pods
 
-Agent pods keep a whole persistent filesystem, which needs `/dev/fuse` on the
-node and a namespace that admits `CAP_SYS_ADMIN`. k3s admits that capability by
-default, so the one thing worth checking is the device:
+Agent pods need two things from the node: a namespace that admits
+`CAP_SYS_ADMIN` (k3s does by default), and **user-namespace support**, which
+means Kubernetes 1.33 or newer with containerd 2.0 or newer.
 
 ```bash
-colima ssh --profile kyber -- ls -l /dev/fuse
+kubectl get node -o jsonpath='{.items[0].status.nodeInfo.kubeletVersion} {.items[0].status.nodeInfo.containerRuntimeVersion}{"\n"}'
 ```
 
-Expected: a character device, `crw-rw-rw- ... /dev/fuse`.
+Expected: `v1.33.x` or newer, and `containerd://2.x`. Below that, Kubernetes
+accepts the user-namespace setting and silently ignores it, so Kyber's agents
+will refuse to start rather than run without the isolation they claim to have.
+If your Colima k3s is older, recreate the VM with a newer Kubernetes.
 
-If it is missing, Kyber still runs. The agent entrypoint tries kernel overlayfs,
-then fuse-overlayfs, then falls back to bind-mounting the agent's home
-directory. On that last tier, system-level installs such as `apt install` do not
-survive a restart, but the agent's home directory, credentials, memory and
-repos do. You can see which tier an agent landed on in its boot log:
+No host device is needed. Earlier versions required `/dev/fuse` for overlay
+persistence; agents now keep their root filesystem on their own volume instead.
+
+You can see how an agent's root was prepared in its boot log:
 
 ```bash
-kubectl -n kyber-system logs <agent-pod> | grep -i overlay
+kubectl -n kyber-system logs <agent-pod> | grep -i 'durable root\|user namespace'
 ```
 
 ## 3. Install Kyber
@@ -136,8 +138,10 @@ export DOCKER_DEFAULT_PLATFORM=linux/amd64
 k3d cluster create kyber --no-lb --wait
 ```
 
-Then continue from [§ 2](#2-check-the-node-can-host-agent-pods), substituting
-`docker exec k3d-kyber-server-0 ls -l /dev/fuse` for the `colima ssh` check.
+Then continue from [§ 2](#2-check-the-node-can-host-agent-pods). The version
+check there runs against the cluster, so it is the same command either way —
+but note that agent pods nested inside Docker are the least reliable place for
+user namespaces, which is why Colima is the recommended path.
 
 ## What is different on a Mac
 
@@ -149,10 +153,11 @@ Then continue from [§ 2](#2-check-the-node-can-host-agent-pods), substituting
 - **Everything is on one disk.** Agent volumes come from k3s's `local-path`
   provisioner, so the VM disk you sized above is the ceiling for all agents
   combined.
-- **The VM is the blast radius.** Agent pods are not privileged by default, but
-  retain `CAP_SYS_ADMIN` for whole-disk persistence. That capability is
-  contained inside the Colima VM rather than on macOS itself, which is one of
-  the nicer properties of this shape. Still read the
+- **The VM is the blast radius.** Agent pods are not privileged, and their
+  `CAP_SYS_ADMIN` is namespaced by the user namespace so it carries no authority
+  over the node. Whatever is left is contained inside the Colima VM rather than
+  on macOS itself, which is one of the nicer properties of this shape. Still
+  read the
   [threat model](../.github/SECURITY.md#deployment-threat-model).
 
 ## Teardown

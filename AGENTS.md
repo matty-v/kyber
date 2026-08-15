@@ -139,16 +139,23 @@ always), `kyber-status-sidecar`, `transcript-tailer`, `transcript-pruner`, and
 a session-brief boot container. The sidecar/tailer/pruner are appended AFTER
 `BuildPodSpec` (`pod_builder.go` → `status_sidecar.go`, `transcript_tailer.go`,
 `transcript_pruner.go`) so runtime stays index 0.
-Persistence: a three-tier dispatcher in `images/agent-base/entrypoint.sh` —
-(1) kernel overlayfs, (2) fuse-overlayfs (prod default on k3s), (3) bind-mount
-$HOME fallback. The runtime container is de-privileged by default and retains
-`CAP_SYS_ADMIN` + `/dev/fuse` for mounts and disables ServiceAccount token
-automount; cluster-level break-glass privilege, seccomp fallback, and opt-in
-user namespaces are under `agent.security.*`. Agent pods default-deny ingress
-via NetworkPolicy.
-See `docs/design/agent-pod-isolation.md`. This is why agents survive
-preemption/restarts with full filesystem continuity. `kubectl exec`
-does NOT land inside the agent's chroot — use nsenter.
+Persistence: the agent's root filesystem is a real directory on its PVC
+(`/persist/agentroot`), seeded from the base image by
+`images/agent-base/scripts/kyber-rootfs` and entered with chroot. There is no
+overlayfs and no `/dev/fuse` — neither works inside a user namespace, and the
+pod runs in one by default (`hostUsers: false`), which is what makes its
+`CAP_SYS_ADMIN` namespaced rather than host-valid. A new base image reaches an
+existing durable root through a three-way merge that never overwrites a file
+the agent has touched. The pod is de-privileged, gets no host devices or
+hostPath volumes, disables ServiceAccount token automount, and default-denies
+ingress plus infrastructure-range egress via NetworkPolicy. Break-glass
+privilege, the seccomp fallback, the persistence-mode rollback, and the egress
+settings are under `agent.security.*`.
+See `docs/design/agent-pod-isolation.md` and
+`docs/adr/0003-agent-sandbox-isolation.md`. This is why agents survive
+restarts with full filesystem continuity — though on `local-path` volumes the
+root does NOT survive node replacement. `kubectl exec` does NOT land inside the
+agent's chroot — use nsenter.
 
 Identity repos are dual-runtime. The template's canonical contract is
 `AGENTS.md`; `CLAUDE.md` is only a Claude Code compatibility entrypoint. Shared

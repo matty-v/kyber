@@ -434,10 +434,19 @@ spec:
             {{- end }}
             {{- with .Values.agent }}
             {{- with .security }}
+            # No `default` on the booleans. Helm's `default` treats false as
+            # empty, so `.requireUserNamespace | default true` would render
+            # "true" for an operator who explicitly set it to false — silently
+            # ignoring the one setting whose whole purpose is to be deliberate.
+            # These keys always exist in values.yaml, so reference them directly.
             - name: KYBER_AGENT_PRIVILEGED
-              value: {{ .privileged | default false | quote }}
+              value: {{ .privileged | quote }}
             - name: KYBER_AGENT_USER_NAMESPACES
-              value: {{ .userNamespaces | default false | quote }}
+              value: {{ .userNamespaces | quote }}
+            - name: KYBER_AGENT_REQUIRE_USER_NAMESPACE
+              value: {{ .requireUserNamespace | quote }}
+            - name: KYBER_AGENT_PERSISTENCE_MODE
+              value: {{ .persistenceMode | quote }}
             - name: KYBER_AGENT_SECCOMP_PROFILE
               value: {{ .seccompProfile | default "RuntimeDefault" | quote }}
             {{- end }}

@@ -812,30 +812,40 @@ restricted-policy cluster allows. Both are set automatically by the Agent
 Controller in `pkg/controllers/agent/pod_builder.go` — you don't need to
 configure them manually. This section explains why they exist.
 
+**User namespaces (required)**
+
+Agent pods run with `hostUsers: false`, which maps in-pod uid 0 to an
+unprivileged host uid. This needs **Kubernetes >= 1.33 and containerd >= 2.0**
+on every node that schedules agents.
+
+Below those versions Kubernetes accepts the setting and silently ignores it —
+the pod runs unisolated and looks healthy. Kyber therefore checks the agent's
+effective uid map at boot and refuses to start rather than run an agent that
+believes it is isolated and is not. If your cluster cannot meet the version
+requirement, set `agent.security.requireUserNamespace=false` to accept that
+deliberately; nothing falls back to it on its own.
+
 **Mount capability (`CAP_SYS_ADMIN`)**
 
-Agent pods are not privileged by default. The runtime container receives only
-the additional `SYS_ADMIN` capability needed by overlayfs, fuse-overlayfs, and
-the bind-mount-HOME fallback, together with a `RuntimeDefault` seccomp profile.
-The explicit `/dev/fuse` mount below supplies the only host device it needs.
+Agent pods are not privileged. The runtime container receives only the
+additional `SYS_ADMIN` capability needed for the bind, `proc` and `tmpfs`
+mounts that assemble its chroot, together with a `RuntimeDefault` seccomp
+profile. Inside the user namespace that capability is namespaced and carries no
+authority over the node.
 
 `SYS_ADMIN` is outside the Kubernetes `baseline` and `restricted` Pod Security
-Standards, so agent pods still need a namespace that admits this capability.
-Optional Linux user namespaces remap that capability away from the host; see
+Standards, so agent pods still need a namespace that admits this capability. See
 [`design/agent-pod-isolation.md`](design/agent-pod-isolation.md) for cluster
-requirements and rollout guidance.
+requirements and how to verify the boundary without fooling yourself.
 
-**`/dev/fuse` device mount**
+**No host devices**
 
-The controller mounts the host's `/dev/fuse` character device into every agent
-pod. This is the standard pattern for FUSE-using containers and requires the host
-kernel to have the `fuse` module loaded. On GCE VMs running Ubuntu 24.04, `fuse`
-is loaded by default.
-
-If you're deploying on a cloud provider that doesn't expose `/dev/fuse` to
-containers (uncommon, but possible on some managed Kubernetes offerings),
-fuse-overlayfs will fall back to bind-mount-HOME automatically — you lose
-whole-disk persistence but the pods still start and run.
+Agent pods receive no host devices and no hostPath volumes. Earlier versions
+mounted `/dev/fuse` for overlay persistence; that is gone. The agent's root
+filesystem is a directory on its own PersistentVolume, which needs nothing from
+the host — and a hostPath device could not be delivered to a user-namespaced pod
+in any case, since the kubelet idmaps hostPath volumes and devtmpfs rejects
+idmapped mounts.
 
 ## Running your own images
 

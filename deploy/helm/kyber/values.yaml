@@ -891,14 +891,58 @@ runtime:
 agent:
   security:
     # De-privileged is the safe default. Restore full privileged mode only as
-    # a temporary rollback if a target cannot mount the persistence overlay.
+    # a temporary rollback if a target cannot run the agent sandbox at all.
     privileged: false
-    # Requires Kubernetes/runtime support and idmapped mounts for every volume.
-    # Validate existing agent PVCs on a canary before enabling per cluster.
-    userNamespaces: false
+    # User namespaces are the boundary that makes in-pod root and SYS_ADMIN
+    # worthless against the node, so they are ON by default (kyber#78).
+    #
+    # REQUIRES Kubernetes >= 1.33 and containerd >= 2.0 on every node that
+    # schedules agents. Below that, Kubernetes ACCEPTS pod.spec.hostUsers and
+    # silently ignores it — the pod runs unisolated and reports nothing wrong.
+    # That is why the agent also checks its own uid map at boot; see
+    # requireUserNamespace and docs/adr/0003-agent-sandbox-isolation.md.
+    userNamespaces: true
+    # Refuse to start an agent that finds itself outside a user namespace,
+    # rather than running it unisolated. Set false only to deliberately accept
+    # an unisolated agent on a cluster that cannot support one.
+    requireUserNamespace: true
+    # How the agent's root filesystem is made durable.
+    #   rootfs  — a real directory on the agent's PVC, seeded from the base
+    #             image and entered with chroot (ADR 0003). Needs no host-valid
+    #             capability and no host device.
+    #   overlay — the pre-#78 in-pod overlayfs mount. Rollback only: it cannot
+    #             run inside a user namespace and needs host-valid SYS_ADMIN.
+    persistenceMode: rootfs
     # RuntimeDefault admits mount when SYS_ADMIN is present in containerd's
     # capability-aware profile. Unconfined is a compatibility fallback.
     seccompProfile: RuntimeDefault
+    egress:
+      # Deny agents the infrastructure ranges while leaving the public
+      # internet open (kyber#78 AC3/AC4/AC6). #77 denied ingress only, which
+      # left the kubelet, the API server, the cloud metadata service and
+      # neighbouring agents all reachable outbound.
+      #
+      # Requires a CNI that enforces NetworkPolicy — verify empirically per
+      # target, because an unenforcing CNI makes every isolation test pass.
+      enabled: true
+      # Private ranges withheld from agents. Cluster DNS and the control plane
+      # are allowed back by their own rules, so they stay reachable.
+      #
+      # 169.254.0.0/16 is the cloud metadata service — the single most valuable
+      # thing for an escaped agent to reach. 100.64.0.0/10 covers Tailscale;
+      # drop it only if agents are meant to reach the tailnet.
+      blockedCIDRs:
+        - "10.0.0.0/8"
+        - "172.16.0.0/12"
+        - "192.168.0.0/16"
+        - "169.254.0.0/16"
+        - "100.64.0.0/10"
+      # Agents exempted from the egress policy, by name. This is the separate,
+      # conspicuous trust tier kyber#78 asks for — rescue agents that genuinely
+      # hold cluster credentials. Naming an agent here gives it unrestricted
+      # outbound access, including to the node and the Kubernetes API. Nothing
+      # is exempt by default.
+      platformTrustAgents: []
 
 # Runtime detection (kyber#375 / PR-A of #374). A control-plane goroutine
 # polls the npm registry + the Anthropic Models API on a cadence and writes
