@@ -322,3 +322,51 @@ func TestRootfs_MigratesLegacyOverlayUpperLayer(t *testing.T) {
 		t.Error("migration destroyed the legacy overlay upper layer — rollback is no longer possible")
 	}
 }
+
+// TestRootfs_SeedsWhenEtcMtabIsASymlink is a regression test for the bug that
+// took down the first dev-env boot of this design.
+//
+// The base image ships /etc/mtab as a symlink to /proc/self/mounts. The seed
+// step copied the symlink faithfully, and the follow-up that ensures bind
+// targets exist then tested it with `-e`, which follows the link — into a
+// /proc that is empty at that point. The test failed, the code tried to create
+// the file, the redirect followed the symlink, and the whole boot died.
+//
+// Nothing was lost, because the fail-closed guard turned it into a refusal to
+// start rather than an agent silently running on an ephemeral root. But a
+// dangling symlink in the image is ordinary, and it must seed cleanly.
+func TestRootfs_SeedsWhenEtcMtabIsASymlink(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+
+	// Exactly the shape the real image has — verified against
+	// kyber-claude-code: `/etc/mtab -> ../proc/self/mounts`.
+	//
+	// RELATIVE is the whole point. An absolute /proc/self/mounts resolves to
+	// the host's real procfs during the test and the bug does not reproduce;
+	// the relative form resolves inside the seeded root, where /proc is an
+	// empty directory, and the redirect fails with ENOENT. The first version
+	// of this test used the absolute form and passed against the broken code.
+	if err := os.Symlink("../proc/self/mounts", filepath.Join(e.image, "etc", "mtab")); err != nil {
+		t.Fatalf("creating the mtab symlink: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs-seeded" {
+		t.Fatalf("seed mode = %q, want rootfs-seeded", mode)
+	}
+
+	// The symlink must survive as a symlink, not be replaced by an empty file.
+	fi, err := os.Lstat(filepath.Join(e.root, "etc", "mtab"))
+	if err != nil {
+		t.Fatalf("etc/mtab missing from the seeded root: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("etc/mtab was replaced by a regular file; the image's symlink should be preserved")
+	}
+
+	// And a second boot must still be a no-op rather than tripping over it.
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("second boot mode = %q, want rootfs", mode)
+	}
+}

@@ -50,11 +50,23 @@ EXCLUDE_DIRS=(
     ./secrets ./user-secrets ./kyber/jobs-src
 )
 
-# Seeded normally, but never allowed to drive an upgrade: kubelet rewrites
-# these on every pod, so they differ from the recorded image on every boot and
-# would otherwise make every boot look like a base-image change.
+# Seeded normally, but never allowed to drive an upgrade: these are rewritten
+# on every pod, so they differ from the recorded image on every boot and would
+# otherwise make every boot look like a base-image change.
 MANIFEST_EXCLUDE_FILES=(
     ./etc/resolv.conf ./etc/hosts ./etc/hostname ./etc/mtab
+)
+
+# The subset of those the entrypoint bind-mounts over, which therefore have to
+# exist as regular files for the mount to have somewhere to land.
+#
+# NOT the same list as above, and deliberately so: /etc/mtab is volatile but is
+# a SYMLINK to /proc/self/mounts in the base image. Creating it unconditionally
+# followed that symlink into a /proc that is not populated yet and failed the
+# whole boot — which the fail-closed guard then correctly turned into a refusal
+# to start rather than an agent quietly running on an ephemeral root.
+BIND_TARGET_FILES=(
+    ./etc/resolv.conf ./etc/hosts ./etc/hostname
 )
 
 log() { echo "[kyber-rootfs] $*" >&2; }
@@ -111,10 +123,13 @@ ensure_mount_targets() {
         mkdir -p "$root/${e#./}"
     done
     chmod 1777 "$root/tmp" 2>/dev/null || true
-    # Bind targets for the kubelet-injected files. Must exist as regular
-    # files or the entrypoint's bind mounts have nowhere to land.
-    for e in "${MANIFEST_EXCLUDE_FILES[@]}"; do
-        [ -e "$root/${e#./}" ] || : > "$root/${e#./}"
+    # Bind targets for the kubelet-injected files. Must exist or the
+    # entrypoint's bind mounts have nowhere to land. The -L test matters: a
+    # dangling symlink is "present" for our purposes, and following it would
+    # write somewhere we did not intend.
+    for e in "${BIND_TARGET_FILES[@]}"; do
+        local target="$root/${e#./}"
+        [ -e "$target" ] || [ -L "$target" ] || : > "$target"
     done
 }
 
