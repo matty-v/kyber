@@ -62,7 +62,8 @@ worse.
 | `agent.security.privileged` | `KYBER_AGENT_PRIVILEGED` | `false` | Break-glass restoration of the legacy profile. |
 | `agent.security.seccompProfile` | `KYBER_AGENT_SECCOMP_PROFILE` | `RuntimeDefault` | `Unconfined` only as a mount-compatibility fallback. |
 | `agent.security.egress.enabled` | — | `true` | Deny agents the infrastructure ranges. |
-| `agent.security.egress.blockedCIDRs` | — | private + link-local + CGNAT | Ranges withheld. Cluster DNS and the control plane are allowed back by their own rules. |
+| `agent.security.egress.blockedCIDRs` | — | private + link-local + CGNAT | IPv4 ranges withheld. Cluster DNS and the control plane are allowed back by their own rules. |
+| `agent.security.egress.blockedCIDRsV6` | — | ULA + link-local + loopback | The IPv6 half. Emptying it removes the v6 rule entirely, which denies ALL v6 egress. |
 | `agent.security.egress.platformTrustAgents` | — | `[]` | Named agents exempted from the egress policy. |
 
 These are cluster-scoped because every agent has the same sandbox requirements.
