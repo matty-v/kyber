@@ -432,6 +432,16 @@ spec:
               value: {{ .timezone | quote }}
             {{- end }}
             {{- end }}
+            {{- with .Values.agent }}
+            {{- with .security }}
+            - name: KYBER_AGENT_PRIVILEGED
+              value: {{ .privileged | default false | quote }}
+            - name: KYBER_AGENT_USER_NAMESPACES
+              value: {{ .userNamespaces | default false | quote }}
+            - name: KYBER_AGENT_SECCOMP_PROFILE
+              value: {{ .seccompProfile | default "RuntimeDefault" | quote }}
+            {{- end }}
+            {{- end }}
             # Surfaced via /api/v1/cluster-info; populates the PWA header.
             - name: KYBER_CLUSTER_NAME
               value: {{ .Values.controlPlane.clusterName | quote }}

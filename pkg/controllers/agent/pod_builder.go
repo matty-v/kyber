@@ -33,6 +33,35 @@ func controlPlanePublicURL() string {
 	return strings.Replace(controlPlaneInternalURL(), ":8082", ":8080", 1)
 }
 
+func agentPodsPrivileged() bool {
+	return strings.EqualFold(os.Getenv("KYBER_AGENT_PRIVILEGED"), "true")
+}
+
+func agentPodUserNamespacesEnabled() bool {
+	return !agentPodsPrivileged() && strings.EqualFold(os.Getenv("KYBER_AGENT_USER_NAMESPACES"), "true")
+}
+
+func agentPodSeccompProfile() corev1.SeccompProfileType {
+	if strings.EqualFold(os.Getenv("KYBER_AGENT_SECCOMP_PROFILE"), string(corev1.SeccompProfileTypeUnconfined)) {
+		return corev1.SeccompProfileTypeUnconfined
+	}
+	return corev1.SeccompProfileTypeRuntimeDefault
+}
+
+func agentContainerSecurityContext() *corev1.SecurityContext {
+	privileged := agentPodsPrivileged()
+	securityContext := &corev1.SecurityContext{
+		Privileged: &privileged,
+		Capabilities: &corev1.Capabilities{
+			Add: []corev1.Capability{"SYS_ADMIN"},
+		},
+	}
+	if !privileged {
+		securityContext.SeccompProfile = &corev1.SeccompProfile{Type: agentPodSeccompProfile()}
+	}
+	return securityContext
+}
+
 // PVCName returns the PersistentVolumeClaim name for the given agent.
 // Format: agent-{name}-pv
 func PVCName(agentName string) string {
@@ -326,21 +355,11 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 			corev1.ResourceMemory: agent.Spec.Resources.Memory,
 		},
 	}
-	// --- Security context: privileged required for fuse-overlayfs ---
-	// SYS_ADMIN alone is insufficient because the default seccomp profile
-	// blocks mount(MS_BIND) and the FUSE syscalls. OpenShift Dev Spaces
-	// requires the same for its fuse-overlayfs-based workspace pods.
-	// Tradeoff is acceptable: agents already have SYS_ADMIN + run arbitrary
-	// code; the security envelope barely widens.
-	privileged := true
-	securityContext := &corev1.SecurityContext{
-		Privileged: &privileged,
-		Capabilities: &corev1.Capabilities{
-			Add: []corev1.Capability{
-				corev1.Capability("SYS_ADMIN"),
-			},
-		},
-	}
+	// fuse-overlayfs needs /dev/fuse plus CAP_SYS_ADMIN for mount(2), but it
+	// does not require Kubernetes privileged mode. Keeping the capability while
+	// dropping privileged mode removes implicit host-device access and restores
+	// the runtime's device allow-list. See docs/design/agent-pod-isolation.md.
+	securityContext := agentContainerSecurityContext()
 
 	// User kv-secrets envFrom (#75). Projected from {name}-user-secrets-kv
 	// with the USER_ prefix so operator-uploaded kv entries appear as
@@ -460,14 +479,21 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		},
 	}
 
-	return corev1.PodSpec{
+	podSpec := corev1.PodSpec{
 		InitContainers:                []corev1.Container{initContainer},
 		Containers:                    []corev1.Container{container},
 		Volumes:                       volumes,
 		Affinity:                      affinity,
 		TerminationGracePeriodSeconds: &gracePeriod,
 		RestartPolicy:                 corev1.RestartPolicyNever,
-	}, nil
+	}
+	automountServiceAccountToken := false
+	podSpec.AutomountServiceAccountToken = &automountServiceAccountToken
+	if agentPodUserNamespacesEnabled() {
+		hostUsers := false
+		podSpec.HostUsers = &hostUsers
+	}
+	return podSpec, nil
 }
 
 // BuildPVC returns a PersistentVolumeClaim for the agent's persistent storage.

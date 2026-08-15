@@ -51,16 +51,27 @@ try_fuse_overlay() {
     return 1
 }
 
+in_user_namespace() {
+    [ -r /proc/self/uid_map ] || return 1
+    awk 'NR == 1 { exit !($1 == 0 && $2 != 0) }' /proc/self/uid_map
+}
+
 OVERLAY_MODE=""
 USE_OVERLAY=true
 
 if mountpoint -q "$MERGED_DIR" 2>/dev/null; then
     echo "[kyber] Overlay already mounted — skipping"
     OVERLAY_MODE="already-mounted"
+elif in_user_namespace && try_fuse_overlay; then
+    # Kernel overlayfs inside a user namespace restricts some cross-layer
+    # directory renames. Prefer the userspace implementation there, while
+    # retaining kernel overlayfs as the next fallback when FUSE is unavailable.
+    echo "[kyber] Overlay mounted (fuse-overlayfs, user namespace)"
+    OVERLAY_MODE="fuse"
 elif try_kernel_overlay; then
     echo "[kyber] Overlay mounted (kernel overlayfs)"
     OVERLAY_MODE="kernel"
-elif try_fuse_overlay; then
+elif ! in_user_namespace && try_fuse_overlay; then
     echo "[kyber] Overlay mounted (fuse-overlayfs)"
     OVERLAY_MODE="fuse"
 else

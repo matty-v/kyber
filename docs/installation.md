@@ -812,21 +812,18 @@ restricted-policy cluster allows. Both are set automatically by the Agent
 Controller in `pkg/controllers/agent/pod_builder.go` — you don't need to
 configure them manually. This section explains why they exist.
 
-**Privileged mode (`Privileged: true`)**
+**Mount capability (`CAP_SYS_ADMIN`)**
 
-Agent pods run with `securityContext.privileged: true`. This is required for two
-reasons:
+Agent pods are not privileged by default. The runtime container receives only
+the additional `SYS_ADMIN` capability needed by overlayfs, fuse-overlayfs, and
+the bind-mount-HOME fallback, together with a `RuntimeDefault` seccomp profile.
+The explicit `/dev/fuse` mount below supplies the only host device it needs.
 
-1. **fuse-overlayfs** — the whole-disk persistence fallback. `SYS_ADMIN` alone is
-   insufficient because the default seccomp profile blocks the `mount` syscall
-   even when `SYS_ADMIN` is granted. Privileged mode lifts both the capability
-   and seccomp restrictions.
-2. **`mount(MS_BIND)`** in the bind-mount-HOME fallback path.
-
-If your cluster enforces a Pod Security Standard of `restricted` or `baseline`,
-agent pods will be rejected. Use a dedicated namespace with
-`enforced=privileged` (the default `kyber-system` namespace is configured this
-way by the chart).
+`SYS_ADMIN` is outside the Kubernetes `baseline` and `restricted` Pod Security
+Standards, so agent pods still need a namespace that admits this capability.
+Optional Linux user namespaces remap that capability away from the host; see
+[`design/agent-pod-isolation.md`](design/agent-pod-isolation.md) for cluster
+requirements and rollout guidance.
 
 **`/dev/fuse` device mount**
 

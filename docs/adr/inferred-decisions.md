@@ -13,16 +13,14 @@ continuously).
 
 ## ⚠️ Top 3 worth revisiting
 
-**1. ADR-003 — Privileged agent pods for whole-disk persistence.**
-Every agent pod runs `Privileged: true` with `/dev/fuse` mounted (`pkg/controllers/agent/pod_builder.go:267-275`).
-The platform's entire purpose is to run agents that execute arbitrary code, which means
-"container escape" is not a hypothetical attack — it's one `nsenter`/`mount` away from any
-agent that decides (or is prompt-injected) to try. Privileged was chosen because the default
-seccomp profile blocks `mount(2)` for fuse-overlayfs, but the blast surface bought for
-whole-disk persistence is the single largest security liability in the platform. Revisit
-with user namespaces (k8s 1.30+ `hostUsers: false`), a Kata/gVisor runtime class, or by
-accepting the tier-3 HOME-only persistence as the default and reserving privileged mode for
-explicitly opted-in agents.
+**1. ADR-003 — De-privileged agent pods for whole-disk persistence.**
+Agent pods retain `CAP_SYS_ADMIN` and `/dev/fuse` for overlay mounts but do not
+run privileged by default. See `docs/design/agent-pod-isolation.md`.
+The platform's entire purpose is to run agents that execute arbitrary code, so
+the residual host-valid `SYS_ADMIN` capability remains worth revisiting. Linux
+user namespaces (`hostUsers: false`) are available as a per-cluster hardening
+layer after runtime and idmapped-volume validation; Kata/gVisor remains a
+possible stronger runtime boundary.
 
 **2. ADR-004 — Prompt delivery via tmux send-keys into an interactive TUI.**
 The wire protocol between the control plane and a running agent is keystroke injection into
@@ -94,7 +92,7 @@ per-agent git credentials.
 - **Decision:** Agent pods mount a PV at `/persist` and the entrypoint
   (`images/agent-base/entrypoint.sh`) dispatches through three strategies to overlay the
   *entire* container filesystem onto it, chrooting the runtime into `/merged`. Requires
-  `Privileged: true` + `/dev/fuse`.
+  `CAP_SYS_ADMIN` + `/dev/fuse`.
 - **Context:** Agents apt-install tools, write global config, and accumulate state outside
   HOME. Spot preemption and pod rolls must not lobotomize them.
 - **Inferred rationale:** Tier 1 fails on k3s (containerd root is already overlayfs — kernel

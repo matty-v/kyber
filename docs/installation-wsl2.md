@@ -793,7 +793,7 @@ Expected output: ends with a line `OK` (Agent reached `Running` within ~6 minute
 
 **Human input needed:** None.
 
-**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on `/dev/fuse` + `Privileged: true` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
+**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on `/dev/fuse` + `CAP_SYS_ADMIN` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
 
 ### Scheduling recurring work on an agent
 
