@@ -1213,6 +1213,63 @@ func TestAgents_SetResources_ClearsRecoveryInputOnMemoryExhausted(t *testing.T) 
 	}
 }
 
+// Failed carries the same defect and gets the same treatment. The controller
+// no longer leaves Failed on the standing desiredPhase==Running (it would never
+// reach maxRestartRetries, so a crash-looping agent rebuilt its pod forever), and
+// a Start on an agent already carrying desiredPhase==Running writes no spec
+// change for anything downstream to notice. Clearing the spent retry budget is
+// what keeps the button working.
+func TestAgents_Start_ClearsRestartCountOnFailed(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseFailed
+	agent.Status.RestartCount = 3
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning // already Running: no spec change to make
+
+	h, c := buildStatusAwareAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/start", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var got kyberv1.Agent
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	if got.Status.RestartCount != 0 {
+		t.Errorf("Start left restartCount=%d — the agent has no budget left and will ignore the operator",
+			got.Status.RestartCount)
+	}
+}
+
+// A Start on a healthy agent must not touch the retry budget — an agent that is
+// merely Stopped has nothing to re-arm, and zeroing the counter there would
+// discard crash history the 5-minute stability reset owns.
+func TestAgents_Start_LeavesRestartCountOnOtherPhases(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseStopped
+	agent.Status.RestartCount = 2
+
+	h, c := buildStatusAwareAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/start", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+
+	var got kyberv1.Agent
+	if err := c.Get(context.Background(),
+		types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	if got.Status.RestartCount != 2 {
+		t.Errorf("restartCount = %d, want it untouched on a non-Failed phase", got.Status.RestartCount)
+	}
+}
+
 // A Start on a healthy agent must not touch the field — clearing it there would
 // re-arm a gate that is not holding anything.
 func TestAgents_Start_LeavesRecoveryInputOnOtherPhases(t *testing.T) {

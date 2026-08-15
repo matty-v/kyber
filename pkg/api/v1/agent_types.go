@@ -856,6 +856,31 @@ type Agent struct {
 	Status AgentStatus `json:"status,omitempty"`
 }
 
+// SpecChangedSinceLastPod reports whether the operator has edited the Agent
+// spec since the reconciler last rolled it into a pod: metadata.generation is
+// ahead of the status.observedGeneration that createPod stamps.
+//
+// Two callers depend on this predicate and they have to agree, which is why it
+// lives on the type rather than being spelled out in each package. The PWA
+// renders it as the "restart required" badge (kyber#157). The agent reconciler
+// reads it as a one-shot claim on the Failed → Starting edge, where it is the
+// difference between an operator override and an unbounded restart loop.
+//
+// Generation 0 is the never-reconciled baseline: an agent whose pod has never
+// been built has nothing to compare against, so it reports false rather than
+// treating generation=1 as an edit.
+//
+// Known looseness: observedGeneration also lags for spec edits that never roll
+// a pod (spec.resources, per kyber#149), so an edit made while the agent was
+// healthy can still read as "changed" the first time it is consulted later.
+// Both callers are fine with that — the badge is meant to over-report, and the
+// reconciler claims the generation before acting, so it is bounded to a single
+// cycle rather than repeating.
+func (a *Agent) SpecChangedSinceLastPod() bool {
+	return a.Status.ObservedGeneration > 0 &&
+		a.Generation > a.Status.ObservedGeneration
+}
+
 // +kubebuilder:object:root=true
 
 // AgentList contains a list of Agent.

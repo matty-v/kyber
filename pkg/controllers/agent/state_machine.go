@@ -192,8 +192,20 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionLogAndEmitEvent,
 			NextPhase: kyberv1.AgentPhaseFailed,
 		},
+		// A pod that dies DURING startup is a crash like any other, so it takes
+		// the same action as {Running, PodDied}: it increments restartCount.
+		// It used to share ActionLogAndEmitEvent with the row above, which
+		// increments nothing — so maxRestartRetries was unreachable for any
+		// crash that happened before the agent ever reached Running, and the
+		// agent rebuilt its pod forever at the reconcile rate. Observed on
+		// kyber-falcon after the v1.0.5 base-image bump: two agents whose tmux
+		// could not start took a new pod every ~12s for hours, restartCount
+		// pinned at 0 the whole time. It also emitted "PodScheduleFailed /
+		// Agent pod failed to schedule" for a pod that had scheduled fine and
+		// then crashed, which sent triage at the scheduler instead of the
+		// container; ActionEmitEventAutoRestart reports AgentCrashed instead.
 		{phase: kyberv1.AgentPhaseStarting, event: EventPodDied}: {
-			Action:    ActionLogAndEmitEvent,
+			Action:    ActionEmitEventAutoRestart,
 			NextPhase: kyberv1.AgentPhaseFailed,
 		},
 		// Starting → NeedsAuth (credential failure during startup: exit code 2
