@@ -465,3 +465,104 @@ func TestSandboxHarness_ExecInSandboxTargetsTheDurableRoot(t *testing.T) {
 			"every persistence result in this package is invalid.", strings.TrimSpace(out))
 	}
 }
+
+// TestSandboxSecurity_AgentIsolationAcrossNodes covers the half of AC4 that
+// Kyber's own scheduling cannot currently produce.
+//
+// #78 asks for two hostile agents on the same node AND on different nodes. The
+// same-node case is covered by TestSandboxSecurity_AgentToAgentIsolation with
+// real agents. The cross-node case cannot be: Kyber's mock compute provider
+// permits exactly one Machine, and agent pods are placed on that Machine's
+// node, so two agents always land together on a single-provider cluster.
+//
+// Rather than record the criterion as untested, this proves the part that
+// actually differs across nodes — whether the CNI enforces the rendered
+// policies when traffic has to traverse the node-to-node overlay rather than
+// staying on one bridge. It does that with two pods carrying the real
+// `kyber.io/agent` label, so the cluster's actual agent NetworkPolicies select
+// them, pinned to different nodes.
+//
+// What this does NOT prove: that two full Kyber agents, with their sidecars and
+// credentials, were scheduled apart. That needs a compute provider that can
+// present more than one machine.
+func TestSandboxSecurity_AgentIsolationAcrossNodes(t *testing.T) {
+	requireAgent(t, "KYBER_E2E_AGENT_A")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	nodes := strings.Fields(kubectlOut(t, ctx, "get", "nodes",
+		"-o", "jsonpath={range .items[*]}{.metadata.name} {end}"))
+	if len(nodes) < 2 {
+		t.Skipf("cluster has %d node(s); the cross-node case needs two", len(nodes))
+	}
+	nodeA, nodeB := nodes[0], nodes[1]
+	t.Logf("proving cross-node isolation between %s and %s", nodeA, nodeB)
+
+	ns := sandboxNamespace()
+	manifest := fmt.Sprintf(`
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kyber-xnode-a
+  namespace: %[1]s
+  labels: {kyber.io/agent: xnode-a}
+spec:
+  nodeName: %[2]s
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sh","-c","echo ok > /tmp/index.html; httpd -f -p 8080 -h /tmp"]
+      resources: {requests: {cpu: 10m, memory: 32Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kyber-xnode-b
+  namespace: %[1]s
+  labels: {kyber.io/agent: xnode-b}
+spec:
+  nodeName: %[3]s
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  containers:
+    - name: c
+      image: busybox:1.36
+      command: ["sleep","900"]
+      resources: {requests: {cpu: 10m, memory: 32Mi}}
+`, ns, nodeA, nodeB)
+
+	applyManifest(t, ctx, manifest)
+	t.Cleanup(func() {
+		c, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		_ = runWithContext(c, "kubectl", "delete", "pod", "kyber-xnode-a", "kyber-xnode-b",
+			"-n", ns, "--wait=false")
+	})
+
+	if err := runWithContext(ctx, "kubectl", "wait", "--for=condition=Ready",
+		"pod/kyber-xnode-a", "pod/kyber-xnode-b", "-n", ns, "--timeout=180s"); err != nil {
+		t.Fatalf("cross-node probe pods never became ready: %v", err)
+	}
+
+	ipA := strings.TrimSpace(kubectlOut(t, ctx, "get", "pod", "kyber-xnode-a", "-n", ns,
+		"-o", "jsonpath={.status.podIP}"))
+
+	// The control that makes the denial meaningful: the port must genuinely be
+	// serving. A blocked connection to a dead port proves nothing.
+	loopback, _ := kubectlOutErr(t, ctx, "exec", "kyber-xnode-a", "-n", ns, "--",
+		"sh", "-c", "timeout 5 wget -qO- http://127.0.0.1:8080/index.html || echo BLOCKED")
+	if !strings.Contains(loopback, "ok") {
+		t.Fatalf("the cross-node probe target is not serving on its own loopback (%q) — "+
+			"a denial below would be a closed port, not enforcement", strings.TrimSpace(loopback))
+	}
+
+	out, _ := kubectlOutErr(t, ctx, "exec", "kyber-xnode-b", "-n", ns, "--",
+		"sh", "-c", fmt.Sprintf("timeout 6 wget -qO- http://%s:8080/index.html || echo BLOCKED", ipA))
+	if !strings.Contains(out, "BLOCKED") {
+		t.Errorf("an agent-labelled pod on %s reached one on %s (%q) — the agent ingress "+
+			"policy is not enforced across nodes", nodeB, nodeA, strings.TrimSpace(out))
+	}
+}
