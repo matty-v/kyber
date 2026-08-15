@@ -84,7 +84,7 @@ running natively and Kyber's images will not start. Delete it
 ## 2. Check the node can host agent pods
 
 Agent pods keep a whole persistent filesystem, which needs `/dev/fuse` on the
-node and permission to run privileged pods. k3s allows privileged pods by
+node and a namespace that admits `CAP_SYS_ADMIN`. k3s admits that capability by
 default, so the one thing worth checking is the device:
 
 ```bash
@@ -149,9 +149,10 @@ Then continue from [§ 2](#2-check-the-node-can-host-agent-pods), substituting
 - **Everything is on one disk.** Agent volumes come from k3s's `local-path`
   provisioner, so the VM disk you sized above is the ceiling for all agents
   combined.
-- **The VM is the blast radius.** Agent pods run privileged. That is contained
-  inside the Colima VM rather than on macOS itself, which is one of the nicer
-  properties of this shape. Still read the
+- **The VM is the blast radius.** Agent pods are not privileged by default, but
+  retain `CAP_SYS_ADMIN` for whole-disk persistence. That capability is
+  contained inside the Colima VM rather than on macOS itself, which is one of
+  the nicer properties of this shape. Still read the
   [threat model](../.github/SECURITY.md#deployment-threat-model).
 
 ## Teardown

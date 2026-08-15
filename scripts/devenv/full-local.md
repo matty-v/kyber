@@ -91,7 +91,7 @@ template plus newly created repositories; follow the main installation guide's
 | `controlPlane.cors.allowedOrigins` | empty | `:5173,:5174` | let the vite dev servers call the API cross-origin |
 
 Prereqs already satisfied by k3d on a typical host: the node container exposes
-`/dev/fuse` (fuse-overlayfs persistence, tier 2) and allows privileged pods.
+`/dev/fuse` (fuse-overlayfs persistence, tier 2) and admits `CAP_SYS_ADMIN`.
 
 ## Create a live agent
 

@@ -76,6 +76,12 @@ namespaces mandatory requires a different persistence or runtime boundary.
 | G4: Kubernetes API boundary bypassed through G3 | Closed with G3. Agent pod specs also set `automountServiceAccountToken: false`. |
 | G5: no agent-to-agent network isolation | Closed when the cluster CNI enforces NetworkPolicy. Every agent pod has default-deny ingress; loopback communication inside the pod is unaffected. |
 
+The runtime probes are exec probes and are unaffected by NetworkPolicy. Status
+and messaging sidecars use HTTP probes from the kubelet; Kubernetes normally
+allows traffic from the pod's node regardless of ingress policy, but operators
+must verify that behavior on the target CNI along with general NetworkPolicy
+enforcement.
+
 ## Rollout and verification
 
 Roll out `privileged=false` to a canary and verify:

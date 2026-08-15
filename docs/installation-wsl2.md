@@ -8,7 +8,7 @@ Step-by-step guide for the standalone single-box deployment shape: native k3s in
 
 > **How this install gets new versions:** it pulls a released chart, and stays on that version until you move it. Upgrades happen from the Kyber UI (Settings → Updates) or by re-running `helm upgrade` with a newer `--version`. Nothing watches a registry or a branch on your behalf. See [upgrading.md](./upgrading.md).
 
-> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and agent runtime with privileged pods (Phase C) are documented separately.
+> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and the agent runtime's `CAP_SYS_ADMIN` + `/dev/fuse` requirements (Phase C) are documented separately.
 
 ## Architecture
 

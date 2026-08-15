@@ -53,7 +53,7 @@ try_fuse_overlay() {
 
 in_user_namespace() {
     [ -r /proc/self/uid_map ] || return 1
-    awk 'NR == 1 { exit !($1 == 0 && $2 != 0) }' /proc/self/uid_map
+    awk 'NR == 1 { found = 1; remapped = ($1 == 0 && $2 != 0) } END { exit !(found && remapped) }' /proc/self/uid_map
 }
 
 OVERLAY_MODE=""

@@ -429,7 +429,7 @@ unchanged (`ReadWriteOnce`).
   `transcript-tailer` mounts the PVC **read-only**, so it cannot mutate agent
   state or transcript files. It runs as **root (uid 0)** — like the agent and
   `session-brief` containers — because the session JSONL is root-owned (the
-  agent runs privileged as root) and the tailer must read it over the RO mount
+  agent can become root in-pod) and the tailer must read it over the RO mount
   (kyber#451). Despite the root uid it is **not privileged**, adds **no
   capabilities**, and sets `allowPrivilegeEscalation: false` +
   `readOnlyRootFilesystem: true` — strictly more locked down than the agent
