@@ -204,6 +204,15 @@ nested dev cluster does not (v1.31.5 / containerd 1.7.23) and silently ignores
 `hostUsers`, so it must be upgraded before it can verify the central claim. The
 canary cluster must be checked for the same.
 
+## Assumptions worth stating
+
+The egress half of the boundary is expressed as CIDR ranges, so it withholds the
+node, the kubelet, the API server and the metadata endpoint **only where those
+addresses are private**. Every cluster we run satisfies that; a cluster with
+publicly addressed nodes does not, and neither the rendered policy nor a passing
+isolation suite on an RFC1918 cluster would reveal it. Operators on such a
+topology have to add their ranges explicitly.
+
 ## Non-goals
 
 Node-management agents are out of scope, per #78. If Kyber later supports them

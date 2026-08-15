@@ -129,6 +129,20 @@ that creating a device node fails. Under a user namespace `mknod` itself returns
 
 ## Known limits
 
+**The egress guarantee is CIDR-shaped.** The policy withholds the node, the
+kubelet, the API server and the metadata service by *address range*, so it holds
+only where those sit inside the ranges in `blockedCIDRs`. That is true of every
+normal cluster, but on a cluster with **publicly addressed nodes** the defaults
+do not withhold them and the AC3/AC6 guarantees do not hold as written. Nothing
+in the render can detect that, and an isolation suite passing on an RFC1918
+cluster will not either — add your node and API-server ranges explicitly if that
+is your topology.
+
+Both address families are covered. An IPv4-only rule matches no IPv6 traffic at
+all, which on a dual-stack cluster would deny every v6 connection — fail-closed,
+but silently.
+
+
 **Node loss.** Agent PVCs on `local-path` are node-local disk with hard node
 affinity. If the node is replaced the volume does not come with it. This is a
 storage-class property, unchanged by the sandbox work, and it means the durable

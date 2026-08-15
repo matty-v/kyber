@@ -77,6 +77,10 @@ spec:
         - protocol: TCP
           port: {{ .Values.api.service.internalPort }}
     # Everything else, minus the infrastructure ranges.
+    #
+    # Both families are listed. An IPv4-only rule matches no IPv6 traffic at
+    # all, so on a dual-stack cluster every v6 connection would be denied —
+    # fail-closed, but silently, and the agent just sees things not working.
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
@@ -84,6 +88,14 @@ spec:
               {{- range .Values.agent.security.egress.blockedCIDRs }}
               - {{ . | quote }}
               {{- end }}
+        {{- if .Values.agent.security.egress.blockedCIDRsV6 }}
+        - ipBlock:
+            cidr: "::/0"
+            except:
+              {{- range .Values.agent.security.egress.blockedCIDRsV6 }}
+              - {{ . | quote }}
+              {{- end }}
+        {{- end }}
 {{- range .Values.agent.security.egress.platformTrustAgents }}
 ---
 # Platform-trust exemption for agent {{ . | quote }}.

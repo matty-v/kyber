@@ -931,12 +931,30 @@ agent:
       # 169.254.0.0/16 is the cloud metadata service — the single most valuable
       # thing for an escaped agent to reach. 100.64.0.0/10 covers Tailscale;
       # drop it only if agents are meant to reach the tailnet.
+      #
+      # ASSUMPTION, and it is load-bearing: this list is CIDR-shaped, so it
+      # withholds the node, the kubelet and the API server only when they sit
+      # in these ranges. That is true of every normal cluster and of all of
+      # ours, but on a cluster with PUBLICLY ADDRESSED NODES the defaults do
+      # NOT withhold them, and kyber#78's AC3/AC6 guarantees do not hold as
+      # written. Add your node and API-server ranges here if that is your
+      # topology — nothing in the render can detect it for you, and a passing
+      # isolation suite on an RFC1918 cluster will not either.
       blockedCIDRs:
         - "10.0.0.0/8"
         - "172.16.0.0/12"
         - "192.168.0.0/16"
         - "169.254.0.0/16"
         - "100.64.0.0/10"
+      # The IPv6 half. Without an IPv6 rule no policy matches v6 at all, so a
+      # dual-stack or v6-only cluster denies ALL v6 egress — fail-closed rather
+      # than a hole, but silently, and agents lose v6 connectivity with no
+      # indication why. fd00::/8 is unique-local, fe80::/10 link-local (which
+      # carries the v6 metadata endpoint on some providers).
+      blockedCIDRsV6:
+        - "fd00::/8"
+        - "fe80::/10"
+        - "::1/128"
       # Agents exempted from the egress policy, by name. This is the separate,
       # conspicuous trust tier kyber#78 asks for — rescue agents that genuinely
       # hold cluster credentials. Naming an agent here gives it unrestricted

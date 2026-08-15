@@ -517,3 +517,50 @@ func TestRootfs_ChangedDirectoryModeDoesNotWipeItsContents(t *testing.T) {
 			"cp -a --parents on a directory copies it recursively")
 	}
 }
+
+// TestRootfs_FailedInstallIsLoudAndRetried covers the bug Chewie found in
+// review, using his reproducer: the image turns a directory into a regular
+// file, and the agent has left something inside that directory.
+//
+// The install half then cannot succeed, and it used to fail silently —
+// `cp … 2>/dev/null` failed, the `&&` skipped the counter, nothing reached the
+// conflict log, and the manifest advanced anyway. From the next boot on, the
+// path compared equal to the image forever and was never retried. The boot
+// reported success the whole time. ENOSPC on a full agent PVC mid-upgrade is
+// the realistic trigger for the same shape.
+func TestRootfs_FailedInstallIsLoudAndRetried(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	mustMkdirAll(t, filepath.Join(e.image, "opt", "thing"))
+	e.writeImage("opt/thing/shipped", "image file\n", v1)
+	e.prepare()
+
+	// The agent puts something of its own inside that directory.
+	e.writeAgent("opt/thing/agent-file", "agent created this\n")
+
+	// The image replaces the directory with a regular file.
+	if err := os.RemoveAll(filepath.Join(e.image, "opt", "thing")); err != nil {
+		t.Fatalf("removing the image directory: %v", err)
+	}
+	e.writeImage("opt/thing", "now a file\n", time.Now().Add(-time.Hour))
+
+	e.prepare()
+
+	// The agent's file must survive — an empty-directory-only removal is what
+	// keeps this safe.
+	if _, ok := e.rootContent("opt/thing/agent-file"); !ok {
+		t.Fatal("the agent's file inside the replaced directory was destroyed")
+	}
+	// And the failure must be visible.
+	if !strings.Contains(e.conflicts(), "opt/thing") {
+		t.Errorf("a failed install left nothing in the conflict log; got:\n%s", e.conflicts())
+	}
+
+	// The next boot must try again rather than concluding the image never
+	// changed this path. Anything but a plain "rootfs" no-op means it retried.
+	if mode := e.prepare(); mode == "rootfs" {
+		t.Error("the boot after a failed install reported no change — the manifest advanced " +
+			"for a path that never landed, so it will never be retried")
+	}
+}

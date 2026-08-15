@@ -228,8 +228,17 @@ migrate_from_overlay() {
 # ---------------------------------------------------------------------------
 upgrade_rootfs() {
     local root="$1" old_manifest="$2" new_manifest="$3"
-    local updated=0 added=0 removed=0 conflicts=0
+    local updated=0 added=0 removed=0 conflicts=0 failed=0
     local type size mtime mode path new old have
+    local -a failed_paths=()
+
+    # A path whose install failed must NOT have its manifest entry advanced, or
+    # it compares equal forever and is never retried.
+    record_failure() {
+        echo "FAILED to install from image (will retry next boot): $1" >> "$CONFLICT_LOG"
+        failed_paths+=("$1")
+        failed=$((failed + 1))
+    }
 
     mkdir -p "$STATE_DIR"
     : > "$CONFLICT_LOG"
@@ -267,15 +276,36 @@ upgrade_rootfs() {
     # deleted and re-copied — because `cp -a --parents` on a directory copies it
     # RECURSIVELY, so "the image changed this directory's mode" would otherwise
     # overwrite everything the agent had put inside it.
+    #
+    # Returns non-zero on failure, and the caller must treat that as loud. It
+    # used to be silent: `cp … 2>/dev/null` failed, the `&&` skipped the
+    # counter, nothing reached the conflict log, and the manifest advanced
+    # anyway — so the path compared equal on every later boot and was never
+    # retried. A type change (image turns a directory into a file) and ENOSPC
+    # on a full PVC both land there.
     install_from_image() {
         local p="$1"
         if [ -d "$IMAGE_ROOT/$p" ] && [ ! -L "$IMAGE_ROOT/$p" ]; then
+            # Image wants a directory. If the agent's copy is a non-directory,
+            # replace it; a stale file where a directory belongs breaks
+            # everything underneath it.
+            if [ -e "$root/$p" ] && [ ! -d "$root/$p" ]; then
+                rm -f "${root:?}/$p" || return 1
+            fi
             mkdir -p "$root/$p" || return 1
             chmod --reference="$IMAGE_ROOT/$p" "$root/$p" 2>/dev/null || true
             chown --reference="$IMAGE_ROOT/$p" "$root/$p" 2>/dev/null || true
             return 0
         fi
-        rm -f "${root:?}/$p" 2>/dev/null || true
+        # Image wants a non-directory. If the agent's copy is a directory, only
+        # remove it when it is EMPTY — rm -rf here would take agent files with
+        # it, which is the bug the deepest-first removal ordering exists to
+        # avoid. A non-empty directory is reported as a conflict instead.
+        if [ -d "$root/$p" ] && [ ! -L "$root/$p" ]; then
+            rmdir "${root:?}/$p" 2>/dev/null || return 1
+        else
+            rm -f "${root:?}/$p" 2>/dev/null || true
+        fi
         cp -a --parents "$p" "$root/" 2>/dev/null
     }
 
@@ -285,13 +315,21 @@ upgrade_rootfs() {
         if [ -z "$old" ]; then
             # New in this image. Only add if the agent has not made its own.
             if [ ! -e "$root/$path" ] && [ ! -L "$root/$path" ]; then
-                install_from_image "$path" && added=$((added + 1))
+                if install_from_image "$path"; then
+                    added=$((added + 1))
+                else
+                    record_failure "$path"
+                fi
             fi
             continue
         fi
         [ "$new" = "$old" ] && continue   # image did not change this path
         if agent_untouched "$path"; then
-            install_from_image "$path" && updated=$((updated + 1))
+            if install_from_image "$path"; then
+                updated=$((updated + 1))
+            else
+                record_failure "$path"
+            fi
         else
             echo "kept agent copy: $path" >> "$CONFLICT_LOG"
             conflicts=$((conflicts + 1))
@@ -327,8 +365,27 @@ upgrade_rootfs() {
         done | sort -rn -k1,1 | cut -f2-
     )
 
-    log "base-image upgrade merged: $updated updated, $added added, $removed removed, $conflicts kept by agent"
-    [ "$conflicts" -gt 0 ] && log "conflict detail: $CONFLICT_LOG"
+    # Roll back the manifest entry for every path that failed to install, so the
+    # next boot sees a difference again and retries instead of concluding the
+    # image never changed it.
+    if [ "${#failed_paths[@]}" -gt 0 ]; then
+        local tmp="$new_manifest.fixup" fp
+        cp "$new_manifest" "$tmp"
+        for fp in "${failed_paths[@]}"; do
+            grep -v -F -x -- "${new_entry[$fp]}	$fp" "$tmp" > "$tmp.next" || true
+            if [ -n "${old_entry[$fp]:-}" ]; then
+                printf '%s\t%s\n' "${old_entry[$fp]}" "$fp" >> "$tmp.next"
+            fi
+            mv "$tmp.next" "$tmp"
+        done
+        mv "$tmp" "$new_manifest"
+    fi
+
+    log "base-image upgrade merged: $updated updated, $added added, $removed removed, $conflicts kept by agent, $failed failed"
+    if [ "$failed" -gt 0 ]; then
+        log "WARNING: $failed path(s) could not be installed from the image and will be retried next boot — see $CONFLICT_LOG"
+    fi
+    [ "$conflicts" -gt 0 ] || [ "$failed" -gt 0 ] && log "detail: $CONFLICT_LOG"
     return 0
 }
 
@@ -356,13 +413,6 @@ cmd_prepare() {
         # baseline it can actually read. Merging here would mark every entry as
         # agent-modified and deliver no base-image updates at all.
         log "no comparable manifest — adopting the durable root, no merge this boot"
-        ensure_mount_targets "$root"
-        mode="rootfs-adopted"
-    elif [ ! -f "$MANIFEST" ]; then
-        # A durable root that predates manifest tracking. Adopt it as-is and
-        # record the running image, so the NEXT upgrade has a baseline. We
-        # cannot merge safely without knowing what the previous image held.
-        log "durable root present without a manifest — adopting, no merge this boot"
         ensure_mount_targets "$root"
         mode="rootfs-adopted"
     elif cmp -s "$MANIFEST" "$new_manifest"; then
