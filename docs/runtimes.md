@@ -4,6 +4,28 @@ Kyber V1 supports Claude Code and Codex as long-lived agent harnesses. Both run
 inside the standard Kyber agent pod, use whole-disk persistence, receive inbound
 work through Kyber's signed dispatch path, and expose the same lifecycle actions.
 
+## Pod isolation
+
+An agent is **unrestricted inside its own pod** — it runs as root, installs and
+manages arbitrary software (including system-level `apt` packages), and that
+software persists across pod restarts via whole-`/` overlay persistence. That is
+a deliberate capability, not an accident.
+
+The pod is the agent's isolation boundary **against the host node**. By default
+agents run **de-privileged** (kyber#76): `Privileged: true` was dropped, so host
+block devices are not present in the pod and the device cgroup allow-list is
+enforced — an agent cannot mount or read the node's filesystem. `CAP_SYS_ADMIN`
+and `/dev/fuse` are retained solely so `fuse-overlayfs` can mount the persistence
+overlay. Clusters that have validated runtime/kernel support can additionally
+enable user namespaces (`agent.security.userNamespaces`), which remaps in-pod
+root to an unprivileged host uid and closes the residual `CAP_SYS_ADMIN` surface.
+
+This boundary is about **host access**. It is **not** an agent-to-agent network
+boundary today — nothing yet default-denies traffic between agent pods (kyber#76
+G5, tracked separately). The full posture, gap dispositions, and per-cluster
+rollout are in
+[`docs/design/2026-08-15-agent-pod-isolation-design.md`](design/2026-08-15-agent-pod-isolation-design.md).
+
 ## Codex with a ChatGPT subscription
 
 ChatGPT subscription login is the default. After the operator creates a Codex
@@ -29,7 +51,8 @@ agent to switch modes.
 
 Codex V1 models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Sol is
 the default. Kyber runs Codex with non-interactive approvals and its unrestricted
-sandbox because the Kubernetes pod is the agent's isolation boundary. Codex's
+sandbox because the Kubernetes pod is the agent's isolation boundary against the
+host (see the isolation note below). Codex's
 startup update check is disabled because Kyber centrally manages the pinned
 harness: use **Set harness version** in the agent action menu to upgrade or
 downgrade explicitly.

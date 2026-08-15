@@ -888,6 +888,39 @@ runtime:
     # @openai/codex npm version baked into the Kyber Codex image.
     version: "0.146.0"
 
+# Agent pod security envelope (kyber#76). Controls the host-isolation posture of
+# the main agent runtime container. Agents are always fully unrestricted INSIDE
+# their pod (root, apt install, whole-/ overlay persistence); these knobs govern
+# only what the pod can do to the HOST node. See
+# docs/design/2026-08-15-agent-pod-isolation-design.md.
+agent:
+  security:
+    # privileged: false (default) drops Privileged:true and runs the agent
+    # container de-privileged — SYS_ADMIN + /dev/fuse are retained so
+    # fuse-overlayfs still mounts, but host block devices are gone and the device
+    # cgroup allow-list is restored, closing the kyber#76 host escape (G3). Set
+    # true ONLY as a break-glass rollback to the pre-#76 full-Privileged profile.
+    privileged: false
+
+    # userNamespaces: false (default) — set true to run agent pods with
+    # hostUsers:false, remapping in-pod root (and its SYS_ADMIN) to an
+    # unprivileged host uid. This is the true host boundary, but enabling it
+    # safely requires per-cluster validation: kernel >= 6.3 with idmapped mounts
+    # so the pre-existing persist PVC stays accessible under the namespace, and a
+    # runtime that supports userns. Validate on a canary (ideally a fresh agent)
+    # before enabling fleet-wide — see the design doc's rollout section. Ignored
+    # when privileged=true.
+    userNamespaces: false
+
+    # seccompProfile: seccomp profile type for the de-privileged agent container.
+    # "RuntimeDefault" (default) applies the container runtime's default filter;
+    # with SYS_ADMIN held it admits the mount/FUSE syscalls fuse-overlayfs needs.
+    # Set "Unconfined" as a documented fallback if a target's RuntimeDefault
+    # profile is strict enough to block the overlay mount (the host-escape fix
+    # comes from privileged=false, not from seccomp). Ignored when
+    # privileged=true (Privileged implies Unconfined regardless).
+    seccompProfile: RuntimeDefault
+
 # Runtime detection (kyber#375 / PR-A of #374). A control-plane goroutine
 # polls the npm registry + the Anthropic Models API on a cadence and writes
 # results into Redis. GET /api/v1/available reads from that cache so the

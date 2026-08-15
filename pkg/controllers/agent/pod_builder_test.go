@@ -319,11 +319,23 @@ func TestBuildPodSpec_NodeAffinity(t *testing.T) {
 	}
 }
 
-func TestBuildPodSpec_SecurityContext(t *testing.T) {
-	agent := testAgent()
-	adapter := testAdapter()
+func hasSysAdmin(sc *corev1.SecurityContext) bool {
+	if sc == nil || sc.Capabilities == nil {
+		return false
+	}
+	for _, c := range sc.Capabilities.Add {
+		if c == corev1.Capability("SYS_ADMIN") {
+			return true
+		}
+	}
+	return false
+}
 
-	pod, err := BuildPodSpec(agent, adapter, "node-01")
+// TestBuildPodSpec_SecurityContext_DefaultDeprivileged verifies the kyber#76
+// default: de-privileged, but SYS_ADMIN + seccomp retained so fuse-overlayfs
+// still mounts. No env set → default profile.
+func TestBuildPodSpec_SecurityContext_DefaultDeprivileged(t *testing.T) {
+	pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
 	if err != nil {
 		t.Fatalf("BuildPodSpec: %v", err)
 	}
@@ -332,19 +344,76 @@ func TestBuildPodSpec_SecurityContext(t *testing.T) {
 	if sc == nil {
 		t.Fatal("container has no securityContext")
 	}
-	if sc.Capabilities == nil {
-		t.Fatal("securityContext has no capabilities")
+	if sc.Privileged == nil || *sc.Privileged {
+		t.Error("default profile must be de-privileged (Privileged=false), got Privileged!=false")
 	}
+	if !hasSysAdmin(sc) {
+		t.Error("SYS_ADMIN must be retained so fuse-overlayfs can mount")
+	}
+	if sc.SeccompProfile == nil || sc.SeccompProfile.Type != corev1.SeccompProfileTypeRuntimeDefault {
+		t.Errorf("default seccomp must be RuntimeDefault, got %+v", sc.SeccompProfile)
+	}
+	if pod.HostUsers != nil {
+		t.Errorf("user namespaces must be off by default, got HostUsers=%v", *pod.HostUsers)
+	}
+}
 
-	var hasSysAdmin bool
-	for _, cap := range sc.Capabilities.Add {
-		if cap == corev1.Capability("SYS_ADMIN") {
-			hasSysAdmin = true
-			break
-		}
+// TestBuildPodSpec_SecurityContext_SeccompUnconfined verifies the documented
+// fallback profile.
+func TestBuildPodSpec_SecurityContext_SeccompUnconfined(t *testing.T) {
+	t.Setenv("KYBER_AGENT_SECCOMP_PROFILE", "Unconfined")
+	pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
+	if err != nil {
+		t.Fatalf("BuildPodSpec: %v", err)
 	}
-	if !hasSysAdmin {
-		t.Error("SYS_ADMIN capability not found in container securityContext.capabilities.add")
+	sc := pod.Containers[0].SecurityContext
+	if sc.SeccompProfile == nil || sc.SeccompProfile.Type != corev1.SeccompProfileTypeUnconfined {
+		t.Errorf("expected Unconfined seccomp, got %+v", sc.SeccompProfile)
+	}
+	if sc.Privileged == nil || *sc.Privileged {
+		t.Error("Unconfined seccomp must not re-enable Privileged")
+	}
+}
+
+// TestBuildPodSpec_SecurityContext_UserNamespaces verifies Phase 2 opt-in sets
+// hostUsers=false while staying de-privileged with SYS_ADMIN.
+func TestBuildPodSpec_SecurityContext_UserNamespaces(t *testing.T) {
+	t.Setenv("KYBER_AGENT_USER_NAMESPACES", "true")
+	pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
+	if err != nil {
+		t.Fatalf("BuildPodSpec: %v", err)
+	}
+	if pod.HostUsers == nil || *pod.HostUsers {
+		t.Error("KYBER_AGENT_USER_NAMESPACES=true must set pod.spec.hostUsers=false")
+	}
+	sc := pod.Containers[0].SecurityContext
+	if sc.Privileged == nil || *sc.Privileged {
+		t.Error("user namespaces must remain de-privileged")
+	}
+	if !hasSysAdmin(sc) {
+		t.Error("SYS_ADMIN must still be present under user namespaces")
+	}
+}
+
+// TestBuildPodSpec_SecurityContext_LegacyPrivileged verifies the break-glass
+// rollback, and that it forces user namespaces off (Privileged + userns is
+// contradictory).
+func TestBuildPodSpec_SecurityContext_LegacyPrivileged(t *testing.T) {
+	t.Setenv("KYBER_AGENT_PRIVILEGED", "true")
+	t.Setenv("KYBER_AGENT_USER_NAMESPACES", "true") // must be ignored
+	pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
+	if err != nil {
+		t.Fatalf("BuildPodSpec: %v", err)
+	}
+	sc := pod.Containers[0].SecurityContext
+	if sc.Privileged == nil || !*sc.Privileged {
+		t.Error("KYBER_AGENT_PRIVILEGED=true must set Privileged=true")
+	}
+	if !hasSysAdmin(sc) {
+		t.Error("legacy profile must keep SYS_ADMIN")
+	}
+	if pod.HostUsers != nil {
+		t.Error("user namespaces must be ignored under the Privileged profile")
 	}
 }
 

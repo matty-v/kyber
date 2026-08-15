@@ -8,6 +8,15 @@ MERGED_DIR="/merged"
 
 # ---- Three-tier overlay dispatcher ----
 #
+# Security context (kyber#76): this runs de-privileged by default — NOT full
+# Privileged. The pod retains CAP_SYS_ADMIN (for the overlay/bind mount(2) and
+# chroot) plus the /dev/fuse device; that is all fuse-overlayfs needs. Every
+# mount/chroot below therefore still works, but host block devices are absent, so
+# the tier-1 kernel-overlay and tier-2 fuse paths behave exactly as before while
+# the pod can no longer reach the node. When user namespaces are enabled
+# (agent.security.userNamespaces), the same operations run against the pod's
+# namespaced root. Do not reintroduce a `Privileged: true` assumption here.
+#
 # Attempts mounts in priority order:
 #   1. Kernel overlayfs — fastest, but fails when the container root is
 #      already on overlayfs (k3s/containerd nested-overlay case; kernel

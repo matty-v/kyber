@@ -141,7 +141,14 @@ a session-brief boot container. The sidecar/tailer/pruner are appended AFTER
 `transcript_pruner.go`) so runtime stays index 0.
 Persistence: a three-tier dispatcher in `images/agent-base/entrypoint.sh` —
 (1) kernel overlayfs, (2) fuse-overlayfs (prod default on k3s), (3) bind-mount
-$HOME fallback. Requires `Privileged: true` + `/dev/fuse`. This is why agents
+$HOME fallback. Needs `CAP_SYS_ADMIN` + `/dev/fuse` for the overlay mount — NOT
+full `Privileged`. Agent pods run de-privileged by default (kyber#76): dropping
+`Privileged: true` removed host-device access (the host escape) while overlay
+persistence keeps working; the security profile is configured cluster-wide via
+`agent.security.*` (Helm) → `KYBER_AGENT_{PRIVILEGED,USER_NAMESPACES,SECCOMP_PROFILE}`
+env → `buildAgentSecurityContext` in `pod_builder.go`. Agents are still
+unrestricted INSIDE the pod (root, apt install). See
+`docs/design/2026-08-15-agent-pod-isolation-design.md`. This is why agents
 survive preemption/restarts with full filesystem continuity. `kubectl exec`
 does NOT land inside the agent's chroot — use nsenter.
 

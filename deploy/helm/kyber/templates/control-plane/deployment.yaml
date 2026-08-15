@@ -432,6 +432,20 @@ spec:
               value: {{ .timezone | quote }}
             {{- end }}
             {{- end }}
+            # Agent pod security envelope (kyber#76). The reconciler reads these
+            # in pod_builder.go to shape every agent pod's host-isolation posture.
+            # `with` guards a null agent/security override the same way the
+            # timezone block above does.
+            {{- with .Values.agent }}
+            {{- with .security }}
+            - name: KYBER_AGENT_PRIVILEGED
+              value: {{ .privileged | default false | quote }}
+            - name: KYBER_AGENT_USER_NAMESPACES
+              value: {{ .userNamespaces | default false | quote }}
+            - name: KYBER_AGENT_SECCOMP_PROFILE
+              value: {{ .seccompProfile | default "RuntimeDefault" | quote }}
+            {{- end }}
+            {{- end }}
             # Surfaced via /api/v1/cluster-info; populates the PWA header.
             - name: KYBER_CLUSTER_NAME
               value: {{ .Values.controlPlane.clusterName | quote }}

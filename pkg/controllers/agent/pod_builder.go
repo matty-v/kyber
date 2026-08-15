@@ -33,6 +33,75 @@ func controlPlanePublicURL() string {
 	return strings.Replace(controlPlaneInternalURL(), ":8082", ":8080", 1)
 }
 
+// agentPrivileged reports whether agent pods should run in the legacy
+// full-Privileged profile. Sourced from KYBER_AGENT_PRIVILEGED (Helm-set on the
+// control-plane Deployment). Default (empty/false) is the de-privileged hardened
+// profile — see buildAgentSecurityContext and
+// docs/design/2026-08-15-agent-pod-isolation-design.md (kyber#76). "true"
+// restores the pre-#76 behavior as a break-glass rollback.
+func agentPrivileged() bool {
+	return strings.EqualFold(os.Getenv("KYBER_AGENT_PRIVILEGED"), "true")
+}
+
+// agentUserNamespaces reports whether agent pods should run in a Linux user
+// namespace (pod.spec.hostUsers=false), remapping in-pod root to an
+// unprivileged host uid. Sourced from KYBER_AGENT_USER_NAMESPACES. Default off:
+// enabling it safely requires per-cluster validation of runtime/kernel support
+// (idmapped mounts for the pre-existing persist PVC) — see the design doc's
+// rollout section. Ignored when agentPrivileged() is true (a Privileged
+// container in a user namespace is contradictory).
+func agentUserNamespaces() bool {
+	return !agentPrivileged() && strings.EqualFold(os.Getenv("KYBER_AGENT_USER_NAMESPACES"), "true")
+}
+
+// agentSeccompProfileType returns the seccomp profile type applied to the
+// de-privileged agent container. Sourced from KYBER_AGENT_SECCOMP_PROFILE;
+// accepts "Unconfined" (case-insensitive) and defaults to RuntimeDefault for
+// anything else (including empty). Unconfined is the documented fallback when a
+// target's RuntimeDefault profile is strict enough to block the mount/FUSE
+// syscalls fuse-overlayfs needs — dropping Privileged is what closes the host
+// escape, not the seccomp profile.
+func agentSeccompProfileType() corev1.SeccompProfileType {
+	if strings.EqualFold(os.Getenv("KYBER_AGENT_SECCOMP_PROFILE"), "Unconfined") {
+		return corev1.SeccompProfileTypeUnconfined
+	}
+	return corev1.SeccompProfileTypeRuntimeDefault
+}
+
+// buildAgentSecurityContext returns the main agent container's security context.
+//
+// Default (de-privileged, kyber#76): Privileged is false, so host block devices
+// are absent from the pod and the device cgroup reverts to the runtime-default
+// allow-list — the G3 host escape (mount /dev/sda) has no device to act on even
+// though CAP_SYS_ADMIN is still held. SYS_ADMIN is retained because it is the
+// one capability fuse-overlayfs's mount(2) requires; the rest of the capability
+// set is the runtime default (sufficient for apt/su). Seccomp is applied.
+// AllowPrivilegeEscalation is deliberately left unset (true) so in-pod
+// `sudo`/setuid — which agents legitimately use to install software — keeps
+// working; in-pod root (G2) is an accepted, required capability and is
+// host-neutered when user namespaces are enabled.
+//
+// Legacy (agentPrivileged()==true): the pre-#76 full-Privileged profile, kept
+// only as a break-glass rollback.
+func buildAgentSecurityContext() *corev1.SecurityContext {
+	sysAdmin := &corev1.Capabilities{
+		Add: []corev1.Capability{corev1.Capability("SYS_ADMIN")},
+	}
+	if agentPrivileged() {
+		privileged := true
+		return &corev1.SecurityContext{
+			Privileged:   &privileged,
+			Capabilities: sysAdmin,
+		}
+	}
+	privileged := false
+	return &corev1.SecurityContext{
+		Privileged:     &privileged,
+		Capabilities:   sysAdmin,
+		SeccompProfile: &corev1.SeccompProfile{Type: agentSeccompProfileType()},
+	}
+}
+
 // PVCName returns the PersistentVolumeClaim name for the given agent.
 // Format: agent-{name}-pv
 func PVCName(agentName string) string {
@@ -326,21 +395,14 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 			corev1.ResourceMemory: agent.Spec.Resources.Memory,
 		},
 	}
-	// --- Security context: privileged required for fuse-overlayfs ---
-	// SYS_ADMIN alone is insufficient because the default seccomp profile
-	// blocks mount(MS_BIND) and the FUSE syscalls. OpenShift Dev Spaces
-	// requires the same for its fuse-overlayfs-based workspace pods.
-	// Tradeoff is acceptable: agents already have SYS_ADMIN + run arbitrary
-	// code; the security envelope barely widens.
-	privileged := true
-	securityContext := &corev1.SecurityContext{
-		Privileged: &privileged,
-		Capabilities: &corev1.Capabilities{
-			Add: []corev1.Capability{
-				corev1.Capability("SYS_ADMIN"),
-			},
-		},
-	}
+	// --- Security context ---
+	// De-privileged by default (kyber#76): fuse-overlayfs needs only /dev/fuse
+	// (mounted above) + CAP_SYS_ADMIN for mount(2), NOT full Privileged.
+	// Dropping Privileged removes the host block devices and restores the device
+	// cgroup allow-list, closing the host escape while whole-/ overlay
+	// persistence keeps working. See buildAgentSecurityContext and
+	// docs/design/2026-08-15-agent-pod-isolation-design.md.
+	securityContext := buildAgentSecurityContext()
 
 	// User kv-secrets envFrom (#75). Projected from {name}-user-secrets-kv
 	// with the USER_ prefix so operator-uploaded kv entries appear as
@@ -460,14 +522,27 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		},
 	}
 
-	return corev1.PodSpec{
+	podSpec := corev1.PodSpec{
 		InitContainers:                []corev1.Container{initContainer},
 		Containers:                    []corev1.Container{container},
 		Volumes:                       volumes,
 		Affinity:                      affinity,
 		TerminationGracePeriodSeconds: &gracePeriod,
 		RestartPolicy:                 corev1.RestartPolicyNever,
-	}, nil
+	}
+
+	// User namespaces (kyber#76, Phase 2): remap in-pod root (and its retained
+	// CAP_SYS_ADMIN) to an unprivileged host uid so it is powerless against
+	// host-owned resources while staying fully root inside the pod. Off by
+	// default — enabling requires per-cluster runtime/kernel validation (see the
+	// design doc). hostUsers=false is meaningless under the legacy Privileged
+	// profile, so agentUserNamespaces() already gates on !agentPrivileged().
+	if agentUserNamespaces() {
+		hostUsers := false
+		podSpec.HostUsers = &hostUsers
+	}
+
+	return podSpec, nil
 }
 
 // BuildPVC returns a PersistentVolumeClaim for the agent's persistent storage.
