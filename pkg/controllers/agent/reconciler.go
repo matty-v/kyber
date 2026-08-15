@@ -925,24 +925,39 @@ func (r *AgentReconciler) classifyEvent(
 	// as kyber#684, same shape of fix: require the operator's input to have
 	// actually CHANGED since the pod we last built.
 	//
-	// The claim here is metadata.generation vs status.observedGeneration —
-	// createPod stamps the latter, so "generation is ahead" means precisely
-	// "the operator edited the spec since that pod was built" and it is
-	// self-clearing on the very next createPod. That keeps the two real
-	// operator-override paths working unchanged: /set-resources on a Failed
-	// agent patches spec.resources (kyber#149), and any lifecycle verb that
-	// genuinely changes desiredPhase bumps the generation itself. A bare Start
-	// on an agent already carrying desiredPhase==Running does not bump anything,
-	// which is why setAgentDesiredPhase clears restartCount for that case — it
-	// buys a fresh retry budget, not a loop.
+	// The claim here is metadata.generation vs status.observedGeneration, and
+	// restartRequestChanged RECORDS it before returning true — the claim cannot
+	// rest on createPod's stamp, which is deliberately best-effort (a failed
+	// stamp there is logged and swallowed so a just-created pod is never lost).
+	// That was fine while the value only drove a PWA badge; it is not fine now
+	// that it bounds a restart loop, because one failed status patch would leave
+	// generation ahead forever and every reconcile would re-fire the edge — and
+	// its action zeroes restartCount, so the retry cap could not catch it
+	// either. Claiming at the decision point, and refusing to act if the claim
+	// cannot be written, is the same shape recoveryInputChanged uses for
+	// kyber#684.
+	//
+	// That keeps the two real operator-override paths working unchanged:
+	// /set-resources on a Failed agent patches spec.resources (kyber#149), and
+	// any lifecycle verb that genuinely changes desiredPhase bumps the
+	// generation itself. A bare Start on an agent already carrying
+	// desiredPhase==Running does not bump anything, which is why
+	// setAgentDesiredPhase clears restartCount for that case — it buys a fresh
+	// retry budget, not a loop.
 	//
 	// Falling through to the retry cap is the safe direction: the agent still
 	// auto-restarts up to maxRestartRetries, then holds in Failed with a
 	// RetryLimitReached alert instead of hammering the node. The counter resets
 	// itself after 5 stable minutes in Running (step 4 of Reconcile).
 	case kyberv1.AgentPhaseFailed:
-		if desired == kyberv1.AgentPhaseRunning && specChangedSinceLastPod(agent) {
-			return EventDesiredRunning, nil
+		if desired == kyberv1.AgentPhaseRunning {
+			changed, err := r.restartRequestChanged(ctx, agent)
+			if err != nil {
+				return "", err
+			}
+			if changed {
+				return EventDesiredRunning, nil
+			}
 		}
 		// Auto-restart: if retry count < max, trigger auto-restart.
 		if agent.Status.RestartCount < maxRestartRetries {
@@ -2094,22 +2109,33 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	return nil
 }
 
-// specChangedSinceLastPod reports whether the operator has edited the Agent
-// spec since the reconciler last rolled it into a pod — the same
-// generation > observedGeneration signal the PWA renders as its "restart
-// required" badge (kyber#157), read here as a one-shot claim.
+// restartRequestChanged reports whether the operator has issued a NEW
+// instruction to a Failed agent since the last one this controller acted on,
+// and claims that instruction so it cannot be acted on twice.
 //
-// It is one-shot because createPod stamps observedGeneration back up to
-// generation, so the next reconcile sees no change and holds. That is what
-// bounds the Failed → Starting edge in classifyEvent: a standing
-// desiredPhase==Running cannot re-fire it, only a genuinely new spec write can.
+// The instruction is a spec edit (Agent.SpecChangedSinceLastPod); the claim is
+// stamping observedGeneration up to generation, which is the same write
+// createPod makes a moment later — so on the happy path this only moves the
+// stamp earlier, and the createPod stamp becomes a no-op.
 //
-// The observedGeneration > 0 guard means "we have stamped at least once".
-// An agent that has never had a pod built has nothing to compare against, so
-// it holds and takes the retry-cap path instead — the conservative direction.
-func specChangedSinceLastPod(agent *kyberv1.Agent) bool {
-	return agent.Status.ObservedGeneration > 0 &&
-		agent.Generation > agent.Status.ObservedGeneration
+// Claiming here rather than trusting that later stamp is the point. createPod's
+// stamp is intentionally non-fatal: it runs after the pod exists, and losing a
+// live pod to a status-patch error would be a bad trade for a stale badge. But
+// an unclaimed generation is a permanently-open gate, and the action behind
+// this gate resets restartCount, so the retry cap cannot bound what the gate
+// lets through. If the claim cannot be written we return the error and derive
+// no event: the reconcile requeues, the agent stays Failed, and the retry cap
+// still governs. Same shape as recoveryInputChanged (kyber#684).
+func (r *AgentReconciler) restartRequestChanged(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	if !agent.SpecChangedSinceLastPod() {
+		return false, nil
+	}
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.ObservedGeneration = agent.Generation
+	if err := r.Status().Patch(ctx, agent, patch); err != nil {
+		return false, fmt.Errorf("claiming restart request generation: %w", err)
+	}
+	return true, nil
 }
 
 // stampObservedGeneration patches agent.status.observedGeneration to the

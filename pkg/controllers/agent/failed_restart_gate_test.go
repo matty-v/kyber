@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -149,6 +151,11 @@ func TestFailedGate_RespectsDesiredStopped(t *testing.T) {
 // action increments nothing — so the cap the tests above rely on could never be
 // reached by a crash that happened before the agent ever reached Running, which
 // is precisely how the production incident presented (restartCount 0 forever).
+//
+// This runs the transition's action for real and reads the counter back out of
+// the client. Asserting only that the row names ActionEmitEventAutoRestart
+// would pass just as happily with the increment deleted out of that action,
+// which is a route to the same production loop by a different door.
 func TestFailedGate_StartingPodDiedIncrementsRestartCount(t *testing.T) {
 	tr, err := NextPhase(kyberv1.AgentPhaseStarting, EventPodDied)
 	if err != nil {
@@ -157,9 +164,61 @@ func TestFailedGate_StartingPodDiedIncrementsRestartCount(t *testing.T) {
 	if tr.NextPhase != kyberv1.AgentPhaseFailed {
 		t.Fatalf("{Starting, PodDied} must land in Failed; got %q", tr.NextPhase)
 	}
-	if tr.Action != ActionEmitEventAutoRestart {
-		t.Fatalf("{Starting, PodDied} runs %q, which does not increment restartCount — "+
-			"a crash during startup would never reach maxRestartRetries; want %q",
-			tr.Action, ActionEmitEventAutoRestart)
+
+	agent := failedAgent(4, 4, 0)
+	agent.Status.Phase = kyberv1.AgentPhaseStarting
+	r := newGateReconciler(t, agent)
+
+	if _, err := r.executeAction(context.Background(), agent, nil, tr.Action, EventPodDied); err != nil {
+		t.Fatalf("executing %q: %v", tr.Action, err)
+	}
+
+	var stored kyberv1.Agent
+	if err := r.Get(context.Background(),
+		client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &stored); err != nil {
+		t.Fatalf("re-reading agent: %v", err)
+	}
+	if stored.Status.RestartCount != 1 {
+		t.Fatalf("a pod that died during startup left restartCount=%d, want 1 — "+
+			"a crash before Running would never reach maxRestartRetries",
+			stored.Status.RestartCount)
+	}
+}
+
+// The gate's claim must be PERSISTED, not just set on the in-memory object.
+// Every real reconcile re-reads the Agent from the API server, so an unclaimed
+// generation is a permanently-open gate — and the action behind it zeroes
+// restartCount, so the retry cap cannot bound what it lets through. This is the
+// window createPod's best-effort stamp used to leave open.
+func TestFailedGate_SpecChangeClaimIsPersistedAndFiresOnce(t *testing.T) {
+	agent := failedAgent(9, 8, maxRestartRetries)
+	r := newGateReconciler(t, agent)
+
+	ev, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if ev != EventDesiredRunning {
+		t.Fatalf("an operator spec change must fire; got %q want %q", ev, EventDesiredRunning)
+	}
+
+	var stored kyberv1.Agent
+	if err := r.Get(context.Background(),
+		client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &stored); err != nil {
+		t.Fatalf("re-reading agent: %v", err)
+	}
+	if stored.Status.ObservedGeneration != 9 {
+		t.Fatalf("claim not persisted: observedGeneration=%d, want 9 — the gate stays open and the loop is back",
+			stored.Status.ObservedGeneration)
+	}
+
+	// A second pass, driven from the STORED object as a real reconcile would be,
+	// must fall through to the retry cap rather than firing again.
+	ev2, err := r.classifyEvent(context.Background(), &stored, nil)
+	if err != nil {
+		t.Fatalf("second reconcile: %v", err)
+	}
+	if ev2 != EventRetryLimitReached {
+		t.Fatalf("the same spec change fired twice (%q) — this is the loop", ev2)
 	}
 }

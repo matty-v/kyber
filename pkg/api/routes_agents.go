@@ -398,7 +398,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		// freshly-created agents whose pod hasn't been built yet (the
 		// reconciler stamps ObservedGeneration on first createPod, after
 		// which the comparison is meaningful).
-		Dirty: (a.Status.ObservedGeneration > 0 && a.Generation > a.Status.ObservedGeneration) ||
+		Dirty: a.SpecChangedSinceLastPod() ||
 			meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionSidecarOutOfDate),
 		CreatedAt: a.CreationTimestamp.UTC().Format(time.RFC3339),
 	}
