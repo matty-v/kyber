@@ -180,7 +180,15 @@ func stopPortForward() {
 
 // waitForAPI polls /healthz until the server responds or a timeout elapses.
 func waitForAPI() error {
-	baseURL := fmt.Sprintf("http://localhost:%d", *apiPort)
+	// Honour KYBER_E2E_BASE_URL when it is already set. The API client reads
+	// it, so without this the readiness gate polls localhost while the tests
+	// themselves would talk to a completely different cluster — the suite then
+	// fails at startup against any pre-existing install (a dev cluster or a
+	// canary), which is exactly where the sandbox suites need to run.
+	baseURL := os.Getenv("KYBER_E2E_BASE_URL")
+	if baseURL == "" {
+		baseURL = fmt.Sprintf("http://localhost:%d", *apiPort)
+	}
 	url := baseURL + "/healthz"
 	deadline := time.Now().Add(60 * time.Second)
 	client := &http.Client{Timeout: 5 * time.Second}

@@ -8,7 +8,7 @@ Step-by-step guide for the standalone single-box deployment shape: native k3s in
 
 > **How this install gets new versions:** it pulls a released chart, and stays on that version until you move it. Upgrades happen from the Kyber UI (Settings → Updates) or by re-running `helm upgrade` with a newer `--version`. Nothing watches a registry or a branch on your behalf. See [upgrading.md](./upgrading.md).
 
-> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and the agent runtime's `CAP_SYS_ADMIN` + `/dev/fuse` requirements (Phase C) are documented separately.
+> **Aside.** Status: Phase A complete (2026-04-16) — PWA reachable on phone via Tailscale Funnel. Agent creation (Phase B) and the agent runtime's `CAP_SYS_ADMIN` + user-namespace requirements (Phase C) are documented separately.
 
 ## Architecture
 
@@ -41,7 +41,7 @@ Phone → HTTPS → Tailscale Funnel (kyber-wsl node, inside WSL2)
       → klipper-lb :8080 → control-plane Service → pod
 ```
 
-**Why native k3s, not k3d/kind?** Agent pods (Phase C) require `/dev/fuse` and `mount(MS_BIND)` — both work far more reliably directly on the WSL2 kernel than nested in Docker. Native k3s also exactly matches the prod stack (same k3s version, same klipper-lb, same Helm chart).
+**Why native k3s, not k3d/kind?** Agent pods (Phase C) require user namespaces and `mount(MS_BIND)` — both work far more reliably directly on the WSL2 kernel than nested in Docker. Native k3s also exactly matches the prod stack (same k3s version, same klipper-lb, same Helm chart).
 
 **Why tailscaled inside WSL2, not Windows-side forwarding?** The Windows Tailscale client keeps its own identity (`windows-laptop-1`) for SSH recovery. Running a separate tailscaled inside WSL2 gives the cluster a clean identity (`kyber-wsl`) and lets Funnel terminate directly on the kube LoadBalancer address — no `netsh portproxy` drift to debug.
 
@@ -190,9 +190,9 @@ sudo apt update
 sudo apt install -y curl jq git openssl
 
 # kubectl (official APT repo)
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | \
   sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | \
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' | \
   sudo tee /etc/apt/sources.list.d/kubernetes.list
 sudo apt update
 sudo apt install -y kubectl
@@ -294,8 +294,15 @@ Expected output: `OK`.
 
 **Run:**
 ```bash
-curl -sfL https://get.k3s.io | sudo sh -s - --disable traefik --write-kubeconfig-mode 644
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.6+k3s1 \
+  sudo sh -s - --disable traefik --write-kubeconfig-mode 644
 ```
+
+The version is pinned rather than left to `stable` because agents need
+**Kubernetes >= 1.33 with containerd >= 2.0**: they run in a user namespace, and
+below those versions Kubernetes accepts `hostUsers` and silently ignores it, so
+the agents refuse to start rather than run unisolated. Any newer k3s release is
+fine; an older one is not.
 
 **Verify:**
 ```bash
@@ -793,7 +800,7 @@ Expected output: ends with a line `OK` (Agent reached `Running` within ~6 minute
 
 **Human input needed:** None.
 
-**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on `/dev/fuse` + `CAP_SYS_ADMIN` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
+**Notes:** *(aside)* On standalone WSL2, the agent pod's Phase C dependency on user namespaces + `CAP_SYS_ADMIN` + `mount(MS_BIND)` is functional, but its end-to-end reliability across kernel updates is not yet covered by CI. If a pod stays in `CrashLoopBackOff`, inspect with `kubectl -n kyber-system logs pod/agent-<name> --previous`.
 
 ### Scheduling recurring work on an agent
 
@@ -1336,7 +1343,7 @@ kubectl -n kyber-system describe agent dave | tail -30
 
 **Symptom:** Step 9.4's polling loop ends with `TERMINAL: CrashLoopBackOff` or never reaches `Running`.
 
-**Likely cause:** Agent pod's privileged-mode + `/dev/fuse` + bind-mount path is failing on this WSL2 substrate. Phase C reliability across kernel updates is not yet CI-covered.
+**Likely cause:** Agent pod's user-namespace + bind-mount path is failing on this WSL2 substrate. Confirm the node is Kubernetes 1.33+ with containerd 2.0+; below that the user namespace is silently ignored and the agent refuses to start by design. Phase C reliability across kernel updates is not yet CI-covered.
 
 **Fix:**
 ```bash
@@ -1346,7 +1353,8 @@ kubectl -n kyber-system describe pod/agent-dave | tail -30
 
 Common cases:
 - `mount: ... operation not permitted` → privileged-pod policy is being rejected. Check the namespace's PodSecurity setting: `kubectl get ns kyber-system -o jsonpath='{.metadata.labels}'` should show `pod-security.kubernetes.io/enforce=privileged`.
-- `Failed to setup overlayfs / bind mount` → fuse-overlayfs path failed; the agent will fall back to bind-mount-HOME. Check pod logs for the fallback.
+- `could not prepare the durable root` → seeding or merging `/persist/agentroot` failed; the agent refuses to start rather than run on an ephemeral root. Check pod logs and `/persist/kyber/`.
+- `this agent is not running in a user namespace` → the node cannot honour `hostUsers: false`. Upgrade it, or set `agent.security.requireUserNamespace=false` to accept an unisolated agent deliberately.
 
 If neither path completes, this is a known Phase C uncertainty on WSL2. Capture what you saw in a fresh issue against `matty-v/kyber`.
 

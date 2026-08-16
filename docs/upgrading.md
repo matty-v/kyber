@@ -2,6 +2,48 @@
 
 How to roll out new features, bug fixes, and schema changes to a running Kyber instance. This document is the source of truth — if a step doesn't match reality, fix the doc.
 
+## Before upgrading past the agent-sandbox release: check your Kubernetes version
+
+Agents now run in a Linux user namespace, and they **refuse to start** without
+one (kyber#78). This needs **Kubernetes >= 1.33 and containerd >= 2.0** on every
+node that schedules agents.
+
+```bash
+kubectl get nodes -o custom-columns=\
+NAME:.metadata.name,K8S:.status.nodeInfo.kubeletVersion,RUNTIME:.status.nodeInfo.containerRuntimeVersion
+```
+
+If any agent-scheduling node is below that, upgrading will stop every agent on
+the cluster. The agents fail with a message naming the cause, and the control
+plane reports them Failed — nothing is lost, and the volumes are untouched — but
+they will not run until you either upgrade the nodes or opt out deliberately:
+
+```yaml
+agent:
+  security:
+    requireUserNamespace: false   # accept unisolated agents, knowingly
+```
+
+That is a real choice, not a formality: without a user namespace an agent's
+in-pod root and `CAP_SYS_ADMIN` are valid against the node. Kyber will not make
+that choice silently on your behalf, which is why the default is to stop rather
+than to continue.
+
+**Kyber's own Install button checks this before it acts.** `POST
+/api/v1/updates/apply` runs a node preflight and refuses with a `409` naming the
+offending nodes rather than installing an upgrade that would stop every agent on
+the cluster. The refusal is the same information as the check above, arriving
+while it can still be acted on. It does not apply when
+`requireUserNamespace=false` — an operator who has accepted unisolated agents
+does not need a second opinion — and an unreadable node or an unfamiliar version
+string never blocks, because a preflight that becomes its own outage is worse
+than the problem it guards against.
+
+The first boot after the upgrade also seeds each agent's durable root from the
+base image (~1.3 GB, a minute or two) and migrates any existing overlay upper
+layer into it. The old upper layer is left in place, so
+`agent.security.persistenceMode=overlay` remains a working rollback.
+
 ## Two delivery models
 
 A cluster gets a new version by exactly one of two routes, and which one applies
@@ -663,10 +705,15 @@ k3s is installed by the Terraform startup script. The script does **not** auto-u
 
 ```bash
 gcloud compute ssh kyber-small-k3s-server --zone=us-central1-a --command '
-  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.31.0+k3s1 sh -
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.6+k3s1 sh -
   sudo systemctl restart k3s
 '
 ```
+
+**Do not pin below v1.33 here.** Agents run in a user namespace and refuse to
+start without one, so a cluster on an older k3s runs Kyber fine and schedules no
+agents at all. Kubernetes also only supports one minor version per upgrade, so
+getting from an old pin to a supported one may take more than one pass.
 
 Pin the k3s version in the startup script (`infra/terraform/scripts/k3s-install.sh`) so new VMs get the same version. There's a TODO comment in the script to do this — do it before the first production install.
 

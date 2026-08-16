@@ -29,9 +29,9 @@ This page documents the two controls that close it. **In scope:** the pod-token
 identity mechanism, the per-identity authz boundary, the enforcement/grace
 rollout posture, and the NetworkPolicy posture. **Out of scope:** the public API
 authz model (`api-authorization.md`, #474 — a separate caller/scope vocabulary);
-de-privileging agent pods (a separate fuse-overlayfs tradeoff, deliberately not
-addressed here — this contains the blast radius, it does not eliminate the
-breakout path).
+the agent sandbox boundary itself (kyber#78 and
+[ADR 0003](../adr/0003-agent-sandbox-isolation.md) — this page contains the
+blast radius, it is not what closes the breakout path).
 
 ## 2. Components & responsibilities
 

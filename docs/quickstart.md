@@ -19,22 +19,32 @@ both start from the same `helm install` you run here.
 
 | Tool | Version | Notes |
 |---|---|---|
-| `kubectl` | ≥ 1.30 | |
+| `kubectl` | ≥ 1.33 | one minor of the cluster; the cluster floor is 1.33 |
 | `helm` | ≥ 3.14 | needs OCI registry support, which 3.14 has by default |
 | `openssl` | any | generating secrets |
 | `curl`, `jq` | any | the verify steps |
 
-Plus **a Kubernetes cluster that admits `CAP_SYS_ADMIN` and exposes
-`/dev/fuse`**. Agent pods are not privileged by default, but those two
-requirements enable whole-disk persistence and are why Kyber wants a cluster
-of its own rather than a shared one. See the
-[deployment threat model](../.github/SECURITY.md#deployment-threat-model).
+Plus **a Kubernetes cluster running 1.33 or newer with containerd 2.0 or
+newer**, which admits `CAP_SYS_ADMIN`. Agents run in a user namespace so that
+in-pod root maps to an unprivileged uid on the node, and that needs those
+versions — below them Kubernetes accepts the setting, ignores it, and the
+agents refuse to start rather than run unisolated. See the
+[deployment threat model](../.github/SECURITY.md#deployment-threat-model) and
+[design/agent-pod-isolation.md](design/agent-pod-isolation.md).
 
-No cluster? [k3d](https://k3d.io) gives you one on Docker in about 30 seconds,
-and satisfies both requirements on a typical host:
+Check an existing cluster with:
 
 ```bash
-k3d cluster create kyber --no-lb --wait
+kubectl get nodes -o custom-columns=\
+NAME:.metadata.name,K8S:.status.nodeInfo.kubeletVersion,RUNTIME:.status.nodeInfo.containerRuntimeVersion
+```
+
+No cluster? [k3d](https://k3d.io) gives you one on Docker in about 30 seconds.
+Pin an image new enough to satisfy the above — the k3d default tracks its own
+release, which may be older than your k3d binary suggests:
+
+```bash
+k3d cluster create kyber --no-lb --wait --image rancher/k3s:v1.34.6-k3s1
 ```
 
 Everything below assumes `kubectl` is pointed at that cluster.

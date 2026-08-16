@@ -52,52 +52,35 @@ new pod comes up, both lines are still installed and the logs keep growing.
 
 ## How persistence works
 
-Two persistence modes, same outcome from the agent's perspective.
+The agent's root filesystem is a real directory on its persistent volume at
+`/persist/agentroot`, seeded from the base image on first boot and entered with
+`chroot`. Every write anywhere on the root FS — including `/etc/crontab`,
+`/etc/cron.d/*`, and `/var/spool/cron/crontabs/*` — is simply a write to that
+directory, so it persists across pod restarts with no special handling.
 
-### Overlay mode (kernel or fuse-overlayfs)
+There is no overlay and no separate fallback mode to reason about. Earlier
+versions mounted an overlayfs over `/` and kept the writes in an upper layer,
+with a bind-mount-`$HOME` fallback that silently stopped persisting system-level
+state. Both are gone: neither overlayfs nor FUSE works inside the user namespace
+agents now run in, and a mode that quietly loses your cron files is worse than a
+pod that refuses to start. See
+[`design/agent-pod-isolation.md`](design/agent-pod-isolation.md).
 
-This is the default on GCE machines and on any standalone install where the
-kernel supports nested overlayfs or `/dev/fuse` is exposed. `entrypoint.sh`
-mounts an overlay over `/` with the upper layer living on the agent's
-persistent volume at `/persist/overlay/upper`. Every write anywhere on the
-root FS (including `/etc/crontab`, `/etc/cron.d/*`, and
-`/var/spool/cron/crontabs/*`) lands in that upper layer and persists across
-pod restarts. On the next boot the overlay re-mounts the same upper layer,
-so state carries over.
+A newer base image reaches an existing root through a three-way merge that never
+overwrites a file the agent has touched, so a cron file you edited survives a
+Kyber upgrade. Conflicts are listed in
+`/persist/kyber/rootfs-upgrade-conflicts.log`.
 
-### Bind-mount-home fallback mode
-
-When overlay setup fails (e.g. no `/dev/fuse`, restrictive kernel), agents
-run on an ephemeral root FS with `$HOME` bind-mounted from `/persist/home`.
-Under this mode the root FS is otherwise **ephemeral** — normally
-`/etc/crontab`, `/etc/cron.d/`, and `/var/spool/cron/crontabs/` would be
-reset on every restart.
-
-To preserve the acceptance contract, `entrypoint.sh` shadows each of those
-paths from `/persist/cron/` via `mount --bind` (with a symlink fallback when
-`mount` itself is blocked by seccomp):
-
-```
-/etc/crontab               ← /persist/cron/crontab
-/etc/cron.d/               ← /persist/cron/cron.d/
-/etc/cron.hourly/          ← /persist/cron/cron.hourly/
-/etc/cron.daily/           ← /persist/cron/cron.daily/
-/etc/cron.weekly/          ← /persist/cron/cron.weekly/
-/etc/cron.monthly/         ← /persist/cron/cron.monthly/
-/var/spool/cron/crontabs/  ← /persist/cron/crontabs/
-```
-
-First-boot seeds the persist side with the image defaults so the bind mount
-doesn't mask system-shipped entries. `/var/spool/cron/crontabs` gets its
-required `root:crontab` ownership and `1730` permissions before mounting.
+One thing does not survive: on `local-path` volumes the PVC is node-local disk,
+so the root does not follow the agent to a replacement node.
 
 ### Daemon start
 
 Containers don't run an init, so `entrypoint.sh` starts `/usr/sbin/cron`
 directly as root just before `su`'ing to `kyber`. Stale
-`/var/run/crond.pid` from the previous pod is unlinked first — in overlay
-mode that pidfile persists in the upper layer across restarts and would
-otherwise make a fresh daemon refuse to start.
+`/var/run/crond.pid` from the previous pod is unlinked first — that pidfile
+lives on the durable root and would otherwise make a fresh daemon refuse to
+start.
 
 ## Debugging
 
@@ -111,10 +94,14 @@ otherwise make a fresh daemon refuse to start.
   ```bash
   jq -r .mode /persist/kyber/boot-metadata.json
   ```
-  If `mode` is `kernel` or `fuse`, files live in `/persist/overlay/upper/`.
-  If `mode` is `bind-mount-home`, system cron files are in `/persist/cron/`.
-  If neither path shows your file, the write never persisted — confirm you
-  weren't shelling into a detached container.
+  It should read `rootfs` (or `rootfs-seeded`, `rootfs-migrated`,
+  `rootfs-upgraded` on the boot that did that work). Your file should then be
+  visible at `/persist/agentroot/etc/cron.d/...`. If it isn't, the write never
+  persisted — confirm you weren't shelling into a detached container, since
+  `kubectl exec` does not land inside the agent's chroot.
+  A `mode` of `bind-mount-home` means the agent fell back to the legacy
+  overlay path and system-level state is NOT persisting; that mode is no longer
+  reachable in the default configuration.
 - **Permission denied on `/var/spool/cron/crontabs`**: that directory requires
   `root:crontab` ownership and mode `1730`. Recreate the pod — entrypoint
   resets these on every boot.

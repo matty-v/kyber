@@ -134,6 +134,15 @@ func (a *Applier) Start(ctx context.Context, targetVersion string, policy Policy
 	}
 	target := version.String()
 
+	// Node-capability preflight (kyber#78). Deliberately after the pin and
+	// channel checks — those are about what the operator asked for; this is
+	// about whether the cluster can carry it — and BEFORE the Job is created,
+	// because the whole point is to refuse rather than to land and break every
+	// agent at once. See preflight.go for why an unreadable node never blocks.
+	if err := CheckNodeCapability(ctx, a.Client); err != nil {
+		return nil, err
+	}
+
 	// One at a time. Two concurrent `helm upgrade`s on one release is a way to
 	// corrupt the release history, and the second would be operating on values
 	// the first is in the middle of replacing.

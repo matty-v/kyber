@@ -13,14 +13,13 @@ continuously).
 
 ## ⚠️ Top 3 worth revisiting
 
-**1. ADR-003 — De-privileged agent pods for whole-disk persistence.**
-Agent pods retain `CAP_SYS_ADMIN` and `/dev/fuse` for overlay mounts but do not
-run privileged by default. See `docs/design/agent-pod-isolation.md`.
-The platform's entire purpose is to run agents that execute arbitrary code, so
-the residual host-valid `SYS_ADMIN` capability remains worth revisiting. Linux
-user namespaces (`hostUsers: false`) are available as a per-cluster hardening
-layer after runtime and idmapped-volume validation; Kata/gVisor remains a
-possible stronger runtime boundary.
+**1. Agent sandbox isolation — resolved by
+[ADR 0003](./0003-agent-sandbox-isolation.md) (kyber#78).**
+The residual host-valid `SYS_ADMIN` this entry used to flag is gone: agent pods
+run in a user namespace by default, and persistence moved off overlayfs onto a
+durable root directory, so no host device and no host-valid capability is
+needed. Kata/gVisor were evaluated and rejected with reasons recorded in the
+ADR; the remaining boundary is the user namespace, not a guest kernel.
 
 **2. ADR-004 — Prompt delivery via tmux send-keys into an interactive TUI.**
 The wire protocol between the control plane and a running agent is keystroke injection into

@@ -1,0 +1,566 @@
+// Package agent_base_test — tests for the durable-root manager (kyber#78).
+//
+// The three-way merge in `scripts/kyber-rootfs` is the riskiest code in this
+// change: it decides, on every base-image upgrade, whether to overwrite a file
+// on an agent's root or leave it alone. Getting it wrong either clobbers months
+// of an agent's work or silently pins it to a stale base image forever.
+//
+// These tests drive the real script against synthetic image trees, so they need
+// no docker and run in the normal test job.
+package agent_base_test
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+)
+
+// rootfsEnv is one synthetic world: an "image" root, a persist dir, and the
+// agent's durable root inside it.
+type rootfsEnv struct {
+	t       *testing.T
+	image   string
+	persist string
+	root    string
+}
+
+func newRootfsEnv(t *testing.T) *rootfsEnv {
+	t.Helper()
+	base := t.TempDir()
+	e := &rootfsEnv{
+		t:       t,
+		image:   filepath.Join(base, "image"),
+		persist: filepath.Join(base, "persist"),
+	}
+	e.root = filepath.Join(e.persist, "agentroot")
+	// `usr` is the sentinel prepare() uses to decide "already seeded", so every
+	// synthetic image needs one.
+	mustMkdirAll(t, filepath.Join(e.image, "usr", "bin"))
+	mustMkdirAll(t, filepath.Join(e.image, "etc"))
+	mustMkdirAll(t, e.persist)
+	return e
+}
+
+// prepare runs `kyber-rootfs prepare` and returns the mode it reported.
+func (e *rootfsEnv) prepare() string {
+	e.t.Helper()
+	script := filepath.Join(rootfsRepoRoot(e.t), "images/agent-base/scripts/kyber-rootfs")
+	cmd := exec.Command("bash", script, "prepare", e.root)
+	cmd.Env = append(os.Environ(),
+		"IMAGE_ROOT="+e.image,
+		"PERSIST_DIR="+e.persist,
+		"LEGACY_UPPER="+filepath.Join(e.persist, "overlay", "upper"),
+	)
+	out, err := cmd.Output()
+	if err != nil {
+		stderr := ""
+		if ee, ok := err.(*exec.ExitError); ok {
+			stderr = string(ee.Stderr)
+		}
+		e.t.Fatalf("kyber-rootfs prepare: %v\n%s", err, stderr)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// writeImage writes a file into the synthetic base image with a fixed mtime, so
+// "the image changed this path" is unambiguous rather than timing-dependent.
+func (e *rootfsEnv) writeImage(rel, content string, mtime time.Time) {
+	e.t.Helper()
+	p := filepath.Join(e.image, rel)
+	mustMkdirAll(e.t, filepath.Dir(p))
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		e.t.Fatalf("writing image file %s: %v", rel, err)
+	}
+	if err := os.Chtimes(p, mtime, mtime); err != nil {
+		e.t.Fatalf("setting mtime on %s: %v", rel, err)
+	}
+}
+
+func (e *rootfsEnv) removeImage(rel string) {
+	e.t.Helper()
+	if err := os.Remove(filepath.Join(e.image, rel)); err != nil {
+		e.t.Fatalf("removing image file %s: %v", rel, err)
+	}
+}
+
+// writeAgent simulates the agent editing its own root.
+func (e *rootfsEnv) writeAgent(rel, content string) {
+	e.t.Helper()
+	p := filepath.Join(e.root, rel)
+	mustMkdirAll(e.t, filepath.Dir(p))
+	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+		e.t.Fatalf("writing agent file %s: %v", rel, err)
+	}
+	// A real edit lands with a current mtime; make that explicit rather than
+	// relying on the test running slowly enough for it to differ.
+	now := time.Now()
+	if err := os.Chtimes(p, now, now); err != nil {
+		e.t.Fatalf("setting mtime on %s: %v", rel, err)
+	}
+}
+
+func (e *rootfsEnv) rootContent(rel string) (string, bool) {
+	e.t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.root, rel))
+	if err != nil {
+		return "", false
+	}
+	return string(b), true
+}
+
+func (e *rootfsEnv) conflicts() string {
+	e.t.Helper()
+	b, err := os.ReadFile(filepath.Join(e.persist, "kyber", "rootfs-upgrade-conflicts.log"))
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// rootfsRepoRoot returns the repo root. Deliberately separate from the
+// identically-shaped helper in home_persistence_test.go: that file is behind
+// the docker_integration build tag, and these tests need no docker, so they
+// must compile without it.
+func rootfsRepoRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		t.Fatalf("git rev-parse --show-toplevel: %v", err)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func mustMkdirAll(t *testing.T, p string) {
+	t.Helper()
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", p, err)
+	}
+}
+
+func TestRootfs_SeedsOnFirstBoot(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("usr/bin/tool", "#!/bin/sh\necho v1\n", v1)
+
+	if mode := e.prepare(); mode != "rootfs-seeded" {
+		t.Fatalf("first boot mode = %q, want rootfs-seeded", mode)
+	}
+	if got, ok := e.rootContent("etc/motd"); !ok || got != "image v1\n" {
+		t.Errorf("etc/motd after seed = %q (present=%v), want image v1", got, ok)
+	}
+
+	// The bind targets the entrypoint mounts over must exist, or the chroot
+	// assembly fails with nowhere to land.
+	for _, dir := range []string{"proc", "sys", "dev", "persist", "tmp", "run"} {
+		if fi, err := os.Stat(filepath.Join(e.root, dir)); err != nil || !fi.IsDir() {
+			t.Errorf("mount target %s missing after seed", dir)
+		}
+	}
+}
+
+func TestRootfs_SecondBootIsANoOp(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("unchanged second boot mode = %q, want rootfs (a re-seed would mean state loss)", mode)
+	}
+}
+
+// The core of the merge: Kyber may update what the agent has not claimed.
+func TestRootfs_UpgradeTakesImageVersionWhenAgentDidNotTouchIt(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	v2 := time.Now().Add(-1 * time.Hour)
+	e.writeImage("etc/motd", "image v2\n", v2)
+
+	if mode := e.prepare(); mode != "rootfs-upgraded" {
+		t.Fatalf("upgrade mode = %q, want rootfs-upgraded", mode)
+	}
+	got, _ := e.rootContent("etc/motd")
+	if got != "image v2\n" {
+		t.Errorf("etc/motd = %q, want the new image version — an untouched file must "+
+			"receive base-image updates or agents freeze on a stale root", got)
+	}
+}
+
+// The other half: Kyber never silently overwrites the agent's work.
+func TestRootfs_UpgradeKeepsAgentVersionAndLogsTheConflict(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	e.writeAgent("etc/motd", "AGENT EDITED THIS\n")
+
+	v2 := time.Now().Add(-1 * time.Hour)
+	e.writeImage("etc/motd", "image v2\n", v2)
+	e.prepare()
+
+	got, _ := e.rootContent("etc/motd")
+	if got != "AGENT EDITED THIS\n" {
+		t.Errorf("etc/motd = %q, want the agent's edit preserved", got)
+	}
+	if !strings.Contains(e.conflicts(), "etc/motd") {
+		t.Errorf("conflict log does not mention etc/motd; got %q", e.conflicts())
+	}
+}
+
+func TestRootfs_UpgradeAddsNewImageFiles(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	e.writeImage("usr/bin/newtool", "#!/bin/sh\necho new\n", time.Now().Add(-time.Hour))
+	e.prepare()
+
+	if got, ok := e.rootContent("usr/bin/newtool"); !ok || !strings.Contains(got, "echo new") {
+		t.Errorf("new image file not delivered to the durable root (present=%v, got %q)", ok, got)
+	}
+}
+
+func TestRootfs_UpgradeRemovesFilesTheAgentNeverTouched(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("etc/dropped", "going away\n", v1)
+	e.prepare()
+
+	e.removeImage("etc/dropped")
+	e.prepare()
+
+	if _, ok := e.rootContent("etc/dropped"); ok {
+		t.Error("a file dropped by the base image and never touched by the agent should be removed")
+	}
+}
+
+func TestRootfs_UpgradeKeepsRemovedFilesTheAgentModified(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("etc/dropped", "going away\n", v1)
+	e.prepare()
+
+	e.writeAgent("etc/dropped", "agent depends on this\n")
+	e.removeImage("etc/dropped")
+	e.prepare()
+
+	got, ok := e.rootContent("etc/dropped")
+	if !ok || got != "agent depends on this\n" {
+		t.Errorf("etc/dropped = %q (present=%v), want the agent's copy kept even though "+
+			"the image dropped it", got, ok)
+	}
+	if !strings.Contains(e.conflicts(), "etc/dropped") {
+		t.Error("keeping a removed-but-modified file should be recorded as a conflict")
+	}
+}
+
+// Anything the agent created that the image never shipped is simply its own.
+func TestRootfs_UpgradePreservesAgentCreatedFiles(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	e.writeAgent("usr/local/bin/mytool", "#!/bin/sh\necho mine\n")
+	e.writeAgent("etc/myconfig", "mine\n")
+
+	e.writeImage("etc/motd", "image v2\n", time.Now().Add(-time.Hour))
+	e.prepare()
+
+	for _, rel := range []string{"usr/local/bin/mytool", "etc/myconfig"} {
+		if _, ok := e.rootContent(rel); !ok {
+			t.Errorf("agent-created file %s was destroyed by a base-image upgrade", rel)
+		}
+	}
+}
+
+// An agent arriving from the overlay era keeps everything it ever changed, and
+// its upper layer is left intact so the rollback path stays open.
+func TestRootfs_MigratesLegacyOverlayUpperLayer(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("usr/bin/tool", "image tool\n", v1)
+
+	upper := filepath.Join(e.persist, "overlay", "upper")
+	mustMkdirAll(t, filepath.Join(upper, "etc"))
+	mustMkdirAll(t, filepath.Join(upper, "usr", "local", "bin"))
+	if err := os.WriteFile(filepath.Join(upper, "etc", "motd"), []byte("overlay edit\n"), 0o644); err != nil {
+		t.Fatalf("seeding upper: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(upper, "usr", "local", "bin", "legacy"), []byte("legacy\n"), 0o755); err != nil {
+		t.Fatalf("seeding upper: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs-migrated" {
+		t.Fatalf("migration mode = %q, want rootfs-migrated", mode)
+	}
+
+	if got, _ := e.rootContent("etc/motd"); got != "overlay edit\n" {
+		t.Errorf("etc/motd = %q, want the overlay upper layer's version to win over the image", got)
+	}
+	if _, ok := e.rootContent("usr/local/bin/legacy"); !ok {
+		t.Error("a file that existed only in the overlay upper layer was lost in migration")
+	}
+	if got, _ := e.rootContent("usr/bin/tool"); got != "image tool\n" {
+		t.Errorf("usr/bin/tool = %q, want the image version for a path the upper layer never had", got)
+	}
+
+	// Rollback must stay a flag flip, not a restore.
+	if _, err := os.Stat(filepath.Join(upper, "etc", "motd")); err != nil {
+		t.Error("migration destroyed the legacy overlay upper layer — rollback is no longer possible")
+	}
+}
+
+// TestRootfs_SeedsWhenEtcMtabIsASymlink is a regression test for the bug that
+// took down the first dev-env boot of this design.
+//
+// The base image ships /etc/mtab as a symlink to /proc/self/mounts. The seed
+// step copied the symlink faithfully, and the follow-up that ensures bind
+// targets exist then tested it with `-e`, which follows the link — into a
+// /proc that is empty at that point. The test failed, the code tried to create
+// the file, the redirect followed the symlink, and the whole boot died.
+//
+// Nothing was lost, because the fail-closed guard turned it into a refusal to
+// start rather than an agent silently running on an ephemeral root. But a
+// dangling symlink in the image is ordinary, and it must seed cleanly.
+func TestRootfs_SeedsWhenEtcMtabIsASymlink(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+
+	// Exactly the shape the real image has — verified against
+	// kyber-claude-code: `/etc/mtab -> ../proc/self/mounts`.
+	//
+	// RELATIVE is the whole point. An absolute /proc/self/mounts resolves to
+	// the host's real procfs during the test and the bug does not reproduce;
+	// the relative form resolves inside the seeded root, where /proc is an
+	// empty directory, and the redirect fails with ENOENT. The first version
+	// of this test used the absolute form and passed against the broken code.
+	if err := os.Symlink("../proc/self/mounts", filepath.Join(e.image, "etc", "mtab")); err != nil {
+		t.Fatalf("creating the mtab symlink: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs-seeded" {
+		t.Fatalf("seed mode = %q, want rootfs-seeded", mode)
+	}
+
+	// The symlink must survive as a symlink, not be replaced by an empty file.
+	fi, err := os.Lstat(filepath.Join(e.root, "etc", "mtab"))
+	if err != nil {
+		t.Fatalf("etc/mtab missing from the seeded root: %v", err)
+	}
+	if fi.Mode()&os.ModeSymlink == 0 {
+		t.Error("etc/mtab was replaced by a regular file; the image's symlink should be preserved")
+	}
+
+	// And a second boot must still be a no-op rather than tripping over it.
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("second boot mode = %q, want rootfs", mode)
+	}
+}
+
+// TestRootfs_UnrelatedDirectoryWritesDoNotLookLikeAnUpgrade is a regression
+// test for the second bug the dev-env run surfaced.
+//
+// A directory's mtime changes whenever anything is created inside it. The
+// container root `.` therefore differed between two otherwise identical pods —
+// the entrypoint creates /merged before the manifest is taken — and that single
+// line was enough to make `cmp` disagree, so EVERY boot ran a full three-way
+// merge and logged spurious conflicts on `.` and `./kyber`.
+//
+// A directory mtime says nothing about whether the base image changed, so the
+// manifest must not record one.
+func TestRootfs_UnrelatedDirectoryWritesDoNotLookLikeAnUpgrade(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	// Touch the image root the way a runtime does — a new directory at the top
+	// level, no change to any file the image ships.
+	mustMkdirAll(t, filepath.Join(e.image, "merged"))
+	now := time.Now()
+	if err := os.Chtimes(e.image, now, now); err != nil {
+		t.Fatalf("bumping the image root mtime: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("mode = %q, want rootfs: a directory mtime change is not a base-image "+
+			"change, and treating it as one runs a full merge on every boot", mode)
+	}
+}
+
+// TestRootfs_UnreadableManifestAdoptsRatherThanMerging covers the format-change
+// path.
+//
+// A manifest written by an older version of this script cannot be compared
+// entry-for-entry with a new one. When the directory-mtime normalisation landed,
+// the first boot afterwards compared new-format directory entries against
+// old-format ones and logged a conflict for all 3980 directories in the image —
+// harmless in that instance, but the same shape as "deliver no base-image
+// updates ever, and say nothing".
+//
+// A manifest it cannot read must make the script adopt the root and re-record,
+// never merge against a format it does not understand.
+func TestRootfs_UnreadableManifestAdoptsRatherThanMerging(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.prepare()
+
+	manifest := filepath.Join(e.persist, "kyber", "rootfs-image-manifest.tsv")
+	body, err := os.ReadFile(manifest)
+	if err != nil {
+		t.Fatalf("reading the manifest: %v", err)
+	}
+	// Strip the version header, leaving a manifest in the old unversioned shape.
+	lines := strings.SplitN(string(body), "\n", 2)
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "#kyber-rootfs-manifest") {
+		t.Fatalf("manifest has no version header; first line was %q", lines[0])
+	}
+	if err := os.WriteFile(manifest, []byte(lines[1]), 0o644); err != nil {
+		t.Fatalf("rewriting the manifest: %v", err)
+	}
+
+	if mode := e.prepare(); mode != "rootfs-adopted" {
+		t.Errorf("mode = %q, want rootfs-adopted for an unreadable manifest", mode)
+	}
+	if c := e.conflicts(); strings.TrimSpace(c) != "" {
+		t.Errorf("adopting should log no conflicts, got:\n%s", c)
+	}
+
+	// And the boot after that is a clean no-op, because the re-recorded
+	// manifest is now readable.
+	if mode := e.prepare(); mode != "rootfs" {
+		t.Errorf("mode after adopting = %q, want rootfs", mode)
+	}
+}
+
+// TestRootfs_DroppedDirectoryDoesNotTakeAgentFilesWithIt is the data-loss case.
+//
+// Bash iterates an associative array in no particular order, so when the image
+// drops a whole directory the parent could be reached before its children. The
+// first version removed it with `rm -rf`, which would delete an agent-modified
+// file inside it — silently, with no conflict logged and nothing to show it had
+// happened. Exactly the outcome the keep-the-agent's-work rule exists to
+// prevent, arriving through the back door.
+//
+// Removals now run deepest-first and directories go through rmdir, which
+// refuses to remove one that still holds anything.
+func TestRootfs_DroppedDirectoryDoesNotTakeAgentFilesWithIt(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	e.writeImage("opt/tool/config", "image config\n", v1)
+	e.writeImage("opt/tool/readme", "image readme\n", v1)
+	e.prepare()
+
+	// The agent edits one file inside that directory, and adds one of its own.
+	e.writeAgent("opt/tool/config", "AGENT EDITED THIS\n")
+	e.writeAgent("opt/tool/mine", "agent created this\n")
+
+	// The image drops the whole directory.
+	e.removeImage("opt/tool/config")
+	e.removeImage("opt/tool/readme")
+	if err := os.Remove(filepath.Join(e.image, "opt", "tool")); err != nil {
+		t.Fatalf("removing the image directory: %v", err)
+	}
+	if err := os.Remove(filepath.Join(e.image, "opt")); err != nil {
+		t.Fatalf("removing the image parent directory: %v", err)
+	}
+	e.prepare()
+
+	if got, ok := e.rootContent("opt/tool/config"); !ok || got != "AGENT EDITED THIS\n" {
+		t.Errorf("opt/tool/config = %q (present=%v), want the agent's edit kept", got, ok)
+	}
+	if got, ok := e.rootContent("opt/tool/mine"); !ok || got != "agent created this\n" {
+		t.Errorf("opt/tool/mine = %q (present=%v), want the agent's own file kept", got, ok)
+	}
+	// The file the agent never touched is the image's to remove.
+	if _, ok := e.rootContent("opt/tool/readme"); ok {
+		t.Error("opt/tool/readme should have been removed: the image dropped it and the agent never touched it")
+	}
+}
+
+// The mirror case: a directory whose metadata changed in the image must not be
+// re-copied recursively over the agent's contents.
+func TestRootfs_ChangedDirectoryModeDoesNotWipeItsContents(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	mustMkdirAll(t, filepath.Join(e.image, "opt", "data"))
+	e.writeImage("opt/data/shipped", "image file\n", v1)
+	e.prepare()
+
+	e.writeAgent("opt/data/agent-file", "agent created this\n")
+
+	// The image changes the directory's mode — nothing else about it.
+	if err := os.Chmod(filepath.Join(e.image, "opt", "data"), 0o700); err != nil {
+		t.Fatalf("chmod on the image directory: %v", err)
+	}
+	e.prepare()
+
+	if _, ok := e.rootContent("opt/data/agent-file"); !ok {
+		t.Error("a directory mode change in the image wiped the agent's file inside it — " +
+			"cp -a --parents on a directory copies it recursively")
+	}
+}
+
+// TestRootfs_FailedInstallIsLoudAndRetried covers the bug Chewie found in
+// review, using his reproducer: the image turns a directory into a regular
+// file, and the agent has left something inside that directory.
+//
+// The install half then cannot succeed, and it used to fail silently —
+// `cp … 2>/dev/null` failed, the `&&` skipped the counter, nothing reached the
+// conflict log, and the manifest advanced anyway. From the next boot on, the
+// path compared equal to the image forever and was never retried. The boot
+// reported success the whole time. ENOSPC on a full agent PVC mid-upgrade is
+// the realistic trigger for the same shape.
+func TestRootfs_FailedInstallIsLoudAndRetried(t *testing.T) {
+	e := newRootfsEnv(t)
+	v1 := time.Now().Add(-72 * time.Hour)
+	e.writeImage("etc/motd", "image v1\n", v1)
+	mustMkdirAll(t, filepath.Join(e.image, "opt", "thing"))
+	e.writeImage("opt/thing/shipped", "image file\n", v1)
+	e.prepare()
+
+	// The agent puts something of its own inside that directory.
+	e.writeAgent("opt/thing/agent-file", "agent created this\n")
+
+	// The image replaces the directory with a regular file.
+	if err := os.RemoveAll(filepath.Join(e.image, "opt", "thing")); err != nil {
+		t.Fatalf("removing the image directory: %v", err)
+	}
+	e.writeImage("opt/thing", "now a file\n", time.Now().Add(-time.Hour))
+
+	e.prepare()
+
+	// The agent's file must survive — an empty-directory-only removal is what
+	// keeps this safe.
+	if _, ok := e.rootContent("opt/thing/agent-file"); !ok {
+		t.Fatal("the agent's file inside the replaced directory was destroyed")
+	}
+	// And the failure must be visible.
+	if !strings.Contains(e.conflicts(), "opt/thing") {
+		t.Errorf("a failed install left nothing in the conflict log; got:\n%s", e.conflicts())
+	}
+
+	// The next boot must try again rather than concluding the image never
+	// changed this path. Anything but a plain "rootfs" no-op means it retried.
+	if mode := e.prepare(); mode == "rootfs" {
+		t.Error("the boot after a failed install reported no change — the manifest advanced " +
+			"for a path that never landed, so it will never be retried")
+	}
+}

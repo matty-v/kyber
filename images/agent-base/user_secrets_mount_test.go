@@ -51,8 +51,8 @@ func TestUserSecrets_BindMountVisibleInChroot(t *testing.T) {
 	// The agent command (forwarded by the entrypoint as "$@" and exec'd inside the
 	// chroot) checks the mount + reads the secret.
 	agentCmd := "mountpoint -q /user-secrets && echo USER_SECRETS_IS_MOUNT; cat /user-secrets/falcon_issue_token.bin"
-	run := exec.Command("docker", "run", "--rm",
-		"--privileged", // lets the entrypoint do the overlay + bind-mount path
+	run := dockerRun(dockerSandboxEnv(),
+		"--privileged", // lets the entrypoint assemble the chroot and bind-mount
 		"-v", persistDir+":/persist",
 		"-v", usDir+":/user-secrets",
 		testImageTag,

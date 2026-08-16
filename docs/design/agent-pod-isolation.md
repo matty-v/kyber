@@ -1,103 +1,155 @@
 # Agent pod host-isolation design
 
-Issue: kyber#76
+Issues: kyber#76 (escape report), kyber#77 (de-privileging), kyber#78 (hard
+isolation). The architectural decision and the measurements behind it live in
+[ADR 0003](../adr/0003-agent-sandbox-isolation.md); this page is the operator's
+view of the resulting boundary.
 
-## Decision
+## The boundary
 
-Agents remain unrestricted inside their own pod: they may become root, install
-packages, and persist changes across pod replacement. That does not require the
-container to be privileged on the host.
+An agent is unrestricted **inside its own sandbox** — it may be root, install
+packages, edit any system file, run services, and keep all of it across pod
+replacement. None of that authority is valid **outside** the sandbox.
 
-The default agent security context is therefore:
+The default agent pod is:
 
 ```yaml
+hostUsers: false                 # in-pod root maps to an unprivileged host uid
 privileged: false
 capabilities:
-  add: [SYS_ADMIN]
+  add: [SYS_ADMIN]               # namespaced — no authority on the node
 seccompProfile:
   type: RuntimeDefault
+automountServiceAccountToken: false
 ```
 
-`/dev/fuse` remains the only explicitly mounted host device. `SYS_ADMIN` is
-retained because the persistence entrypoint mounts overlayfs, FUSE, bind mounts,
-and a chroot. Containerd's runtime-default seccomp profile is capability-aware
-and admits `mount` when `SYS_ADMIN` is present.
+No host devices. No hostPath volumes. Persistence is a directory on the agent's
+own PersistentVolume, seeded from the base image and entered with `chroot` — not
+an overlay mounted in-pod, and not `/dev/fuse`.
 
-Dropping privileged mode is the critical boundary change. Privileged containers
-receive all capabilities, bypass seccomp/AppArmor/SELinux confinement, see host
-devices, and receive an unrestricted device cgroup. A non-privileged container
-with one added capability no longer receives those implicit privileges. In
-particular, host block devices are not populated into `/dev`, and a fabricated
-block-device node is rejected by the runtime's device allow-list.
+`SYS_ADMIN` is still needed for the bind, `proc` and `tmpfs` mounts that
+assemble the chroot. Inside a user namespace those are namespaced operations.
+That is the entire isolation argument: the capability is real inside the
+sandbox and meaningless against the node.
 
-Three cluster-level settings are exposed:
+## Cluster requirements
+
+User namespaces need **Kubernetes >= 1.33 and containerd >= 2.0** on every node
+that schedules agents.
+
+Below that, Kubernetes **accepts `pod.spec.hostUsers: false` and silently
+ignores it**. The pod is admitted, runs with no user namespace, and reports
+nothing wrong — `/proc/self/uid_map` reads `0 0 4294967295`. A control plane
+that trusted the PodSpec would report an isolated agent that is not isolated.
+
+So the agent checks its own uid map at boot and refuses to start if it is not
+remapped. On an unsupported cluster you will see the agent fail with a message
+naming the cause, rather than an agent that looks healthy.
+
+The other requirement is a CNI that actually **enforces NetworkPolicy**. k3s
+does (its kube-router-based controller, unless started with
+`--disable-network-policy`); GKE needs Dataplane V2 or Calico. An unenforcing
+CNI does not fail — it makes every isolation check pass for free, which is
+worse.
+
+## Settings
 
 | Helm value | Environment variable | Default | Purpose |
 | --- | --- | --- | --- |
+| `agent.security.userNamespaces` | `KYBER_AGENT_USER_NAMESPACES` | `true` | Set `pod.spec.hostUsers: false`. Disable only to deliberately accept an unisolated agent. |
+| `agent.security.requireUserNamespace` | `KYBER_AGENT_REQUIRE_USER_NAMESPACE` | `true` | Refuse to start outside a user namespace instead of running unisolated. |
+| `agent.security.persistenceMode` | `KYBER_AGENT_PERSISTENCE_MODE` | `rootfs` | `rootfs` is the durable root. `overlay` is the pre-#78 in-pod mount, rollback only. |
 | `agent.security.privileged` | `KYBER_AGENT_PRIVILEGED` | `false` | Break-glass restoration of the legacy profile. |
-| `agent.security.userNamespaces` | `KYBER_AGENT_USER_NAMESPACES` | `false` | Set `pod.spec.hostUsers: false` after target validation. |
-| `agent.security.seccompProfile` | `KYBER_AGENT_SECCOMP_PROFILE` | `RuntimeDefault` | Permit `Unconfined` only as a mount-compatibility fallback. |
+| `agent.security.seccompProfile` | `KYBER_AGENT_SECCOMP_PROFILE` | `RuntimeDefault` | `Unconfined` only as a mount-compatibility fallback. |
+| `agent.security.egress.enabled` | — | `true` | Deny agents the infrastructure ranges. |
+| `agent.security.egress.blockedCIDRs` | — | private + link-local + CGNAT | IPv4 ranges withheld. Cluster DNS and the control plane are allowed back by their own rules. |
+| `agent.security.egress.blockedCIDRsV6` | — | ULA + link-local + loopback | The IPv6 half. Emptying it removes the v6 rule entirely, which denies ALL v6 egress. |
+| `agent.security.egress.platformTrustAgents` | — | `[]` | Named agents exempted from the egress policy. |
 
-The settings are cluster-scoped because all agents have the same persistence
-requirements and no supported workload needs host access. A per-Agent privilege
-field would add CRD/API/PWA surface without a current product use case.
+These are cluster-scoped because every agent has the same sandbox requirements.
+The one per-agent knob is the platform-trust list, and it is deliberately a
+values entry rather than a CRD field so that granting it shows up in every diff.
 
-## User namespaces
+## Network isolation
 
-User namespaces are the stronger second layer. With `hostUsers: false`, uid 0
-and `SYS_ADMIN` inside the pod map to an unprivileged uid and namespaced
-capability on the host. This keeps in-pod root useful while neutralizing it
-against host-owned resources.
+Agent pods get **default-deny ingress** — nothing on the pod network can open a
+connection to them. Loopback inside the pod is unaffected, which is how the
+runtime and its sidecars talk to each other.
 
-They are opt-in because Kubernetes requires runtime support and idmapped-mount
-support from every filesystem used by the pod. Existing persist PVCs must be
-verified on a canary before fleet enablement. A target lacking that support can
-fail container creation before Kyber's entrypoint runs.
+Agent pods also get an **egress policy**: the public internet stays open, and
+the private ranges are withheld — the node, the kubelet, the API server, the
+cloud metadata service at `169.254.169.254`, and the pod CIDR where neighbouring
+agents live. Denying ingress alone was not enough; before this an agent could
+still reach the kubelet on `:10250` and scan the pod network for its neighbours.
 
-Inside a user namespace, the persistence dispatcher tries fuse-overlayfs first.
-Kernel overlayfs remains the fallback because FUSE device access can itself be
-unavailable under user namespaces. Outside a user namespace, kernel overlayfs
-remains first for performance.
+Cluster DNS and the control plane fall inside the blocked ranges and are allowed
+back by their own rules — a NetworkPolicy is the union of its rules, not a
+sequence of overrides.
 
-Local k3d validation found that this fallback is not fully transparent:
-`/dev/fuse` could not be opened (`EPERM`), and kernel overlayfs then rejected a
-dpkg directory replacement while installing `figlet` with `EXDEV`. User
-namespaces must therefore remain opt-in until a target proves both FUSE access
-and representative system-package installs. Host isolation that makes user
-namespaces mandatory requires a different persistence or runtime boundary.
+### The trust tier
+
+`platformTrustAgents` names agents that keep unrestricted egress, including to
+the node and the Kubernetes API. This exists for rescue agents that genuinely
+hold cluster credentials. kyber#78 is explicit that host administration must not
+be folded into the normal agent profile, so this is a separate and conspicuous
+tier, empty by default.
+
+## Verifying it, without fooling yourself
+
+Every check below has a way of passing for the wrong reason. The methodology
+matters more than the result.
+
+**User namespace.** Read `/proc/self/uid_map` from inside a running agent. The
+first line must map container uid 0 to a non-zero host uid. Reading the PodSpec
+proves nothing — see above.
+
+**NetworkPolicy enforcement.** Do not conclude "blocked" from a failed
+connection. A closed port and an enforced policy are indistinguishable. Bind a
+listener, confirm same-pod loopback reaches it, confirm a second pod cannot,
+then **delete the policy and confirm the same connection succeeds**. Only the
+last step proves enforcement.
+
+**Persistence.** `/persist/kyber/boot-metadata.json` reports the mode. It must
+read `rootfs*`, never `bind-mount-home`. Install a package with `apt`, delete
+the pod, and confirm the binary is still there and still runs.
+
+**Host access.** Confirm `/dev/sd*` is absent, `Seccomp` in `/proc/self/status`
+is non-zero, the capability bounding set is not the privileged all-caps set, and
+that creating a device node fails. Under a user namespace `mknod` itself returns
+`EPERM`.
 
 ## Gap dispositions
 
 | Issue gap | Disposition |
 | --- | --- |
-| G1: fully privileged, no seccomp, full capability set | Closed for privilege, seccomp, and full capabilities. The runtime/node retains responsibility for its default AppArmor or SELinux policy; Kyber does not ship a mount-compatible custom MAC profile in this change. |
-| G2: passwordless in-pod root | Accepted. Root is required for the agent product contract; user namespaces make it non-root on the host. |
-| G3: host filesystem reachable through host block devices | Closed by default by removing privileged mode and its host-device/device-cgroup grants. User namespaces provide the stronger defense against capability misuse. |
-| G4: Kubernetes API boundary bypassed through G3 | Closed with G3. Agent pod specs also set `automountServiceAccountToken: false`. |
-| G5: no agent-to-agent network isolation | Closed when the cluster CNI enforces NetworkPolicy. Every agent pod has default-deny ingress; loopback communication inside the pod is unaffected. |
+| G1: privileged, no seccomp, full capability set | Closed. The node retains responsibility for its own AppArmor/SELinux policy; Kyber does not ship a mount-compatible custom MAC profile. |
+| G2: passwordless in-pod root | Accepted by design. Root is the agent product contract; the user namespace is what makes it harmless to the host. |
+| G3: host filesystem reachable through host block devices | Closed. No privileged mode, no host devices, no hostPath volumes, and `CAP_MKNOD` is namespaced. |
+| G4: Kubernetes API boundary bypassed through G3 | Closed with G3, plus `automountServiceAccountToken: false` and the egress policy. |
+| G5: no agent-to-agent network isolation | Closed where the CNI enforces NetworkPolicy: default-deny ingress, plus egress that withholds the pod CIDR. |
 
-The runtime probes are exec probes and are unaffected by NetworkPolicy. Status
-and messaging sidecars use HTTP probes from the kubelet; Kubernetes normally
-allows traffic from the pod's node regardless of ingress policy, but operators
-must verify that behavior on the target CNI along with general NetworkPolicy
-enforcement.
+## Known limits
 
-## Rollout and verification
+**The egress guarantee is CIDR-shaped.** The policy withholds the node, the
+kubelet, the API server and the metadata service by *address range*, so it holds
+only where those sit inside the ranges in `blockedCIDRs`. That is true of every
+normal cluster, but on a cluster with **publicly addressed nodes** the defaults
+do not withhold them and the AC3/AC6 guarantees do not hold as written. Nothing
+in the render can detect that, and an isolation suite passing on an RFC1918
+cluster will not either — add your node and API-server ranges explicitly if that
+is your topology.
 
-Roll out `privileged=false` to a canary and verify:
+Both address families are covered. An IPv4-only rule matches no IPv6 traffic at
+all, which on a dual-stack cluster would deny every v6 connection — fail-closed,
+but silently.
 
-1. `/persist/kyber/boot-metadata.json` reports `kernel` or `fuse`, not the
-   HOME-only fallback.
-2. A package installed with `sudo apt-get` survives pod recreation.
-3. `/dev/sd*` is absent, `Seccomp` in `/proc/self/status` is non-zero, and the
-   capability bounding set is no longer the privileged all-capabilities set.
-4. The issue's read-only host-device mount reproduction fails.
 
-If the overlay fails specifically because of the runtime seccomp profile, use
-`seccompProfile: Unconfined` temporarily; this does not restore host devices or
-the privileged device cgroup. `privileged: true` is the final break-glass
-rollback only.
+**Node loss.** Agent PVCs on `local-path` are node-local disk with hard node
+affinity. If the node is replaced the volume does not come with it. This is a
+storage-class property, unchanged by the sandbox work, and it means the durable
+root survives pod replacement but not machine replacement on such targets.
 
-Enable user namespaces separately on a fresh canary, then an existing-PVC
-canary. Verify `/proc/self/uid_map` maps container uid 0 to a non-zero host uid,
-and repeat the persistence and package-install checks before fleet rollout.
+**Kernel boundary.** The sandbox boundary is the user namespace, not a guest
+kernel. A kernel exploit reachable from an unprivileged user namespace is not
+defended against here. ADR 0003 records why a VM-isolated runtime was not
+chosen and what would reopen that question.
