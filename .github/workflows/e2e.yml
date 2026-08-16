@@ -15,6 +15,30 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1'
+  # ...AND on any PR that touches the agent sandbox. Added 2026-08-16 after
+  # kyber#79 took all 8 falcon agents down on v1.0.6.
+  #
+  # That change dropped agent pods out of `privileged: true`, which silently
+  # dropped them out of AppArmor `unconfined` into containerd's default profile
+  # in enforce mode. That profile denies mount(2), so the entrypoint could not
+  # bind the durable root and every agent fail-closed on boot.
+  #
+  # Unit tests could not have caught it: the pod spec was correct, and nothing
+  # about the failure is visible until a real containerd node with AppArmor
+  # enforced runs the container. THESE tests would have — they build a k3d
+  # cluster and exercise the durable root — but they were dispatch-and-cron
+  # only, so a change whose entire risk surface is runtime sandbox behaviour
+  # merged on unit coverage alone.
+  #
+  # Deliberately path-filtered rather than run on every PR: the flake profile
+  # that got the `push:` trigger disabled in April is real, and the point here
+  # is to gate exactly the class of change that cannot be tested any other way.
+  pull_request:
+    paths:
+      - 'images/agent-base/**'
+      - 'pkg/controllers/agent/pod_builder*.go'
+      - 'test/e2e/sandbox_*'
+      - 'deploy/helm/kyber/templates/agent/**'
 
 permissions:
   contents: read

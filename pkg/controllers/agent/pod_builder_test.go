@@ -89,6 +89,16 @@ func testAdapter() pkgruntimes.Adapter {
 	)
 }
 
+// derefProfile renders a profile pointer for a failure message. Printing the
+// pointer itself shows an address, which tells whoever hits this nothing about
+// what was actually set.
+func derefProfile(p *corev1.AppArmorProfileType) string {
+	if p == nil {
+		return "<unset>"
+	}
+	return string(*p)
+}
+
 func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -98,6 +108,8 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 		wantPrivileged bool
 		wantHostUsers  *bool
 		wantSeccomp    *corev1.SeccompProfileType
+		apparmor       string
+		wantAppArmor   *corev1.AppArmorProfileType
 	}{
 		{
 			// kyber#78: user namespaces are the DEFAULT, not an opt-in. Without
@@ -106,6 +118,11 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			wantPrivileged: false,
 			wantHostUsers:  ptrTo(false),
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+			// Unconfined is REQUIRED, not a relaxation. containerd's default
+			// AppArmor profile denies mount(2), so a confined agent cannot bind
+			// its durable root and fail-closes on every boot. This took all 8
+			// falcon agents down on v1.0.6.
+			wantAppArmor: ptrTo(corev1.AppArmorProfileTypeUnconfined),
 		},
 		{
 			name:           "unconfined seccomp compatibility fallback",
@@ -113,6 +130,7 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			wantPrivileged: false,
 			wantHostUsers:  ptrTo(false),
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeUnconfined),
+			wantAppArmor:   ptrTo(corev1.AppArmorProfileTypeUnconfined),
 		},
 		{
 			name:           "user namespaces explicitly enabled",
@@ -120,6 +138,7 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			wantPrivileged: false,
 			wantHostUsers:  ptrTo(false),
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+			wantAppArmor:   ptrTo(corev1.AppArmorProfileTypeUnconfined),
 		},
 		{
 			// The conspicuous, deliberate opt-out. An operator can still run
@@ -130,6 +149,10 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			wantPrivileged: false,
 			wantHostUsers:  nil,
 			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+			// Still unconfined: dropping the user namespace does not restore the
+			// ability to mount. Verified on falcon — the bind failed with
+			// hostUsers unset too, so AppArmor is the only thing in the way.
+			wantAppArmor: ptrTo(corev1.AppArmorProfileTypeUnconfined),
 		},
 		{
 			name:           "legacy privileged rollback disables user namespaces",
@@ -139,6 +162,19 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			wantPrivileged: true,
 			wantHostUsers:  nil,
 			wantSeccomp:    nil,
+			// A privileged container is already AppArmor-unconfined via the
+			// runtime; setting the field would be noise.
+			wantAppArmor: nil,
+		},
+		{
+			// The deliberate opt-back-in, for a cluster whose AppArmor policy
+			// permits mount. Anything other than "Unconfined" confines.
+			name:           "apparmor confinement explicitly restored",
+			apparmor:       "RuntimeDefault",
+			wantPrivileged: false,
+			wantHostUsers:  ptrTo(false),
+			wantSeccomp:    ptrTo(corev1.SeccompProfileTypeRuntimeDefault),
+			wantAppArmor:   ptrTo(corev1.AppArmorProfileTypeRuntimeDefault),
 		},
 	}
 
@@ -147,6 +183,7 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			t.Setenv("KYBER_AGENT_PRIVILEGED", tc.privileged)
 			t.Setenv("KYBER_AGENT_USER_NAMESPACES", tc.userNamespaces)
 			t.Setenv("KYBER_AGENT_SECCOMP_PROFILE", tc.seccomp)
+			t.Setenv("KYBER_AGENT_APPARMOR_PROFILE", tc.apparmor)
 
 			pod, err := BuildPodSpec(testAgent(), testAdapter(), "node-01")
 			if err != nil {
@@ -168,6 +205,14 @@ func TestBuildPodSpec_AgentIsolation(t *testing.T) {
 			}
 			if !reflect.DeepEqual(gotSeccomp, tc.wantSeccomp) {
 				t.Errorf("seccomp = %v, want %v", gotSeccomp, tc.wantSeccomp)
+			}
+			var gotAppArmor *corev1.AppArmorProfileType
+			if securityContext.AppArmorProfile != nil {
+				gotAppArmor = &securityContext.AppArmorProfile.Type
+			}
+			if !reflect.DeepEqual(gotAppArmor, tc.wantAppArmor) {
+				t.Errorf("apparmor = %s, want %s (containerd's default profile denies mount(2); a confined agent cannot bind its durable root)",
+					derefProfile(gotAppArmor), derefProfile(tc.wantAppArmor))
 			}
 			if got := securityContext.Capabilities.Add; !reflect.DeepEqual(got, []corev1.Capability{"SYS_ADMIN"}) {
 				t.Errorf("added capabilities = %v, want [SYS_ADMIN]", got)
