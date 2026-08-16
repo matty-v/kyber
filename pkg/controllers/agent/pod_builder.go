@@ -90,6 +90,48 @@ func agentPodSeccompProfile() corev1.SeccompProfileType {
 	return corev1.SeccompProfileTypeRuntimeDefault
 }
 
+// agentPodAppArmorProfile returns the AppArmor profile for the agent container.
+//
+// MUST be Unconfined, and this is the whole reason v1.0.6 took the fleet down.
+//
+// Dropping `privileged: true` in #79 also dropped the container out of AppArmor
+// `unconfined` and into containerd's default profile in ENFORCE mode. That
+// profile denies mount(2) outright — so `mount --bind $ROOTFS_DIR /merged` in
+// the entrypoint failed, the durable root could not be assembled, and every
+// agent correctly fail-closed with "Refusing to start on an ephemeral root".
+// Eight of eight agents on kyber-falcon died as they rolled.
+//
+// Three things make this trap worth spelling out:
+//
+//   - AppArmor is a SEPARATE LSM check from capabilities. `CAP_SYS_ADMIN` is in
+//     CapEff and still cannot mount — adding capabilities never lifts an LSM
+//     denial, and the two are easy to conflate when reasoning about "root".
+//   - The denial surfaces as EACCES, not EPERM. EPERM reads as "missing
+//     capability" and sends you hunting the capability set, which is exactly
+//     the wrong tree. Measured directly: mount(2) returned errno 13.
+//   - It is NOT seccomp and NOT the user namespace. Both were eliminated
+//     empirically — the bind still failed with seccomp Unconfined, and still
+//     failed with hostUsers unset.
+//
+// Lifting AppArmor costs almost nothing of #79's security property. The
+// isolation comes from the USER NAMESPACE (in-pod root maps to an unprivileged
+// host uid, so SYS_ADMIN is worthless against the node, ADR 0003). AppArmor was
+// never load-bearing for that; it was an incidental side effect of the
+// privileged flag we happened to be relying on.
+//
+// Verified on kyber-falcon: privileged=false + hostUsers=false + seccomp
+// RuntimeDefault + AppArmor Unconfined => the bind succeeds.
+func agentPodAppArmorProfile() corev1.AppArmorProfileType {
+	if t := os.Getenv("KYBER_AGENT_APPARMOR_PROFILE"); t != "" &&
+		!strings.EqualFold(t, string(corev1.AppArmorProfileTypeUnconfined)) {
+		// An operator can opt back into confinement, but only deliberately —
+		// and only on a cluster whose AppArmor policy permits mount, or the
+		// agents will not start.
+		return corev1.AppArmorProfileTypeRuntimeDefault
+	}
+	return corev1.AppArmorProfileTypeUnconfined
+}
+
 func agentContainerSecurityContext() *corev1.SecurityContext {
 	privileged := agentPodsPrivileged()
 	securityContext := &corev1.SecurityContext{
@@ -100,6 +142,10 @@ func agentContainerSecurityContext() *corev1.SecurityContext {
 	}
 	if !privileged {
 		securityContext.SeccompProfile = &corev1.SeccompProfile{Type: agentPodSeccompProfile()}
+		// Without this the agent cannot mount its own durable root. See
+		// agentPodAppArmorProfile — this is not optional on a stock
+		// containerd node.
+		securityContext.AppArmorProfile = &corev1.AppArmorProfile{Type: agentPodAppArmorProfile()}
 	}
 	return securityContext
 }

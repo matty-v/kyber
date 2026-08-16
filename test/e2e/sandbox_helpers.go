@@ -40,12 +40,27 @@ func sandboxNamespace() string {
 	return defaultSandboxNamespace
 }
 
-// requireAgent returns the configured agent name or skips the test. Two agents
-// are needed for the cross-agent criteria; one is enough for the rest.
+// requireAgent returns the configured agent name, or skips — unless the caller
+// declared that the sandbox suite MUST run, in which case it fails.
+//
+// Skipping is right for a dev box or a canary that has no agents. It is wrong
+// in CI, and quietly wrong: on 2026-08-16 every one of these tests skipped in
+// the e2e workflow because nothing sets KYBER_E2E_AGENT_A, so a green-ish run
+// was reporting coverage the suite never provided. That is how kyber#79 reached
+// production and took the whole fleet down — the tests that would have caught
+// it existed and never executed.
+//
+// KYBER_E2E_SANDBOX_REQUIRED=true turns the skip into a failure, so the gap is
+// loud wherever the suite is supposed to be real coverage.
 func requireAgent(t *testing.T, envVar string) string {
 	t.Helper()
 	name := os.Getenv(envVar)
 	if name == "" {
+		if strings.EqualFold(os.Getenv("KYBER_E2E_SANDBOX_REQUIRED"), "true") {
+			t.Fatalf("%s not set but KYBER_E2E_SANDBOX_REQUIRED=true — the sandbox suite is "+
+				"declared as required coverage here and cannot run without a live agent to inspect. "+
+				"Provision one and export %s, or unset KYBER_E2E_SANDBOX_REQUIRED.", envVar, envVar)
+		}
 		t.Skipf("%s not set — sandbox suite needs a live agent to inspect", envVar)
 	}
 	return name
