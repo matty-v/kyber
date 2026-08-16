@@ -1,8 +1,8 @@
 name: release
 
-# Fires on git tag push matching v*.*.*. Builds ALL 5 Kyber images from
+# Fires on git tag push matching v*.*.*. Builds ALL 8 Kyber images from
 # source at the tagged commit (full rebuild — not a manifest copy), pushes
-# them as :vX.Y.Z, then creates the GitHub Release and notifies Lando.
+# them as :vX.Y.Z, then creates the GitHub Release.
 #
 # Why full rebuild instead of re-tagging :<sha> manifests: build.yml uses
 # path filters (per kyber CI cost optimization), so not every commit on
@@ -10,8 +10,9 @@ name: release
 # of 8 images at the tagged commit; that means rebuild-on-tag.
 #
 # Slower than the manifest-copy approach (~10 min per release vs ~1 min)
-# but releases are infrequent (proposed via Lando's 24h soak gate) so the
-# cost is acceptable. See dave-agent/docs/specs/2026-05-25-kyber-release-
+# but releases are infrequent — a release is cut deliberately by Dave via
+# prepare-release.yml, after Matt approves the version and the notes — so
+# the cost is acceptable. See dave-agent/docs/specs/2026-05-25-kyber-release-
 # process-design.md and Matt's confirmation 2026-05-25.
 
 on:
@@ -325,7 +326,7 @@ jobs:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
   # --------------------------------------------------------------------
-  # Once all 8 images are pushed: create the GitHub Release + notify Lando.
+  # Once all 8 images are pushed: create the GitHub Release.
   # --------------------------------------------------------------------
   release:
     needs: [meta, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-runtime-base, build-claude-code, build-codex]
@@ -358,27 +359,6 @@ jobs:
           name: ${{ needs.meta.outputs.tag }}
           body: ${{ steps.changelog.outputs.body }}
           make_latest: 'true'
-
-      - name: Notify Lando
-        if: success()
-        env:
-          LANDO_RELEASE_URL: ${{ secrets.LANDO_RELEASE_NOTIFY_URL }}
-          LANDO_SECRET:      ${{ secrets.LANDO_RELEASE_HMAC }}
-        run: |
-          if [ -z "$LANDO_RELEASE_URL" ] || [ -z "$LANDO_SECRET" ]; then
-            echo "WARNING: LANDO_RELEASE_NOTIFY_URL or LANDO_RELEASE_HMAC not configured — skipping notify"
-            exit 0
-          fi
-          PAYLOAD=$(jq -nc \
-            --arg tag "${{ needs.meta.outputs.tag }}" \
-            --arg sha "${{ needs.meta.outputs.sha }}" \
-            --arg url "https://github.com/${{ github.repository }}/releases/tag/${{ needs.meta.outputs.tag }}" \
-            '{event:"release-published", tag:$tag, sha:$sha, url:$url}')
-          SIG=$(echo -n "$PAYLOAD" | openssl dgst -sha256 -hmac "$LANDO_SECRET" | awk '{print $2}')
-          curl -fsS -X POST "$LANDO_RELEASE_URL" \
-            -H "Content-Type: application/json" \
-            -H "X-Falcon-Signature: sha256=$SIG" \
-            -d "$PAYLOAD"
 
   # --------------------------------------------------------------------
   # B0: Publish the Helm chart as an OCI artifact.
