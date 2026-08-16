@@ -135,8 +135,12 @@ images:
 ```bash
 brew install k3d
 export DOCKER_DEFAULT_PLATFORM=linux/amd64
-k3d cluster create kyber --no-lb --wait
+k3d cluster create kyber --no-lb --wait --image rancher/k3s:v1.34.6-k3s1
 ```
+
+The `--image` pin matters: agents need Kubernetes >= 1.33 with containerd >= 2.0
+for user namespaces, and k3d's default node image tracks its own release rather
+than the newest k3s.
 
 Then continue from [§ 2](#2-check-the-node-can-host-agent-pods). The version
 check there runs against the cluster, so it is the same command either way —

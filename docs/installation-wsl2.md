@@ -190,9 +190,9 @@ sudo apt update
 sudo apt install -y curl jq git openssl
 
 # kubectl (official APT repo)
-curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.34/deb/Release.key | \
   sudo gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' | \
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.34/deb/ /' | \
   sudo tee /etc/apt/sources.list.d/kubernetes.list
 sudo apt update
 sudo apt install -y kubectl
@@ -294,8 +294,15 @@ Expected output: `OK`.
 
 **Run:**
 ```bash
-curl -sfL https://get.k3s.io | sudo sh -s - --disable traefik --write-kubeconfig-mode 644
+curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.6+k3s1 \
+  sudo sh -s - --disable traefik --write-kubeconfig-mode 644
 ```
+
+The version is pinned rather than left to `stable` because agents need
+**Kubernetes >= 1.33 with containerd >= 2.0**: they run in a user namespace, and
+below those versions Kubernetes accepts `hostUsers` and silently ignores it, so
+the agents refuse to start rather than run unisolated. Any newer k3s release is
+fine; an older one is not.
 
 **Verify:**
 ```bash

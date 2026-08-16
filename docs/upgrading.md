@@ -29,6 +29,16 @@ in-pod root and `CAP_SYS_ADMIN` are valid against the node. Kyber will not make
 that choice silently on your behalf, which is why the default is to stop rather
 than to continue.
 
+**Kyber's own Install button checks this before it acts.** `POST
+/api/v1/updates/apply` runs a node preflight and refuses with a `409` naming the
+offending nodes rather than installing an upgrade that would stop every agent on
+the cluster. The refusal is the same information as the check above, arriving
+while it can still be acted on. It does not apply when
+`requireUserNamespace=false` — an operator who has accepted unisolated agents
+does not need a second opinion — and an unreadable node or an unfamiliar version
+string never blocks, because a preflight that becomes its own outage is worse
+than the problem it guards against.
+
 The first boot after the upgrade also seeds each agent's durable root from the
 base image (~1.3 GB, a minute or two) and migrates any existing overlay upper
 layer into it. The old upper layer is left in place, so
@@ -695,10 +705,15 @@ k3s is installed by the Terraform startup script. The script does **not** auto-u
 
 ```bash
 gcloud compute ssh kyber-small-k3s-server --zone=us-central1-a --command '
-  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.31.0+k3s1 sh -
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION=v1.34.6+k3s1 sh -
   sudo systemctl restart k3s
 '
 ```
+
+**Do not pin below v1.33 here.** Agents run in a user namespace and refuse to
+start without one, so a cluster on an older k3s runs Kyber fine and schedules no
+agents at all. Kubernetes also only supports one minor version per upgrade, so
+getting from an old pin to a supported one may take more than one pass.
 
 Pin the k3s version in the startup script (`infra/terraform/scripts/k3s-install.sh`) so new VMs get the same version. There's a TODO comment in the script to do this — do it before the first production install.
 

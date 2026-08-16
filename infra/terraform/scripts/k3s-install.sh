@@ -43,14 +43,23 @@ apt-get update -qq
 apt-get install -yq curl wget jq
 
 # ---- Install k3s server -----------------------------------------------------
-# TODO: pin k3s version (e.g. INSTALL_K3S_VERSION=v1.31.x+k3s1) before production upgrades
-# so that VM reprovisions are deterministic across time.
+# Pinned, which resolves the long-standing TODO here: reprovisioning a VM now
+# gets the same Kubernetes it got last time instead of whatever `stable` means
+# today.
+#
+# The floor is not arbitrary. Agents run in a user namespace and REFUSE TO START
+# without one, which needs Kubernetes >= 1.33 with containerd >= 2.0 (kyber#78).
+# Below that, Kubernetes accepts pod.spec.hostUsers and silently ignores it — so
+# an older pin here provisions a VM where Kyber installs cleanly and then
+# schedules no agents at all. Raise this pin freely; do not lower it past 1.33.
+K3S_VERSION="${K3S_VERSION:-v1.34.6+k3s1}"
+
 # k3s reads /etc/rancher/k3s/config.yaml for disable + tls-san; INSTALL_K3S_EXEC is empty.
 if [ -x /usr/local/bin/k3s ] && systemctl is-active --quiet k3s; then
   echo "[$(date -u +%FT%TZ)] k3s already installed and running, skipping install"
 else
-  echo "[$(date -u +%FT%TZ)] Installing k3s server..."
-  curl -sfL https://get.k3s.io | sh -
+  echo "[$(date -u +%FT%TZ)] Installing k3s server ${K3S_VERSION}..."
+  curl -sfL https://get.k3s.io | INSTALL_K3S_VERSION="${K3S_VERSION}" sh -
 fi
 
 echo "[$(date -u +%FT%TZ)] Waiting for k3s to become ready..."
