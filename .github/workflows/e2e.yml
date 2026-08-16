@@ -15,30 +15,24 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '0 8 * * 1'
-  # ...AND on any PR that touches the agent sandbox. Added 2026-08-16 after
-  # kyber#79 took all 8 falcon agents down on v1.0.6.
-  #
-  # That change dropped agent pods out of `privileged: true`, which silently
-  # dropped them out of AppArmor `unconfined` into containerd's default profile
-  # in enforce mode. That profile denies mount(2), so the entrypoint could not
-  # bind the durable root and every agent fail-closed on boot.
-  #
-  # Unit tests could not have caught it: the pod spec was correct, and nothing
-  # about the failure is visible until a real containerd node with AppArmor
-  # enforced runs the container. THESE tests would have — they build a k3d
-  # cluster and exercise the durable root — but they were dispatch-and-cron
-  # only, so a change whose entire risk surface is runtime sandbox behaviour
-  # merged on unit coverage alone.
-  #
-  # Deliberately path-filtered rather than run on every PR: the flake profile
-  # that got the `push:` trigger disabled in April is real, and the point here
-  # is to gate exactly the class of change that cannot be tested any other way.
-  pull_request:
-    paths:
-      - 'images/agent-base/**'
-      - 'pkg/controllers/agent/pod_builder*.go'
-      - 'test/e2e/sandbox_*'
-      - 'deploy/helm/kyber/templates/agent/**'
+
+# NOT gated on PRs — and the reason is worth recording, because the obvious fix
+# does not work.
+#
+# After kyber#79 took the fleet down (see #82), the instinct was to run this
+# suite on any PR touching the sandbox. Two things make that theatre:
+#
+#   1. Every sandbox test SKIPS in CI. They guard on KYBER_E2E_AGENT_A, which
+#      names a live agent to inspect, and nothing in this workflow provisions
+#      one. A gate whose tests skip provides false assurance, not coverage.
+#   2. The lifecycle suite (TestE2E_MachineLifecycle, TestE2E_AgentLifecycle,
+#      TestE2E_ScaleToZeroWake) is currently red for reasons predating all of
+#      this — the same flakiness that got the `push:` trigger disabled in April.
+#      Gating on it blocks unrelated PRs, including the fix for an outage.
+#
+# The real work is making the sandbox tests RUN: provision an agent in this
+# workflow and export KYBER_E2E_AGENT_A. Until that lands, the loud-skip guard
+# below at least makes the gap visible instead of silent.
 
 permissions:
   contents: read
