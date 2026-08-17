@@ -17,9 +17,11 @@ name: prepare-release
 # point where "bump ∈ tagged commit" holds; scripts/release-version-guard_test.sh
 # locks the invariant in CI.
 #
-# Flow: validate version → bump Chart.yaml on a branch → open + auto-merge the
-# bump PR to main → wait for the squash-merge → push tag vX.Y.Z on the merged
-# commit. The tag push then triggers release.yml (which builds the 5 images,
+# Flow: validate version → bump Chart.yaml + stamp the version into the
+# quickstart docs (README.md, docs/quickstart.md) on a branch → open +
+# auto-merge the bump PR to main → wait for the squash-merge → push tag vX.Y.Z
+# on the merged commit. The docs ride the same tagged commit, so the published
+# quickstart always names the latest release. The tag push then triggers release.yml (which builds the 5 images,
 # refreshes the control-plane :latest tag for the canary, and cuts the GitHub
 # Release).
 #
@@ -104,15 +106,21 @@ jobs:
           export VER
           # version and appVersion stay in lockstep at the bare X.Y.Z (kyber#457).
           yq -i '.version = strenv(VER) | .appVersion = strenv(VER)' deploy/helm/kyber/Chart.yaml
+          # Stamp the release version into the quickstart install docs so the
+          # published docs always name the latest release. Pattern-targeted
+          # (any bare semver in the two known shapes), not old-version-targeted,
+          # so it also heals docs that have already drifted behind.
+          sed -E -i "s/--version [0-9]+\.[0-9]+\.[0-9]+/--version ${VER}/" README.md docs/quickstart.md
+          sed -E -i 's/in place of `[0-9]+\.[0-9]+\.[0-9]+`/in place of `'"${VER}"'`/' README.md docs/quickstart.md
           git config user.name "kyber-app[bot]"
           git config user.email "kyber-app[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git"
-          if git diff --quiet -- deploy/helm/kyber/Chart.yaml; then
-            echo "Chart.yaml already at ${VER}; no bump PR needed — main HEAD is the release commit."
+          if git diff --quiet -- deploy/helm/kyber/Chart.yaml README.md docs/quickstart.md; then
+            echo "Chart.yaml and quickstart docs already at ${VER}; no bump PR needed — main HEAD is the release commit."
             echo "needs_bump=false" >> "$GITHUB_OUTPUT"
           else
             echo "--- staged diff ---"
-            git --no-pager diff -- deploy/helm/kyber/Chart.yaml
+            git --no-pager diff -- deploy/helm/kyber/Chart.yaml README.md docs/quickstart.md
             echo "needs_bump=true" >> "$GITHUB_OUTPUT"
           fi
 
@@ -134,8 +142,8 @@ jobs:
           set -euo pipefail
           BRANCH="chore/prepare-release-v${VER}"
           git checkout -b "${BRANCH}"
-          git add deploy/helm/kyber/Chart.yaml
-          git commit -m "chore(chart): bump chart version to ${VER} (v${VER})"
+          git add deploy/helm/kyber/Chart.yaml README.md docs/quickstart.md
+          git commit -m "chore(chart): bump chart version + quickstart docs to ${VER} (v${VER})"
           if ! git push -u origin "${BRANCH}"; then
             echo "::error::Failed to push ${BRANCH} to matty-v/kyber — cannot prepare the release. Confirm the App's kyber installation grants contents:write + pull_requests:write (kyber#457 delivery gate)." >&2
             exit 1
@@ -143,7 +151,7 @@ jobs:
           BODY=$(cat <<EOF
           ## Prepare release v${VER}
 
-          Bumps \`deploy/helm/kyber/Chart.yaml\` \`version\` + \`appVersion\` to \`${VER}\` (in lockstep), folded into the commit that will be tagged \`v${VER}\`.
+          Bumps \`deploy/helm/kyber/Chart.yaml\` \`version\` + \`appVersion\` to \`${VER}\` (in lockstep), folded into the commit that will be tagged \`v${VER}\`. Also stamps \`${VER}\` into the quickstart install commands in \`README.md\` and \`docs/quickstart.md\`, so the published docs always name the latest release.
 
           Cutting the tag on this merged commit makes \`git describe --tags\` at the release commit resolve to the clean tag, so the canary (razer, \`:latest\`) reports \`${VER}\` instead of a stale pre-tag \`git describe\` string (kyber#591). Replaces the retired post-tag \`chart-version-bump-pr\` job.
 

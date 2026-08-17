@@ -91,7 +91,7 @@ stamped at release time, so there is nothing to pin by hand.
 
 ```bash
 helm install kyber oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.5 \
+  --version 1.0.7 \
   --namespace kyber-system \
   --set namespace.create=false \
   --set api.apiKey="$KYBER_API_KEY" \
@@ -100,7 +100,7 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
 ```
 
 Use the newest version from [Releases](https://github.com/matty-v/kyber/releases)
-in place of `1.0.5`; the chart version and the release tag are the same number.
+in place of `1.0.7`; the chart version and the release tag are the same number.
 
 Every other default is already right for this install: compute is `mock`,
 the node-agent DaemonSet is on, agent volumes bind against your cluster's

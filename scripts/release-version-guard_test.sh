@@ -103,6 +103,15 @@ if [ -f "$PREPARE_YML" ]; then
     else
         bad "prepare-release.yml bumps Chart.yaml" "Chart.yaml path not referenced"
     fi
+
+    # The quickstart docs ride the same tagged commit as the chart bump, so the
+    # published README/quickstart always name the latest release. Re-decoupling
+    # them recreates the docs-drift this stamp exists to prevent.
+    if grep -q 'README.md docs/quickstart.md' "$PREPARE_YML"; then
+        ok "prepare-release.yml stamps the quickstart docs in the tagged commit"
+    else
+        bad "prepare-release.yml stamps the quickstart docs" "README.md docs/quickstart.md not referenced"
+    fi
 else
     bad "prepare-release.yml exists" "file not found at ${PREPARE_YML}"
     bad "prepare-release.yml validates the version input" "file missing"
