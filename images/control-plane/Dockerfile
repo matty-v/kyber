@@ -11,7 +11,7 @@
 # Stage 1: build the PWA (React + Vite + Tailwind) inside the npm workspace.
 # packages/pwa-views is the published library (@matty-v/kyber-pwa-views) and
 # apps/embedded-pwa is the thin shell that gets embedded into the Go binary.
-FROM node:22-alpine AS pwa-builder
+FROM node:26-alpine AS pwa-builder
 WORKDIR /build
 
 # Copy workspace metadata first so npm ci can install before the rest of the
