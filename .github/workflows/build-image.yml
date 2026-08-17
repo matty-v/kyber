@@ -127,7 +127,7 @@ jobs:
       # the same GHCR repository under different tags (the arch probe did), and
       # an artifact namespace keyed on the image alone would let one call's
       # digests satisfy another call's merge.
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: digests-${{ inputs.cache-scope }}-${{ matrix.arch }}
           path: /tmp/digests/*
@@ -143,12 +143,12 @@ jobs:
       # Downloaded by exact name, one directory per architecture, so the merge
       # can assert it has exactly one digest from each rather than counting a
       # glob that a stray artifact could satisfy.
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: digests-${{ inputs.cache-scope }}-amd64
           path: /tmp/digests/amd64
 
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           name: digests-${{ inputs.cache-scope }}-arm64
           path: /tmp/digests/arm64
