@@ -1,5 +1,16 @@
 # @matty-v/kyber-pwa-views
 
+## 0.27.1 — 2026-08-17
+
+### Changed
+- Dependency updates, consolidating Dependabot PRs #87, #90, #91:
+  `@xterm/xterm` 5.5 → 6.0, `@vitejs/plugin-react` 4.7.0 → 6.0.5, `sonner`
+  ^2.0.7 → ^2.0.8, `@testing-library/user-event` ^14.6.3 → ^14.6.4. No
+  functional changes intended; build and tests pass with the new majors.
+  The `typescript` 5 → 7 bump (#89) is deliberately excluded: tsup's bundled
+  `rollup-plugin-dts` cannot load against TS 7 yet, so the declaration build
+  breaks. Revisit when the toolchain supports it.
+
 ## 0.27.0 — 2026-08-14
 
 ### Added
