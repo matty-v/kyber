@@ -1,7 +1,7 @@
 source: litellm
 upstream_repo: BerriAI/litellm
 upstream_file: model_prices_and_context_window.json
-upstream_commit: b45b4b73004261b47369d7d12c97d58b137a732e
-fetched_at: 2026-08-07T21:20:54Z
-model_count: 162
-rejected_count: 81
+upstream_commit: 0059b497f44d8ad2ab8dae5e17fbd8df0cfcdb11
+fetched_at: 2026-08-17T06:20:09Z
+model_count: 164
+rejected_count: 84
