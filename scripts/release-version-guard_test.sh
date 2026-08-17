@@ -103,6 +103,24 @@ if [ -f "$PREPARE_YML" ]; then
     else
         bad "prepare-release.yml bumps Chart.yaml" "Chart.yaml path not referenced"
     fi
+
+    # The install docs ride the same tagged commit as the chart bump, so the
+    # published docs always name the latest release. These greps target the
+    # DOCS assignment and the sed stamp lines SPECIFICALLY — a bare filename
+    # grep also matches the git-add line, which made the original check
+    # vacuous: deleting the seds kept it green (caught by review on kyber#94).
+    if grep -Fq 'DOCS="README.md docs/quickstart.md docs/installation.md docs/installation-wsl2.md"' "$PREPARE_YML"; then
+        ok "prepare-release.yml stamps all four install docs (DOCS list intact)"
+    else
+        bad "prepare-release.yml stamps all four install docs" "DOCS list line missing or trimmed"
+    fi
+    for shape in 's/--version [0-9]' 's/in place of `[0-9]' 's/tag: "v[0-9]' 's/`version: [0-9]'; do
+        if grep -Fq "$shape" "$PREPARE_YML"; then
+            ok "prepare-release.yml docs stamp keeps sed shape: ${shape}"
+        else
+            bad "prepare-release.yml docs stamp sed shape: ${shape}" "sed pattern missing"
+        fi
+    done
 else
     bad "prepare-release.yml exists" "file not found at ${PREPARE_YML}"
     bad "prepare-release.yml validates the version input" "file missing"
