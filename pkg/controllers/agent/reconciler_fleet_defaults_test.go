@@ -135,37 +135,25 @@ func TestResolveAgentForPod_EmptySpecUsesDefault(t *testing.T) {
 	}
 }
 
-// TestResolveAgentForPod_EmptyBoth_RaisesConditionAndErrors is the
-// safety-net AC: empty spec.model AND empty defaultModel must produce a
-// hard error so createPod skips, and a ModelUnresolved condition so the
-// PWA shows the operator what to fix.
-func TestResolveAgentForPod_EmptyBoth_RaisesConditionAndErrors(t *testing.T) {
+// Empty model values deliberately delegate selection to the runtime.
+func TestResolveAgentForPod_EmptyBothUsesRuntimeDefault(t *testing.T) {
 	agent := newResolverAgent("")
-	// No ConfigMap exists at all — Resolve returns empty Defaults.
 	r, c := newResolverReconciler(t, agent, nil)
 
-	_, err := r.resolveAgentForPod(context.Background(), agent)
-	if err == nil {
-		t.Fatal("expected error when both spec.model and default are empty")
+	resolved, err := r.resolveAgentForPod(context.Background(), agent)
+	if err != nil {
+		t.Fatalf("resolveAgentForPod: %v", err)
+	}
+	if resolved.Spec.Model != "" {
+		t.Fatalf("resolved model = %q, want empty runtime default", resolved.Spec.Model)
 	}
 
-	// Refetch — the condition should have been persisted via Status().Patch.
 	fresh := &kyberv1.Agent{}
 	if getErr := c.Get(context.Background(), types.NamespacedName{Namespace: rfdNS, Name: rfdAgentName}, fresh); getErr != nil {
 		t.Fatalf("get: %v", getErr)
 	}
-	cond := meta.FindStatusCondition(fresh.Status.Conditions, kyberv1.AgentConditionModelUnresolved)
-	if cond == nil {
-		t.Fatal("expected ModelUnresolved condition to be set, got nil")
-	}
-	if cond.Status != metav1.ConditionTrue {
-		t.Errorf("condition status = %v, want True", cond.Status)
-	}
-	if cond.Reason != "NoModelConfigured" {
-		t.Errorf("condition reason = %q, want NoModelConfigured", cond.Reason)
-	}
-	if cond.Message == "" {
-		t.Error("condition message must carry remediation guidance, got empty")
+	if cond := meta.FindStatusCondition(fresh.Status.Conditions, kyberv1.AgentConditionModelUnresolved); cond != nil {
+		t.Fatalf("unexpected ModelUnresolved condition: %+v", cond)
 	}
 }
 

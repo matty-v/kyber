@@ -181,7 +181,7 @@ func TestAgents_TokenUsage_Get_NormalizationPreserved(t *testing.T) {
 		Tokens: tokenreport.Tokens{Used: 100_000, Limit: 0},
 	})
 	h := buildHandlerWithSnapshot(t, ts,
-		map[string]string{}, map[string]int64{}, sampleAgentCRD("r2-d2"))
+		map[string]string{}, map[string]int64{"claude-opus-4-7": 1_000_000}, sampleAgentCRD("r2-d2"))
 
 	req := authedRequest(t, http.MethodGet, "/api/v1/agents/r2-d2/token-usage", nil)
 	rr := httptest.NewRecorder()
@@ -277,10 +277,9 @@ func TestAgents_TokenUsage_Get_ResolvesLimitServerSide(t *testing.T) {
 	}
 }
 
-// TestAgents_TokenUsage_Get_UnknownModelFloors: a model absent from the
-// ConfigMap floors to 200K with contextWindowKnown=false (the PWA renders the
-// % as an estimate) — a safe under-report, no crash, no 5xx.
-func TestAgents_TokenUsage_Get_UnknownModelFloors(t *testing.T) {
+// A model absent from every authoritative source fails loudly rather than
+// receiving a guessed context-window floor.
+func TestAgents_TokenUsage_Get_UnknownModelFails(t *testing.T) {
 	ts := tokenstore.NewMemoryStore()
 	_ = ts.Put(context.Background(), "dave", &tokenreport.Snapshot{
 		Model:  "claude-mystery-9",
@@ -292,18 +291,8 @@ func TestAgents_TokenUsage_Get_UnknownModelFloors(t *testing.T) {
 	req := authedRequest(t, http.MethodGet, "/api/v1/agents/dave/token-usage", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
-	}
-	var got tokenreport.Snapshot
-	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if got.Tokens.Limit != 200_000 {
-		t.Errorf("Limit=%d want 200000 (floor)", got.Tokens.Limit)
-	}
-	if got.ContextWindowKnown {
-		t.Errorf("ContextWindowKnown=true want false (model absent from ConfigMap)")
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -327,8 +316,9 @@ func buildHandlerWithTokenStore(t *testing.T, ts tokenstore.TokenStore, objs ...
 func TestAgents_TokenUsage_Get(t *testing.T) {
 	ts := tokenstore.NewMemoryStore()
 	_ = ts.Put(context.Background(), "dave", &tokenreport.Snapshot{
-		Model:  "claude-sonnet-4-5",
-		Tokens: tokenreport.Tokens{Used: 1234, Limit: 200000},
+		Model:              "claude-sonnet-4-5",
+		Tokens:             tokenreport.Tokens{Used: 1234, Limit: 200000},
+		ContextWindowKnown: true,
 	})
 	h := buildHandlerWithTokenStore(t, ts, sampleAgentCRD("dave"))
 

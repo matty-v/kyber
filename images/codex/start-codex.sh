@@ -10,6 +10,7 @@ chmod 0700 "$CODEX_HOME"
 # character set; repeat it here because persisted CRs may predate validation.
 # Installation failure is non-fatal: keep the baked-in CLI, report its actual
 # version below, and let RuntimeVersionMismatch tell the operator what happened.
+KYBER_CODEX_REQUESTED_SATISFIED=""
 if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
     if [ "${#KYBER_REQUESTED_CODEX_VERSION}" -le 64 ] && [[ "$KYBER_REQUESTED_CODEX_VERSION" =~ ^[0-9A-Za-z.-]+$ ]]; then
         CURRENT_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
@@ -17,10 +18,16 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
             echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION}"
             if ! npm install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" >/dev/null 2>&1; then
                 echo "[kyber] WARNING: requested Codex harness install failed; using baked-in version"
+                KYBER_CODEX_REQUESTED_SATISFIED="false"
+            else
+                KYBER_CODEX_REQUESTED_SATISFIED="true"
             fi
+        else
+            KYBER_CODEX_REQUESTED_SATISFIED="true"
         fi
     else
         echo "[kyber] WARNING: requested Codex harness version is invalid; using baked-in version"
+        KYBER_CODEX_REQUESTED_SATISFIED="false"
     fi
 fi
 
@@ -128,12 +135,14 @@ fi
 unset _device_auth_pending
 
 cat > "$CODEX_HOME/config.toml" <<EOF
-model = "${CODEX_MODEL:-gpt-5.6-sol}"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false
 tui.resume_cwd = "current"
 EOF
+if [ -n "${CODEX_MODEL:-}" ]; then
+    printf 'model = "%s"\n' "$CODEX_MODEL" >> "$CODEX_HOME/config.toml"
+fi
 
 # Telegram MCP sidecar (kyber#684). Same server the Claude Code runtime
 # registers, so both runtimes get the same tool surface instead of Codex
@@ -175,6 +184,9 @@ if mkdir -p /var/run/kyber 2>/dev/null; then
     printf '%s\n' "$CODEX_VERSION" > /var/run/kyber/runtime-version 2>/dev/null || true
 fi
 RUNTIME_BODY="{\"version\":\"${CODEX_VERSION}\",\"requestedVersion\":\"${KYBER_REQUESTED_CODEX_VERSION:-}\"}"
+if [ -n "$KYBER_CODEX_REQUESTED_SATISFIED" ]; then
+    RUNTIME_BODY="${RUNTIME_BODY%?},\"requestedSatisfied\":${KYBER_CODEX_REQUESTED_SATISFIED}}"
+fi
 if curl -fsS --max-time 5 -H 'Content-Type: application/json' -X POST \
     -d "$RUNTIME_BODY" http://127.0.0.1:8091/runtime-version >/dev/null 2>&1; then
     echo "[kyber] runtime version reported: $CODEX_VERSION"
@@ -291,7 +303,10 @@ cat >> "$CODEX_HOME/config.toml" <<EOF
 trust_level = "trusted"
 EOF
 
-CODEX_ARGS=(--model "${CODEX_MODEL:-gpt-5.6-sol}" --ask-for-approval never --sandbox danger-full-access)
+CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
+if [ -n "${CODEX_MODEL:-}" ]; then
+    CODEX_ARGS=(--model "$CODEX_MODEL" "${CODEX_ARGS[@]}")
+fi
 
 # Build the tmux command string once, shell-quoting every argument. CODEX_MODEL
 # comes from spec.model, which the API does not charset-validate, and it is

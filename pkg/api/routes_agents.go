@@ -154,12 +154,15 @@ var (
 
 // AgentResponse is the JSON representation of an Agent returned by the API.
 type AgentResponse struct {
-	ID           string                     `json:"id"`
-	Phase        kyberv1.AgentPhase         `json:"phase"`
-	Machine      string                     `json:"machine"`
-	Runtime      string                     `json:"runtime"`
-	AuthType     kyberv1.AgentAuthType      `json:"authType"`
-	Model        string                     `json:"model"`
+	ID       string                `json:"id"`
+	Phase    kyberv1.AgentPhase    `json:"phase"`
+	Machine  string                `json:"machine"`
+	Runtime  string                `json:"runtime"`
+	AuthType kyberv1.AgentAuthType `json:"authType"`
+	Model    string                `json:"model"`
+	// CurrentModel is the concrete model observed from the running runtime.
+	// It differs from Model when spec.model is empty (harness default).
+	CurrentModel string                     `json:"currentModel,omitempty"`
 	Scaling      kyberv1.AgentScalingMode   `json:"scaling"`
 	Resources    agentResourcesResponse     `json:"resources"`
 	IdentityRepo *agentIdentityRepoResponse `json:"identityRepo,omitempty"`
@@ -369,13 +372,14 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		authType = kyberv1.AgentAuthTypeOAuth
 	}
 	resp := AgentResponse{
-		ID:       a.Name,
-		Phase:    a.Status.Phase,
-		Machine:  a.Spec.Machine,
-		Runtime:  a.Spec.Runtime,
-		AuthType: authType,
-		Model:    a.Spec.Model,
-		Scaling:  a.Spec.Scaling,
+		ID:           a.Name,
+		Phase:        a.Status.Phase,
+		Machine:      a.Spec.Machine,
+		Runtime:      a.Spec.Runtime,
+		AuthType:     authType,
+		Model:        a.Spec.Model,
+		CurrentModel: a.Status.CurrentModel,
+		Scaling:      a.Spec.Scaling,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
 			Memory: a.Spec.Resources.Memory.String(),
@@ -589,6 +593,9 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	case "token-usage":
 		s.handleTokenUsageGet(w, r, name)
 		return
+	case "models":
+		s.handleAgentModels(w, r, name)
+		return
 	}
 
 	// User-defined per-agent secrets (#75): dispatch anything under "secrets".
@@ -726,10 +733,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 					"then retry. No Kyber agent can run this runtime until then.", "runtime")
 			return
 		}
-	}
-	if req.Model == "" {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "model is required", "model")
-		return
 	}
 	if req.Runtime == "codex" {
 		switch kyberv1.AgentAuthType(req.Secrets.AuthType) {
@@ -940,6 +943,10 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 				limit, known := s.resolveContextWindow(r.Context(), resolved.Model)
 				if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {
 					limit, known = resolved.Tokens.Limit, true
+				}
+				if !known {
+					items = append(items, resp)
+					continue
 				}
 				resolved.Tokens.Limit = limit
 				resolved.ContextWindowKnown = known

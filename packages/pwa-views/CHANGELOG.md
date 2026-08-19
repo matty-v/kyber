@@ -1,5 +1,40 @@
 # @matty-v/kyber-pwa-views
 
+## 0.27.2 — 2026-08-19
+
+### Changed
+- Agent harness defaults now expose explicit Default-model and Latest-version
+  choices for Claude Code and Codex. Fresh installs use those dynamic settings;
+  operators can still enter concrete model or version pins.
+- New agents now inherit the selected runtime's fleet model and harness-version
+  defaults. The create wizard no longer pins or manually overrides a model.
+- Change model now uses the selected agent's authenticated provider catalog and
+  persists the choice on that agent. Settings no longer asks for a platform
+  Anthropic key; harness-version discovery remains public and npm-backed.
+- Agent details show the concrete runtime-observed model when the harness chose
+  the default, rather than rendering a blank Model row.
+- Authenticated model picker options and token-budget gauges now display only
+  provider-reported context windows. Kyber rejects incomplete catalogs rather
+  than rendering guessed values.
+- The Agents table and mobile cards show the runtime-observed model for agents
+  using the harness default, instead of leaving the Model column blank.
+- Settings now starts with Version followed immediately by Updates, keeping
+  cluster identity and upgrade controls together at the top of the page.
+- The Settings API-key field is directly editable while masked; the eye button
+  now only controls visibility instead of unlocking the input. The card also
+  reports whether this browser already has an active API session.
+- The Machines page keeps the New action available on existing-node installs,
+  allowing additional pre-labelled Kubernetes nodes to be registered.
+- Agent-list activity badges no longer show redundant dots, and idle labels
+  stay on one line at narrow table widths.
+- Settings places API-key rotation directly below the API Connection card so
+  credential setup and lifecycle controls stay together.
+- Settings cards now share the wider layout used by Updates.
+
+### Removed
+- The compact-density preference, including its Settings control and command
+  palette action. Kyber now consistently uses the comfortable layout.
+
 ## 0.27.1 — 2026-08-17
 
 ### Changed

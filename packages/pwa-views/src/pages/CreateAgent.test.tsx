@@ -165,7 +165,6 @@ describe('CreateAgent — submit happy path (api-key)', () => {
         name: 'alice',
         machine: 'razer',
         runtime: 'claude-code',
-        model: 'claude-opus-4-7',
         scaling: 'warm',
         resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
         identity: { soulDescription: undefined },
@@ -181,6 +180,7 @@ describe('CreateAgent — submit happy path (api-key)', () => {
         }),
       }),
     )
+    expect(mutateAsync.mock.calls[0][0]).not.toHaveProperty('model')
     await waitFor(() => expect(navigateMock).toHaveBeenCalledWith('/agents'))
   // 15 s: this test drives all 5 wizard steps via userEvent; 5 s flakes under WSL2 parallel load.
   }, 15_000)
@@ -351,13 +351,13 @@ describe('CreateAgent — deep-link guard', () => {
   })
 })
 
-describe('CreateAgent — model seeding effect', () => {
-  it('seeds state.model from models[0].id once useComputeConfig loads', async () => {
+describe('CreateAgent — fleet defaults', () => {
+  it('shows fleet defaults in Review instead of pinning a model', async () => {
     const user = userEvent.setup()
     setupHooks()
     renderAt()
 
-    // Drive forward to step 5 to inspect Model in the Review summary.
+    // Drive forward to step 5 to inspect the inherited settings summary.
     await user.type(screen.getByLabelText(/name/i), 'alice')
     await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
     await user.click(screen.getByRole('button', { name: /next/i }))
@@ -367,8 +367,8 @@ describe('CreateAgent — model seeding effect', () => {
     await user.type(screen.getByLabelText(/anthropic api key/i), 'sk-ant-x')
     await user.click(screen.getByRole('button', { name: /next/i }))
 
-    // Step 5 — Review shows Model row with the seeded value.
-    await waitFor(() => expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument())
+    // Both model and harness version inherit their runtime-scoped defaults.
+    await waitFor(() => expect(screen.getAllByText('Fleet default')).toHaveLength(2))
   })
 })
 

@@ -64,10 +64,9 @@ is deliberate — there's no orchestrated rolling restart machinery (see
 kyber#374 § Known interactions for why). Per-agent immediate adoption is
 the per-agent restart in the section above.
 
-> **Persistence caveat:** the PWA writes to the `kyber-fleet-defaults`
-> ConfigMap. A subsequent `helm upgrade` that doesn't override the chart
-> value reverts the ConfigMap to the chart's seed. Mirror PWA edits into
-> `kyber-deploy`'s values.yaml to survive the next upgrade.
+Choose **Latest** to track the current upstream harness release at each pod
+creation, or enter a concrete version to pin the fleet. Fresh installs start
+on Latest. PWA-selected values are operator-owned and survive Helm upgrades.
 
 ## Charset rules + error messages
 

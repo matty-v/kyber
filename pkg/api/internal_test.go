@@ -17,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -531,6 +532,39 @@ func TestInternalServer_TokenUsagePost(t *testing.T) {
 	}
 	if got == nil || got.Tokens.Used != 1000 {
 		t.Errorf("stored snapshot = %+v", got)
+	}
+}
+
+func TestInternalServer_TokenUsagePostPersistsObservedCurrentModel(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := kyberv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme: %v", err)
+	}
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"}}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent).Build()
+	store := tokenstore.NewMemoryStore()
+	s := api.NewInternalServer(briefstore.NewMemoryStore(),
+		api.WithTokenStore(store),
+		api.WithKubeClient(k8sClient, "kyber-system"),
+	)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+
+	body, _ := json.Marshal(tokenreport.Snapshot{Model: "claude-sonnet-5"})
+	resp, err := http.Post(srv.URL+"/internal/agents/alice/token-usage", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	got := &kyberv1.Agent{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "alice", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatalf("Get agent: %v", err)
+	}
+	if got.Status.CurrentModel != "claude-sonnet-5" {
+		t.Fatalf("status.currentModel = %q", got.Status.CurrentModel)
 	}
 }
 

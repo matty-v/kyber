@@ -121,6 +121,26 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 	}
 }
 
+func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(script)
+	resolve := strings.Index(s, `LAUNCH_DIR="$REPO_DIR"`)
+	trust := strings.Index(s, `.projects[$launch_dir]`)
+	launch := strings.LastIndex(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_ARGS"`)
+	if resolve < 0 || trust < 0 || launch < 0 {
+		t.Fatalf("missing launch-dir resolution, trust merge, or Claude launch")
+	}
+	if !(resolve < trust && trust < launch) {
+		t.Fatalf("workspace trust must be written after resolving LAUNCH_DIR and before Claude starts")
+	}
+	if strings.Contains(s[:trust], `"${WORK_DIR}": {`) {
+		t.Fatal("startup still trusts the pre-identity-repo working directory")
+	}
+}
+
 func TestStartClaude_RefreshOnBoot_WritesCredentialsJSON(t *testing.T) {
 	mock := mockserver.New()
 	ts := httptest.NewServer(mock)
@@ -1316,6 +1336,23 @@ func TestStartClaude_PRC_RequestDiffersFromDefault_NpmInstallFires(t *testing.T)
 	}
 	if !strings.Contains(string(npmArgs), "install -g @anthropic-ai/claude-code@2.1.200") {
 		t.Errorf("npm args: got %q, want substring 'install -g @anthropic-ai/claude-code@2.1.200'", string(npmArgs))
+	}
+}
+
+func TestStartClaude_PRC_LatestAcceptsResolvedVersion(t *testing.T) {
+	npmLog := filepath.Join(t.TempDir(), "npm.log")
+	sudoLog := filepath.Join(t.TempDir(), "sudo.log")
+	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.9.1")
+	out := bootPrepRun(t,
+		"PATH="+stub+":"+testPATH(),
+		"KYBER_REQUESTED_CC_VERSION=latest",
+		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
+	)
+	if !strings.Contains(out, "CC install: succeeded (latest -> 2.9.1)") {
+		t.Errorf("latest install was not accepted: %s", out)
+	}
+	if !strings.Contains(out, "CC_INSTALL_OUTCOME=installed") {
+		t.Errorf("expected latest install outcome=installed: %s", out)
 	}
 }
 

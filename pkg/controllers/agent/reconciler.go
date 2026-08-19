@@ -279,8 +279,8 @@ type AgentReconciler struct {
 	// FleetDefaults resolves cluster-wide fallback values (defaultModel,
 	// defaultRuntimeVersion) used when an Agent CR omits the
 	// corresponding spec field (kyber#376 / PR-B of #374). Nil disables
-	// the fallback layer — agents with empty spec.model land on
-	// AgentConditionModelUnresolved instead of getting a fleet default.
+	// the fallback layer. An empty resolved model is valid and delegates model
+	// selection to the runtime harness.
 	// Wired by cmd/control-plane/main.go from the kyber-fleet-defaults
 	// ConfigMap; tests typically leave this nil and set spec.Model
 	// directly.
@@ -1931,12 +1931,9 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		return err
 	}
 
-	// Resolve fleet defaults (kyber#376 / PR-B): when spec.model is empty,
-	// fall back to the kyber-fleet-defaults ConfigMap's defaultModel. If
-	// both are empty we refuse to build the pod and surface
-	// AgentConditionModelUnresolved on the agent's status — better to
-	// leave the agent un-pod'd with a clear message than to launch
-	// `claude` with no --model flag (silent wrong-model footgun).
+	// Resolve runtime-scoped fleet defaults. If both model layers are empty,
+	// the adapter deliberately omits a model selection and the harness chooses
+	// its current default.
 	resolved, resolveErr := r.resolveAgentForPod(ctx, agent)
 	if resolveErr != nil {
 		return resolveErr
@@ -2264,18 +2261,15 @@ func (r *AgentReconciler) updatePhase(
 //     "use the baked-in version," which is the existing behavior. So no
 //     condition fires when both spec and default are empty here.
 //
-// It also reconciles the AgentConditionModelUnresolved status condition:
-// True when both spec.model and the fleet default are empty (no pod is
-// built in this state), False/cleared once a model can be resolved. The
+// An empty resolved model is valid: both supported harnesses interpret it as
+// "use the harness default." Any stale ModelUnresolved condition from an older
+// control plane is cleared. The
 // original `agent` object is mutated only for the condition write — the
 // returned copy is what the pod builder consumes, so any spec mutation
 // stays local to this reconcile pass.
 //
-// Returns an error (non-nil) when resolution can't proceed (e.g.,
-// ConfigMap read failure that isn't a NotFound). Both-empty (for Model)
-// is reported as an error too so the caller skips pod creation and
-// retries on the next reconcile — but the condition is patched first so
-// operators see the cause in the PWA without grepping logs.
+// Returns an error (non-nil) when resolution can't proceed (e.g., a ConfigMap
+// read failure that isn't a NotFound).
 func (r *AgentReconciler) resolveAgentForPod(ctx context.Context, agent *kyberv1.Agent) (*kyberv1.Agent, error) {
 	resolved := agent.DeepCopy()
 
@@ -2315,20 +2309,8 @@ func (r *AgentReconciler) resolveAgentForPod(ctx context.Context, agent *kyberv1
 		}
 	}
 
-	if resolved.Spec.Model == "" {
-		// Both empty — set condition and refuse to build the pod.
-		before := agent.DeepCopy()
-		if r.setModelUnresolvedCondition(agent, true) {
-			if patchErr := r.Status().Patch(ctx, agent, client.MergeFrom(before)); patchErr != nil {
-				log.FromContext(ctx).Info("ModelUnresolved condition patch failed (best-effort)",
-					"agent", agent.Name, "err", patchErr)
-			}
-		}
-		return nil, fmt.Errorf("agent %s/%s has no resolvable model: spec.model and defaultModel are both empty",
-			agent.Namespace, agent.Name)
-	}
-
-	// A model was resolved — clear the condition if it was set.
+	// Empty now means runtime-selected default. Clear a condition left by an
+	// older controller that treated the same state as an error.
 	if meta.FindStatusCondition(agent.Status.Conditions, kyberv1.AgentConditionModelUnresolved) != nil {
 		before := agent.DeepCopy()
 		if r.setModelUnresolvedCondition(agent, false) {
@@ -3137,12 +3119,12 @@ func (r *AgentReconciler) reconcileRuntimeStatusConditions(agent *kyberv1.Agent)
 		if meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionRuntimeVersionMismatch) {
 			changed = true
 		}
-	case rs.InstalledVersion == rs.RequestedVersion:
+	case rs.RequestedSatisfied != nil && *rs.RequestedSatisfied || rs.InstalledVersion == rs.RequestedVersion:
 		cond := metav1.Condition{
 			Type:    kyberv1.AgentConditionRuntimeVersionMismatch,
 			Status:  metav1.ConditionFalse,
 			Reason:  "Match",
-			Message: fmt.Sprintf("Installed harness version (%s) matches the requested version.", rs.InstalledVersion),
+			Message: fmt.Sprintf("Installed harness version (%s) satisfies the requested version (%s).", rs.InstalledVersion, rs.RequestedVersion),
 		}
 		if meta.SetStatusCondition(&agent.Status.Conditions, cond) {
 			changed = true

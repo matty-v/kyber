@@ -15,6 +15,7 @@ import type {
   PutTelegramCommsRequest,
   PutDiscordCommsRequest,
   CreateAgentRequest,
+  AgentModelsResponse,
   InboundBindingWithStats,
   InboundCreateResponse,
   InboundDebugRequest,
@@ -181,6 +182,9 @@ export function createApiClient(cluster: Cluster) {
 
     createAgent: (req: CreateAgentRequest): Promise<Agent> =>
       request<Agent>('POST', '/api/v1/agents', req),
+
+    getAgentModels: (name: string): Promise<AgentModelsResponse> =>
+      request<AgentModelsResponse>('GET', `/api/v1/agents/${encodeURIComponent(name)}/models`),
 
     // Rotate the control-plane API key (#143). Returns the new key, which the
     // caller is responsible for storing in localStorage and showing to the

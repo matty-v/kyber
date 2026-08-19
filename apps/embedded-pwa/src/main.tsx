@@ -5,7 +5,6 @@ import { QueryClient, QueryClientProvider, MutationCache } from '@tanstack/react
 import { toast } from 'sonner'
 import {
   App,
-  DensityProvider,
   TooltipProvider,
   Toaster,
   enableMocks,
@@ -69,18 +68,16 @@ if (import.meta.env.VITE_ENABLE_MOCKS === '1') {
 void enableMocks().then(() => {
   createRoot(rootEl).render(
     <StrictMode>
-      <DensityProvider>
-        <QueryClientProvider client={queryClient}>
-          <TooltipProvider delayDuration={200}>
-            <BrowserRouter>
-              <EmbeddedClusterProvider>
-                <App />
-              </EmbeddedClusterProvider>
-            </BrowserRouter>
-            <Toaster />
-          </TooltipProvider>
-        </QueryClientProvider>
-      </DensityProvider>
+      <QueryClientProvider client={queryClient}>
+        <TooltipProvider delayDuration={200}>
+          <BrowserRouter>
+            <EmbeddedClusterProvider>
+              <App />
+            </EmbeddedClusterProvider>
+          </BrowserRouter>
+          <Toaster />
+        </TooltipProvider>
+      </QueryClientProvider>
     </StrictMode>,
   )
 })

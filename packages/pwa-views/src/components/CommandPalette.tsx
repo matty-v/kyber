@@ -1,13 +1,12 @@
 import { useEffect, useId } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Command } from 'cmdk'
-import { ArrowLeft, LayoutDashboard, Server, Bot, Settings, Gauge } from 'lucide-react'
+import { ArrowLeft, LayoutDashboard, Server, Bot, Settings } from 'lucide-react'
 import { useAgents, useMachines } from '../hooks/useAPI'
-import { useDensity } from '../contexts/DensityContext'
 import { useBackTo, usePrefixedPath } from '../lib/route-prefix'
 
 // ⌘K command palette (#106 Slice B). Read-only V1: fuzzy search over routes,
-// agents, machines, plus a density toggle. Write actions (Start/Stop/Restart/
+// agents, and machines. Write actions (Start/Stop/Restart/
 // Delete) and the contextual-resource concept were deferred per the issue's
 // refinement comment — they need confirm dialogs and a fresh design pass.
 //
@@ -38,7 +37,6 @@ export function CommandPalette({ open, onOpenChange }: Props) {
   const titleId = useId()
   const { data: agents = [], isLoading: agentsLoading } = useAgents()
   const { data: machines = [], isLoading: machinesLoading } = useMachines()
-  const { density, setDensity } = useDensity()
 
   // Esc closes — same hook shape as ShortcutHelpOverlay so the two modals
   // behave identically. cmdk doesn't intercept Esc on its own when not using
@@ -63,8 +61,6 @@ export function CommandPalette({ open, onOpenChange }: Props) {
       onOpenChange(false)
     }
   }
-
-  const nextDensity = density === 'compact' ? 'comfortable' : 'compact'
 
   return (
     <div
@@ -165,22 +161,6 @@ export function CommandPalette({ open, onOpenChange }: Props) {
             )}
           </Command.Group>
 
-          <Command.Group
-            heading="Preferences"
-            className="kyber-cmd-group [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:pt-3 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-semibold [&_[cmdk-group-heading]]:uppercase [&_[cmdk-group-heading]]:tracking-wider [&_[cmdk-group-heading]]:text-text-muted"
-          >
-            <Command.Item
-              value={`density toggle ${nextDensity}`}
-              onSelect={handleSelect(() => setDensity(nextDensity))}
-              className="flex cursor-pointer items-center gap-3 rounded-md px-3 py-2 text-sm text-text-primary aria-selected:bg-accent-muted aria-selected:text-accent"
-            >
-              <Gauge className="h-4 w-4 text-text-muted" />
-              <span>Toggle density</span>
-              <span className="ml-auto text-xs text-text-muted">
-                {density} → {nextDensity}
-              </span>
-            </Command.Item>
-          </Command.Group>
         </Command.List>
         <div className="flex items-center justify-between border-t border-border-subtle px-3 py-2 text-[11px] text-text-muted">
           <span>

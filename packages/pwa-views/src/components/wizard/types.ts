@@ -64,16 +64,15 @@ export type WizardSetter = <K extends keyof WizardState>(
 ) => void
 
 /**
- * Default starting state. `model` is seeded from the server's models list
- * if available; CreateAgent's existing useEffect handles the late-load case
- * (don't duplicate the effect here).
+ * Default starting state. Model remains empty so agent creation inherits the
+ * runtime-scoped fleet default instead of pinning a per-agent override.
  */
-export function initialWizardState(models: ModelInfo[]): WizardState {
+export function initialWizardState(_models: ModelInfo[]): WizardState {
   return {
     name: '',
     machine: '',
     runtime: 'claude-code',
-    model: models[0]?.id ?? '',
+    model: '',
     scaling: 'warm',
     cpu: '1',
     memory: '2Gi',

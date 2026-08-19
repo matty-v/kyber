@@ -35,7 +35,8 @@ type Poller struct {
 	// CodexNpm fetches @openai/codex versions. Nil keeps backward-compatible
 	// Claude-only behavior for tests and installs that have not configured it.
 	CodexNpm *NpmClient
-	// Anthropic is the Anthropic Models API client. Required.
+	// Anthropic is the legacy platform-level Anthropic Models API client.
+	// Nil disables this leg; authenticated agent pods report their own catalogs.
 	Anthropic *AnthropicClient
 	// KeySource returns the operator-supplied Anthropic API key per poll
 	// cycle. When the source returns "", the Anthropic leg is skipped and
@@ -119,11 +120,15 @@ func (p *Poller) pollOnce(ctx context.Context, logger *slog.Logger) {
 	}
 
 	var models []Model
-	apiKey, kErr := p.KeySource()
+	var apiKey string
+	var kErr error
+	if p.KeySource != nil {
+		apiKey, kErr = p.KeySource()
+	}
 	if kErr != nil {
 		logger.Warn("runtimedetect: anthropic key source error", "err", kErr)
 	}
-	if apiKey != "" {
+	if apiKey != "" && p.Anthropic != nil {
 		fetched, mErr := p.Anthropic.Fetch(ctx, apiKey)
 		switch {
 		case mErr == nil:
@@ -181,6 +186,7 @@ func (p *Poller) pollOnce(ctx context.Context, logger *slog.Logger) {
 	}
 	if previous != nil {
 		snap.CodexModels = previous.CodexModels
+		snap.AgentModels = previous.AgentModels
 	}
 	if err := p.Cache.Put(ctx, snap); err != nil {
 		logger.Warn("runtimedetect: cache put failed", "err", err)
@@ -207,12 +213,6 @@ func (p *Poller) validate() error {
 	}
 	if p.Npm == nil {
 		return fmt.Errorf("runtimedetect: Poller.Npm is required")
-	}
-	if p.Anthropic == nil {
-		return fmt.Errorf("runtimedetect: Poller.Anthropic is required")
-	}
-	if p.KeySource == nil {
-		return fmt.Errorf("runtimedetect: Poller.KeySource is required")
 	}
 	return nil
 }

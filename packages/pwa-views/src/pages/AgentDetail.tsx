@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, Pause, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2 } from 'lucide-react'
@@ -12,6 +12,7 @@ import {
   useSuspendAgent,
   useForceNeedsAuthAgent,
   useSetAgentModel,
+  useAgentModels,
   useSetAgentRuntimeVersion,
   useSetAgentResources,
   useDeleteAgent,
@@ -421,9 +422,8 @@ export function AgentDetail() {
   const { data: agent, isLoading, error } = useAgent(name)
   const tokenUsage = useTokenUsage(name, agent?.phase === 'Running')
   const { data: computeConfig } = useComputeConfig()
-  // kyber#378 PR-D: the effective model list (detected /available
-  // primary, /config Models fallback) also carries the CC version
-  // catalog for the set-runtime-version dialog.
+  // The public /available catalog supplies harness versions. Model choices
+  // come separately from this agent's authenticated provider catalog.
   const effective = useEffectiveModelList(agent?.runtime)
   const [pending, setPending] = useState<ActionKind | null>(null)
   const [activeTab, setActiveTab] = useState<Tab>('overview')
@@ -431,6 +431,14 @@ export function AgentDetail() {
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
   const [newCPU, setNewCPU] = useState('')
   const [newMemory, setNewMemory] = useState('')
+  const agentModels = useAgentModels(name, pending === 'set-model')
+
+  useEffect(() => {
+    if (pending === 'set-model' && !newModel && agentModels.data?.models[0]) {
+      const current = agentModels.data.models.find((model) => model.id === (agent?.currentModel || agent?.model))
+      setNewModel(current?.id ?? agentModels.data.models[0].id)
+    }
+  }, [pending, newModel, agentModels.data, agent?.model, agent?.currentModel])
 
   // Re-authorize flow state
   const [reauthVerifier, setReauthVerifier] = useState('')
@@ -615,7 +623,7 @@ export function AgentDetail() {
               <DropdownMenuLabel>Agent configuration</DropdownMenuLabel>
               <DropdownMenuItem
                 onSelect={() => {
-                  setNewModel(agent.model)
+                  setNewModel(agent.currentModel || agent.model)
                   setPending('set-model')
                 }}
               >
@@ -794,7 +802,10 @@ export function AgentDetail() {
             <dl className="space-y-2 text-sm">
               <div className="flex justify-between">
                 <dt className="text-text-muted">Model</dt>
-                <dd className="text-text-primary font-mono text-xs">{agent.model}</dd>
+                <dd className="text-right text-text-primary font-mono text-xs">
+                  {agent.currentModel || agent.model || 'Harness default'}
+                  {!agent.model && agent.currentModel && <span className="block font-sans text-[10px] text-text-muted">harness default</span>}
+                </dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-text-muted">Machine</dt>
@@ -872,21 +883,22 @@ export function AgentDetail() {
           <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
             <h2 className="text-base font-semibold text-text-primary mb-4">Change model</h2>
             {(() => {
-              // kyber#378 PR-D: detected list from /available wins; /config
-              // is the cold-start fallback (composed inside useEffectiveModelList).
-              const models = effective.models
-              const currentInList = models.some((m) => m.id === newModel)
+              const models = agentModels.data?.models ?? []
               return (
                 <>
+                  {agentModels.isLoading && <p className="mb-3 text-sm text-text-muted">Loading models from the authenticated agent…</p>}
+                  {agentModels.isError && (
+                    <p className="mb-3 text-sm text-warning">
+                      No authenticated model catalog is available yet. Finish authentication and wait a few seconds, then reopen this dialog.
+                    </p>
+                  )}
                   <select
                     value={newModel}
                     onChange={(e) => setNewModel(e.target.value)}
                     className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
-                    disabled={models.length === 0 && !newModel}
+                    disabled={models.length === 0}
                   >
-                    {!currentInList && newModel && (
-                      <option value={newModel}>{newModel} (manual)</option>
-                    )}
+                    {!newModel && <option value="">Select a model</option>}
                     {models.map((m) => {
                       const k = Math.round(m.contextWindow / 1000)
                       const window = k >= 1000 ? `${(k / 1000).toFixed(0)}M ctx` : `${k}K ctx`
@@ -898,16 +910,6 @@ export function AgentDetail() {
                       )
                     })}
                   </select>
-                  <input
-                    type="text"
-                    placeholder={`Manual override: type a ${agent.runtime === 'codex' ? 'Codex' : 'Claude'} model ID`}
-                    value={!currentInList && newModel ? newModel : ''}
-                    onChange={(e) => setNewModel(e.target.value.trim())}
-                    className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
-                    autoComplete="off"
-                    spellCheck={false}
-                    aria-label="Manual model override"
-                  />
                 </>
               )
             })()}

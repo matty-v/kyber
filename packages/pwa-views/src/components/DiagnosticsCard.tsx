@@ -60,7 +60,7 @@ export function DiagnosticsCard() {
   const build = formatBuildDate(versionInfo?.buildDate ?? '')
 
   return (
-    <Card className="max-w-lg mt-4">
+    <Card className="max-w-3xl">
       <h2 className="text-sm font-medium text-text-muted mb-3">Version</h2>
       <dl className="space-y-2 text-sm">
         <div className="flex justify-between">

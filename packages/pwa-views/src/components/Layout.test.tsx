@@ -23,7 +23,6 @@ vi.mock('../hooks/useLiveVersion', () => ({
 import { Layout } from './Layout'
 import { ClusterProvider, type Cluster } from '../lib/cluster-context'
 import { RoutePrefixProvider, type BackTo } from '../lib/route-prefix'
-import { DensityProvider } from '../contexts/DensityContext'
 import { TooltipProvider } from './ui/tooltip'
 
 const mockCluster: Cluster = {
@@ -36,21 +35,6 @@ const mockCluster: Cluster = {
 }
 
 // jsdom polyfills the Layout subtree relies on (mirror App.prefix.test.tsx).
-if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      dispatchEvent: () => false,
-      onchange: null,
-    })),
-  })
-}
 if (typeof globalThis.ResizeObserver === 'undefined') {
   ;(globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = class {
     observe() {}
@@ -70,8 +54,7 @@ function renderLayout(initialPath: string, backTo?: BackTo) {
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <QueryClientProvider client={qc}>
-        <DensityProvider>
-          <TooltipProvider>
+        <TooltipProvider>
             <ClusterProvider value={mockCluster}>
               <RoutePrefixProvider prefix="" backTo={backTo}>
                 <Layout>
@@ -79,8 +62,7 @@ function renderLayout(initialPath: string, backTo?: BackTo) {
                 </Layout>
               </RoutePrefixProvider>
             </ClusterProvider>
-          </TooltipProvider>
-        </DensityProvider>
+        </TooltipProvider>
       </QueryClientProvider>
     </MemoryRouter>,
   )

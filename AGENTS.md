@@ -72,6 +72,9 @@ testable without a cluster. Authoritative transition table:
   `provider=fake` uses a deterministic in-memory instance but traverses the
   normal managed Machine state machine and finalizer against one local Ready
   node. `provider=mock` remains a compatibility alias for `static`. Verify the
+  static provider supports multiple existing nodes: the first Machine may use
+  the single-Ready-node fallback, while each additional Machine requires a
+  distinct Ready node labelled `kyber.io/machine=<machine-name>`. Verify the
   fake lifecycle locally with `scripts/devenv/up.sh --compute-provider fake`
   followed by `scripts/devenv/smoke-fake-provider.sh`. The contract is in
   `docs/design/2026-08-13-compute-provider-boundary-design.md`.
@@ -169,6 +172,15 @@ packaged into both runtime images. Startup scripts install
 `discord-messaging` only when `KYBER_DISCORD_MCP_URL` is present; an
 identity-repo skill with the same name wins, so operators can customize the
 behavior without forking an image.
+
+Harness-version discovery is public and npm-backed. Model discovery is
+per-agent and begins only after authentication: Claude Code uses that agent's
+Anthropic credential and Codex uses app-server `model/list`, then each reports
+non-secret metadata through the status sidecar. `GET
+/api/v1/agents/{name}/models` never substitutes another agent's catalog.
+For an empty `spec.model`, the first transcript-backed token snapshot records
+the concrete harness choice in `status.currentModel`; do not copy that value
+into spec, because doing so would turn a dynamic default into a persistent pin.
 
 Control plane = ONE binary (`cmd/control-plane/main.go`) — a modular monolith:
 REST API (`pkg/api`), both controllers, inbound, telemetry, background workers.
@@ -319,6 +331,10 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     with `figlet`). Keep `agent.security.userNamespaces` opt-in until the target
     validates FUSE plus representative apt installs. Do not make it default-on
     without changing the persistence/runtime boundary.
+14. **Empty fleet model defaults are intentional.** They mean "let the runtime
+    choose its default model," while the fresh harness-version default is the
+    literal `latest`. The live ConfigMap wins for all four runtime-scoped keys
+    so an operator's concrete pin survives Helm upgrades.
 
 ---
 

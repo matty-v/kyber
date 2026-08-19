@@ -3,6 +3,7 @@ import { formatRelativeTime } from './AgentActivityDot'
 
 export interface AgentActivityBadgeProps {
   agent: Agent
+  showDot?: boolean
 }
 
 /**
@@ -14,7 +15,7 @@ export interface AgentActivityBadgeProps {
  *
  * Spec: kyber#249 (closes kyber#174).
  */
-export function AgentActivityBadge({ agent }: AgentActivityBadgeProps) {
+export function AgentActivityBadge({ agent, showDot = true }: AgentActivityBadgeProps) {
   const a = agent.activity
   if (!a || !a.state || a.state === 'unknown') {
     return null
@@ -30,18 +31,20 @@ export function AgentActivityBadge({ agent }: AgentActivityBadgeProps) {
     <span
       data-testid="agent-activity-badge"
       data-state={a.state}
-      className={`inline-flex items-center gap-1.5 rounded-full px-2 py-0.5 text-xs font-medium ${
+      className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ${
         working
           ? 'bg-success/15 text-success'
           : 'bg-surface-overlay text-text-secondary'
       }`}
     >
-      <span
-        className={`inline-block h-1.5 w-1.5 rounded-full ${
-          working ? 'bg-success motion-safe:animate-pulse' : 'bg-text-disabled'
-        }`}
-        aria-hidden="true"
-      />
+      {showDot && (
+        <span
+          className={`inline-block h-1.5 w-1.5 rounded-full ${
+            working ? 'bg-success motion-safe:animate-pulse' : 'bg-text-disabled'
+          }`}
+          aria-hidden="true"
+        />
+      )}
       {text}
     </span>
   )

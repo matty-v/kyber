@@ -15,29 +15,12 @@ stable for compatibility:
 When `controlPlane.fleetDefaults.configMapName` is empty, the ConfigMap
 isn't rendered and the API endpoint returns 503.
 
-PRECEDENCE — and it DIFFERS by field, deliberately.
-
-The two *Model keys are OPERATOR-AUTHORED: nothing derives them, so the live
-value wins and the chart value only seeds a first install. `hasKey` rather
-than truthiness, because empty is a real, documented setting ("no fleet
-default — every agent must set spec.model") and a `default` pipeline would
-treat the operator deliberately clearing it as "unset" and restore the chart
-value on the next upgrade.
-
-The two *RuntimeVersion keys are DERIVED from the harness version the chart
-ships (`runtime.claudeCode.version` / `runtime.codex.version`), so the CHART
-wins. Live-wins was wrong for these and would have been a silent, permanent
-regression: a fresh install seeds the derived value, so from the second
-upgrade onward the live value always won and bumping the harness in values
-could never reach the fleet again. Every agent with an empty
-spec.runtimeVersion would keep booting the OLD harness inside the NEW image,
-forever, with no signal. Caught in review; the unit test could not see it
-because `lookup` is always empty under `helm template`.
-
-Cost of each choice, stated: a *Model edit in values.yaml does not affect a
-cluster where the key exists (change it in the PWA, or delete the live key
-and upgrade); a *RuntimeVersion edit in the PWA does not survive an upgrade
-(the chart is authoritative, because it must track the image).
+All four keys are OPERATOR-AUTHORED: the live value wins and the chart value
+only seeds a first install. `hasKey` rather than truthiness is load-bearing:
+empty is the explicit "Default model" setting and must survive upgrades.
+Fresh installs seed `latest` for both harness versions, so harness upgrades no
+longer depend on tracking the image's baked-in pin. A concrete version selected
+in the PWA is an intentional pin and must survive a Helm upgrade as well.
 
 Why the live tier exists at all: this template used to render straight from
 `.Values`, so any `helm upgrade` reverted every PWA-written default back to
@@ -78,8 +61,6 @@ data:
   # Operator-authored: live wins, hasKey so a deliberate "" is preserved.
   defaultModel: {{ if hasKey $prev "defaultModel" }}{{ index $prev "defaultModel" | quote }}{{ else }}{{ $fd.defaultModel | default "" | quote }}{{ end }}
   codexDefaultModel: {{ if hasKey $prev "codexDefaultModel" }}{{ index $prev "codexDefaultModel" | quote }}{{ else }}{{ $fd.codexDefaultModel | default "" | quote }}{{ end }}
-  # Derived from the harness the chart ships: the CHART wins, or a bump here
-  # could never reach the fleet again. See the precedence note above.
-  defaultRuntimeVersion: {{ $fd.defaultRuntimeVersion | default .Values.runtime.claudeCode.version | quote }}
-  codexDefaultRuntimeVersion: {{ $fd.codexDefaultRuntimeVersion | default .Values.runtime.codex.version | quote }}
+  defaultRuntimeVersion: {{ if hasKey $prev "defaultRuntimeVersion" }}{{ index $prev "defaultRuntimeVersion" | quote }}{{ else }}{{ $fd.defaultRuntimeVersion | default "latest" | quote }}{{ end }}
+  codexDefaultRuntimeVersion: {{ if hasKey $prev "codexDefaultRuntimeVersion" }}{{ index $prev "codexDefaultRuntimeVersion" | quote }}{{ else }}{{ $fd.codexDefaultRuntimeVersion | default "latest" | quote }}{{ end }}
 {{- end }}

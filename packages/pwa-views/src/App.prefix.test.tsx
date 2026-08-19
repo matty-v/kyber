@@ -87,7 +87,6 @@ vi.mock('./hooks/useAPI', () => {
 import { App } from './App'
 import { ClusterProvider, type Cluster } from './lib/cluster-context'
 import { RoutePrefixProvider, type BackTo } from './lib/route-prefix'
-import { DensityProvider } from './contexts/DensityContext'
 import { TooltipProvider } from './components/ui/tooltip'
 
 const mockCluster: Cluster = {
@@ -102,24 +101,6 @@ const mockCluster: Cluster = {
 function LocationProbe() {
   const location = useLocation()
   return <span data-testid="loc">{location.pathname}</span>
-}
-
-// Polyfill window.matchMedia for jsdom — DensityProvider calls it on mount.
-// Mirrors the helper in CommandPalette.test.tsx.
-if (typeof window !== 'undefined' && typeof window.matchMedia !== 'function') {
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: false,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      dispatchEvent: () => false,
-      onchange: null,
-    })),
-  })
 }
 
 // Polyfill ResizeObserver for jsdom — data-table / cmdk reads it.
@@ -140,9 +121,8 @@ function renderUnderPrefix(initialPath: string, backTo?: BackTo) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
-      <DensityProvider>
-        <QueryClientProvider client={qc}>
-          <TooltipProvider>
+      <QueryClientProvider client={qc}>
+        <TooltipProvider>
             <Routes>
               <Route
                 path="/c/:clusterId/*"
@@ -163,9 +143,8 @@ function renderUnderPrefix(initialPath: string, backTo?: BackTo) {
                   back affordance can navigate to it without a 404. */}
               <Route path="/clusters" element={<LocationProbe />} />
             </Routes>
-          </TooltipProvider>
-        </QueryClientProvider>
-      </DensityProvider>
+        </TooltipProvider>
+      </QueryClientProvider>
     </MemoryRouter>,
   )
 }

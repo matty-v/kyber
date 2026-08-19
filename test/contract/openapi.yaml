@@ -307,6 +307,33 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/agents/{name}/models:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgentModels
+      summary: Get the model catalog reported by this authenticated agent
+      tags: [agents]
+      responses:
+        '200':
+          description: Provider-visible models for this agent
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [models]
+                properties:
+                  models:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/AvailableModel'
+        '409':
+          description: Agent has not reported an authenticated catalog yet
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          description: Agent not found
+
   /api/v1/agents/{name}/comms:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -981,6 +1008,9 @@ components:
         model:
           type: string
           example: claude-sonnet-4
+        currentModel:
+          type: string
+          description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
         scaling:
           type: string
           enum: [warm, scale-to-zero]
@@ -1005,7 +1035,7 @@ components:
 
     CreateAgentRequest:
       type: object
-      required: [name, machine, runtime, model]
+      required: [name, machine, runtime]
       properties:
         name:
           type: string

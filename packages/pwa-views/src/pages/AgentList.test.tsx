@@ -69,14 +69,16 @@ describe('AgentList activity badge (kyber#417)', () => {
     expect(badges).toHaveLength(2)
     for (const badge of badges) {
       expect(badge).toHaveAttribute('data-state', 'idle')
+      expect(badge).toHaveClass('whitespace-nowrap')
       expect(badge.textContent).toMatch(/^Idle 1h ago$/)
+      expect(badge.querySelector('[aria-hidden="true"]')).toBeNull()
     }
   })
 
   it('renders no activity badge for an agent with no reported activity', () => {
     const { container } = renderList([mockNoActivityAgent])
     expect(screen.queryAllByTestId('agent-activity-badge')).toHaveLength(0)
-    // The standalone dot is also absent (visible-by-absence) — no crash.
+    // The list view has no standalone activity dots.
     expect(screen.queryAllByTestId('agent-activity-dot')).toHaveLength(0)
     // And no empty spacer div is emitted in the badge's place — a no-activity
     // card must keep its exact prior layout, not gain a stray mt-1 gap that
@@ -85,5 +87,11 @@ describe('AgentList activity badge (kyber#417)', () => {
       (d) => d.children.length === 0 && !d.textContent,
     )
     expect(emptySpacers).toHaveLength(0)
+  })
+
+  it('shows the observed model when the agent uses the harness default', () => {
+    renderList([{ ...mockNoActivityAgent, model: '', currentModel: 'claude-sonnet-5' }])
+    expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
+    expect(screen.getByText(/claude-sonnet-5 ·/)).toBeInTheDocument()
   })
 })

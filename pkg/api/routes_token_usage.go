@@ -52,6 +52,11 @@ func (s *Server) handleTokenUsageGet(w http.ResponseWriter, r *http.Request, nam
 	if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {
 		limit, known = resolved.Tokens.Limit, true
 	}
+	if !known {
+		writeJSONError(w, http.StatusServiceUnavailable, "context_window_unavailable",
+			"authoritative context-window metadata is unavailable for model '"+resolved.Model+"'")
+		return
+	}
 	resolved.Tokens.Limit = limit
 	resolved.ContextWindowKnown = known
 	if limit > 0 {

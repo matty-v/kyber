@@ -157,10 +157,12 @@ func discoverModels() ([]catalogModel, error) {
 		ID     int `json:"id"`
 		Result struct {
 			Data []struct {
-				ID          string `json:"id"`
-				Model       string `json:"model"`
-				DisplayName string `json:"displayName"`
-				Hidden      bool   `json:"hidden"`
+				ID                 string `json:"id"`
+				Model              string `json:"model"`
+				DisplayName        string `json:"displayName"`
+				Hidden             bool   `json:"hidden"`
+				ContextWindow      int64  `json:"contextWindow"`
+				ContextWindowKnown bool   `json:"contextWindowKnown"`
 			} `json:"data"`
 		} `json:"result"`
 		Error json.RawMessage `json:"error"`
@@ -201,7 +203,10 @@ func discoverModels() ([]catalogModel, error) {
 			if id == "" || item.Hidden {
 				continue
 			}
-			models = append(models, catalogModel{ID: id, DisplayName: item.DisplayName, ContextWindow: 200_000})
+			if !item.ContextWindowKnown || item.ContextWindow <= 0 {
+				return nil, fmt.Errorf("model %q omitted authoritative context-window metadata", id)
+			}
+			models = append(models, catalogModel{ID: id, DisplayName: item.DisplayName, ContextWindow: item.ContextWindow, ContextWindowKnown: true})
 		}
 		return models, nil
 	}

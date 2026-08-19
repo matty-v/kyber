@@ -88,10 +88,10 @@ which today lives in `start-claude.sh` and must become data-driven (§3, §5).
 
 ## Components
 
-### 1. Detection poller (control-plane, read-only)
+### 1. Public harness detection + authenticated per-agent model discovery
 
 A goroutine in the control-plane periodically (configurable, default ~1h) queries
-two upstreams and caches the result **in Redis** (Kyber already runs Redis for the
+the public npm upstreams and caches the result **in Redis** (Kyber already runs Redis for the
 token-budget feature, and the control-plane may run multiple replicas — a per-replica
 in-memory cache would make `/available` answer differently per replica and flicker
 the PWA picker; Redis is the default, in-memory only as a single-replica fallback):
@@ -99,24 +99,22 @@ the PWA picker; Redis is the default, in-memory only as a single-replica fallbac
 - **CC versions:** the npm registry endpoint for `@anthropic-ai/claude-code`
   (`https://registry.npmjs.org/@anthropic-ai/claude-code`), extracting `latest` and
   the N most-recent published versions (keep the picker sane — not all history).
-- **Models:** the Anthropic Models API (`GET https://api.anthropic.com/v1/models`),
-  extracting model IDs (+ `display_name`, `created_at`).
+- **Codex versions:** the npm registry endpoint for `@openai/codex`, with the same
+  bounded version policy.
 
-Exposed via **`GET /api/v1/available`** returning
-`{ claudeCodeVersions: [...], models: [{ id, displayName, contextWindow, contextWindowKnown }] }`.
+The public harness lists are exposed via **`GET /api/v1/available`**. No provider
+credential is required for this control-plane poller.
 
-**Authentication & key handling:** the Models API call uses an **operator-supplied
-Anthropic API key**, entered in the PWA and stored as a Kubernetes Secret in the
-control-plane namespace (reuse the user-secrets pattern,
-`docs/design/2026-04-18-user-secrets-design.md`). Note this key is org/billing-capable and
-is held by the _control-plane_ (not per-agent); document it as such, mount read-only,
-and ensure the poller treats a rotated/revoked key as a soft failure (serve cache,
-flag "detection unavailable") rather than crashing. The key is used only for the
-read-only Models call.
+**Model authentication:** after an agent authenticates, its in-pod reporter queries
+the provider using that agent's existing credential. Claude Code calls Anthropic's
+Models API with its OAuth access token (or its configured API key); Codex calls the
+authenticated app-server `model/list` method. The reporter sends only model metadata
+through the status sidecar. Credentials never reach the control plane or browser.
+The control plane stores catalogs by agent and exposes only the requested agent's
+list at **`GET /api/v1/agents/{name}/models`**.
 
-When the key is absent or a poll fails, `/available` serves the last good cache (or
-the §5 fallback list) and the PWA shows a "detection unavailable" state — detection
-failure must never block agent operation.
+Before authentication, Change model reports that authentication is required. A
+discovery failure never blocks agent operation or changes its current model.
 
 **Does not:** mutate any agent. Detection is strictly read-only.
 
@@ -132,9 +130,10 @@ failure must never block agent operation.
   semver-ish shape (`^[0-9A-Za-z.\-]+$`) and a sane `MaxLength` — both correctness
   and the injection guard in §3. Empty → use the fleet default.
 - **`spec.model`** becomes `+optional` (today required). Empty → use the fleet default.
-- **Fleet defaults** `defaultRuntimeVersion` and `defaultModel`: new control-plane
-  config (chart value → ConfigMap, also settable via the PWA). `defaultRuntimeVersion`
-  itself defaults to the baked-in CC version so behavior is unchanged until opt-in.
+- **Fleet defaults** `defaultRuntimeVersion` and `defaultModel`: control-plane
+  config (chart value → ConfigMap, also settable via the PWA). Fresh installs use
+  `latest` for the runtime version and an empty model, meaning the harness chooses
+  its own default. Operators can explicitly pin either value in Settings.
 - The reconciler resolves `(spec.X || default.X)` for both fields and, for the model,
   looks up its context window (§5) to decide the 1M opt-in. It injects into the pod:
   - `CLAUDE_MODEL` (already wired — adapter.go:103),
@@ -242,8 +241,9 @@ Both surface in `GET /api/v1/agents/{name}` and the PWA agent view.
 
 ## Data flow (adopt a new model, end-to-end)
 
-1. Anthropic ships `claude-opus-4-9`. The poller picks it up; `/available` lists it.
-2. Operator selects it for an agent in the PWA → PATCH `spec.model` → restart.
+1. Anthropic ships `claude-opus-4-9`. An authenticated agent's reporter picks it up;
+   `/api/v1/agents/{name}/models` lists it.
+2. Operator selects it for that agent in the PWA → PATCH `spec.model` → restart.
 3. New pod resolves the model + its context window; `start-claude.sh` applies `[1m]`
    iff the window ≥ 1M, runs the pre-flight probe, launches, and reports
    `currentModel` + `modelSupported`.
@@ -282,11 +282,11 @@ Both surface in `GET /api/v1/agents/{name}` and the PWA agent view.
 
 ## Rollout / compatibility
 
-- `spec.runtimeVersion` is additive/optional; `spec.model` relaxes required→optional.
-  Empty fields fall back to fleet defaults, which themselves default to the baked-in
-  version + a sane model — behavior unchanged until an operator opts in.
-- The fallback `knownModels` list keeps the system working before the Anthropic-key
-  Secret is configured.
+- `spec.runtimeVersion` and `spec.model` are optional and fall back to fleet defaults.
+  Fresh fleet defaults request the latest harness and delegate model choice to it;
+  concrete operator pins remain stable across upgrades.
+- An untouched fleet setting leaves `spec.model` empty so the harness chooses its
+  upstream default; an explicit per-agent selection is persisted in `spec.model`.
 - Ships behind the existing chart/ArgoCD flow. Poller + `/available` are control-plane
   only; the start-claude.sh changes ship in the kyber-claude-code image (one rebuild to
   introduce the data-driven runtime; subsequent version/model adoption needs none).
@@ -296,8 +296,7 @@ Both surface in `GET /api/v1/agents/{name}` and the PWA agent view.
 Re-scoped per review (C1) — fleet-defaults and report-schema split out so no single PR
 is overloaded:
 
-- **PR-A — detection + `/available`:** poller (npm + Models API), Redis cache, endpoint,
-  Anthropic-key Secret + PWA settings field.
+- **PR-A — detection + `/available`:** public npm poller, Redis cache, and endpoint.
 - **PR-B — fleet-default resolution layer:** `spec.model`→optional, `defaultModel` /
   `defaultRuntimeVersion` config + ConfigMap + reconciler resolution. (No new runtime
   behavior yet; pure plumbing + the default layer the rest builds on.)

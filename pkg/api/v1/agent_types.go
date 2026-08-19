@@ -58,15 +58,9 @@ const (
 	// is a pod recreate. See kyber#299.
 	AgentConditionSidecarOutOfDate = "SidecarOutOfDate"
 
-	// AgentConditionModelUnresolved is set True when the controller cannot
-	// resolve an LLM model identifier for the agent — both spec.model and
-	// the fleet-default defaultModel (kyber-fleet-defaults ConfigMap) are
-	// empty. The reconciler refuses to build a pod in this state rather
-	// than booting `claude` with no `--model` arg (which would silently
-	// fall back to whatever the installed CC defaults to — a subtle
-	// "wrong model used" footgun, kyber#374 PR-B). Recovery: set
-	// spec.model on the agent OR set defaultModel via the PWA Settings
-	// panel / chart value. See kyber#376.
+	// AgentConditionModelUnresolved is retained for API compatibility with
+	// older control planes. Current controllers clear it because an empty
+	// resolved model now explicitly means "use the harness default."
 	AgentConditionModelUnresolved = "ModelUnresolved"
 
 	// AgentConditionRuntimeImageMissing is set True when the agent's runtime
@@ -574,9 +568,8 @@ type AgentSpec struct {
 	// model (kyber-fleet-defaults ConfigMap key `defaultModel`, seeded by
 	// the chart's `controlPlane.fleetDefaults.defaultModel` value and
 	// writable via the PWA Settings panel — kyber#376 / PR-B of #374).
-	// If both spec.model AND the fleet default are empty, the
-	// AgentConditionModelUnresolved condition fires and pod creation is
-	// refused.
+	// If both spec.model and the fleet default are empty, the runtime harness
+	// selects its own default model.
 	// +optional
 	Model string `json:"model,omitempty"`
 
