@@ -209,7 +209,7 @@ func TestParseExecCommand_ModeAttach(t *testing.T) {
 func TestParseExecCommand_ModeShell(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/?mode=shell", nil)
 	got := api.ParseExecCommandForTest(req)
-	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/bin/bash", "-l"}
+	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "env", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "/bin/bash", "-l"}
 	if !equalStringSlice(got, want) {
 		t.Errorf("mode=shell: got %v, want %v", got, want)
 	}

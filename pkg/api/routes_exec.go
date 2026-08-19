@@ -331,7 +331,10 @@ func parseExecCommand(r *http.Request) []string {
 	case "attach":
 		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "agent", "-r")
 	case "shell":
-		return append(nsenterPrefix, "/bin/bash", "-l")
+		// Kubernetes exec does not guarantee a locale. A locale-less shell
+		// causes tmux clients launched from it (including the `agent` helper)
+		// to replace non-ASCII runtime UI glyphs with underscores.
+		return append(nsenterPrefix, "env", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "/bin/bash", "-l")
 	case "history":
 		// -p prints to stdout; -e preserves escapes (colors, box-drawing);
 		// -J joins wrapped lines; -S -10000 grabs up to 10k scrollback lines.
