@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import type { Agent } from '../lib/types'
 
 vi.mock('./ExecTerminal', () => ({
@@ -29,5 +29,11 @@ describe('TerminalPeek', () => {
   it('renders an empty state with no agents', () => {
     render(<TerminalPeek agents={[]} />)
     expect(screen.getByText('No agents to watch')).toBeInTheDocument()
+  })
+  it('switches to a scrollable history snapshot', () => {
+    render(<TerminalPeek agents={[a('echo', 10)]} />)
+    fireEvent.click(screen.getByRole('button', { name: 'History' }))
+    expect(screen.getByTestId('exec')).toHaveAttribute('data-mode', 'history')
+    expect(screen.getByRole('button', { name: /Refresh/ })).toBeInTheDocument()
   })
 })
