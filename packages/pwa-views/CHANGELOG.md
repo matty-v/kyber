@@ -3,8 +3,8 @@
 ## 0.27.3 — 2026-08-19
 
 ### Changed
-- Agent terminals retain xterm.js while adding WebGL rendering with a canvas
-  fallback, grapheme-aware Unicode, clickable web links, OSC 52 clipboard
+- Agent terminals retain xterm.js while adding grapheme-aware Unicode,
+  clickable web links, OSC 52 clipboard
   support, terminal search, explicit copy/paste controls, debounced fitting,
   and bounded reconnect backoff.
 - Interactive terminals expose a phone-only extra-key row for Escape, Tab,

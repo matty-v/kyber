@@ -5,7 +5,6 @@ import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { SearchAddon } from '@xterm/addon-search'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { WebLinksAddon } from '@xterm/addon-web-links'
-import { WebglAddon } from '@xterm/addon-webgl'
 import { ClipboardCopy, ClipboardPaste, Search, X } from 'lucide-react'
 import { createApiClient } from '../lib/api'
 import { useCluster } from '../lib/cluster-context'
@@ -77,7 +76,6 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       // Claude Code uses several symbols that xterm's synthetic glyph path
       // flattens at some device-pixel ratios. Let the font stack draw them.
       customGlyphs: false,
-      rescaleOverlappingGlyphs: true,
       rightClickSelectsWord: true,
       allowProposedApi: true,
     })
@@ -157,11 +155,6 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       await document.fonts?.load('400 13px "Kyber Terminal"', '●❯✻▎▛█▜▝▘')
       if (disposed) return
       term.open(container)
-      try {
-        const webgl = new WebglAddon()
-        webgl.onContextLoss(() => webgl.dispose())
-        term.loadAddon(webgl)
-      } catch { /* canvas renderer remains active */ }
       termRef.current = term
       searchRef.current = searchAddon
       observer = new ResizeObserver(fit)
