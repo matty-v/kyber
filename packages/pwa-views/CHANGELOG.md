@@ -14,8 +14,6 @@
   glyphs reach xterm intact even when the pod exec environment has no locale.
 - Agent debug shells set an explicit UTF-8 locale, keeping tmux sessions
   launched through the `agent` and `peek` helpers Unicode-safe as well.
-- Terminal Peek now switches between a live read-only tmux view and a
-  scrollable full-history snapshot, with an explicit snapshot refresh action.
 
 ## 0.27.2 — 2026-08-19
 
