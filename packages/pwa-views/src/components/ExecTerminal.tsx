@@ -74,6 +74,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       customGlyphs: true,
       rescaleOverlappingGlyphs: true,
       rightClickSelectsWord: true,
+      allowProposedApi: true,
     })
     const fitAddon = new FitAddon()
     const searchAddon = new SearchAddon()
