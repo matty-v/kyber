@@ -65,13 +65,15 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     if (!container) return
     const term = new Terminal({
       theme: { background: '#000', foreground: '#e5e7eb', cursor: '#22d3ee', selectionBackground: '#155e75' },
-      fontFamily: '\"JetBrains Mono\", ui-monospace, SFMono-Regular, Menlo, monospace',
+      fontFamily: '\"JetBrains Mono\", \"Apple Symbols\", \"Segoe UI Symbol\", ui-monospace, SFMono-Regular, Menlo, monospace',
       fontSize: window.matchMedia('(max-width: 640px)').matches ? 12 : 13,
       cursorBlink: interactive,
       disableStdin: !interactive,
       scrollback: 10_000,
       minimumContrastRatio: 4.5,
-      customGlyphs: true,
+      // Claude Code uses several symbols that xterm's synthetic glyph path
+      // flattens at some device-pixel ratios. Let the font stack draw them.
+      customGlyphs: false,
       rescaleOverlappingGlyphs: true,
       rightClickSelectsWord: true,
       allowProposedApi: true,
