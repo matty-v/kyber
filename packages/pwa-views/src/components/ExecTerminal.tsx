@@ -64,7 +64,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     if (!container) return
     const term = new Terminal({
       theme: { background: '#000', foreground: '#e5e7eb', cursor: '#22d3ee', selectionBackground: '#155e75' },
-      fontFamily: '\"Kyber Terminal\", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: window.matchMedia('(max-width: 640px)').matches ? 12 : 13,
       fontWeight: '500',
       fontWeightBold: '700',
@@ -73,9 +73,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       disableStdin: !interactive,
       scrollback: 10_000,
       minimumContrastRatio: 4.5,
-      // Claude Code uses several symbols that xterm's synthetic glyph path
-      // flattens at some device-pixel ratios. Let the font stack draw them.
-      customGlyphs: false,
+      customGlyphs: true,
       rightClickSelectsWord: true,
       allowProposedApi: true,
     })
@@ -148,11 +146,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     const input = term.onData(send)
     const focusTerminal = () => term.focus()
     container.addEventListener('pointerdown', focusTerminal)
-    const initialize = async () => {
-      // xterm caches rasterized glyphs when it opens. Wait for the explicit
-      // symbol fallback so Claude Code's UI glyphs are not cached from a
-      // metric-incompatible browser fallback.
-      await document.fonts?.load('400 13px "Kyber Terminal"', '●❯✻▎▛█▜▝▘')
+    const initialize = () => {
       if (disposed) return
       term.open(container)
       termRef.current = term
@@ -162,7 +156,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       fit()
       connect()
     }
-    void initialize()
+    initialize()
 
     return () => {
       disposed = true

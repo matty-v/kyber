@@ -329,7 +329,7 @@ func parseExecCommand(r *http.Request) []string {
 	}
 	switch r.URL.Query().Get("mode") {
 	case "attach":
-		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "attach", "-t", "agent", "-r")
+		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "agent", "-r")
 	case "shell":
 		return append(nsenterPrefix, "/bin/bash", "-l")
 	case "history":
@@ -339,7 +339,7 @@ func parseExecCommand(r *http.Request) []string {
 		// layer closes on exit, which the client treats as end-of-stream.
 		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "capture-pane", "-peJ", "-S", "-10000", "-t", "agent")
 	case "device-auth":
-		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "attach", "-t", "auth", "-r")
+		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "auth", "-r")
 	}
 	return []string{"/bin/bash"}
 }

@@ -11,24 +11,6 @@
 @import "@fontsource/jetbrains-mono/400.css";
 @import "@fontsource/jetbrains-mono/500.css";
 
-@font-face {
-  font-family: "Kyber Terminal";
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: block;
-  src: local("SFMono-Regular"), local("SF Mono"), local("Menlo"), local("Consolas");
-  unicode-range: U+0000-257F, U+27C0-10FFFF;
-}
-
-@font-face {
-  font-family: "Kyber Terminal";
-  font-style: normal;
-  font-weight: 400 700;
-  font-display: block;
-  src: url("@fontsource/noto-sans-symbols-2/files/noto-sans-symbols-2-symbols-400-normal.woff2") format("woff2");
-  unicode-range: U+2580-27BF;
-}
-
 /* Kyber Crystal design tokens — tuned direction (Phase 3A). */
 @theme {
   /* Surfaces — cooler blue-grey, deeper base, a touch more chroma on the lifts */
