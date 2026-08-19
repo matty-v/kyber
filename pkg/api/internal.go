@@ -388,8 +388,12 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		if model.DisplayName == "" {
 			model.DisplayName = model.ID
 		}
-		if !model.ContextWindowKnown || model.ContextWindow <= 0 || model.ContextWindow > maxReportedContextWindow {
+		if model.ContextWindowKnown && (model.ContextWindow <= 0 || model.ContextWindow > maxReportedContextWindow) {
 			http.Error(w, "missing or invalid context window", http.StatusBadRequest)
+			return
+		}
+		if body.Runtime == "claude-code" && !model.ContextWindowKnown {
+			http.Error(w, "missing authoritative context window", http.StatusBadRequest)
 			return
 		}
 		models = append(models, model)
@@ -399,27 +403,8 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
 			return
 		}
-	}
-	snap, err := s.runtimeDetectCache.Get(r.Context())
-	if err != nil {
-		if !errors.Is(err, runtimedetect.ErrCacheEmpty) {
-			http.Error(w, "catalog cache unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		snap = &runtimedetect.Snapshot{}
-	}
-	if snap.AgentModels == nil {
-		snap.AgentModels = make(map[string][]runtimedetect.Model)
-	}
-	snap.AgentModels[agentName] = models
-	if body.Runtime == "codex" {
-		snap.CodexModels = models // compatibility for older /available clients
 	} else {
-		snap.Models = models // compatibility for older /available clients
-	}
-	snap.FetchedAt = time.Now().UTC()
-	if err := s.runtimeDetectCache.Put(r.Context(), snap); err != nil {
-		http.Error(w, "catalog cache unavailable", http.StatusServiceUnavailable)
+		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -681,17 +666,10 @@ func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Req
 	if snap.Model != "" && s.k8sClient != nil {
 		key := types.NamespacedName{Name: agent, Namespace: s.namespace}
 		current := &kyberv1.Agent{}
-		if err := s.k8sClient.Get(r.Context(), key, current); err != nil {
-			http.Error(w, "agent lookup failed", http.StatusInternalServerError)
-			return
-		}
-		if current.Status.CurrentModel != snap.Model {
+		if err := s.k8sClient.Get(r.Context(), key, current); err == nil && current.Status.CurrentModel != snap.Model {
 			patch := client.MergeFrom(current.DeepCopy())
 			current.Status.CurrentModel = snap.Model
-			if err := s.k8sClient.Status().Patch(r.Context(), current, patch); err != nil {
-				http.Error(w, "agent status update failed", http.StatusInternalServerError)
-				return
-			}
+			_ = s.k8sClient.Status().Patch(r.Context(), current, patch)
 		}
 	}
 	delta := computeTokenDelta(prev, &snap)

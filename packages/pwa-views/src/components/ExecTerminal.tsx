@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { ClipboardAddon } from '@xterm/addon-clipboard'
 import { SearchAddon } from '@xterm/addon-search'
 import { UnicodeGraphemesAddon } from '@xterm/addon-unicode-graphemes'
 import { WebLinksAddon } from '@xterm/addon-web-links'
@@ -32,7 +31,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
   const [connection, setConnection] = useState<ConnectionState>('connecting')
   const [searchOpen, setSearchOpen] = useState(false)
   const [query, setQuery] = useState('')
-  const interactive = mode !== 'attach' && mode !== 'history'
+  const interactive = mode !== 'attach' && mode !== 'history' && mode !== 'device-auth'
 
   const send = useCallback((data: string) => {
     const ws = wsRef.current
@@ -82,7 +81,6 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     term.loadAddon(fitAddon)
     term.loadAddon(searchAddon)
     term.loadAddon(new UnicodeGraphemesAddon())
-    term.loadAddon(new ClipboardAddon())
     term.loadAddon(new WebLinksAddon((_event, uri) => {
       if (/^https?:\/\//i.test(uri)) window.open(uri, '_blank', 'noopener,noreferrer')
     }))
@@ -128,7 +126,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       }
       ws.onerror = () => setConnection('reconnecting')
       ws.onclose = (event) => {
-        if (disposed || sessionEnded || event.code === 1000 || mode === 'history') { setConnection('closed'); return }
+        if (disposed || sessionEnded || event.code === 1000 || mode === 'history' || mode === 'attach') { setConnection('closed'); return }
         setConnection('reconnecting')
         reconnectAttempts += 1
         reconnectTimer = setTimeout(connect, Math.min(1000 * 2 ** (reconnectAttempts - 1), 15_000))
@@ -137,7 +135,8 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
 
     term.attachCustomKeyEventHandler((event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f' && event.type === 'keydown') { setSearchOpen(true); return false }
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && term.hasSelection()) {
+      const copyShortcut = event.metaKey || (event.ctrlKey && event.shiftKey)
+      if (copyShortcut && event.key.toLowerCase() === 'c' && term.hasSelection()) {
         if (event.type === 'keydown') void navigator.clipboard.writeText(term.getSelection())
         return false
       }

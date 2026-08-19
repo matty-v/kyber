@@ -20,7 +20,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={initialState()}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -34,7 +33,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), cpu: '0.25' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -48,7 +46,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), cpu: '4' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -64,7 +61,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={initialWizardState(models)}
         set={set}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -90,7 +86,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={initialWizardState(models)}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -104,7 +99,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -117,7 +111,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer', cpu: '1', memory: '2Gi' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={machine}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -132,7 +125,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer', cpu: '8', memory: '16Gi' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={machine}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,

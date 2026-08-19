@@ -113,6 +113,12 @@ through the status sidecar. Credentials never reach the control plane or browser
 The control plane stores catalogs by agent and exposes only the requested agent's
 list at **`GET /api/v1/agents/{name}/models`**.
 
+Anthropic includes `max_input_tokens` in the authenticated response, so Claude
+picker entries carry authoritative windows. Codex app-server `model/list` does
+not expose a context-window field; those picker entries remain explicitly
+unknown, while the active model's rollout `token_count.context_window` drives
+its budget gauge. No static or guessed fallback is applied.
+
 Before authentication, Change model reports that authentication is required. A
 discovery failure never blocks agent operation or changes its current model.
 

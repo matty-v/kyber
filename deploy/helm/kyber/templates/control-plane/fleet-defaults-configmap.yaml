@@ -42,6 +42,8 @@ transition period while ArgoCD is still in play.
 {{- $live := lookup "v1" "ConfigMap" (include "kyber.namespace" .) $fd.configMapName }}
 {{- $prev := dict }}
 {{- if $live }}{{- $prev = ($live.data | default dict) }}{{- end }}
+{{- $operatorAuthored := false }}
+{{- if $live }}{{- $operatorAuthored = eq (index ($live.metadata.annotations | default dict) "kyber.io/fleet-defaults-authored" | default "") "true" }}{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -61,6 +63,9 @@ data:
   # Operator-authored: live wins, hasKey so a deliberate "" is preserved.
   defaultModel: {{ if hasKey $prev "defaultModel" }}{{ index $prev "defaultModel" | quote }}{{ else }}{{ $fd.defaultModel | default "" | quote }}{{ end }}
   codexDefaultModel: {{ if hasKey $prev "codexDefaultModel" }}{{ index $prev "codexDefaultModel" | quote }}{{ else }}{{ $fd.codexDefaultModel | default "" | quote }}{{ end }}
-  defaultRuntimeVersion: {{ if hasKey $prev "defaultRuntimeVersion" }}{{ index $prev "defaultRuntimeVersion" | quote }}{{ else }}{{ $fd.defaultRuntimeVersion | default "latest" | quote }}{{ end }}
-  codexDefaultRuntimeVersion: {{ if hasKey $prev "codexDefaultRuntimeVersion" }}{{ index $prev "codexDefaultRuntimeVersion" | quote }}{{ else }}{{ $fd.codexDefaultRuntimeVersion | default "latest" | quote }}{{ end }}
+  # Pre-marker ConfigMaps contain chart-derived concrete image pins. Migrate
+  # those once to the new `latest` seed; after the Settings API stamps the
+  # authored annotation, the live value wins and explicit pins persist.
+  defaultRuntimeVersion: {{ if and $operatorAuthored (hasKey $prev "defaultRuntimeVersion") }}{{ index $prev "defaultRuntimeVersion" | quote }}{{ else }}{{ $fd.defaultRuntimeVersion | default "latest" | quote }}{{ end }}
+  codexDefaultRuntimeVersion: {{ if and $operatorAuthored (hasKey $prev "codexDefaultRuntimeVersion") }}{{ index $prev "codexDefaultRuntimeVersion" | quote }}{{ else }}{{ $fd.codexDefaultRuntimeVersion | default "latest" | quote }}{{ end }}
 {{- end }}

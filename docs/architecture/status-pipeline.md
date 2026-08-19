@@ -86,13 +86,14 @@ cross-cutting concerns (rate-limiting, batching, signature verification).
 Claude Code refreshes the upstream catalog hourly but replays the cached
 metadata every 30 seconds, allowing an in-memory control-plane cache to recover
 quickly after a restart without multiplying provider traffic.
-Every authenticated catalog entry must include a provider-reported, positive
-context window below Kyber's defensive upper bound. The control plane rejects
-the entire report when any entry omits or violates that contract; reporters log
-the discovery/report failure and retain the last valid catalog. Kyber never
-substitutes a guessed window in this path. The same accepted catalog powers both
-the model picker and token-budget resolution, so their window labels stay
-consistent.
+Claude catalog entries must include a provider-reported, positive context
+window below Kyber's defensive upper bound. Codex app-server's `model/list`
+schema does not publish context windows, so its catalog keeps them explicitly
+unknown; the active model's rollout `token_count.context_window` is the
+authoritative source for its token budget. Kyber never substitutes a guessed
+window. Catalogs are stored under separate per-agent keys so concurrent reports
+cannot overwrite public harness discovery or leak one user's entitlements to
+another.
 
 The only remaining direct-to-control-plane path from an agent pod is
 `start-claude.sh`'s boot-time OAuth push, which runs before the sidecar

@@ -4,8 +4,8 @@
 
 ### Changed
 - Agent terminals retain xterm.js while adding grapheme-aware Unicode,
-  clickable web links, OSC 52 clipboard
-  support, terminal search, explicit copy/paste controls, debounced fitting,
+  clickable web links, terminal search, explicit user-initiated copy/paste
+  controls, debounced fitting,
   and bounded reconnect backoff.
 - Interactive terminals expose a phone-only extra-key row for Escape, Tab,
   Shift-Tab, Ctrl-C, the tmux Ctrl-B prefix, arrows, and Enter. Read-only

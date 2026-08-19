@@ -121,6 +121,31 @@ type catalogModel struct {
 	ContextWindowKnown bool   `json:"contextWindowKnown"`
 }
 
+type appServerModel struct {
+	ID          string `json:"id"`
+	Model       string `json:"model"`
+	DisplayName string `json:"displayName"`
+	Hidden      bool   `json:"hidden"`
+}
+
+func catalogModels(items []appServerModel) []catalogModel {
+	models := make([]catalogModel, 0, len(items))
+	for _, item := range items {
+		id := item.Model
+		if id == "" {
+			id = item.ID
+		}
+		if id == "" || item.Hidden {
+			continue
+		}
+		// app-server's model/list schema does not publish context-window
+		// metadata. Keep it explicitly unknown; the rollout token_count event
+		// is the authoritative source for the model actually in use.
+		models = append(models, catalogModel{ID: id, DisplayName: item.DisplayName})
+	}
+	return models
+}
+
 // discoverModels uses the supported Codex app-server protocol rather than a
 // hard-coded OpenAI list. app-server reads the same CODEX_HOME auth.json as the
 // interactive harness, so model/list is subscription-aware.
@@ -156,14 +181,7 @@ func discoverModels() ([]catalogModel, error) {
 	type response struct {
 		ID     int `json:"id"`
 		Result struct {
-			Data []struct {
-				ID                 string `json:"id"`
-				Model              string `json:"model"`
-				DisplayName        string `json:"displayName"`
-				Hidden             bool   `json:"hidden"`
-				ContextWindow      int64  `json:"contextWindow"`
-				ContextWindowKnown bool   `json:"contextWindowKnown"`
-			} `json:"data"`
+			Data []appServerModel `json:"data"`
 		} `json:"result"`
 		Error json.RawMessage `json:"error"`
 	}
@@ -194,21 +212,7 @@ func discoverModels() ([]catalogModel, error) {
 		if len(resp.Error) > 0 && string(resp.Error) != "null" {
 			return nil, fmt.Errorf("app-server model/list returned %s", resp.Error)
 		}
-		models := make([]catalogModel, 0, len(resp.Result.Data))
-		for _, item := range resp.Result.Data {
-			id := item.Model
-			if id == "" {
-				id = item.ID
-			}
-			if id == "" || item.Hidden {
-				continue
-			}
-			if !item.ContextWindowKnown || item.ContextWindow <= 0 {
-				return nil, fmt.Errorf("model %q omitted authoritative context-window metadata", id)
-			}
-			models = append(models, catalogModel{ID: id, DisplayName: item.DisplayName, ContextWindow: item.ContextWindow, ContextWindowKnown: true})
-		}
-		return models, nil
+		return catalogModels(resp.Result.Data), nil
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading app-server response: %w", err)

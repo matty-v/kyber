@@ -3,6 +3,8 @@ package api
 import (
 	"context"
 	"strings"
+
+	"github.com/matty-v/kyber/pkg/runtimedetect"
 )
 
 // SnapshotWindowResolver resolves a model's auto-detected context window from
@@ -21,7 +23,8 @@ type SnapshotWindowResolver interface {
 // given model resolves identically on every path (kyber#500):
 //
 //  1. operator override ConfigMap   (explicit human intent — top precedence)
-//  2. detection snapshot            (auto-detected max_input_tokens)
+//  2. this agent's authenticated catalog
+//  3. public detection snapshot     (auto-detected max_input_tokens)
 //
 // There is deliberately no built-in table or numeric floor. Missing metadata
 // is an error at the HTTP boundary, not an estimate presented as usable data.
@@ -30,7 +33,7 @@ type SnapshotWindowResolver interface {
 // previous ContextWindows.LookupNormalized did), and the alias resolution is
 // nil-safe at every tier and stays off any slow/unbounded cache call (the
 // SnapshotResolver's TTL+timeout bounds guarantee that).
-func (s *Server) resolveContextWindow(ctx context.Context, model string) (int64, bool) {
+func (s *Server) resolveContextWindow(ctx context.Context, agent, model string) (int64, bool) {
 	base := strings.TrimSuffix(model, "[1m]")
 
 	// 1. operator override ConfigMap — wins when the operator pinned the model.
@@ -39,7 +42,18 @@ func (s *Server) resolveContextWindow(ctx context.Context, model string) (int64,
 			return w, true
 		}
 	}
-	// 2. detection snapshot — auto-detected window for models the poller saw.
+	// 2. the authenticated catalog reported by this exact agent. Catalogs are
+	// deliberately agent-scoped because provider entitlements can differ.
+	if catalogs, ok := s.RuntimeDetectCache.(runtimedetect.AgentCatalogCache); ok && agent != "" {
+		if models, err := catalogs.GetAgentModels(ctx, agent); err == nil {
+			for _, candidate := range models {
+				if candidate.ID == base && candidate.ContextWindowKnown && candidate.ContextWindow > 0 {
+					return candidate.ContextWindow, true
+				}
+			}
+		}
+	}
+	// 3. detection snapshot — auto-detected window for models the poller saw.
 	if s.Snapshots != nil {
 		if w, known := s.Snapshots.LookupWindow(ctx, base); known {
 			return w, true

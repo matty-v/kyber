@@ -737,7 +737,7 @@ func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, na
 // POST /api/v1/machines (provider=mock) to auto-fill spec.capacity from
 // node.status.allocatable when the request omits capacity. Standalone is
 // expected to be a single-node cluster, so "first Ready" is unambiguous.
-// Errors when no nodes exist or none are Ready (caller surfaces 500).
+// Errors when no unassigned nodes exist or none are Ready (caller surfaces 500).
 func pickStandaloneNode(ctx context.Context, c client.Client) (*corev1.Node, error) {
 	var nodes corev1.NodeList
 	if err := c.List(ctx, &nodes); err != nil {
@@ -745,6 +745,9 @@ func pickStandaloneNode(ctx context.Context, c client.Client) (*corev1.Node, err
 	}
 	for i := range nodes.Items {
 		n := &nodes.Items[i]
+		if n.Labels["kyber.io/machine"] != "" {
+			continue
+		}
 		for _, cond := range n.Status.Conditions {
 			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
 				return n, nil

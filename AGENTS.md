@@ -93,6 +93,11 @@ the PWA attaches read-only to tmux session `auth`. The exact `{}` payload in
 `<agent>-codex-auth` is the device-login marker and pauses the normal Starting
 timeout until the credential syncer replaces it. Codex API-key agents use
 `<agent>-openai` / `OPENAI_API_KEY` and never enter the device flow.
+Authenticated model catalogs are stored per agent, separately from the public
+npm-backed harness snapshot. Claude catalog entries require Anthropic's
+authoritative context window; Codex `model/list` lacks that field, so Codex
+picker entries remain explicitly unknown and the active rollout's
+`token_count.context_window` is authoritative. Never add a guessed fallback.
 
 Discord-enabled agents register the sidecar's loopback Streamable HTTP MCP
 endpoint (`kyber-discord`, port 14007) in both runtimes. Its `reply` tool is the

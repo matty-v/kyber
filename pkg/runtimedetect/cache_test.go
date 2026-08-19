@@ -89,3 +89,22 @@ func TestMemoryCache_PutTakesDefensiveCopy(t *testing.T) {
 		t.Fatalf("cache corrupted via caller mutation: %q", got.ClaudeCodeVersions[0])
 	}
 }
+
+func TestMemoryCache_AgentCatalogIsIndependentFromSnapshot(t *testing.T) {
+	c := runtimedetect.NewMemoryCache()
+	ctx := context.Background()
+	models := []runtimedetect.Model{{ID: "claude-opus", ContextWindow: 1_000_000, ContextWindowKnown: true}}
+	if err := c.PutAgentModels(ctx, "alice", models); err != nil {
+		t.Fatalf("PutAgentModels: %v", err)
+	}
+	if _, err := c.Get(ctx); !errors.Is(err, runtimedetect.ErrCacheEmpty) {
+		t.Fatalf("agent catalog made public snapshot non-empty: %v", err)
+	}
+	if err := c.Put(ctx, &runtimedetect.Snapshot{ClaudeCodeVersions: []string{"2.1.0"}}); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, err := c.GetAgentModels(ctx, "alice")
+	if err != nil || len(got) != 1 || got[0].ID != "claude-opus" {
+		t.Fatalf("catalog lost after snapshot write: models=%+v err=%v", got, err)
+	}
+}

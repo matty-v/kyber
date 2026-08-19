@@ -141,6 +141,20 @@ func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T
 	}
 }
 
+func TestStartClaudeRecoversCorruptClaudeStateBeforeTrustMerge(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(script)
+	validate := strings.Index(s, `if ! jq empty "$CLAUDE_STATE"`)
+	recover := strings.Index(s, `printf '{}\n' > "$CLAUDE_STATE"`)
+	merge := strings.Index(s, `if ! jq --arg launch_dir "$LAUNCH_DIR"`)
+	if validate < 0 || recover < 0 || merge < 0 || !(validate < recover && recover < merge) {
+		t.Fatal("corrupt Claude state must be rebuilt before the workspace-trust merge")
+	}
+}
+
 func TestStartClaude_RefreshOnBoot_WritesCredentialsJSON(t *testing.T) {
 	mock := mockserver.New()
 	ts := httptest.NewServer(mock)

@@ -13,12 +13,25 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 )
 
-func TestInternalRuntimeCatalogRejectsMissingContextWindow(t *testing.T) {
+func TestInternalRuntimeCatalogAcceptsCodexModelsWithoutContextWindow(t *testing.T) {
 	cache := runtimedetect.NewMemoryCache()
 	srv := api.NewInternalServer(briefstore.NewMemoryStore())
 	srv.SetRuntimeDetectCache(cache)
 	req := httptest.NewRequest(http.MethodPost, "/internal/agents/codex-spike/runtime-catalog", bytes.NewBufferString(
 		`{"runtime":"codex","models":[{"id":"gpt-5.6-sol","displayName":"GPT-5.6-Sol"}]}`))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestInternalRuntimeCatalogRejectsClaudeModelWithoutContextWindow(t *testing.T) {
+	cache := runtimedetect.NewMemoryCache()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv.SetRuntimeDetectCache(cache)
+	req := httptest.NewRequest(http.MethodPost, "/internal/agents/claude-spike/runtime-catalog", bytes.NewBufferString(
+		`{"runtime":"claude-code","models":[{"id":"claude-opus","displayName":"Claude Opus"}]}`))
 	rr := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -58,16 +71,12 @@ func TestInternalRuntimeCatalogStoresClaudeModelsPerAgent(t *testing.T) {
 			t.Fatalf("%s status = %d, want 204; body=%s", tc.agent, rr.Code, rr.Body.String())
 		}
 	}
-	snap, err := cache.Get(context.Background())
-	if err != nil {
-		t.Fatalf("getting catalog: %v", err)
-	}
-	if got := snap.AgentModels["alice"]; len(got) != 1 || got[0].ID != "claude-opus-4-1" {
+	if got, err := cache.GetAgentModels(context.Background(), "alice"); err != nil || len(got) != 1 || got[0].ID != "claude-opus-4-1" {
 		t.Errorf("alice models = %+v", got)
 	} else if got[0].ContextWindow != 1_000_000 || !got[0].ContextWindowKnown {
 		t.Errorf("alice context metadata = %+v", got[0])
 	}
-	if got := snap.AgentModels["bob"]; len(got) != 1 || got[0].ID != "claude-sonnet-4-5" {
+	if got, err := cache.GetAgentModels(context.Background(), "bob"); err != nil || len(got) != 1 || got[0].ID != "claude-sonnet-4-5" {
 		t.Errorf("bob models = %+v", got)
 	}
 }

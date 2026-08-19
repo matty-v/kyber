@@ -1189,7 +1189,10 @@ func (r *MachineReconciler) selectMockNode(ctx context.Context, m *kyberv1.Machi
 		return nil, fmt.Errorf("list nodes: %w", err)
 	}
 	for i := range nodes.Items {
-		if isNodeReady(&nodes.Items[i]) {
+		// Never let an unlabelled compatibility Machine claim a node that the
+		// operator explicitly assigned to another Machine.
+		assigned := nodes.Items[i].Labels[MachineLabelKey]
+		if assigned == "" && isNodeReady(&nodes.Items[i]) {
 			return &nodes.Items[i], nil
 		}
 	}

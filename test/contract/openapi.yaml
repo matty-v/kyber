@@ -329,6 +329,8 @@ paths:
                       $ref: '#/components/schemas/AvailableModel'
         '409':
           description: Agent has not reported an authenticated catalog yet
+        '503':
+          description: Authenticated model catalog storage is unavailable
         '401':
           $ref: '#/components/responses/Unauthorized'
         '404':

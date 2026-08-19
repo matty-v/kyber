@@ -1,4 +1,4 @@
-import type { AvailableModel, Machine } from '../../lib/types'
+import type { Machine } from '../../lib/types'
 import { parseCpu, parseMemoryGi, type MachineAvailability } from '../../lib/machineTypes'
 import { bandFor } from './capacity'
 import { inputClass, labelClass } from './styles'
@@ -11,8 +11,6 @@ const DISK_OPTIONS = ['10Gi', '20Gi', '50Gi', '100Gi', '200Gi']
 export interface ResourcesSectionProps {
   state: WizardState
   set: WizardSetter
-  /** @deprecated Agent creation always inherits the runtime's fleet defaults. */
-  models?: AvailableModel[]
   /** The selected Machine, or null if no machine picked. Used by the capacity hint. */
   selectedMachine: Machine | null
   /** The selected machine's available capacity, or null when unknown. */

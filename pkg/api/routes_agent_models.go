@@ -41,12 +41,14 @@ func (s *Server) handleAgentModels(w http.ResponseWriter, r *http.Request, name 
 			writeJSON(w, http.StatusOK, agentModelsResponse{Models: availableModels(models)})
 			return
 		}
+		if err != nil && !errors.Is(err, runtimedetect.ErrCacheEmpty) {
+			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+			return
+		}
 		if errors.Is(err, runtimedetect.ErrCacheEmpty) || len(models) == 0 {
 			writeJSONError(w, http.StatusConflict, "authentication_required", "the agent has not reported an authenticated model catalog yet")
 			return
 		}
-		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
-		return
 	}
 	snap, err := s.RuntimeDetectCache.Get(r.Context())
 	if err != nil {

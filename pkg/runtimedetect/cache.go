@@ -42,8 +42,9 @@ var ErrCacheEmpty = errors.New("runtimedetect: cache empty")
 // Redis cache — a per-replica memory cache would make /available answer
 // differently on each replica and flicker the PWA picker.
 type MemoryCache struct {
-	mu   sync.RWMutex
-	snap *Snapshot
+	mu          sync.RWMutex
+	snap        *Snapshot
+	agentModels map[string][]Model
 }
 
 // NewMemoryCache returns an empty MemoryCache.
@@ -95,23 +96,20 @@ func (m *MemoryCache) Get(ctx context.Context) (*Snapshot, error) {
 func (m *MemoryCache) PutAgentModels(_ context.Context, agent string, models []Model) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.snap == nil {
-		m.snap = &Snapshot{}
+	if m.agentModels == nil {
+		m.agentModels = make(map[string][]Model)
 	}
-	if m.snap.AgentModels == nil {
-		m.snap.AgentModels = make(map[string][]Model)
-	}
-	m.snap.AgentModels[agent] = append([]Model(nil), models...)
+	m.agentModels[agent] = append([]Model(nil), models...)
 	return nil
 }
 
 func (m *MemoryCache) GetAgentModels(_ context.Context, agent string) ([]Model, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if m.snap == nil || len(m.snap.AgentModels[agent]) == 0 {
+	if len(m.agentModels[agent]) == 0 {
 		return nil, ErrCacheEmpty
 	}
-	return append([]Model(nil), m.snap.AgentModels[agent]...), nil
+	return append([]Model(nil), m.agentModels[agent]...), nil
 }
 
 // redisKey is where the snapshot lives in Redis. Single key — multi-replica

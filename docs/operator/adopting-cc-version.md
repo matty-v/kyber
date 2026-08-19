@@ -149,6 +149,12 @@ Once PR-E ships, an agent whose installed CC version can't run its
 configured model surfaces as `ModelUnsupported` in the PWA — the cue
 to bump `spec.runtimeVersion` for that agent.
 
+On the first upgrade to the `latest`-aware defaults, Kyber treats an existing
+unmarked runtime version as the old chart-derived pin and migrates it to
+`latest`. Saving Agent harnesses in Settings stamps the ConfigMap as
+operator-authored; concrete versions selected after that point survive future
+Helm upgrades.
+
 ## Related
 
 - `docs/design/2026-05-29-runtime-model-management-design.md` — authoritative

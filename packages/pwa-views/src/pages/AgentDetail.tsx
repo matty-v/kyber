@@ -899,10 +899,11 @@ export function AgentDetail() {
                     disabled={models.length === 0}
                   >
                     {!newModel && <option value="">Select a model</option>}
+                    {newModel && !models.some((m) => m.id === newModel) && <option value={newModel}>{newModel} · current model (not in catalog)</option>}
                     {models.map((m) => {
-                      const k = Math.round(m.contextWindow / 1000)
-                      const window = k >= 1000 ? `${(k / 1000).toFixed(0)}M ctx` : `${k}K ctx`
-                      const label = m.contextWindowKnown ? window : `${window} (context unknown)`
+					  const k = Math.round(m.contextWindow / 1000)
+					  const window = k >= 1000 ? `${(k / 1000).toFixed(0)}M ctx` : `${k}K ctx`
+					  const label = m.contextWindowKnown ? window : 'context unknown'
                       return (
                         <option key={m.id} value={m.id}>
                           {(m.displayName || m.id)} · {label}

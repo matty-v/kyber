@@ -794,6 +794,15 @@ fi
 # entry self-heal, while preserving every unrelated field Claude has written.
 CLAUDE_STATE="${HOME:-/home/kyber}/.claude.json"
 CLAUDE_STATE_TMP="${CLAUDE_STATE}.kyber-tmp"
+# Claude owns this durable file and may leave it truncated after an abrupt pod
+# stop. Preserve the bad bytes for diagnosis, then rebuild the minimum valid
+# object so a UI-state file cannot permanently crash-loop the runtime.
+if ! jq empty "$CLAUDE_STATE" >/dev/null 2>&1; then
+    CLAUDE_STATE_CORRUPT="${CLAUDE_STATE}.corrupt"
+    cp "$CLAUDE_STATE" "$CLAUDE_STATE_CORRUPT" 2>/dev/null || true
+    printf '{}\n' > "$CLAUDE_STATE"
+    echo "[kyber] WARNING: recovered invalid $CLAUDE_STATE (saved as $CLAUDE_STATE_CORRUPT)" >&2
+fi
 if ! jq --arg launch_dir "$LAUNCH_DIR" '
     .hasCompletedOnboarding = true
     | .projects = (.projects // {})

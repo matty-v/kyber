@@ -115,6 +115,9 @@ func TestHandleFleetDefaults_PUT_CreatesConfigMapWhenMissing(t *testing.T) {
 	if got.Data[fleetdefaults.KeyCodexDefaultModel] != "gpt-5.6-sol" || got.Data[fleetdefaults.KeyCodexDefaultRuntimeVersion] != "0.146.0" {
 		t.Errorf("Codex defaults not persisted: %+v", got.Data)
 	}
+	if got.Annotations[fleetDefaultsAuthoredAnnotation] != "true" {
+		t.Errorf("authored annotation = %q, want true", got.Annotations[fleetDefaultsAuthoredAnnotation])
+	}
 }
 
 func TestHandleFleetDefaults_PUT_PatchesExistingConfigMap(t *testing.T) {

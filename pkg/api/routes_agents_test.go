@@ -58,11 +58,11 @@ func TestGetAgentModelsReturnsOnlyAuthenticatedAgentCatalog(t *testing.T) {
 		t.Fatalf("creating agent: %v", err)
 	}
 	cache := runtimedetect.NewMemoryCache()
-	if err := cache.Put(context.Background(), &runtimedetect.Snapshot{AgentModels: map[string][]runtimedetect.Model{
-		"alice": {{ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1", ContextWindow: 200_000, ContextWindowKnown: true}},
-		"bob":   {{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5"}},
-	}}); err != nil {
+	if err := cache.PutAgentModels(context.Background(), "alice", []runtimedetect.Model{{ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1", ContextWindow: 200_000, ContextWindowKnown: true}}); err != nil {
 		t.Fatalf("seeding catalog: %v", err)
+	}
+	if err := cache.PutAgentModels(context.Background(), "bob", []runtimedetect.Model{{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5"}}); err != nil {
+		t.Fatalf("seeding other catalog: %v", err)
 	}
 	s.RuntimeDetectCache = cache
 	req := scopedRequest(http.MethodGet, "/api/v1/agents/alice/models", testAPIKey)
