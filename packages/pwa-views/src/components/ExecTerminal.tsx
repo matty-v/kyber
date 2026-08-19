@@ -65,9 +65,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     if (!container) return
     const term = new Terminal({
       theme: { background: '#000', foreground: '#e5e7eb', cursor: '#22d3ee', selectionBackground: '#155e75' },
-      // The symbols-only Noto face comes first but contains no Latin glyphs,
-      // so normal text still uses the native system monospace face.
-      fontFamily: '\"Kyber Terminal Symbols\", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+      fontFamily: '\"Kyber Terminal\", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: window.matchMedia('(max-width: 640px)').matches ? 12 : 13,
       fontWeight: '500',
       fontWeightBold: '700',
@@ -156,7 +154,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       // xterm caches rasterized glyphs when it opens. Wait for the explicit
       // symbol fallback so Claude Code's UI glyphs are not cached from a
       // metric-incompatible browser fallback.
-      await document.fonts?.load('400 13px "Kyber Terminal Symbols"', '●❯✻▎▛█▜▝▘')
+      await document.fonts?.load('400 13px "Kyber Terminal"', '●❯✻▎▛█▜▝▘')
       if (disposed) return
       term.open(container)
       try {
