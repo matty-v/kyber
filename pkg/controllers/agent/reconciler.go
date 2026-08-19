@@ -3096,8 +3096,14 @@ func (r *AgentReconciler) reconcileSidecarDriftCondition(agent *kyberv1.Agent, p
 //
 //	RuntimeVersionMismatch:
 //	  installedVersion=="" OR requestedVersion=="" → Remove (no signal)
+//	  requestedSatisfied==true                     → False (Reason=Match)
 //	  installed == requested                       → False (Reason=Match)
-//	  installed != requested                       → True  (Reason=InstallNotConverged)
+//	  otherwise                                    → True  (Reason=InstallNotConverged)
+//
+//	requestedSatisfied is consulted first because a floating request like
+//	`latest` never string-matches the concrete installed version, yet the
+//	boot-time install did converge. A nil value falls through to the
+//	string comparison, which is the pre-`latest` behavior.
 //
 //	ModelUnsupported:
 //	  modelSupported nil  → Remove (probe didn't run / old sidecar)

@@ -931,9 +931,12 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 		//
 		// #500: resolve the context-window limit server-side here too — the
 		// reporter stores a raw snapshot (limit/pct=0 sentinel), so without
-		// this the overview gauge floors every model. Uses the SAME
-		// override→snapshot→LimitFor→floor precedence as the dedicated
-		// /token-usage endpoint and /available, so both serve sites agree.
+		// this the overview gauge has no limit to render against. Uses the
+		// SAME override→snapshot precedence as the dedicated /token-usage
+		// endpoint and /available, so both serve sites agree. There is no
+		// built-in table or floor tier any more: an unresolvable window
+		// leaves TokenUsage nil here (the UI renders "—") and 503s on
+		// /token-usage, rather than showing a guessed number.
 		if s.TokenStore != nil {
 			if snap, err := s.TokenStore.Get(r.Context(), resp.ID); err == nil && snap != nil {
 				// Resolve on a COPY — TokenStore.Get returns the shared pointer

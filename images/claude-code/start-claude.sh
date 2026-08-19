@@ -506,12 +506,16 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
         if sudo "${_npm}" install -g "@anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION}" 2>&1; then
             _npm_install_ok="true"
         fi
-        # Determine success from the RUNNING binary, not npm's exit code: verify
-        # `claude --version` actually reports the requested version. Trusting the
-        # exit code alone lets requestedSatisfied lie when an install reports OK
-        # but didn't take effect.
+        # Determine success from the RUNNING binary, not npm's exit code alone:
+        # `claude --version` must actually run, and for a concrete request it
+        # must report exactly that version. Trusting the exit code by itself
+        # lets requestedSatisfied lie when an install reports OK but didn't
+        # take effect. `latest` has no version string to compare against, so
+        # there it is npm's exit code AND a binary that still answers
+        # --version — an empty answer means the install broke the CLI and must
+        # NOT be reported as satisfied.
         _installed="$(claude --version 2>/dev/null | awk '{print $1; exit}')"
-        if [ "${_npm_install_ok}" = "true" ] && { [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ] || [ "${_installed}" = "${KYBER_REQUESTED_CC_VERSION}" ]; }; then
+        if [ "${_npm_install_ok}" = "true" ] && { { [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ] && [ -n "${_installed}" ]; } || [ "${_installed}" = "${KYBER_REQUESTED_CC_VERSION}" ]; }; then
             if [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ]; then
                 echo "[kyber] CC install: succeeded (latest -> ${_installed})"
             else
