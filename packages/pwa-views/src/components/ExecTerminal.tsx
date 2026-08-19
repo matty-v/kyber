@@ -65,8 +65,13 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     if (!container) return
     const term = new Terminal({
       theme: { background: '#000', foreground: '#e5e7eb', cursor: '#22d3ee', selectionBackground: '#155e75' },
-      fontFamily: '\"JetBrains Mono\", \"Apple Symbols\", \"Segoe UI Symbol\", ui-monospace, SFMono-Regular, Menlo, monospace',
+      // The symbols-only Noto face comes first but contains no Latin glyphs,
+      // so normal text still uses the native system monospace face.
+      fontFamily: '\"Kyber Terminal Symbols\", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
       fontSize: window.matchMedia('(max-width: 640px)').matches ? 12 : 13,
+      fontWeight: '500',
+      fontWeightBold: '700',
+      lineHeight: 1.2,
       cursorBlink: interactive,
       disableStdin: !interactive,
       scrollback: 10_000,
@@ -87,15 +92,6 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     term.loadAddon(new WebLinksAddon((_event, uri) => {
       if (/^https?:\/\//i.test(uri)) window.open(uri, '_blank', 'noopener,noreferrer')
     }))
-    term.open(container)
-    try {
-      const webgl = new WebglAddon()
-      webgl.onContextLoss(() => webgl.dispose())
-      term.loadAddon(webgl)
-    } catch { /* canvas renderer remains active */ }
-
-    termRef.current = term
-    searchRef.current = searchAddon
     let ws: WebSocket | null = null
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined
     let reconnectAttempts = 0
@@ -103,6 +99,7 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
     let sessionEnded = false
     let lastSize = ''
     let fitFrame = 0
+    let observer: ResizeObserver | undefined
 
     const fit = () => {
       cancelAnimationFrame(fitFrame)
@@ -153,19 +150,34 @@ export function ExecTerminal({ kind, name, mode, heightClassName }: Props) {
       return true
     })
     const input = term.onData(send)
-    const observer = new ResizeObserver(fit)
-    observer.observe(container)
     const focusTerminal = () => term.focus()
     container.addEventListener('pointerdown', focusTerminal)
-    void document.fonts?.ready.then(fit)
-    fit()
-    connect()
+    const initialize = async () => {
+      // xterm caches rasterized glyphs when it opens. Wait for the explicit
+      // symbol fallback so Claude Code's UI glyphs are not cached from a
+      // metric-incompatible browser fallback.
+      await document.fonts?.load('400 13px "Kyber Terminal Symbols"', '●❯✻▎▛█▜▝▘')
+      if (disposed) return
+      term.open(container)
+      try {
+        const webgl = new WebglAddon()
+        webgl.onContextLoss(() => webgl.dispose())
+        term.loadAddon(webgl)
+      } catch { /* canvas renderer remains active */ }
+      termRef.current = term
+      searchRef.current = searchAddon
+      observer = new ResizeObserver(fit)
+      observer.observe(container)
+      fit()
+      connect()
+    }
+    void initialize()
 
     return () => {
       disposed = true
       if (reconnectTimer) clearTimeout(reconnectTimer)
       cancelAnimationFrame(fitFrame)
-      observer.disconnect()
+      observer?.disconnect()
       container.removeEventListener('pointerdown', focusTerminal)
       input.dispose()
       ws?.close(1000)

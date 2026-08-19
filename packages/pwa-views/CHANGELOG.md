@@ -10,6 +10,8 @@
 - Interactive terminals expose a phone-only extra-key row for Escape, Tab,
   Shift-Tab, Ctrl-C, the tmux Ctrl-B prefix, arrows, and Enter. Read-only
   terminal peeks remain non-interactive and omit those controls.
+- Terminals use the native system monospace face for readable text and a
+  bundled, preloaded symbols-only face for Claude Code's interface glyphs.
 
 ## 0.27.2 — 2026-08-19
 
