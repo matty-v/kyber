@@ -49,7 +49,7 @@ kubectl -n kyber-system create secret generic kyber-internal-signing-key \
 export KYBER_API_KEY=$(openssl rand -hex 32)
 
 helm install kyber oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 \
+  --version 1.0.8 \
   --namespace kyber-system \
   --set namespace.create=false \
   --set api.apiKey="$KYBER_API_KEY" \
@@ -58,7 +58,7 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
 ```
 
 Use the newest version from
-[Releases](https://github.com/matty-v/kyber/releases) in place of `1.0.7`.
+[Releases](https://github.com/matty-v/kyber/releases) in place of `1.0.8`.
 
 [**docs/quickstart.md**](docs/quickstart.md) wraps this in the full 15-minute
 path, from an empty cluster (or a k3d one-liner) to a fleet console with one
