@@ -14,7 +14,6 @@ import {
 import { Card } from '../components/Card'
 import { StatusBadge } from '../components/StatusBadge'
 import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
-import { AgentActivityDot } from '../components/AgentActivityDot'
 import { AgentActivityBadge } from '../components/AgentActivityBadge'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -79,17 +78,22 @@ export function AgentList() {
           <div className="inline-flex items-center gap-1.5">
             <StatusBadge phase={row.original.phase} />
             <SchedulingFailureBadge agent={row.original} />
-            <AgentActivityDot agent={row.original} />
-            <AgentActivityBadge agent={row.original} />
+            <AgentActivityBadge agent={row.original} showDot={false} />
           </div>
         ),
       },
       {
-        accessorKey: 'model',
+        id: 'model',
+        accessorFn: (row) => row.currentModel || row.model || '',
         header: 'Model',
-        cell: ({ row }) => (
-          <span className="font-mono text-xs text-text-secondary">{row.original.model}</span>
-        ),
+        cell: ({ row }) => {
+          const model = row.original.currentModel || row.original.model
+          return (
+            <span className={`font-mono text-xs ${model ? 'text-text-secondary' : 'text-text-disabled'}`}>
+              {model || '—'}
+            </span>
+          )
+        },
       },
       {
         accessorKey: 'machine',
@@ -230,7 +234,6 @@ export function AgentList() {
                       <span className="font-medium text-text-primary truncate">{a.id}</span>
                       <StatusBadge phase={a.phase} />
                       <SchedulingFailureBadge agent={a} />
-                      <AgentActivityDot agent={a} />
                     </div>
                     {/* Activity badge on its own line — keeps the truncating
                         id + badges in the header row from overflowing on
@@ -240,11 +243,11 @@ export function AgentList() {
                         spacer div nudging the model·machine line down). */}
                     {a.activity?.state && a.activity.state !== 'unknown' && (
                       <div className="mt-1">
-                        <AgentActivityBadge agent={a} />
+                        <AgentActivityBadge agent={a} showDot={false} />
                       </div>
                     )}
                     <p className="mt-1 text-xs text-text-muted">
-                      {a.model} &middot; {a.machine}
+                      {a.currentModel || a.model || '—'} &middot; {a.machine}
                     </p>
                     <p className="mt-0.5 text-xs text-text-muted">
                       Context:{' '}

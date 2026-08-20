@@ -228,6 +228,15 @@ func TestBriefInputForEvent_UnknownEvent(t *testing.T) {
 	}
 }
 
+func TestBriefInputForEventUsesObservedHarnessDefaultModel(t *testing.T) {
+	agent := makeAgentForBriefTest("echo", "", 0, nil)
+	agent.Status.CurrentModel = "claude-sonnet-5"
+	input := briefInputForEvent(agent, EventCRDCreated)
+	if input.PreviousModel != "claude-sonnet-5" {
+		t.Fatalf("PreviousModel = %q, want observed model", input.PreviousModel)
+	}
+}
+
 // TestBriefInputForEvent_OperatorRestart verifies briefInputForEvent for EventDesiredRunning.
 func TestBriefInputForEvent_OperatorRestart(t *testing.T) {
 	startTime := metav1.NewTime(time.Now().Add(-2 * time.Hour))

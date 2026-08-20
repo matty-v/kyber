@@ -47,10 +47,8 @@ const ResolveCacheTTL = 30 * time.Second
 // Defaults is the resolved snapshot returned by Resolve.
 type Defaults struct {
 	// Model is the fleet-default LLM model identifier injected as
-	// CLAUDE_MODEL when an Agent's spec.model is empty. Empty when the
-	// ConfigMap is absent OR carries an empty value — callers MUST treat
-	// "" as "no fleet default configured" and surface a clear error if
-	// both spec.model and this are empty.
+	// CLAUDE_MODEL when an Agent's spec.model is empty. Empty means the
+	// runtime should select its own default model.
 	Model string
 
 	// RuntimeVersion is the fleet-default Claude Code version. PR-B

@@ -120,6 +120,8 @@ workflow.
 
 Open **Settings** → **Fleet defaults** in the PWA. Change `Default
 model` (and optionally `Default Claude Code version`) and click **Save**.
+Choose **Default** to let the harness select its current model; this is the
+fresh-install setting. Enter a concrete model identifier to pin it.
 
 What happens:
 

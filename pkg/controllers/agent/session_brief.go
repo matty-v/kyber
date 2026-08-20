@@ -118,8 +118,12 @@ func briefInputForEvent(agent *kyberv1.Agent, event Event) BriefInput {
 		}
 	}
 
-	// Use the current model from spec (status.currentModel may lag for first boot).
+	// An explicit spec pin is authoritative. For harness-default agents the
+	// runtime-observed status value is the only concrete model we can record.
 	input.PreviousModel = agent.Spec.Model
+	if input.PreviousModel == "" {
+		input.PreviousModel = agent.Status.CurrentModel
+	}
 
 	// PendingMessages are always empty in B2 — B4 will populate them on wake events.
 	// RecentExchanges are always empty in B2 — populated when session-state.json is read.

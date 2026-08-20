@@ -10,7 +10,6 @@ import {
   usePutDiscordComms,
 } from '../hooks/useAPI'
 import { useUpgradeProgress } from '../hooks/useUpgradeProgress'
-import { useEffectiveModelList } from '../lib/models'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { availableFromMachine, parseCpu, parseMemoryGi } from '../lib/machineTypes'
@@ -61,21 +60,9 @@ export function CreateAgent() {
   const [dirty, setDirty] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
 
-  // The runtime-specific catalog keeps Claude and authenticated Codex models
-  // out of each other's picker while preserving Claude's /config fallback.
-  const { models } = useEffectiveModelList(state.runtime)
-
   const [searchParams, setSearchParams] = useSearchParams()
   const requestedStep = Number(searchParams.get('step') ?? String(MIN_STEP))
   const activeStep = clampToValidStep(requestedStep, state)
-
-  // Once the server's models list loads, default the Model field to its first
-  // entry. Users can still pick another via the dropdown.
-  useEffect(() => {
-    if (!state.model && models.length > 0) {
-      setState((prev) => (prev.model ? prev : { ...prev, model: models[0].id }))
-    }
-  }, [models, state.model])
 
   // Deep-link guard — bounces ?step=N to the earliest invalid step when the URL
   // requests a step the user can't reach yet. Runs whenever the URL step changes
@@ -247,7 +234,6 @@ export function CreateAgent() {
         name: toKebabCase(state.name),
         machine: state.machine,
         runtime: state.runtime,
-        model: state.model,
         scaling: state.scaling,
         resources: { cpu: state.cpu, memory: state.memory, disk: state.disk },
         identity: { soulDescription: state.soulDescription || undefined },
@@ -318,7 +304,6 @@ export function CreateAgent() {
               <ResourcesSection
                 state={state}
                 set={set}
-                models={models}
                 selectedMachine={selectedMachine}
                 machineAvailable={machineAvailable}
               />

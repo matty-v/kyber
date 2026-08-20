@@ -4,7 +4,6 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { CommandPalette } from './CommandPalette'
-import { DensityProvider } from '../contexts/DensityContext'
 import * as useAPIModule from '../hooks/useAPI'
 import type { Agent, Machine } from '../lib/types'
 
@@ -69,7 +68,7 @@ function setHooks({
 function renderPalette(node: ReactNode) {
   return render(
     <MemoryRouter>
-      <DensityProvider>{node}</DensityProvider>
+      {node}
     </MemoryRouter>,
   )
 }
@@ -88,30 +87,9 @@ if (typeof Element !== 'undefined' && typeof Element.prototype.scrollIntoView !=
   Element.prototype.scrollIntoView = function () {}
 }
 
-// Polyfill window.matchMedia for jsdom — DensityProvider calls it on mount.
-// Mirrors the helper in DensityContext.test.tsx.
-function setMatchMedia(matchesMobile: boolean) {
-  Object.defineProperty(window, 'matchMedia', {
-    writable: true,
-    value: vi.fn().mockImplementation((query: string) => ({
-      matches: matchesMobile,
-      media: query,
-      addEventListener: () => {},
-      removeEventListener: () => {},
-      addListener: () => {},
-      removeListener: () => {},
-      dispatchEvent: () => false,
-      onchange: null,
-    })),
-  })
-}
-
 beforeEach(() => {
   navigateMock.mockReset()
   setHooks()
-  setMatchMedia(false)
-  window.localStorage.removeItem('kyber:density')
-  document.body.removeAttribute('data-density')
 })
 
 describe('CommandPalette — visibility', () => {
@@ -188,21 +166,6 @@ describe('CommandPalette — fuzzy match + navigate', () => {
     await user.type(input, 'zzzznopenopezzzz')
 
     expect(screen.getByText(/No matches/i)).toBeInTheDocument()
-  })
-})
-
-describe('CommandPalette — density toggle', () => {
-  it('flips density and writes to body data-density', async () => {
-    const user = userEvent.setup()
-    renderPalette(<CommandPalette open={true} onOpenChange={vi.fn()} />)
-
-    // Default density is 'comfortable' — toggle should switch to 'compact'.
-    const input = screen.getByPlaceholderText(/Type to jump/i)
-    await user.type(input, 'density')
-    await user.keyboard('{Enter}')
-
-    expect(document.body.dataset.density).toBe('compact')
-    expect(window.localStorage.getItem('kyber:density')).toBe('compact')
   })
 })
 

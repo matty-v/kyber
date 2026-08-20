@@ -1466,12 +1466,19 @@ func TestSelectMockNode(t *testing.T) {
 			wantNode: "agent-node",
 		},
 		{
-			name: "label for a different machine is ignored",
+			name: "label for a different machine is never claimed",
 			nodes: []client.Object{
 				ready("other-machine-node", map[string]string{MachineLabelKey: "somebody-else"}),
 			},
-			// No node claims "local", so the fallback picks the only Ready node.
-			wantNode: "other-machine-node",
+			wantNode: "",
+		},
+		{
+			name: "fallback skips another machine label and chooses unassigned node",
+			nodes: []client.Object{
+				ready("other-machine-node", map[string]string{MachineLabelKey: "somebody-else"}),
+				ready("unassigned", nil),
+			},
+			wantNode: "unassigned",
 		},
 		{
 			name:     "labelled but NotReady does not fall through to another node",

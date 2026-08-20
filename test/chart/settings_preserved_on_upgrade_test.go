@@ -101,23 +101,14 @@ func TestFleetDefaults_SeedsFromChartValuesWhenNoLiveValue(t *testing.T) {
 	}
 }
 
-// defaultRuntimeVersion derives from the pinned harness version, and the CHART
-// must stay authoritative for it.
-//
-// This is the corrected rule. Live-wins was applied to this field in the first
-// pass and was a silent, permanent regression: a fresh install seeds the
-// derived value, so from the second upgrade onward the live value always won
-// and bumping runtime.claudeCode.version could never reach the fleet again —
-// every agent with an empty spec.runtimeVersion would keep booting the OLD
-// harness inside the NEW image, forever. `helm template` cannot see it (lookup
-// is always empty here), which is why it took a reviewer reading the
-// precedence rather than a test.
-func TestFleetDefaults_RuntimeVersionStillDerivesFromPinnedHarness(t *testing.T) {
+// Fresh installs follow upstream harness releases rather than pinning the
+// version baked into the image.
+func TestFleetDefaults_RuntimeVersionDefaultsToLatest(t *testing.T) {
 	rendered := helmTemplate(t, "runtime.claudeCode.version=9.9.9")
 	cm := findDoc(t, rendered, "ConfigMap", "kyber-fleet-defaults")
 
-	if got := dataString(t, cm, "data", "defaultRuntimeVersion"); got != "9.9.9" {
-		t.Errorf("defaultRuntimeVersion = %q, want it derived from runtime.claudeCode.version (%q)", got, "9.9.9")
+	if got := dataString(t, cm, "data", "defaultRuntimeVersion"); got != "latest" {
+		t.Errorf("defaultRuntimeVersion = %q, want latest", got)
 	}
 }
 
@@ -191,22 +182,17 @@ func TestFleetDefaults_ArgoCDDriftAnnotationsRetainedDuringMigration(t *testing.
 	}
 }
 
-// The precedence SPLIT is the whole point of the corrected design, and it is
-// easy to "simplify" back into a single rule. This pins which fields are
-// operator-authored (live wins) and which are derived (chart wins) by
-// asserting the chart-authoritative half — the half a unit test can observe,
-// since lookup is always empty under `helm template`.
-func TestFleetDefaults_RuntimeVersionsTrackTheChartNotTheCluster(t *testing.T) {
+func TestFleetDefaults_RuntimeVersionsIgnoreImagePins(t *testing.T) {
 	rendered := helmTemplate(t,
 		"runtime.claudeCode.version=9.9.9",
 		"runtime.codex.version=8.8.8",
 	)
 	cm := findDoc(t, rendered, "ConfigMap", "kyber-fleet-defaults")
 
-	if got := dataString(t, cm, "data", "defaultRuntimeVersion"); got != "9.9.9" {
-		t.Errorf("defaultRuntimeVersion = %q, want the chart's harness version %q — if this field ever starts preferring a live value, a harness bump can never reach the fleet again", got, "9.9.9")
+	if got := dataString(t, cm, "data", "defaultRuntimeVersion"); got != "latest" {
+		t.Errorf("defaultRuntimeVersion = %q, want latest", got)
 	}
-	if got := dataString(t, cm, "data", "codexDefaultRuntimeVersion"); got != "8.8.8" {
-		t.Errorf("codexDefaultRuntimeVersion = %q, want the chart's harness version %q", got, "8.8.8")
+	if got := dataString(t, cm, "data", "codexDefaultRuntimeVersion"); got != "latest" {
+		t.Errorf("codexDefaultRuntimeVersion = %q, want latest", got)
 	}
 }

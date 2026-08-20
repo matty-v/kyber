@@ -20,8 +20,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -88,12 +93,17 @@ func main() {
 	go syncer.Run(ctx)
 	log.Printf("token-reporter: credential syncer started (fsnotify primary + 5m poll backstop, via sidecar at %s)",
 		nonEmptyOr(sidecarURL, "127.0.0.1:8091"))
+	go reportModelCatalog(ctx, credsPath, sidecarURL)
 
 	// Outer loop: every 60s re-pick the newest subdir under projectsRoot. If
 	// it rotates (user ran /clear), restart the inner Reporter with the new
 	// dir. The Reporter itself reads the newest .jsonl inside the provided
 	// dir on every tick, so this is only needed for subdir changes.
-	ticker := time.NewTicker(60 * time.Second)
+	// Keep the initial-session discovery tight: a default-model agent cannot
+	// report its concrete model or context budget until Claude writes the first
+	// transcript. Scanning this one shallow directory every 5s is cheap and
+	// avoids leaving the dashboard blank for up to a minute after first use.
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	currentSub := pickLatestSubdir(projectsRoot)
@@ -121,6 +131,133 @@ func main() {
 			}
 		}
 	}
+}
+
+type catalogModel struct {
+	ID                 string `json:"id"`
+	DisplayName        string `json:"displayName"`
+	ContextWindow      int64  `json:"contextWindow"`
+	ContextWindowKnown bool   `json:"contextWindowKnown"`
+}
+
+const anthropicModelsURL = "https://api.anthropic.com/v1/models"
+
+const (
+	modelCatalogDiscoveryInterval = time.Hour
+	modelCatalogReportInterval    = 30 * time.Second
+)
+
+func reportModelCatalog(ctx context.Context, credsPath, sidecarURL string) {
+	client := &http.Client{Timeout: 20 * time.Second}
+	ticker := time.NewTicker(modelCatalogReportInterval)
+	defer ticker.Stop()
+	var models []catalogModel
+	var lastDiscovery time.Time
+	for {
+		if len(models) == 0 || time.Since(lastDiscovery) >= modelCatalogDiscoveryInterval {
+			discovered, err := discoverClaudeModels(ctx, credsPath, anthropicModelsURL, client)
+			if err != nil {
+				log.Printf("token-reporter: model catalog discovery failed: %v", err)
+			} else {
+				models = discovered
+				lastDiscovery = time.Now()
+			}
+		}
+		if len(models) > 0 {
+			reportClaudeModelCatalog(ctx, sidecarURL, models, client)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func reportClaudeModelCatalog(ctx context.Context, sidecarURL string, models []catalogModel, client *http.Client) {
+	body, err := json.Marshal(map[string]any{"runtime": "claude-code", "models": models})
+	if err != nil {
+		log.Printf("token-reporter: model catalog report failed: %v", err)
+		return
+	}
+	base := nonEmptyOr(sidecarURL, "http://127.0.0.1:8091")
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/runtime-catalog", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("token-reporter: model catalog report failed: %v", err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Printf("token-reporter: model catalog report failed: %v", err)
+		return
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		log.Printf("token-reporter: model catalog report failed: %s", resp.Status)
+	}
+}
+
+func discoverClaudeModels(ctx context.Context, credsPath, modelsURL string, client *http.Client) ([]catalogModel, error) {
+	accessToken := os.Getenv("CLAUDE_ACCESS_TOKEN")
+	if data, err := os.ReadFile(credsPath); err == nil {
+		var creds struct {
+			ClaudeAiOauth struct {
+				AccessToken string `json:"accessToken"`
+			} `json:"claudeAiOauth"`
+		}
+		if json.Unmarshal(data, &creds) == nil && creds.ClaudeAiOauth.AccessToken != "" {
+			accessToken = creds.ClaudeAiOauth.AccessToken
+		}
+	}
+	apiKey := os.Getenv("ANTHROPIC_API_KEY")
+	if accessToken == "" && apiKey == "" {
+		return nil, fmt.Errorf("agent is not authenticated")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, modelsURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building models request: %w", err)
+	}
+	if accessToken != "" {
+		req.Header.Set("Authorization", "Bearer "+accessToken)
+		req.Header.Set("anthropic-beta", "oauth-2025-04-20")
+	} else {
+		req.Header.Set("x-api-key", apiKey)
+	}
+	req.Header.Set("anthropic-version", "2023-06-01")
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("calling models API: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("models API returned %s", resp.Status)
+	}
+	var body struct {
+		Data []struct {
+			ID             string `json:"id"`
+			DisplayName    string `json:"display_name"`
+			MaxInputTokens int64  `json:"max_input_tokens"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		return nil, fmt.Errorf("decoding models response: %w", err)
+	}
+	models := make([]catalogModel, 0, len(body.Data))
+	for _, model := range body.Data {
+		if model.ID == "" {
+			continue
+		}
+		if model.MaxInputTokens <= 0 {
+			return nil, fmt.Errorf("model %q omitted a valid max_input_tokens value", model.ID)
+		}
+		models = append(models, catalogModel{ID: model.ID, DisplayName: model.DisplayName, ContextWindow: model.MaxInputTokens, ContextWindowKnown: true})
+	}
+	if len(models) == 0 {
+		return nil, fmt.Errorf("models API returned no usable models")
+	}
+	return models, nil
 }
 
 func nonEmptyOr(s, fallback string) string {
@@ -185,7 +322,7 @@ func pickLatestSubdir(root string) string {
 // the right place + already parsing the same file.
 func startReporter(ctx context.Context, agent, dir, sidecarURL string, interval time.Duration) context.CancelFunc {
 	if dir == "" {
-		log.Printf("token-reporter: no session subdir yet; will check again in 60s")
+		log.Printf("token-reporter: no session subdir yet; will check again in 5s")
 		return func() {}
 	}
 	rctx, cancel := context.WithCancel(ctx)

@@ -316,31 +316,21 @@ controlPlane:
   # docs/design/2026-05-29-runtime-model-management-design.md §2.
   fleetDefaults:
     # configMapName: name of the ConfigMap. Empty disables the layer
-    # entirely (the PUT endpoint returns 503 and the reconciler treats
-    # every empty spec.model as ModelUnresolved). The default name
+    # entirely (the PUT endpoint returns 503). The default name
     # matches what the chart template renders below.
     configMapName: "kyber-fleet-defaults"
-    # defaultModel: fleet-default LLM model identifier injected as
-    # CLAUDE_MODEL into the agent pod when spec.model is empty. Empty
-    # means "no fleet default" — every agent must set spec.model
-    # explicitly or land on AgentConditionModelUnresolved.
-    # Pick a sane current model at chart-install time and let operators
-    # edit via the PWA going forward.
-    defaultModel: "claude-sonnet-4-5"
+    # Empty means "Default": omit the model override and let the harness
+    # select its current default. This is the fresh-install behavior.
+    defaultModel: ""
     # defaultRuntimeVersion: fleet-default Claude Code version requested
     # by agents whose spec.runtimeVersion is empty. PR-B plumbs this
-    # value end-to-end (Helm → ConfigMap → API → PWA) but does NOT
-    # consume it yet — that wiring lands in PR-C alongside the
-    # spec.runtimeVersion field and the boot-time install. Empty here
-    # means "derive from the build-time runtime.claudeCode.version
-    # baked into the kyber-claude-code image" — which is what the
-    # template default does so existing installs see no change until
-    # opt-in.
-    defaultRuntimeVersion: ""
-    # Codex-specific defaults. Empty version uses the version baked into the
-    # Codex runtime image; the model seed matches the V1 subscription runtime.
-    codexDefaultModel: "gpt-5.6-sol"
-    codexDefaultRuntimeVersion: ""
+    # "latest" asks the runtime to install the latest upstream harness at
+    # pod creation. Operators can replace it with a concrete version pin.
+    defaultRuntimeVersion: "latest"
+    # Codex follows the same fresh-install policy: harness-selected model and
+    # latest upstream harness until the operator explicitly pins either one.
+    codexDefaultModel: ""
+    codexDefaultRuntimeVersion: "latest"
 
 # Node agent DaemonSet — runs on every node to collect metrics and manage lifecycle.
 nodeAgent:

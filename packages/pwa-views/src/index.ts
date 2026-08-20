@@ -82,7 +82,6 @@ export type * from './lib/types'
 
 // Providers + tooling consumers wrap App in (re-exported so apps/embedded-pwa
 // has one import source).
-export { DensityProvider } from './contexts/DensityContext'
 export { TooltipProvider } from './components/ui/tooltip'
 export { Toaster } from './components/ui/sonner'
 export { enableMocks } from './mocks/init'

@@ -41,6 +41,7 @@ Code activity): kyber#249.
 │  │      POST /event          → status-event     │    │
 │  │      POST /token-usage    → token-usage      │    │
 │  │      POST /refresh-token  → refresh-token    │    │
+│  │      POST /runtime-catalog → runtime-catalog │    │
 │  │  - applies agent identity + pod-token auth   │    │
 │  │  - forwards to control plane                 │    │
 │  └────────────┬─────────────────────────────────┘    │
@@ -76,9 +77,23 @@ Code activity): kyber#249.
 Per kyber#257 (Phase C2 of the observability epic), every runtime
 in-pod path rides this same conduit: activity events on `/event`,
 context-budget snapshots from `kyber-token-reporter` on `/token-usage`,
-and OAuth credential rotations from the credential syncer on
-`/refresh-token`. One egress, one auth path, one place to add future
+OAuth credential rotations from the credential syncer on `/refresh-token`,
+and authenticated model catalogs on `/runtime-catalog`. Claude Code queries
+Anthropic with its own OAuth token or API key; Codex asks its authenticated
+app-server. Only non-secret model metadata crosses the sidecar. One egress,
+one auth path, one place to add future
 cross-cutting concerns (rate-limiting, batching, signature verification).
+Claude Code refreshes the upstream catalog hourly but replays the cached
+metadata every 30 seconds, allowing an in-memory control-plane cache to recover
+quickly after a restart without multiplying provider traffic.
+Claude catalog entries must include a provider-reported, positive context
+window below Kyber's defensive upper bound. Codex app-server's `model/list`
+schema does not publish context windows, so its catalog keeps them explicitly
+unknown; the active model's rollout `token_count.context_window` is the
+authoritative source for its token budget. Kyber never substitutes a guessed
+window. Catalogs are stored under separate per-agent keys so concurrent reports
+cannot overwrite public harness discovery or leak one user's entitlements to
+another.
 
 The only remaining direct-to-control-plane path from an agent pod is
 `start-claude.sh`'s boot-time OAuth push, which runs before the sidecar
@@ -108,6 +123,12 @@ The control plane patches `Agent.status.activity` based on type:
 - `activity` → `lastHeartbeatAt` + `lastActivityAt` + `state`
 - unknown type → silently dropped (forward-compat: newer runtimes can
   emit new event kinds without breaking older control planes)
+
+Token snapshots also carry the concrete model parsed from the runtime's
+transcript. The control plane persists that observation as
+`Agent.status.currentModel`. This is especially important when `spec.model` is
+empty: the spec continues to mean “use the harness default,” while status and
+the PWA can still show which model the harness actually selected.
 
 See `pkg/api/internal_status.go` for the handler; `pkg/api/v1/agent_types.go`
 for the CRD shape.
@@ -180,6 +201,7 @@ runtime-agnostic sidecar over localhost" (Matt 2026-05-03) gave us:
 | Runtime binary running, sidecar localhost listener down | Runtime binary's POST to `127.0.0.1:8091` fails with connection refused; runtime binary logs error and retries on next tick |
 | Sidecar localhost listener up, control plane unreachable | Runtime binary POST returns 502 from the sidecar's `/event` handler; sidecar's heartbeat loop also logs failures; PWA shows stale `lastHeartbeatAt` |
 | Control plane up, agent CR missing | Control plane returns 404; sidecar logs + drops the event |
+| Agent is not authenticated | No per-agent catalog is reported; Change model asks the operator to authenticate the agent |
 
 ## Related
 

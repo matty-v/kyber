@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { Plus, Play, Server, Square, RotateCcw, Trash2, Zap, MoreHorizontal } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useComputeConfig, useMachines, useStartMachine, useStopMachine, useRebootMachine, useDeleteMachine, useRestartMachineAgents } from '../hooks/useAPI'
+import { useMachines, useStartMachine, useStopMachine, useRebootMachine, useDeleteMachine, useRestartMachineAgents } from '../hooks/useAPI'
 import { machineCapacity, parseCpu, parseMemoryGi } from '../lib/machineTypes'
 import { capacityBand, pctUsed, BAND_BG_CLASS } from '../lib/capacityBars'
 import { CapacityBar } from '../components/CapacityBar'
@@ -34,10 +34,6 @@ export function MachineList() {
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
   const { data: machines, isLoading, error } = useMachines()
-  const { data: config } = useComputeConfig()
-  const isMockCluster = config?.compute.provider === 'mock'
-  const machineCount = machines?.length ?? 0
-  const hideNewMachineButton = isMockCluster && machineCount >= 1
   const [pending, setPending] = useState<ActionState | null>(null)
 
   const startMachine = useStartMachine()
@@ -165,16 +161,14 @@ export function MachineList() {
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-xl font-bold text-text-primary">Machines</h1>
-        {!hideNewMachineButton && (
-          <Button
-            variant="primary"
-            size="sm"
-            onClick={() => navigate(prefixed('/machines/new'))}
-          >
-            <Plus className="h-4 w-4" />
-            New
-          </Button>
-        )}
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => navigate(prefixed('/machines/new'))}
+        >
+          <Plus className="h-4 w-4" />
+          New
+        </Button>
       </div>
 
       {isLoading && (
@@ -196,18 +190,16 @@ export function MachineList() {
           icon={<Server className="h-6 w-6" strokeWidth={1.5} />}
           title="No machines provisioned"
           description="Provision a machine to host one or more agents."
-          action={
-            !hideNewMachineButton && (
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => navigate(prefixed('/machines/new'))}
-              >
-                <Plus className="h-4 w-4" />
-                New machine
-              </Button>
-            )
-          }
+          action={(
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => navigate(prefixed('/machines/new'))}
+            >
+              <Plus className="h-4 w-4" />
+              New machine
+            </Button>
+          )}
         />
       )}
 

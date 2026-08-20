@@ -131,8 +131,7 @@ func TestResolver_Invalidate(t *testing.T) {
 
 // TestResolver_Resolve_PropagatesAPIErrors keeps non-NotFound errors
 // visible to the caller — silently swallowing them would hide the case
-// where the API server is unreachable (would render every agent as
-// "no fleet default" + likely trip the empty-both guard).
+// where the API server is unreachable.
 func TestResolver_Resolve_PropagatesAPIErrors(t *testing.T) {
 	boom := errors.New("apiserver down")
 	r := &Resolver{Client: &errorReader{err: boom}, Namespace: testNS, ConfigMapName: testCM}

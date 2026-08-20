@@ -25,6 +25,14 @@ type Cache interface {
 	Get(ctx context.Context) (*Snapshot, error)
 }
 
+// AgentCatalogCache stores authenticated model catalogs independently from the
+// public harness snapshot, avoiding lost updates when agents and the npm poller
+// report concurrently.
+type AgentCatalogCache interface {
+	PutAgentModels(ctx context.Context, agent string, models []Model) error
+	GetAgentModels(ctx context.Context, agent string) ([]Model, error)
+}
+
 // ErrCacheEmpty signals that no snapshot has been written, or the cached
 // snapshot has expired. /available returns the empty fallback in this case.
 var ErrCacheEmpty = errors.New("runtimedetect: cache empty")
@@ -34,8 +42,9 @@ var ErrCacheEmpty = errors.New("runtimedetect: cache empty")
 // Redis cache — a per-replica memory cache would make /available answer
 // differently on each replica and flicker the PWA picker.
 type MemoryCache struct {
-	mu   sync.RWMutex
-	snap *Snapshot
+	mu          sync.RWMutex
+	snap        *Snapshot
+	agentModels map[string][]Model
 }
 
 // NewMemoryCache returns an empty MemoryCache.
@@ -84,9 +93,29 @@ func (m *MemoryCache) Get(ctx context.Context) (*Snapshot, error) {
 	return &copy, nil
 }
 
+func (m *MemoryCache) PutAgentModels(_ context.Context, agent string, models []Model) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.agentModels == nil {
+		m.agentModels = make(map[string][]Model)
+	}
+	m.agentModels[agent] = append([]Model(nil), models...)
+	return nil
+}
+
+func (m *MemoryCache) GetAgentModels(_ context.Context, agent string) ([]Model, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if len(m.agentModels[agent]) == 0 {
+		return nil, ErrCacheEmpty
+	}
+	return append([]Model(nil), m.agentModels[agent]...), nil
+}
+
 // redisKey is where the snapshot lives in Redis. Single key — multi-replica
 // installs hit the same blob so /available is consistent across replicas.
 const redisKey = "runtimedetect:available"
+const redisAgentModelsKey = "runtimedetect:agent-models"
 
 // defaultRedisTTL gives the cache enough margin over the poll cadence that
 // a single missed poll still serves last-good. The poller refreshes every
@@ -142,8 +171,39 @@ func (r *RedisCache) Get(ctx context.Context) (*Snapshot, error) {
 	return &snap, nil
 }
 
+func (r *RedisCache) PutAgentModels(ctx context.Context, agent string, models []Model) error {
+	data, err := json.Marshal(models)
+	if err != nil {
+		return fmt.Errorf("marshaling agent models: %w", err)
+	}
+	pipe := r.client.TxPipeline()
+	pipe.HSet(ctx, redisAgentModelsKey, agent, data)
+	pipe.Expire(ctx, redisAgentModelsKey, r.ttl)
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("setting agent models: %w", err)
+	}
+	return nil
+}
+
+func (r *RedisCache) GetAgentModels(ctx context.Context, agent string) ([]Model, error) {
+	raw, err := r.client.HGet(ctx, redisAgentModelsKey, agent).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, ErrCacheEmpty
+	}
+	if err != nil {
+		return nil, fmt.Errorf("getting agent models: %w", err)
+	}
+	var models []Model
+	if err := json.Unmarshal(raw, &models); err != nil {
+		return nil, fmt.Errorf("unmarshaling agent models: %w", err)
+	}
+	return models, nil
+}
+
 // Compile-time assertion: both implementations satisfy the Cache interface.
 var (
-	_ Cache = (*MemoryCache)(nil)
-	_ Cache = (*RedisCache)(nil)
+	_ Cache             = (*MemoryCache)(nil)
+	_ Cache             = (*RedisCache)(nil)
+	_ AgentCatalogCache = (*MemoryCache)(nil)
+	_ AgentCatalogCache = (*RedisCache)(nil)
 )

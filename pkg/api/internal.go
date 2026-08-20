@@ -343,7 +343,7 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 	case "runtime-version":
 		s.handleRuntimeVersion(w, r, agentName)
 	case "runtime-catalog":
-		s.handleRuntimeCatalog(w, r)
+		s.handleRuntimeCatalog(w, r, agentName)
 	case "status-event":
 		s.handleStatusEvent(w, r, agentName)
 	case "status":
@@ -358,7 +358,7 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 // handleRuntimeCatalog accepts the picker-visible model catalog discovered by
 // an authenticated runtime. Codex obtains this through app-server model/list,
 // so the result reflects the agent owner's ChatGPT subscription.
-func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Request) {
+func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Request, agentName string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -372,11 +372,12 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		Models  []runtimedetect.Model `json:"models"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
-	if err := dec.Decode(&body); err != nil || body.Runtime != "codex" || len(body.Models) > 100 {
+	if err := dec.Decode(&body); err != nil || (body.Runtime != "codex" && body.Runtime != "claude-code") || len(body.Models) == 0 || len(body.Models) > 100 {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
 	models := make([]runtimedetect.Model, 0, len(body.Models))
+	const maxReportedContextWindow = int64(10_000_000)
 	for _, model := range body.Models {
 		model.ID = strings.TrimSpace(model.ID)
 		model.DisplayName = strings.TrimSpace(model.DisplayName)
@@ -387,22 +388,23 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		if model.DisplayName == "" {
 			model.DisplayName = model.ID
 		}
-		model.ContextWindow = runtimedetect.DefaultContextWindowFloor
-		model.ContextWindowKnown = false
-		models = append(models, model)
-	}
-	snap, err := s.runtimeDetectCache.Get(r.Context())
-	if err != nil {
-		if !errors.Is(err, runtimedetect.ErrCacheEmpty) {
-			http.Error(w, "catalog cache unavailable", http.StatusServiceUnavailable)
+		if model.ContextWindowKnown && (model.ContextWindow <= 0 || model.ContextWindow > maxReportedContextWindow) {
+			http.Error(w, "missing or invalid context window", http.StatusBadRequest)
 			return
 		}
-		snap = &runtimedetect.Snapshot{}
+		if body.Runtime == "claude-code" && !model.ContextWindowKnown {
+			http.Error(w, "missing authoritative context window", http.StatusBadRequest)
+			return
+		}
+		models = append(models, model)
 	}
-	snap.CodexModels = models
-	snap.FetchedAt = time.Now().UTC()
-	if err := s.runtimeDetectCache.Put(r.Context(), snap); err != nil {
-		http.Error(w, "catalog cache unavailable", http.StatusServiceUnavailable)
+	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
+		if err := catalogs.PutAgentModels(r.Context(), agentName, models); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+			return
+		}
+	} else {
+		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -656,6 +658,19 @@ func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Req
 	if err := s.tokenStore.Put(r.Context(), agent, &snap); err != nil {
 		http.Error(w, "store error", http.StatusInternalServerError)
 		return
+	}
+	// A blank spec.model means "let the harness choose." The first finalized
+	// assistant transcript is therefore the authoritative observation of the
+	// concrete model actually running. Persist it in status so it survives the
+	// token store's short TTL and is visible in agent views and session briefs.
+	if snap.Model != "" && s.k8sClient != nil {
+		key := types.NamespacedName{Name: agent, Namespace: s.namespace}
+		current := &kyberv1.Agent{}
+		if err := s.k8sClient.Get(r.Context(), key, current); err == nil && current.Status.CurrentModel != snap.Model {
+			patch := client.MergeFrom(current.DeepCopy())
+			current.Status.CurrentModel = snap.Model
+			_ = s.k8sClient.Status().Patch(r.Context(), current, patch)
+		}
 	}
 	delta := computeTokenDelta(prev, &snap)
 	if telemetry.AgentTokensTotal != nil {

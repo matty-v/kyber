@@ -15,60 +15,17 @@ const models: AvailableModel[] = [
 const initialState = () => initialWizardState(models.map((m) => ({ id: m.id, contextWindow: m.contextWindow })))
 
 describe('ResourcesSection', () => {
-  it('renders model options sourced from props with displayName + context window', () => {
+  it('does not offer per-agent model overrides', () => {
     render(
       <ResourcesSection
         state={initialState()}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
     )
-    // kyber#378 PR-D: picker shows displayName + window. Partial-text
-    // match so a future copy tweak doesn't break the test.
-    expect(screen.getByRole('option', { name: /Claude Opus 4\.7/ })).toBeInTheDocument()
-    // Both models in the fixture have 1M windows — getAllBy* avoids the
-    // multiple-element error and asserts the marker rendered at least once.
-    expect(screen.getAllByRole('option', { name: /1M ctx/ }).length).toBeGreaterThan(0)
-  })
-
-  it('renders "context unknown" indicator for unmapped models (kyber#378 AC)', () => {
-    const unknownModel: AvailableModel = {
-      id: 'claude-mystery-9',
-      displayName: 'Claude Mystery 9',
-      contextWindow: 200000,
-      contextWindowKnown: false,
-    }
-    render(
-      <ResourcesSection
-        state={initialWizardState([{ id: unknownModel.id, contextWindow: unknownModel.contextWindow }])}
-        set={vi.fn()}
-        models={[unknownModel]}
-        selectedMachine={null}
-        machineAvailable={null}
-      />,
-    )
-    expect(screen.getByRole('option', { name: /context unknown/i })).toBeInTheDocument()
-  })
-
-  it('manual model entry surfaces a value not in the dropdown via onBlur (kyber#378 AC)', async () => {
-    const user = userEvent.setup()
-    const set = vi.fn()
-    render(
-      <ResourcesSection
-        state={initialState()}
-        set={set}
-        models={models}
-        selectedMachine={null}
-        machineAvailable={null}
-      />,
-    )
-    const input = screen.getByLabelText(/Manual model override/i)
-    await user.click(input)
-    await user.type(input, 'claude-opus-5-0')
-    await user.tab() // blur
-    expect(set).toHaveBeenCalledWith('model', 'claude-opus-5-0')
+    expect(screen.queryByLabelText(/^Model$/i)).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(/Manual model override/i)).not.toBeInTheDocument()
   })
 
   it('CPU input wrapper carries data-band="green" when request well under available', () => {
@@ -76,7 +33,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), cpu: '0.25' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -90,7 +46,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), cpu: '4' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -106,7 +61,6 @@ describe('ResourcesSection', () => {
       <ResourcesSection
         state={initialWizardState(models)}
         set={set}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -132,7 +86,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={initialWizardState(models)}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -146,7 +99,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={null}
         machineAvailable={null}
       />,
@@ -159,7 +111,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer', cpu: '1', memory: '2Gi' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={machine}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,
@@ -174,7 +125,6 @@ describe('ResourcesSection — capacity card', () => {
       <ResourcesSection
         state={{ ...initialWizardState(models), machine: 'razer', cpu: '8', memory: '16Gi' }}
         set={vi.fn()}
-        models={models}
         selectedMachine={machine}
         machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 100 }}
       />,

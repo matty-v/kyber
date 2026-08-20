@@ -329,9 +329,12 @@ func parseExecCommand(r *http.Request) []string {
 	}
 	switch r.URL.Query().Get("mode") {
 	case "attach":
-		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "attach", "-t", "agent", "-r")
+		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "agent", "-r")
 	case "shell":
-		return append(nsenterPrefix, "/bin/bash", "-l")
+		// Kubernetes exec does not guarantee a locale. A locale-less shell
+		// causes tmux clients launched from it (including the `agent` helper)
+		// to replace non-ASCII runtime UI glyphs with underscores.
+		return append(nsenterPrefix, "env", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "/bin/bash", "-l")
 	case "history":
 		// -p prints to stdout; -e preserves escapes (colors, box-drawing);
 		// -J joins wrapped lines; -S -10000 grabs up to 10k scrollback lines.
@@ -339,7 +342,7 @@ func parseExecCommand(r *http.Request) []string {
 		// layer closes on exit, which the client treats as end-of-stream.
 		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "capture-pane", "-peJ", "-S", "-10000", "-t", "agent")
 	case "device-auth":
-		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "attach", "-t", "auth", "-r")
+		return append(nsenterPrefix, "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "auth", "-r")
 	}
 	return []string{"/bin/bash"}
 }

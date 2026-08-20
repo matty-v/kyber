@@ -5,14 +5,13 @@ import { ReviewSection } from './ReviewSection'
 import { initialWizardState } from './types'
 
 describe('ReviewSection', () => {
-  it('renders the agent name + machine + runtime + model + resources', () => {
+  it('renders the agent configuration and inherited runtime defaults', () => {
     render(
       <ReviewSection
         state={{
           ...initialWizardState([]),
           name: 'alice',
           machine: 'razer',
-          model: 'claude-opus-4-7',
           cpu: '2',
           memory: '4Gi',
           disk: '50Gi',
@@ -22,7 +21,7 @@ describe('ReviewSection', () => {
     expect(screen.getByText('alice')).toBeInTheDocument()
     expect(screen.getByText('razer')).toBeInTheDocument()
     expect(screen.getByText('claude-code')).toBeInTheDocument() // default runtime
-    expect(screen.getByText('claude-opus-4-7')).toBeInTheDocument()
+    expect(screen.getAllByText('Fleet default')).toHaveLength(2)
     expect(screen.getByText(/2 CPU/)).toBeInTheDocument()
     expect(screen.getByText(/4Gi/)).toBeInTheDocument()
     expect(screen.getByText(/50Gi/)).toBeInTheDocument()
@@ -58,10 +57,9 @@ describe('ReviewSection', () => {
     expect(screen.getByText(/matty-v\/some-repo/)).toBeInTheDocument()
   })
 
-  it('renders "(unset)" placeholders for empty name / machine / model', () => {
+  it('renders "(unset)" placeholders for empty name and machine', () => {
     render(<ReviewSection state={initialWizardState([])} />)
-    // Three rows show (unset) when those fields are empty: Name, Machine, Model
-    expect(screen.getAllByText('(unset)')).toHaveLength(3)
+    expect(screen.getAllByText('(unset)')).toHaveLength(2)
   })
 
   it('renders Identity as "(none)" when mode is existing with empty slug', () => {

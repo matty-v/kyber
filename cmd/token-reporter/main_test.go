@@ -1,11 +1,98 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+func TestDiscoverClaudeModelsUsesOAuthCredentials(t *testing.T) {
+	t.Setenv("CLAUDE_ACCESS_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	creds := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(creds, []byte(`{"claudeAiOauth":{"accessToken":"oauth-token"}}`), 0o600); err != nil {
+		t.Fatalf("writing credentials: %v", err)
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer oauth-token" {
+			t.Errorf("Authorization = %q", got)
+		}
+		if got := r.Header.Get("anthropic-beta"); got != "oauth-2025-04-20" {
+			t.Errorf("anthropic-beta = %q", got)
+		}
+		if got := r.Header.Get("anthropic-version"); got != "2023-06-01" {
+			t.Errorf("anthropic-version = %q", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-opus-4-1","display_name":"Claude Opus","max_input_tokens":200000}]}`))
+	}))
+	defer server.Close()
+
+	models, err := discoverClaudeModels(context.Background(), creds, server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("discoverClaudeModels: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "claude-opus-4-1" || !models[0].ContextWindowKnown {
+		t.Fatalf("models = %+v", models)
+	}
+}
+
+func TestDiscoverClaudeModelsRejectsMissingContextWindow(t *testing.T) {
+	t.Setenv("CLAUDE_ACCESS_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "api-key")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != "api-key" {
+			t.Errorf("x-api-key = %q", got)
+		}
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization = %q, want empty", got)
+		}
+		_, _ = w.Write([]byte(`{"data":[{"id":"claude-sonnet","display_name":"Claude Sonnet"}]}`))
+	}))
+	defer server.Close()
+
+	if _, err := discoverClaudeModels(context.Background(), filepath.Join(t.TempDir(), "missing"), server.URL, server.Client()); err == nil {
+		t.Fatal("discoverClaudeModels returned nil error without max_input_tokens")
+	}
+}
+
+func TestDiscoverClaudeModelsRequiresAuthentication(t *testing.T) {
+	t.Setenv("CLAUDE_ACCESS_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	if _, err := discoverClaudeModels(context.Background(), filepath.Join(t.TempDir(), "missing"), "http://unused", http.DefaultClient); err == nil {
+		t.Fatal("discoverClaudeModels returned nil error without credentials")
+	}
+}
+
+func TestReportClaudeModelCatalogPostsCachedMetadata(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		if r.URL.Path != "/runtime-catalog" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		var body struct {
+			Runtime string         `json:"runtime"`
+			Models  []catalogModel `json:"models"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("decode: %v", err)
+		}
+		if body.Runtime != "claude-code" || len(body.Models) != 1 || body.Models[0].ID != "claude-sonnet-5" {
+			t.Errorf("body = %+v", body)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	reportClaudeModelCatalog(context.Background(), server.URL, []catalogModel{{ID: "claude-sonnet-5"}}, server.Client())
+	if !called {
+		t.Fatal("catalog was not posted")
+	}
+}
 
 // TestPickLatestSubdir_IgnoresDirWithoutJSONL reproduces the bug that
 // left agents showing "No token data yet" in the UI: a sibling project

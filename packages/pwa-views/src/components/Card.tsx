@@ -23,9 +23,6 @@ export function Card({ children, className = '', onClick }: Props) {
 
   return (
     <div
-      // kyber-card: stable class hook so [data-density="compact"] selectors
-      // in index.css can override the p-4 padding without depending on the
-      // exact Tailwind class string here. See #105.
       className={`kyber-card ${base} ${interactive} ${className}`}
       onClick={onClick}
       onKeyDown={onClick ? handleKeyDown : undefined}

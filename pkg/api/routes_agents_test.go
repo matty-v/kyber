@@ -27,6 +27,7 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/oauth/mockserver"
+	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 )
@@ -47,6 +48,45 @@ func defaultMachine() *kyberv1.Machine {
 				Memory: resource.MustParse("256Gi"),
 			},
 		},
+	}
+}
+
+func TestGetAgentModelsReturnsOnlyAuthenticatedAgentCatalog(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("alice")
+	if err := s.K8sClient.Create(context.Background(), agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	cache := runtimedetect.NewMemoryCache()
+	if err := cache.PutAgentModels(context.Background(), "alice", []runtimedetect.Model{{ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1", ContextWindow: 200_000, ContextWindowKnown: true}}); err != nil {
+		t.Fatalf("seeding catalog: %v", err)
+	}
+	if err := cache.PutAgentModels(context.Background(), "bob", []runtimedetect.Model{{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5"}}); err != nil {
+		t.Fatalf("seeding other catalog: %v", err)
+	}
+	s.RuntimeDetectCache = cache
+	req := scopedRequest(http.MethodGet, "/api/v1/agents/alice/models", testAPIKey)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "claude-opus-4-1") || strings.Contains(rr.Body.String(), "claude-sonnet-4-5") {
+		t.Fatalf("unexpected response: %s", rr.Body.String())
+	}
+}
+
+func TestGetAgentModelsRequiresAuthenticatedCatalog(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	if err := s.K8sClient.Create(context.Background(), sampleAgentCRD("alice")); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	s.RuntimeDetectCache = runtimedetect.NewMemoryCache()
+	req := scopedRequest(http.MethodGet, "/api/v1/agents/alice/models", testAPIKey)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "authentication_required") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
 
@@ -132,7 +172,6 @@ func TestAgents_Create_HappyPath(t *testing.T) {
 		"name":    "dave",
 		"machine": "worker-1",
 		"runtime": "claude-code",
-		"model":   "claude-sonnet-4",
 		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
@@ -156,8 +195,8 @@ func TestAgents_Create_HappyPath(t *testing.T) {
 	if resp.ID != "dave" {
 		t.Errorf("ID: got %q, want %q", resp.ID, "dave")
 	}
-	if resp.Model != "claude-sonnet-4" {
-		t.Errorf("Model: got %q", resp.Model)
+	if resp.Model != "" {
+		t.Errorf("Model: got %q, want empty fleet-default override", resp.Model)
 	}
 }
 
@@ -628,7 +667,6 @@ func TestAgents_Create_ValidationErrors(t *testing.T) {
 		{"invalid name", map[string]interface{}{"name": "UPPER", "machine": "w1", "runtime": "claude-code", "model": "m"}},
 		{"missing machine", map[string]interface{}{"name": "dave", "runtime": "claude-code", "model": "m"}},
 		{"missing runtime", map[string]interface{}{"name": "dave", "machine": "w1", "model": "m"}},
-		{"missing model", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "claude-code"}},
 		{"invalid scaling", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "r", "model": "m", "scaling": "turbo"}},
 		{"invalid cpu", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "r", "model": "m", "resources": map[string]interface{}{"cpu": "notavalue"}}},
 		{"telegram with api-key", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "claude-code", "model": "m", "secrets": map[string]interface{}{"authType": "api-key", "telegramEnabled": true, "anthropicApiKey": "sk-ant-test"}}},
@@ -916,8 +954,9 @@ func TestAgents_List_HydratesTokenUsage(t *testing.T) {
 	// Limit is the model's real window (claude-sonnet-4-5 → 200K, a known model
 	// — resolves without any ConfigMap/snapshot entry).
 	_ = ts.Put(context.Background(), "dave", &tokenreport.Snapshot{
-		Model:  "claude-sonnet-4-5",
-		Tokens: tokenreport.Tokens{Used: 74357, Limit: 0},
+		Model:              "claude-sonnet-4-5",
+		Tokens:             tokenreport.Tokens{Used: 74357, Limit: 200_000},
+		ContextWindowKnown: true,
 	})
 	// "chewie" intentionally has no entry — should come back with TokenUsage nil.
 	h := buildHandlerWithTokenStore(t, ts, sampleAgentCRD("dave"), sampleAgentCRD("chewie"))

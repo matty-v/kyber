@@ -318,7 +318,9 @@ function CreateMachineMock({
             This machine will use the full capacity of this node. The Kyber
             control plane reserves a small CPU/memory/disk carve-out (see
             helm chart <code className="font-mono">controlPlane.platformReservation</code>);
-            everything else is available for agents.
+            everything else is available for agents. Additional machines must
+            already have a distinct Ready Kubernetes node labelled{' '}
+            <code className="font-mono">kyber.io/machine=&lt;name&gt;</code>.
           </p>
 
           {fieldError && (

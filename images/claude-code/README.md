@@ -12,8 +12,9 @@ Container image for Kyber agents that use the Claude Code CLI. Built from
   `KYBER_RUNTIME_DEFAULT_VERSION` for `start-claude.sh` to read.
 - `start-claude.sh` — entry-point. Handles credentials refresh, identity
   repo setup, the boot-time runtime install (see below), model
-  resolution + `[1m]` opt-in, and the actual `tmux new-session "claude
-  $CLAUDE_ARGS"` launch.
+  resolution + `[1m]` opt-in, marks the resolved identity-repo launch path as
+  trusted in Claude Code's durable state, and performs the actual
+  `tmux new-session "claude $CLAUDE_ARGS"` launch.
 - `start_claude_test.go` — integration tests for `start-claude.sh`.
   Tagged `//go:build integration`; run with `go test -tags=integration
   ./images/claude-code/`.

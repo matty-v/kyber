@@ -14,6 +14,8 @@ import (
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
 )
 
+const fleetDefaultsAuthoredAnnotation = "kyber.io/fleet-defaults-authored"
+
 // FleetDefaultsResponse is the JSON contract for GET /api/v1/fleet-defaults
 // and the request body for PUT /api/v1/fleet-defaults.
 //
@@ -96,8 +98,9 @@ func (s *Server) handleFleetDefaultsPut(w http.ResponseWriter, r *http.Request) 
 	// first edit lands cleanly.
 	desired := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      s.FleetDefaultsConfigMapName,
-			Namespace: s.Namespace,
+			Name:        s.FleetDefaultsConfigMapName,
+			Namespace:   s.Namespace,
+			Annotations: map[string]string{fleetDefaultsAuthoredAnnotation: "true"},
 		},
 		Data: map[string]string{
 			fleetdefaults.KeyDefaultModel:               req.DefaultModel,
@@ -117,6 +120,10 @@ func (s *Server) handleFleetDefaultsPut(w http.ResponseWriter, r *http.Request) 
 		if existing.Data == nil {
 			existing.Data = map[string]string{}
 		}
+		if existing.Annotations == nil {
+			existing.Annotations = map[string]string{}
+		}
+		existing.Annotations[fleetDefaultsAuthoredAnnotation] = "true"
 		existing.Data[fleetdefaults.KeyDefaultModel] = req.DefaultModel
 		existing.Data[fleetdefaults.KeyDefaultRuntimeVersion] = req.DefaultRuntimeVersion
 		if codexModelSet {
@@ -150,6 +157,10 @@ func (s *Server) handleFleetDefaultsPut(w http.ResponseWriter, r *http.Request) 
 			if existing.Data == nil {
 				existing.Data = map[string]string{}
 			}
+			if existing.Annotations == nil {
+				existing.Annotations = map[string]string{}
+			}
+			existing.Annotations[fleetDefaultsAuthoredAnnotation] = "true"
 			existing.Data[fleetdefaults.KeyDefaultModel] = req.DefaultModel
 			existing.Data[fleetdefaults.KeyDefaultRuntimeVersion] = req.DefaultRuntimeVersion
 			if codexModelSet {

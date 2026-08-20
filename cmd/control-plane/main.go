@@ -894,16 +894,10 @@ func main() {
 				runtimeDetectVersionLimit = n
 			}
 		}
-		keyPath := os.Getenv("KYBER_ANTHROPIC_KEY_PATH")
-		if keyPath == "" {
-			keyPath = "/etc/kyber-anthropic-key/api-key"
-		}
 		runtimeDetectPoller := &runtimedetect.Poller{
 			Cache:          runtimeDetectCache,
 			Npm:            runtimedetect.NewNpmClient("", 15*time.Second),
 			CodexNpm:       runtimedetect.NewNpmClient(runtimedetect.DefaultCodexNpmRegistryURL, 15*time.Second),
-			Anthropic:      runtimedetect.NewAnthropicClient("", "", 15*time.Second),
-			KeySource:      runtimedetect.MultiKeySource(runtimedetect.FileKeySource(keyPath), runtimedetect.EnvKeySource("KYBER_ANTHROPIC_API_KEY")),
 			ContextWindows: contextWindowResolver,
 			Cadence:        runtimeDetectCadence,
 			VersionLimit:   runtimeDetectVersionLimit,
@@ -915,8 +909,7 @@ func main() {
 		}
 		setupLog.Info("runtimedetect: poller registered",
 			"cadenceSeconds", int(runtimeDetectCadence.Seconds()),
-			"versionLimit", runtimeDetectVersionLimit,
-			"keyPath", keyPath)
+			"versionLimit", runtimeDetectVersionLimit)
 	} else {
 		setupLog.Info("runtimedetect: disabled (KYBER_RUNTIMEDETECT_ENABLED=false); /api/v1/available will serve empty contract")
 	}

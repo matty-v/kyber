@@ -33,6 +33,11 @@ type Snapshot struct {
 	// catalog, this reflects the user's ChatGPT subscription entitlements.
 	CodexModels []Model `json:"codexModels"`
 
+	// AgentModels is keyed by Agent name and contains the catalog reported by
+	// that agent's authenticated runtime. Operator-facing model changes read
+	// only this map so one user's entitlements never leak into another agent.
+	AgentModels map[string][]Model `json:"agentModels,omitempty"`
+
 	// FetchedAt is when the poller wrote this snapshot. Surfaced for
 	// debuggability — not part of the PWA contract.
 	FetchedAt time.Time `json:"fetchedAt"`

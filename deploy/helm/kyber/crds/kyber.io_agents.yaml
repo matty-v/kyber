@@ -362,9 +362,8 @@ spec:
                   model (kyber-fleet-defaults ConfigMap key `defaultModel`, seeded by
                   the chart's `controlPlane.fleetDefaults.defaultModel` value and
                   writable via the PWA Settings panel — kyber#376 / PR-B of #374).
-                  If both spec.model AND the fleet default are empty, the
-                  AgentConditionModelUnresolved condition fires and pod creation is
-                  refused.
+                  If both spec.model and the fleet default are empty, the runtime harness
+                  selects its own default model.
                 type: string
               resources:
                 description: Resources specifies the compute resources requested for

@@ -199,7 +199,7 @@ func TestExec_WebSocketPrecheck(t *testing.T) {
 func TestParseExecCommand_ModeAttach(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/?mode=attach", nil)
 	got := api.ParseExecCommandForTest(req)
-	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "sudo", "-iu", "kyber", "tmux", "attach", "-t", "agent", "-r"}
+	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "sudo", "-iu", "kyber", "tmux", "-u", "attach", "-t", "agent", "-r"}
 	if !equalStringSlice(got, want) {
 		t.Errorf("mode=attach: got %v, want %v", got, want)
 	}
@@ -209,7 +209,7 @@ func TestParseExecCommand_ModeAttach(t *testing.T) {
 func TestParseExecCommand_ModeShell(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/?mode=shell", nil)
 	got := api.ParseExecCommandForTest(req)
-	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/bin/bash", "-l"}
+	want := []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "env", "LANG=C.UTF-8", "LC_ALL=C.UTF-8", "/bin/bash", "-l"}
 	if !equalStringSlice(got, want) {
 		t.Errorf("mode=shell: got %v, want %v", got, want)
 	}
@@ -230,7 +230,7 @@ func TestParseExecCommand_ModeDeviceAuth(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/dave/exec?mode=device-auth", nil)
 	got := api.ParseExecCommandForTest(req)
 	joined := strings.Join(got, " ")
-	if !strings.Contains(joined, "tmux attach -t auth -r") {
+	if !strings.Contains(joined, "tmux -u attach -t auth -r") {
 		t.Fatalf("device-auth command = %q, want read-only auth-session attach", joined)
 	}
 }

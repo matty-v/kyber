@@ -12,16 +12,10 @@ mkdir -p ~/.claude ~/.claude/channels/telegram ~/.claude/plugins ~/.claude/stats
 # This pattern matches the legacy Kyber agents (R2-D2 etc.) — see
 # kyber-legacy/images/bootstrap-claude-code.sh for the source of truth.
 if [ ! -f ~/.claude.json ]; then
-    WORK_DIR="${PWD}"
     cat > ~/.claude.json <<EOF
 {
   "hasCompletedOnboarding": true,
-  "projects": {
-    "${WORK_DIR}": {
-      "hasTrustDialogAccepted": true,
-      "hasCompletedProjectOnboarding": true
-    }
-  }
+  "projects": {}
 }
 EOF
     echo "[kyber] ~/.claude.json written (onboarding bypass)"
@@ -508,14 +502,25 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
                 sudo rm -rf "${_stale}" 2>&1 || true
             done
         fi
-        sudo "${_npm}" install -g "@anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION}" 2>&1 || true
-        # Determine success from the RUNNING binary, not npm's exit code: verify
-        # `claude --version` actually reports the requested version. Trusting the
-        # exit code alone lets requestedSatisfied lie when an install reports OK
-        # but didn't take effect.
+        _npm_install_ok="false"
+        if sudo "${_npm}" install -g "@anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION}" 2>&1; then
+            _npm_install_ok="true"
+        fi
+        # Determine success from the RUNNING binary, not npm's exit code alone:
+        # `claude --version` must actually run, and for a concrete request it
+        # must report exactly that version. Trusting the exit code by itself
+        # lets requestedSatisfied lie when an install reports OK but didn't
+        # take effect. `latest` has no version string to compare against, so
+        # there it is npm's exit code AND a binary that still answers
+        # --version — an empty answer means the install broke the CLI and must
+        # NOT be reported as satisfied.
         _installed="$(claude --version 2>/dev/null | awk '{print $1; exit}')"
-        if [ "${_installed}" = "${KYBER_REQUESTED_CC_VERSION}" ]; then
-            echo "[kyber] CC install: succeeded (${KYBER_REQUESTED_CC_VERSION})"
+        if [ "${_npm_install_ok}" = "true" ] && { { [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ] && [ -n "${_installed}" ]; } || [ "${_installed}" = "${KYBER_REQUESTED_CC_VERSION}" ]; }; then
+            if [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ]; then
+                echo "[kyber] CC install: succeeded (latest -> ${_installed})"
+            else
+                echo "[kyber] CC install: succeeded (${KYBER_REQUESTED_CC_VERSION})"
+            fi
             KYBER_CC_INSTALL_OUTCOME="installed"
         else
             echo "[kyber] CC install: FAILED — claude --version reports '${_installed:-unknown}', not ${KYBER_REQUESTED_CC_VERSION}; falling back to baked-in ${KYBER_RUNTIME_DEFAULT_VERSION:-unset} (mismatch surfaced via the runtime report / PWA badge)"
@@ -777,6 +782,45 @@ LAUNCH_DIR="${HOME:-/home/kyber}"
 if [ -n "${REPO_DIR:-}" ] && [ -d "$REPO_DIR" ]; then
     LAUNCH_DIR="$REPO_DIR"
 fi
+
+# Claude Code's workspace-trust decision is keyed by the exact launch path in
+# ~/.claude.json. The old boot path wrote trust for $PWD near the top of this
+# script (normally "/"), before identity-repo setup resolved REPO_DIR, and then
+# launched Claude from /home/kyber/dev/<repo>. Fresh agents therefore stopped
+# at an interactive trust prompt despite Kyber owning and cloning that repo.
+#
+# Merge instead of replacing: Claude stores session/UI state alongside these
+# keys on the durable root. Re-assert on every boot so existing PVCs missing the
+# entry self-heal, while preserving every unrelated field Claude has written.
+CLAUDE_STATE="${HOME:-/home/kyber}/.claude.json"
+CLAUDE_STATE_TMP="${CLAUDE_STATE}.kyber-tmp"
+# Claude owns this durable file and may leave it truncated after an abrupt pod
+# stop. Preserve the bad bytes for diagnosis, then rebuild the minimum valid
+# object so a UI-state file cannot permanently crash-loop the runtime.
+if ! jq empty "$CLAUDE_STATE" >/dev/null 2>&1; then
+    CLAUDE_STATE_CORRUPT="${CLAUDE_STATE}.corrupt"
+    cp "$CLAUDE_STATE" "$CLAUDE_STATE_CORRUPT" 2>/dev/null || true
+    printf '{}\n' > "$CLAUDE_STATE"
+    echo "[kyber] WARNING: recovered invalid $CLAUDE_STATE (saved as $CLAUDE_STATE_CORRUPT)" >&2
+fi
+if ! jq --arg launch_dir "$LAUNCH_DIR" '
+    .hasCompletedOnboarding = true
+    | .projects = (.projects // {})
+    | .projects[$launch_dir] = ((.projects[$launch_dir] // {}) + {
+        hasTrustDialogAccepted: true,
+        hasCompletedProjectOnboarding: true
+      })
+  ' "$CLAUDE_STATE" > "$CLAUDE_STATE_TMP"; then
+    rm -f "$CLAUDE_STATE_TMP"
+    echo "[kyber] FATAL: could not trust Claude Code launch directory $LAUNCH_DIR" >&2
+    exit 2
+fi
+mv "$CLAUDE_STATE_TMP" "$CLAUDE_STATE"
+chmod 600 "$CLAUDE_STATE"
+if [ "$(id -u)" -eq 0 ]; then
+    chown kyber:kyber "$CLAUDE_STATE"
+fi
+echo "[kyber] Claude Code workspace trusted: $LAUNCH_DIR"
 
 # Dump a re-runnable launch script so POST /restart-session (#128) can
 # kill-tmux + relaunch in place without rolling the pod. The heredoc is

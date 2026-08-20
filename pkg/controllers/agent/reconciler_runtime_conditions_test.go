@@ -66,6 +66,19 @@ func TestRuntimeStatusConditions_VersionMismatch_FalseWhenInstalledMatchesReques
 	}
 }
 
+func TestRuntimeStatusConditions_VersionMismatch_FalseWhenLatestInstallSucceeded(t *testing.T) {
+	r := &AgentReconciler{}
+	satisfied := true
+	agent := runtimeAgent(kyberv1.AgentRuntimeStatus{
+		InstalledVersion: "2.9.1", RequestedVersion: "latest", RequestedSatisfied: &satisfied,
+	})
+	_ = r.reconcileRuntimeStatusConditions(agent)
+	cond := meta.FindStatusCondition(agent.Status.Conditions, kyberv1.AgentConditionRuntimeVersionMismatch)
+	if cond == nil || cond.Status != metav1.ConditionFalse {
+		t.Fatalf("condition = %+v, want False for a successful latest install", cond)
+	}
+}
+
 func TestRuntimeStatusConditions_VersionMismatch_TrueWhenDiffers(t *testing.T) {
 	r := &AgentReconciler{}
 	agent := runtimeAgent(kyberv1.AgentRuntimeStatus{

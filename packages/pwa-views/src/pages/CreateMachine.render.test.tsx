@@ -57,6 +57,7 @@ describe('CreateMachine (mock provider)', () => {
     // Explainer copy mentions the carve-out so the operator knows why.
     expect(screen.getByText(/full capacity of this node/i)).toBeInTheDocument()
     expect(screen.getByText(/platformReservation/i)).toBeInTheDocument()
+    expect(screen.getByText(/kyber\.io\/machine=/i)).toBeInTheDocument()
   })
 
   it('submits {name, provider:"mock"} with no capacity field', async () => {

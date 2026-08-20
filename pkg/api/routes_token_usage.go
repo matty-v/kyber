@@ -46,11 +46,16 @@ func (s *Server) handleTokenUsageGet(w http.ResponseWriter, r *http.Request, nam
 	// concurrent reader (e.g. the agents-list serve site, which now also
 	// resolves). The shallow copy is safe — every mutated field is a value.
 	resolved := *snap
-	limit, known := s.resolveContextWindow(r.Context(), resolved.Model)
+	limit, known := s.resolveContextWindow(r.Context(), name, resolved.Model)
 	// Codex reports the authoritative per-turn context window in its rollout
 	// JSONL. Use it when the server has no configured/detected value.
 	if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {
 		limit, known = resolved.Tokens.Limit, true
+	}
+	if !known {
+		writeJSONError(w, http.StatusServiceUnavailable, "context_window_unavailable",
+			"authoritative context-window metadata is unavailable for model '"+resolved.Model+"'")
+		return
 	}
 	resolved.Tokens.Limit = limit
 	resolved.ContextWindowKnown = known

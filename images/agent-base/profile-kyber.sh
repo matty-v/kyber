@@ -2,8 +2,8 @@
 # Available to root and to the kyber user. Aliases assume sudo is available
 # (the kyber user has passwordless sudo per agent-base Dockerfile).
 
-alias agent='sudo nsenter --target 1 --mount --uts --ipc --net --pid --root --wd -- runuser -u kyber -- tmux attach -t agent'
-alias peek='sudo nsenter --target 1 --mount --uts --ipc --net --pid --root --wd -- runuser -u kyber -- tmux attach -t agent -r'
+alias agent='sudo nsenter --target 1 --mount --uts --ipc --net --pid --root --wd -- runuser -u kyber -- tmux -u attach -t agent'
+alias peek='sudo nsenter --target 1 --mount --uts --ipc --net --pid --root --wd -- runuser -u kyber -- tmux -u attach -t agent -r'
 alias as-agent='sudo nsenter --target 1 --mount --uts --ipc --net --pid --root --wd -- runuser -u kyber -- bash -l'
 creds() {
     if [ -f /home/kyber/.codex/auth.json ]; then

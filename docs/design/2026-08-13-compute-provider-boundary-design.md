@@ -119,6 +119,11 @@ explicitly labelled `kyber.io/machine=<machine-name>`, with the existing
 single-node fallback retained for standalone installations. It advertises no
 create, start, stop, interruption, or replacement capability.
 
+The first Machine may use that single-node fallback. Every additional static
+Machine requires its own Ready node with the matching label before the Machine
+is created, preventing two logical Machines from attaching to and double-counting
+the same Kubernetes node.
+
 The current public `mock` value remains a compatibility alias for `static`
 during migration.
 

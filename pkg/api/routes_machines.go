@@ -375,7 +375,29 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("provider=%s: machineType/diskSizeGb/spot/zone must be absent", provider), "zone")
 			return
 		}
-		// Auto-fill capacity from the cluster's first Ready node when omitted
+		var existing kyberv1.MachineList
+		if err := s.K8sClient.List(r.Context(), &existing,
+			client.InNamespace(s.Namespace)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error",
+				"list machines: "+err.Error())
+			return
+		}
+
+		// The first static Machine retains the standalone single-node fallback.
+		// Every additional Machine must have its own explicitly labelled Ready
+		// node; otherwise two logical Machines could silently attach to the same
+		// node and double-count its capacity.
+		var selectedNode *corev1.Node
+		if hasStaticMachine(existing.Items) {
+			var nodeErr error
+			selectedNode, nodeErr = pickReadyNodeForMachine(r.Context(), s.K8sClient, req.Name)
+			if nodeErr != nil {
+				writeJSONError(w, http.StatusConflict, "conflict", nodeErr.Error())
+				return
+			}
+		}
+
+		// Auto-fill capacity from the selected Ready node when omitted
 		// (kyber#240). On standalone the operator shouldn't have to translate
 		// `node.status.allocatable` into a number — the API does that math.
 		// The controller's ComputeAssignable then subtracts the platform
@@ -384,7 +406,11 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		var cpuQ, memQ, diskQ resource.Quantity
 		var err error
 		if req.Capacity == nil {
-			node, nodeErr := pickStandaloneNode(r.Context(), s.K8sClient)
+			node := selectedNode
+			var nodeErr error
+			if node == nil {
+				node, nodeErr = pickStandaloneNode(r.Context(), s.K8sClient)
+			}
 			if nodeErr != nil {
 				writeJSONError(w, http.StatusInternalServerError, "internal_error",
 					"auto-detect node capacity: "+nodeErr.Error())
@@ -417,25 +443,6 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 						"capacity.ephemeralStorage: "+err.Error(), "capacity.ephemeralStorage")
 					return
 				}
-			}
-		}
-		// NOTE: list-then-create is not race-safe. Two simultaneous POSTs can both
-		// see "no existing mock machine" and both succeed. Acceptable for the
-		// single-operator standalone shape; revisit if Kyber ever grows multi-user
-		// concurrent admin.
-		var existing kyberv1.MachineList
-		if err := s.K8sClient.List(r.Context(), &existing,
-			client.InNamespace(s.Namespace)); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "internal_error",
-				"list machines: "+err.Error())
-			return
-		}
-		for i := range existing.Items {
-			if existing.Items[i].Spec.Provider == kyberv1.MachineProviderMock ||
-				existing.Items[i].Spec.Provider == kyberv1.MachineProviderStatic {
-				writeJSONError(w, http.StatusConflict, "conflict",
-					fmt.Sprintf("only one Machine is allowed when provider=%s (found %q)", provider, existing.Items[i].Name))
-				return
 			}
 		}
 		spec.Capacity = kyberv1.MachineCapacity{CPU: cpuQ, Memory: memQ, EphemeralStorage: diskQ}
@@ -730,7 +737,7 @@ func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, na
 // POST /api/v1/machines (provider=mock) to auto-fill spec.capacity from
 // node.status.allocatable when the request omits capacity. Standalone is
 // expected to be a single-node cluster, so "first Ready" is unambiguous.
-// Errors when no nodes exist or none are Ready (caller surfaces 500).
+// Errors when no unassigned nodes exist or none are Ready (caller surfaces 500).
 func pickStandaloneNode(ctx context.Context, c client.Client) (*corev1.Node, error) {
 	var nodes corev1.NodeList
 	if err := c.List(ctx, &nodes); err != nil {
@@ -738,6 +745,9 @@ func pickStandaloneNode(ctx context.Context, c client.Client) (*corev1.Node, err
 	}
 	for i := range nodes.Items {
 		n := &nodes.Items[i]
+		if n.Labels["kyber.io/machine"] != "" {
+			continue
+		}
 		for _, cond := range n.Status.Conditions {
 			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
 				return n, nil
@@ -748,4 +758,30 @@ func pickStandaloneNode(ctx context.Context, c client.Client) (*corev1.Node, err
 		return nil, fmt.Errorf("no nodes in cluster")
 	}
 	return nil, fmt.Errorf("no Ready nodes (have %d nodes total)", len(nodes.Items))
+}
+
+func hasStaticMachine(machines []kyberv1.Machine) bool {
+	for i := range machines {
+		if machines[i].Spec.Provider == kyberv1.MachineProviderMock ||
+			machines[i].Spec.Provider == kyberv1.MachineProviderStatic {
+			return true
+		}
+	}
+	return false
+}
+
+func pickReadyNodeForMachine(ctx context.Context, c client.Client, machineName string) (*corev1.Node, error) {
+	var nodes corev1.NodeList
+	if err := c.List(ctx, &nodes, client.MatchingLabels{"kyber.io/machine": machineName}); err != nil {
+		return nil, fmt.Errorf("list nodes for Machine %q: %w", machineName, err)
+	}
+	for i := range nodes.Items {
+		n := &nodes.Items[i]
+		for _, cond := range n.Status.Conditions {
+			if cond.Type == corev1.NodeReady && cond.Status == corev1.ConditionTrue {
+				return n, nil
+			}
+		}
+	}
+	return nil, fmt.Errorf("additional static Machine %q requires a distinct Ready node labelled kyber.io/machine=%s", machineName, machineName)
 }

@@ -63,6 +63,9 @@ export interface Agent {
   // Optional while older Kyber control planes roll forward.
   authType?: AgentAuthType
   model: string
+  // Concrete model observed from the running agent. This is populated after
+  // the first response when model is empty and the harness chose its default.
+  currentModel?: string
   scaling: AgentScalingMode
   resources: AgentResources
   status: AgentStatus
@@ -339,7 +342,7 @@ export interface CreateAgentRequest {
   name: string
   machine: string
   runtime: string
-  model: string
+  model?: string
   scaling?: AgentScalingMode
   resources?: Partial<AgentResources>
   identity?: {
@@ -737,6 +740,10 @@ export interface AvailableResponse {
   codexVersions?: string[]
   models: AvailableModel[]
   codexModels?: AvailableModel[]
+}
+
+export interface AgentModelsResponse {
+  models: AvailableModel[]
 }
 
 // ---- Per-agent comms channels (kyber#664) ----

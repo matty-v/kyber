@@ -173,6 +173,18 @@ export function useStartAgent() {
   })
 }
 
+export function useAgentModels(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'models'],
+    queryFn: () => api.getAgentModels(name),
+    enabled: enabled && name.length > 0,
+    retry: 1,
+    staleTime: 5 * 60 * 1000,
+  })
+}
+
 export function useStopAgent() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

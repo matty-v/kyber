@@ -601,37 +601,54 @@ func TestCreateMachine_GCE_RejectsCapacity(t *testing.T) {
 	}
 }
 
-// TestCreateMachine_Mock_RejectsSecondMachine verifies that a second provider=mock
-// machine returns 409 Conflict.
-func TestCreateMachine_Mock_RejectsSecondMachine(t *testing.T) {
-	h := buildMachineHandler(t, mustNewScheme(t))
-
-	// First mock machine — should succeed.
-	req1 := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
-		"name":     "mock-worker-1",
-		"provider": "mock",
-		"capacity": map[string]interface{}{"cpu": "4", "memory": "16Gi"},
-	})
-	rr1 := httptest.NewRecorder()
-	h.ServeHTTP(rr1, req1)
-	if rr1.Code != http.StatusCreated {
-		t.Fatalf("first mock machine: want 201, got %d: %s", rr1.Code, rr1.Body.String())
+func TestCreateMachine_StaticAdditionalNodeBinding(t *testing.T) {
+	tests := []struct {
+		name       string
+		nodeReady  bool
+		wantStatus int
+	}{
+		{name: "labelled Ready node", nodeReady: true, wantStatus: http.StatusCreated},
+		{name: "labelled node not Ready", nodeReady: false, wantStatus: http.StatusConflict},
 	}
 
-	// Second mock machine — should be rejected.
-	req2 := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
-		"name":     "mock-worker-2",
-		"provider": "mock",
-		"capacity": map[string]interface{}{"cpu": "2", "memory": "8Gi"},
-	})
-	rr2 := httptest.NewRecorder()
-	h.ServeHTTP(rr2, req2)
-	if rr2.Code != http.StatusConflict {
-		t.Fatalf("second mock machine: want 409, got %d: %s", rr2.Code, rr2.Body.String())
-	}
-	body := rr2.Body.String()
-	if !strings.Contains(body, "one Machine") {
-		t.Errorf("want error body to contain %q, got: %s", "one Machine", body)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			condition := corev1.ConditionFalse
+			if tc.nodeReady {
+				condition = corev1.ConditionTrue
+			}
+			existing := &kyberv1.Machine{
+				ObjectMeta: metav1.ObjectMeta{Name: "mock-worker-1", Namespace: "kyber-system"},
+				Spec:       kyberv1.MachineSpec{Provider: kyberv1.MachineProviderMock},
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "worker-node-2",
+					Labels: map[string]string{"kyber.io/machine": "mock-worker-2"},
+				},
+				Status: corev1.NodeStatus{
+					Allocatable: corev1.ResourceList{
+						corev1.ResourceCPU:              apiresource.MustParse("2"),
+						corev1.ResourceMemory:           apiresource.MustParse("8Gi"),
+						corev1.ResourceEphemeralStorage: apiresource.MustParse("20Gi"),
+					},
+					Conditions: []corev1.NodeCondition{{Type: corev1.NodeReady, Status: condition}},
+				},
+			}
+			h := buildMachineHandler(t, mustNewScheme(t), existing, node)
+			req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+				"name": "mock-worker-2", "provider": "mock",
+			})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d; body=%s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			if !tc.nodeReady && !strings.Contains(rr.Body.String(), "kyber.io/machine=mock-worker-2") {
+				t.Errorf("error should explain the required node label; got %s", rr.Body.String())
+			}
+		})
 	}
 }
 
