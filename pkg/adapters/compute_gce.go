@@ -423,12 +423,11 @@ func (g *GCEAdapter) Reconcile(
 		return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
 
 	case DesiredOnline:
-		if (status == "TERMINATED" || status == "STOPPED") && desired.Interruptible {
-			if _, err := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{Project: g.ProjectID, Zone: zone, Instance: name}); err != nil && !isNotFoundError(err) {
-				return CapacityObservation{}, fmt.Errorf("deleting interrupted GCE capacity %s: %w", name, err)
-			}
-			return CapacityObservation{State: CapacityRecovering, Reason: ReasonInterrupted, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
-		}
+		// TERMINATED is also the normal state after an operator stops a Spot VM.
+		// Reconcile cannot infer preemption from that status alone, so resuming
+		// must preserve the VM and boot disk. Provider-owned replacement remains
+		// on the legacy Machine state-machine path until observation and mutation
+		// are split in this declarative adapter.
 		if status == "TERMINATED" || status == "STOPPED" || status == "SUSPENDED" {
 			if _, err := g.client.Start(ctx, &computepb.StartInstanceRequest{Project: g.ProjectID, Zone: zone, Instance: name}); err != nil {
 				return CapacityObservation{}, fmt.Errorf("starting GCE capacity %s: %w", name, err)

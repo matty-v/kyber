@@ -41,6 +41,8 @@ type fakeGCEClient struct {
 	// deleteResponses drives successive Delete calls (consumed in order).
 	deleteResponses []deleteResult
 	deleteCallCount int
+	startResponses  []startResult
+	startCallCount  int
 
 	aggregatedPairs []compute.InstancesScopedListPair
 }
@@ -54,6 +56,10 @@ type getResult struct {
 	err  error
 }
 type deleteResult struct {
+	op  gceOperation
+	err error
+}
+type startResult struct {
 	op  gceOperation
 	err error
 }
@@ -87,7 +93,12 @@ func (f *fakeGCEClient) Delete(_ context.Context, _ *computepb.DeleteInstanceReq
 
 // Stub methods not exercised by these tests.
 func (f *fakeGCEClient) Start(_ context.Context, _ *computepb.StartInstanceRequest) (gceOperation, error) {
-	return &fakeOp{}, nil
+	if f.startCallCount >= len(f.startResponses) {
+		return nil, fmt.Errorf("unexpected Start call #%d", f.startCallCount+1)
+	}
+	r := f.startResponses[f.startCallCount]
+	f.startCallCount++
+	return r.op, r.err
 }
 func (f *fakeGCEClient) Stop(_ context.Context, _ *computepb.StopInstanceRequest) (gceOperation, error) {
 	return &fakeOp{}, nil
@@ -157,37 +168,28 @@ func TestGCECapacityProviderCreateIsBounded(t *testing.T) {
 	}
 }
 
-func TestGCECapacityProviderOwnsInterruptibleReplacement(t *testing.T) {
-	deleteOp := &fakeOp{}
-	insertOp := &fakeOp{}
+func TestGCECapacityProviderResumesStoppedInterruptibleInstanceWithoutDeleting(t *testing.T) {
+	startOp := &fakeOp{}
 	fake := &fakeGCEClient{
-		getResponses: []getResult{
-			{inst: gceTestInstance("TERMINATED", true)},
-			{err: err404()},
-			{inst: gceTestInstance("RUNNING", true)},
-		},
-		deleteResponses: []deleteResult{{op: deleteOp}},
-		insertResponses: []insertResult{{op: insertOp}},
+		getResponses:   []getResult{{inst: gceTestInstance("TERMINATED", true)}},
+		startResponses: []startResult{{op: startOp}},
 	}
 	provider := &GCEAdapter{ProjectID: "test-project", client: fake}
 	desired := DesiredMachine{Availability: DesiredOnline, Profile: "n2-standard-4", DiskSizeGb: 50, Interruptible: true, Location: "us-central1-a"}
 	ref := ProviderRef("gce://test-project/us-central1-a/kyber-worker")
 
-	for i, want := range []AvailabilityState{CapacityRecovering, CapacityPending, CapacityAvailable} {
-		got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, ref)
-		if err != nil {
-			t.Fatalf("Reconcile %d: %v", i+1, err)
-		}
-		if got.State != want {
-			t.Fatalf("Reconcile %d state = %q, want %q", i+1, got.State, want)
-		}
-		ref = got.ProviderRef
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, ref)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
 	}
-	if deleteOp.waitCalls != 0 || insertOp.waitCalls != 0 {
-		t.Fatalf("operation waits = delete %d, insert %d; want zero", deleteOp.waitCalls, insertOp.waitCalls)
+	if got.State != CapacityRecovering || got.Reason != ReasonRepairing {
+		t.Fatalf("observation = %+v, want Recovering/Repairing", got)
 	}
-	if fake.deleteCallCount != 1 || fake.insertCallCount != 1 {
-		t.Fatalf("calls = delete %d insert %d, want one each", fake.deleteCallCount, fake.insertCallCount)
+	if fake.startCallCount != 1 || fake.deleteCallCount != 0 || fake.insertCallCount != 0 {
+		t.Fatalf("calls = start %d delete %d insert %d, want 1/0/0", fake.startCallCount, fake.deleteCallCount, fake.insertCallCount)
+	}
+	if startOp.waitCalls != 0 {
+		t.Fatalf("operation Wait called %d times, want 0", startOp.waitCalls)
 	}
 }
 

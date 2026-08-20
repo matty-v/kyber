@@ -16,8 +16,10 @@
 - [x] Machine reconciler bridge routes matching declarative providers through
   Online, Offline, and Deleted intent while preserving legacy direct-GCE and
   test-double behavior.
-- [x] Direct GCE provider migration with bounded operations, stable opaque
-  references, legacy numeric-ID adoption, and provider-owned spot replacement.
+- [ ] Direct GCE controller migration. A bounded declarative adapter and stable
+  references exist for migration testing, but production deliberately retains
+  the legacy path until observation is non-mutating and operator stop/start is
+  unambiguous from provider preemption.
 - [x] Neutral additive CRD/API fields, generated schema, legacy conflict
   validation, dual-read/write compatibility, and PWA contract types.
 - [x] Provider capability/profile wiring, portable preflight, and opaque

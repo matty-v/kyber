@@ -814,6 +814,14 @@ func (r *MachineReconciler) executeAction(
 }
 
 func (r *MachineReconciler) capacityProviderFor(machine *kyberv1.Machine) adapters.CapacityProvider {
+	// Direct GCE deliberately retains the legacy action-oriented path. Its
+	// state machine distinguishes an operator stop/start from provider-driven
+	// preemption and performs stale k3s Node/password cleanup before replacement.
+	// The declarative GCE adapter is not safe to adopt until observation is
+	// separated from mutation and those invariants have equivalent coverage.
+	if machine.Spec.Provider == kyberv1.MachineProviderGCE {
+		return nil
+	}
 	if r.CapacityProvider != nil {
 		if r.CapacityProvider.Type() == string(machine.Spec.Provider) {
 			return r.CapacityProvider
@@ -872,7 +880,8 @@ func (r *MachineReconciler) reconcileCapacity(
 
 	ref := string(observation.ProviderRef)
 	observedAvailability := kyberv1.MachineAvailability(observation.State)
-	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.ResolvedProfile == nil || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP {
+	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP {
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
 		// Dual-write during the compatibility window. Legacy readers continue

@@ -68,10 +68,13 @@ testable without a cluster. Authoritative transition table:
   provider-native status strings, and are constructed through the registry in
   `pkg/adapters/compute_registry.go`. Explicit provider initialization fails
   closed — never fall back from a broken real provider to mock behavior. The
-  direct-GCE `CapacityProvider` persists `gce://<project>/<zone>/<name>` as an
-  opaque reference and initiates cloud operations without waiting for them;
-  subsequent reconciles observe convergence. It adopts legacy numeric instance
-  IDs and rewrites them through the compatibility dual-write path.
+  A declarative direct-GCE `CapacityProvider` implementation exists for
+  migration testing, but the Machine reconciler deliberately keeps production
+  GCE Machines on the legacy action-oriented path. That path preserves the
+  distinction between operator stop/start and Spot preemption plus the stale
+  k3s Node/password cleanup required before replacement. Do not route GCE
+  through `CapacityProvider` until observation is non-mutating and those
+  invariants have equivalent regression coverage.
   Operator discovery is capability-driven through `/api/v1/config`,
   `POST /api/v1/machines/preflight`, and `GET /api/v1/machine-candidates`;
   candidate IDs are opaque, and platform, unready, labelled, or already

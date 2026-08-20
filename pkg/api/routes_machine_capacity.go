@@ -101,11 +101,24 @@ func (s *Server) handleMachinePreflight(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	mode := kyberv1.MachineManagementManaged
-	if !capabilities.CanProvision {
+	if req.ManagementMode != "" {
+		mode = kyberv1.MachineManagementMode(req.ManagementMode)
+	} else if !capabilities.CanProvision {
 		mode = kyberv1.MachineManagementExternal
 	}
-	if req.ManagementMode != "" && req.ManagementMode != string(mode) {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "managementMode is not supported by this installation", "managementMode")
+	switch mode {
+	case kyberv1.MachineManagementManaged:
+		if !capabilities.CanProvision {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "managed capacity is not enabled by this installation", "managementMode")
+			return
+		}
+	case kyberv1.MachineManagementExternal:
+		if !capabilities.CanDiscoverExisting {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "existing capacity discovery is not supported by this installation", "managementMode")
+			return
+		}
+	default:
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "managementMode must be Managed or External", "managementMode")
 		return
 	}
 	desired := adapters.DesiredMachine{

@@ -29,6 +29,15 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
+func TestCapacityProviderForKeepsDirectGCEOnLegacyPath(t *testing.T) {
+	provider := &adapters.GCEAdapter{}
+	r := &MachineReconciler{ComputeAdapter: provider, CapacityProvider: provider}
+	machine := &kyberv1.Machine{Spec: kyberv1.MachineSpec{Provider: kyberv1.MachineProviderGCE}}
+	if got := r.capacityProviderFor(machine); got != nil {
+		t.Fatalf("capacityProviderFor(GCE) = %T, want nil legacy path", got)
+	}
+}
+
 // envtestBinPath resolves the envtest binary path from the KUBEBUILDER_ASSETS env var
 // or falls back to the pre-installed 1.31.0 binaries.
 func envtestBinPath() string {

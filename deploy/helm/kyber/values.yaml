@@ -725,25 +725,13 @@ compute:
       - type: n2-standard-16
         cpu: "16"
         memory: "64Gi"
-  # Observation-only GKE integration. Each Machine initially maps by name to
-  # an installer-managed node pool in this cluster; Kyber does not resize or
-  # delete pools until managed mode is explicitly enabled in a later release.
+  # GKE integration is observation-only by default. Supplying one or more
+  # profiles explicitly enables managed node-pool create/resize/delete.
   gke:
     project: ""
     location: ""
     cluster: ""
-    profiles:
-      - id: standard
-        displayName: Standard
-        description: Good default for one or two typical agents
-        cpu: "4"
-        memory: 16Gi
-        availabilityClasses: [reliable, costOptimized]
-        recommended: true
-        machineType: e2-standard-4
-        diskSizeGb: 200
-        diskType: pd-balanced
-        imageType: UBUNTU_CONTAINERD
+    profiles: []
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.
 # Obtain these from Terraform outputs (k3s_join_token, k3s_server_url).

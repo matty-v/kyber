@@ -116,7 +116,7 @@ func TestGKEProviderReferenceIsClusterScoped(t *testing.T) {
 }
 
 func TestGKEManagedLifecycleRequiresOwnership(t *testing.T) {
-	profile := GKEProfile{ID: "standard", MachineType: "e2-standard-4", DiskSizeGB: 200, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD"}
+	profile := GKEProfile{ID: "standard", MachineType: "e2-standard-4", DiskSizeGB: 200, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable", "costOptimized"}}
 	provider := func(client *fakeGKENodePoolsClient) *GKEAdapter {
 		return &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, profiles: map[string]GKEProfile{"standard": profile}}
 	}
@@ -161,6 +161,20 @@ func TestGKEObservationOnlyCapabilities(t *testing.T) {
 	}
 	if got.CanProvision || !got.CanDiscoverExisting || got.SuspendMode != SuspendUnsupported || got.DeletionMode != UnregisterOnly {
 		t.Fatalf("Capabilities = %+v", got)
+	}
+}
+
+func TestGKEValidateRejectsUnsupportedAvailabilityClass(t *testing.T) {
+	provider := &GKEAdapter{profiles: map[string]GKEProfile{"reliable-only": {
+		ID: "reliable-only", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2",
+		DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD",
+		AvailabilityClasses: []string{"reliable"},
+	}}}
+	err := provider.Validate(context.Background(), DesiredMachine{
+		Availability: DesiredOnline, Profile: "reliable-only", Managed: true, Interruptible: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "costOptimized") {
+		t.Fatalf("Validate error = %v, want unsupported costOptimized class", err)
 	}
 }
 
@@ -225,6 +239,7 @@ func TestGKELiveManagedLifecycle(t *testing.T) {
 	provider.profiles = map[string]GKEProfile{"live-small": {
 		ID: "live-small", CPU: "2", Memory: "2Gi", MachineType: "e2-small",
 		DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD",
+		AvailabilityClasses: []string{"reliable"},
 	}}
 	resourceName := provider.resourceName(poolName)
 	if _, err := provider.client.Get(context.Background(), resourceName); err == nil || !isGKENotFound(err) {

@@ -333,6 +333,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	switch kyberv1.MachineProvider(req.Provider) {
 	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderGKE, kyberv1.MachineProviderFake:
 		provider := req.Provider
+		externalGKE := provider == string(kyberv1.MachineProviderGKE) && req.ManagementMode == string(kyberv1.MachineManagementExternal)
 		profile := req.Profile
 		if profile == "" {
 			profile = req.MachineType
@@ -370,7 +371,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			}
 			interruptible = classInterruptible
 		}
-		if req.ManagementMode != "" && req.ManagementMode != string(kyberv1.MachineManagementManaged) {
+		if req.ManagementMode != "" && req.ManagementMode != string(kyberv1.MachineManagementManaged) && !externalGKE {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "managed providers require managementMode=Managed", "managementMode")
 			return
 		}
@@ -378,6 +379,16 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				fmt.Sprintf("provider=%s: capacity is derived from machineType; do not send it", provider), "capacity")
 			return
+		}
+		if externalGKE {
+			if profile != "" || req.DiskSizeGb != 0 || req.Interruptible != nil || req.Spot || req.AvailabilityClass != "" {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "external GKE capacity does not accept profile, disk, or availability settings", "managementMode")
+				return
+			}
+			spec.Location = location
+			spec.Zone = location
+			spec.ManagementMode = kyberv1.MachineManagementExternal
+			break
 		}
 		if profile == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -396,6 +407,10 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		}
 		catalog := activeMachineCatalog(s.GCEVMTypeCatalog)
 		profileCapacity, ok := catalog[profile]
+		validProfiles := make([]string, 0, len(catalog))
+		for candidate := range catalog {
+			validProfiles = append(validProfiles, candidate)
+		}
 		if provider == string(kyberv1.MachineProviderGKE) && s.CapacityProvider != nil {
 			providerProfiles, profileErr := s.CapacityProvider.Profiles(r.Context())
 			if profileErr != nil {
@@ -403,7 +418,9 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			ok = false
+			validProfiles = validProfiles[:0]
 			for _, candidate := range providerProfiles {
+				validProfiles = append(validProfiles, candidate.ID)
 				if candidate.ID != profile {
 					continue
 				}
@@ -419,13 +436,9 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if !ok {
-			validTypes := make([]string, 0, len(catalog))
-			for t := range catalog {
-				validTypes = append(validTypes, t)
-			}
-			sort.Strings(validTypes)
+			sort.Strings(validProfiles)
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				fmt.Sprintf("unknown profile %q; valid profiles: %s", profile, strings.Join(validTypes, ", ")),
+				fmt.Sprintf("unknown profile %q; valid profiles: %s", profile, strings.Join(validProfiles, ", ")),
 				"profile")
 			return
 		}

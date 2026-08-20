@@ -157,8 +157,23 @@ func (g *GKEAdapter) Locations(context.Context) ([]string, error) {
 
 func (g *GKEAdapter) Validate(_ context.Context, desired DesiredMachine) error {
 	if desired.Managed {
-		if _, ok := g.profiles[desired.Profile]; !ok {
+		profile, ok := g.profiles[desired.Profile]
+		if !ok {
 			return fmt.Errorf("validating GKE capacity: unknown profile %q", desired.Profile)
+		}
+		requestedClass := "reliable"
+		if desired.Interruptible {
+			requestedClass = "costOptimized"
+		}
+		supported := false
+		for _, class := range profile.AvailabilityClasses {
+			if class == requestedClass {
+				supported = true
+				break
+			}
+		}
+		if !supported {
+			return fmt.Errorf("validating GKE capacity: profile %q does not support availability class %q", desired.Profile, requestedClass)
 		}
 	}
 	switch desired.Availability {

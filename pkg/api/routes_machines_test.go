@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/messagebuffer"
@@ -76,6 +77,47 @@ func TestMachines_Create_HappyPath(t *testing.T) {
 	}
 	if resp.Spec.MachineType != "n1-standard-4" {
 		t.Errorf("MachineType: got %q", resp.Spec.MachineType)
+	}
+}
+
+func TestMachinesCreateExternalGKECapacity(t *testing.T) {
+	h := buildMachineHandler(t, mustNewScheme(t))
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "agents", "provider": "gke", "managementMode": "External",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got api.MachineResponse
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Spec.ManagementMode != "External" || got.Spec.Profile != "" {
+		t.Fatalf("spec = %+v", got.Spec)
+	}
+}
+
+func TestMachinesCreateUnknownGKEProfileListsOnlyProviderProfiles(t *testing.T) {
+	s := &api.Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(),
+		APIKey:    testAPIKey, Namespace: "kyber-system", ComputeProvider: "gke",
+		CapacityProvider: adapters.NewFakeComputeAdapter(),
+		GCEVMTypeCatalog: api.DefaultGCEVMTypeCatalog(),
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "worker", "provider": "gke", "managementMode": "Managed",
+		"profile": "unknown", "location": "us-central1-a",
+	})
+	rr := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "valid profiles: e2-small") || strings.Contains(body, "n2-standard") {
+		t.Fatalf("unexpected profile error: %s", body)
 	}
 }
 

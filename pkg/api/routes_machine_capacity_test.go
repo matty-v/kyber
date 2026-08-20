@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,18 @@ import (
 	"github.com/matty-v/kyber/pkg/adapters"
 	"github.com/matty-v/kyber/pkg/api"
 )
+
+type discoverableFakeProvider struct {
+	*adapters.FakeComputeAdapter
+}
+
+func (p *discoverableFakeProvider) Capabilities(context.Context) (adapters.Capabilities, error) {
+	return adapters.Capabilities{
+		CanProvision: true, CanDiscoverExisting: true,
+		SuspendMode: adapters.SuspendCapacity, DeletionMode: adapters.DeleteCapacity,
+		SupportsReliable: true, SupportsInterruptible: true, SupportsLocations: true,
+	}, nil
+}
 
 func TestMachinePreflightResolvesNeutralIntent(t *testing.T) {
 	s := &api.Server{
@@ -36,6 +49,29 @@ func TestMachinePreflightResolvesNeutralIntent(t *testing.T) {
 	}
 	if !got.Valid || got.Resolved.Profile != "e2-small" || got.Resolved.AvailabilityClass != "costOptimized" || got.Resolved.ManagementMode != "Managed" {
 		t.Fatalf("resolved = %+v", got.Resolved)
+	}
+}
+
+func TestMachinePreflightAllowsExplicitExternalMode(t *testing.T) {
+	s := &api.Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(),
+		APIKey:    testAPIKey, Namespace: "kyber-system", ComputeProvider: "gke",
+		CapacityProvider: &discoverableFakeProvider{FakeComputeAdapter: adapters.NewFakeComputeAdapter()},
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines/preflight", map[string]interface{}{
+		"provider": "gke", "managementMode": "External",
+	})
+	rr := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("preflight: want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got api.MachinePreflightResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Resolved.ManagementMode != "External" {
+		t.Fatalf("managementMode = %q, want External", got.Resolved.ManagementMode)
 	}
 }
 
