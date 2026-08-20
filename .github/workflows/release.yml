@@ -539,21 +539,39 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
-      - name: Check if pwa-views version already published
+      - name: Check whether this pwa-views version should publish
         id: check_published
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GHCR_PAT }}
           PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
         run: |
-          if npm view "@matty-v/kyber-pwa-views@${PWA_VERSION}" version >/dev/null 2>&1; then
-            echo "already=true" >> "$GITHUB_OUTPUT"
-            echo "@matty-v/kyber-pwa-views@${PWA_VERSION} already published — skipping tag push"
+          # Shared decision with auto-publish-pwa-views.yml: publish only a
+          # version strictly newer than the registry's latest. The old
+          # version-exact `npm view` check let a release run against an older
+          # SHA (re-run, ad-hoc tag) republish a stale unpublished version and
+          # move the registry's latest dist-tag BACKWARDS — which bump-holocron
+          # would then auto-merge as a downgrade.
+          LATEST="$(npm view @matty-v/kyber-pwa-views version 2>/dev/null || echo '')"
+          if [ -f scripts/pwa-views-should-tag.sh ]; then
+            DECISION="$(bash scripts/pwa-views-should-tag.sh "$PWA_VERSION" "$LATEST")"
           else
+            # Release SHA predates the shared script — fall back to the old
+            # version-exact check.
+            if npm view "@matty-v/kyber-pwa-views@${PWA_VERSION}" version >/dev/null 2>&1; then
+              DECISION="skip: ${PWA_VERSION} already published"
+            else
+              DECISION="tag"
+            fi
+          fi
+          echo "pwa=${PWA_VERSION} published-latest=${LATEST:-<none>} decision=${DECISION}"
+          if [ "${DECISION%%[: ]*}" = "tag" ]; then
             echo "already=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "already=true" >> "$GITHUB_OUTPUT"
           fi
 
       # Mint a fresh per-run App token — gated identically to the push below so
@@ -584,6 +602,14 @@ jobs:
             exit 1
           fi
           PVT="pwa-views/v${PWA_VERSION}"
+          if git ls-remote --tags origin "refs/tags/${PVT}" | grep -q .; then
+            # Tagged but unpublished (the 0.27.3 state). Don't recreate it here
+            # — auto-publish-pwa-views.yml owns that recovery (re-tag at main
+            # HEAD, current workflow definition); a bare `git tag -a` on an
+            # existing tag would just die with exit 128 anyway.
+            echo "::warning::${PVT} already exists but ${PWA_VERSION} is not on the registry — its publish likely died after tagging. Recover via auto-publish-pwa-views.yml (workflow_dispatch on main)."
+            exit 0
+          fi
           git config user.name "kyber-app[bot]"
           git config user.email "kyber-app[bot]@users.noreply.github.com"
           git remote set-url origin "https://x-access-token:${APP_TOKEN}@github.com/${{ github.repository }}.git"

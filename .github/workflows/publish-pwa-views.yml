@@ -9,6 +9,13 @@ permissions:
   contents: read
   packages: write
 
+# Same group as auto-publish-pwa-views.yml: serializes the tag-push decision
+# and the publishes themselves, so two quick bumps cannot race two parallel
+# `npm publish` runs (last finisher would own the latest dist-tag).
+concurrency:
+  group: pwa-views-publish
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -26,7 +33,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version-file: '.nvmrc'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
@@ -95,7 +102,9 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          # Literal, not node-version-file: this job's checkout is HOLOCRON,
+          # so kyber's .nvmrc is not on disk. Keep in sync with .nvmrc.
+          node-version: '22'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
@@ -113,6 +122,26 @@ jobs:
           if [ "$CURRENT" = "$VERSION" ]; then
             echo "holocron already on @matty-v/kyber-pwa-views@${VERSION} — nothing to do"
             exit 0
+          fi
+          # Never open a DOWNGRADE PR: a stale pwa-views/v* tag pushed from an
+          # old clone, or an out-of-order publish, must not walk holocron
+          # backwards via an auto-merging PR. Numeric field-wise compare (this
+          # job checks out holocron, so kyber's pwa-views-should-tag.sh isn't
+          # on disk — keep the ordering rule in sync with that script).
+          CUR_CORE="${CURRENT#[\^~]}"; CUR_CORE="${CUR_CORE%%-*}"
+          if [ -n "$CUR_CORE" ]; then
+            IFS=. read -r c1 c2 c3 <<<"$CUR_CORE"
+            IFS=. read -r v1 v2 v3 <<<"${VERSION%%-*}"
+            NEWER=false
+            for pair in "$v1:$c1" "$v2:$c2" "$v3:$c3"; do
+              v="${pair%%:*}"; c="${pair##*:}"
+              if [ "$v" -gt "$c" ] 2>/dev/null; then NEWER=true; break; fi
+              if [ "$v" -lt "$c" ] 2>/dev/null; then break; fi
+            done
+            if [ "$NEWER" != "true" ]; then
+              echo "::warning::holocron is on ${CURRENT}, refusing to open a bump PR to older/equal ${VERSION}."
+              exit 0
+            fi
           fi
           BRANCH="auto/pwa-views-${VERSION}"
           if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH}" >/dev/null 2>&1; then
