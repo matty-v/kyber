@@ -242,12 +242,12 @@ Expected output: `port free` (or no output before that line).
 
 **Verify:**
 ```bash
-helm show chart oci://ghcr.io/matty-v/charts/kyber --version 1.0.7 \
+helm show chart oci://ghcr.io/matty-v/charts/kyber --version 1.0.8 \
   | grep -E '^(name|version):'
-helm show values oci://ghcr.io/matty-v/charts/kyber --version 1.0.7 \
-  | grep -c 'tag: "v1.0.7"'
+helm show values oci://ghcr.io/matty-v/charts/kyber --version 1.0.8 \
+  | grep -c 'tag: "v1.0.8"'
 ```
-Expected output: `name: kyber` and `version: 1.0.7`, then `8` — the eight container images the chart pins for you.
+Expected output: `name: kyber` and `version: 1.0.8`, then `8` — the eight container images the chart pins for you.
 
 **If it fails:** → § Troubleshooting / "published chart unreachable".
 
@@ -582,7 +582,7 @@ sed -i "s|^  defaultOwner:.*|  defaultOwner: \"$IDENTITY_OWNER\"|" \
 grep -E '(existingSecret|provider|type|defaultOwner):' ~/.config/kyber/values-laptop.yaml
 
 helm template kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 -n kyber-system \
+  --version 1.0.8 -n kyber-system \
   -f ~/.config/kyber/values-laptop.yaml >/dev/null && echo "renders OK"
 ```
 Expected output: four lines — `existingSecret: kyber-api-credentials`, `type: LoadBalancer`, `provider: mock`, and `defaultOwner:` (empty unless § 5.3 was done) — then `renders OK`.
@@ -602,13 +602,13 @@ The second command is a dry run against the real chart. If it prints `renders OK
 **Run:**
 ```bash
 helm install kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 \
+  --version 1.0.8 \
   --namespace kyber-system \
   -f ~/.config/kyber/values-laptop.yaml \
   --wait --timeout 15m
 ```
 
-Use the newest version from https://github.com/matty-v/kyber/releases in place of `1.0.7` — the chart version and the release tag are the same number.
+Use the newest version from https://github.com/matty-v/kyber/releases in place of `1.0.8` — the chart version and the release tag are the same number.
 
 **Verify:**
 ```bash
@@ -900,7 +900,7 @@ sed -i "s|^  publicURL: .*|  publicURL: \"$TAILNET_URL\"|" \
   ~/.config/kyber/values-laptop.yaml
 
 helm upgrade kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 \
+  --version 1.0.8 \
   --namespace kyber-system \
   -f ~/.config/kyber/values-laptop.yaml \
   --wait --timeout 10m
@@ -1161,7 +1161,7 @@ Do not conclude from a `curl https://ghcr.io/v2/...` returning `401` that the pa
 **Fix:** Re-run the whole `cat > ~/.config/kyber/values-laptop.yaml <<'EOF' … EOF` block from 6.1 — it overwrites cleanly. Then check it parses:
 ```bash
 helm template kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 -n kyber-system \
+  --version 1.0.8 -n kyber-system \
   -f ~/.config/kyber/values-laptop.yaml >/dev/null && echo "renders OK"
 ```
 
@@ -1392,7 +1392,7 @@ helm -n kyber-system history kyber-laptop | tail -3 # a new revision should exis
 If the values file is wrong, fix it and re-run the § 10.3 `helm upgrade`. If the file is right but the Deployment still shows the old value, the upgrade did not roll the pod:
 ```bash
 helm upgrade kyber-laptop oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.0.7 -n kyber-system \
+  --version 1.0.8 -n kyber-system \
   -f ~/.config/kyber/values-laptop.yaml --wait
 ```
 
