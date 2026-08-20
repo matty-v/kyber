@@ -48,6 +48,8 @@ export function CreateMachine() {
       return <CreateManagedMachine navigate={navigate} provider="fake" capabilities={config.compute.managed} />
     case 'gce':
       return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
+    case 'gke':
+      return <CreateManagedMachine navigate={navigate} provider="gke" capabilities={config.compute.managed} />
     case '':
     default:
       return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
@@ -72,7 +74,7 @@ function CreateManagedMachine({
   capabilities,
 }: {
   navigate: ReturnType<typeof useNavigate>
-  provider: 'gce' | 'fake'
+  provider: 'gce' | 'gke' | 'fake'
   capabilities?: { profiles: VMType[]; locations: string[]; diskSizesGb: number[]; supportsInterruptible: boolean }
 }) {
   const createMachine = useCreateMachine()
@@ -86,7 +88,7 @@ function CreateManagedMachine({
   const [form, setForm] = useState<ManagedMachineFormState>({
     name: '',
     machineType: profiles[0]?.type ?? '',
-    diskSizeGb: String(diskSizes.includes(50) ? 50 : (diskSizes[0] ?? '')),
+    diskSizeGb: provider === 'gke' ? '0' : String(diskSizes.includes(50) ? 50 : (diskSizes[0] ?? '')),
     zone: locations[0] ?? '',
     spot: false,
   })
@@ -106,7 +108,9 @@ function CreateManagedMachine({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    const err = validateManagedMachineForm(form)
+    const err = provider === 'gke'
+      ? (!form.name ? 'Name is required' : !form.machineType ? 'Machine profile is required' : !form.zone ? 'Location is required' : null)
+      : validateManagedMachineForm(form)
     if (err) {
       setFieldError(err)
       return
@@ -187,7 +191,7 @@ function CreateManagedMachine({
             </Select>
           </div>
 
-          <div>
+          {provider !== 'gke' && <div>
             <label className={labelClass}>Disk Size</label>
             <Select value={form.diskSizeGb} onValueChange={(v) => set('diskSizeGb', v)}>
               <SelectTrigger>
@@ -201,7 +205,7 @@ function CreateManagedMachine({
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </div>}
 
           {capabilities?.supportsInterruptible && <div className="flex items-center gap-3 py-1">
             <input

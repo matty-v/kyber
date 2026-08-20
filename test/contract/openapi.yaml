@@ -185,6 +185,39 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /api/v1/machines/preflight:
+    post:
+      operationId: preflightMachine
+      summary: Validate and resolve provider-neutral Machine intent without creating capacity
+      tags: [machines]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateMachineRequest'
+      responses:
+        '200':
+          description: Resolved Machine intent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MachinePreflightResponse'
+        '400':
+          description: Invalid Machine intent
+
+  /api/v1/machine-candidates:
+    get:
+      operationId: listMachineCandidates
+      summary: List eligible externally managed capacity using opaque candidate IDs
+      tags: [machines]
+      responses:
+        '200':
+          description: Eligible capacity candidates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MachineCandidatesResponse'
   /api/v1/machines/{name}:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -750,7 +783,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [gce, static, fake, mock]
+          enum: [gce, gke, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'
@@ -783,6 +816,12 @@ components:
         interruptible:
           type: boolean
           description: Permit provider-initiated reclamation. Preferred over the deprecated spot alias.
+        availabilityClass:
+          type: string
+          enum: [reliable, costOptimized]
+        managementMode:
+          type: string
+          enum: [Managed, External]
 
     ConfigResponse:
       type: object
@@ -794,7 +833,7 @@ components:
           properties:
             provider:
               type: string
-              enum: [gce, static, fake, mock, ""]
+              enum: [gce, gke, static, fake, mock, ""]
             managed:
               $ref: '#/components/schemas/ManagedComputeCapabilities'
             gceVMTypes:
@@ -827,6 +866,29 @@ components:
             type: integer
             format: int32
         supportsInterruptible:
+          type: boolean
+        capabilities:
+          $ref: '#/components/schemas/ComputeCapabilities'
+
+    ComputeCapabilities:
+      type: object
+      required: [canProvision, canDiscoverExisting, suspendMode, deletionMode, supportsReliable, supportsInterruptible, supportsLocations]
+      properties:
+        canProvision:
+          type: boolean
+        canDiscoverExisting:
+          type: boolean
+        suspendMode:
+          type: string
+          enum: [Capacity, LogicalOnly, Unsupported]
+        deletionMode:
+          type: string
+          enum: [DeleteCapacity, UnregisterOnly]
+        supportsReliable:
+          type: boolean
+        supportsInterruptible:
+          type: boolean
+        supportsLocations:
           type: boolean
 
     ComputeProfile:
@@ -861,6 +923,15 @@ components:
           type: string
         instanceId:
           type: string
+          deprecated: true
+        providerRef:
+          type: string
+          description: Opaque provider-owned reference. Clients must not parse it.
+        availability:
+          type: string
+          enum: [Pending, Available, Recovering, Offline, Absent, Failed, Unknown]
+        resolvedProfile:
+          $ref: '#/components/schemas/ResolvedMachineProfile'
         externalIP:
           type: string
         internalIP:
@@ -870,6 +941,19 @@ components:
         agentCount:
           type: integer
           format: int32
+
+    ResolvedMachineProfile:
+      type: object
+      required: [id, capacity]
+      properties:
+        id:
+          type: string
+        displayName:
+          type: string
+        description:
+          type: string
+        capacity:
+          $ref: '#/components/schemas/MachineCapacity'
 
     MachinePhase:
       type: string
@@ -926,7 +1010,7 @@ components:
           example: worker-1
         provider:
           type: string
-          enum: [gce, static, fake, mock]
+          enum: [gce, gke, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'
@@ -945,6 +1029,73 @@ components:
         zone:
           type: string
           example: us-central1-a
+        profile:
+          type: string
+        location:
+          type: string
+        interruptible:
+          type: boolean
+        availabilityClass:
+          type: string
+          enum: [reliable, costOptimized]
+        managementMode:
+          type: string
+          enum: [Managed, External]
+
+    MachinePreflightResponse:
+      type: object
+      required: [valid, resolved, warnings]
+      properties:
+        valid:
+          type: boolean
+        resolved:
+          type: object
+          required: [provider, managementMode]
+          properties:
+            provider:
+              type: string
+            profile:
+              type: string
+            availabilityClass:
+              type: string
+              enum: [reliable, costOptimized]
+            location:
+              type: string
+            managementMode:
+              type: string
+              enum: [Managed, External]
+            diskSizeGb:
+              type: integer
+              format: int32
+            capacity:
+              $ref: '#/components/schemas/MachineCapacity'
+        warnings:
+          type: array
+          items:
+            type: string
+
+    MachineCandidatesResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/MachineCandidate'
+
+    MachineCandidate:
+      type: object
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          description: Opaque candidate identifier; clients must not parse it.
+        displayName:
+          type: string
+        location:
+          type: string
+        capacity:
+          $ref: '#/components/schemas/MachineCapacity'
 
     AgentPhase:
       type: string

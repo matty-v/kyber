@@ -65,6 +65,14 @@ spec:
           spec:
             description: MachineSpec defines the desired state of a Machine.
             properties:
+              availabilityClass:
+                description: |-
+                  AvailabilityClass requests reliable or cost-optimized interruptible
+                  capacity without naming a provider-specific purchasing model.
+                enum:
+                - reliable
+                - costOptimized
+                type: string
               capacity:
                 description: |-
                   Capacity is the declared resource budget for this Machine. Optional at
@@ -119,11 +127,29 @@ spec:
                 format: int32
                 minimum: 10
                 type: integer
+              location:
+                description: |-
+                  Location is an opaque provider location identifier. It is preferred over
+                  the deprecated Zone field.
+                type: string
               machineType:
                 description: |-
                   MachineType is the provider machine type (e.g., "n2-standard-4" for GCE).
                   Maps to the vCPU and memory configuration for the VM. Required for
                   gce/fake and absent for static/mock.
+                type: string
+              managementMode:
+                description: |-
+                  ManagementMode records whether Kyber owns the backing capacity lifecycle
+                  or only registers externally managed capacity.
+                enum:
+                - Managed
+                - External
+                type: string
+              profile:
+                description: |-
+                  Profile is the stable installer-defined compute profile. It is preferred
+                  over the deprecated provider-native MachineType field.
                 type: string
               provider:
                 description: |-
@@ -132,6 +158,7 @@ spec:
                   an existing Kubernetes node; "mock" is a deprecated alias for "static".
                 enum:
                 - gce
+                - gke
                 - static
                 - fake
                 - mock
@@ -198,6 +225,18 @@ spec:
                 - cpu
                 - memory
                 type: object
+              availability:
+                description: Availability is the provider-neutral observed capacity
+                  state.
+                enum:
+                - Pending
+                - Available
+                - Recovering
+                - Offline
+                - Absent
+                - Failed
+                - Unknown
+                type: string
               availableCapacity:
                 description: |-
                   AvailableCapacity is AssignableCapacity minus the sum of all agents'
@@ -368,11 +407,68 @@ spec:
               phase:
                 description: Phase is the current lifecycle phase of the machine.
                 type: string
+              providerRef:
+                description: |-
+                  ProviderRef is an opaque, provider-owned reference to backing capacity or
+                  an in-flight provider operation. Consumers must not parse it.
+                type: string
               replacementCount:
                 description: ReplacementCount is the number of times this machine
                   has been replaced (spot preemption replacements).
                 format: int32
                 type: integer
+              resolvedProfile:
+                description: ResolvedProfile snapshots the operator-facing profile
+                  used at creation.
+                properties:
+                  capacity:
+                    description: |-
+                      MachineCapacity is the declared resource budget the operator allocates to
+                      this Machine. Populated from Spec.MachineType on gce (via machinecaps lookup)
+                      or supplied directly by the user on mock.
+                    properties:
+                      cpu:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: CPU is the total CPU budget (e.g., "4", "500m").
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      ephemeralStorage:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: |-
+                          EphemeralStorage is the total ephemeral-storage budget for agent disk
+                          requests (e.g., "200Gi"). Sourced from node.status.allocatable on
+                          observed/assignable; the difference between assignable and the sum of
+                          agent.spec.resources.disk on this machine is published as available.
+                          Optional for backward compat — pre-#129 PR-C resources omitted it
+                          entirely; reading code MUST treat the zero value as "unknown."
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      memory:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: Memory is the total memory budget (e.g., "16Gi",
+                          "512Mi").
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    required:
+                    - cpu
+                    - memory
+                    type: object
+                  description:
+                    type: string
+                  displayName:
+                    type: string
+                  id:
+                    type: string
+                required:
+                - capacity
+                - id
+                type: object
             type: object
         required:
         - spec

@@ -639,7 +639,7 @@ metrics:
 # or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the
 # instance's service account via the metadata server — no key file is needed.
 compute:
-  provider: mock          # "mock" or "gce"
+  provider: mock          # "mock", "static", "fake", "gce", or "gke"
   simulation:
     # Development-only, API-key-protected scenario controls. Production
     # installations must leave this disabled.
@@ -725,6 +725,25 @@ compute:
       - type: n2-standard-16
         cpu: "16"
         memory: "64Gi"
+  # Observation-only GKE integration. Each Machine initially maps by name to
+  # an installer-managed node pool in this cluster; Kyber does not resize or
+  # delete pools until managed mode is explicitly enabled in a later release.
+  gke:
+    project: ""
+    location: ""
+    cluster: ""
+    profiles:
+      - id: standard
+        displayName: Standard
+        description: Good default for one or two typical agents
+        cpu: "4"
+        memory: 16Gi
+        availabilityClasses: [reliable, costOptimized]
+        recommended: true
+        machineType: e2-standard-4
+        diskSizeGb: 200
+        diskType: pd-balanced
+        imageType: UBUNTU_CONTAINERD
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.
 # Obtain these from Terraform outputs (k3s_join_token, k3s_server_url).

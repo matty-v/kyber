@@ -31,3 +31,22 @@ func TestMachineSpec_CapacityRoundTrip(t *testing.T) {
 		t.Errorf("provider after mutate-orig = %q, want %q (alias leak)", clone.Provider, MachineProviderMock)
 	}
 }
+
+func TestMachineStatus_ResolvedProfileDeepCopy(t *testing.T) {
+	orig := MachineStatus{ResolvedProfile: &ResolvedMachineProfile{
+		ID: "standard",
+		Capacity: MachineCapacity{
+			CPU: resource.MustParse("4"), Memory: resource.MustParse("16Gi"),
+		},
+	}}
+	clone := orig.DeepCopy()
+	orig.ResolvedProfile.ID = "changed"
+	orig.ResolvedProfile.Capacity.CPU = resource.MustParse("8")
+
+	if clone.ResolvedProfile == nil || clone.ResolvedProfile.ID != "standard" {
+		t.Fatalf("resolved profile clone = %+v", clone.ResolvedProfile)
+	}
+	if got := clone.ResolvedProfile.Capacity.CPU.String(); got != "4" {
+		t.Errorf("resolved profile CPU = %q, want 4", got)
+	}
+}

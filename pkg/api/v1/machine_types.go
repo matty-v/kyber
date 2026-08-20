@@ -48,12 +48,14 @@ const (
 )
 
 // MachineProvider identifies the cloud provider for this machine.
-// +kubebuilder:validation:Enum=gce;static;fake;mock
+// +kubebuilder:validation:Enum=gce;gke;static;fake;mock
 type MachineProvider string
 
 const (
 	// MachineProviderGCE is Google Compute Engine.
 	MachineProviderGCE MachineProvider = "gce"
+	// MachineProviderGKE manages or observes capacity through GKE node pools.
+	MachineProviderGKE MachineProvider = "gke"
 	// MachineProviderStatic attaches to a Kubernetes node provisioned outside
 	// Kyber and does not manage an external VM lifecycle.
 	MachineProviderStatic MachineProvider = "static"
@@ -64,6 +66,40 @@ const (
 	// Deprecated compatibility alias for MachineProviderStatic.
 	MachineProviderMock MachineProvider = "mock"
 )
+
+// MachineAvailabilityClass describes the interruption contract requested by
+// an operator without exposing a provider-specific purchasing model.
+// +kubebuilder:validation:Enum=reliable;costOptimized
+type MachineAvailabilityClass string
+
+const (
+	MachineAvailabilityReliable      MachineAvailabilityClass = "reliable"
+	MachineAvailabilityCostOptimized MachineAvailabilityClass = "costOptimized"
+)
+
+// MachineManagementMode distinguishes Kyber-managed capacity from capacity
+// registered by an installer and managed outside Kyber.
+// +kubebuilder:validation:Enum=Managed;External
+type MachineManagementMode string
+
+const (
+	MachineManagementManaged  MachineManagementMode = "Managed"
+	MachineManagementExternal MachineManagementMode = "External"
+)
+
+// MachineAvailability is the provider-neutral observed capacity state.
+// +kubebuilder:validation:Enum=Pending;Available;Recovering;Offline;Absent;Failed;Unknown
+type MachineAvailability string
+
+// ResolvedMachineProfile snapshots the operator-facing profile properties
+// used when this Machine was created. Installer mapping changes therefore do
+// not silently change the declared capacity of an existing Machine.
+type ResolvedMachineProfile struct {
+	ID          string          `json:"id"`
+	DisplayName string          `json:"displayName,omitempty"`
+	Description string          `json:"description,omitempty"`
+	Capacity    MachineCapacity `json:"capacity"`
+}
 
 // MachineSpec defines the desired state of a Machine.
 type MachineSpec struct {
@@ -78,6 +114,26 @@ type MachineSpec struct {
 	// for static/mock.
 	// +optional
 	Capacity MachineCapacity `json:"capacity,omitempty"`
+
+	// Profile is the stable installer-defined compute profile. It is preferred
+	// over the deprecated provider-native MachineType field.
+	// +optional
+	Profile string `json:"profile,omitempty"`
+
+	// AvailabilityClass requests reliable or cost-optimized interruptible
+	// capacity without naming a provider-specific purchasing model.
+	// +optional
+	AvailabilityClass MachineAvailabilityClass `json:"availabilityClass,omitempty"`
+
+	// Location is an opaque provider location identifier. It is preferred over
+	// the deprecated Zone field.
+	// +optional
+	Location string `json:"location,omitempty"`
+
+	// ManagementMode records whether Kyber owns the backing capacity lifecycle
+	// or only registers externally managed capacity.
+	// +optional
+	ManagementMode MachineManagementMode `json:"managementMode,omitempty"`
 
 	// MachineType is the provider machine type (e.g., "n2-standard-4" for GCE).
 	// Maps to the vCPU and memory configuration for the VM. Required for
@@ -118,6 +174,19 @@ type MachineStatus struct {
 	// InstanceId is the cloud provider instance ID (e.g., GCE instance ID).
 	// +optional
 	InstanceId string `json:"instanceId,omitempty"`
+
+	// ProviderRef is an opaque, provider-owned reference to backing capacity or
+	// an in-flight provider operation. Consumers must not parse it.
+	// +optional
+	ProviderRef string `json:"providerRef,omitempty"`
+
+	// Availability is the provider-neutral observed capacity state.
+	// +optional
+	Availability MachineAvailability `json:"availability,omitempty"`
+
+	// ResolvedProfile snapshots the operator-facing profile used at creation.
+	// +optional
+	ResolvedProfile *ResolvedMachineProfile `json:"resolvedProfile,omitempty"`
 
 	// ExternalIP is the external IP address of the VM, if assigned.
 	// +optional

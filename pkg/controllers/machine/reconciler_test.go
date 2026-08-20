@@ -320,10 +320,35 @@ func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
 	if err := adapter.ApplySimulationScenario(got.Name, adapters.SimulationPreempted); err != nil {
 		t.Fatalf("applying preempted scenario: %v", err)
 	}
+	preemptedRef := got.Status.InstanceId
 	reconcileN(t, r, req, 1)
 	got = getMachine(t, k8sClient, req.NamespacedName)
 	if got.Status.Phase != kyberv1.MachinePhasePreempted {
 		t.Fatalf("preempted phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhasePreempted)
+	}
+
+	// The next reconcile requests Online from the declarative provider. The
+	// fake provider owns replacement and returns a new opaque reference; the
+	// Machine controller must not create a second surviving capacity resource.
+	reconcileN(t, r, req, 1)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseReplacing {
+		t.Fatalf("replacement phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseReplacing)
+	}
+	if got.Status.InstanceId == preemptedRef {
+		t.Fatalf("replacement provider ref = %q, want a new ref", got.Status.InstanceId)
+	}
+	if got.Status.ReplacementCount != 1 {
+		t.Errorf("replacement count = %d, want 1", got.Status.ReplacementCount)
+	}
+	if adapter.InstanceCount() != 1 {
+		t.Fatalf("instance count during replacement = %d, want 1", adapter.InstanceCount())
+	}
+
+	reconcileN(t, r, req, 1)
+	got = getMachine(t, k8sClient, req.NamespacedName)
+	if got.Status.Phase != kyberv1.MachinePhaseReady {
+		t.Fatalf("replacement ready phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseReady)
 	}
 
 	if err := k8sClient.Delete(context.Background(), got); err != nil {

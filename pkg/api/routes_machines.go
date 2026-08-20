@@ -44,9 +44,11 @@ type CreateMachineRequest struct {
 	Provider string `json:"provider"` // "gce", "fake", "static", or compatibility "mock"
 
 	// Managed-provider fields (required for gce/fake; rejected for static/mock).
-	Profile       string `json:"profile,omitempty"`
-	Location      string `json:"location,omitempty"`
-	Interruptible *bool  `json:"interruptible,omitempty"`
+	Profile           string `json:"profile,omitempty"`
+	Location          string `json:"location,omitempty"`
+	Interruptible     *bool  `json:"interruptible,omitempty"`
+	AvailabilityClass string `json:"availabilityClass,omitempty"`
+	ManagementMode    string `json:"managementMode,omitempty"`
 	// Deprecated compatibility aliases retained for older clients.
 	MachineType string `json:"machineType,omitempty"`
 	DiskSizeGb  int32  `json:"diskSizeGb,omitempty"`
@@ -76,12 +78,16 @@ type MachineResponse struct {
 }
 
 type machineSpecResponse struct {
-	Provider    string                   `json:"provider"`
-	Capacity    *machineCapacityResponse `json:"capacity,omitempty"`
-	MachineType string                   `json:"machineType,omitempty"`
-	DiskSizeGb  int32                    `json:"diskSizeGb,omitempty"`
-	Spot        bool                     `json:"spot,omitempty"`
-	Zone        string                   `json:"zone,omitempty"`
+	Provider          string                           `json:"provider"`
+	Capacity          *machineCapacityResponse         `json:"capacity,omitempty"`
+	MachineType       string                           `json:"machineType,omitempty"`
+	DiskSizeGb        int32                            `json:"diskSizeGb,omitempty"`
+	Spot              bool                             `json:"spot,omitempty"`
+	Zone              string                           `json:"zone,omitempty"`
+	Profile           string                           `json:"profile,omitempty"`
+	AvailabilityClass kyberv1.MachineAvailabilityClass `json:"availabilityClass,omitempty"`
+	Location          string                           `json:"location,omitempty"`
+	ManagementMode    kyberv1.MachineManagementMode    `json:"managementMode,omitempty"`
 }
 
 type machineCapacityResponse struct {
@@ -97,14 +103,17 @@ type machineAllocatableResponse struct {
 }
 
 type machineStatusResponse struct {
-	Phase       kyberv1.MachinePhase        `json:"phase,omitempty"`
-	Message     string                      `json:"message,omitempty"`
-	InstanceId  string                      `json:"instanceId,omitempty"`
-	ExternalIP  string                      `json:"externalIP,omitempty"`
-	InternalIP  string                      `json:"internalIP,omitempty"`
-	NodeName    string                      `json:"nodeName,omitempty"`
-	AgentCount  int32                       `json:"agentCount,omitempty"`
-	Allocatable *machineAllocatableResponse `json:"allocatable,omitempty"`
+	Phase           kyberv1.MachinePhase            `json:"phase,omitempty"`
+	Message         string                          `json:"message,omitempty"`
+	InstanceId      string                          `json:"instanceId,omitempty"`
+	ProviderRef     string                          `json:"providerRef,omitempty"`
+	Availability    kyberv1.MachineAvailability     `json:"availability,omitempty"`
+	ResolvedProfile *kyberv1.ResolvedMachineProfile `json:"resolvedProfile,omitempty"`
+	ExternalIP      string                          `json:"externalIP,omitempty"`
+	InternalIP      string                          `json:"internalIP,omitempty"`
+	NodeName        string                          `json:"nodeName,omitempty"`
+	AgentCount      int32                           `json:"agentCount,omitempty"`
+	Allocatable     *machineAllocatableResponse     `json:"allocatable,omitempty"`
 	// Three new capacity fields shipped by #140. Mirror the renamed
 	// Status.{Observed,Assignable,Available}Capacity. PWA #142 reads these
 	// directly; `allocatable` above is preserved as the legacy alias of
@@ -124,13 +133,16 @@ type MachineListResponse struct {
 // machineToResponse converts a Machine CRD to the API response shape.
 func machineToResponse(m *kyberv1.Machine) MachineResponse {
 	status := machineStatusResponse{
-		Phase:      m.Status.Phase,
-		Message:    m.Status.Message,
-		InstanceId: m.Status.InstanceId,
-		ExternalIP: m.Status.ExternalIP,
-		InternalIP: m.Status.InternalIP,
-		NodeName:   m.Status.NodeName,
-		AgentCount: m.Status.AgentCount,
+		Phase:           m.Status.Phase,
+		Message:         m.Status.Message,
+		InstanceId:      m.Status.InstanceId,
+		ProviderRef:     m.Status.ProviderRef,
+		Availability:    m.Status.Availability,
+		ResolvedProfile: m.Status.ResolvedProfile,
+		ExternalIP:      m.Status.ExternalIP,
+		InternalIP:      m.Status.InternalIP,
+		NodeName:        m.Status.NodeName,
+		AgentCount:      m.Status.AgentCount,
 	}
 	// quantityOrEmpty returns "" when q is the zero value, otherwise q.String().
 	// Important: resource.Quantity{}.String() emits "0", so naive String() leaks
@@ -170,11 +182,34 @@ func machineToResponse(m *kyberv1.Machine) MachineResponse {
 		}
 	}
 	specResp := machineSpecResponse{
-		Provider:    string(m.Spec.Provider),
-		MachineType: m.Spec.MachineType,
-		DiskSizeGb:  m.Spec.DiskSizeGb,
-		Spot:        m.Spec.Spot,
-		Zone:        m.Spec.Zone,
+		Provider:          string(m.Spec.Provider),
+		MachineType:       m.Spec.MachineType,
+		DiskSizeGb:        m.Spec.DiskSizeGb,
+		Spot:              m.Spec.Spot,
+		Zone:              m.Spec.Zone,
+		Profile:           m.Spec.Profile,
+		AvailabilityClass: m.Spec.AvailabilityClass,
+		Location:          m.Spec.Location,
+		ManagementMode:    m.Spec.ManagementMode,
+	}
+	if specResp.Profile == "" {
+		specResp.Profile = m.Spec.MachineType
+	}
+	if specResp.Location == "" {
+		specResp.Location = m.Spec.Zone
+	}
+	if specResp.AvailabilityClass == "" && (m.Spec.MachineType != "" || m.Spec.Profile != "") {
+		specResp.AvailabilityClass = kyberv1.MachineAvailabilityReliable
+		if m.Spec.Spot {
+			specResp.AvailabilityClass = kyberv1.MachineAvailabilityCostOptimized
+		}
+	}
+	if specResp.ManagementMode == "" {
+		if m.Spec.Provider == kyberv1.MachineProviderStatic || m.Spec.Provider == kyberv1.MachineProviderMock {
+			specResp.ManagementMode = kyberv1.MachineManagementExternal
+		} else {
+			specResp.ManagementMode = kyberv1.MachineManagementManaged
+		}
 	}
 	if !m.Spec.Capacity.CPU.IsZero() || !m.Spec.Capacity.Memory.IsZero() || !m.Spec.Capacity.EphemeralStorage.IsZero() {
 		specResp.Capacity = &machineCapacityResponse{
@@ -296,19 +331,48 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch kyberv1.MachineProvider(req.Provider) {
-	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderFake:
+	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderGKE, kyberv1.MachineProviderFake:
 		provider := req.Provider
 		profile := req.Profile
 		if profile == "" {
 			profile = req.MachineType
 		}
+		if req.Profile != "" && req.MachineType != "" && req.Profile != req.MachineType {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "profile conflicts with deprecated machineType", "profile")
+			return
+		}
 		location := req.Location
 		if location == "" {
 			location = req.Zone
 		}
+		if req.Location != "" && req.Zone != "" && req.Location != req.Zone {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "location conflicts with deprecated zone", "location")
+			return
+		}
 		interruptible := req.Spot
 		if req.Interruptible != nil {
 			interruptible = *req.Interruptible
+		}
+		availabilityClass := kyberv1.MachineAvailabilityReliable
+		if interruptible {
+			availabilityClass = kyberv1.MachineAvailabilityCostOptimized
+		}
+		if req.AvailabilityClass != "" {
+			availabilityClass = kyberv1.MachineAvailabilityClass(req.AvailabilityClass)
+			if availabilityClass != kyberv1.MachineAvailabilityReliable && availabilityClass != kyberv1.MachineAvailabilityCostOptimized {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "availabilityClass must be reliable or costOptimized", "availabilityClass")
+				return
+			}
+			classInterruptible := availabilityClass == kyberv1.MachineAvailabilityCostOptimized
+			if (req.Interruptible != nil || req.Spot) && classInterruptible != interruptible {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "availabilityClass conflicts with deprecated interruptible/spot intent", "availabilityClass")
+				return
+			}
+			interruptible = classInterruptible
+		}
+		if req.ManagementMode != "" && req.ManagementMode != string(kyberv1.MachineManagementManaged) {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "managed providers require managementMode=Managed", "managementMode")
+			return
 		}
 		if req.Capacity != nil {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
@@ -320,7 +384,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("provider=%s requires profile", provider), "profile")
 			return
 		}
-		if req.DiskSizeGb < 10 {
+		if provider != string(kyberv1.MachineProviderGKE) && req.DiskSizeGb < 10 {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				fmt.Sprintf("provider=%s requires diskSizeGb >= 10", provider), "diskSizeGb")
 			return
@@ -330,11 +394,30 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 				fmt.Sprintf("provider=%s requires location", provider), "location")
 			return
 		}
-		catalog := s.GCEVMTypeCatalog
-		if catalog == nil {
-			catalog = DefaultGCEVMTypeCatalog()
+		catalog := activeMachineCatalog(s.GCEVMTypeCatalog)
+		profileCapacity, ok := catalog[profile]
+		if provider == string(kyberv1.MachineProviderGKE) && s.CapacityProvider != nil {
+			providerProfiles, profileErr := s.CapacityProvider.Profiles(r.Context())
+			if profileErr != nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute profiles unavailable")
+				return
+			}
+			ok = false
+			for _, candidate := range providerProfiles {
+				if candidate.ID != profile {
+					continue
+				}
+				cpu, cpuErr := resource.ParseQuantity(candidate.CPU)
+				memory, memoryErr := resource.ParseQuantity(candidate.Memory)
+				if cpuErr != nil || memoryErr != nil {
+					writeJSONError(w, http.StatusInternalServerError, "COMPUTE_PROFILE_INVALID", "configured compute profile capacity is invalid")
+					return
+				}
+				profileCapacity = kyberv1.MachineCapacity{CPU: cpu, Memory: memory}
+				ok = true
+				break
+			}
 		}
-		gceCap, ok := catalog[profile]
 		if !ok {
 			validTypes := make([]string, 0, len(catalog))
 			for t := range catalog {
@@ -347,13 +430,26 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		spec.MachineType = profile
+		spec.Profile = profile
 		spec.DiskSizeGb = req.DiskSizeGb
 		spec.Spot = interruptible
+		spec.AvailabilityClass = availabilityClass
 		spec.Zone = location
-		spec.Capacity = gceCap
+		spec.Location = location
+		spec.ManagementMode = kyberv1.MachineManagementManaged
+		spec.Capacity = profileCapacity
 
 	case kyberv1.MachineProviderMock, kyberv1.MachineProviderStatic:
 		provider := req.Provider
+		if req.AvailabilityClass != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "external providers do not accept availabilityClass", "availabilityClass")
+			return
+		}
+		if req.ManagementMode != "" && req.ManagementMode != string(kyberv1.MachineManagementExternal) {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "static providers require managementMode=External", "managementMode")
+			return
+		}
+		spec.ManagementMode = kyberv1.MachineManagementExternal
 		// Reject any GCE-only field — emit one error per offending field.
 		if req.Profile != "" || req.Location != "" || req.Interruptible != nil || req.MachineType != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",

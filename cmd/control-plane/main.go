@@ -703,12 +703,20 @@ func main() {
 	gceProject := os.Getenv("KYBER_GCE_PROJECT")
 	gceNetwork := os.Getenv("KYBER_GCE_NETWORK")
 	gceSubnet := os.Getenv("KYBER_GCE_SUBNET")
+	gkeProject := os.Getenv("KYBER_GKE_PROJECT")
+	gkeLocation := os.Getenv("KYBER_GKE_LOCATION")
+	gkeCluster := os.Getenv("KYBER_GKE_CLUSTER")
+	gkeProfiles := os.Getenv("KYBER_GKE_PROFILES")
 	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
 		adapters.GCEConfigProject:  gceProject,
 		adapters.GCEConfigNetwork:  gceNetwork,
 		adapters.GCEConfigSubnet:   gceSubnet,
 		adapters.GCEConfigEndpoint: gceEndpoint,
+		adapters.GKEConfigProject:  gkeProject,
+		adapters.GKEConfigLocation: gkeLocation,
+		adapters.GKEConfigCluster:  gkeCluster,
+		adapters.GKEConfigProfiles: gkeProfiles,
 	})
 	cancel()
 	if err != nil {
@@ -1209,20 +1217,24 @@ func main() {
 		RestConfig:               restCfg,
 		InformerCache:            mgr.GetCache(),
 		ComputeProvider:          os.Getenv("KYBER_COMPUTE_PROVIDER"),
-		GCEVMTypeCatalog:         gceVMTypeCatalog,
-		Recorder:                 mgr.GetEventRecorderFor("kyber-api"),
-		BuildSHA:                 BuildSHA,
-		BuildDate:                BuildDate,
-		ChartVersion:             resolveDisplayVersion(),         // build-injected version wins; chart file is the local/dev fallback (kyber#482)
-		ClusterName:              os.Getenv("KYBER_CLUSTER_NAME"), // "" is valid; PWA renders blank header
-		AllowedOrigins:           parseCORSAllowedOrigins(os.Getenv("KYBER_CORS_ALLOWED_ORIGINS")),
-		Substrate:                kyberNamespace,
-		InboundDeduper:           inboundDeduper,
-		InboundRateLimiter:       inboundRateLimiter,
-		InboundQueue:             inboundQueue,
-		InboundEnvelopeCache:     inboundEnvelopeCache,
-		AnthropicKeySecretName:   os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
-		RuntimeDetectCache:       runtimeDetectCache,
+		CapacityProvider: func() adapters.CapacityProvider {
+			provider, _ := computeAdapter.(adapters.CapacityProvider)
+			return provider
+		}(),
+		GCEVMTypeCatalog:       gceVMTypeCatalog,
+		Recorder:               mgr.GetEventRecorderFor("kyber-api"),
+		BuildSHA:               BuildSHA,
+		BuildDate:              BuildDate,
+		ChartVersion:           resolveDisplayVersion(),         // build-injected version wins; chart file is the local/dev fallback (kyber#482)
+		ClusterName:            os.Getenv("KYBER_CLUSTER_NAME"), // "" is valid; PWA renders blank header
+		AllowedOrigins:         parseCORSAllowedOrigins(os.Getenv("KYBER_CORS_ALLOWED_ORIGINS")),
+		Substrate:              kyberNamespace,
+		InboundDeduper:         inboundDeduper,
+		InboundRateLimiter:     inboundRateLimiter,
+		InboundQueue:           inboundQueue,
+		InboundEnvelopeCache:   inboundEnvelopeCache,
+		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
+		RuntimeDetectCache:     runtimeDetectCache,
 		// #500: the serve-time token-budget gauge resolves the context window
 		// through the SAME detection snapshot /available + the pod adapter use,
 		// via a bounded SnapshotResolver (30s TTL + 2s timeout). nil-safe — a

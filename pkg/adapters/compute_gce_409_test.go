@@ -17,9 +17,15 @@ import (
 )
 
 // fakeOp is a no-op gceOperation that always succeeds.
-type fakeOp struct{ err error }
+type fakeOp struct {
+	err       error
+	waitCalls int
+}
 
-func (f *fakeOp) Wait(_ context.Context, _ ...gax.CallOption) error { return f.err }
+func (f *fakeOp) Wait(_ context.Context, _ ...gax.CallOption) error {
+	f.waitCalls++
+	return f.err
+}
 
 // fakeGCEClient is a scriptable fake for gceInstancesClient.
 // Insert, Delete, and Get calls are driven by queues; other methods are stubs.
@@ -35,6 +41,8 @@ type fakeGCEClient struct {
 	// deleteResponses drives successive Delete calls (consumed in order).
 	deleteResponses []deleteResult
 	deleteCallCount int
+
+	aggregatedPairs []compute.InstancesScopedListPair
 }
 
 type insertResult struct {
@@ -85,21 +93,132 @@ func (f *fakeGCEClient) Stop(_ context.Context, _ *computepb.StopInstanceRequest
 	return &fakeOp{}, nil
 }
 func (f *fakeGCEClient) AggregatedList(_ context.Context, _ *computepb.AggregatedListInstancesRequest) gceAggregatedListIterator {
-	return &emptyIterator{}
+	return &sliceIterator{pairs: f.aggregatedPairs}
 }
 func (f *fakeGCEClient) Close() error { return nil }
 
-// emptyIterator returns iterator.Done immediately.
-type emptyIterator struct{}
+type sliceIterator struct {
+	pairs []compute.InstancesScopedListPair
+	next  int
+}
 
-func (e *emptyIterator) Next() (compute.InstancesScopedListPair, error) {
-	return compute.InstancesScopedListPair{}, iterator.Done
+func (s *sliceIterator) Next() (compute.InstancesScopedListPair, error) {
+	if s.next >= len(s.pairs) {
+		return compute.InstancesScopedListPair{}, iterator.Done
+	}
+	pair := s.pairs[s.next]
+	s.next++
+	return pair, nil
 }
 
 // err409 returns a *googleapi.Error with Code 409 — what the real GCE client
 // returns when an instance already exists.
 func err409() error {
 	return &googleapi.Error{Code: 409, Message: "already exists"}
+}
+
+func err404() error {
+	return &googleapi.Error{Code: 404, Message: "not found"}
+}
+
+func TestGCECapacityProviderCreateIsBounded(t *testing.T) {
+	op := &fakeOp{}
+	fake := &fakeGCEClient{
+		getResponses:    []getResult{{err: err404()}, {inst: gceTestInstance("RUNNING", true)}},
+		insertResponses: []insertResult{{op: op}},
+	}
+	provider := &GCEAdapter{ProjectID: "test-project", client: fake}
+	desired := DesiredMachine{
+		Availability: DesiredOnline, Profile: "n2-standard-4", DiskSizeGb: 50,
+		Interruptible: true, Location: "us-central1-a",
+		NodeBootstrap: NodeBootstrap{ServerURL: "https://cluster.example:6443", JoinToken: "test-token"},
+	}
+
+	first, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, "")
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if first.State != CapacityPending || first.ProviderRef != "gce://test-project/us-central1-a/kyber-worker" {
+		t.Fatalf("first observation = %+v", first)
+	}
+	if op.waitCalls != 0 {
+		t.Fatalf("operation Wait called %d times, want 0", op.waitCalls)
+	}
+
+	second, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, first.ProviderRef)
+	if err != nil {
+		t.Fatalf("second Reconcile: %v", err)
+	}
+	if second.State != CapacityAvailable || second.Reason != ReasonReady {
+		t.Fatalf("second observation = %+v", second)
+	}
+	if fake.insertCallCount != 1 {
+		t.Errorf("Insert calls = %d, want 1", fake.insertCallCount)
+	}
+}
+
+func TestGCECapacityProviderOwnsInterruptibleReplacement(t *testing.T) {
+	deleteOp := &fakeOp{}
+	insertOp := &fakeOp{}
+	fake := &fakeGCEClient{
+		getResponses: []getResult{
+			{inst: gceTestInstance("TERMINATED", true)},
+			{err: err404()},
+			{inst: gceTestInstance("RUNNING", true)},
+		},
+		deleteResponses: []deleteResult{{op: deleteOp}},
+		insertResponses: []insertResult{{op: insertOp}},
+	}
+	provider := &GCEAdapter{ProjectID: "test-project", client: fake}
+	desired := DesiredMachine{Availability: DesiredOnline, Profile: "n2-standard-4", DiskSizeGb: 50, Interruptible: true, Location: "us-central1-a"}
+	ref := ProviderRef("gce://test-project/us-central1-a/kyber-worker")
+
+	for i, want := range []AvailabilityState{CapacityRecovering, CapacityPending, CapacityAvailable} {
+		got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, ref)
+		if err != nil {
+			t.Fatalf("Reconcile %d: %v", i+1, err)
+		}
+		if got.State != want {
+			t.Fatalf("Reconcile %d state = %q, want %q", i+1, got.State, want)
+		}
+		ref = got.ProviderRef
+	}
+	if deleteOp.waitCalls != 0 || insertOp.waitCalls != 0 {
+		t.Fatalf("operation waits = delete %d, insert %d; want zero", deleteOp.waitCalls, insertOp.waitCalls)
+	}
+	if fake.deleteCallCount != 1 || fake.insertCallCount != 1 {
+		t.Fatalf("calls = delete %d insert %d, want one each", fake.deleteCallCount, fake.insertCallCount)
+	}
+}
+
+func TestGCECapacityProviderAdoptsLegacyNumericReference(t *testing.T) {
+	const legacyID = uint64(12345)
+	inst := gceTestInstance("RUNNING", false)
+	inst.Id = proto.Uint64(legacyID)
+	inst.Zone = proto.String("zones/us-central1-a")
+	fake := &fakeGCEClient{
+		aggregatedPairs: []compute.InstancesScopedListPair{{
+			Value: &computepb.InstancesScopedList{Instances: []*computepb.Instance{inst}},
+		}},
+		getResponses: []getResult{{inst: inst}},
+	}
+	provider := &GCEAdapter{ProjectID: "test-project", client: fake}
+	desired := DesiredMachine{Availability: DesiredOnline, Profile: "n2-standard-4", DiskSizeGb: 50, Location: "us-central1-a"}
+
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, desired, ProviderRef("12345"))
+	if err != nil {
+		t.Fatalf("Reconcile legacy ref: %v", err)
+	}
+	if got.State != CapacityAvailable || got.ProviderRef != "gce://test-project/us-central1-a/kyber-worker" {
+		t.Fatalf("observation = %+v", got)
+	}
+}
+
+func gceTestInstance(status string, interruptible bool) *computepb.Instance {
+	return &computepb.Instance{
+		Name: proto.String("kyber-worker"), Status: proto.String(status),
+		Scheduling: &computepb.Scheduling{Preemptible: proto.Bool(interruptible)},
+	}
 }
 
 // TestCreateInstance_AdoptsRunningInstance verifies that when Insert returns 409

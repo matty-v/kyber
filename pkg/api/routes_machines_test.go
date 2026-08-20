@@ -710,6 +710,47 @@ func TestCreateMachine_Fake_NeutralManagedFields(t *testing.T) {
 	if got.Spec.MachineType != "e2-medium" || got.Spec.Zone != "local-a" || !got.Spec.Spot {
 		t.Fatalf("translated spec = %+v", got.Spec)
 	}
+	if got.Spec.Profile != "e2-medium" || got.Spec.Location != "local-a" ||
+		got.Spec.AvailabilityClass != kyberv1.MachineAvailabilityCostOptimized ||
+		got.Spec.ManagementMode != kyberv1.MachineManagementManaged {
+		t.Fatalf("neutral spec = %+v", got.Spec)
+	}
+}
+
+func TestCreateMachine_RejectsConflictingNeutralAndLegacyFields(t *testing.T) {
+	tests := []struct {
+		name  string
+		field string
+		body  map[string]interface{}
+	}{
+		{
+			name: "profile", field: "profile",
+			body: map[string]interface{}{"name": "worker", "provider": "fake", "profile": "e2-medium", "machineType": "n2-standard-4", "diskSizeGb": 20, "location": "local-a"},
+		},
+		{
+			name: "location", field: "location",
+			body: map[string]interface{}{"name": "worker", "provider": "fake", "profile": "e2-medium", "diskSizeGb": 20, "location": "local-a", "zone": "local-b"},
+		},
+		{
+			name: "availability", field: "availabilityClass",
+			body: map[string]interface{}{"name": "worker", "provider": "fake", "profile": "e2-medium", "diskSizeGb": 20, "location": "local-a", "interruptible": true, "availabilityClass": "reliable"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := buildMachineHandler(t, mustNewScheme(t))
+			req := authedRequest(t, http.MethodPost, "/api/v1/machines", tt.body)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("want 400, got %d: %s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), tt.field) {
+				t.Errorf("response %q does not identify field %q", rr.Body.String(), tt.field)
+			}
+		})
+	}
 }
 
 // TestCreateMachine_GCE_UnknownMachineType verifies that an unknown machineType returns

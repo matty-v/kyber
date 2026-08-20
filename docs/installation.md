@@ -1,6 +1,10 @@
 # Installing Kyber on GCP
 
 Step-by-step guide to deploying a production Kyber instance on Google Cloud.
+
+This guide describes the direct-GCE/k3s installation. For GKE Standard with a
+dedicated platform pool and per-Machine node pools, use
+[Install Kyber on GKE](installation-gke.md).
 This document is the source of truth for installation — if you hit a step that
 doesn't match reality, fix the doc.
 

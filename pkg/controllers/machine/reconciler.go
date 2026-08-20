@@ -64,6 +64,11 @@ type MachineReconciler struct {
 	Scheme         *runtime.Scheme
 	Recorder       record.EventRecorder
 	ComputeAdapter adapters.ComputeAdapter
+	// CapacityProvider is the declarative provider contract used during the
+	// provider-neutral migration. When nil, capacityProvider lazily adopts a
+	// ComputeAdapter that also implements the new contract. Direct GCE remains
+	// on ComputeAdapter until its provider migration is complete.
+	CapacityProvider adapters.CapacityProvider
 	// AllowSimulatedNodes accepts explicitly labelled synthetic Nodes without
 	// kubelet heartbeats. It is enabled only by the local GCE emulator profile.
 	AllowSimulatedNodes bool
@@ -117,7 +122,7 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 		setupLog.Info("warning: KYBER_K3S_SERVER_URL not set — provisioned nodes will not join the cluster")
 	}
 
-	return &MachineReconciler{
+	r := &MachineReconciler{
 		Client:              c,
 		Scheme:              scheme,
 		Recorder:            recorder,
@@ -126,6 +131,10 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 		K3sServerURL:        serverURL,
 		AllowSimulatedNodes: os.Getenv("KYBER_ALLOW_SIMULATED_NODES") == "true",
 	}
+	if provider, ok := adapter.(adapters.CapacityProvider); ok {
+		r.CapacityProvider = provider
+	}
+	return r
 }
 
 // Reconcile is the main reconciliation function called by controller-runtime.
@@ -361,14 +370,13 @@ func (r *MachineReconciler) classifyProvisioning(ctx context.Context, machine *k
 		return "", requeueProvisioning, nil
 	}
 
-	// Query the provider-neutral instance observation.
-	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	observation, err := r.observeMachineCapacity(ctx, machine, adapters.DesiredOnline)
 	if err != nil {
 		// Instance not found or transient error — requeue.
 		return "", requeueProvisioning, nil
 	}
 
-	if observation.State != adapters.InstanceStateRunning {
+	if observation.State != adapters.CapacityAvailable {
 		// Still starting up.
 		return EventInstanceRunningNodeNotReady, requeueProvisioning, nil
 	}
@@ -488,8 +496,8 @@ func (r *MachineReconciler) classifyStopping(ctx context.Context, machine *kyber
 
 	// No agents remain — check if VM is stopped.
 	if machine.Status.InstanceId != "" {
-		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
-		if err == nil && observation.State == adapters.InstanceStateStopped {
+		observation, err := r.observeMachineCapacity(ctx, machine, adapters.DesiredOffline)
+		if err == nil && observation.State == adapters.CapacityOffline {
 			return EventAllAgentsStoppedVMStopped, 0, nil
 		}
 	}
@@ -509,16 +517,16 @@ func (r *MachineReconciler) classifyReplacing(ctx context.Context, machine *kybe
 	}
 
 	// Check if the new instance is running and the node is Ready.
-	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	observation, err := r.observeMachineCapacity(ctx, machine, adapters.DesiredOnline)
 	if err != nil {
 		return "", requeueReplacing, nil
 	}
 	// If the replacement instance was itself terminated (double preemption),
 	// fire ReplacementFailed so the state machine can retry with budget.
-	if observation.Interruption == adapters.InterruptionPreempted {
+	if observation.Reason == adapters.ReasonInterrupted {
 		return EventReplacementFailed, 0, nil
 	}
-	if observation.State != adapters.InstanceStateRunning {
+	if observation.State != adapters.CapacityAvailable {
 		return "", requeueReplacing, nil
 	}
 
@@ -540,16 +548,35 @@ func (r *MachineReconciler) classifyNodeDisappeared(ctx context.Context, machine
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	observation, err := r.observeMachineCapacity(ctx, machine, adapters.DesiredOnline)
 	if err != nil {
 		// Can't determine — treat as failed.
 		return EventNodeDisappearedFailed, 0, nil
 	}
 
-	if observation.Interruption == adapters.InterruptionPreempted && machine.Spec.Spot {
+	if observation.Reason == adapters.ReasonInterrupted && machineInterruptible(machine) {
 		return EventNodeDisappearedPreempted, 0, nil
 	}
 	return EventNodeDisappearedFailed, 0, nil
+}
+
+func (r *MachineReconciler) observeMachineCapacity(
+	ctx context.Context,
+	machine *kyberv1.Machine,
+	desired adapters.DesiredAvailability,
+) (adapters.CapacityObservation, error) {
+	if r.capacityProviderFor(machine) != nil {
+		return r.reconcileCapacity(ctx, machine, desired)
+	}
+	observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
+	if err != nil {
+		return adapters.CapacityObservation{}, err
+	}
+	return adapters.CapacityObservationFromInstance(
+		adapters.ProviderRef(machine.Status.InstanceId),
+		map[string]string{MachineLabelKey: machine.Name},
+		observation,
+	), nil
 }
 
 // executeAction performs the cloud and k8s operations required by the transition action.
@@ -563,6 +590,17 @@ func (r *MachineReconciler) executeAction(
 
 	switch action {
 	case ActionCreateInstance:
+		if r.capacityProviderFor(machine) != nil {
+			observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOnline)
+			if err != nil {
+				return 0, fmt.Sprintf("provisioning capacity failed: %v", err), err
+			}
+			logger.Info("capacity provision reconciled", "machine", machine.Name,
+				"providerRef", observation.ProviderRef, "state", observation.State)
+			r.Recorder.Eventf(machine, corev1.EventTypeNormal, "CapacityProvisioning",
+				"Machine capacity provisioning requested")
+			return requeueProvisioning, "", nil
+		}
 		// Clean any stale k8s Node + node-password Secret bound to a previous
 		// instance with this machine's label. Without this, a re-provision
 		// (preemption recovery, ProvisioningTimeout retry) hits k3s's
@@ -614,6 +652,17 @@ func (r *MachineReconciler) executeAction(
 		return 0, "machine entered failed state", nil
 
 	case ActionStopVM:
+		if r.capacityProviderFor(machine) != nil {
+			observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOffline)
+			if err != nil {
+				return 0, "", fmt.Errorf("stopping capacity: %w", err)
+			}
+			logger.Info("offline intent reconciled", "machine", machine.Name,
+				"providerRef", observation.ProviderRef, "state", observation.State)
+			r.Recorder.Eventf(machine, corev1.EventTypeNormal, "CapacityStopping",
+				"Machine capacity stop requested")
+			return requeueStopping, "", nil
+		}
 		if machine.Status.InstanceId == "" {
 			return 0, "stopped (no instance)", nil
 		}
@@ -626,6 +675,14 @@ func (r *MachineReconciler) executeAction(
 		return requeueStopping, "", nil
 
 	case ActionForceStopVM:
+		if r.capacityProviderFor(machine) != nil {
+			if _, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOffline); err != nil {
+				logger.Error(err, "force-stop capacity reconcile failed (non-fatal, proceeding to Stopped)", "machine", machine.Name)
+			}
+			r.Recorder.Eventf(machine, corev1.EventTypeWarning, "StoppingTimeout",
+				"Stopping timeout exceeded — forcing capacity offline")
+			return 0, "force-stopped after timeout", nil
+		}
 		if machine.Status.InstanceId != "" {
 			if err := r.ComputeAdapter.StopInstance(ctx, machine.Status.InstanceId); err != nil {
 				logger.Error(err, "force-stop failed (non-fatal, proceeding to Stopped)", "machine", machine.Name)
@@ -636,6 +693,17 @@ func (r *MachineReconciler) executeAction(
 		return 0, "force-stopped after timeout", nil
 
 	case ActionStartInstance:
+		if r.capacityProviderFor(machine) != nil {
+			observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOnline)
+			if err != nil {
+				return 0, "", fmt.Errorf("starting capacity: %w", err)
+			}
+			logger.Info("online intent reconciled", "machine", machine.Name,
+				"providerRef", observation.ProviderRef, "state", observation.State)
+			r.Recorder.Eventf(machine, corev1.EventTypeNormal, "CapacityStarting",
+				"Machine capacity start requested")
+			return requeueProvisioning, "", nil
+		}
 		if machine.Status.InstanceId == "" {
 			return 0, "", fmt.Errorf("cannot start: no instance ID recorded")
 		}
@@ -665,6 +733,24 @@ func (r *MachineReconciler) executeAction(
 		machine.Status.ReplacementCount++
 		if err := r.Status().Patch(ctx, machine, countPatch); err != nil {
 			return 0, "", fmt.Errorf("patching replacement count: %w", err)
+		}
+
+		if r.capacityProviderFor(machine) != nil {
+			observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOnline)
+			if err != nil {
+				r.Recorder.Eventf(machine, corev1.EventTypeWarning, "ReplacementFailed",
+					"Replacement capacity reconciliation failed (attempt %d/%d): %v",
+					machine.Status.ReplacementCount, MaxReplacementRetries, err)
+				return 0, "", fmt.Errorf("reconciling replacement capacity: %w", err)
+			}
+			logger.Info("replacement capacity reconciled",
+				"machine", machine.Name,
+				"providerRef", observation.ProviderRef,
+				"replacementCount", machine.Status.ReplacementCount)
+			r.Recorder.Eventf(machine, corev1.EventTypeNormal, "ReplacementReconciled",
+				"Replacement capacity reconciled (attempt %d/%d)",
+				machine.Status.ReplacementCount, MaxReplacementRetries)
+			return requeueReplacing, "", nil
 		}
 
 		// Same cleanup as ActionCreateInstance — preemption replacement
@@ -727,6 +813,114 @@ func (r *MachineReconciler) executeAction(
 	}
 }
 
+func (r *MachineReconciler) capacityProviderFor(machine *kyberv1.Machine) adapters.CapacityProvider {
+	if r.CapacityProvider != nil {
+		if r.CapacityProvider.Type() == string(machine.Spec.Provider) {
+			return r.CapacityProvider
+		}
+		return nil
+	}
+	provider, _ := r.ComputeAdapter.(adapters.CapacityProvider)
+	if provider != nil && provider.Type() != string(machine.Spec.Provider) {
+		return nil
+	}
+	return provider
+}
+
+func (r *MachineReconciler) reconcileCapacity(
+	ctx context.Context,
+	machine *kyberv1.Machine,
+	availability adapters.DesiredAvailability,
+) (adapters.CapacityObservation, error) {
+	provider := r.capacityProviderFor(machine)
+	if provider == nil {
+		return adapters.CapacityObservation{}, fmt.Errorf("capacity provider is not configured")
+	}
+	desired := adapters.DesiredMachine{
+		Availability:  availability,
+		Profile:       machineProfile(machine),
+		DiskSizeGb:    int(machine.Spec.DiskSizeGb),
+		Interruptible: machineInterruptible(machine),
+		Location:      machineLocation(machine),
+		Labels:        map[string]string{MachineLabelKey: machine.Name},
+		NodeBootstrap: adapters.NodeBootstrap{
+			JoinToken: r.K3sJoinToken,
+			ServerURL: r.K3sServerURL,
+		},
+		Managed: machine.Spec.ManagementMode != kyberv1.MachineManagementExternal,
+	}
+	if selectorProvider, ok := provider.(adapters.CapacityNodeSelector); ok {
+		selector := selectorProvider.NodeSelector(adapters.MachineIdentity{Name: machine.Name}, adapters.ProviderRef(providerReference(machine)))
+		if len(selector) > 0 {
+			var nodes corev1.NodeList
+			if err := r.List(ctx, &nodes, client.MatchingLabels(selector)); err != nil {
+				return adapters.CapacityObservation{}, fmt.Errorf("observing attached provider nodes: %w", err)
+			}
+			desired.AttachmentObserved = true
+			desired.AttachedNodes = len(nodes.Items)
+		}
+	}
+	observation, err := provider.Reconcile(
+		ctx,
+		adapters.MachineIdentity{Name: machine.Name},
+		desired,
+		adapters.ProviderRef(providerReference(machine)),
+	)
+	if err != nil {
+		return adapters.CapacityObservation{}, fmt.Errorf("reconciling %s capacity: %w", availability, err)
+	}
+
+	ref := string(observation.ProviderRef)
+	observedAvailability := kyberv1.MachineAvailability(observation.State)
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.ResolvedProfile == nil || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP {
+		patch := client.MergeFrom(machine.DeepCopy())
+		machine.Status.ProviderRef = ref
+		// Dual-write during the compatibility window. Legacy readers continue
+		// using instanceId until every provider and client has migrated.
+		machine.Status.InstanceId = ref
+		machine.Status.Availability = observedAvailability
+		machine.Status.InternalIP = observation.InternalIP
+		machine.Status.ExternalIP = observation.ExternalIP
+		if machine.Status.ResolvedProfile == nil && desired.Profile != "" {
+			machine.Status.ResolvedProfile = &kyberv1.ResolvedMachineProfile{
+				ID: desired.Profile, Capacity: machine.Spec.Capacity,
+			}
+		}
+		if err := r.Status().Patch(ctx, machine, patch); err != nil {
+			return adapters.CapacityObservation{}, fmt.Errorf("patching provider reference: %w", err)
+		}
+	}
+	return observation, nil
+}
+
+func machineProfile(machine *kyberv1.Machine) string {
+	if machine.Spec.Profile != "" {
+		return machine.Spec.Profile
+	}
+	return machine.Spec.MachineType
+}
+
+func machineLocation(machine *kyberv1.Machine) string {
+	if machine.Spec.Location != "" {
+		return machine.Spec.Location
+	}
+	return machine.Spec.Zone
+}
+
+func machineInterruptible(machine *kyberv1.Machine) bool {
+	if machine.Spec.AvailabilityClass != "" {
+		return machine.Spec.AvailabilityClass == kyberv1.MachineAvailabilityCostOptimized
+	}
+	return machine.Spec.Spot
+}
+
+func providerReference(machine *kyberv1.Machine) string {
+	if machine.Status.ProviderRef != "" {
+		return machine.Status.ProviderRef
+	}
+	return machine.Status.InstanceId
+}
+
 // handleDeletion runs the machine cleanup finalizer.
 func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1.Machine) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
@@ -772,8 +966,19 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 
 	logger.Info("running machine finalizer", "machine", machine.Name)
 
-	// Delete the provider instance if one exists.
-	if machine.Status.InstanceId != "" {
+	if r.capacityProviderFor(machine) != nil {
+		observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredDeleted)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("deleting capacity during finalizer: %w", err)
+		}
+		if observation.State != adapters.CapacityAbsent {
+			logger.Info("waiting for provider capacity deletion", "machine", machine.Name,
+				"state", observation.State, "reason", observation.Reason)
+			return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
+		}
+		logger.Info("provider capacity deleted or unregistered", "machine", machine.Name)
+	} else if machine.Status.InstanceId != "" {
+		// Delete the legacy provider instance if one exists.
 		// Attempt stop first (graceful), then delete.
 		if err := r.ComputeAdapter.StopInstance(ctx, machine.Status.InstanceId); err != nil {
 			// Non-fatal — proceed to delete.
@@ -811,7 +1016,7 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 	}
 
 	r.Recorder.Eventf(machine, corev1.EventTypeNormal, "MachineDeleted",
-		"Machine cleanup complete — compute instance deleted, finalizer removed")
+		"Machine cleanup complete — provider capacity released, finalizer removed")
 
 	return ctrl.Result{}, nil
 }
@@ -924,7 +1129,7 @@ func (r *MachineReconciler) updateNodeInfo(ctx context.Context, machine *kyberv1
 	}
 
 	// Update IPs from the provider observation.
-	if machine.Status.InstanceId != "" {
+	if machine.Status.InstanceId != "" && r.capacityProviderFor(machine) == nil {
 		observation, err := r.ComputeAdapter.Observe(ctx, machine.Status.InstanceId)
 		if err == nil {
 			machine.Status.InternalIP = observation.InternalIP
@@ -1006,6 +1211,24 @@ func (r *MachineReconciler) cleanupStaleNodeArtifacts(ctx context.Context, machi
 // getNodeForMachine lists k8s nodes with the machine label and returns the first ready one.
 // Returns nil if no node is found.
 func (r *MachineReconciler) getNodeForMachine(ctx context.Context, machine *kyberv1.Machine) (*corev1.Node, error) {
+	if selectorProvider, ok := r.capacityProviderFor(machine).(adapters.CapacityNodeSelector); ok {
+		selector := selectorProvider.NodeSelector(
+			adapters.MachineIdentity{Name: machine.Name},
+			adapters.ProviderRef(providerReference(machine)),
+		)
+		if len(selector) > 0 {
+			nodes := &corev1.NodeList{}
+			if err := r.List(ctx, nodes, client.MatchingLabels(selector)); err != nil {
+				return nil, fmt.Errorf("listing provider nodes for machine %s: %w", machine.Name, err)
+			}
+			for i := range nodes.Items {
+				if isNodeReady(&nodes.Items[i]) {
+					return &nodes.Items[i], nil
+				}
+			}
+			return nil, nil
+		}
+	}
 	nodeList := &corev1.NodeList{}
 	if err := r.List(ctx, nodeList, client.MatchingLabels{
 		MachineLabelKey: machine.Name,

@@ -394,7 +394,10 @@ export type MachinePhase =
   | 'Failed'
   | 'Deleted'
 
-export type MachineProvider = 'gce' | 'static' | 'fake' | 'mock'
+export type MachineProvider = 'gce' | 'gke' | 'static' | 'fake' | 'mock'
+export type MachineAvailabilityClass = 'reliable' | 'costOptimized'
+export type MachineManagementMode = 'Managed' | 'External'
+export type MachineAvailability = 'Pending' | 'Available' | 'Recovering' | 'Offline' | 'Absent' | 'Failed' | 'Unknown'
 
 export interface MachineCapacitySpec {
   cpu: string
@@ -415,6 +418,17 @@ export interface MachineSpec {
   diskSizeGb?: number
   spot?: boolean
   zone?: string
+  profile?: string
+  availabilityClass?: MachineAvailabilityClass
+  location?: string
+  managementMode?: MachineManagementMode
+}
+
+export interface ResolvedMachineProfile {
+  id: string
+  displayName?: string
+  description?: string
+  capacity: MachineCapacitySpec
 }
 
 /**
@@ -438,6 +452,9 @@ export interface MachineStatus {
   phase: MachinePhase
   message?: string
   instanceId?: string
+  providerRef?: string
+  availability?: MachineAvailability
+  resolvedProfile?: ResolvedMachineProfile
   externalIP?: string
   internalIP?: string
   nodeName?: string
@@ -480,8 +497,43 @@ export interface RestartMachineAgentsResponse {
 // `capacity` object is optional too since #240 — when omitted, the server
 // auto-fills from node.status.allocatable.
 export type CreateMachineRequest =
-  | { name: string; provider: 'gce' | 'fake'; profile: string; diskSizeGb: number; interruptible: boolean; location: string }
-  | { name: string; provider: 'static' | 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string } }
+  | { name: string; provider: 'gce' | 'gke' | 'fake'; profile: string; diskSizeGb?: number; interruptible?: boolean; availabilityClass?: MachineAvailabilityClass; location: string; managementMode?: 'Managed' }
+  | { name: string; provider: 'static' | 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string }; managementMode?: 'External' }
+
+export interface ComputeCapabilities {
+  canProvision: boolean
+  canDiscoverExisting: boolean
+  suspendMode: 'Capacity' | 'LogicalOnly' | 'Unsupported'
+  deletionMode: 'DeleteCapacity' | 'UnregisterOnly'
+  supportsReliable: boolean
+  supportsInterruptible: boolean
+  supportsLocations: boolean
+}
+
+export interface MachinePreflightResponse {
+  valid: boolean
+  resolved: {
+    provider: MachineProvider
+    profile?: string
+    availabilityClass?: MachineAvailabilityClass
+    location?: string
+    managementMode: MachineManagementMode
+    diskSizeGb?: number
+    capacity?: MachineCapacitySpec
+  }
+  warnings: string[]
+}
+
+export interface MachineCandidate {
+  id: string
+  displayName: string
+  location?: string
+  capacity?: MachineCapacitySpec
+}
+
+export interface MachineCandidatesResponse {
+  items: MachineCandidate[]
+}
 
 // ---- Fleet types ----
 
@@ -547,7 +599,7 @@ export interface TranscriptResult {
 // Used by the PWA to render provider-conditional forms (e.g., Create Machine
 // shows different fields on mock vs gce) and to drive the Create-Agent model
 // dropdown from the server's known-models list.
-export type ComputeProvider = 'gce' | 'static' | 'fake' | 'mock' | ''
+export type ComputeProvider = 'gce' | 'gke' | 'static' | 'fake' | 'mock' | ''
 
 export type ModelInfo = {
   id: string
@@ -562,6 +614,7 @@ export type ComputeConfig = {
       locations: string[]
       diskSizesGb: number[]
       supportsInterruptible: boolean
+      capabilities?: ComputeCapabilities
     }
     // Catalog of GCE machine types accepted by the create-machine API.
     // Sourced from compute.gce.vmTypeCatalog in the chart. Server omits

@@ -68,7 +68,33 @@ testable without a cluster. Authoritative transition table:
   provider-native status strings, and are constructed through the registry in
   `pkg/adapters/compute_registry.go`. Explicit provider initialization fails
   closed — never fall back from a broken real provider to mock behavior. The
-  `provider=static` means existing-node/standalone attachment;
+  direct-GCE `CapacityProvider` persists `gce://<project>/<zone>/<name>` as an
+  opaque reference and initiates cloud operations without waiting for them;
+  subsequent reconciles observe convergence. It adopts legacy numeric instance
+  IDs and rewrites them through the compatibility dual-write path.
+  Operator discovery is capability-driven through `/api/v1/config`,
+  `POST /api/v1/machines/preflight`, and `GET /api/v1/machine-candidates`;
+  candidate IDs are opaque, and platform, unready, labelled, or already
+  claimed Nodes are never offered as external capacity.
+  `provider=gke` supports External observation: one Machine maps by name (or
+  opaque `gke://<project>/<location>/<cluster>/nodePools/<pool>` reference) to
+  one installer-managed node pool. It selects Nodes through
+  `cloud.google.com/gke-nodepool`, reports pool health, does not resize or
+  delete cloud resources, rejects Offline, and treats Machine deletion as
+  unregister-only. Configure it with `compute.gke.{project,location,cluster}`.
+  Installer-curated `compute.gke.profiles` enable explicit Managed Machines.
+  Managed pools are created at size one with Kyber ownership labels, resized
+  to zero for Offline, and deleted only when both ownership labels match; an
+  unowned pool is a hard failure, never an adoption opportunity.
+  provider-neutral capacity migration is additive: `pkg/adapters/compute.go`
+  also defines declarative `CapacityProvider` intent/observation types. `fake`
+  and `static`/`mock` implement both contracts. The Machine reconciler routes a
+  matching declarative provider through `CapacityProvider` but retains the
+  legacy path for direct GCE and test doubles; do not expose provider resource
+  kinds through the new contract or remove the compatibility interface before
+  all providers migrate. The target design
+  is `docs/design/2026-08-20-provider-agnostic-machine-provisioning-design.md`.
+  The `provider=static` means existing-node/standalone attachment;
   `provider=fake` uses a deterministic in-memory instance but traverses the
   normal managed Machine state machine and finalizer against one local Ready
   node. `provider=mock` remains a compatibility alias for `static`. Verify the

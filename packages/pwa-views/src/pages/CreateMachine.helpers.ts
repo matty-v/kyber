@@ -12,15 +12,16 @@ export type MockFormState = {
   name: string
 }
 
-export function buildManagedMachineRequest(form: ManagedMachineFormState, provider: 'gce' | 'fake'): CreateMachineRequest {
-  return {
+export function buildManagedMachineRequest(form: ManagedMachineFormState, provider: 'gce' | 'gke' | 'fake'): CreateMachineRequest {
+  const request: CreateMachineRequest = {
     name: form.name,
     provider,
     profile: form.machineType,
-    diskSizeGb: parseInt(form.diskSizeGb, 10),
     interruptible: form.spot,
     location: form.zone,
   }
+  if (provider !== 'gke') request.diskSizeGb = parseInt(form.diskSizeGb, 10)
+  return request
 }
 
 // buildMockRequest produces the minimal body — name + provider only. Since

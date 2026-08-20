@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -57,10 +58,21 @@ type ConfigCompute struct {
 }
 
 type ConfigManagedCompute struct {
-	Profiles              []ConfigVMType `json:"profiles"`
-	Locations             []string       `json:"locations"`
-	DiskSizesGB           []int32        `json:"diskSizesGb"`
-	SupportsInterruptible bool           `json:"supportsInterruptible"`
+	Profiles              []ConfigVMType             `json:"profiles"`
+	Locations             []string                   `json:"locations"`
+	DiskSizesGB           []int32                    `json:"diskSizesGb"`
+	SupportsInterruptible bool                       `json:"supportsInterruptible"`
+	Capabilities          *ConfigComputeCapabilities `json:"capabilities,omitempty"`
+}
+
+type ConfigComputeCapabilities struct {
+	CanProvision          bool                  `json:"canProvision"`
+	CanDiscoverExisting   bool                  `json:"canDiscoverExisting"`
+	SuspendMode           adapters.SuspendMode  `json:"suspendMode"`
+	DeletionMode          adapters.DeletionMode `json:"deletionMode"`
+	SupportsReliable      bool                  `json:"supportsReliable"`
+	SupportsInterruptible bool                  `json:"supportsInterruptible"`
+	SupportsLocations     bool                  `json:"supportsLocations"`
 }
 
 // ConfigVMType is one entry in the GCE machine-type catalog as exposed to
@@ -114,7 +126,51 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			DiskSizesGB: []int32{20, 50, 100, 200, 500}, SupportsInterruptible: true,
 		}
 	}
+	if s.CapacityProvider != nil {
+		capabilities, err := s.CapacityProvider.Capabilities(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute capabilities unavailable")
+			return
+		}
+		if resp.Compute.Managed == nil {
+			resp.Compute.Managed = &ConfigManagedCompute{
+				Profiles: []ConfigVMType{}, Locations: []string{}, DiskSizesGB: []int32{},
+			}
+		}
+		resp.Compute.Managed.SupportsInterruptible = capabilities.SupportsInterruptible
+		resp.Compute.Managed.Capabilities = &ConfigComputeCapabilities{
+			CanProvision: capabilities.CanProvision, CanDiscoverExisting: capabilities.CanDiscoverExisting,
+			SuspendMode: capabilities.SuspendMode, DeletionMode: capabilities.DeletionMode,
+			SupportsReliable: capabilities.SupportsReliable, SupportsInterruptible: capabilities.SupportsInterruptible,
+			SupportsLocations: capabilities.SupportsLocations,
+		}
+		providerProfiles, err := s.CapacityProvider.Profiles(r.Context())
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute profiles unavailable")
+			return
+		}
+		if len(providerProfiles) > 0 {
+			resp.Compute.Managed.Profiles = configProfiles(providerProfiles)
+		}
+		if locationsProvider, ok := s.CapacityProvider.(adapters.CapacityLocations); ok {
+			locations, err := locationsProvider.Locations(r.Context())
+			if err != nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute locations unavailable")
+				return
+			}
+			resp.Compute.Managed.Locations = locations
+		}
+	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func configProfiles(profiles []adapters.Profile) []ConfigVMType {
+	out := make([]ConfigVMType, 0, len(profiles))
+	for _, profile := range profiles {
+		out = append(out, ConfigVMType{Type: profile.ID, CPU: profile.CPU, Memory: profile.Memory})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	return out
 }
 
 // modelsForConfig returns the model list for /api/v1/config respecting
