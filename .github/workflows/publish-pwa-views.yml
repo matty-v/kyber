@@ -26,7 +26,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
@@ -95,7 +95,7 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: '20'
+          node-version: '22'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
