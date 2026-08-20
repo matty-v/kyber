@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -107,6 +108,11 @@ func isAlreadyExistsError(err error) bool {
 	return strings.Contains(err.Error(), "already exists")
 }
 
+func isNotFoundError(err error) bool {
+	var gerr *googleapi.Error
+	return errors.As(err, &gerr) && gerr.Code == 404
+}
+
 // ErrInstanceNotFound is returned by GCEAdapter when the requested instance
 // ID cannot be found — either because it was never valid (wrong format, e.g.
 // a stale mock-adapter ID like "mock-abc-123") or because the instance has
@@ -160,6 +166,36 @@ func (g *GCEAdapter) Type() string { return "gce" }
 // NodeAttachment reports that GCE instances bootstrap and register their own nodes.
 func (g *GCEAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentManaged }
 
+func (g *GCEAdapter) Capabilities(_ context.Context) (Capabilities, error) {
+	return Capabilities{
+		CanProvision: true, SuspendMode: SuspendCapacity, DeletionMode: DeleteCapacity,
+		SupportsReliable: true, SupportsInterruptible: true, SupportsLocations: true,
+	}, nil
+}
+
+// Profiles are installer-defined and currently supplied by the API's managed
+// compute catalog. GCE deliberately does not expose its native SKU catalog
+// through the provider boundary.
+func (g *GCEAdapter) Profiles(_ context.Context) ([]Profile, error) { return []Profile{}, nil }
+
+func (g *GCEAdapter) Validate(_ context.Context, desired DesiredMachine) error {
+	if desired.Profile == "" {
+		return fmt.Errorf("validating GCE capacity: profile is required")
+	}
+	if desired.Location == "" {
+		return fmt.Errorf("validating GCE capacity: location is required")
+	}
+	if desired.DiskSizeGb < 10 {
+		return fmt.Errorf("validating GCE capacity: disk size must be at least 10 GB")
+	}
+	switch desired.Availability {
+	case DesiredOnline, DesiredOffline, DesiredDeleted:
+		return nil
+	default:
+		return fmt.Errorf("validating GCE capacity: unsupported desired availability %q", desired.Availability)
+	}
+}
+
 // Close releases the underlying GCE client connection.
 func (g *GCEAdapter) Close() error {
 	if g.client != nil {
@@ -211,7 +247,62 @@ func regionFromZone(zone string) string {
 // Returns the GCE-assigned instance ID (numeric string from the insert operation).
 func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (string, error) {
 	gceName := instanceGCEName(spec.Name)
+	req := g.buildInsertRequest(spec)
 
+	var op gceOperation
+	var insertErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		op, insertErr = g.client.Insert(ctx, req)
+		if insertErr == nil {
+			break
+		}
+		if !isAlreadyExistsError(insertErr) {
+			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Location, gceName, insertErr)
+		}
+		existing, getErr := g.client.Get(ctx, &computepb.GetInstanceRequest{
+			Project: g.ProjectID, Zone: spec.Location, Instance: gceName,
+		})
+		if getErr != nil {
+			return "", fmt.Errorf("GCE Insert returned 409 but Get failed: insert=%w; get=%w", insertErr, getErr)
+		}
+		status := existing.GetStatus()
+		switch status {
+		case "RUNNING", "STAGING", "PROVISIONING":
+			if existing.Id != nil {
+				return fmt.Sprintf("%d", *existing.Id), nil
+			}
+			return "", fmt.Errorf("GCE Insert 409 with adoptable status=%s but instance has no ID", status)
+		case "TERMINATED", "STOPPED", "STOPPING":
+			delOp, delErr := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{
+				Project: g.ProjectID, Zone: spec.Location, Instance: gceName,
+			})
+			if delErr != nil {
+				return "", fmt.Errorf("deleting stale terminated instance %s: %w", gceName, delErr)
+			}
+			if waitErr := delOp.Wait(ctx); waitErr != nil {
+				return "", fmt.Errorf("waiting for stale instance delete of %s: %w", gceName, waitErr)
+			}
+		default:
+			return "", fmt.Errorf("GCE Insert(%s): instance exists with ambiguous status=%q — manual intervention required", gceName, status)
+		}
+	}
+	if insertErr != nil {
+		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Location, gceName, insertErr)
+	}
+	if err := op.Wait(ctx); err != nil {
+		return "", fmt.Errorf("waiting for GCE Insert(%s): %w", gceName, err)
+	}
+	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
+		Project: g.ProjectID, Zone: spec.Location, Instance: gceName,
+	})
+	if err != nil {
+		return "", fmt.Errorf("fetching created instance %s: %w", gceName, err)
+	}
+	return fmt.Sprintf("%d", inst.GetId()), nil
+}
+
+func (g *GCEAdapter) buildInsertRequest(spec MachineSpec) *computepb.InsertInstanceRequest {
+	gceName := instanceGCEName(spec.Name)
 	labels := map[string]string{
 		"kyber-machine": spec.Name,
 		"managed-by":    "kyber",
@@ -234,7 +325,7 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 	// Startup script installs k3s agent and labels the k8s node.
 	startupScript := buildStartupScript(spec)
 
-	req := &computepb.InsertInstanceRequest{
+	return &computepb.InsertInstanceRequest{
 		Project: g.ProjectID,
 		Zone:    spec.Location,
 		InstanceResource: &computepb.Instance{
@@ -268,80 +359,129 @@ func (g *GCEAdapter) CreateInstance(ctx context.Context, spec MachineSpec) (stri
 			Scheduling: scheduling,
 		},
 	}
+}
 
-	var op gceOperation
-	var insertErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		op, insertErr = g.client.Insert(ctx, req)
-		if insertErr == nil {
-			break
-		}
-		if !isAlreadyExistsError(insertErr) {
-			return "", fmt.Errorf("GCE Insert(%s/%s/%s): %w", g.ProjectID, spec.Location, gceName, insertErr)
-		}
-
-		// 409 — inspect the existing instance to decide how to proceed.
-		existing, getErr := g.client.Get(ctx, &computepb.GetInstanceRequest{
-			Project:  g.ProjectID,
-			Zone:     spec.Location,
-			Instance: gceName,
-		})
-		if getErr != nil {
-			return "", fmt.Errorf("GCE Insert returned 409 but Get failed: insert=%w; get=%w", insertErr, getErr)
-		}
-
-		status := ""
-		if existing.Status != nil {
-			status = *existing.Status
-		}
-
-		switch status {
-		case "RUNNING", "STAGING", "PROVISIONING":
-			// Adopt: the Insert op likely succeeded earlier but op.Wait was interrupted.
-			// Return the existing instance ID as a success.
-			if existing.Id != nil {
-				return fmt.Sprintf("%d", *existing.Id), nil
-			}
-			return "", fmt.Errorf("GCE Insert 409 with adoptable status=%s but instance has no ID", status)
-
-		case "TERMINATED", "STOPPED", "STOPPING":
-			// Delete the stale instance and retry Insert.
-			delOp, delErr := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{
-				Project:  g.ProjectID,
-				Zone:     spec.Location,
-				Instance: gceName,
-			})
-			if delErr != nil {
-				return "", fmt.Errorf("deleting stale terminated instance %s: %w", gceName, delErr)
-			}
-			if waitErr := delOp.Wait(ctx); waitErr != nil {
-				return "", fmt.Errorf("waiting for stale instance delete of %s: %w", gceName, waitErr)
-			}
-			// Loop continues to retry Insert.
-
-		default:
-			return "", fmt.Errorf("GCE Insert(%s): instance exists with ambiguous status=%q — manual intervention required", gceName, status)
-		}
-	}
-	if insertErr != nil {
-		return "", fmt.Errorf("GCE Insert(%s/%s/%s): exhausted retries after 409: %w", g.ProjectID, spec.Location, gceName, insertErr)
+// Reconcile performs one bounded, idempotent GCE capacity step. Cloud
+// operations are initiated but never waited here; later controller passes
+// observe the instance's native state by stable name and zone.
+func (g *GCEAdapter) Reconcile(
+	ctx context.Context,
+	identity MachineIdentity,
+	desired DesiredMachine,
+	ref ProviderRef,
+) (CapacityObservation, error) {
+	if err := g.Validate(ctx, desired); err != nil {
+		return CapacityObservation{}, err
 	}
 
-	if err := op.Wait(ctx); err != nil {
-		return "", fmt.Errorf("waiting for GCE Insert(%s): %w", gceName, err)
-	}
-
-	// Fetch the created instance to get its numeric ID.
-	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
-		Project:  g.ProjectID,
-		Zone:     spec.Location,
-		Instance: gceName,
-	})
+	name, zone, err := g.resolveCapacityReference(ctx, identity, desired, ref)
 	if err != nil {
-		return "", fmt.Errorf("fetching created instance %s: %w", gceName, err)
+		return CapacityObservation{}, err
+	}
+	stableRef := gceProviderRef(g.ProjectID, zone, name)
+	selector := map[string]string{MachineLabelKey: identity.Name}
+	inst, err := g.client.Get(ctx, &computepb.GetInstanceRequest{
+		Project: g.ProjectID, Zone: zone, Instance: name,
+	})
+	if err != nil && !isNotFoundError(err) {
+		return CapacityObservation{}, fmt.Errorf("getting GCE capacity %s: %w", name, err)
+	}
+	if isNotFoundError(err) {
+		switch desired.Availability {
+		case DesiredDeleted:
+			return CapacityObservation{State: CapacityAbsent, Reason: ReasonDeleted}, nil
+		case DesiredOffline:
+			return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+		case DesiredOnline:
+			spec := desiredMachineSpec(identity, desired)
+			if _, insertErr := g.client.Insert(ctx, g.buildInsertRequest(spec)); insertErr != nil && !isAlreadyExistsError(insertErr) {
+				return CapacityObservation{}, fmt.Errorf("inserting GCE capacity %s: %w", name, insertErr)
+			}
+			return CapacityObservation{State: CapacityPending, Reason: ReasonProvisioning, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+		}
 	}
 
-	return fmt.Sprintf("%d", inst.GetId()), nil
+	status := inst.GetStatus()
+	switch desired.Availability {
+	case DesiredDeleted:
+		if status != "STOPPING" {
+			if _, err := g.client.Delete(ctx, &computepb.DeleteInstanceRequest{Project: g.ProjectID, Zone: zone, Instance: name}); err != nil && !isNotFoundError(err) {
+				return CapacityObservation{}, fmt.Errorf("deleting GCE capacity %s: %w", name, err)
+			}
+		}
+		return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+
+	case DesiredOffline:
+		if status == "TERMINATED" || status == "STOPPED" || status == "SUSPENDED" {
+			return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+		}
+		if status == "RUNNING" {
+			if _, err := g.client.Stop(ctx, &computepb.StopInstanceRequest{Project: g.ProjectID, Zone: zone, Instance: name}); err != nil {
+				return CapacityObservation{}, fmt.Errorf("stopping GCE capacity %s: %w", name, err)
+			}
+		}
+		return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+
+	case DesiredOnline:
+		// TERMINATED is also the normal state after an operator stops a Spot VM.
+		// Reconcile cannot infer preemption from that status alone, so resuming
+		// must preserve the VM and boot disk. Provider-owned replacement remains
+		// on the legacy Machine state-machine path until observation and mutation
+		// are split in this declarative adapter.
+		if status == "TERMINATED" || status == "STOPPED" || status == "SUSPENDED" {
+			if _, err := g.client.Start(ctx, &computepb.StartInstanceRequest{Project: g.ProjectID, Zone: zone, Instance: name}); err != nil {
+				return CapacityObservation{}, fmt.Errorf("starting GCE capacity %s: %w", name, err)
+			}
+			return CapacityObservation{State: CapacityRecovering, Reason: ReasonRepairing, ProviderRef: stableRef, Location: zone, NodeSelector: selector}, nil
+		}
+		observation := CapacityObservationFromInstance(stableRef, selector, parseInstanceObservation(inst, zone))
+		if observation.State == CapacityAvailable {
+			observation.Reason = ReasonReady
+		} else {
+			observation.Reason = ReasonProvisioning
+		}
+		return observation, nil
+	}
+
+	return CapacityObservation{}, fmt.Errorf("reconciling GCE capacity: unsupported desired availability %q", desired.Availability)
+}
+
+func desiredMachineSpec(identity MachineIdentity, desired DesiredMachine) MachineSpec {
+	return MachineSpec{
+		Name: identity.Name, Profile: desired.Profile, DiskSizeGb: desired.DiskSizeGb,
+		Interruptible: desired.Interruptible, Location: desired.Location,
+		JoinToken: desired.NodeBootstrap.JoinToken, ServerURL: desired.NodeBootstrap.ServerURL,
+		Labels: desired.Labels,
+	}
+}
+
+func gceProviderRef(project, zone, name string) ProviderRef {
+	return ProviderRef((&url.URL{Scheme: "gce", Host: project, Path: "/" + zone + "/" + name}).String())
+}
+
+func (g *GCEAdapter) resolveCapacityReference(ctx context.Context, identity MachineIdentity, desired DesiredMachine, ref ProviderRef) (string, string, error) {
+	if ref == "" {
+		return instanceGCEName(identity.Name), desired.Location, nil
+	}
+	if _, err := strconv.ParseUint(string(ref), 10, 64); err == nil {
+		name, zone, lookupErr := g.lookupInstanceByID(ctx, string(ref))
+		if lookupErr != nil {
+			if errors.Is(lookupErr, ErrInstanceNotFound) {
+				return instanceGCEName(identity.Name), desired.Location, nil
+			}
+			return "", "", lookupErr
+		}
+		return name, zone, nil
+	}
+	u, err := url.Parse(string(ref))
+	if err != nil || u.Scheme != "gce" || u.Host != g.ProjectID {
+		return "", "", fmt.Errorf("parsing GCE provider reference: invalid reference")
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", fmt.Errorf("parsing GCE provider reference: invalid resource path")
+	}
+	return parts[1], parts[0], nil
 }
 
 // StartInstance starts a stopped GCE instance identified by its numeric instance ID.
@@ -571,5 +711,7 @@ curl -sfL https://get.k3s.io | \
 	)
 }
 
-// compile-time assertion: GCEAdapter implements ComputeAdapter.
+// compile-time assertions: GCEAdapter supports both compatibility and
+// declarative provider contracts during the controller migration.
 var _ ComputeAdapter = (*GCEAdapter)(nil)
+var _ CapacityProvider = (*GCEAdapter)(nil)

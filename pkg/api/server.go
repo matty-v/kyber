@@ -55,6 +55,11 @@ type Server struct {
 	// controller. It is nil in production and for real compute providers.
 	ComputeSimulation adapters.SimulationController
 
+	// CapacityProvider supplies provider-neutral capabilities, profiles, and
+	// validation to operator-facing compute APIs. Nil preserves compatibility
+	// for tests and installations still using only the legacy adapter contract.
+	CapacityProvider adapters.CapacityProvider
+
 	// MessageBuffer buffers Telegram messages for suspended agents.
 	MessageBuffer messagebuffer.MessageBuffer
 
@@ -710,6 +715,8 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// Machines.
 	mux.HandleFunc("/api/v1/machines", s.handleMachines)
 	mux.HandleFunc("/api/v1/machines/", s.handleMachines)
+	mux.HandleFunc("/api/v1/machine-candidates", s.handleMachineCandidates)
+	mux.HandleFunc("/api/v1/machines/preflight", s.handleMachinePreflight)
 
 	// Agents.
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)

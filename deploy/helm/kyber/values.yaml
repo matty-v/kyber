@@ -639,7 +639,7 @@ metrics:
 # or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the
 # instance's service account via the metadata server — no key file is needed.
 compute:
-  provider: mock          # "mock" or "gce"
+  provider: mock          # "mock", "static", "fake", "gce", or "gke"
   simulation:
     # Development-only, API-key-protected scenario controls. Production
     # installations must leave this disabled.
@@ -725,6 +725,13 @@ compute:
       - type: n2-standard-16
         cpu: "16"
         memory: "64Gi"
+  # GKE integration is observation-only by default. Supplying one or more
+  # profiles explicitly enables managed node-pool create/resize/delete.
+  gke:
+    project: ""
+    location: ""
+    cluster: ""
+    profiles: []
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.
 # Obtain these from Terraform outputs (k3s_join_token, k3s_server_url).

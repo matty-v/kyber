@@ -10,6 +10,7 @@ package adapters
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"sync"
 	"time"
 
@@ -52,6 +53,74 @@ func (m *MockComputeAdapter) Type() string { return "mock" }
 
 // NodeAttachment reports that compatibility mock Machines use an existing node.
 func (m *MockComputeAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentExisting }
+
+// Capabilities reports existing-capacity semantics for the compatibility
+// mock/static provider. Offline is logical only and deletion unregisters the
+// Machine without touching the Kubernetes host.
+func (m *MockComputeAdapter) Capabilities(_ context.Context) (Capabilities, error) {
+	return Capabilities{
+		CanProvision:          false,
+		CanDiscoverExisting:   true,
+		SuspendMode:           SuspendLogicalOnly,
+		DeletionMode:          UnregisterOnly,
+		SupportsReliable:      true,
+		SupportsInterruptible: false,
+		SupportsLocations:     false,
+	}, nil
+}
+
+// Profiles returns no predefined sizes because existing-node capacity is
+// detected from Kubernetes rather than selected from a cloud catalog.
+func (m *MockComputeAdapter) Profiles(_ context.Context) ([]Profile, error) {
+	return []Profile{}, nil
+}
+
+// Validate checks the portable lifecycle intent supported by existing
+// capacity. Provider-specific sizing fields are validated by API admission
+// during the compatibility period.
+func (m *MockComputeAdapter) Validate(_ context.Context, desired DesiredMachine) error {
+	switch desired.Availability {
+	case DesiredOnline, DesiredOffline, DesiredDeleted:
+		return nil
+	default:
+		return fmt.Errorf("validating existing capacity: unsupported desired availability %q", desired.Availability)
+	}
+}
+
+// Reconcile reports intent for externally managed capacity without mutating
+// the host. The Machine controller remains responsible for resolving the
+// selector, including the legacy first-Ready-node fallback.
+func (m *MockComputeAdapter) Reconcile(
+	ctx context.Context,
+	identity MachineIdentity,
+	desired DesiredMachine,
+	ref ProviderRef,
+) (CapacityObservation, error) {
+	if err := m.Validate(ctx, desired); err != nil {
+		return CapacityObservation{}, err
+	}
+	if ref == "" {
+		ref = ProviderRef("existing://machine/" + url.PathEscape(identity.Name))
+	}
+	selector := map[string]string{MachineLabelKey: identity.Name}
+
+	switch desired.Availability {
+	case DesiredOnline:
+		return CapacityObservation{
+			State: CapacityPending, Reason: ReasonExternalWait,
+			ProviderRef: ref, NodeSelector: selector,
+		}, nil
+	case DesiredOffline:
+		return CapacityObservation{
+			State: CapacityOffline, Reason: ReasonStopped,
+			ProviderRef: ref, NodeSelector: selector,
+		}, nil
+	case DesiredDeleted:
+		return CapacityObservation{State: CapacityAbsent, Reason: ReasonDeleted}, nil
+	default:
+		return CapacityObservation{}, fmt.Errorf("reconciling existing capacity: unsupported desired availability %q", desired.Availability)
+	}
+}
 
 // StaticComputeAdapter preserves the existing-node behavior under its accurate
 // provider name. Its lifecycle methods are inherited for interface symmetry,
@@ -188,3 +257,6 @@ func (m *MockComputeAdapter) InstanceCount() int {
 	defer m.mu.Unlock()
 	return len(m.instances)
 }
+
+var _ CapacityProvider = (*MockComputeAdapter)(nil)
+var _ CapacityProvider = (*StaticComputeAdapter)(nil)

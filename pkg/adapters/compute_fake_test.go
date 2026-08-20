@@ -157,3 +157,119 @@ func TestFakeComputeAdapterRecoversLegacyPersistedInstanceAfterRestart(t *testin
 		t.Fatalf("legacy interruption = %q, want %q", observation.Interruption, InterruptionPreempted)
 	}
 }
+
+func TestFakeCapacityProviderLifecycle(t *testing.T) {
+	ctx := context.Background()
+	provider := NewFakeComputeAdapter()
+	identity := MachineIdentity{Name: "capacity-worker"}
+	desired := DesiredMachine{
+		Availability:  DesiredOnline,
+		Profile:       "default",
+		Interruptible: true,
+		Location:      "local-a",
+		NodeBootstrap: NodeBootstrap{
+			ServerURL: "https://cluster.example:6443",
+			JoinToken: "test-only-token",
+		},
+	}
+
+	created, err := provider.Reconcile(ctx, identity, desired, "")
+	if err != nil {
+		t.Fatalf("Reconcile Online create: %v", err)
+	}
+	if created.State != CapacityAvailable || created.Reason != ReasonReady {
+		t.Fatalf("created observation = %+v, want Available/Ready", created)
+	}
+	if created.ProviderRef == "" {
+		t.Fatal("created ProviderRef is empty")
+	}
+	if created.NodeSelector[MachineLabelKey] != identity.Name {
+		t.Errorf("created NodeSelector = %#v, want machine label %q", created.NodeSelector, identity.Name)
+	}
+	instances := provider.ListSimulatedInstances()
+	if len(instances) != 1 {
+		t.Fatalf("ListSimulatedInstances() returned %d instances, want 1", len(instances))
+	}
+	if instances[0].Spec.ServerURL != desired.NodeBootstrap.ServerURL ||
+		instances[0].Spec.JoinToken != desired.NodeBootstrap.JoinToken {
+		t.Errorf("fake bootstrap = %#v, want desired bootstrap", instances[0].Spec)
+	}
+
+	desired.Availability = DesiredOffline
+	stopped, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("Reconcile Offline: %v", err)
+	}
+	if stopped.State != CapacityOffline || stopped.Reason != ReasonStopped {
+		t.Fatalf("stopped observation = %+v, want Offline/Stopped", stopped)
+	}
+
+	desired.Availability = DesiredOnline
+	started, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("Reconcile Online start: %v", err)
+	}
+	if started.State != CapacityAvailable || started.ProviderRef != created.ProviderRef {
+		t.Fatalf("started observation = %+v, want Available with original ref %q", started, created.ProviderRef)
+	}
+
+	desired.Availability = DesiredDeleted
+	deleted, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("Reconcile Deleted: %v", err)
+	}
+	if deleted.State != CapacityAbsent || deleted.Reason != ReasonDeleted {
+		t.Fatalf("deleted observation = %+v, want Absent/Deleted", deleted)
+	}
+	if provider.InstanceCount() != 0 {
+		t.Errorf("InstanceCount() = %d, want 0", provider.InstanceCount())
+	}
+}
+
+func TestFakeCapacityProviderOwnsInterruptionReplacement(t *testing.T) {
+	ctx := context.Background()
+	provider := NewFakeComputeAdapter()
+	identity := MachineIdentity{Name: "spot-capacity"}
+	desired := DesiredMachine{
+		Availability:  DesiredOnline,
+		Profile:       "default",
+		Interruptible: true,
+		Location:      "local-a",
+	}
+
+	first, err := provider.Reconcile(ctx, identity, desired, "")
+	if err != nil {
+		t.Fatalf("first Reconcile: %v", err)
+	}
+	if err := provider.ApplySimulationScenario(identity.Name, SimulationPreempted); err != nil {
+		t.Fatalf("ApplySimulationScenario: %v", err)
+	}
+
+	replacement, err := provider.Reconcile(ctx, identity, desired, first.ProviderRef)
+	if err != nil {
+		t.Fatalf("replacement Reconcile: %v", err)
+	}
+	if replacement.ProviderRef == first.ProviderRef {
+		t.Fatalf("replacement ProviderRef = %q, want a new ref", replacement.ProviderRef)
+	}
+	if replacement.State != CapacityAvailable {
+		t.Errorf("replacement State = %q, want %q", replacement.State, CapacityAvailable)
+	}
+	if provider.InstanceCount() != 1 {
+		t.Errorf("InstanceCount() = %d, want 1", provider.InstanceCount())
+	}
+}
+
+func TestFakeCapacityProviderCapabilities(t *testing.T) {
+	provider := NewFakeComputeAdapter()
+	got, err := provider.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if !got.CanProvision || got.SuspendMode != SuspendCapacity || got.DeletionMode != DeleteCapacity {
+		t.Errorf("Capabilities() = %+v, want managed lifecycle", got)
+	}
+	if !got.SupportsReliable || !got.SupportsInterruptible || !got.SupportsLocations {
+		t.Errorf("Capabilities() = %+v, want all fake offering capabilities", got)
+	}
+}

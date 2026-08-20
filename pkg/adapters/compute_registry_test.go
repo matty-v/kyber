@@ -28,7 +28,7 @@ func TestNewComputeAdapterUnknown(t *testing.T) {
 
 func TestRegisteredComputeProviders(t *testing.T) {
 	got := RegisteredComputeProviders()
-	want := []string{"fake", "gce", "mock", "static"}
+	want := []string{"fake", "gce", "gke", "mock", "static"}
 	if len(got) != len(want) {
 		t.Fatalf("RegisteredComputeProviders() = %v, want %v", got, want)
 	}

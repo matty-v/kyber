@@ -39,6 +39,139 @@ func (f *FakeComputeAdapter) Type() string { return "fake" }
 
 func (f *FakeComputeAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentExisting }
 
+// Capabilities describes the operator actions supported by the deterministic
+// managed-capacity simulator.
+func (f *FakeComputeAdapter) Capabilities(_ context.Context) (Capabilities, error) {
+	return Capabilities{
+		CanProvision:          true,
+		CanDiscoverExisting:   false,
+		SuspendMode:           SuspendCapacity,
+		DeletionMode:          DeleteCapacity,
+		SupportsReliable:      true,
+		SupportsInterruptible: true,
+		SupportsLocations:     true,
+	}, nil
+}
+
+// Profiles returns the provider-neutral profile used by contract tests. The
+// active API continues serving its configured catalog until the profile API
+// migration is complete.
+func (f *FakeComputeAdapter) Profiles(_ context.Context) ([]Profile, error) {
+	return []Profile{{
+		ID:                  "e2-small",
+		DisplayName:         "Small",
+		CPU:                 "2",
+		Memory:              "2Gi",
+		AvailabilityClasses: []string{"reliable", "costOptimized"},
+		Recommended:         true,
+	}}, nil
+}
+
+// Validate checks only the portable intent understood by the fake provider.
+func (f *FakeComputeAdapter) Validate(_ context.Context, desired DesiredMachine) error {
+	switch desired.Availability {
+	case DesiredOnline, DesiredOffline, DesiredDeleted:
+		return nil
+	default:
+		return fmt.Errorf("validating fake capacity: unsupported desired availability %q", desired.Availability)
+	}
+}
+
+// Reconcile converges deterministic fake capacity toward the requested
+// availability. It implements the new provider contract alongside the legacy
+// ComputeAdapter methods while the Machine reconciler is migrated.
+func (f *FakeComputeAdapter) Reconcile(
+	ctx context.Context,
+	identity MachineIdentity,
+	desired DesiredMachine,
+	ref ProviderRef,
+) (CapacityObservation, error) {
+	if err := f.Validate(ctx, desired); err != nil {
+		return CapacityObservation{}, err
+	}
+
+	selector := map[string]string{MachineLabelKey: identity.Name}
+	switch desired.Availability {
+	case DesiredDeleted:
+		if ref != "" {
+			if err := f.DeleteInstance(ctx, string(ref)); err != nil {
+				return CapacityObservation{}, fmt.Errorf("deleting fake capacity: %w", err)
+			}
+		}
+		return CapacityObservation{State: CapacityAbsent, Reason: ReasonDeleted}, nil
+
+	case DesiredOffline:
+		if ref == "" {
+			return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped}, nil
+		}
+		if err := f.StopInstance(ctx, string(ref)); err != nil {
+			return CapacityObservation{}, fmt.Errorf("stopping fake capacity: %w", err)
+		}
+		observation, err := f.Observe(ctx, string(ref))
+		if err != nil {
+			return CapacityObservation{}, fmt.Errorf("observing stopped fake capacity: %w", err)
+		}
+		return CapacityObservationFromInstance(ref, selector, observation), nil
+
+	case DesiredOnline:
+		if ref == "" {
+			return f.createCapacity(ctx, identity, desired, selector)
+		}
+		observation, err := f.Observe(ctx, string(ref))
+		if err != nil {
+			return CapacityObservation{}, fmt.Errorf("observing fake capacity: %w", err)
+		}
+		if observation.Interruption == InterruptionPreempted {
+			if !desired.Interruptible {
+				return CapacityObservation{
+					State: CapacityFailed, Reason: ReasonProviderError,
+					Message: "non-interruptible fake capacity was interrupted", ProviderRef: ref,
+					NodeSelector: selector,
+				}, nil
+			}
+			return f.createCapacity(ctx, identity, desired, selector)
+		}
+		if observation.State == InstanceStateStopped {
+			if err := f.StartInstance(ctx, string(ref)); err != nil {
+				return CapacityObservation{}, fmt.Errorf("starting fake capacity: %w", err)
+			}
+			observation, err = f.Observe(ctx, string(ref))
+			if err != nil {
+				return CapacityObservation{}, fmt.Errorf("observing started fake capacity: %w", err)
+			}
+		}
+		return CapacityObservationFromInstance(ref, selector, observation), nil
+	}
+
+	return CapacityObservation{}, fmt.Errorf("reconciling fake capacity: unsupported desired availability %q", desired.Availability)
+}
+
+func (f *FakeComputeAdapter) createCapacity(
+	ctx context.Context,
+	identity MachineIdentity,
+	desired DesiredMachine,
+	selector map[string]string,
+) (CapacityObservation, error) {
+	id, err := f.CreateInstance(ctx, MachineSpec{
+		Name:          identity.Name,
+		Profile:       desired.Profile,
+		DiskSizeGb:    desired.DiskSizeGb,
+		Interruptible: desired.Interruptible,
+		Location:      desired.Location,
+		Labels:        desired.Labels,
+		JoinToken:     desired.NodeBootstrap.JoinToken,
+		ServerURL:     desired.NodeBootstrap.ServerURL,
+	})
+	if err != nil {
+		return CapacityObservation{}, fmt.Errorf("creating fake capacity: %w", err)
+	}
+	observation, err := f.Observe(ctx, id)
+	if err != nil {
+		return CapacityObservation{}, fmt.Errorf("observing created fake capacity: %w", err)
+	}
+	return CapacityObservationFromInstance(ProviderRef(id), selector, observation), nil
+}
+
 func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -246,4 +379,5 @@ func (f *FakeComputeAdapter) instance(instanceID string) (*fakeInstance, error) 
 }
 
 var _ ComputeAdapter = (*FakeComputeAdapter)(nil)
+var _ CapacityProvider = (*FakeComputeAdapter)(nil)
 var _ SimulationController = (*FakeComputeAdapter)(nil)

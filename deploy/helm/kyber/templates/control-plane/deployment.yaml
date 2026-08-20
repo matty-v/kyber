@@ -379,6 +379,16 @@ spec:
               value: {{ .Values.compute.gce.vmTypeCatalog | toJson | quote }}
             {{- end }}
             {{- end }}
+            {{- if eq (.Values.compute.provider | default "mock") "gke" }}
+            - name: KYBER_GKE_PROJECT
+              value: {{ required "compute.gke.project is required when compute.provider=gke" .Values.compute.gke.project | quote }}
+            - name: KYBER_GKE_LOCATION
+              value: {{ required "compute.gke.location is required when compute.provider=gke" .Values.compute.gke.location | quote }}
+            - name: KYBER_GKE_CLUSTER
+              value: {{ required "compute.gke.cluster is required when compute.provider=gke" .Values.compute.gke.cluster | quote }}
+            - name: KYBER_GKE_PROFILES
+              value: {{ .Values.compute.gke.profiles | toJson | quote }}
+            {{- end }}
             # Telemetry — OTEL exporter config.
             - name: KYBER_TELEMETRY_ENABLED
               valueFrom:

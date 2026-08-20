@@ -190,6 +190,74 @@ func TestMockComputeAdapter_ConcurrentAccess(t *testing.T) {
 	}
 }
 
+func TestExistingCapacityProviderLifecycleDoesNotMutateHost(t *testing.T) {
+	ctx := context.Background()
+	provider := NewStaticComputeAdapter()
+	identity := MachineIdentity{Name: "local-worker"}
+	desired := DesiredMachine{Availability: DesiredOnline}
+
+	online, err := provider.Reconcile(ctx, identity, desired, "")
+	if err != nil {
+		t.Fatalf("Reconcile Online: %v", err)
+	}
+	if online.State != CapacityPending || online.Reason != ReasonExternalWait {
+		t.Fatalf("online observation = %+v, want Pending/ExternalWait", online)
+	}
+	if online.ProviderRef == "" {
+		t.Fatal("online ProviderRef is empty")
+	}
+	if online.NodeSelector[MachineLabelKey] != identity.Name {
+		t.Errorf("online NodeSelector = %#v, want machine label %q", online.NodeSelector, identity.Name)
+	}
+
+	desired.Availability = DesiredOffline
+	offline, err := provider.Reconcile(ctx, identity, desired, online.ProviderRef)
+	if err != nil {
+		t.Fatalf("Reconcile Offline: %v", err)
+	}
+	if offline.State != CapacityOffline || offline.ProviderRef != online.ProviderRef {
+		t.Fatalf("offline observation = %+v, want Offline with preserved ref", offline)
+	}
+	if provider.InstanceCount() != 0 {
+		t.Errorf("InstanceCount() = %d, want 0; logical lifecycle must not create capacity", provider.InstanceCount())
+	}
+
+	desired.Availability = DesiredDeleted
+	deleted, err := provider.Reconcile(ctx, identity, desired, online.ProviderRef)
+	if err != nil {
+		t.Fatalf("Reconcile Deleted: %v", err)
+	}
+	if deleted.State != CapacityAbsent || deleted.ProviderRef != "" {
+		t.Fatalf("deleted observation = %+v, want Absent with no ref", deleted)
+	}
+	if provider.InstanceCount() != 0 {
+		t.Errorf("InstanceCount() = %d after unregister, want 0", provider.InstanceCount())
+	}
+}
+
+func TestExistingCapacityProviderCapabilities(t *testing.T) {
+	provider := NewStaticComputeAdapter()
+	got, err := provider.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("Capabilities: %v", err)
+	}
+	if got.CanProvision {
+		t.Error("CanProvision = true, want false")
+	}
+	if !got.CanDiscoverExisting {
+		t.Error("CanDiscoverExisting = false, want true")
+	}
+	if got.SuspendMode != SuspendLogicalOnly {
+		t.Errorf("SuspendMode = %q, want %q", got.SuspendMode, SuspendLogicalOnly)
+	}
+	if got.DeletionMode != UnregisterOnly {
+		t.Errorf("DeletionMode = %q, want %q", got.DeletionMode, UnregisterOnly)
+	}
+	if got.SupportsInterruptible || got.SupportsLocations {
+		t.Errorf("Capabilities() = %+v, existing capacity must not advertise cloud choices", got)
+	}
+}
+
 // TestMockAdapter_ImplementsInterface is a compile-time assertion that MockComputeAdapter
 // implements ComputeAdapter.
 var _ ComputeAdapter = (*MockComputeAdapter)(nil)

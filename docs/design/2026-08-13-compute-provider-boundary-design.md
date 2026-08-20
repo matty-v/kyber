@@ -5,6 +5,11 @@
 configuration, and local lifecycle testing. Agent runtimes and log-archive
 backends are out of scope.
 
+> **Forward design:**
+> [`2026-08-20-provider-agnostic-machine-provisioning-design.md`](2026-08-20-provider-agnostic-machine-provisioning-design.md)
+> proposes the next boundary: declarative logical capacity with provider-owned
+> fulfillment, preserving the implemented foundations documented here.
+
 The second vertical slice exposes managed compute through neutral capabilities:
 profiles, opaque locations, disk choices, and interruptible-instance support.
 The public API retains `gceVMTypes` and the `machineType`/`zone`/`spot` request

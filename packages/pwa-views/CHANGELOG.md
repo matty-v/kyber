@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.0 — 2026-08-20
+
+### Added
+- Provider-neutral Machine profile, availability class, location, management mode, provider reference, availability, and resolved-profile types.
+- Portable compute capabilities, Machine preflight, and existing-capacity candidate API types.
+
 ## 0.27.4 — 2026-08-20
 
 ### Fixed
