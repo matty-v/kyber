@@ -60,8 +60,6 @@ jobs:
 
       - uses: actions/checkout@v7
         with:
-          # Need the previous commit to detect whether the version changed.
-          fetch-depth: 2
           # Don't persist the read-only GITHUB_TOKEN as a git auth header — it
           # would override the App-token remote URL the push step sets and the
           # tag push would auth as the contents:read GITHUB_TOKEN → 403.
@@ -80,9 +78,21 @@ jobs:
           ver() { git show "$1:packages/pwa-views/package.json" \
             | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1; }
           NEW="$(ver HEAD)"
-          OLD="$(ver HEAD~1 || echo '')"
-          echo "old=${OLD:-<none>} new=${NEW}"
-          if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ]; then
+          # Compare against the newest pwa-views/v* tag, not HEAD~1: a version
+          # superseded before this workflow ran (two bumps landing between
+          # pushes) never appears as HEAD and a commit-to-commit diff strands
+          # it forever — that's how 0.27.2 was never published. The latest tag
+          # is what actually went out, so any bump ahead of it gets tagged on
+          # the next main push, however many commits late. ls-remote avoids
+          # needing local tags; the ^{} deref lines are filtered out.
+          OLD="$(git ls-remote --tags origin 'refs/tags/pwa-views/v*' \
+            | sed -nE 's|.*refs/tags/pwa-views/v([0-9][0-9A-Za-z.+-]*)$|\1|p' \
+            | sort -V | tail -1)"
+          echo "latest-tag=${OLD:-<none>} new=${NEW}"
+          # Strictly newer only: a reverted bump must not republish an old
+          # version as the registry's latest.
+          if [ -n "$NEW" ] && [ "$NEW" != "$OLD" ] \
+            && [ "$(printf '%s\n' "$OLD" "$NEW" | sort -V | tail -1)" = "$NEW" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             echo "version=${NEW}" >> "$GITHUB_OUTPUT"
           else
