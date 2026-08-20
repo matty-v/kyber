@@ -3,10 +3,12 @@
 ## 0.27.4 — 2026-08-20
 
 ### Fixed
-- Republish of 0.27.3, which never reached the registry: its publish job hung
-  in the test step on Node 20 (the suite passes on Node 22, which is what PR
-  CI runs). The publish workflows now run Node 22, matching the tested path.
-  No package code changes beyond the version.
+- First publish since 0.27.1 — it carries the 0.27.2 and 0.27.3 changes below,
+  neither of which reached the registry. 0.27.2 was superseded inside the same
+  push and never tagged; 0.27.3's publish job hung in the test step on Node 20
+  (the suite passes on Node 22, which is what PR CI runs). The publish
+  workflows now run Node 22, matching the tested path. No package code changes
+  beyond the version.
 
 ## 0.27.3 — 2026-08-19
 
