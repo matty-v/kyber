@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"fmt"
+
 	corev1 "k8s.io/api/core/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -18,6 +20,9 @@ import (
 // A periodic resync is configured on the Manager (every 5 minutes), catching any drift
 // between desired and actual state.
 func (r *AgentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if r.MachineGetter == nil {
+		return fmt.Errorf("setting up agent controller: machine getter is required")
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kyberv1.Agent{}).
 		// Watch pods we own: any pod status change triggers reconciliation of the owning Agent.

@@ -167,7 +167,6 @@ stateDiagram-v2
     Starting --> WaitingForMachine: MachineUnavailable
     Running --> WaitingForMachine: MachineUnavailable
     Restarting --> WaitingForMachine: MachineUnavailable
-    Failed --> WaitingForMachine: MachineUnavailable
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
@@ -209,6 +208,7 @@ stateDiagram-v2
 
     Draining --> WaitingForMachine: PodDeleted / MachinePreempted
     WaitingForMachine --> Starting: MachineReady
+    WaitingForMachine --> Stopped: DesiredStopped
 
     note right of Starting
         Starting is the common re-entry point:
@@ -241,7 +241,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Starting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Running` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Restarting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
-| `Failed` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `WaitingForMachine` | `DesiredStopped` | `ForceKillPod` | `Stopped` |
 | `Running` | `DesiredStopped` | `SendSIGTERM` | `Stopping` |
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `DesiredSuspended` | `CaptureStateAndDeletePod` | `Suspended` |

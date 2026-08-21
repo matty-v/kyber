@@ -145,16 +145,8 @@ func TestGKEManagedLifecycleRequiresOwnership(t *testing.T) {
 		t.Fatalf("resize = %+v, err=%v, sizes=%v", resizing, err, resizeClient.sizes)
 	}
 
-	repairClient := &fakeGKENodePoolsClient{pool: &container.NodePool{
-		Status: "RUNNING", InitialNodeCount: 1,
-		Config: &container.NodeConfig{Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "test-pool"}},
-	}}
-	repairing, err := provider(repairClient).Reconcile(context.Background(), MachineIdentity{Name: "test-pool"}, desired, "")
-	if err != nil || repairing.State != CapacityRecovering || len(repairClient.sizes) != 0 {
-		t.Fatalf("repair = %+v, err=%v, sizes=%v; an already-size-one pool must repair without another resize", repairing, err, repairClient.sizes)
-	}
-	if repairing.Message == "" {
-		t.Error("repair observation must explain that provider capacity is pending")
+	if resizing.Message == "" {
+		t.Error("resize observation must explain that provider capacity is pending")
 	}
 
 	deleteClient := &fakeGKENodePoolsClient{pool: ownedPool}

@@ -34,18 +34,19 @@ is therefore:
    GKE left the node pool present and repairing after its Spot Node vanished,
    so the Machine controller classified the disappearance as an ordinary
    failure.
-5. The GKE adapter reissued `SetSize(1)` whenever a size-one pool temporarily
-   had no attached Node, producing redundant operations while the managed
-   instance group was already repairing.
 
 ## Design
 
 Agent lifecycle consumes only Machine readiness. `MachineUnavailable` is an
 internal, provider-neutral event emitted for active or retrying Agents when
 their assigned Machine is not `Ready` or `Running`. It transitions `Creating`,
-`Starting`, `Running`, `Restarting`, and `Failed` to `WaitingForMachine` using
-the existing transition action. The action deletes any existing pod with zero
-grace, preserves PVCs, and never increments `restartCount`.
+`Starting`, `Running`, and `Restarting` to `WaitingForMachine` using the
+existing transition action. A pre-existing `Failed` Agent retains its failure
+provenance instead of being revived by an unrelated Machine recovery. The
+action force-deletes a Pending pod or a pod on a missing/NotReady Node, but
+retains normal termination grace while the Node is healthy. It preserves PVCs
+and never increments `restartCount`. Operator Stop remains available from
+`WaitingForMachine` and converges directly to `Stopped`.
 
 The production control plane supplies a cache-backed `KubernetesMachineGetter`.
 `WaitingForMachine` polls on the existing 15-second cadence. A Ready/Running
@@ -59,9 +60,11 @@ repair remain inside the adapter. Reliable-capacity failures retain the
 ordinary Failed/reconcile path, while their Agents still wait because Machine
 readiness is the only Agent-side contract.
 
-The GKE adapter distinguishes a stopped pool (`initialNodeCount == 0`) from a
-size-one pool whose Node is temporarily absent. Only the former needs
-`SetSize(1)`; the latter is already being repaired by GKE.
+The GKE NodePool API does not expose a reliable current target size through
+`initialNodeCount`, so Kyber retains the existing idempotent SetSize calls while
+capacity is absent. Avoiding redundant provider operations requires a separate
+trustworthy target-size observation; recovery correctness does not depend on
+that optimization.
 
 No CRD or REST shape changes are required. Existing Machine `status.message`
 stores a provider-neutral recovery explanation. PWA banners derive recovery
@@ -77,6 +80,6 @@ copy action.
   replacement Machine recreates the pod with its new hostname affinity.
 - Machine/controller test: missing interruptible provider capacity enters the
   replacement path even without a native interruption reason.
-- GKE adapter test: a size-one pool with zero attached Nodes reports Recovering
-  without another resize; a zero-size pool still resizes to one.
+- GKE adapter test: a pool with zero attached Nodes reports Recovering and
+  continues asserting the Online size target.
 - PWA tests: friendly recovery copy is visible and raw details are collapsed.

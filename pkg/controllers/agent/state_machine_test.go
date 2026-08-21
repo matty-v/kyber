@@ -439,13 +439,6 @@ func TestPreemptionTransitions(t *testing.T) {
 			wantAction: ActionTransitionToWaiting,
 		},
 		{
-			name:       "Failed + MachineUnavailable → WaitingForMachine",
-			phase:      kyberv1.AgentPhaseFailed,
-			event:      EventMachineUnavailable,
-			wantPhase:  kyberv1.AgentPhaseWaitingForMachine,
-			wantAction: ActionTransitionToWaiting,
-		},
-		{
 			name:       "Creating + MachineUnavailable → WaitingForMachine",
 			phase:      kyberv1.AgentPhaseCreating,
 			event:      EventMachineUnavailable,
@@ -472,6 +465,13 @@ func TestPreemptionTransitions(t *testing.T) {
 			event:      EventMachineUnavailable,
 			wantPhase:  kyberv1.AgentPhaseWaitingForMachine,
 			wantAction: ActionTransitionToWaiting,
+		},
+		{
+			name:       "WaitingForMachine + DesiredStopped → Stopped",
+			phase:      kyberv1.AgentPhaseWaitingForMachine,
+			event:      EventDesiredStopped,
+			wantPhase:  kyberv1.AgentPhaseStopped,
+			wantAction: ActionForceKillPod,
 		},
 	}
 

@@ -110,8 +110,9 @@ testable without a cluster. Authoritative transition table:
   The production Agent reconciler must be wired with a
   `KubernetesMachineGetter`: active agents consume the provider-neutral
   Machine readiness contract, park in `WaitingForMachine`, and remove their
-  stale pod while capacity recovers. They resume without spending their retry
-  budget when the Machine becomes Ready. See
+  stale pod while capacity recovers. Pods on healthy Nodes retain termination
+  grace; only Pending pods or pods on missing/NotReady Nodes are force-deleted.
+  They resume without spending their retry budget when the Machine becomes Ready. See
   `docs/design/2026-08-21-machine-capacity-recovery.md`.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
@@ -377,8 +378,9 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     so an operator's concrete pin survives Helm upgrades.
 15. **Machine-aware Agent recovery depends on production wiring.** Keep
     `AgentReconciler.MachineGetter` initialized in `cmd/control-plane/main.go`.
-    Leaving it nil silently disables `WaitingForMachine` recovery and turns
-    provider capacity loss into Agent startup failures.
+    `SetupWithManager` fails closed when it is nil; weakening that gate can
+    silently disable `WaitingForMachine` recovery and turn provider capacity
+    loss into Agent startup failures.
 
 ---
 

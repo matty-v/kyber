@@ -844,13 +844,14 @@ func (r *AgentReconciler) classifyEvent(
 	// Allowlist deliberately EXCLUDES Stopped (unlike NeedsAuth): a Stopped agent
 	// with desired==Stopped must derive no event so it is a stable fixed point
 	// and stays down across resyncs until desired flips to Running. Transient/
-	// cleanup phases (Creating, Stopping, Restarting, Draining, WaitingForMachine,
-	// NeedsAuth, Deleted) are likewise untouched.
+	// cleanup phases (Creating, Stopping, Restarting, Draining, NeedsAuth,
+	// Deleted) are likewise untouched. WaitingForMachine is included because an
+	// operator must always be able to stop an Agent during a prolonged outage.
 	if desired == kyberv1.AgentPhaseStopped {
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-			kyberv1.AgentPhaseSuspended:
+			kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseWaitingForMachine:
 			return EventDesiredStopped, nil
 		}
 	}
@@ -862,8 +863,7 @@ func (r *AgentReconciler) classifyEvent(
 	// Operator Stop/NeedsAuth intent above still wins by ordering.
 	switch phase {
 	case kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStarting,
-		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting,
-		kyberv1.AgentPhaseFailed:
+		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting:
 		if r.isMachineUnavailable(ctx, agent) {
 			return EventMachineUnavailable, nil
 		}
@@ -1425,8 +1425,8 @@ func (r *AgentReconciler) executeAction(
 		// otherwise MachineReady would find it and createPod's safety guard would
 		// refuse to build the replacement.
 		if pod != nil {
-			zero := int64(0)
-			if err := r.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !errors.IsNotFound(err) {
+			force := pod.Spec.NodeName == "" || r.isNodeUnavailable(ctx, pod.Spec.NodeName)
+			if err := r.deletePod(ctx, pod, force); err != nil {
 				return 0, fmt.Errorf("deleting pod while waiting for machine: %w", err)
 			}
 		}
@@ -2810,6 +2810,22 @@ func (r *AgentReconciler) isNodeNotReady(ctx context.Context, nodeName string) b
 		}
 	}
 	return false
+}
+
+// isNodeUnavailable distinguishes vanished/dead capacity from a planned
+// Machine transition whose Node is still healthy. Only the former justifies
+// bypassing pod termination grace while parking an Agent.
+func (r *AgentReconciler) isNodeUnavailable(ctx context.Context, nodeName string) bool {
+	node := &corev1.Node{}
+	if err := r.Get(ctx, types.NamespacedName{Name: nodeName}, node); err != nil {
+		return errors.IsNotFound(err)
+	}
+	for _, cond := range node.Status.Conditions {
+		if cond.Type == corev1.NodeReady {
+			return cond.Status != corev1.ConditionTrue
+		}
+	}
+	return true
 }
 
 // isMachineReady returns true if the agent's machine is in the Ready or Running phase,

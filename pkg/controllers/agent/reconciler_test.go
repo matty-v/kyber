@@ -2051,6 +2051,64 @@ func TestIsMachinePreempted_NilMachineGetter(t *testing.T) {
 	}
 }
 
+func TestClassifyEvent_FailedAgentRetainsFailureWhileMachineUnavailable(t *testing.T) {
+	r := &AgentReconciler{
+		MachineGetter: &fakeMachineGetter{machine: &kyberv1.Machine{
+			Status: kyberv1.MachineStatus{Phase: kyberv1.MachinePhaseProvisioning},
+		}},
+	}
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "dave", Namespace: "default"},
+		Spec:       kyberv1.AgentSpec{Machine: "node-01"},
+		Status: kyberv1.AgentStatus{
+			Phase:        kyberv1.AgentPhaseFailed,
+			RestartCount: maxRestartRetries,
+		},
+	}
+	event, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent: %v", err)
+	}
+	if event != EventRetryLimitReached {
+		t.Fatalf("event = %q, want RetryLimitReached; an unrelated Machine outage must not revive a failed Agent", event)
+	}
+}
+
+func TestClassifyEvent_WaitingForMachineHonorsStop(t *testing.T) {
+	r := &AgentReconciler{}
+	agent := &kyberv1.Agent{
+		Spec: kyberv1.AgentSpec{DesiredPhase: kyberv1.AgentPhaseStopped},
+		Status: kyberv1.AgentStatus{
+			Phase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+	}
+	event, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent: %v", err)
+	}
+	if event != EventDesiredStopped {
+		t.Fatalf("event = %q, want DesiredStopped", event)
+	}
+}
+
+func TestIsNodeUnavailable(t *testing.T) {
+	r := newFakeReconcilerWithNodes(t, readyNode("ready"), notReadyNode("not-ready"))
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{name: "ready", want: false},
+		{name: "not-ready", want: true},
+		{name: "missing", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := r.isNodeUnavailable(context.Background(), tc.name); got != tc.want {
+				t.Errorf("isNodeUnavailable(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestIsMachinePreempted_NonPreemptionPhases verifies that isMachinePreempted returns false
 // for phases that are not preemption-related (Ready, Running, Stopped, etc.).
 // MachinePhaseFailed is excluded here because its result depends on Spec.Spot — see the

@@ -376,6 +376,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseStopped,
 		},
+		{phase: kyberv1.AgentPhaseWaitingForMachine, event: EventDesiredStopped}: {
+			Action:    ActionForceKillPod,
+			NextPhase: kyberv1.AgentPhaseStopped,
+		},
 		// MemoryExhausted transitions: operator bumps memory limit and
 		// triggers Restart → recreate the pod with the new limit (#272).
 		{phase: kyberv1.AgentPhaseMemoryExhausted, event: EventDesiredRunning}: {
@@ -415,10 +419,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},
 		{phase: kyberv1.AgentPhaseRestarting, event: EventMachineUnavailable}: {
-			Action:    ActionTransitionToWaiting,
-			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
-		},
-		{phase: kyberv1.AgentPhaseFailed, event: EventMachineUnavailable}: {
 			Action:    ActionTransitionToWaiting,
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},

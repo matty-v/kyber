@@ -89,7 +89,12 @@ describe('lifecycleItemsInMore', () => {
     }
   })
 
-  it.each(['Stopping', 'Restarting', 'Creating', 'Draining', 'WaitingForMachine'] as const)(
+
+  it('WaitingForMachine: Stop remains available during a prolonged capacity outage', () => {
+    expect(lifecycleItemsInMore('WaitingForMachine')).toEqual(['stop'])
+  })
+
+  it.each(['Stopping', 'Restarting', 'Creating', 'Draining'] as const)(
     'no actions during transient phase %s',
     (phase) => {
       expect(lifecycleItemsInMore(phase)).toEqual([])
