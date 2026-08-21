@@ -188,6 +188,11 @@ func (g *GKEAdapter) Locations(context.Context) ([]string, error) {
 
 func (g *GKEAdapter) regional() bool { return len(g.nodeLocations) > 1 }
 
+// NeedsSchedulerDemand reports whether this adapter's managed capacity uses
+// regional GKE autoscaling. GKE scales these zero-node pools only in response
+// to an unschedulable Pod; configured minimums are not proactive desired size.
+func (g *GKEAdapter) NeedsSchedulerDemand() bool { return g.regional() }
+
 func (g *GKEAdapter) onlineAutoscaling() *container.NodePoolAutoscaling {
 	return &container.NodePoolAutoscaling{Enabled: true, LocationPolicy: "ANY", TotalMinNodeCount: 1, TotalMaxNodeCount: 1}
 }

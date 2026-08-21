@@ -66,6 +66,15 @@ capacity is absent. Avoiding redundant provider operations requires a separate
 trustworthy target-size observation; recovery correctness does not depend on
 that optimization.
 
+Regional GKE autoscaling is demand-driven: configuring a non-zero minimum does
+not proactively restore a zero-node pool. Because `WaitingForMachine`
+deliberately removes the Agent pod, the Machine controller owns a minimal
+capacity-request Pod whenever active Agent intent targets an unavailable
+scheduler-driven provider. The Pod has no service-account token, requests only
+1m CPU and 1Mi memory, selects the provider's node pool, and is deleted when a
+Ready node attaches or Agent demand disappears. Agent changes enqueue their
+Machine immediately; the periodic Machine resync is only a fallback.
+
 No CRD or REST shape changes are required. Existing Machine `status.message`
 stores a provider-neutral recovery explanation. PWA banners derive recovery
 copy from existing Agent/Machine phases and availability. Verbatim scheduler
@@ -82,4 +91,6 @@ copy action.
   replacement path even without a native interruption reason.
 - GKE adapter test: a pool with zero attached Nodes reports Recovering and
   continues asserting the Online size target.
+- Machine envtest: active Agent demand creates one provider-targeted,
+  credential-free capacity-request Pod and removes it when demand disappears.
 - PWA tests: friendly recovery copy is visible and raw details are collapsed.

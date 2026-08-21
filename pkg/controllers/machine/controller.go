@@ -16,6 +16,7 @@ import (
 // SetupWithManager registers the MachineReconciler with the controller-runtime Manager.
 // It watches:
 //   - Machine CRDs (create, update, delete)
+//   - Agent CRDs (assignment and desired-phase changes alter capacity demand)
 //   - k8s Nodes (status changes may indicate the machine's node joined or was lost)
 //
 // A periodic resync is configured on the Manager (every 2 minutes per spec), catching
@@ -43,6 +44,8 @@ func (r *MachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kyberv1.Machine{}).
+		Owns(&corev1.Pod{}).
+		Watches(&kyberv1.Agent{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAgentMachine)).
 		// Watch nodes: node status changes (Ready, NotReady, deletion) trigger
 		// reconciliation of all machines in the same namespace, so the controller
 		// can detect node join after provisioning and preemption after node loss.
@@ -50,6 +53,16 @@ func (r *MachineReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		// script), so we use a fan-out handler rather than Owns().
 		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(r.enqueueAllMachines)).
 		Complete(r)
+}
+
+func (r *MachineReconciler) enqueueAgentMachine(_ context.Context, obj client.Object) []reconcile.Request {
+	agent, ok := obj.(*kyberv1.Agent)
+	if !ok || agent.Spec.Machine == "" {
+		return nil
+	}
+	return []reconcile.Request{{NamespacedName: client.ObjectKey{
+		Name: agent.Spec.Machine, Namespace: agent.Namespace,
+	}}}
 }
 
 // enqueueAllMachines is called when any k8s Node changes. It enqueues reconcile

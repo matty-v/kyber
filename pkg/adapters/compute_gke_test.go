@@ -211,6 +211,9 @@ func TestGKERegionalManagedPoolUsesOneTotalNodeAcrossZones(t *testing.T) {
 			AvailabilityClasses: []string{"reliable", "costOptimized"},
 		}},
 	}
+	if !provider.NeedsSchedulerDemand() {
+		t.Fatal("regional GKE provider must request scheduler demand")
+	}
 	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{
 		Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true,
 	}, "")

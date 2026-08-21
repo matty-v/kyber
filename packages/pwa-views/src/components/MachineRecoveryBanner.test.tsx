@@ -28,6 +28,16 @@ describe('MachineRecoveryBanner', () => {
     expect(screen.getByText(/providerRef: opaque-ref/)).toBeInTheDocument()
   })
 
+  it('describes initial on-demand capacity without claiming reclamation', () => {
+    render(<MachineRecoveryBanner machine={machine({
+      phase: 'Provisioning',
+      status: { phase: 'Provisioning', availability: 'Recovering' },
+    })} />)
+    expect(screen.getByText('Machine capacity is starting')).toBeInTheDocument()
+    expect(screen.getByText(/requested provider capacity/)).toBeInTheDocument()
+    expect(screen.queryByText(/provider reclaimed/)).not.toBeInTheDocument()
+  })
+
   it('renders nothing for available capacity', () => {
     const { container } = render(<MachineRecoveryBanner machine={machine({
       phase: 'Ready',

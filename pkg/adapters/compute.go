@@ -163,6 +163,14 @@ type CapacityNodeSelector interface {
 	NodeSelector(MachineIdentity, ProviderRef) map[string]string
 }
 
+// CapacityNeedsSchedulerDemand is an optional provider extension for managed
+// capacity that relies on an unschedulable Pod to trigger provider autoscaling.
+// The Machine controller supplies that demand while Agents are deliberately
+// parked without pods during capacity recovery.
+type CapacityNeedsSchedulerDemand interface {
+	NeedsSchedulerDemand() bool
+}
+
 type CapacityLocations interface {
 	Locations(context.Context) ([]string, error)
 }

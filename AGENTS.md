@@ -119,7 +119,10 @@ testable without a cluster. Authoritative transition table:
   stale pod while capacity recovers. Pods on healthy Nodes retain termination
   grace; only Pending pods or pods on missing/NotReady Nodes are force-deleted.
   They resume without spending their retry budget when the Machine becomes Ready. See
-  `docs/design/2026-08-21-machine-capacity-recovery.md`.
+  `docs/design/2026-08-21-machine-capacity-recovery.md`. Scheduler-driven
+  regional providers keep autoscaling demand alive with one Machine-owned,
+  credential-free capacity-request Pod while active Agents are parked; Agent
+  changes must continue to enqueue their assigned Machine immediately.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
