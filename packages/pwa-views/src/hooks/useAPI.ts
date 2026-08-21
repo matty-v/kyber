@@ -722,7 +722,9 @@ export function useImportAgentSecretsKV() {
       }
       return entries.length
     },
-    onSuccess: (_count, { name }) => {
+    // Refresh even after failure because earlier entries in the sequential
+    // import may already have landed.
+    onSettled: (_count, _error, { name }) => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agentSecrets', name] })
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
     },

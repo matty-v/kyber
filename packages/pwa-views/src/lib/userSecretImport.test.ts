@@ -13,6 +13,12 @@ describe('parseUserSecretImport', () => {
     ])
   })
 
+  it('preserves whitespace in values', () => {
+    expect(parseUserSecretImport('  TOKEN=  abc123   ')).toEqual([
+      { key: 'TOKEN', value: '  abc123   ' },
+    ])
+  })
+
   it.each([
     ['missing separator', 'FOO', 'Line 1: expected KEY=VALUE'],
     ['invalid key', 'bad=value', 'Line 1: Key must match'],

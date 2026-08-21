@@ -187,7 +187,7 @@ func TestUserSecrets_PutFile_HappyPath(t *testing.T) {
 }
 
 func TestUserSecrets_PutReplacesAcrossKinds(t *testing.T) {
-	h, c := buildUserSecretsHandler(t, "dave")
+	h, c := buildUserSecretsHandlerWithPhase(t, "dave", kyberv1.AgentPhaseRunning)
 
 	// First: PUT FOO as kv.
 	req := authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/FOO", map[string]string{
@@ -214,6 +214,9 @@ func TestUserSecrets_PutReplacesAcrossKinds(t *testing.T) {
 	fileSec := getSecret(t, c, "dave-user-secrets-files")
 	if got := fileSec.Data["foo.bin"]; !bytes.Equal(got, []byte("binary-content")) {
 		t.Errorf("files Data[foo.bin]: got %q, want %q", got, "binary-content")
+	}
+	if phase := getAgent(t, c, "dave").Spec.DesiredPhase; phase != kyberv1.AgentPhaseRestarting {
+		t.Errorf("DesiredPhase: got %q, want Restarting after changing secret kinds", phase)
 	}
 }
 

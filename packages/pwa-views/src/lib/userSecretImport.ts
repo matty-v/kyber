@@ -3,9 +3,10 @@ export interface ImportedUserSecret {
   value: string
 }
 
+// Mirrors pkg/usersecrets validation so imports fail before the first API call.
+// The server remains authoritative; keep these grammar and size limits in sync.
 const KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/
 const RESERVED_PREFIXES = ['USER_', 'KYBER_']
-
 export const MAX_USER_SECRET_ENTRY_BYTES = 64 * 1024
 export const MAX_USER_SECRETS_AGGREGATE_BYTES = 256 * 1024
 
@@ -31,7 +32,10 @@ export function parseUserSecretImport(raw: string): ImportedUserSecret[] {
     const trimmed = originalLine.trim()
     if (!trimmed || trimmed.startsWith('#')) continue
 
-    const assignment = trimmed.startsWith('export ') ? trimmed.slice(7).trimStart() : trimmed
+    const withoutLeadingWhitespace = originalLine.trimStart()
+    const assignment = withoutLeadingWhitespace.startsWith('export ')
+      ? withoutLeadingWhitespace.slice(7).trimStart()
+      : withoutLeadingWhitespace
     const separator = assignment.indexOf('=')
     if (separator < 1) {
       throw new Error(`Line ${lineNumber}: expected KEY=VALUE`)
