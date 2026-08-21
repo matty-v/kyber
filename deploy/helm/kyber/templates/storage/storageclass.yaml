@@ -1,4 +1,14 @@
 {{- if .Values.storage.gcePD.enabled }}
+{{- if eq .Values.storage.gcePD.replicationType "regional-pd" }}
+{{- if ne (len .Values.storage.gcePD.allowedZones) 2 }}
+{{- fail "storage.gcePD.allowedZones must contain exactly two zones when replicationType=regional-pd" }}
+{{- end }}
+{{- range .Values.compute.gke.nodeLocations }}
+{{- if not (has . $.Values.storage.gcePD.allowedZones) }}
+{{- fail (printf "compute.gke.nodeLocations zone %s is not present in storage.gcePD.allowedZones" .) }}
+{{- end }}
+{{- end }}
+{{- end }}
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
 metadata:
@@ -23,4 +33,13 @@ volumeBindingMode: WaitForFirstConsumer
 parameters:
   type: {{ .Values.storage.gcePD.diskType }}
   replication-type: {{ .Values.storage.gcePD.replicationType }}
+{{- if .Values.storage.gcePD.allowedZones }}
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: topology.gke.io/zone
+        values:
+{{- range .Values.storage.gcePD.allowedZones }}
+          - {{ . | quote }}
+{{- end }}
+{{- end }}
 {{- end }}

@@ -15,10 +15,11 @@ import (
 )
 
 const (
-	GKEConfigProject  = "gke-project"
-	GKEConfigLocation = "gke-location"
-	GKEConfigCluster  = "gke-cluster"
-	GKEConfigProfiles = "gke-profiles"
+	GKEConfigProject       = "gke-project"
+	GKEConfigLocation      = "gke-location"
+	GKEConfigCluster       = "gke-cluster"
+	GKEConfigProfiles      = "gke-profiles"
+	GKEConfigNodeLocations = "gke-node-locations"
 )
 
 const gkeNodePoolLabel = "cloud.google.com/gke-nodepool"
@@ -34,6 +35,14 @@ func init() {
 			return nil, err
 		}
 		adapter.profiles = profiles
+		if raw := config[GKEConfigNodeLocations]; raw != "" {
+			if err := json.Unmarshal([]byte(raw), &adapter.nodeLocations); err != nil {
+				return nil, fmt.Errorf("parsing GKE node locations: %w", err)
+			}
+			if err := validateGKENodeLocations(adapter.Location, adapter.nodeLocations); err != nil {
+				return nil, err
+			}
+		}
 		return adapter, nil
 	})
 }
@@ -42,6 +51,7 @@ type gkeNodePoolsClient interface {
 	Get(context.Context, string) (*container.NodePool, error)
 	Create(context.Context, string, *container.NodePool) (*container.Operation, error)
 	SetSize(context.Context, string, int64) (*container.Operation, error)
+	SetAutoscaling(context.Context, string, *container.NodePoolAutoscaling) (*container.Operation, error)
 	Delete(context.Context, string) (*container.Operation, error)
 }
 
@@ -58,6 +68,9 @@ func (r *realGKENodePoolsClient) Create(ctx context.Context, parent string, pool
 func (r *realGKENodePoolsClient) SetSize(ctx context.Context, name string, size int64) (*container.Operation, error) {
 	return r.service.Projects.Locations.Clusters.NodePools.SetSize(name, &container.SetNodePoolSizeRequest{NodeCount: size}).Context(ctx).Do()
 }
+func (r *realGKENodePoolsClient) SetAutoscaling(ctx context.Context, name string, autoscaling *container.NodePoolAutoscaling) (*container.Operation, error) {
+	return r.service.Projects.Locations.Clusters.NodePools.SetAutoscaling(name, &container.SetNodePoolAutoscalingRequest{Autoscaling: autoscaling}).Context(ctx).Do()
+}
 func (r *realGKENodePoolsClient) Delete(ctx context.Context, name string) (*container.Operation, error) {
 	return r.service.Projects.Locations.Clusters.NodePools.Delete(name).Context(ctx).Do()
 }
@@ -66,11 +79,29 @@ func (r *realGKENodePoolsClient) Delete(ctx context.Context, name string) (*cont
 // intentionally disabled until observation and identity have been validated
 // against a target cluster.
 type GKEAdapter struct {
-	ProjectID string
-	Location  string
-	Cluster   string
-	client    gkeNodePoolsClient
-	profiles  map[string]GKEProfile
+	ProjectID     string
+	Location      string
+	Cluster       string
+	client        gkeNodePoolsClient
+	profiles      map[string]GKEProfile
+	nodeLocations []string
+}
+
+func validateGKENodeLocations(clusterLocation string, locations []string) error {
+	seen := make(map[string]struct{}, len(locations))
+	for _, location := range locations {
+		if location == "" {
+			return fmt.Errorf("validating GKE node locations: location is empty")
+		}
+		if _, ok := seen[location]; ok {
+			return fmt.Errorf("validating GKE node locations: duplicate location %q", location)
+		}
+		seen[location] = struct{}{}
+		if !strings.HasPrefix(location, clusterLocation+"-") && location != clusterLocation {
+			return fmt.Errorf("validating GKE node locations: %q is outside cluster location %q", location, clusterLocation)
+		}
+	}
+	return nil
 }
 
 // GKEProfile is an installer-curated operator promise plus its private GKE
@@ -153,6 +184,12 @@ func (g *GKEAdapter) Profiles(context.Context) ([]Profile, error) {
 
 func (g *GKEAdapter) Locations(context.Context) ([]string, error) {
 	return []string{g.Location}, nil
+}
+
+func (g *GKEAdapter) regional() bool { return len(g.nodeLocations) > 1 }
+
+func (g *GKEAdapter) onlineAutoscaling() *container.NodePoolAutoscaling {
+	return &container.NodePoolAutoscaling{Enabled: true, LocationPolicy: "ANY", TotalMinNodeCount: 1, TotalMaxNodeCount: 1}
 }
 
 func (g *GKEAdapter) Validate(_ context.Context, desired DesiredMachine) error {
@@ -245,6 +282,12 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
 				return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 			}
+			if nodePool.Status == "RUNNING" && g.regional() && nodePool.Autoscaling != nil && nodePool.Autoscaling.Enabled {
+				if _, err := g.client.SetAutoscaling(ctx, g.resourceName(pool), &container.NodePoolAutoscaling{Enabled: false}); err != nil && !isGKEConflict(err) {
+					return CapacityObservation{}, fmt.Errorf("disabling GKE node pool autoscaling %s: %w", pool, err)
+				}
+				return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+			}
 			if nodePool.Status == "RUNNING" {
 				if _, err := g.client.SetSize(ctx, g.resourceName(pool), 0); err != nil && !isGKEConflict(err) {
 					return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to zero: %w", pool, err)
@@ -252,13 +295,21 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			}
 			return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 		case DesiredOnline:
+			if g.regional() && !regionalAutoscalingOnline(nodePool.Autoscaling) {
+				if _, err := g.client.SetAutoscaling(ctx, g.resourceName(pool), g.onlineAutoscaling()); err != nil && !isGKEConflict(err) {
+					return CapacityObservation{}, fmt.Errorf("enabling regional GKE node pool autoscaling %s: %w", pool, err)
+				}
+				return CapacityObservation{State: CapacityRecovering, Reason: ReasonProvisioning, Message: "Selecting available capacity across configured zones.", ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+			}
 			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
 				// The NodePool API does not provide a reliable current target-size
 				// observation: InitialNodeCount is creation intent and is not required
 				// to reflect SetSize. Reissuing this idempotent desired size is noisy,
 				// but it is safer than falsely declaring a zero-size pool repaired.
-				if _, err := g.client.SetSize(ctx, g.resourceName(pool), 1); err != nil && !isGKEConflict(err) {
-					return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to one: %w", pool, err)
+				if !g.regional() {
+					if _, err := g.client.SetSize(ctx, g.resourceName(pool), 1); err != nil && !isGKEConflict(err) {
+						return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to one: %w", pool, err)
+					}
 				}
 				return CapacityObservation{
 					State: CapacityRecovering, Reason: ReasonRepairing,
@@ -295,14 +346,28 @@ func (g *GKEAdapter) clusterName() string {
 }
 
 func (g *GKEAdapter) managedNodePool(name string, profile GKEProfile, desired DesiredMachine) *container.NodePool {
-	return &container.NodePool{Name: name, InitialNodeCount: 1, Locations: []string{g.Location},
-		Autoscaling: &container.NodePoolAutoscaling{Enabled: false},
+	locations := append([]string(nil), g.nodeLocations...)
+	if len(locations) == 0 {
+		locations = []string{g.Location}
+	}
+	autoscaling := &container.NodePoolAutoscaling{Enabled: false}
+	initialNodeCount := int64(1)
+	if g.regional() {
+		autoscaling = g.onlineAutoscaling()
+		initialNodeCount = 0
+	}
+	return &container.NodePool{Name: name, InitialNodeCount: initialNodeCount, Locations: locations,
+		Autoscaling: autoscaling,
 		Management:  &container.NodeManagement{AutoRepair: true, AutoUpgrade: true},
 		Config: &container.NodeConfig{MachineType: profile.MachineType, DiskSizeGb: profile.DiskSizeGB,
 			DiskType: profile.DiskType, ImageType: profile.ImageType, Spot: desired.Interruptible,
 			Labels:         map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: name},
 			ResourceLabels: map[string]string{"managed-by": "kyber", "kyber-machine": name}},
 	}
+}
+
+func regionalAutoscalingOnline(a *container.NodePoolAutoscaling) bool {
+	return a != nil && a.Enabled && a.LocationPolicy == "ANY" && a.TotalMinNodeCount == 1 && a.TotalMaxNodeCount == 1
 }
 
 func (g *GKEAdapter) owned(pool *container.NodePool, machine string) bool {

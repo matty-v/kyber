@@ -20,6 +20,7 @@ type fakeGKENodePoolsClient struct {
 	names       []string
 	creates     []*container.NodePool
 	sizes       []int64
+	autoscaling []*container.NodePoolAutoscaling
 	deletes     int
 }
 
@@ -29,6 +30,10 @@ func (f *fakeGKENodePoolsClient) Create(_ context.Context, _ string, pool *conta
 }
 func (f *fakeGKENodePoolsClient) SetSize(_ context.Context, _ string, size int64) (*container.Operation, error) {
 	f.sizes = append(f.sizes, size)
+	return &container.Operation{}, f.mutationErr
+}
+func (f *fakeGKENodePoolsClient) SetAutoscaling(_ context.Context, _ string, autoscaling *container.NodePoolAutoscaling) (*container.Operation, error) {
+	f.autoscaling = append(f.autoscaling, autoscaling)
 	return &container.Operation{}, f.mutationErr
 }
 func (f *fakeGKENodePoolsClient) Delete(_ context.Context, _ string) (*container.Operation, error) {
@@ -192,6 +197,71 @@ func TestParseGKEProfiles(t *testing.T) {
 	}
 	if _, err := ParseGKEProfiles(`[{"id":"broken"}]`); err == nil {
 		t.Fatal("incomplete profile accepted")
+	}
+}
+
+func TestGKERegionalManagedPoolUsesOneTotalNodeAcrossZones(t *testing.T) {
+	client := &fakeGKENodePoolsClient{err: &googleapi.Error{Code: 404}}
+	provider := &GKEAdapter{
+		ProjectID: "project", Location: "us-central1", Cluster: "cluster", client: client,
+		nodeLocations: []string{"us-central1-a", "us-central1-c"},
+		profiles: map[string]GKEProfile{"standard": {
+			ID: "standard", CPU: "4", Memory: "16Gi", MachineType: "e2-standard-4",
+			DiskSizeGB: 200, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD",
+			AvailabilityClasses: []string{"reliable", "costOptimized"},
+		}},
+	}
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{
+		Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true,
+	}, "")
+	if err != nil || got.State != CapacityPending || len(client.creates) != 1 {
+		t.Fatalf("Reconcile = %+v, err=%v, creates=%d", got, err, len(client.creates))
+	}
+	pool := client.creates[0]
+	if pool.InitialNodeCount != 0 {
+		t.Errorf("InitialNodeCount = %d, want 0", pool.InitialNodeCount)
+	}
+	if !regionalAutoscalingOnline(pool.Autoscaling) {
+		t.Errorf("Autoscaling = %+v, want total size one with ANY placement", pool.Autoscaling)
+	}
+	if fmt.Sprint(pool.Locations) != "[us-central1-a us-central1-c]" {
+		t.Errorf("Locations = %v", pool.Locations)
+	}
+}
+
+func TestGKERegionalRecoveryDoesNotRepeatSetSize(t *testing.T) {
+	client := &fakeGKENodePoolsClient{pool: &container.NodePool{
+		Status: "RUNNING", Autoscaling: (&GKEAdapter{}).onlineAutoscaling(),
+		Config: &container.NodeConfig{Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}},
+	}}
+	provider := &GKEAdapter{
+		ProjectID: "project", Location: "us-central1", Cluster: "cluster", client: client,
+		nodeLocations: []string{"us-central1-a", "us-central1-c"},
+		profiles: map[string]GKEProfile{"standard": {
+			ID: "standard", CPU: "4", Memory: "16Gi", MachineType: "e2-standard-4", DiskSizeGB: 200,
+			DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"costOptimized"},
+		}},
+	}
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{
+		Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true,
+		AttachmentObserved: true, AttachedNodes: 0,
+	}, "")
+	if err != nil || got.State != CapacityRecovering {
+		t.Fatalf("Reconcile = %+v, err=%v", got, err)
+	}
+	if len(client.sizes) != 0 || len(client.autoscaling) != 0 {
+		t.Fatalf("unexpected mutations: sizes=%v autoscaling=%v", client.sizes, client.autoscaling)
+	}
+}
+
+func TestValidateGKENodeLocations(t *testing.T) {
+	if err := validateGKENodeLocations("us-central1", []string{"us-central1-a", "us-central1-c"}); err != nil {
+		t.Fatalf("valid regional locations rejected: %v", err)
+	}
+	for _, locations := range [][]string{{"us-east1-b"}, {"us-central1-a", "us-central1-a"}, {""}} {
+		if err := validateGKENodeLocations("us-central1", locations); err == nil {
+			t.Errorf("invalid locations accepted: %v", locations)
+		}
 	}
 }
 

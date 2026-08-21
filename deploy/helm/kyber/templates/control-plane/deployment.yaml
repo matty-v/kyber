@@ -388,6 +388,8 @@ spec:
               value: {{ required "compute.gke.cluster is required when compute.provider=gke" .Values.compute.gke.cluster | quote }}
             - name: KYBER_GKE_PROFILES
               value: {{ .Values.compute.gke.profiles | toJson | quote }}
+            - name: KYBER_GKE_NODE_LOCATIONS
+              value: {{ .Values.compute.gke.nodeLocations | toJson | quote }}
             {{- end }}
             # Telemetry — OTEL exporter config.
             - name: KYBER_TELEMETRY_ENABLED
