@@ -708,16 +708,18 @@ func main() {
 	gkeLocation := os.Getenv("KYBER_GKE_LOCATION")
 	gkeCluster := os.Getenv("KYBER_GKE_CLUSTER")
 	gkeProfiles := os.Getenv("KYBER_GKE_PROFILES")
+	gkeNodeLocations := os.Getenv("KYBER_GKE_NODE_LOCATIONS")
 	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
-		adapters.GCEConfigProject:  gceProject,
-		adapters.GCEConfigNetwork:  gceNetwork,
-		adapters.GCEConfigSubnet:   gceSubnet,
-		adapters.GCEConfigEndpoint: gceEndpoint,
-		adapters.GKEConfigProject:  gkeProject,
-		adapters.GKEConfigLocation: gkeLocation,
-		adapters.GKEConfigCluster:  gkeCluster,
-		adapters.GKEConfigProfiles: gkeProfiles,
+		adapters.GCEConfigProject:       gceProject,
+		adapters.GCEConfigNetwork:       gceNetwork,
+		adapters.GCEConfigSubnet:        gceSubnet,
+		adapters.GCEConfigEndpoint:      gceEndpoint,
+		adapters.GKEConfigProject:       gkeProject,
+		adapters.GKEConfigLocation:      gkeLocation,
+		adapters.GKEConfigCluster:       gkeCluster,
+		adapters.GKEConfigProfiles:      gkeProfiles,
+		adapters.GKEConfigNodeLocations: gkeNodeLocations,
 	})
 	cancel()
 	if err != nil {

@@ -731,6 +731,10 @@ compute:
     project: ""
     location: ""
     cluster: ""
+    # Eligible worker zones for regional managed pools. Empty preserves the
+    # single-location behavior. Two or more zones use total-size-one
+    # autoscaling with locationPolicy=ANY.
+    nodeLocations: []
     profiles: []
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.
@@ -815,12 +819,10 @@ storage:
   # recreation (no full-backlog re-ship; the #466 incident). The data is
   # sub-1KB integers, so size is deliberately tiny.
   #
-  # storageClassName MUST stay empty on ALL targets (cluster default = local-path
-  # on k3s) — do NOT set it to kyber-pd on gcp: a GCE-PD has a 1Gi minimum and
-  # would waste storage by four orders of magnitude for sub-1KB checkpoints
-  # (Ackbar's deploy review). local-path PVCs survive pod recreation (the point
-  # of this feature); a node replacement just falls back to the bounded
-  # MAX_COLD_TAILS first-boot re-ship.
+  # Empty uses the cluster default. Regional installations may deliberately
+  # select the regional class so offsets follow an Agent across zones; the
+  # provider minimum allocation is accepted as the cost of regional recovery.
+  # Local installs should keep the local default.
   transcriptOffsets:
     size: "10Mi"
     storageClassName: ""
@@ -829,6 +831,10 @@ storage:
     storageClassName: kyber-pd
     diskType: pd-standard
     replicationType: regional-pd
+    # Set to exactly two zones for topology-constrained regional-pd installs.
+    # Empty preserves existing unconstrained regional-pd installations.
+    # Managed GKE nodeLocations require this and must be a subset.
+    allowedZones: []
 
 # Identity repo configuration.
 #
