@@ -1,5 +1,6 @@
 import { AlertTriangle } from 'lucide-react'
 import type { Agent, AgentSchedulingCategory } from '../lib/types'
+import { DiagnosticDetails } from './DiagnosticDetails'
 
 export interface SchedulingFailureBannerProps {
   agent: Agent
@@ -56,6 +57,33 @@ const CATEGORY_COPY: Record<AgentSchedulingCategory, CategoryCopy> = {
  */
 export function SchedulingFailureBanner({ agent }: SchedulingFailureBannerProps) {
   const sched = agent.scheduling
+  const waitingForMachine = agent.phase === 'WaitingForMachine'
+  if (!sched && !waitingForMachine) return null
+
+  if (waitingForMachine) {
+    const details = [
+      `agent: ${agent.id}`,
+      `machine: ${agent.machine}`,
+      `phase: ${agent.phase}`,
+      agent.status.message ? `message: ${agent.status.message}` : '',
+      sched?.lastError ? `scheduler: ${sched.lastError}` : '',
+    ].filter(Boolean).join('\n')
+    return (
+      <div role="status" data-testid="machine-wait-banner" className="rounded-lg border border-accent/40 bg-accent/10 p-4">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-accent" aria-hidden="true" />
+          <div className="min-w-0 flex-1 space-y-2">
+            <h3 className="text-sm font-semibold text-text-primary">Waiting for machine capacity</h3>
+            <p className="text-xs text-text-secondary">
+              Machine {agent.machine} is recovering. Kyber will restart this agent automatically when a Ready node joins; no operator action is required.
+            </p>
+            {details && <DiagnosticDetails details={details} />}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   if (!sched) return null
 
   const copy = CATEGORY_COPY[sched.category] ?? CATEGORY_COPY.Other
@@ -76,14 +104,7 @@ export function SchedulingFailureBanner({ agent }: SchedulingFailureBannerProps)
           {remediation && (
             <p className="text-xs text-warn/90">{remediation}</p>
           )}
-          {sched.lastError && (
-            <pre
-              data-testid="scheduling-failure-message"
-              className="overflow-x-auto rounded bg-surface-overlay p-2 font-mono text-[11px] text-text-secondary whitespace-pre-wrap break-words"
-            >
-              {sched.lastError}
-            </pre>
-          )}
+          {sched.lastError && <DiagnosticDetails details={sched.lastError} testId="scheduling-failure-message" />}
           <p className="text-[11px] text-warn/70">
             {observedAgo ? `First observed ${observedAgo} · ` : ''}
             category: {sched.category}

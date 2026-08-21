@@ -1,5 +1,14 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.3 — 2026-08-21
+
+### Fixed
+- Agents whose Machine loses capacity now show that Kyber is waiting and will
+  resume them automatically, instead of presenting the infrastructure event as
+  an agent scheduling failure.
+- Machine recovery and scheduling diagnostics are collapsed by default and can
+  be copied from an expandable technical-details panel.
+
 ## 0.28.2 — 2026-08-20
 
 ### Added

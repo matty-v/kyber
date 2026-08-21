@@ -78,6 +78,8 @@ describe('lifecycleItemsInMore', () => {
       'Stopping',
       'Restarting',
       'Creating',
+      'Draining',
+      'WaitingForMachine',
       'Deleted',
     ] as const
     for (const phase of others) {
@@ -87,7 +89,7 @@ describe('lifecycleItemsInMore', () => {
     }
   })
 
-  it.each(['Stopping', 'Restarting', 'Creating'] as const)(
+  it.each(['Stopping', 'Restarting', 'Creating', 'Draining', 'WaitingForMachine'] as const)(
     'no actions during transient phase %s',
     (phase) => {
       expect(lifecycleItemsInMore(phase)).toEqual([])

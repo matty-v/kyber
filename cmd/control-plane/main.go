@@ -546,6 +546,7 @@ func main() {
 		SidecarAutoRollEnabled:        sidecarAutoRollEnabled,
 		SidecarAutoRollMinStable:      sidecarAutoRollMinStable,
 		FleetDefaults:                 fleetDefaultsResolver,
+		MachineGetter:                 &agentcontroller.KubernetesMachineGetter{Client: mgr.GetClient()},
 
 		TranscriptRetentionEnabled:           transcriptRetentionEnabled,
 		TranscriptRetentionMaxAgeDays:        transcriptRetentionMaxAgeDays,

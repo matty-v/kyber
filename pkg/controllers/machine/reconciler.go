@@ -557,6 +557,14 @@ func (r *MachineReconciler) classifyNodeDisappeared(ctx context.Context, machine
 	if observation.Reason == adapters.ReasonInterrupted && machineInterruptible(machine) {
 		return EventNodeDisappearedPreempted, 0, nil
 	}
+	// Capacity providers such as GKE manage a pool rather than one observable
+	// instance, so a reclaimed Spot node may leave the pool RUNNING/repairing
+	// without an explicit provider interruption signal. The missing Ready node
+	// is sufficient evidence that interruptible capacity must enter replacement
+	// recovery; reliable capacity retains the ordinary failure path.
+	if r.capacityProviderFor(machine) != nil && machineInterruptible(machine) {
+		return EventNodeDisappearedPreempted, 0, nil
+	}
 	return EventNodeDisappearedFailed, 0, nil
 }
 
@@ -881,7 +889,7 @@ func (r *MachineReconciler) reconcileCapacity(
 	ref := string(observation.ProviderRef)
 	observedAvailability := kyberv1.MachineAvailability(observation.State)
 	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
-	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP {
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
 		// Dual-write during the compatibility window. Legacy readers continue
@@ -890,6 +898,7 @@ func (r *MachineReconciler) reconcileCapacity(
 		machine.Status.Availability = observedAvailability
 		machine.Status.InternalIP = observation.InternalIP
 		machine.Status.ExternalIP = observation.ExternalIP
+		machine.Status.Message = observation.Message
 		if machine.Status.ResolvedProfile == nil && desired.Profile != "" {
 			machine.Status.ResolvedProfile = &kyberv1.ResolvedMachineProfile{
 				ID: desired.Profile, Capacity: machine.Spec.Capacity,
@@ -1060,8 +1069,13 @@ func (r *MachineReconciler) updatePhase(
 	newPhase kyberv1.MachinePhase,
 	message string,
 ) error {
+	if machine.Status.Phase == newPhase && message == "" {
+		// Provider observation may have written a useful recovery diagnostic.
+		// A no-op self-transition must not erase it on every polling reconcile.
+		return nil
+	}
 	if machine.Status.Phase == newPhase && machine.Status.Message == message {
-		return nil // nothing to update
+		return nil
 	}
 	// Capture the patch base BEFORE mutating — all mutations below appear in the diff.
 	patch := client.MergeFrom(machine.DeepCopy())

@@ -242,10 +242,10 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			}
 			return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 		case DesiredOffline:
-			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
+			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" && nodePool.InitialNodeCount == 0 {
 				return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 			}
-			if nodePool.Status == "RUNNING" {
+			if nodePool.Status == "RUNNING" && nodePool.InitialNodeCount != 0 {
 				if _, err := g.client.SetSize(ctx, g.resourceName(pool), 0); err != nil && !isGKEConflict(err) {
 					return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to zero: %w", pool, err)
 				}
@@ -253,10 +253,21 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 		case DesiredOnline:
 			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
-				if _, err := g.client.SetSize(ctx, g.resourceName(pool), 1); err != nil && !isGKEConflict(err) {
-					return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to one: %w", pool, err)
+				// A pool already targeting one node repairs a reclaimed/missing
+				// instance itself. Reissuing SetSize(1) on every observation creates
+				// a stream of redundant GKE operations and obscures the real repair.
+				// InitialNodeCount is updated by SetSize, including the supported
+				// Offline (zero) → Online (one) lifecycle.
+				if nodePool.InitialNodeCount == 0 {
+					if _, err := g.client.SetSize(ctx, g.resourceName(pool), 1); err != nil && !isGKEConflict(err) {
+						return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to one: %w", pool, err)
+					}
 				}
-				return CapacityObservation{State: CapacityRecovering, Reason: ReasonRepairing, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+				return CapacityObservation{
+					State: CapacityRecovering, Reason: ReasonRepairing,
+					Message:     "Waiting for provider capacity to attach a Ready node. Kyber will keep retrying automatically.",
+					ProviderRef: stableRef, Location: g.Location, NodeSelector: selector,
+				}, nil
 			}
 		}
 	}

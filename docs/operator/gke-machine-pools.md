@@ -21,9 +21,9 @@ pools. The platform pool is outside this lifecycle.
 kubectl get machines.kyber.io -n kyber-system -o wide
 kubectl get nodes -L cloud.google.com/gke-nodepool,kyber.io/machine
 gcloud container node-pools list \
-  --project=datawire-dev \
-  --cluster=kyber-datawire \
-  --zone=us-central1-a
+  --project="$GCP_PROJECT" \
+  --cluster="$GKE_CLUSTER" \
+  --location="$GKE_LOCATION"
 ```
 
 For a Machine, compare `status.providerRef`, the pool name, the selected Node,
@@ -68,19 +68,18 @@ the GKE installation guide, then verify cleanup explicitly:
 
 ```bash
 gcloud container node-pools list \
-  --project=datawire-dev \
-  --cluster=kyber-datawire \
-  --zone=us-central1-a \
+  --project="$GCP_PROJECT" \
+  --cluster="$GKE_CLUSTER" \
+  --location="$GKE_LOCATION" \
   --format='table(name,status,config.machineType,initialNodeCount)'
 ```
 
-Acceptance evidence for `datawire-dev/us-central1-a/kyber-datawire` on
-2026-08-20: `TestGKELiveManagedLifecycle` passed in 651 seconds using disposable
-pool `kyber-test-codex-0820` (`e2-small`, `pd-balanced`, size 1 → 0 → 1 →
-deleted). The independent post-test listing contained only `platform` and
-`agents`, both `RUNNING` at size one. This proves the provider adapter's pool
-lifecycle and cleanup boundary; the Agent scheduling, draining, and persistent
-volume steps above remain required before production enablement.
+Save the test date, disposable pool profile, elapsed time, and before/after
+pool listing in the installation's private operations record. Do not put
+project IDs, cluster names, operator identities, or other installation-specific
+evidence in this reusable runbook. A passing pool lifecycle test proves the
+provider adapter's pool and cleanup boundary; Agent scheduling, draining, and
+persistent-volume checks remain required before production enablement.
 
 ## Recovery
 
@@ -88,6 +87,11 @@ volume steps above remain required before production enablement.
   identifies it.
 - `Recovering`: inspect GKE node-pool status and operations; do not create a
   second pool manually with the same identity.
+- A cost-optimized pool can remain `Recovering` while its managed instance
+  group reports zonal capacity exhaustion. Kyber keeps the pool at size one,
+  parks assigned Agents in `WaitingForMachine`, and resumes them when a Ready
+  Node joins. Switching to reliable capacity requires replacing the pool; do
+  not hand-create a competing Node in the same pool.
 - `Failed/ProviderError`: inspect node-pool conditions and IAM audit logs.
 - Node pool healthy but Machine has no Node: verify
   `cloud.google.com/gke-nodepool=<pool>` and Node readiness.

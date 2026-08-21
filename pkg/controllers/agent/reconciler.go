@@ -80,6 +80,21 @@ type MachineGetter interface {
 	Get(ctx context.Context, name, namespace string) (*kyberv1.Machine, error)
 }
 
+// KubernetesMachineGetter reads Machine CRDs through the controller cache.
+// Production must install this on AgentReconciler; otherwise machine-loss
+// recovery silently degrades into ordinary pod-crash retries.
+type KubernetesMachineGetter struct {
+	Client client.Reader
+}
+
+func (g *KubernetesMachineGetter) Get(ctx context.Context, name, namespace string) (*kyberv1.Machine, error) {
+	machine := &kyberv1.Machine{}
+	if err := g.Client.Get(ctx, types.NamespacedName{Name: name, Namespace: namespace}, machine); err != nil {
+		return nil, fmt.Errorf("getting machine: %w", err)
+	}
+	return machine, nil
+}
+
 // AgentReconciler reconciles Agent CRDs.
 //
 // +kubebuilder:rbac:groups=kyber.io,resources=agents,verbs=get;list;watch;create;update;patch;delete
@@ -840,6 +855,20 @@ func (r *AgentReconciler) classifyEvent(
 		}
 	}
 
+	// Infrastructure availability is not an agent crash. Active and retrying
+	// phases park in WaitingForMachine until their assigned Machine is Ready
+	// again, without consuming the agent's restart budget. This check must run
+	// before the Failed auto-restart arm and before Starting's timeout logic.
+	// Operator Stop/NeedsAuth intent above still wins by ordering.
+	switch phase {
+	case kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStarting,
+		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting,
+		kyberv1.AgentPhaseFailed:
+		if r.isMachineUnavailable(ctx, agent) {
+			return EventMachineUnavailable, nil
+		}
+	}
+
 	// Operator intent: desired phase signals (only valid in certain current phases).
 	switch phase {
 	case kyberv1.AgentPhaseRunning:
@@ -1391,9 +1420,18 @@ func (r *AgentReconciler) executeAction(
 		return 5 * time.Second, nil
 
 	case ActionTransitionToWaiting:
-		// No retry counter increment — this is infra, not a bug.
-		r.Recorder.Eventf(agent, corev1.EventTypeWarning, "MachinePreempted",
-			"Agent waiting for machine replacement after preemption")
+		// No retry counter increment — this is infra, not an agent bug. Remove
+		// any pod pinned to the vanished node (including a still-Pending pod),
+		// otherwise MachineReady would find it and createPod's safety guard would
+		// refuse to build the replacement.
+		if pod != nil {
+			zero := int64(0)
+			if err := r.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !errors.IsNotFound(err) {
+				return 0, fmt.Errorf("deleting pod while waiting for machine: %w", err)
+			}
+		}
+		r.Recorder.Eventf(agent, corev1.EventTypeWarning, "MachineUnavailable",
+			"Agent waiting for machine capacity; it will resume automatically")
 		return 15 * time.Second, nil
 
 	default:
@@ -2230,7 +2268,9 @@ func (r *AgentReconciler) updatePhase(
 	// Capture the patch base BEFORE mutating — all mutations below appear in the diff.
 	patch := client.MergeFrom(agent.DeepCopy())
 	now := metav1.Now()
-	if message == "" {
+	if newPhase == kyberv1.AgentPhaseWaitingForMachine && message == "" {
+		agent.Status.Message = fmt.Sprintf("Waiting for machine %s to recover. Kyber will resume this agent automatically.", agent.Spec.Machine)
+	} else if message == "" {
 		agent.Status.Message = ""
 	} else {
 		agent.Status.Message = message
@@ -2244,7 +2284,7 @@ func (r *AgentReconciler) updatePhase(
 	// kyber#210: clear the scheduling-failure status when the agent is up.
 	// The PWA banner keys off this field; leaving it stale would render
 	// "stuck Pending" on a Running agent.
-	if newPhase == kyberv1.AgentPhaseRunning {
+	if newPhase == kyberv1.AgentPhaseRunning || newPhase == kyberv1.AgentPhaseWaitingForMachine {
 		clearSchedulingStatus(agent)
 	}
 	return r.Status().Patch(ctx, agent, patch)
@@ -2709,7 +2749,7 @@ func (r *AgentReconciler) isMachinePreempted(ctx context.Context, agent *kyberv1
 		return false
 	}
 	machine, err := r.MachineGetter.Get(ctx, agent.Spec.Machine, agent.Namespace)
-	if err != nil {
+	if err != nil || machine == nil {
 		return false
 	}
 	// Direct preemption states from machine controller.
@@ -2741,6 +2781,22 @@ func (r *AgentReconciler) isMachinePreempted(ctx context.Context, agent *kyberv1
 	return false
 }
 
+// isMachineUnavailable reports whether an assigned Machine currently lacks
+// schedulable capacity. The Agent lifecycle deliberately consumes only this
+// provider-neutral readiness contract; cloud interruption details remain in
+// the Machine controller and compute adapter.
+func (r *AgentReconciler) isMachineUnavailable(ctx context.Context, agent *kyberv1.Agent) bool {
+	if r.MachineGetter == nil || agent.Spec.Machine == "" {
+		return false
+	}
+	machine, err := r.MachineGetter.Get(ctx, agent.Spec.Machine, agent.Namespace)
+	if err != nil || machine == nil {
+		return false
+	}
+	return machine.Status.Phase != kyberv1.MachinePhaseReady &&
+		machine.Status.Phase != kyberv1.MachinePhaseRunning
+}
+
 // isNodeNotReady returns true if the named node has a Ready condition that is not True.
 // Returns false if the node cannot be fetched or has no Ready condition.
 func (r *AgentReconciler) isNodeNotReady(ctx context.Context, nodeName string) bool {
@@ -2764,7 +2820,7 @@ func (r *AgentReconciler) isMachineReady(ctx context.Context, agent *kyberv1.Age
 		return false
 	}
 	machine, err := r.MachineGetter.Get(ctx, agent.Spec.Machine, agent.Namespace)
-	if err != nil {
+	if err != nil || machine == nil {
 		return false
 	}
 	return machine.Status.Phase == kyberv1.MachinePhaseReady || machine.Status.Phase == kyberv1.MachinePhaseRunning

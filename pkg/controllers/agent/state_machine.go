@@ -73,6 +73,10 @@ const (
 	EventPreemptionNotice Event = "PreemptionNotice"
 	// EventMachinePreempted fires when the agent's machine has been preempted (pod is gone or going).
 	EventMachinePreempted Event = "MachinePreempted"
+	// EventMachineUnavailable fires whenever assigned provider capacity is not
+	// Ready. It is provider-neutral and includes both interruption recovery and
+	// ordinary infrastructure repair.
+	EventMachineUnavailable Event = "MachineUnavailable"
 	// EventMachineReady fires when a replacement machine is available and the agent can be rescheduled.
 	EventMachineReady Event = "MachineReady"
 	// EventOAuthRefreshFailed fires when the runtime's start script exits with
@@ -125,7 +129,7 @@ const (
 	ActionStayFailedAndAlert Action = "StayFailedAndAlert"
 	// ActionDrainAgent means signal the agent to save state and prepare for shutdown due to preemption.
 	ActionDrainAgent Action = "DrainAgent"
-	// ActionTransitionToWaiting means record preemption state and wait for a replacement machine.
+	// ActionTransitionToWaiting means remove stale pod state and wait for machine capacity.
 	ActionTransitionToWaiting Action = "TransitionToWaiting"
 )
 
@@ -395,6 +399,26 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		},
 		// Preemption: pod was still starting when the machine was preempted
 		{phase: kyberv1.AgentPhaseStarting, event: EventMachinePreempted}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseCreating, event: EventMachineUnavailable}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseStarting, event: EventMachineUnavailable}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventMachineUnavailable}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseRestarting, event: EventMachineUnavailable}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseFailed, event: EventMachineUnavailable}: {
 			Action:    ActionTransitionToWaiting,
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},
