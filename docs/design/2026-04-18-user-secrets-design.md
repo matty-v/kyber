@@ -16,7 +16,8 @@ See issue #75 for motivation, user story, API surface, PWA requirements, key gra
 - No auto-rotation / TTL.
 - No external secret managers (Vault, SOPS, cloud KMS).
 - No cluster-wide pool or cross-agent sharing.
-- No hot-reload — pod always rolls on mutation.
+- No hot-reload for environment variables. New key/value entries wait for the
+  next pod start; replacing one rolls the pod. File entries update live.
 - No separate audit store — control-plane INFO logs only.
 
 ## Architectural decisions
@@ -33,11 +34,18 @@ Both `{name}-user-secrets-kv` and `{name}-user-secrets-files` will follow the sa
 
 No new secret flavor or lifecycle. This is load-bearing: it means the "accessible at all times" durability contract in #75 is automatically satisfied, because it's the same contract oauth/telegram already satisfy in production.
 
-### 2. Pod-roll reuses `Spec.DesiredPhase = Running`
+### 2. New entries do not interrupt a running agent
 
-`routes_oauth.go:100-103` already has the pattern: after writing the secret, patch `agent.Spec.DesiredPhase = AgentPhaseRunning`. The state machine handles the restart; the existing brief-write path runs as a side effect, so agents get resume context on next boot. This is the "standard brief-write + restart path" referenced in #75.
+Creating a new entry persists it without changing `Agent.spec.desiredPhase`.
+File entries appear live through the kubelet-updated Secret volume. Key/value
+entries are environment variables, so a newly added one becomes visible on the
+next natural pod start. This favors session continuity over immediately
+injecting a new environment variable.
 
-`PUT /secrets/{key}` and `DELETE /secrets/{key}` will call the same code path. No new restart mechanism. No direct pod manipulation from the API layer.
+Replacing an existing key/value entry, changing an entry's kind, or deleting
+an entry still uses the standard graceful lifecycle roll. These mutations can
+otherwise leave a stale environment variable active. No direct pod manipulation
+comes from the API layer.
 
 ### 3. Mount layout
 
@@ -50,7 +58,7 @@ Because both Secrets always exist (decision 1), the pod builder can mount them u
 
 > **kv vs file — refresh semantics (kyber#514).** The two kinds refresh differently, and this distinction is load-bearing for short-lived rotated secrets (e.g. the externally-minted `FALCON_ISSUE_TOKEN`, fdc#10/#17):
 > - **File-mode** is delivered live. The agent runs inside the `/merged` overlay chroot, and `entrypoint.sh` bind-mounts `/user-secrets` into it (alongside `/secrets`), so kubelet's atomic in-place updates to `{name}-user-secrets-files` are visible **without a pod roll**. A consumer should read the file **fresh per use** to pick up a rotation. (Before kyber#514 this bind was missing, so the agent saw only the empty boot-time overlay snapshot — file-mode user-secrets never reached the pod.)
-> - **kv-mode** is **boot-time only**. `USER_*` env vars are projected via `envFrom` at pod start and do **not** refresh in place — a kv PUT to a live agent requires a **pod roll** to take effect. (The roll-on-mutation path must therefore actually recreate the pod for kv changes; see the `rollAgentForUserSecret` follow-up.)
+> - **kv-mode** is **boot-time only**. `USER_*` env vars are projected via `envFrom` at pod start and do **not** refresh in place. Creating a new entry does not interrupt a live agent; it takes effect on the next pod start. Replacing an existing kv entry rolls the pod so its prior value does not remain active.
 
 ### 4. Readback format
 
@@ -61,7 +69,7 @@ PWA fetches as blob either way and does click-to-copy or download in JS. Clean A
 
 ### 5. Sequencing: two PRs
 
-- **PR A (this work):** controller reconciliation + API + validation helper + tests. Operator can curl the API and see the secret mounted after a pod roll. Addresses acceptance criteria 1–7 of #75.
+- **PR A (this work):** controller reconciliation + API + validation helper + tests. Operator can curl the API and see the secret after its documented live-update or next-start boundary. Addresses acceptance criteria 1–7 of #75.
 - **PR B (follow-up):** PWA Secrets tab. Mechanical once the API is stable. Addresses the PWA bullets of #75.
 
 Rationale: the controller+API is the integration-heavy piece that benefits from shipping and getting used before the PWA locks in any shape. Landing them separately keeps review scope sane and lets us adjust the API based on real use before PWA lock-in.
@@ -85,7 +93,9 @@ Four handlers, mirroring `routes_oauth.go` for style and the k8s client idioms:
 - `GET  /api/v1/agents/{name}/secrets/{key}` — readback (see decision 4)
 - `DELETE /api/v1/agents/{name}/secrets/{key}` — remove
 
-All four: API-key auth via existing middleware. Mutations patch the Secret, then patch `Agent.Spec.DesiredPhase = Running`.
+All four: API-key auth via existing middleware. Mutations patch the Secret.
+New entries leave lifecycle intent untouched; replacements, kind changes, and
+deletions roll only when needed to prevent stale environment state.
 
 Route registration in `routing.go` next to the existing `/oauth` route.
 
@@ -134,14 +144,14 @@ Metadata (created-at, updated-at, sha256 prefix per entry) stored in each Secret
 Unit:
 
 - `pkg/usersecrets` — exhaustive grammar + size tests.
-- `routes_user_secrets_test.go` — happy paths for PUT (kv + file), GET list, GET readback, DELETE. 400s for bad grammar, reserved prefix, over-size, missing agent. Asserts `Spec.DesiredPhase = Running` gets patched on mutation.
+- `routes_user_secrets_test.go` — happy paths for PUT (kv + file), GET list, GET readback, DELETE. 400s for bad grammar, reserved prefix, over-size, missing agent. Asserts new entries do not change lifecycle intent and stale-environment mutations request a graceful roll.
 - `pod_builder_test.go` — envFrom + volume mount always present.
 - `reconciler_test.go` — Secret eagerly created; Secret deleted on Agent deletion (extend existing oauth/telegram cleanup test).
 
 Integration (if there's a harness; see Open Questions):
 
-- Create agent → PUT kv secret → pod rolls → `$USER_FOO` visible in pod.
-- Create agent → PUT file secret → pod rolls → `/user-secrets/app_pem.bin` readable.
+- Create agent → PUT new kv secret → pod stays live → next pod start exposes `$USER_FOO`.
+- Create agent → PUT file secret → pod stays live → `/user-secrets/app_pem.bin` becomes readable.
 - Delete agent → Secret is gone.
 
 ## Acceptance mapping
@@ -169,5 +179,6 @@ Every checkbox in #75's Success Criteria:
 2. Controller reconciliation change — eagerly create both `{name}-user-secrets-kv` and `{name}-user-secrets-files` + cleanup on Agent deletion + reconciler_test extension.
 3. Pod builder change — unconditional envFrom (from `-kv` Secret) + volume mount at `/user-secrets` (from `-files` Secret) + pod_builder_test.
 4. `routes_user_secrets.go` + tests + routing registration.
-5. Wire `DesiredPhase = Running` patch on every mutation.
+5. Leave new-entry lifecycle intent untouched; request a graceful roll for
+   existing environment replacements, kind changes, and deletions.
 6. Manual smoke: `curl` PUT / GET / DELETE against a local control plane pointing at k3s; verify env var and file appear in pod.

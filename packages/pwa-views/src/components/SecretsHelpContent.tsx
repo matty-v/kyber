@@ -16,7 +16,12 @@ export function SecretsHelpContent() {
         </p>
       </Section>
       <Section label="Updates">
-        <p>Adding or replacing a secret rolls the pod.</p>
+        <p>Adding a secret does not restart the agent.</p>
+        <p>
+          New files appear live. New key/value entries become available on the
+          next pod start. Replacing a key/value entry or changing its kind
+          rolls the pod so stale environment variables do not remain active.
+        </p>
       </Section>
       <Section label="Limits">
         <p>256 KiB aggregate. 64 KiB per entry.</p>

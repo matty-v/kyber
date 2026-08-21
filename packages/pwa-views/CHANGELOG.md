@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.2 — 2026-08-20
+
+### Changed
+- Adding a new per-agent secret no longer restarts a running agent. New file
+  secrets appear live; new environment entries become available on the next
+  pod start.
+
 ## 0.28.1 — 2026-08-20
 
 ### Fixed
