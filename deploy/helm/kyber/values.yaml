@@ -831,7 +831,9 @@ storage:
     storageClassName: kyber-pd
     diskType: pd-standard
     replicationType: regional-pd
-    # Required for regional-pd. Managed GKE nodeLocations must be a subset.
+    # Set to exactly two zones for topology-constrained regional-pd installs.
+    # Empty preserves existing unconstrained regional-pd installations.
+    # Managed GKE nodeLocations require this and must be a subset.
     allowedZones: []
 
 # Identity repo configuration.

@@ -254,11 +254,40 @@ func TestGKERegionalRecoveryDoesNotRepeatSetSize(t *testing.T) {
 	}
 }
 
+func TestGKENarrowedPoolDisablesAutoscalingBeforeResize(t *testing.T) {
+	ownedPool := &container.NodePool{
+		Status: "RUNNING", Autoscaling: (&GKEAdapter{}).onlineAutoscaling(),
+		Config: &container.NodeConfig{Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}},
+	}
+	for _, availability := range []DesiredAvailability{DesiredOnline, DesiredOffline} {
+		t.Run(string(availability), func(t *testing.T) {
+			client := &fakeGKENodePoolsClient{pool: ownedPool}
+			provider := &GKEAdapter{
+				ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client,
+				profiles: map[string]GKEProfile{"standard": {ID: "standard", AvailabilityClasses: []string{"reliable"}}},
+			}
+			got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{
+				Availability: availability, Profile: "standard", Managed: true,
+				AttachmentObserved: true, AttachedNodes: 1,
+			}, "")
+			if err != nil || got.State != CapacityRecovering {
+				t.Fatalf("Reconcile = %+v, err=%v", got, err)
+			}
+			if len(client.autoscaling) != 1 || client.autoscaling[0].Enabled {
+				t.Fatalf("autoscaling mutations = %+v, want one disable", client.autoscaling)
+			}
+			if len(client.sizes) != 0 {
+				t.Fatalf("SetSize called before autoscaling disabled: %v", client.sizes)
+			}
+		})
+	}
+}
+
 func TestValidateGKENodeLocations(t *testing.T) {
 	if err := validateGKENodeLocations("us-central1", []string{"us-central1-a", "us-central1-c"}); err != nil {
 		t.Fatalf("valid regional locations rejected: %v", err)
 	}
-	for _, locations := range [][]string{{"us-east1-b"}, {"us-central1-a", "us-central1-a"}, {""}} {
+	for _, locations := range [][]string{{"us-east1-b"}, {"us-central1"}, {"us-central1", "us-central1-a"}, {"us-central1-a", "us-central1-a"}, {""}} {
 		if err := validateGKENodeLocations("us-central1", locations); err == nil {
 			t.Errorf("invalid locations accepted: %v", locations)
 		}

@@ -97,7 +97,7 @@ func validateGKENodeLocations(clusterLocation string, locations []string) error 
 			return fmt.Errorf("validating GKE node locations: duplicate location %q", location)
 		}
 		seen[location] = struct{}{}
-		if !strings.HasPrefix(location, clusterLocation+"-") && location != clusterLocation {
+		if !strings.HasPrefix(location, clusterLocation+"-") {
 			return fmt.Errorf("validating GKE node locations: %q is outside cluster location %q", location, clusterLocation)
 		}
 	}
@@ -282,7 +282,7 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
 				return CapacityObservation{State: CapacityOffline, Reason: ReasonStopped, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 			}
-			if nodePool.Status == "RUNNING" && g.regional() && nodePool.Autoscaling != nil && nodePool.Autoscaling.Enabled {
+			if nodePool.Status == "RUNNING" && autoscalingEnabled(nodePool.Autoscaling) {
 				if _, err := g.client.SetAutoscaling(ctx, g.resourceName(pool), &container.NodePoolAutoscaling{Enabled: false}); err != nil && !isGKEConflict(err) {
 					return CapacityObservation{}, fmt.Errorf("disabling GKE node pool autoscaling %s: %w", pool, err)
 				}
@@ -300,6 +300,12 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 					return CapacityObservation{}, fmt.Errorf("enabling regional GKE node pool autoscaling %s: %w", pool, err)
 				}
 				return CapacityObservation{State: CapacityRecovering, Reason: ReasonProvisioning, Message: "Selecting available capacity across configured zones.", ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+			}
+			if !g.regional() && autoscalingEnabled(nodePool.Autoscaling) {
+				if _, err := g.client.SetAutoscaling(ctx, g.resourceName(pool), &container.NodePoolAutoscaling{Enabled: false}); err != nil && !isGKEConflict(err) {
+					return CapacityObservation{}, fmt.Errorf("disabling GKE node pool autoscaling %s: %w", pool, err)
+				}
+				return CapacityObservation{State: CapacityRecovering, Reason: ReasonRepairing, Message: "Restoring fixed-size capacity in the configured location.", ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
 			}
 			if desired.AttachmentObserved && desired.AttachedNodes == 0 && nodePool.Status == "RUNNING" {
 				// The NodePool API does not provide a reliable current target-size
@@ -368,6 +374,10 @@ func (g *GKEAdapter) managedNodePool(name string, profile GKEProfile, desired De
 
 func regionalAutoscalingOnline(a *container.NodePoolAutoscaling) bool {
 	return a != nil && a.Enabled && a.LocationPolicy == "ANY" && a.TotalMinNodeCount == 1 && a.TotalMaxNodeCount == 1
+}
+
+func autoscalingEnabled(a *container.NodePoolAutoscaling) bool {
+	return a != nil && a.Enabled
 }
 
 func (g *GKEAdapter) owned(pool *container.NodePool, machine string) bool {

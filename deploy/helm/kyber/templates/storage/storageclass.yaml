@@ -1,11 +1,13 @@
 {{- if .Values.storage.gcePD.enabled }}
 {{- if eq .Values.storage.gcePD.replicationType "regional-pd" }}
+{{- if or .Values.storage.gcePD.allowedZones .Values.compute.gke.nodeLocations }}
 {{- if ne (len .Values.storage.gcePD.allowedZones) 2 }}
 {{- fail "storage.gcePD.allowedZones must contain exactly two zones when replicationType=regional-pd" }}
 {{- end }}
 {{- range .Values.compute.gke.nodeLocations }}
 {{- if not (has . $.Values.storage.gcePD.allowedZones) }}
 {{- fail (printf "compute.gke.nodeLocations zone %s is not present in storage.gcePD.allowedZones" .) }}
+{{- end }}
 {{- end }}
 {{- end }}
 {{- end }}
