@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.1 — 2026-08-20
+
+### Fixed
+- Agent detail pages no longer crash while a newly created Agent is waiting
+  for the controller to report its initial lifecycle phase.
+
 ## 0.28.0 — 2026-08-20
 
 ### Added

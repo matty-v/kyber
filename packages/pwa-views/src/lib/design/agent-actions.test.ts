@@ -18,6 +18,10 @@ import {
 // /restart (the edge that does not).
 
 describe('lifecycleItemsInMore', () => {
+  it('has no actions before the controller reports the initial phase', () => {
+    expect(lifecycleItemsInMore('')).toEqual([])
+  })
+
   it('Running: Stop + Restart pod + Suspend + Require re-auth (no Start)', () => {
     expect(lifecycleItemsInMore('Running')).toEqual([
       'stop',
@@ -159,6 +163,10 @@ describe('isLifecycleKind', () => {
 // are Running-only; every other phase returns [] and the section's header
 // is suppressed rather than rendering an empty group.
 describe('sessionItemsInMore', () => {
+  it('has no actions before the controller reports the initial phase', () => {
+    expect(sessionItemsInMore('')).toEqual([])
+  })
+
   it('Running: compact before restart — the smaller move comes first', () => {
     expect(sessionItemsInMore('Running')).toEqual(['compact-session', 'restart-session'])
   })
