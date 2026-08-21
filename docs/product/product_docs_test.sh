@@ -55,14 +55,18 @@ while IFS= read -r rel; do
     assert_file "${PROD}/${rel}"
 done <<< "${MANIFEST_PAGES}"
 
+# Every .md anywhere under docs/product/ except the charter README must be in
+# the manifest — including pages in a section dir the manifest doesn't know
+# yet, and stray top-level pages.
 while IFS= read -r f; do
     rel="${f#"${PROD}"/}"
+    [ "${rel}" = "README.md" ] && continue
     if echo "${MANIFEST_PAGES}" | grep -qxF "${rel}"; then
         ok "in manifest: ${rel}"
     else
         bad "page on disk but not in manifest (will NOT publish): ${rel}"
     fi
-done < <(find "${PROD}/getting-started" "${PROD}/capabilities" "${PROD}/use-cases" "${PROD}/project" -name '*.md' 2>/dev/null | sort)
+done < <(find "${PROD}" -name '*.md' | sort)
 
 # --- every published page: single H1 on line 1, no YAML frontmatter ---
 while IFS= read -r rel; do
@@ -75,6 +79,29 @@ while IFS= read -r rel; do
         *)      bad "no H1 on line 1 of ${rel}" "line 1: ${first}" ;;
     esac
 done <<< "${MANIFEST_PAGES}"
+
+# --- every relative link in a published page resolves to a real file ---
+# Cross-boundary links (out of docs/product/) publish as github.com URLs via
+# the site's rewrite; that only works if the target actually exists. Catch a
+# broken or moved target here, at PR time, on either side of the boundary.
+BROKEN_LINKS=$(python3 -c '
+import os, re, sys
+root, prod = sys.argv[1], sys.argv[2]
+pages = [l for l in sys.argv[3].splitlines() if l]
+link_re = re.compile(r"!?\[[^\]]*\]\(([^)\s]+)\)")
+for rel in pages:
+    page = os.path.join(prod, rel)
+    if not os.path.isfile(page):
+        continue
+    for target in link_re.findall(open(page).read()):
+        if re.match(r"^(https?:|mailto:|#|/)", target):
+            continue
+        resolved = os.path.normpath(os.path.join(os.path.dirname(page), target.split("#")[0]))
+        if not os.path.exists(resolved):
+            print(f"{rel}: {target}")
+' "${REPO_ROOT}" "${PROD}" "${MANIFEST_PAGES}")
+[ -z "${BROKEN_LINKS}" ] && ok "all relative links in published pages resolve" \
+    || bad "broken relative link(s) in published pages" "$(echo "${BROKEN_LINKS}" | head -5 | tr '\n' '|')"
 
 # --- location-neutral + plain voice, whole tree (charter README exempt from
 # --- the site-link rule: it documents the mirror) ---
@@ -95,7 +122,7 @@ done < <(find "${PROD}/capabilities" "${PROD}/use-cases" -name '*.md' 2>/dev/nul
 
 # --- README states the charter; the two doc sets cross-link both ways ---
 assert_grep "${PROD}/README.md" 'WHAT'            "README states scope is WHAT"
-assert_grep "${PROD}/README.md" '[Hh][Oo][Ww]'    "README names the HOW boundary"
+assert_grep "${PROD}/README.md" 'WHAT, not HOW|WHAT/HOW' "README names the WHAT/HOW boundary"
 assert_grep "${PROD}/README.md" 'source of truth' "README declares itself the product source of truth"
 assert_grep "${PROD}/README.md" 'manifest\.json'  "README documents the publication manifest"
 assert_grep "${PROD}/README.md" 'docs/architecture|\.\./architecture' "product README links to the architecture (HOW) set"
