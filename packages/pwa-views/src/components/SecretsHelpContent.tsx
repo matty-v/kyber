@@ -14,9 +14,18 @@ export function SecretsHelpContent() {
           File entries mount at{' '}
           <code className="text-text-primary">/user-secrets/&lt;key&gt;.bin</code>.
         </p>
+        <p>
+          Import a key=value file to create multiple environment entries at
+          once. Blank lines and # comments are ignored.
+        </p>
       </Section>
       <Section label="Updates">
-        <p>Adding or replacing a secret rolls the pod.</p>
+        <p>Adding a secret does not restart the agent.</p>
+        <p>
+          New files appear live. New key/value entries become available on the
+          next pod start. Replacing a key/value entry or changing its kind
+          rolls the pod so stale environment variables do not remain active.
+        </p>
       </Section>
       <Section label="Limits">
         <p>256 KiB aggregate. 64 KiB per entry.</p>

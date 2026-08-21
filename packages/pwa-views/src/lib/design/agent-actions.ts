@@ -121,6 +121,8 @@ export function lifecycleActionEndpoint(kind: AgentLifecycleKind): AgentLifecycl
 //     which goes through the same latch-clearing endpoint.
 export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
   switch (phase) {
+    case '':
+      return []
     case 'Running':
       return ['stop', 'restart', 'suspend', 'force-needs-auth']
     case 'Stopped':

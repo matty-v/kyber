@@ -6,12 +6,19 @@ import { ChevronDown, Eye, FileText, HelpCircle, KeyRound, Plus, Trash2, Upload 
 import {
   useAgentSecrets,
   useDeleteAgentSecret,
+  useImportAgentSecretsKV,
   usePutAgentSecretFile,
   usePutAgentSecretKV,
 } from '../hooks/useAPI'
 import { createApiClient } from '../lib/api'
 import { useCluster } from '../lib/cluster-context'
 import type { AgentSecret, AgentSecretKind } from '../lib/types'
+import {
+  MAX_USER_SECRET_ENTRY_BYTES,
+  MAX_USER_SECRETS_AGGREGATE_BYTES,
+  parseUserSecretImport,
+  validateUserSecretKey,
+} from '../lib/userSecretImport'
 import { Button } from './Button'
 import { Card } from './Card'
 import { ConfirmDialog } from './ConfirmDialog'
@@ -24,22 +31,6 @@ import {
 } from '@/components/ui/collapsible'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-
-// Mirrors pkg/usersecrets validation — fail fast before the round-trip.
-const KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/
-const RESERVED_PREFIXES = ['USER_', 'KYBER_']
-const MAX_ENTRY_BYTES = 64 * 1024 // 64 KiB per entry (matches usersecrets.ValidateEntrySize).
-
-function validateKeyClientSide(key: string): string | null {
-  if (!key) return 'Key is required'
-  if (!KEY_PATTERN.test(key)) {
-    return 'Key must match ^[A-Z][A-Z0-9_]{0,63}$ (start with A-Z, then A-Z/0-9/_)'
-  }
-  for (const prefix of RESERVED_PREFIXES) {
-    if (key.startsWith(prefix)) return `Key must not start with reserved prefix ${prefix}`
-  }
-  return null
-}
 
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`
@@ -62,6 +53,15 @@ function formatTimestamp(iso: string | undefined): string {
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return 'Unknown error'
+}
+
+function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('Unknown file read error'))
+    reader.readAsText(file)
+  })
 }
 
 interface Props {
@@ -271,9 +271,11 @@ interface AddProps {
   onClose: () => void
 }
 
+type AddMode = AgentSecretKind | 'env-file'
+
 function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
   const titleId = useId()
-  const [kind, setKind] = useState<AgentSecretKind>('kv')
+  const [mode, setMode] = useState<AddMode>('kv')
   const [key, setKey] = useState('')
   const [value, setValue] = useState('')
   const [file, setFile] = useState<File | null>(null)
@@ -282,7 +284,8 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
 
   const putKV = usePutAgentSecretKV()
   const putFile = usePutAgentSecretFile()
-  const busy = putKV.isPending || putFile.isPending
+  const importKV = useImportAgentSecretsKV()
+  const busy = putKV.isPending || putFile.isPending || importKV.isPending
 
   useEffect(() => {
     keyInputRef.current?.focus()
@@ -296,7 +299,7 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [busy, onClose])
 
-  const keyError = useMemo(() => (key ? validateKeyClientSide(key) : null), [key])
+  const keyError = useMemo(() => (key ? validateUserSecretKey(key) : null), [key])
 
   const existingKey = useMemo(
     () => existing.find((s) => s.key === key),
@@ -305,18 +308,54 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
 
   function submit() {
     setSubmitErr(null)
-    const err = validateKeyClientSide(key)
+    if (mode === 'env-file') {
+      if (!file) {
+        setSubmitErr('Pick a key=value file to upload')
+        return
+      }
+      if (file.size > MAX_USER_SECRETS_AGGREGATE_BYTES) {
+        setSubmitErr(`File exceeds ${MAX_USER_SECRETS_AGGREGATE_BYTES} bytes`)
+        return
+      }
+      void readTextFile(file).then((contents) => {
+        try {
+          const entries = parseUserSecretImport(contents)
+          const existingByKey = new Map(existing.map((entry) => [entry.key, entry]))
+          const encoder = new TextEncoder()
+          let aggregate = existing.reduce((total, entry) => total + entry.size, 0)
+          for (const entry of entries) {
+            aggregate -= existingByKey.get(entry.key)?.size ?? 0
+            aggregate += encoder.encode(entry.value).length
+          }
+          if (aggregate > MAX_USER_SECRETS_AGGREGATE_BYTES) {
+            throw new Error(`Import would exceed the ${MAX_USER_SECRETS_AGGREGATE_BYTES} byte aggregate limit`)
+          }
+          importKV.mutate(
+            { name: agentName, entries },
+            {
+              onSuccess: onClose,
+              onError: (e) => setSubmitErr(errorMessage(e)),
+            },
+          )
+        } catch (e) {
+          setSubmitErr(errorMessage(e))
+        }
+      }).catch((e) => setSubmitErr(`Failed to read file: ${errorMessage(e)}`))
+      return
+    }
+
+    const err = validateUserSecretKey(key)
     if (err) {
       setSubmitErr(err)
       return
     }
-    if (kind === 'kv') {
+    if (mode === 'kv') {
       if (!value) {
         setSubmitErr('Value is required')
         return
       }
-      if (new TextEncoder().encode(value).length > MAX_ENTRY_BYTES) {
-        setSubmitErr(`Value exceeds ${MAX_ENTRY_BYTES} bytes`)
+      if (new TextEncoder().encode(value).length > MAX_USER_SECRET_ENTRY_BYTES) {
+        setSubmitErr(`Value exceeds ${MAX_USER_SECRET_ENTRY_BYTES} bytes`)
         return
       }
       putKV.mutate(
@@ -331,8 +370,8 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
         setSubmitErr('Pick a file to upload')
         return
       }
-      if (file.size > MAX_ENTRY_BYTES) {
-        setSubmitErr(`File exceeds ${MAX_ENTRY_BYTES} bytes`)
+      if (file.size > MAX_USER_SECRET_ENTRY_BYTES) {
+        setSubmitErr(`File exceeds ${MAX_USER_SECRET_ENTRY_BYTES} bytes`)
         return
       }
       putFile.mutate(
@@ -368,9 +407,9 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
             <div className="inline-flex rounded-lg border border-border-subtle bg-surface-base p-0.5">
               <button
                 type="button"
-                onClick={() => setKind('kv')}
+                onClick={() => setMode('kv')}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                  kind === 'kv'
+                  mode === 'kv'
                     ? 'bg-accent text-white'
                     : 'text-text-muted hover:text-text-primary'
                 }`}
@@ -379,20 +418,31 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
               </button>
               <button
                 type="button"
-                onClick={() => setKind('file')}
+                onClick={() => setMode('file')}
                 className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
-                  kind === 'file'
+                  mode === 'file'
                     ? 'bg-accent text-white'
                     : 'text-text-muted hover:text-text-primary'
                 }`}
               >
                 file (/user-secrets)
               </button>
+              <button
+                type="button"
+                onClick={() => setMode('env-file')}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                  mode === 'env-file'
+                    ? 'bg-accent text-white'
+                    : 'text-text-muted hover:text-text-primary'
+                }`}
+              >
+                key=value file
+              </button>
             </div>
           </div>
 
           {/* Key */}
-          <div>
+          {mode !== 'env-file' && <div>
             <label className="block text-xs font-medium text-text-muted mb-1">
               Key
             </label>
@@ -414,10 +464,10 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
                 Replaces existing {existingKey.kind} entry with same key.
               </p>
             )}
-          </div>
+          </div>}
 
           {/* Value input */}
-          {kind === 'kv' ? (
+          {mode === 'kv' ? (
             <div>
               <label className="block text-xs font-medium text-text-muted mb-1">
                 Value
@@ -431,7 +481,7 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
                 placeholder="Secret value (never echoed after save)"
               />
               <p className="mt-1 text-xs text-text-muted">
-                {new TextEncoder().encode(value).length} / {MAX_ENTRY_BYTES} bytes
+                {new TextEncoder().encode(value).length} / {MAX_USER_SECRET_ENTRY_BYTES} bytes
               </p>
             </div>
           ) : (
@@ -442,7 +492,7 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
               <label className="flex items-center gap-2 cursor-pointer rounded-lg border border-dashed border-border-default bg-surface-overlay px-3 py-3 hover:border-border-strong">
                 <Upload className="h-4 w-4 text-text-muted" />
                 <span className="text-sm text-text-secondary truncate">
-                  {file ? `${file.name} (${formatBytes(file.size)})` : 'Choose file…'}
+                  {file ? `${file.name} (${formatBytes(file.size)})` : mode === 'env-file' ? 'Choose .env file…' : 'Choose file…'}
                 </span>
                 <input
                   type="file"
@@ -450,9 +500,15 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
                   onChange={(e) => setFile(e.target.files?.[0] ?? null)}
                 />
               </label>
-              {file && file.size > MAX_ENTRY_BYTES && (
+              {file && file.size > (mode === 'env-file' ? MAX_USER_SECRETS_AGGREGATE_BYTES : MAX_USER_SECRET_ENTRY_BYTES) && (
                 <p className="mt-1 text-xs text-danger">
-                  File exceeds {formatBytes(MAX_ENTRY_BYTES)} limit
+                  File exceeds {formatBytes(mode === 'env-file' ? MAX_USER_SECRETS_AGGREGATE_BYTES : MAX_USER_SECRET_ENTRY_BYTES)} limit
+                </p>
+              )}
+              {mode === 'env-file' && (
+                <p className="mt-1 text-xs text-text-muted">
+                  One KEY=VALUE per line. Blank lines and # comments are ignored.
+                  Existing keys are replaced; values are not shell-expanded.
                 </p>
               )}
             </div>
@@ -474,9 +530,9 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
             size="sm"
             onClick={submit}
             loading={busy}
-            disabled={!key || Boolean(keyError)}
+            disabled={mode === 'env-file' ? !file : !key || Boolean(keyError)}
           >
-            Save
+            {mode === 'env-file' ? 'Import' : 'Save'}
           </Button>
         </div>
       </div>

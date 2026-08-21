@@ -22,8 +22,8 @@ import (
 
 // buildUserSecretsHandler returns an API handler backed by a fake client with
 // the given agent and the two shell user-secrets Secrets pre-seeded (mirrors
-// what the reconciler does). The agent is seeded Running — the canonical case
-// for a secret update, and the one where the pod must actually roll (kyber#515).
+// what the reconciler does). The agent is seeded Running so tests can prove
+// which mutations do and do not interrupt a live pod.
 // Returns the handler and the fake client so tests can inspect the stored
 // Secrets after requests.
 func buildUserSecretsHandler(t *testing.T, agentName string) (http.Handler, client.Client) {
@@ -32,8 +32,8 @@ func buildUserSecretsHandler(t *testing.T, agentName string) (http.Handler, clie
 
 // buildUserSecretsHandlerWithPhase is buildUserSecretsHandler with an explicit
 // seeded Status.Phase, so tests can exercise the phase-aware roll path of
-// rollAgentForUserSecret (kyber#515) — a live agent rolls, a dormant one is
-// left untouched.
+// rollAgentForUserSecret (kyber#515) — eligible mutations roll a live agent,
+// while a dormant one is left untouched.
 func buildUserSecretsHandlerWithPhase(t *testing.T, agentName string, phase kyberv1.AgentPhase) (http.Handler, client.Client) {
 	t.Helper()
 
@@ -156,8 +156,8 @@ func TestUserSecrets_PutKV_HappyPath(t *testing.T) {
 	}
 
 	agent := getAgent(t, c, "dave")
-	if agent.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
-		t.Errorf("DesiredPhase: got %q, want Restarting (kyber#515: a Running agent must roll)", agent.Spec.DesiredPhase)
+	if agent.Spec.DesiredPhase != "" {
+		t.Errorf("DesiredPhase: got %q, want unchanged for a new secret", agent.Spec.DesiredPhase)
 	}
 }
 
@@ -187,7 +187,7 @@ func TestUserSecrets_PutFile_HappyPath(t *testing.T) {
 }
 
 func TestUserSecrets_PutReplacesAcrossKinds(t *testing.T) {
-	h, c := buildUserSecretsHandler(t, "dave")
+	h, c := buildUserSecretsHandlerWithPhase(t, "dave", kyberv1.AgentPhaseRunning)
 
 	// First: PUT FOO as kv.
 	req := authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/FOO", map[string]string{
@@ -214,6 +214,9 @@ func TestUserSecrets_PutReplacesAcrossKinds(t *testing.T) {
 	fileSec := getSecret(t, c, "dave-user-secrets-files")
 	if got := fileSec.Data["foo.bin"]; !bytes.Equal(got, []byte("binary-content")) {
 		t.Errorf("files Data[foo.bin]: got %q, want %q", got, "binary-content")
+	}
+	if phase := getAgent(t, c, "dave").Spec.DesiredPhase; phase != kyberv1.AgentPhaseRestarting {
+		t.Errorf("DesiredPhase: got %q, want Restarting after changing secret kinds", phase)
 	}
 }
 
@@ -381,19 +384,46 @@ func TestUserSecrets_Delete_RemovesAndRolls(t *testing.T) {
 	}
 }
 
-// TestUserSecrets_PutKV_RollsRunningAgent is the kyber#515 regression test:
-// updating a kv-mode user-secret on an already-Running agent must produce a
-// spec mutation that recreates the pod, so the new value (projected as envFrom
-// at pod boot, pod_builder.go) is picked up. The old code set
-// DesiredPhase=Running — a no-op merge-patch for an already-Running agent — so
-// the pod was never recreated and the value stayed stale. The fix drives the
-// standard graceful roll (DesiredPhase=Restarting) used by setModel/setResources.
-func TestUserSecrets_PutKV_RollsRunningAgent(t *testing.T) {
+// Creating a brand-new user secret must not interrupt a Running agent. A new
+// kv value is boot-time env and becomes visible on the next natural pod start.
+func TestUserSecrets_PutKV_NewDoesNotRollRunningAgent(t *testing.T) {
 	h, c := buildUserSecretsHandlerWithPhase(t, "dave", kyberv1.AgentPhaseRunning)
 
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/FOO", map[string]string{
 		"kind": "kv", "value": "bar",
+	}))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("want 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if dp := getAgent(t, c, "dave").Spec.DesiredPhase; dp != "" {
+		t.Errorf("DesiredPhase: got %q, want unchanged — adding a secret must not restart the agent", dp)
+	}
+}
+
+// TestUserSecrets_PutKV_UpdateRollsRunningAgent is the kyber#515 regression test:
+// replacing a kv-mode user-secret on an already-Running agent must produce a
+// spec mutation that recreates the pod, so the new value (projected as envFrom
+// at pod boot, pod_builder.go) is picked up. The old code set
+// DesiredPhase=Running — a no-op merge-patch for an already-Running agent — so
+// the pod was never recreated and the value stayed stale. The fix drives the
+// standard graceful roll (DesiredPhase=Restarting) used by setModel/setResources.
+func TestUserSecrets_PutKV_UpdateRollsRunningAgent(t *testing.T) {
+	h, c := buildUserSecretsHandlerWithPhase(t, "dave", kyberv1.AgentPhaseRunning)
+
+	// The first PUT creates the entry without rolling. The second replaces an
+	// env-projected value and must roll so the pod does not retain "old".
+	first := httptest.NewRecorder()
+	h.ServeHTTP(first, authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/FOO", map[string]string{
+		"kind": "kv", "value": "old",
+	}))
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("seed PUT: want 204, got %d: %s", first.Code, first.Body.String())
+	}
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/FOO", map[string]string{
+		"kind": "kv", "value": "new",
 	}))
 	if rr.Code != http.StatusNoContent {
 		t.Fatalf("want 204, got %d: %s", rr.Code, rr.Body.String())

@@ -3,7 +3,7 @@
 // mocked so tests are deterministic and don't need a live server.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from './ui/tooltip'
@@ -13,6 +13,7 @@ import { TooltipProvider } from './ui/tooltip'
 vi.mock('../hooks/useAPI', () => ({
   useAgentSecrets: vi.fn(),
   useDeleteAgentSecret: vi.fn(),
+  useImportAgentSecretsKV: vi.fn(),
   usePutAgentSecretKV: vi.fn(),
   usePutAgentSecretFile: vi.fn(),
 }))
@@ -56,8 +57,11 @@ function setupMocks(secrets: AgentSecret[] | null, loading = false, error: Error
     refetch: vi.fn(),
   } as unknown as ReturnType<typeof useAPIModule.useAgentSecrets>)
   vi.mocked(useAPIModule.useDeleteAgentSecret).mockReturnValue(newMutationMock() as unknown as ReturnType<typeof useAPIModule.useDeleteAgentSecret>)
+  const importMutation = newMutationMock()
+  vi.mocked(useAPIModule.useImportAgentSecretsKV).mockReturnValue(importMutation as unknown as ReturnType<typeof useAPIModule.useImportAgentSecretsKV>)
   vi.mocked(useAPIModule.usePutAgentSecretKV).mockReturnValue(newMutationMock() as unknown as ReturnType<typeof useAPIModule.usePutAgentSecretKV>)
   vi.mocked(useAPIModule.usePutAgentSecretFile).mockReturnValue(newMutationMock() as unknown as ReturnType<typeof useAPIModule.usePutAgentSecretFile>)
+  return { importMutation }
 }
 
 // ---- tests ----
@@ -78,6 +82,32 @@ describe('SecretsTab — empty state', () => {
     // Clicking it opens the "Add secret" dialog
     await user.click(ctaButton)
     expect(screen.getByRole('dialog', { name: /add secret/i })).toBeInTheDocument()
+  })
+
+  it('imports a key=value file as individual kv entries', async () => {
+    const { importMutation } = setupMocks([])
+    const user = userEvent.setup()
+    const { container } = renderWithQuery(<SecretsTab agentName="my-agent" />)
+
+    await user.click(screen.getByRole('button', { name: /add secret/i }))
+    await user.click(screen.getByRole('button', { name: /key=value file/i }))
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    await user.upload(input, new File(['FOO=bar\nTOKEN=a=b'], 'secrets.env', { type: 'text/plain' }))
+    await user.click(screen.getByRole('button', { name: 'Import' }))
+
+    await waitFor(() => {
+      expect(importMutation.mutate).toHaveBeenCalledWith(
+        {
+          name: 'my-agent',
+          entries: [
+            { key: 'FOO', value: 'bar' },
+            { key: 'TOKEN', value: 'a=b' },
+          ],
+        },
+        expect.any(Object),
+      )
+    })
   })
 
   it('disclosure trigger is present and toggles aria-expanded on click', async () => {

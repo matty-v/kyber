@@ -190,8 +190,9 @@ func (s *Server) getUserSecret(w http.ResponseWriter, r *http.Request, agentName
 
 // putUserSecret handles PUT /api/v1/agents/{name}/secrets/{key}. Content-Type
 // selects kind: application/json → kv, multipart/form-data → file. On success
-// the entry replaces any existing entry (including one in the other kind) and
-// the agent's DesiredPhase is set to Running to trigger a pod roll.
+// the entry replaces any existing entry (including one in the other kind).
+// Creating a new entry never rolls the agent; replacing an env-projected entry
+// or changing an entry's kind rolls a live agent so stale env state is removed.
 func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
 	if err := usersecrets.ValidateKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
@@ -211,6 +212,12 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 
 	if err := usersecrets.ValidateEntrySize(len(value)); err != nil {
 		writeUserSecretValidationError(w, "value", err)
+		return
+	}
+
+	updatedExisting, err := s.userSecretEntryExists(r, agentName, key, kind)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to inspect prior secret entry")
 		return
 	}
 
@@ -245,14 +252,12 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 		return
 	}
 
-	// Roll the agent ONLY when the change affects the env projection. kv-mode
-	// secrets ride static envFrom and need a pod recreate to re-project; file-mode
-	// lands live via the #516 bind-mount and needs NO roll. The prior code rolled
-	// on EVERY write — so a token-minting agent's file-mode rotation (every
-	// 20 min) restarted the entire team every 20 min, killing in-flight work
-	// (a production incident). Also roll if this write displaced a prior kv entry of
-	// the same key (a kind migration that drops a now-stale env var).
-	if kind == userSecretKindKV || (otherKind == userSecretKindKV && removedOther) {
+	// A brand-new secret never interrupts a running agent. File-mode secrets
+	// appear live through the kubelet-updated bind mount; a new kv-mode entry is
+	// boot-time env and becomes visible on the next natural pod start. Replacing
+	// an existing kv value still rolls so the old env value does not linger, and
+	// changing kinds rolls in either direction to add or remove the env entry.
+	if removedOther || (kind == userSecretKindKV && updatedExisting) {
 		if err := s.rollAgentForUserSecret(r, agent); err != nil {
 			slog.Error("failed to roll agent after user-secret write", "agent", agentName, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to restart agent")
@@ -339,6 +344,15 @@ func (s *Server) getUserSecretsSecret(r *http.Request, agentName string, kind us
 		return nil, err
 	}
 	return sec, nil
+}
+
+func (s *Server) userSecretEntryExists(r *http.Request, agentName, key string, kind userSecretKind) (bool, error) {
+	sec, err := s.getUserSecretsSecret(r, agentName, kind)
+	if err != nil || sec == nil {
+		return false, err
+	}
+	_, ok := sec.Data[userSecretDataKey(key, kind)]
+	return ok, nil
 }
 
 // writeUserSecretEntry upserts an entry into the kind's Secret. It creates the

@@ -4,6 +4,9 @@
 // ---- Agent types ----
 
 export type AgentPhase =
+  // Newly created Agents can be returned before the controller has written
+  // status.phase. The Go response emits that zero value as an empty string.
+  | ''
   | 'Creating'
   | 'Starting'
   | 'Running'
