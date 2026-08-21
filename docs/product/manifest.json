@@ -1,0 +1,47 @@
+{
+  "$comment": "Publication manifest for the product docs. kyber-site reads this at build time to mirror docs/product/ at https://kyber.voget.io. Section and page order here is the site's sidebar order. A page's sidebar label defaults to its H1; use {\"file\": ..., \"label\": ...} to override. README.md becomes the section index page.",
+  "sections": [
+    {
+      "label": "Getting started",
+      "dir": "getting-started",
+      "pages": [
+        { "file": "what-is-kyber.md", "label": "What is Kyber?" },
+        { "file": "quickstart.md", "label": "Quickstart" },
+        { "file": "installation.md", "label": "Installation options" }
+      ]
+    },
+    {
+      "label": "Capabilities",
+      "dir": "capabilities",
+      "pages": [
+        { "file": "fleet-console.md", "label": "The fleet console" },
+        { "file": "agents-and-persistence.md", "label": "Agents and persistence" },
+        { "file": "chat-channels.md", "label": "Chat: Telegram and Discord" },
+        { "file": "memory-and-identity.md", "label": "Memory and identity" },
+        { "file": "scheduled-jobs.md", "label": "Scheduled jobs and agent-to-agent" },
+        { "file": "runtimes.md", "label": "Runtimes and subscriptions" },
+        { "file": "multi-cluster-and-api.md", "label": "Multi-cluster and the API" }
+      ]
+    },
+    {
+      "label": "Use cases",
+      "dir": "use-cases",
+      "pages": [
+        { "file": "README.md", "label": "Overview" },
+        { "file": "personal-agent-fleet.md", "label": "A personal agent fleet" },
+        { "file": "autonomous-dev-team.md", "label": "An autonomous dev team" },
+        { "file": "ops-from-your-phone.md", "label": "Ops from your phone" },
+        { "file": "scheduled-automation.md", "label": "Scheduled automation" }
+      ]
+    },
+    {
+      "label": "Project",
+      "dir": "project",
+      "pages": [
+        { "file": "architecture.md", "label": "Architecture" },
+        { "file": "security.md", "label": "Security model" },
+        { "file": "faq.md", "label": "FAQ" }
+      ]
+    }
+  ]
+}

@@ -18,7 +18,7 @@ name: prepare-release
 # locks the invariant in CI.
 #
 # Flow: validate version → bump Chart.yaml + stamp the version into the
-# install docs (README.md, docs/quickstart.md, docs/installation.md,
+# install docs (README.md, docs/product/getting-started/quickstart.md, docs/installation.md,
 # docs/installation-wsl2.md) on a branch → open + auto-merge the bump PR to
 # main → wait for the squash-merge → push tag vX.Y.Z on the merged commit.
 # The docs ride the same tagged commit, so the published docs always name the
@@ -117,7 +117,7 @@ jobs:
           #   `version: X.Y.Z`      wsl2 verify step: expected output
           # Historical prose like "Releases after 1.0.4 also accept" matches
           # none of these and stays untouched.
-          DOCS="README.md docs/quickstart.md docs/installation.md docs/installation-wsl2.md"
+          DOCS="README.md docs/product/getting-started/quickstart.md docs/installation.md docs/installation-wsl2.md"
           sed -E -i "s/--version [0-9]+\.[0-9]+\.[0-9]+/--version ${VER}/g" ${DOCS}
           sed -E -i 's/in place of `[0-9]+\.[0-9]+\.[0-9]+`/in place of `'"${VER}"'`/g' ${DOCS}
           sed -E -i 's/tag: "v[0-9]+\.[0-9]+\.[0-9]+"/tag: "v'"${VER}"'"/g' ${DOCS}
@@ -153,7 +153,7 @@ jobs:
           BRANCH="chore/prepare-release-v${VER}"
           git checkout -b "${BRANCH}"
           # Same list as the stamp step above (steps don't share shell state).
-          DOCS="README.md docs/quickstart.md docs/installation.md docs/installation-wsl2.md"
+          DOCS="README.md docs/product/getting-started/quickstart.md docs/installation.md docs/installation-wsl2.md"
           git add deploy/helm/kyber/Chart.yaml ${DOCS}
           git commit -m "chore(chart): bump chart version + install docs to ${VER} (v${VER})"
           if ! git push -u origin "${BRANCH}"; then
@@ -163,7 +163,7 @@ jobs:
           BODY=$(cat <<EOF
           ## Prepare release v${VER}
 
-          Bumps \`deploy/helm/kyber/Chart.yaml\` \`version\` + \`appVersion\` to \`${VER}\` (in lockstep), folded into the commit that will be tagged \`v${VER}\`. Also stamps \`${VER}\` into the quickstart install commands in \`README.md\` and \`docs/quickstart.md\`, so the published docs always name the latest release.
+          Bumps \`deploy/helm/kyber/Chart.yaml\` \`version\` + \`appVersion\` to \`${VER}\` (in lockstep), folded into the commit that will be tagged \`v${VER}\`. Also stamps \`${VER}\` into the quickstart install commands in \`README.md\` and \`docs/product/getting-started/quickstart.md\`, so the published docs always name the latest release.
 
           Cutting the tag on this merged commit makes \`git describe --tags\` at the release commit resolve to the clean tag, so the canary (razer, \`:latest\`) reports \`${VER}\` instead of a stale pre-tag \`git describe\` string (kyber#591). Replaces the retired post-tag \`chart-version-bump-pr\` job.
 

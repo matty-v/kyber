@@ -1,6 +1,6 @@
 # Kyber documentation
 
-New here? Start with the [Quickstart](quickstart.md). It takes any Kubernetes
+New here? Start with the [Quickstart](product/getting-started/quickstart.md). It takes any Kubernetes
 cluster to a running fleet console with one live agent in about 15 minutes. Not
 a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 
@@ -8,7 +8,7 @@ a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 
 | Guide | For |
 |---|---|
-| [quickstart.md](quickstart.md) | Any cluster (or a local k3d one-liner), the short path |
+| [the quickstart](product/getting-started/quickstart.md) | Any cluster (or a local k3d one-liner), the short path |
 | [install-with-an-ai-assistant.md](install-with-an-ai-assistant.md) | Let an AI assistant drive the install for you |
 | [installation.md](installation.md) | GCP: production multi-VM install, Terraform, HTTPS |
 | [installation-macos.md](installation-macos.md) | A Mac, via a Linux VM with Kubernetes |

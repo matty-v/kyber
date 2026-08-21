@@ -162,5 +162,5 @@ On any conflict, the code wins and this doc is stale — fix the doc.
   (§ Token pricing).
 - [`../runtime-detection.md`](../runtime-detection.md) — the detection poller /
   `/available` operator-facing detail.
-- Product / WHAT mirror: `docs/product/pwa-holocron.md` (Metrics surface) — Yoda-owned.
+- Product / WHAT mirror: `docs/product/capabilities/fleet-console.md` (Metrics surface).
 - Epic: [kyber#489](https://github.com/matty-v/kyber/issues/489) (children #487 pricing, #488 window, #492 pod `[1m]`).

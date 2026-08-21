@@ -60,7 +60,7 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
 Use the newest version from
 [Releases](https://github.com/matty-v/kyber/releases) in place of `1.0.8`.
 
-[**docs/quickstart.md**](docs/quickstart.md) wraps this in the full 15-minute
+[**docs/product/getting-started/quickstart.md**](docs/product/getting-started/quickstart.md) wraps this in the full 15-minute
 path, from an empty cluster (or a k3d one-liner) to a fleet console with one
 live Claude Code agent, with a verify step at every stage. No cloud account
 required.
@@ -69,7 +69,7 @@ required.
 
 | I want to | Start here |
 |---|---|
-| Try it on a cluster I already have, or a local one | [Quickstart](docs/quickstart.md) |
+| Try it on a cluster I already have, or a local one | [Quickstart](docs/product/getting-started/quickstart.md) |
 | Have an AI assistant do the install for me | [Install with an AI assistant](docs/install-with-an-ai-assistant.md) |
 | Run it on my Mac | [macOS guide](docs/installation-macos.md) |
 | Run it on my Windows laptop, no cloud account | [WSL2 guide](docs/installation-wsl2.md) |

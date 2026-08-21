@@ -133,4 +133,4 @@ offline remediation: stop the agent, inspect or clear the PVC, then start it.
   (the `DesiredNeedsAuth` and `DesiredStopped` rows and the live-pod-vs-pod-less
   Action split — the two kill switches share one shape).
 - The operator-facing lifecycle and actions:
-  [`../product/agent-lifecycle.md`](../product/agent-lifecycle.md).
+  [`../product/capabilities/agents-and-persistence.md`](../product/capabilities/agents-and-persistence.md).

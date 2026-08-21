@@ -26,9 +26,11 @@ coordinate disclosure timing in the report thread.
 ## Deployment threat model
 
 Kyber runs long-lived AI coding agents as Kubernetes pods with substantial
-power by design: agent runtime pods are not privileged by default, but retain
-`CAP_SYS_ADMIN` and mount `/dev/fuse` from the host to achieve whole-disk
-persistence. Agents also accept prompts from connected chat channels
+power by design: agent runtime pods are unprivileged and run in a user
+namespace (`hostUsers: false`, so in-pod root maps to an unprivileged uid on
+the node), with `CAP_SYS_ADMIN` added *inside that namespace* to assemble the
+chroot-based whole-disk persistence. No host devices, no hostPath volumes, no
+service-account token. Agents also accept prompts from connected chat channels
 (Telegram/Discord), so anyone who can message a bound channel can influence
 what an agent does. Deploy Kyber on a dedicated cluster whose workloads and
 credentials you are willing to trust the agents with — not on a shared

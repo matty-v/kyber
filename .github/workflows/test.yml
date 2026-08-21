@@ -139,6 +139,13 @@ jobs:
         if: needs.changes.outputs.go == 'true'
         run: bash scripts/release-version-guard_test.sh
 
+      # docs/product/ is the product source of truth and is mirrored to
+      # kyber.voget.io by the kyber-site build. Keep its structural invariants
+      # green (manifest/page agreement, H1-no-frontmatter format, WHAT/HOW
+      # boundary). Grep-only, seconds, so it runs on every PR.
+      - name: Product docs invariants
+        run: bash docs/product/product_docs_test.sh
+
       - name: Lint
         if: needs.changes.outputs.go == 'true'
         run: make lint

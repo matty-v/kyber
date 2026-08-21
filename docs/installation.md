@@ -8,7 +8,7 @@ dedicated platform pool and per-Machine node pools, use
 This document is the source of truth for installation — if you hit a step that
 doesn't match reality, fix the doc.
 
-> **Just want to see Kyber run?** [quickstart.md](./quickstart.md) gets you a
+> **Just want to see Kyber run?** [the quickstart](./product/getting-started/quickstart.md) gets you a
 > working instance with one live agent in ~15 minutes on any cluster, with no
 > cloud account. This guide is the permanent version of the same install.
 

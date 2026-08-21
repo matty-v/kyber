@@ -2,7 +2,7 @@
 
 Step-by-step guide for the standalone single-box deployment shape: native k3s in WSL2, Tailscale Funnel for HTTPS, and Kyber installed from the published Helm chart. Companion to [installation.md](./installation.md) (GCP multi-VM install).
 
-> **Just want to see Kyber run first?** [quickstart.md](./quickstart.md) gets you a working instance with one live agent in ~15 minutes on any cluster. This guide is the permanent, laptop-shaped version of the same install, with a public HTTPS URL and verify gates at every step.
+> **Just want to see Kyber run first?** [the quickstart](./product/getting-started/quickstart.md) gets you a working instance with one live agent in ~15 minutes on any cluster. This guide is the permanent, laptop-shaped version of the same install, with a public HTTPS URL and verify gates at every step.
 
 > **Aside.** Cluster naming: this guide installs the `kyber-laptop` cluster, which is also the Helm release name. See [clusters.md](./clusters.md) for the naming convention.
 

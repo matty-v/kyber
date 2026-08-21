@@ -109,7 +109,7 @@ if [ -f "$PREPARE_YML" ]; then
     # DOCS assignment and the sed stamp lines SPECIFICALLY — a bare filename
     # grep also matches the git-add line, which made the original check
     # vacuous: deleting the seds kept it green (caught by review on kyber#94).
-    if grep -Fq 'DOCS="README.md docs/quickstart.md docs/installation.md docs/installation-wsl2.md"' "$PREPARE_YML"; then
+    if grep -Fq 'DOCS="README.md docs/product/getting-started/quickstart.md docs/installation.md docs/installation-wsl2.md"' "$PREPARE_YML"; then
         ok "prepare-release.yml stamps all four install docs (DOCS list intact)"
     else
         bad "prepare-release.yml stamps all four install docs" "DOCS list line missing or trimmed"
