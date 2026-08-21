@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.4 — 2026-08-21
+
+### Fixed
+- The new-Agent capacity card now treats disk capacity as unknown while a
+  scale-from-zero Machine has no node, instead of reporting zero disk and a
+  false "won't fit" warning.
+- Regional managed GKE Machines with no active Agent demand now display as
+  Standby instead of appearing stuck in Provisioning. They return to
+  Provisioning as soon as an Agent needs capacity.
+
 ## 0.28.3 — 2026-08-21
 
 ### Fixed

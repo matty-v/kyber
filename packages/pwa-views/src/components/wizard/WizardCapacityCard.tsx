@@ -48,6 +48,7 @@ export function WizardCapacityCard({
   const cpuTotal = asn?.cpu ? parseCpu(asn.cpu) : machineAvailable.cpu
   const memTotal = asn?.memory ? parseMemoryGi(asn.memory) : machineAvailable.memoryGi
   const diskTotal = asn?.ephemeralStorage ? parseMemoryGi(asn.ephemeralStorage) : machineAvailable.diskGi
+	const diskKnown = diskTotal > 0
 
   const cpuUsedByOthers = Math.max(0, cpuTotal - machineAvailable.cpu)
   const memUsedByOthers = Math.max(0, memTotal - machineAvailable.memoryGi)
@@ -55,7 +56,7 @@ export function WizardCapacityCard({
 
   const cpuExceeds = newCpu > machineAvailable.cpu
   const memExceeds = newMemoryGi > machineAvailable.memoryGi
-  const diskExceeds = newDiskGi > machineAvailable.diskGi
+	const diskExceeds = diskKnown && newDiskGi > machineAvailable.diskGi
   const exceeds = cpuExceeds || memExceeds || diskExceeds
 
   // Verdict copy — list every resource that overflows, in the order CPU,
@@ -91,14 +92,24 @@ export function WizardCapacityCard({
         unit=" GiB"
         decimals={1}
       />
-      <ProposedCapacityBar
-        label="Disk"
-        usedByOthers={diskUsedByOthers}
-        newRequest={newDiskGi}
-        total={diskTotal}
-        unit=" GiB"
-        decimals={1}
-      />
+		{diskKnown ? (
+			<ProposedCapacityBar
+				label="Disk"
+				usedByOthers={diskUsedByOthers}
+				newRequest={newDiskGi}
+				total={diskTotal}
+				unit=" GiB"
+				decimals={1}
+			/>
+		) : (
+			<div data-testid="proposed-disk-unknown" className="font-mono text-[11px] text-text-secondary">
+				<div className="flex justify-between">
+					<span>Disk</span>
+					<span>available after node provisioning</span>
+				</div>
+				<div className="mt-0.5 h-2 rounded bg-surface-overlay" />
+			</div>
+		)}
       <p
         className={`text-xs ${exceeds ? 'text-danger font-medium' : 'text-text-muted'}`}
         data-testid="capacity-verdict"
@@ -107,11 +118,15 @@ export function WizardCapacityCard({
           <>
             This agent won&apos;t fit — reduce {overflowCopy} or pick a different machine.
           </>
-        ) : (
+		) : diskKnown ? (
           <>
             Fits on {selectedMachine.id}. {(machineAvailable.cpu - newCpu).toFixed(2)} vCPU, {(machineAvailable.memoryGi - newMemoryGi).toFixed(1)} GiB memory and {(machineAvailable.diskGi - newDiskGi).toFixed(1)} GiB disk will remain.
           </>
-        )}
+		) : (
+			<>
+				CPU and memory fit on {selectedMachine.id}. Disk capacity will be checked after node provisioning.
+			</>
+		)}
       </p>
     </div>
   )
