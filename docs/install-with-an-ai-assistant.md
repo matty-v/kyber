@@ -17,7 +17,7 @@ a GCP project / a Kubernetes cluster I already have>
 
 Read the guide for my target end-to-end before starting. Your job is to
 drive the install, not improvise one:
-- Any existing cluster, or just trying Kyber out: docs/quickstart.md,
+- Any existing cluster, or just trying Kyber out: docs/product/getting-started/quickstart.md,
   the shortest path, ~15 minutes, one helm install and a first agent.
   Start here if you are unsure.
 - macOS: docs/installation-macos.md, which starts a Linux VM with
@@ -49,7 +49,7 @@ Operating principles:
 
 ## Doing it yourself instead
 
-- [Quickstart](quickstart.md): any Kubernetes cluster (or a k3d one-liner) to a
+- [Quickstart](product/getting-started/quickstart.md): any Kubernetes cluster (or a k3d one-liner) to a
   running fleet console with one live agent
 - [macOS install guide](installation-macos.md): a Mac, via a Linux VM with
   Kubernetes

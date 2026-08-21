@@ -1,0 +1,42 @@
+name: notify-site
+
+# The marketing/docs site (matty-v/kyber-site, kyber.voget.io) mirrors
+# docs/product/ at build time. When the product docs change on main, tell the
+# site to rebuild so the change goes live within minutes instead of waiting
+# for the site's scheduled safety-net rebuild.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/product/**'
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # GITHUB_TOKEN cannot reach another repo; mint an App token scoped to
+      # kyber-site. Requires the Kyber Platform App to be installed on
+      # matty-v/kyber-site with contents:write.
+      - name: Mint a GitHub App token (kyber-site)
+        id: app_token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.KYBER_APP_ID }}
+          private-key: ${{ secrets.KYBER_APP_PRIVATE_KEY }}
+          owner: matty-v
+          repositories: kyber-site
+
+      - name: Fire repository_dispatch to kyber-site
+        env:
+          GH_TOKEN: ${{ steps.app_token.outputs.token }}
+        run: |
+          set -euo pipefail
+          gh api repos/matty-v/kyber-site/dispatches \
+            -f event_type=kyber-docs-updated \
+            -f 'client_payload[sha]=${{ github.sha }}'
+          echo "Dispatched kyber-docs-updated to matty-v/kyber-site for ${{ github.sha }}"

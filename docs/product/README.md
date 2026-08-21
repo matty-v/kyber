@@ -1,68 +1,51 @@
-# Kyber Product Docs — the WHAT
+# Kyber Product Docs
 
-This is the **product source of truth** for Kyber: a maintained description of
-**what the product does** — its capabilities, observable behaviors, and concepts
-— from an operator's vantage point.
+This tree is the **product source of truth** for Kyber: what the product does,
+what an operator sees and can do, and what its states and concepts mean. It is
+written for someone evaluating or running Kyber, not for someone hacking on it.
+
+These pages are published twice from this single source:
+
+- **In-repo**, right here, rendered by GitHub.
+- **On the docs site, [kyber.voget.io](https://kyber.voget.io)**, which mirrors
+  this tree at build time. The site's build pulls this directory from `main`,
+  so a merged change here is live on the site within minutes (a
+  `repository_dispatch` from `.github/workflows/notify-site.yml` triggers the
+  rebuild, with a scheduled rebuild as the safety net).
+
+[`manifest.json`](manifest.json) is the publication contract: it lists the
+sections, page order, and sidebar labels the site renders. A page not in the
+manifest does not publish. Adding a page means adding the file **and** a
+manifest entry.
+
+## Structure
+
+| Section | What belongs there |
+|---|---|
+| [`getting-started/`](getting-started/what-is-kyber.md) | What Kyber is, the quickstart, and the installation options |
+| [`capabilities/`](capabilities/fleet-console.md) | One page per capability area: what it does and how an operator uses it |
+| [`use-cases/`](use-cases/README.md) | Narrative walkthroughs of ways to run Kyber |
+| [`project/`](project/architecture.md) | Product-level architecture, the security model, and the FAQ |
 
 ## Scope: WHAT, not HOW
 
-These pages describe **what an operator sees and can do**, and what the product's
-states and concepts *mean*. They deliberately contain **no implementation
-detail** — no file paths, function names, controller internals, or wiring. That
-is the **HOW**, and it lives in its sibling set, the architecture docs:
-[`../architecture/`](../architecture/overview.md).
+These pages describe **what the product does**. They deliberately contain no
+implementation detail: no file paths, function names, or controller internals.
+That is the HOW, and it lives in the sibling set,
+[`../architecture/`](../architecture/overview.md). The two sets cross-link so
+the boundary is navigable from either direction.
 
-The two sets are a matched pair and cross-link to each other so the boundary is
-navigable from either direction:
+## Writing rules
 
-| Question | Doc set |
-|---|---|
-| *What does Kyber do? What does an operator see and do?* | **`docs/product/`** (here) — the WHAT |
-| *How is Kyber built? How does a subsystem work?* | [`docs/architecture/`](../architecture/overview.md) — the HOW |
-
-If a contributor is unsure where something belongs: describe observable
-**behavior and concepts** here; describe **mechanism** (components, data flow,
-state machines, code) in `docs/architecture/`. When a state or concept is named
-in both, the architecture set owns the authoritative names and this set links to
-it rather than re-deriving them — keeping the vocabulary from drifting.
-
-## Ownership and cadence
-
-**Yoda (Product) maintains this doc set.** Yoda reads the relevant page before
-triage / acceptance-criteria / spec work, and **refreshes these pages at ship /
-release-notes time** — the same moment user-perspective release notes are
-written, so the product docs and the released reality move together.
-
-Behavior-changing PRs are expected to update the affected page (enforced
-separately); QA tests product behavior against these pages and flags
-product-vs-doc divergence (separate work). This directory establishes the doc
-set and its convention; those wiring behaviors land via the per-agent skill
-issues.
-
-## Accuracy rule
-
-Content must reflect **current shipped reality**, spot-checked against the
-running product — not aspirational or planned behavior. Anything the author
-cannot confirm against a running instance is **omitted or explicitly marked
-`_Unverified_`**, never asserted. Bringing up a real instance to spot-check is
-what the one-command dev/test environment (`scripts/devenv/`, kyber#399) is for.
-
-## Convention
-
-One page per major capability area. To add a page, copy
-[`_TEMPLATE.md`](_TEMPLATE.md) (sections: **Concept / Observable behavior /
-States / Operator actions**) and add it to the index below. New areas slot in
-without re-litigating structure.
-
-## Index
-
-| Page | Capability area |
-|---|---|
-| [`overview.md`](overview.md) | What Kyber does, from an operator's vantage — the entry point |
-| [`agent-lifecycle.md`](agent-lifecycle.md) | The states an agent moves through and what an operator can do at each |
-| [`pwa-holocron.md`](pwa-holocron.md) | The PWA (Fleet Command Console) and Holocron multi-cluster surfaces |
-| [`telegram.md`](telegram.md) | Telegram channel setup states and observable messaging behavior |
-
-**v1 set** is the three pages above plus this README and the template. Remaining
-capability areas — machine / capacity, inbound prompts, authentication, token /
-context budget — accrue as follow-up pages using the same convention.
+- First line is the `# H1` title; the paragraph after it is the page's lead
+  (the site uses it as the meta description). No YAML frontmatter.
+- Links to pages inside this tree are relative `.md` links (the site rewrites
+  them to site routes). Links to anything else in the repo are relative paths
+  too (the site rewrites those to GitHub). Never hardcode a kyber.voget.io URL.
+- Plain voice, no em dashes.
+- Release-version pins in `getting-started/quickstart.md` are stamped
+  automatically by `prepare-release.yml` at each release; write them as the
+  current bare semver and let the release flow keep them fresh.
+- `product_docs_test.sh` checks the structural invariants (manifest/page
+  agreement, the WHAT/HOW boundary, no em dashes). Run it from the repo root
+  after editing.

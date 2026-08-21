@@ -7,7 +7,7 @@ chart.
 
 > **Verification status.** The maintainer's own fleets run on Linux (k3s) and on
 > GCP. This guide is written from the same chart and the same verify gates as
-> [quickstart.md](./quickstart.md), but the macOS path is not yet part of the
+> [the quickstart](./product/getting-started/quickstart.md), but the macOS path is not yet part of the
 > maintainer's regular testing. If a step here does not behave as described,
 > please [open an issue](https://github.com/matty-v/kyber/issues).
 
@@ -108,7 +108,7 @@ kubectl -n kyber-system logs <agent-pod> | grep -i 'durable root\|user namespace
 ## 3. Install Kyber
 
 From here the install is identical to every other cluster. Follow
-[quickstart.md](./quickstart.md) from § 1 to the end: it creates the namespace
+[the quickstart](./product/getting-started/quickstart.md) from § 1 to the end: it creates the namespace
 and secrets, installs the chart, opens the PWA, and walks you through your first
 machine and your first agent, with a verify step at each stage.
 
@@ -175,7 +175,7 @@ colima delete kyber
 
 ## Where to go next
 
-- [quickstart.md](./quickstart.md) for the install itself and your first agent
+- [the quickstart](./product/getting-started/quickstart.md) for the install itself and your first agent
 - [agents-comms.md](./agents-comms.md) to reach your agents from Telegram or
   Discord
 - [upgrading.md](./upgrading.md) to move to a newer version later
