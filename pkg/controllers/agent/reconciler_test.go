@@ -2794,11 +2794,12 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	}
 
 	// Honored phases: Stop must derive EventDesiredStopped (the AC's required set
-	// plus Suspended for parity). Notably this includes the crash-loop phases.
+	// plus Suspended and WaitingForMachine for parity). Notably this includes
+	// the crash-loop and machine-recovery phases.
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-		kyberv1.AgentPhaseSuspended,
+		kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseWaitingForMachine,
 	}
 	for _, ph := range allowed {
 		event, err := r.classifyEvent(ctx, stopped(ph), nil)
@@ -2844,8 +2845,7 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	outOfScope := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStopping,
 		kyberv1.AgentPhaseRestarting, kyberv1.AgentPhaseDraining,
-		kyberv1.AgentPhaseWaitingForMachine, kyberv1.AgentPhaseNeedsAuth,
-		kyberv1.AgentPhaseDeleted,
+		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseDeleted,
 	}
 	for _, ph := range outOfScope {
 		event, err := r.classifyEvent(ctx, stopped(ph), nil)
