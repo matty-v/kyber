@@ -145,6 +145,10 @@ func TestGKEManagedLifecycleRequiresOwnership(t *testing.T) {
 		t.Fatalf("resize = %+v, err=%v, sizes=%v", resizing, err, resizeClient.sizes)
 	}
 
+	if resizing.Message == "" {
+		t.Error("resize observation must explain that provider capacity is pending")
+	}
+
 	deleteClient := &fakeGKENodePoolsClient{pool: ownedPool}
 	desired.Availability = DesiredDeleted
 	deleting, err := provider(deleteClient).Reconcile(context.Background(), MachineIdentity{Name: "test-pool"}, desired, "")

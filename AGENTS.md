@@ -107,6 +107,13 @@ testable without a cluster. Authoritative transition table:
   fake lifecycle locally with `scripts/devenv/up.sh --compute-provider fake`
   followed by `scripts/devenv/smoke-fake-provider.sh`. The contract is in
   `docs/design/2026-08-13-compute-provider-boundary-design.md`.
+  The production Agent reconciler must be wired with a
+  `KubernetesMachineGetter`: active agents consume the provider-neutral
+  Machine readiness contract, park in `WaitingForMachine`, and remove their
+  stale pod while capacity recovers. Pods on healthy Nodes retain termination
+  grace; only Pending pods or pods on missing/NotReady Nodes are force-deleted.
+  They resume without spending their retry budget when the Machine becomes Ready. See
+  `docs/design/2026-08-21-machine-capacity-recovery.md`.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
@@ -369,6 +376,11 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     choose its default model," while the fresh harness-version default is the
     literal `latest`. The live ConfigMap wins for all four runtime-scoped keys
     so an operator's concrete pin survives Helm upgrades.
+15. **Machine-aware Agent recovery depends on production wiring.** Keep
+    `AgentReconciler.MachineGetter` initialized in `cmd/control-plane/main.go`.
+    `SetupWithManager` fails closed when it is nil; weakening that gate can
+    silently disable `WaitingForMachine` recovery and turn provider capacity
+    loss into Agent startup failures.
 
 ---
 

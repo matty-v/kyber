@@ -21,6 +21,7 @@ import {
   useRestartMachineAgents,
 } from '../hooks/useAPI'
 import { MachineCapacityCard } from '../components/MachineCapacityCard'
+import { MachineRecoveryBanner } from '../components/MachineRecoveryBanner'
 import { StatusBadge } from '../components/StatusBadge'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
@@ -181,6 +182,8 @@ export function MachineDetail() {
           )}
         </div>
       </div>
+
+      <MachineRecoveryBanner machine={machine} />
 
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Spec */}

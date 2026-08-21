@@ -17,9 +17,11 @@ export type AgentPhase =
   | 'Suspended'
   | 'Deleted'
   | 'NeedsAuth'
+  | 'Draining'
+  | 'WaitingForMachine'
   // MemoryExhausted is emitted by the backend (OOM-killed agent, #272). The PWA
   // models it so operator actions like force-needs-auth (#395) can be offered
-  // from it. (Draining / WaitingForMachine remain unmodeled — a separate gap.)
+  // from it.
   | 'MemoryExhausted'
 
 export type AgentScalingMode = 'warm' | 'scale-to-zero'

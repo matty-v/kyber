@@ -138,7 +138,10 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
     case 'Stopping':
     case 'Restarting':
     case 'Creating':
+    case 'Draining':
     case 'Deleted':
       return []
+    case 'WaitingForMachine':
+      return ['stop']
   }
 }

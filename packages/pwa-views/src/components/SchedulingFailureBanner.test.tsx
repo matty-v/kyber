@@ -24,6 +24,16 @@ describe('SchedulingFailureBanner', () => {
     expect(container.firstChild).toBeNull()
   })
 
+  it('explains automatic recovery while waiting for machine capacity', () => {
+    render(<SchedulingFailureBanner agent={agentWith(undefined, {
+      phase: 'WaitingForMachine',
+      status: { phase: 'WaitingForMachine', message: 'waiting detail' },
+    })} />)
+    expect(screen.getByTestId('machine-wait-banner')).toHaveTextContent('Waiting for machine capacity')
+    expect(screen.getByText(/restart this agent automatically/)).toBeInTheDocument()
+    expect(screen.getByText('Technical details')).toBeInTheDocument()
+  })
+
   it('renders Capacity headline + remediation that names the machine', () => {
     render(<SchedulingFailureBanner agent={agentWith('Capacity')} />)
     expect(screen.getByTestId('scheduling-failure-banner')).toHaveAttribute(
@@ -62,7 +72,7 @@ describe('SchedulingFailureBanner', () => {
     )
   })
 
-  it('renders the verbatim scheduler message in mono', () => {
+  it('keeps the verbatim scheduler message in collapsed technical details', () => {
     render(<SchedulingFailureBanner agent={agentWith('Capacity')} />)
     const pre = screen.getByTestId('scheduling-failure-message')
     expect(pre).toHaveTextContent('sample scheduler message')

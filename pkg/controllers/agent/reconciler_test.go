@@ -1909,6 +1909,100 @@ func (f *fakeMachineGetter) Get(_ context.Context, _, _ string) (*kyberv1.Machin
 	return f.machine, nil
 }
 
+// TestReconciler_UnavailableMachineParksAndResumesAgent is the end-to-end
+// controller regression for managed-capacity loss. A Pending pod must be
+// removed and parked without spending retries, then rebuilt automatically on
+// the replacement node when the Machine becomes Ready.
+func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	ctx := context.Background()
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	r.MachineGetter = &KubernetesMachineGetter{Client: k8sClient}
+	namespace := "test-machine-recovery"
+	if err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+
+	machine := &kyberv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-01", Namespace: namespace},
+		Spec: kyberv1.MachineSpec{
+			Provider: kyberv1.MachineProviderFake, DesiredPhase: kyberv1.MachinePhaseRunning,
+		},
+	}
+	if err := k8sClient.Create(ctx, machine); err != nil {
+		t.Fatalf("creating machine: %v", err)
+	}
+	machinePatch := client.MergeFrom(machine.DeepCopy())
+	machine.Status.Phase = kyberv1.MachinePhaseProvisioning
+	machine.Status.NodeName = "old-node"
+	if err := k8sClient.Status().Patch(ctx, machine, machinePatch); err != nil {
+		t.Fatalf("setting machine unavailable: %v", err)
+	}
+
+	agent := newTestAgent("dave", namespace)
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	key := types.NamespacedName{Name: agent.Name, Namespace: namespace}
+	req := ctrl.Request{NamespacedName: key}
+	reconcileN(t, r, req, 1) // birth path creates PVCs and the initial pod
+
+	current := getAgent(t, k8sClient, key)
+	statusPatch := client.MergeFrom(current.DeepCopy())
+	current.Status.Scheduling = &kyberv1.AgentSchedulingStatus{
+		Category: "Placement", LastError: "raw scheduler detail",
+	}
+	if err := k8sClient.Status().Patch(ctx, current, statusPatch); err != nil {
+		t.Fatalf("seeding scheduling status: %v", err)
+	}
+
+	reconcileN(t, r, req, 1)
+	parked := getAgent(t, k8sClient, key)
+	if parked.Status.Phase != kyberv1.AgentPhaseWaitingForMachine {
+		t.Fatalf("phase after capacity loss: got %q, want WaitingForMachine", parked.Status.Phase)
+	}
+	if parked.Status.RestartCount != 0 {
+		t.Errorf("restartCount after capacity loss: got %d, want 0", parked.Status.RestartCount)
+	}
+	if parked.Status.Scheduling != nil {
+		t.Errorf("stale scheduling status was not cleared: %+v", parked.Status.Scheduling)
+	}
+	if !strings.Contains(parked.Status.Message, "resume this agent automatically") {
+		t.Errorf("waiting message = %q", parked.Status.Message)
+	}
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: namespace}, pod); !errors.IsNotFound(err) {
+		t.Fatalf("old pod still exists after parking: %v", err)
+	}
+
+	machine = &kyberv1.Machine{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: "node-01", Namespace: namespace}, machine); err != nil {
+		t.Fatalf("getting machine for recovery: %v", err)
+	}
+	machinePatch = client.MergeFrom(machine.DeepCopy())
+	machine.Status.Phase = kyberv1.MachinePhaseReady
+	machine.Status.NodeName = "replacement-node"
+	if err := k8sClient.Status().Patch(ctx, machine, machinePatch); err != nil {
+		t.Fatalf("setting machine ready: %v", err)
+	}
+
+	reconcileN(t, r, req, 1)
+	resumed := getAgent(t, k8sClient, key)
+	if resumed.Status.Phase != kyberv1.AgentPhaseStarting {
+		t.Fatalf("phase after replacement: got %q, want Starting", resumed.Status.Phase)
+	}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: namespace}, pod); err != nil {
+		t.Fatalf("replacement pod was not created: %v", err)
+	}
+	values := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values
+	if len(values) != 1 || values[0] != "replacement-node" {
+		t.Errorf("replacement pod node affinity = %v, want replacement-node", values)
+	}
+}
+
 // TestIsMachinePreempted_PreemptionPhases verifies that isMachinePreempted returns true when
 // the machine is in Preempted, Replacing, or Provisioning phase.
 func TestIsMachinePreempted_PreemptionPhases(t *testing.T) {
@@ -1954,6 +2048,64 @@ func TestIsMachinePreempted_NilMachineGetter(t *testing.T) {
 
 	if r.isMachinePreempted(ctx, agent, nil) {
 		t.Error("isMachinePreempted: got true, want false when MachineGetter is nil")
+	}
+}
+
+func TestClassifyEvent_FailedAgentRetainsFailureWhileMachineUnavailable(t *testing.T) {
+	r := &AgentReconciler{
+		MachineGetter: &fakeMachineGetter{machine: &kyberv1.Machine{
+			Status: kyberv1.MachineStatus{Phase: kyberv1.MachinePhaseProvisioning},
+		}},
+	}
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "dave", Namespace: "default"},
+		Spec:       kyberv1.AgentSpec{Machine: "node-01"},
+		Status: kyberv1.AgentStatus{
+			Phase:        kyberv1.AgentPhaseFailed,
+			RestartCount: maxRestartRetries,
+		},
+	}
+	event, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent: %v", err)
+	}
+	if event != EventRetryLimitReached {
+		t.Fatalf("event = %q, want RetryLimitReached; an unrelated Machine outage must not revive a failed Agent", event)
+	}
+}
+
+func TestClassifyEvent_WaitingForMachineHonorsStop(t *testing.T) {
+	r := &AgentReconciler{}
+	agent := &kyberv1.Agent{
+		Spec: kyberv1.AgentSpec{DesiredPhase: kyberv1.AgentPhaseStopped},
+		Status: kyberv1.AgentStatus{
+			Phase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+	}
+	event, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent: %v", err)
+	}
+	if event != EventDesiredStopped {
+		t.Fatalf("event = %q, want DesiredStopped", event)
+	}
+}
+
+func TestIsNodeUnavailable(t *testing.T) {
+	r := newFakeReconcilerWithNodes(t, readyNode("ready"), notReadyNode("not-ready"))
+	for _, tc := range []struct {
+		name string
+		want bool
+	}{
+		{name: "ready", want: false},
+		{name: "not-ready", want: true},
+		{name: "missing", want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := r.isNodeUnavailable(context.Background(), tc.name); got != tc.want {
+				t.Errorf("isNodeUnavailable(%q) = %v, want %v", tc.name, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -2209,8 +2361,8 @@ func TestClassifyEvent_TerminatingPodTreatedAsDead(t *testing.T) {
 		if err != nil {
 			t.Fatalf("classifyEvent: %v", err)
 		}
-		if event != EventMachinePreempted {
-			t.Errorf("classifyEvent with terminating pod + preempted machine: got %q, want %q", event, EventMachinePreempted)
+		if event != EventMachineUnavailable {
+			t.Errorf("classifyEvent with terminating pod + preempted machine: got %q, want %q", event, EventMachineUnavailable)
 		}
 	})
 
@@ -2270,7 +2422,7 @@ func TestClassifyEvent_TerminatingPodTreatedAsDead(t *testing.T) {
 }
 
 // TestClassifyEvent_RunningNilPod_MachinePreempted verifies that classifyEvent returns
-// EventMachinePreempted (not EventPodDied) when a Running agent's pod is nil and the
+// the provider-neutral MachineUnavailable event (not EventPodDied) when a Running agent's pod is nil and the
 // machine is in a preempted phase.
 func TestClassifyEvent_RunningNilPod_MachinePreempted(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
@@ -2642,11 +2794,12 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	}
 
 	// Honored phases: Stop must derive EventDesiredStopped (the AC's required set
-	// plus Suspended for parity). Notably this includes the crash-loop phases.
+	// plus Suspended and WaitingForMachine for parity). Notably this includes
+	// the crash-loop and machine-recovery phases.
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-		kyberv1.AgentPhaseSuspended,
+		kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseWaitingForMachine,
 	}
 	for _, ph := range allowed {
 		event, err := r.classifyEvent(ctx, stopped(ph), nil)
@@ -2692,8 +2845,7 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	outOfScope := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStopping,
 		kyberv1.AgentPhaseRestarting, kyberv1.AgentPhaseDraining,
-		kyberv1.AgentPhaseWaitingForMachine, kyberv1.AgentPhaseNeedsAuth,
-		kyberv1.AgentPhaseDeleted,
+		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseDeleted,
 	}
 	for _, ph := range outOfScope {
 		event, err := r.classifyEvent(ctx, stopped(ph), nil)

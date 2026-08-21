@@ -38,6 +38,38 @@ func TestCapacityProviderForKeepsDirectGCEOnLegacyPath(t *testing.T) {
 	}
 }
 
+func TestClassifyNodeDisappeared_InterruptibleCapacityProviderStartsReplacement(t *testing.T) {
+	ctx := context.Background()
+	provider := adapters.NewFakeComputeAdapter()
+	instanceID, err := provider.CreateInstance(ctx, adapters.MachineSpec{Name: "spot-pool", Interruptible: true})
+	if err != nil {
+		t.Fatalf("creating fake capacity: %v", err)
+	}
+	scheme := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(scheme)
+	_ = kyberv1.AddToScheme(scheme)
+	machine := &kyberv1.Machine{
+		ObjectMeta: metav1.ObjectMeta{Name: "spot-pool", Namespace: "default"},
+		Spec: kyberv1.MachineSpec{
+			Provider: kyberv1.MachineProviderFake, Spot: true,
+			DesiredPhase: kyberv1.MachinePhaseRunning,
+		},
+		Status: kyberv1.MachineStatus{Phase: kyberv1.MachinePhaseReady, InstanceId: instanceID},
+	}
+	r := &MachineReconciler{
+		Client: fake.NewClientBuilder().WithScheme(scheme).
+			WithStatusSubresource(machine).WithObjects(machine).Build(),
+		ComputeAdapter: provider, CapacityProvider: provider,
+	}
+	event, _, err := r.classifyNodeDisappeared(ctx, machine)
+	if err != nil {
+		t.Fatalf("classifyNodeDisappeared: %v", err)
+	}
+	if event != EventNodeDisappearedPreempted {
+		t.Errorf("event = %q, want %q", event, EventNodeDisappearedPreempted)
+	}
+}
+
 // envtestBinPath resolves the envtest binary path from the KUBEBUILDER_ASSETS env var
 // or falls back to the pre-installed 1.31.0 binaries.
 func envtestBinPath() string {

@@ -117,6 +117,11 @@ The 13 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `RetryLimitReached`, `WakeReceived`, `PreemptionNotice`, `MachinePreempted`,
 `MachineReady`, `OAuthRefreshFailed`, `OOMKilled`.
 
+`MachineUnavailable` is the provider-neutral capacity-loss event. Active and
+retrying Agents park in `WaitingForMachine` without consuming restart retries;
+the transition removes any stale pod so `MachineReady` can rebuild it against
+the replacement Node.
+
 > **`LivenessFailed` is defined but not yet wired.** The transition exists in
 > `NextPhase`, but no reconciler code currently emits the event (it carries a
 > `TODO(B3)` — wire it when `RestartPolicy` changes or a custom liveness
@@ -158,6 +163,10 @@ stateDiagram-v2
     Starting --> NeedsAuth: OAuthRefreshFailed
     Starting --> MemoryExhausted: OOMKilled
     Starting --> WaitingForMachine: MachinePreempted
+    Creating --> WaitingForMachine: MachineUnavailable
+    Starting --> WaitingForMachine: MachineUnavailable
+    Running --> WaitingForMachine: MachineUnavailable
+    Restarting --> WaitingForMachine: MachineUnavailable
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
@@ -199,6 +208,7 @@ stateDiagram-v2
 
     Draining --> WaitingForMachine: PodDeleted / MachinePreempted
     WaitingForMachine --> Starting: MachineReady
+    WaitingForMachine --> Stopped: DesiredStopped
 
     note right of Starting
         Starting is the common re-entry point:
@@ -227,6 +237,11 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Starting` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
 | `Starting` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
 | `Starting` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
+| `Creating` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `Starting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `Running` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `Restarting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `WaitingForMachine` | `DesiredStopped` | `ForceKillPod` | `Stopped` |
 | `Running` | `DesiredStopped` | `SendSIGTERM` | `Stopping` |
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `DesiredSuspended` | `CaptureStateAndDeletePod` | `Suspended` |
