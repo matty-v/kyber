@@ -686,13 +686,49 @@ export function usePutAgentSecretKV() {
       api.putAgentSecretKV(name, key, value),
     onSuccess: (_data, { name }) => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agentSecrets', name] })
-      // PUT rolls the pod — refresh agent status.
+      // Replacing an existing entry can roll the pod; refresh agent status.
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
     },
     meta: {
       successMessage: (_d: unknown, v: unknown) =>
         `Secret ${(v as { key: string }).key} saved`,
       errorPrefix: 'Failed to save secret',
+    },
+  })
+}
+
+export function useImportAgentSecretsKV() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async ({
+      name,
+      entries,
+    }: {
+      name: string
+      entries: { key: string; value: string }[]
+    }) => {
+      for (const [index, entry] of entries.entries()) {
+        try {
+          // Keep these sequential. Concurrent merge-patches against the same
+          // Kubernetes Secret can conflict or overwrite another imported row.
+          await api.putAgentSecretKV(name, entry.key, entry.value)
+        } catch (err) {
+          throw new Error(
+            `Imported ${index} of ${entries.length}; ${entry.key} failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+          )
+        }
+      }
+      return entries.length
+    },
+    onSuccess: (_count, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agentSecrets', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+    },
+    meta: {
+      successMessage: (count: unknown) => `Imported ${count as number} secrets`,
+      errorPrefix: 'Failed to import secrets',
     },
   })
 }

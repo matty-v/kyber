@@ -14,6 +14,10 @@ export function SecretsHelpContent() {
           File entries mount at{' '}
           <code className="text-text-primary">/user-secrets/&lt;key&gt;.bin</code>.
         </p>
+        <p>
+          Import a key=value file to create multiple environment entries at
+          once. Blank lines and # comments are ignored.
+        </p>
       </Section>
       <Section label="Updates">
         <p>Adding a secret does not restart the agent.</p>

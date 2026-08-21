@@ -117,6 +117,9 @@ Listed here for completeness; implemented in the follow-up:
 - New "Secrets" tab on `AgentDetail`.
 - List: key, kind, size, sha256 prefix, timestamps.
 - Add dialog: key name + value (textarea for kv / file picker for file).
+- Bulk import: a client-side key=value parser validates the entire file, then
+  writes each row sequentially through the existing PUT endpoint. This avoids
+  a second storage/API path and prevents concurrent Kubernetes Secret patches.
 - Delete button with confirm.
 - Readback button: fetches as blob, shows modal with click-to-copy for kv or download link for file.
 

@@ -2,6 +2,10 @@
 
 ## 0.28.2 — 2026-08-20
 
+### Added
+- The agent Secrets dialog can import a key=value file as
+  individual environment-secret rows, with complete validation before upload.
+
 ### Changed
 - Adding a new per-agent secret no longer restarts a running agent. New file
   secrets appear live; new environment entries become available on the next
