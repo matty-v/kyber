@@ -209,9 +209,12 @@ extending it:
   `MemoryExhausted` (operator bumps `spec.resources.memory` before retry) rather
   than `Failed`-with-auto-restart, so a too-small agent doesn't crash-loop.
 - **Suspension is how preemption and idle wake are unified.** A spot-preemption
-  notice and a "no work right now" both park the agent in `Suspended`; a wake
-  event (e.g. a Telegram message) or a ready replacement machine brings it back
-  to `Running`.
+  notice and a "no work right now" both park the agent in `Suspended`; an
+  operator start (`DesiredRunning`, via `POST …/start` or the console) brings it
+  back to `Running`. A `WakeReceived` event exists in the state machine for
+  message-triggered wake, but no production path emits it today — an inbound
+  message does not wake a suspended agent (see
+  [`agent-lifecycle.md`](agent-lifecycle.md) § 4).
 
 How the running agent reports `status.activity` back up — the in-pod signal
 source → status sidecar → control plane path — is the **status pipeline**, and

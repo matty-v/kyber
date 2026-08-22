@@ -18,7 +18,7 @@ An agent moves through named phases. Most transitions are automatic: Kyber drive
 | `Stopping` | Being gracefully shut down at your request. |
 | `Stopped` | Not running; filesystem preserved. Stop is an authoritative kill switch: a stopped agent stays down, even if it was crash-looping, until you start it again. |
 | `Restarting` | The pod is being replaced with the agent's work preserved. Usually operator-initiated, but Kyber also enters it on its own when the agent's runtime image is updated. |
-| `Suspended` | Scaled to zero with the filesystem preserved, either idle or parked after a machine interruption. New work or a ready machine wakes it. |
+| `Suspended` | Scaled to zero with the filesystem preserved, either idle or parked after a machine interruption. Start it to wake it; an inbound message does not. |
 | `Draining` | Being gracefully drained ahead of its machine being reclaimed. Kyber is protecting its work. |
 | `WaitingForMachine` | Waiting for a replacement machine after preemption. It resumes when capacity returns. |
 | `NeedsAuth` | Its stored authorization is no longer valid. Re-authorize it to bring it back. |

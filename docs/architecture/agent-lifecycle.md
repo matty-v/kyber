@@ -122,11 +122,16 @@ retrying Agents park in `WaitingForMachine` without consuming restart retries;
 the transition removes any stale pod so `MachineReady` can rebuild it against
 the replacement Node.
 
-> **`LivenessFailed` is defined but not yet wired.** The transition exists in
-> `NextPhase`, but no reconciler code currently emits the event (it carries a
-> `TODO(B3)` — wire it when `RestartPolicy` changes or a custom liveness
-> monitor is added). Every other event above is emitted by the reconciler. The
-> transition is documented below for completeness and marked accordingly.
+> **`LivenessFailed` and `WakeReceived` are defined but not yet wired.** Their
+> transitions exist in `NextPhase`, but no reconciler or API code currently
+> emits either event. `LivenessFailed` carries a `TODO(B3)` — wire it when
+> `RestartPolicy` changes or a custom liveness monitor is added. `WakeReceived`
+> was designed for message-triggered wake of a `Suspended` agent (e.g. a
+> Telegram message), but no production path emits it: inbound webhooks deliver
+> only into a running agent's session, and the Telegram sidecar long-polls from
+> inside the pod, so a suspended agent resumes only via `DesiredRunning` (an
+> operator start). Every other event above is emitted by the reconciler. Both
+> transitions are documented below for completeness and marked accordingly.
 >
 > **kyber#575 note — native sidecars supersede the B3 watchdog for *sidecar*
 > self-healing.** The `TODO(B3)` controller-side watchdog (recreate a pod that
@@ -184,7 +189,7 @@ stateDiagram-v2
     Failed --> Starting: AutoRestartTriggered / DesiredRunning
     Failed --> Failed: RetryLimitReached
 
-    Suspended --> Starting: WakeReceived / DesiredRunning
+    Suspended --> Starting: WakeReceived* / DesiredRunning
     NeedsAuth --> Starting: DesiredRunning
     MemoryExhausted --> Starting: DesiredRunning
 
@@ -216,7 +221,7 @@ stateDiagram-v2
     end note
 ```
 
-`*` `LivenessFailed` is defined but not yet emitted (see § 4).
+`*` `LivenessFailed` and `WakeReceived` are defined but not yet emitted (see § 4).
 
 ## 6. Transition table
 
@@ -258,7 +263,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Failed` | `AutoRestartTriggered` | `WriteBriefAndCreatePod` | `Starting` |
 | `Failed` | `RetryLimitReached` | `StayFailedAndAlert` | `Failed` |
 | `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
-| `Suspended` | `WakeReceived` | `WriteBriefAndCreatePod` | `Starting` |
+| `Suspended` | `WakeReceived` *(not currently reachable — no emitter)* | `WriteBriefAndCreatePod` | `Starting` |
 | `Suspended` | `DesiredRunning` | `WriteBriefAndCreatePod` | `Starting` |
 | `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
@@ -429,9 +434,10 @@ silently.
   Off by default (permissive/audit), legacy key = full scope. See
   [api-authorization.md](api-authorization.md).
 - **`Suspended` unifies preemption-park and idle-park.** Both a spot-preemption
-  outcome and an idle "no work right now" land an agent in `Suspended`; a wake
-  event (`WakeReceived`, e.g. a Telegram message) or an operator
-  `DesiredRunning` brings it back through `Starting`.
+  outcome and an idle "no work right now" land an agent in `Suspended`; an
+  operator `DesiredRunning` brings it back through `Starting`. (`WakeReceived`
+  is defined for message-triggered wake but is not yet emitted by any production
+  path — see § 4; an inbound message cannot wake a suspended agent today.)
 - **`Starting` is the single recovery re-entry point.** Every resume/restart
   path (`Stopped`, `Restarting`, `Failed`, `Suspended`, `NeedsAuth`,
   `MemoryExhausted`, `WaitingForMachine`) re-enters at `Starting`, never

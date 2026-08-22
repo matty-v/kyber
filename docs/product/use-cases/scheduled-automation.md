@@ -15,7 +15,7 @@ On Kyber, schedules live inside the agent and survive restarts, upgrades, and pr
 
 ## Chains, not just timers
 
-Scheduled work becomes more useful when it can trigger more work. Kyber agents send each other signed messages, so one agent's finding becomes another agent's next prompt and can wake it from sleep. A monitor that finds a real bug can hand it straight to a builder agent, and you read about it in the morning as a pull request instead of an alert.
+Scheduled work becomes more useful when it can trigger more work. Kyber agents send each other signed messages, so one agent's finding becomes another agent's next prompt. The receiving agent needs to be running to accept the handoff. A monitor that finds a real bug can hand it straight to a builder agent, and you read about it in the morning as a pull request instead of an alert.
 
 ## Start here
 
