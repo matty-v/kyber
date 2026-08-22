@@ -240,6 +240,15 @@ type AgentRuntimeStatus struct {
 	// false so a flaky network blip doesn't flip the badge.
 	// +optional
 	ModelSupported *bool `json:"modelSupported,omitempty"`
+	// ModelProbeMessage carries the pre-flight probe's diagnostic output
+	// (sanitized, truncated) when the probe did not succeed — the CLI's
+	// actual rejection or error text. Empty on success or when the pod
+	// runs an older image that reports only the legacy boolean. Lets the
+	// ModelUnsupported condition (and the PWA via blockedReason) show
+	// WHY the model was rejected, and lets an inconclusive probe surface
+	// as Unknown instead of silently reporting nothing.
+	// +optional
+	ModelProbeMessage string `json:"modelProbeMessage,omitempty"`
 }
 
 // AgentIdentityRepoStatus reports the observed state of the agent's identity

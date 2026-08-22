@@ -93,6 +93,29 @@ func (s *Server) handleFleetDefaultsPut(w http.ResponseWriter, r *http.Request) 
 	}
 	_, codexModelSet := raw["codexDefaultModel"]
 	_, codexVersionSet := raw["codexDefaultRuntimeVersion"]
+
+	// Validate model ids against the catalogs the platform can see —
+	// unless force:true. A typo'd fleet default is the worst silent
+	// failure on the platform: every empty-spec.model agent inherits it,
+	// fails every turn, and still reports healthy (canary regression
+	// 2026-08-22). `force` is read from the raw map so it never becomes
+	// part of the stored/rendered FleetDefaultsResponse shape.
+	force := false
+	if rawForce, ok := raw["force"]; ok {
+		_ = json.Unmarshal(rawForce, &force)
+	}
+	if !force {
+		if msg := s.validateModelValue(r.Context(), "claude-code", req.DefaultModel, ""); msg != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "defaultModel")
+			return
+		}
+		if codexModelSet {
+			if msg := s.validateModelValue(r.Context(), "codex", req.CodexDefaultModel, ""); msg != "" {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "codexDefaultModel")
+				return
+			}
+		}
+	}
 	// Build the desired ConfigMap state. Create-or-update: if it doesn't
 	// exist (fresh install, never seeded), we create it now so the PWA's
 	// first edit lands cleanly.
