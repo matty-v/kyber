@@ -28,13 +28,18 @@ invariant below), the pod build itself, and how the running agent reports
 | Reconciler | [`pkg/controllers/agent/reconciler.go`](../../pkg/controllers/agent/reconciler.go) | watches pods/CRDs, derives events, calls `NextPhase()`, executes the returned `Action`, and handles deletion out-of-band (`handleDeletion`) |
 | Status sidecar | [`pkg/controllers/agent/status_sidecar.go`](../../pkg/controllers/agent/status_sidecar.go) | `kyber-status-sidecar` **native sidecar** (`spec.InitContainers` entry with `restartPolicy:Always`, kyber#575) — pushes heartbeats + activity/metrics to the control plane (`AppendStatusSidecar`). Prepended ahead of `session-brief` so the heartbeat is live during boot |
 | Transcript tailer | [`pkg/controllers/agent/transcript_tailer.go`](../../pkg/controllers/agent/transcript_tailer.go) | `transcript-tailer` **native sidecar** (`spec.InitContainers`, `restartPolicy:Always`, kyber#575) (kyber#446) — ships the agent's Claude Code session JSONL off the **read-only** PVC on its own stdout for the `?source=transcript` archive lane. A **single-process, poll-based, active-set-bounded reader** (kyber#584): one loop ships only the un-shipped lines of *active* (growing) sessions, one file at a time, so tailer memory is bounded by the **active** session set, **not** the total session-file count — superseding the old per-file `tail -F` follower-process fan-out that OOM-looped aged agents (memory scaled with file COUNT). Reuses the agent runtime image and runs as **root** to read the root-owned JSONL, but non-privileged with no caps + `allowPrivilegeEscalation:false` + `readOnlyRootFilesystem:true` (kyber#451) (`AppendTranscriptTailer`) |
+| Session saver | [`pkg/controllers/agent/session_saver.go`](../../pkg/controllers/agent/session_saver.go) | `session-saver` **native sidecar** (`spec.InitContainers`, `restartPolicy:Always`) — maintains the `/persist/session-state.json` recall snapshot (a "last activity" line + the recent turns) by polling the newest session JSONL, so a recreated pod can recall what the prior session was doing. A **separate RW-mounted** container (like the pruner) writing only to the durable persist PVC; same locked-down root posture as the tailer (non-privileged, no caps, `allowPrivilegeEscalation:false`, `readOnlyRootFilesystem:true`). Because native-sidecar teardown runs after the agent container exits, it gets a final poll that captures the last turns of a planned shutdown (`AppendSessionSaver`) |
 | Transcript pruner | [`pkg/controllers/agent/transcript_pruner.go`](../../pkg/controllers/agent/transcript_pruner.go) | `transcript-pruner` **native sidecar** (`spec.InitContainers`, `restartPolicy:Always`, kyber#575) (kyber#471) — bounds the on-PVC transcript backlog by removing already-archived session JSONL past the retention policy (default 7d age; optional size ceiling). A **separate RW-mounted** container so the tailer's read-only mount (kyber#446) is untouched and the PVC access mode is unchanged; same locked-down root posture as the tailer (non-privileged, no caps, `allowPrivilegeEscalation:false`, `readOnlyRootFilesystem:true`). Deletes only local already-archived copies — never archive objects. Gated by `transcripts.retention.enabled` (`AppendTranscriptPruner`) |
 
 Every agent pod therefore runs the `agent` runtime as the sole **regular**
-container (`Containers[0]`) plus three **native sidecars** (kyber#575) — the
-`kyber-status-sidecar`, the `transcript-tailer` (kyber#446), and (when transcript
-retention is enabled, the default) the `transcript-pruner` (kyber#471) — and the
-`session-brief` init/hydration container, all in `spec.InitContainers`. The three
+container (`Containers[0]`) plus four **native sidecars** (kyber#575) — the
+`kyber-status-sidecar`, the `transcript-tailer` (kyber#446), the
+`session-saver`, and (when transcript retention is enabled, the default) the
+`transcript-pruner` (kyber#471) — and the `session-brief` init/hydration
+container, all in `spec.InitContainers`. Agents with a comms channel get one
+more **optional** native sidecar per channel: the Discord sidecar (kyber#646)
+when `spec.channels.discord` is set, and the Telegram sidecar when Telegram is
+enabled (runtime-neutral since kyber#684). The
 sidecars carry `restartPolicy:Always`, so the kubelet restarts each on **any**
 exit (OOM, panic, SIGTERM, a clean exit 0) **independently of the pod-level
 `RestartPolicy:Never`** — before kyber#575 they were regular containers and a
@@ -42,7 +47,7 @@ dead sidecar was never restarted, leaving the pod permanently `NotReady` with a
 silently-frozen heartbeat until a human pod-deleted it. The pod-level `Never` is
 preserved (the #563 agent-container contract): when the agent container exits,
 the kubelet tears the native sidecars down in reverse order and the pod reaches a
-terminal phase, so the controller's pod-recreate logic fires unchanged. The three
+terminal phase, so the controller's pod-recreate logic fires unchanged. The
 sidecars are appended after `BuildPodSpec` (`reconciler.go`); the status-sidecar
 is **prepended** to `InitContainers` so its heartbeat is live during the
 potentially-slow git-clone boot, while the runtime stays `Containers[0]`.
@@ -122,11 +127,16 @@ retrying Agents park in `WaitingForMachine` without consuming restart retries;
 the transition removes any stale pod so `MachineReady` can rebuild it against
 the replacement Node.
 
-> **`LivenessFailed` is defined but not yet wired.** The transition exists in
-> `NextPhase`, but no reconciler code currently emits the event (it carries a
-> `TODO(B3)` — wire it when `RestartPolicy` changes or a custom liveness
-> monitor is added). Every other event above is emitted by the reconciler. The
-> transition is documented below for completeness and marked accordingly.
+> **`LivenessFailed` and `WakeReceived` are defined but not yet wired.** Their
+> transitions exist in `NextPhase`, but no reconciler or API code currently
+> emits either event. `LivenessFailed` carries a `TODO(B3)` — wire it when
+> `RestartPolicy` changes or a custom liveness monitor is added. `WakeReceived`
+> was designed for message-triggered wake of a `Suspended` agent (e.g. a
+> Telegram message), but no production path emits it: inbound webhooks deliver
+> only into a running agent's session, and the Telegram sidecar long-polls from
+> inside the pod, so a suspended agent resumes only via `DesiredRunning` (an
+> operator start). Every other event above is emitted by the reconciler. Both
+> transitions are documented below for completeness and marked accordingly.
 >
 > **kyber#575 note — native sidecars supersede the B3 watchdog for *sidecar*
 > self-healing.** The `TODO(B3)` controller-side watchdog (recreate a pod that
@@ -184,7 +194,7 @@ stateDiagram-v2
     Failed --> Starting: AutoRestartTriggered / DesiredRunning
     Failed --> Failed: RetryLimitReached
 
-    Suspended --> Starting: WakeReceived / DesiredRunning
+    Suspended --> Starting: WakeReceived* / DesiredRunning
     NeedsAuth --> Starting: DesiredRunning
     MemoryExhausted --> Starting: DesiredRunning
 
@@ -216,7 +226,7 @@ stateDiagram-v2
     end note
 ```
 
-`*` `LivenessFailed` is defined but not yet emitted (see § 4).
+`*` `LivenessFailed` and `WakeReceived` are defined but not yet emitted (see § 4).
 
 ## 6. Transition table
 
@@ -258,7 +268,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Failed` | `AutoRestartTriggered` | `WriteBriefAndCreatePod` | `Starting` |
 | `Failed` | `RetryLimitReached` | `StayFailedAndAlert` | `Failed` |
 | `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
-| `Suspended` | `WakeReceived` | `WriteBriefAndCreatePod` | `Starting` |
+| `Suspended` | `WakeReceived` *(not currently reachable — no emitter)* | `WriteBriefAndCreatePod` | `Starting` |
 | `Suspended` | `DesiredRunning` | `WriteBriefAndCreatePod` | `Starting` |
 | `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
@@ -429,9 +439,10 @@ silently.
   Off by default (permissive/audit), legacy key = full scope. See
   [api-authorization.md](api-authorization.md).
 - **`Suspended` unifies preemption-park and idle-park.** Both a spot-preemption
-  outcome and an idle "no work right now" land an agent in `Suspended`; a wake
-  event (`WakeReceived`, e.g. a Telegram message) or an operator
-  `DesiredRunning` brings it back through `Starting`.
+  outcome and an idle "no work right now" land an agent in `Suspended`; an
+  operator `DesiredRunning` brings it back through `Starting`. (`WakeReceived`
+  is defined for message-triggered wake but is not yet emitted by any production
+  path — see § 4; an inbound message cannot wake a suspended agent today.)
 - **`Starting` is the single recovery re-entry point.** Every resume/restart
   path (`Stopped`, `Restarting`, `Failed`, `Suspended`, `NeedsAuth`,
   `MemoryExhausted`, `WaitingForMachine`) re-enters at `Starting`, never

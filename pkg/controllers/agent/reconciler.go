@@ -50,6 +50,13 @@ const (
 	// requeueWaiting is how long to wait before checking on a pod that's not yet Ready.
 	requeueWaiting = 30 * time.Second
 
+	// terminatingPodGraceWindow bounds the recently-deleted wait guard: a
+	// Running agent's pod with a DeletionTimestamp younger than this is a
+	// deliberate graceful roll in progress (wait for the roll's own
+	// transition); older means stuck Terminating (dead node) and takes
+	// the dead-pod recovery path.
+	terminatingPodGraceWindow = 60 * time.Second
+
 	// requeueImmediate is used after transitions that should quickly lead to another.
 	requeueImmediate = 2 * time.Second
 
@@ -689,6 +696,19 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 		case kyberv1.AgentPhaseWaitingForMachine:
 			base = 15 * time.Second
+		case kyberv1.AgentPhaseRunning:
+			// The recently-terminating wait guard (classifyEvent) emits no
+			// event while a graceful roll's pod delete is in flight. The
+			// stuck-Terminating recovery at the grace bound must not depend
+			// on another watch event arriving — a dead node produces none —
+			// so requeue for the remainder of the window ourselves.
+			if pod != nil && pod.DeletionTimestamp != nil {
+				remaining := terminatingPodGraceWindow - time.Since(pod.DeletionTimestamp.Time)
+				if remaining < time.Second {
+					remaining = time.Second
+				}
+				base = remaining + time.Second
+			}
 		}
 		return ctrl.Result{RequeueAfter: minNonZero(base, identityRequeue)}, nil
 	}
@@ -1116,6 +1136,25 @@ func (r *AgentReconciler) classifyEvent(
 			// instead of Failed. This prevents the confusing Failed flash in the PWA.
 			if agent.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
 				return EventDesiredRestarting, nil
+			}
+			// A pod with a RECENT DeletionTimestamp is being deleted
+			// deliberately — pods never get a DeletionTimestamp from
+			// crashing. The common case is our own graceful roll
+			// (set-model / secret update / operator restart): the
+			// roll's action patches spec (desiredPhase cleared) before
+			// its status patch lands, and a reconcile triggered by that
+			// spec patch can observe phase=Running + terminating pod +
+			// no desiredPhase — which used to fall through to PodDied,
+			// flashing Failed in the PWA, inflating restartCount and
+			// emitting a false AgentCrashed warning (reproduced live on
+			// the canary 2026-08-22, agent "biggs"). Wait instead; the
+			// roll's own Restarting transition lands within seconds.
+			// The 60s bound keeps the dead-node recovery path: a pod
+			// stuck Terminating longer than that falls through to the
+			// existing dead-pod handling.
+			if pod != nil && pod.DeletionTimestamp != nil &&
+				time.Since(pod.DeletionTimestamp.Time) < terminatingPodGraceWindow {
+				return "", nil
 			}
 			// Suspicious-but-uncertain: agent died with exit 137 and no
 			// kernel-OOM signal yet. Could be (a) an OOM the sidecar will
@@ -3178,9 +3217,10 @@ func (r *AgentReconciler) reconcileSidecarDriftCondition(agent *kyberv1.Agent, p
 //	string comparison, which is the pre-`latest` behavior.
 //
 //	ModelUnsupported:
-//	  modelSupported nil  → Remove (probe didn't run / old sidecar)
-//	  modelSupported true → False (Reason=ProbeOK)
-//	  modelSupported false → True (Reason=ProbeFailed)
+//	  modelSupported nil, probe message present → Unknown (Reason=ProbeInconclusive)
+//	  modelSupported nil, no probe message      → Remove (probe didn't run / old sidecar)
+//	  modelSupported true                       → False (Reason=ProbeOK)
+//	  modelSupported false                      → True  (Reason=ProbeFailed, message includes probe output)
 //
 // Both conditions stay absent (rather than False) when the underlying
 // signal is unknown — keeps the conditions list clean for agents that
@@ -3224,6 +3264,23 @@ func (r *AgentReconciler) reconcileRuntimeStatusConditions(agent *kyberv1.Agent)
 
 	// ModelUnsupported
 	switch {
+	case rs.ModelSupported == nil && rs.ModelProbeMessage != "":
+		// The probe ran and failed, but not in a way attributable to the
+		// model (auth, network, unrecognized error shape). Surface it as
+		// Unknown with the diagnostic instead of removing the condition —
+		// "we could not verify the model" must be distinguishable from
+		// "the probe never ran" (canary regression 2026-08-22: an invalid
+		// fleet-default model rendered as all-green because inconclusive
+		// collapsed to silence).
+		cond := metav1.Condition{
+			Type:    kyberv1.AgentConditionModelUnsupported,
+			Status:  metav1.ConditionUnknown,
+			Reason:  "ProbeInconclusive",
+			Message: "Pre-flight model probe failed without a clear model-rejection signal: " + rs.ModelProbeMessage,
+		}
+		if meta.SetStatusCondition(&agent.Status.Conditions, cond) {
+			changed = true
+		}
 	case rs.ModelSupported == nil:
 		if meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionModelUnsupported) {
 			changed = true
@@ -3239,11 +3296,15 @@ func (r *AgentReconciler) reconcileRuntimeStatusConditions(agent *kyberv1.Agent)
 			changed = true
 		}
 	default:
+		msg := "Pre-flight model probe failed — the installed Claude Code rejected the configured model. Fix the model (per-agent set-model, or the fleet default), or apply a newer Claude Code version (spec.runtimeVersion per-agent, or defaultRuntimeVersion fleet-wide) that supports it."
+		if rs.ModelProbeMessage != "" {
+			msg += " Probe output: " + rs.ModelProbeMessage
+		}
 		cond := metav1.Condition{
 			Type:    kyberv1.AgentConditionModelUnsupported,
 			Status:  metav1.ConditionTrue,
 			Reason:  "ProbeFailed",
-			Message: "Pre-flight model probe failed — the installed Claude Code does not recognise the configured model. Apply a newer Claude Code version (spec.runtimeVersion per-agent, or defaultRuntimeVersion fleet-wide) that supports this model.",
+			Message: msg,
 		}
 		if meta.SetStatusCondition(&agent.Status.Conditions, cond) {
 			changed = true

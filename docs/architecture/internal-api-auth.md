@@ -17,8 +17,12 @@ token scoped to the agent's own identity repo
 consumer of exactly the `authorizeAgentSelf` boundary this page documents; see
 [`agent-lifecycle.md`](agent-lifecycle.md) § 7). It used to be
 **unauthenticated by design** — it trusted the cluster-internal network. That
-trust was unfounded: every agent pod runs `privileged` and can dial the
-control-plane Service on `:8082`, and every `/internal/agents/{name}/…` handler
+trust was unfounded: any pod on the cluster network can dial the control-plane
+Service on `:8082` — agent pods included, and no privilege is needed for that
+(since kyber#78 agent pods run **unprivileged in user namespaces by default**;
+`KYBER_AGENT_PRIVILEGED=true` is the opt-out back to privileged mode, see
+`pkg/controllers/agent/pod_builder.go`) — and every
+`/internal/agents/{name}/…` handler
 trusted the `{name}` in the path with no proof the caller *was* that agent. So
 any agent could overwrite **another agent's** OAuth Secret
 (`POST /internal/agents/{name}/refresh-token`), read another agent's session

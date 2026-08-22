@@ -1109,6 +1109,20 @@ func main() {
 		}
 		podName := "agent-" + job.Agent
 		jobName := "inbound-" + job.RequestID
+		// Hold the job while the agent is mid-restart (set-model, secret
+		// roll, operator restart) instead of delivering into the
+		// terminating pod — the dying session would answer the prompt and
+		// the reply dies with the pod. Per-agent worker goroutines mean
+		// this waits only this agent's queue. On timeout, fall through
+		// and attempt delivery anyway (the exec fails cleanly when
+		// there's no pod, matching pre-gate behavior).
+		waitCtx, cancelWait := context.WithTimeout(ctx, 3*time.Minute)
+		if err := publicAPI.WaitAgentRunning(waitCtx, job.Agent, 3*time.Minute); err != nil {
+			setupLog.Info("inbound dispatch: agent not Running after wait; attempting delivery anyway",
+				"agent", job.Agent, "binding", job.Binding,
+				"request_id", job.RequestID, "reason", err.Error())
+		}
+		cancelWait()
 		// Bound the exec; the in-pod dispatcher is fast (send-keys + a POST)
 		// but a stuck SPDY connection would otherwise hold a queue slot
 		// indefinitely.

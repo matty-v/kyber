@@ -33,6 +33,8 @@ type CreateAgentRequest struct {
 	Machine      string                   `json:"machine"`
 	Runtime      string                   `json:"runtime"`
 	Model        string                   `json:"model"`
+	// Force skips catalog validation of the model id, same as set-model.
+	Force        bool                     `json:"force,omitempty"`
 	Scaling      string                   `json:"scaling"`
 	Resources    agentResourcesRequest    `json:"resources"`
 	Identity     agentIdentityRequest     `json:"identity"`
@@ -136,6 +138,9 @@ type SetRuntimeVersionRequest struct {
 // SetModelRequest is the JSON body for POST /api/v1/agents/{name}/set-model.
 type SetModelRequest struct {
 	Model string `json:"model"`
+	// Force skips catalog validation of the model id — the escape hatch
+	// for a model newer than the last detection poll.
+	Force bool `json:"force,omitempty"`
 }
 
 // SetResourcesRequest is the JSON body for POST /api/v1/agents/{name}/set-resources.
@@ -292,6 +297,10 @@ type agentRuntimeVersionResponse struct {
 	// probe didn't run or the report came from an older sidecar.
 	// kyber#379.
 	ModelSupported *bool `json:"modelSupported,omitempty"`
+	// ModelProbeMessage is the probe's diagnostic output when it did not
+	// succeed (the CLI's rejection or error text, sanitized/truncated by
+	// the reporter). Empty on success or on reports from older images.
+	ModelProbeMessage string `json:"modelProbeMessage,omitempty"`
 }
 
 type agentJobResponse struct {
@@ -425,6 +434,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			v := *a.Status.Runtime.ModelSupported
 			rv.ModelSupported = &v
 		}
+		rv.ModelProbeMessage = a.Status.Runtime.ModelProbeMessage
 		resp.RuntimeVersion = rv
 	}
 	// PR-E badges: surface the two mismatch conditions as top-level
@@ -443,6 +453,12 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing); c != nil && c.Status == metav1.ConditionTrue {
 		resp.BlockedReason = c.Message
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved); c != nil && c.Status == metav1.ConditionTrue {
+		resp.BlockedReason = c.Message
+	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnsupported); c != nil && c.Status == metav1.ConditionTrue {
+		// An unsupported model doesn't block the pod, but it silently
+		// fails every turn — which is worse than blocked, because the
+		// agent looks healthy. Surface the probe's diagnosis wherever
+		// the PWA shows blockedReason (canary regression 2026-08-22).
 		resp.BlockedReason = c.Message
 	}
 	if a.Spec.IdentityRepo.Repo != "" {
@@ -716,6 +732,15 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"unknown runtime '"+req.Runtime+"'", "runtime")
 		return
+	}
+	// Same catalog check + force escape set-model applies — an unknown
+	// model id would otherwise fail every turn while the agent reports
+	// healthy.
+	if !req.Force {
+		if msg := s.validateModelValue(r.Context(), req.Runtime, req.Model, ""); msg != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
+			return
+		}
 	}
 	// kyber#674: registered is not the same as usable. A runtime whose image
 	// was never pinned on this install (image.<runtime>.tag empty, so the
@@ -1273,6 +1298,16 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		slog.Error("failed to get agent", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
+	}
+
+	// An UNCHANGED model is not re-validated — re-posting the current
+	// value (to trigger a roll, or from a UI resubmit) must not start
+	// failing because the catalog view shifted since it was set.
+	if !req.Force && req.Model != agent.Spec.Model {
+		if msg := s.validateModelValue(r.Context(), agent.Spec.Runtime, req.Model, name); msg != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
+			return
+		}
 	}
 
 	patch := client.MergeFrom(agent.DeepCopy())

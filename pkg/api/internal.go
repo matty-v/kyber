@@ -29,6 +29,7 @@ import (
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/metricsstore"
+	"github.com/matty-v/kyber/pkg/modelprobe"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/telemetry"
@@ -925,6 +926,13 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 		RequestedVersion   *string `json:"requestedVersion,omitempty"`
 		RequestedSatisfied *bool   `json:"requestedSatisfied,omitempty"`
 		ModelSupported     *bool   `json:"modelSupported,omitempty"`
+		// Raw probe outcome (newer start scripts). When ModelProbeExit is
+		// present the server classifies it via pkg/modelprobe and it takes
+		// precedence over the legacy ModelSupported bool — classification
+		// lives in Go where it is unit-tested, not in a container-image
+		// grep heuristic that failed open (canary regression 2026-08-22).
+		ModelProbeExit   *int   `json:"modelProbeExit,omitempty"`
+		ModelProbeOutput string `json:"modelProbeOutput,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -980,7 +988,31 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 		v := *body.RequestedSatisfied
 		agent.Status.Runtime.RequestedSatisfied = &v
 	}
-	if body.ModelSupported != nil {
+	switch {
+	case body.ModelProbeExit != nil:
+		// Cap defensively, same rationale as the version fields.
+		output := body.ModelProbeOutput
+		if len(output) > 512 {
+			output = output[:512]
+		}
+		switch modelprobe.Classify(*body.ModelProbeExit, output) {
+		case modelprobe.OutcomeSupported:
+			v := true
+			agent.Status.Runtime.ModelSupported = &v
+			agent.Status.Runtime.ModelProbeMessage = ""
+		case modelprobe.OutcomeUnsupported:
+			v := false
+			agent.Status.Runtime.ModelSupported = &v
+			agent.Status.Runtime.ModelProbeMessage = output
+		case modelprobe.OutcomeInconclusive:
+			// Not attributable to the model — but not silence either:
+			// keep the diagnostic so the reconciler can raise the
+			// condition as Unknown instead of removing it.
+			agent.Status.Runtime.ModelSupported = nil
+			agent.Status.Runtime.ModelProbeMessage = output
+		}
+	case body.ModelSupported != nil:
+		// Legacy reporter (pre raw-probe image): boolean only.
 		v := *body.ModelSupported
 		agent.Status.Runtime.ModelSupported = &v
 	}

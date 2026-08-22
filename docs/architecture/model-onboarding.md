@@ -49,7 +49,7 @@ This page covers how the two metadata sources are *produced and wired*.
 | Detection poller | `pkg/runtimedetect/poller.go`, `anthropic.go` | Hourly fetch of the Anthropic Models API; decodes `max_input_tokens`; enriches with the override map; writes the `Snapshot`. |
 | Snapshot cache | `pkg/runtimedetect/cache.go` | Redis (prod) / in-memory (dev) store of the latest `Snapshot`. Shared by `/available` **and** the pod path. |
 | Override map resolver | `pkg/contextwindowmap/contextwindowmap.go` | Reads the operator `kyber-model-context-windows` ConfigMap (30s TTL). Authoritative manual override. |
-| `/available` handler | `pkg/api/routes_available.go` | Serves the snapshot to the PWA model picker + token-budget gauge. |
+| `/available` handler | `pkg/api/routes_available.go` | Serves the snapshot to the PWA harness-version pickers, the fleet-defaults model list, and the token-budget gauge. **Not** the per-agent change-model picker — that reads the agent's authenticated catalog (`GET /api/v1/agents/{name}/models`, `409` until the runtime has reported it). |
 | Snapshot resolver | `pkg/runtimedetect/snapshot_resolver.go` | Bounded, memoized cache read for the synchronous pod-construction path (30s TTL, 2s timeout, best-effort). |
 | Claude Code adapter | `pkg/runtimes/claudecode/adapter.go` | Sizes `KYBER_MODEL_CONTEXT_WINDOW` (→ `start-claude.sh` `[1m]` gate) via the window precedence chain. |
 | Pricing build adapter | `cmd/fetch-provider-rates/main.go`, `pkg/metrics/litellm.go` | CI-only: fetch the pinned LiteLLM feed, project to per-MTok `ProviderRates` (provider filter + sanity bounds). |
@@ -88,6 +88,20 @@ flowchart TD
 
 This is the **same override-on-top-of-detection order** the poller uses when it
 builds the snapshot — the two places agree by construction.
+
+**Serve-time window precedence** (`pkg/api/context_window.go`
+`resolveContextWindow` — the token-usage read surfaces and the agents list) adds
+one layer between override and detection:
+
+1. **operator override ConfigMap** — explicit human intent, top precedence.
+2. **this agent's authenticated catalog** — the model list the agent's own
+   runtime reported (the same catalog `GET /api/v1/agents/{name}/models`
+   serves; deliberately agent-scoped because provider entitlements differ).
+3. **detection snapshot** — auto-detected `max_input_tokens`.
+
+There is deliberately no built-in table or numeric floor at this surface: an
+unresolvable window is an error at the HTTP boundary, not an estimate presented
+as usable data.
 
 ### Path B — pricing (feed-derived, build-time, review-gated)
 

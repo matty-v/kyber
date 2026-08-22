@@ -152,9 +152,9 @@ already have open:
 http://localhost:8080/
 ```
 
-On first load it asks for the API key. Paste `$KYBER_API_KEY`. It is stored in
-your browser's `localStorage`, so use a browser you trust on a machine you
-trust.
+On first load it asks for the API key. Paste `$KYBER_API_KEY`. The console
+exchanges it once for a session cookie rather than keeping the key in browser
+storage; even so, use a browser you trust on a machine you trust.
 
 Lost the key already? It is in the cluster. The Secret is named after the Helm
 release, so it is `kyber-api-credentials` for the `kyber` release used here:
@@ -203,7 +203,9 @@ Agents need real Anthropic credentials, so this step needs you and a browser.
 The PWA runs the whole OAuth exchange:
 
 1. **Agents → Create Agent.**
-2. Name it `dave`, machine `local`, runtime `claude-code`, and pick a model.
+2. Name it `dave`, machine `local`, runtime `claude-code`. There is no model to
+   pick here: a new agent inherits the fleet default model, and you can change
+   it later from the agent page.
 3. Click **Authorize with Claude.** The PWA generates a PKCE verifier and opens
    Anthropic's authorize page in a new tab.
 4. Sign in, approve the grant, and copy the authorization code Anthropic shows
@@ -242,7 +244,10 @@ Expected: `credentials.json written` and `pre-flight model probe: ok`. A
 credentials; it will sit idle rather than fail. See
 [wedged-agent-recovery.md](../../operator/wedged-agent-recovery.md).
 
-Open the agent in the PWA and use the terminal tab to talk to it.
+Open the agent in the PWA and use the terminal tab to talk to it. One heads-up:
+the agent's Activity tab reads from a durable log archive bucket that this
+quickstart does not configure, so expect an error there; the terminal and live
+logs work without it.
 
 ## Where to go next
 

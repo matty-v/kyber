@@ -30,7 +30,7 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
         start/stop/restart       → require lifecycle:write       │ deny → 403 + audit
         suspend/force-needs-auth → require lifecycle:admin  ─────┤ allow → audit + proceed
    handleReauthorize → Running   → require lifecycle:write       │
-   (Telegram webhook wake → EXEMPT: own per-binding HMAC) ───────┘
+   (Telegram webhook wake → EXEMPT; handler currently unreachable) ┘
 ```
 
 - **`Authenticator.Authenticate`** (`pkg/api/auth.go`) now returns a `*Caller`
@@ -181,9 +181,14 @@ audit AC and the observability that makes permissive-mode migration safe.
 
 The Telegram **webhook wake** (`routes_webhooks.go`) patches
 `desiredPhase=Running` but is **exempt**: webhook routes bypass the Bearer wall
-entirely and are gated by their own per-binding secret-header validation
-(`X-Telegram-Bot-Api-Secret-Token`) — there is no API `Caller` in context to
-authorize; the binding secret *is* the authorization.
+entirely and are gated by their own secret-header validation
+(`X-Telegram-Bot-Api-Secret-Token`, compared against the server-wide
+`WebhookSecret`) — there is no API `Caller` in context to authorize; the
+webhook secret *is* the authorization. Note the handler is currently
+**unreachable in practice**: nothing registers the Telegram webhook
+(`registerTelegramWebhook` has no production callers, and the in-pod sidecar
+deletes any registered webhook at boot to long-poll instead), so this exempt
+path is dormant until transition-based registration is wired.
 
 ## See also
 

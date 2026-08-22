@@ -21,7 +21,7 @@ Humans, the fleet console, and other agents all declare intent the same way: by 
 
 ## The agent lifecycle
 
-Each `Agent` moves through a state machine: created, starting, running, and the states around them. Two choices stand out. An out-of-memory kill gets its own state, so an undersized agent waits for a bigger memory limit instead of crash-looping. And suspension unifies spot preemption with idle parking: either way the agent sleeps, and a wake event, such as a Telegram message or a ready replacement machine, brings it back.
+Each `Agent` moves through a state machine: created, starting, running, and the states around them. Two choices stand out. An out-of-memory kill gets its own state, so an undersized agent waits for a bigger memory limit instead of crash-looping. And suspension unifies spot preemption with idle parking: either way the agent sleeps, and an operator starting it, or a ready replacement machine after an interruption, brings it back.
 
 ## Inbound message dispatch
 

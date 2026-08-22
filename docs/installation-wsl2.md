@@ -761,7 +761,7 @@ Pause here. Do not proceed to 9.3 until the operator confirms the OAuth tab has 
 ```bash
 kubectl -n kyber-system get agent dave -o jsonpath='{.status.phase}'
 ```
-Expected output: a phase string — `Creating`, `Starting`, or `Running` are all OK at this point. `NeedsAuth` or `Failed` mean the create did not land cleanly.
+Expected output: a phase string — `Creating`, `Starting`, or `Running` are all OK at this point. An invalid or already-consumed authorization code fails the create call itself (`400 oauth_exchange_failed`, no Agent created), so if the Agent exists its code exchanged successfully. `Failed` means the pod did not come up cleanly. `NeedsAuth` is never entered at creation — it means a running agent's stored credentials failed later, or an operator forced re-auth.
 
 **If it fails:** → § Troubleshooting / "Agent CRD missing or in NeedsAuth phase".
 
@@ -1327,15 +1327,15 @@ The control-plane logs surface OAuth client configuration errors at startup.
 
 **Symptom:** Step 9.3's verify shows phase `NeedsAuth` or returns no output (Agent CRD wasn't created).
 
-**Likely cause:** The PKCE token exchange failed (code was wrong / expired), or the operator dismissed the Create Agent form before the create POST landed.
+**Likely cause:** Two distinct situations. A failed PKCE token exchange (code wrong / expired / already used) fails the create **synchronously** with `400 oauth_exchange_failed` and creates no Agent at all — so a missing Agent means the create failed or was never submitted. An Agent sitting in `NeedsAuth` is different: creation succeeded, but the running agent's stored credentials later failed to refresh (or an operator forced re-auth); this phase is never entered at creation time.
 
 **Fix:**
 ```bash
 kubectl -n kyber-system get agents
 kubectl -n kyber-system describe agent dave | tail -30
 ```
-- If the Agent doesn't exist: the operator never clicked Create Agent. Return to 9.2's form.
-- If phase is `NeedsAuth`: the OAuth code was invalid or already consumed. Return to 9.2 and run a fresh OAuth round-trip with a new authorization code.
+- If the Agent doesn't exist: either the operator never clicked Create Agent, or the create failed with `oauth_exchange_failed`. Return to 9.2 and run a fresh OAuth round-trip with a new authorization code (codes are single-use).
+- If phase is `NeedsAuth`: the agent's stored credentials went bad after creation. Use the agent's re-authorize action with a fresh OAuth code, then start it.
 
 **Verify the fix:** Re-run step 9.3's verify.
 

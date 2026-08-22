@@ -209,9 +209,12 @@ extending it:
   `MemoryExhausted` (operator bumps `spec.resources.memory` before retry) rather
   than `Failed`-with-auto-restart, so a too-small agent doesn't crash-loop.
 - **Suspension is how preemption and idle wake are unified.** A spot-preemption
-  notice and a "no work right now" both park the agent in `Suspended`; a wake
-  event (e.g. a Telegram message) or a ready replacement machine brings it back
-  to `Running`.
+  notice and a "no work right now" both park the agent in `Suspended`; an
+  operator start (`DesiredRunning`, via `POST …/start` or the console) brings it
+  back to `Running`. A `WakeReceived` event exists in the state machine for
+  message-triggered wake, but no production path emits it today — an inbound
+  message does not wake a suspended agent (see
+  [`agent-lifecycle.md`](agent-lifecycle.md) § 4).
 
 How the running agent reports `status.activity` back up — the in-pod signal
 source → status sidecar → control plane path — is the **status pipeline**, and
@@ -290,74 +293,62 @@ binding rotation) live alongside the receiver in `pkg/api/routes_inbound_*.go`.
 ## 7. Build & release model
 
 Kyber tracks **semver `:vX.Y.Z`**. A release is cut by
-`.github/workflows/prepare-release.yml` (operator or release-automation dispatch with a
-`version` input, kyber#591): it folds the `Chart.yaml` `version`/`appVersion`
-bump (kyber#457) **into the commit that gets tagged**, then pushes the tag
-`vX.Y.Z` on that merged commit. The tag push triggers
-`.github/workflows/release.yml`, which does a full rebuild of all five kyber
-images from source at the tagged commit, pushes them as `:vX.Y.Z`, **refreshes
-the control-plane `:latest` tag to the release image** (guarded — only while the
-release commit is still `main` HEAD; kyber#591), cuts a GitHub Release, and opens
-digest-pinned image-bump PRs on
-[matty-v/kyber-deploy](https://github.com/matty-v/kyber-deploy) for every
-production cluster — **kyber-falcon and kyber-gcp** — via a parallel
-`[falcon, gcp]` matrix job (kyber#449). Each kyber-deploy bump PR is auto-merged
-and ArgoCD on the release-track clusters syncs the pinned digests. Day-to-day,
-canary clusters track `:latest` off `main` via ArgoCD Image Updater. razer is
-correctly excluded from the per-env digest pins — it tracks `:latest` via ArgoCD
-Image Updater and is never value-pinned per release; the release-time `:latest`
-refresh is what gives it the clean release label immediately.
+`.github/workflows/prepare-release.yml` (operator or release-automation dispatch
+with a `version` input, kyber#591): it folds the `Chart.yaml`
+`version`/`appVersion` bump (kyber#457) **into the commit that gets tagged**,
+then pushes the tag `vX.Y.Z` on that merged commit. The tag push triggers
+`.github/workflows/release.yml`, which does a full rebuild of all **eight**
+kyber images from source at the tagged commit (`kyber-control-plane`,
+`kyber-node-agent`, `kyber-status-sidecar`, `kyber-mcp-discord`,
+`kyber-mcp-telegram`, `kyber-runtime-base`, `kyber-claude-code`, `kyber-codex`)
+as amd64+arm64 manifest lists, pushes them as `:vX.Y.Z`, cuts a GitHub Release,
+publishes the pwa-views npm package, and publishes the Helm chart to
+`oci://ghcr.io/matty-v/charts/kyber:X.Y.Z` with the release image tags stamped
+into its defaults — **the chart version carries the image versions**, so the
+published chart installs as-is with nothing to pin by hand.
 
-Each cluster-promotion leg emits a `cluster-promoted` or
-`cluster-promote-failed` status signal to the release-notification webhook, so
-the operator sees per-cluster progress in chat without inspecting CI. `fail-fast: false` on the matrix
-keeps each leg isolated — a gcp failure does not strand falcon.
+**Delivery is pull, not push (since 2026-08-13).** Both live clusters
+(`kyber-falcon` and `kyber-razer`) are self-updating Helm releases: a new
+version reaches a cluster when **an operator chooses to install it**, through
+the updates subsystem (`pkg/updates` + `pkg/selfupgrade`; the Updates settings
+surface / `POST /api/v1/updates/apply`). Apply runs a supervised in-cluster Job
+that pre-flights, applies the new chart's CRDs, runs `helm upgrade --wait`,
+verifies the live rollout, and rolls back on failure. There is no automatic
+apply and no fleet-wide action — each cluster upgrades on its own.
 
-The split is deliberate: **image identity is pinned per-environment** (the
-kyber-deploy bump writes `tag@digest` into each env's `values.yaml`), but the
-**chart — including `Chart.yaml` — renders from `kyber@main` uniformly for all
-clusters** (every ArgoCD app sets `targetRevision: main`).
+The old **push/promotion model is retired**: release-time digest-pinned bump
+PRs on [matty-v/kyber-deploy](https://github.com/matty-v/kyber-deploy) synced
+by ArgoCD (the `deploy-bump-pr` `[falcon, gcp]` matrix, `cluster-promoted`
+signals, ArgoCD Image Updater canaries, `targetRevision: main`). The
+deploy-bump legs were **removed from `release.yml` on 2026-08-13** — push
+delivery had no targets left once falcon and razer both left ArgoCD — and
+`kyber-gcp` is parked (VM terminated), frozen at its last release. Re-pinning a
+pulling cluster's `image.*.tag` values would actually *disable* it: the upgrade
+Job refuses to run against values that override image tags, precisely so a
+pinned cluster can't report a new chart version while running old builds.
 
-**The user-facing version is build-injected, not chart-rendered (kyber#482).**
-The version each cluster reports via `GET /api/v1/version` (the `chartVersion`
-field) is **baked into the control-plane image at build time** via
-`-ldflags "-X main.Version=…"` — exactly the mechanism that already populates
-`sha`/`buildDate`. On the release path (`release.yml`) it is the release tag
-with its leading `v` stripped; on the `:latest` canary path (`build.yml`) it is
-`git describe --tags`. Because the chart bump is folded into the tagged commit
-(kyber#591), a build **at a release commit** describes to the clean bare tag
-(e.g. `2.2.0`); for genuine dev commits past the release it is
-`2.2.0-3-gabc1234`, razer's honest offset ahead of the last release. Because the
-version and `sha` are injected from the **same build in the same image**, they
-converge atomically on image rollout and can never disagree — there is no steady
-state where the code is live but the version string trails. `resolveDisplayVersion`
-(`cmd/control-plane/version.go`) falls back to the chart-rendered
-`/etc/kyber/chart-version` file only on local/dev builds where no ldflag was
-passed.
+Two release-adjacent mechanics that still hold:
 
-razer picks up the clean release label without waiting for its next dev build
-because `release.yml` refreshes `:latest` to the release image at tag time. Before
-kyber#591 the canary could sit indefinitely on a stale **pre-tag** describe (e.g.
-`2.1.1-7-gd64fbbd` after v2.2.0): the `:latest` build that happened to be running
-predated the tag, and the post-tag chart bump was an image-less commit that never
-triggered a canary rebuild.
-
-The earlier chart-render derivation lagged by exactly one release: the image
-deploy (the ArgoCD sync trigger) always beat the ~15-min-gated chart-version bump
-merge to `main`, so each cluster re-rendered the chart version that was on `main`
-one release ago. The `Chart.yaml` advance is **retained for Helm/ArgoCD operator
-metadata** (`helm list`, the ArgoCD UI) and no longer feeds the user-facing
-version — but since kyber#591 it happens **before** the tag (in
-`prepare-release.yml`, folded into the tagged commit) rather than in a separate
-post-tag PR. Cutting the tag on the bumped commit is also what makes the canary's
-`git describe` resolve to the clean tag. The chart-version bump still lands on
-`main`, not per-env — it remains a chart-level signal, just not the source of the
-displayed version.
+- **The user-facing version is build-injected, not chart-rendered (kyber#482).**
+  `GET /api/v1/version`'s `chartVersion` is baked into the control-plane image
+  via `-ldflags "-X main.Version=…"` — the release tag with its leading `v`
+  stripped on the release path, `git describe --tags` on the `:latest` dev path
+  (`build.yml`) — so the version and `sha` come from the same build in the same
+  image and can never disagree. `resolveDisplayVersion`
+  (`cmd/control-plane/version.go`) falls back to the chart-rendered
+  `/etc/kyber/chart-version` file only on local/dev builds with no ldflag.
+- **`release.yml` still refreshes the control-plane `:latest` tag** to the
+  release image at tag time (kyber#591). No cluster currently consumes it — the
+  head-of-main canary lane was retired on 2026-08-10 and no cluster runs
+  head-of-main today — but the step is deliberately kept for the planned
+  replacement canary.
 
 There is **no `:stable` tag and no `promote-stable` branch/workflow** — that
-framing is retired. The kyber-side mechanics are in the
-[release runbook](../operator/release-runbook.md). The deploy-repo internals
-(ArgoCD Applications, per-env values) are kyber-deploy's deep-dive, not this one.
+framing is retired. The operator-facing detail of both delivery models — the
+upgrade Job's guards and verification, how each component adopts its new image
+after an upgrade, and the release-lane table — is
+[`../upgrading.md`](../upgrading.md); the release-cut mechanics are the
+[release runbook](../operator/release-runbook.md).
 
 ---
 

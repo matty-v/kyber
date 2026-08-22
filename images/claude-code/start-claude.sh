@@ -656,43 +656,55 @@ echo "[kyber] runtime version: $CLAUDE_VERSION (default=${KYBER_RUNTIME_DEFAULT_
 # probe needs a model round-trip, never tools), it costs nothing, and it keeps
 # this path immune to the next stdio MCP server anyone adds.
 #
-# KYBER_MODEL_SUPPORTED (true|false|unknown) is captured for the report.
+# The script reports the RAW probe outcome (exit code + combined
+# stdout/stderr, sanitized) and the control plane classifies it via
+# pkg/modelprobe — a unit-tested Go table instead of an in-image grep
+# heuristic. Rationale (canary regression 2026-08-22): the CLI prints its
+# model-rejection message to STDOUT, which the old probe discarded, and
+# the current phrasing matched none of the old stderr patterns — so an
+# invalid model reported "unknown" and the platform showed green.
+#
+# KYBER_MODEL_SUPPORTED (true|false|unknown) is still computed for
+# mixed-version windows where the control plane predates the raw fields:
+# exit 0 → true, timeout → unknown, other failures → false only on a
+# clear rejection phrase in the COMBINED output (both streams).
 KYBER_MODEL_SUPPORTED="unknown"
+KYBER_MODEL_PROBE_RAN="0"
+KYBER_MODEL_PROBE_EXIT=""
+KYBER_MODEL_PROBE_OUTPUT=""
 PROBE_TIMEOUT="${KYBER_PROBE_TIMEOUT_SECONDS:-10}"
 if [ -n "${CLAUDE_MODEL:-}" ] && [ "${KYBER_SKIP_MODEL_PROBE:-}" != "1" ]; then
     echo "[kyber] pre-flight model probe: claude --model ${CLAUDE_MODEL} --strict-mcp-config --print 'ping' (timeout=${PROBE_TIMEOUT}s)"
-    PROBE_STDERR_FILE="$(mktemp 2>/dev/null || echo /tmp/kyber-probe-stderr.$$)"
+    PROBE_OUT_FILE="$(mktemp 2>/dev/null || echo /tmp/kyber-probe-out.$$)"
     set +e
-    timeout "${PROBE_TIMEOUT}" claude --model "$CLAUDE_MODEL" --strict-mcp-config --print 'ping' >/dev/null 2>"$PROBE_STDERR_FILE"
+    timeout "${PROBE_TIMEOUT}" claude --model "$CLAUDE_MODEL" --strict-mcp-config --print 'ping' >"$PROBE_OUT_FILE" 2>&1
     PROBE_EXIT=$?
     set -e
-    PROBE_STDERR="$(cat "$PROBE_STDERR_FILE" 2>/dev/null || true)"
-    rm -f "$PROBE_STDERR_FILE" 2>/dev/null || true
+    PROBE_OUTPUT="$(cat "$PROBE_OUT_FILE" 2>/dev/null || true)"
+    rm -f "$PROBE_OUT_FILE" 2>/dev/null || true
+
+    KYBER_MODEL_PROBE_RAN="1"
+    KYBER_MODEL_PROBE_EXIT="$PROBE_EXIT"
+    # JSON-safe payload: drop control chars, double quotes and
+    # backslashes (lossy but diagnostic-grade), cap at 300 bytes.
+    KYBER_MODEL_PROBE_OUTPUT="$(printf '%s' "$PROBE_OUTPUT" | tr -d '\000-\037"\\' | head -c 300)"
 
     if [ "$PROBE_EXIT" = "0" ]; then
         KYBER_MODEL_SUPPORTED="true"
         echo "[kyber] pre-flight model probe: ok"
     elif [ "$PROBE_EXIT" = "124" ]; then
         # `timeout(1)` returns 124 on hard timeout. Network blip vs real
-        # rejection is indistinguishable here — report nil/unknown rather
-        # than flipping the badge on a flaky network.
-        KYBER_MODEL_SUPPORTED="unknown"
-        echo "[kyber] pre-flight model probe: timed out after ${PROBE_TIMEOUT}s — reporting unknown (not flipping ModelUnsupported on a possible network blip)"
+        # rejection is indistinguishable here — legacy field stays
+        # unknown; the raw report lets the control plane decide.
+        echo "[kyber] pre-flight model probe: timed out after ${PROBE_TIMEOUT}s"
     else
-        # Heuristic match for model-rejection messages. Anthropic's CLI
-        # surfaces these in various orderings — 'unsupported model X',
-        # 'model X is not supported', 'unknown model X', 'invalid model
-        # X', etc. Match the keyword + 'model' in either order so we
-        # don't miss a real rejection on a phrasing tweak. A non-model
-        # error (network, auth) lacks both halves and is reported as
-        # nil — the controller's existing auth/network surfaces handle
-        # those.
-        if printf '%s' "$PROBE_STDERR" | grep -Eqi '(unsupported|invalid|unknown|not found|does not (exist|support|recognize))[^A-Za-z]+model|model[^A-Za-z]+.*?(unsupported|invalid|unknown|not found|does not (exist|support|recognize))'; then
+        # Legacy-field heuristic only (the control plane re-classifies
+        # from the raw fields with the authoritative pattern table).
+        if printf '%s' "$PROBE_OUTPUT" | grep -Eqi 'issue with the selected model|(unsupported|invalid|unknown|not found|no such|does not (exist|support|recognize))[^A-Za-z]+model|model[^A-Za-z]+.*?(unsupported|invalid|unknown|not found|not available|may not exist|does not (exist|support|recognize))'; then
             KYBER_MODEL_SUPPORTED="false"
             echo "[kyber] pre-flight model probe: model rejected (exit=${PROBE_EXIT}); reporting ModelUnsupported"
         else
-            KYBER_MODEL_SUPPORTED="unknown"
-            echo "[kyber] pre-flight model probe: probe failed (exit=${PROBE_EXIT}) without clear model-rejection signal; reporting unknown"
+            echo "[kyber] pre-flight model probe: probe failed (exit=${PROBE_EXIT}) without clear model-rejection signal; control plane will classify from raw output"
         fi
     fi
 else
@@ -744,6 +756,14 @@ if [ -n "${AGENT_NAME:-}" ] && [ -n "${KYBER_CONTROL_PLANE_INTERNAL_URL:-}" ]; t
         BODY="${BODY},\"modelSupported\":true"
     elif [ "$KYBER_MODEL_SUPPORTED" = "false" ]; then
         BODY="${BODY},\"modelSupported\":false"
+    fi
+    # Raw probe outcome — authoritative on control planes that know the
+    # fields; older ones ignore unknown JSON keys. KYBER_MODEL_PROBE_OUTPUT
+    # was sanitized above (no quotes/backslashes/control chars), so plain
+    # concatenation stays valid JSON.
+    if [ "$KYBER_MODEL_PROBE_RAN" = "1" ]; then
+        BODY="${BODY},\"modelProbeExit\":${KYBER_MODEL_PROBE_EXIT}"
+        BODY="${BODY},\"modelProbeOutput\":\"${KYBER_MODEL_PROBE_OUTPUT}\""
     fi
     BODY="${BODY}}"
     URL="${KYBER_CONTROL_PLANE_INTERNAL_URL}/internal/agents/${AGENT_NAME}/runtime-version"

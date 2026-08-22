@@ -145,7 +145,7 @@ export function useUpdateFleetDefaults() {
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (body: FleetDefaults) => api.putFleetDefaults(body),
+    mutationFn: (body: FleetDefaults & { force?: boolean }) => api.putFleetDefaults(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'fleetDefaults'] })
     },

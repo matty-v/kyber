@@ -16,9 +16,9 @@ Over Discord, an accepted message gets an eyes reaction and a typing indicator w
 
 Every accepted message, from either service, enters the same signed, rate-limited inbound dispatcher that all inbound work uses, so a chat message is verified the same way as any other sender.
 
-## One practical difference
+## Channels need a running agent
 
-Telegram can reach a suspended agent and wake it. Discord delivers messages only over a live gateway connection held by the agent's pod, so Discord agents should be kept running: messages sent while a Discord agent sleeps are lost.
+Both channels deliver to a running agent. A suspended agent does not receive chat messages, and a message does not wake it; you resume it by starting it from the [fleet console](fleet-console.md) or the API. Keep chat-driven agents running. Discord in particular delivers messages only over a live gateway connection held by the agent's pod, so messages sent while a Discord agent is down are lost.
 
 There is also a lighter, one-way Discord option: an outbound webhook the agent posts progress and status into, with no bot and no gateway connection. Use it when you want notifications, not conversation.
 

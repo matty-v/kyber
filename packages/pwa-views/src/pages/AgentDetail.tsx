@@ -222,7 +222,17 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   // the page is empty.
   const showImageMissing = Boolean(agent.runtimeImageMissing)
   const showModelUnresolved = Boolean(agent.modelUnresolved)
-  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved) return null
+  // Probe ran and failed for a reason NOT attributable to the model
+  // (auth, network, unrecognized error): modelSupported is absent, but
+  // the diagnostic is present. "Couldn't verify" must be visible here,
+  // not only in the CRD — the canary regression was invisible precisely
+  // on this surface. (A definite rejection renders the danger banner
+  // above instead.)
+  const showProbeInconclusive =
+    !showUnsupported &&
+    agent.runtimeVersion?.modelSupported !== false &&
+    Boolean(agent.runtimeVersion?.modelProbeMessage)
+  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showProbeInconclusive) return null
   const installed = agent.runtimeVersion?.installedVersion
   const requested = agent.runtimeVersion?.requestedVersion
   return (
@@ -286,14 +296,40 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
             <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-text-primary">Model not supported by installed Claude Code</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Model rejected by installed Claude Code</h2>
               <p className="text-xs text-text-muted">
                 The pre-flight probe reported the configured model
                 {agent.model ? <> (<code className="font-mono">{agent.model}</code>)</> : null}
-                {' '}as unsupported by the installed Claude Code{installed ? <> ({installed})</> : null}.
-                Apply a newer Claude Code version (set <code className="font-mono">spec.runtimeVersion</code>
-                {' '}per-agent or bump the fleet <code className="font-mono">defaultRuntimeVersion</code>
-                {' '}via Settings) and restart.
+                {' '}as rejected by the installed Claude Code{installed ? <> ({installed})</> : null}.
+                {' '}Every turn will fail until this is fixed. Check the model id first (Change model on
+                this page, or the fleet default in Settings — an agent with no model of its own inherits
+                the fleet default); if the id is right, apply a newer Claude Code version
+                (<code className="font-mono">spec.runtimeVersion</code> per-agent or the fleet
+                {' '}<code className="font-mono">defaultRuntimeVersion</code>) and restart.
+              </p>
+              {agent.runtimeVersion?.modelProbeMessage ? (
+                <p className="text-xs text-text-muted font-mono border-l-2 border-danger/40 pl-2">
+                  {agent.runtimeVersion.modelProbeMessage}
+                </p>
+              ) : null}
+            </div>
+          </div>
+        </Card>
+      )}
+      {showProbeInconclusive && (
+        <Card className="border-warning/40 bg-warning/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">Model check inconclusive</h2>
+              <p className="text-xs text-text-muted">
+                The boot-time model probe failed for a reason that does not look like a model
+                rejection (network, auth, or an unrecognized error), so the platform cannot confirm
+                the configured model works. If the agent answers normally, this is transient noise
+                from boot; if turns are failing, the output below is the lead.
+              </p>
+              <p className="text-xs text-text-muted font-mono border-l-2 border-warning/40 pl-2">
+                {agent.runtimeVersion?.modelProbeMessage}
               </p>
             </div>
           </div>

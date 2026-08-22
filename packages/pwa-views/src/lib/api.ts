@@ -737,7 +737,7 @@ export function createApiClient(cluster: Cluster) {
     getFleetDefaults: (): Promise<FleetDefaults> =>
       request<FleetDefaults>('GET', '/api/v1/fleet-defaults'),
 
-    putFleetDefaults: (body: FleetDefaults): Promise<FleetDefaults> =>
+    putFleetDefaults: (body: FleetDefaults & { force?: boolean }): Promise<FleetDefaults> =>
       request<FleetDefaults>('PUT', '/api/v1/fleet-defaults', body),
   }
 }

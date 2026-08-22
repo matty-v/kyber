@@ -136,7 +136,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/FleetDefaults'
+              $ref: '#/components/schemas/FleetDefaultsUpdate'
       responses:
         '200':
           description: Updated defaults
@@ -144,6 +144,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FleetDefaults'
+        '400':
+          description: Model id not present in any catalog this cluster can see (pass force to override)
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -711,6 +713,15 @@ components:
         codexDefaultRuntimeVersion:
           type: string
 
+    FleetDefaultsUpdate:
+      allOf:
+        - $ref: '#/components/schemas/FleetDefaults'
+        - type: object
+          properties:
+            force:
+              type: boolean
+              description: Skip catalog validation of the model ids (write-only; never returned).
+
     AvailableModel:
       type: object
       required: [id, displayName, contextWindow, contextWindowKnown]
@@ -1205,6 +1216,9 @@ components:
         model:
           type: string
           example: claude-sonnet-4
+        force:
+          type: boolean
+          description: Skip catalog validation of the model id (write-only).
         scaling:
           type: string
           enum: [warm, scale-to-zero]

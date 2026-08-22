@@ -174,11 +174,60 @@ describe('AgentDetail MismatchBadges', () => {
       runtimeVersion: { installedVersion: '2.1.119' },
     })
     render(<MismatchBadges agent={agent} />)
-    expect(screen.getByText(/Model not supported/i)).toBeInTheDocument()
+    expect(screen.getByText(/Model rejected/i)).toBeInTheDocument()
     expect(screen.getByText('claude-fictional-9')).toBeInTheDocument()
-    // Remedy hint must point at the action operators need to take.
-    const body = screen.getByText(/Apply a newer Claude Code version/i)
+    // Remedy hint must lead with the common cause (a wrong model id —
+    // including one inherited from the fleet default) before the
+    // runtime-version path.
+    const body = screen.getByText(/Check the model id first/i)
     expect(body).toBeInTheDocument()
+  })
+
+  it('renders an inconclusive-probe warning when the probe failed without a verdict', () => {
+    // modelUnsupported stays false (condition is Unknown, not True), but
+    // the diagnostic is present — "couldn't verify" must be visible in
+    // the console, not only in the CRD.
+    const agent = baseAgent({
+      modelUnsupported: false,
+      runtimeVersion: {
+        installedVersion: '2.1.240',
+        modelProbeMessage: 'Invalid bearer token. Please run /login.',
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/Model check inconclusive/i)).toBeInTheDocument()
+    expect(screen.getByText(/Invalid bearer token/)).toBeInTheDocument()
+  })
+
+  it('does not render the inconclusive warning on a definite rejection', () => {
+    const agent = baseAgent({
+      modelUnsupported: true,
+      runtimeVersion: {
+        installedVersion: '2.1.240',
+        modelSupported: false,
+        modelProbeMessage: 'no such model: claude-x',
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/Model rejected/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Model check inconclusive/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the probe diagnostic when the report carries one', () => {
+    // The probe message names the rejected model even when the agent
+    // inherits the fleet default (agent.model empty) — the case that
+    // used to be fully silent (canary regression 2026-08-22).
+    const agent = baseAgent({
+      modelUnsupported: true,
+      model: '',
+      runtimeVersion: {
+        installedVersion: '2.1.240',
+        modelProbeMessage:
+          "There's an issue with the selected model (claude-opus-4-canary-marker). It may not exist or you may not have access to it.",
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/claude-opus-4-canary-marker/)).toBeInTheDocument()
   })
 
   // --- kyber#674: blocked-before-pod conditions -------------------------
@@ -228,7 +277,7 @@ describe('AgentDetail MismatchBadges', () => {
     })
     render(<MismatchBadges agent={agent} />)
     expect(screen.getByText(/Runtime version mismatch/i)).toBeInTheDocument()
-    expect(screen.getByText(/Model not supported/i)).toBeInTheDocument()
+    expect(screen.getByText(/Model rejected/i)).toBeInTheDocument()
   })
 })
 
