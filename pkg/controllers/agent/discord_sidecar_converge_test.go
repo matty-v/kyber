@@ -68,7 +68,12 @@ func TestConvergeDiscordSidecar_EnvtestDeletesOnlyWhenIdle(t *testing.T) {
 	}
 	r := &AgentReconciler{Client: k8sClient, DiscordSidecarImage: "discord:test"}
 
+	phasePatch := client.MergeFrom(ag.DeepCopy())
+	ag.Status.Phase = kyberv1.AgentPhaseRunning
 	ag.Status.Activity = nil
+	if err := k8sClient.Status().Patch(ctx, ag, phasePatch); err != nil {
+		t.Fatalf("patching Running phase: %v", err)
+	}
 	rolled, err := r.convergeDiscordSidecar(ctx, ag, pod)
 	if err != nil || rolled {
 		t.Fatalf("unknown activity rolled=%v err=%v", rolled, err)
@@ -77,7 +82,11 @@ func TestConvergeDiscordSidecar_EnvtestDeletesOnlyWhenIdle(t *testing.T) {
 		t.Fatalf("working/unknown pod was changed: %v", err)
 	}
 
+	activityPatch := client.MergeFrom(ag.DeepCopy())
 	ag.Status.Activity = idleAgent("dave", ns.Name).Status.Activity
+	if err := k8sClient.Status().Patch(ctx, ag, activityPatch); err != nil {
+		t.Fatalf("patching idle activity: %v", err)
+	}
 	rolled, err = r.convergeDiscordSidecar(ctx, ag, pod)
 	if err != nil || !rolled {
 		t.Fatalf("idle rolled=%v err=%v", rolled, err)
