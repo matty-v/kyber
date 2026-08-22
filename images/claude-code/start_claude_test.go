@@ -2472,3 +2472,77 @@ func TestStartClaude_LaunchHeredoc_NoUnescapedLocals(t *testing.T) {
 			"launch script — a restart would no longer pick up new skills/contract")
 	}
 }
+
+// --- raw model-probe report (canary regression 2026-08-22) ----------------
+//
+// The CLI prints its model-rejection message to STDOUT, which the old
+// probe discarded (it captured stderr only), and the current phrasing
+// matched none of the old grep patterns — so an invalid model reported
+// "unknown" and the platform showed green. The script now captures BOTH
+// streams, recognizes the current phrasing, and always ships the raw
+// exit+output for the control plane's authoritative classification
+// (pkg/modelprobe).
+
+func TestStartClaude_Probe_StdoutRejectionCurrentPhrasing_ReportsFalseAndRaw(t *testing.T) {
+	// Reproduces the live failure byte-for-byte: rejection on STDOUT,
+	// deprecation noise on stderr, exit 1.
+	claude := `if [[ "$*" == "--version" ]]; then echo "2.1.240 (Claude Code)"; exit 0; fi
+if [[ "$*" == *"--print"* ]]; then
+  echo "There's an issue with the selected model (claude-opus-4-canary-marker). It may not exist or you may not have access to it."
+  echo "warning: something unrelated" >&2
+  exit 1
+fi
+exit 1`
+	out, body := probeRun(t, claude, "CLAUDE_MODEL=claude-opus-4-canary-marker")
+	if !strings.Contains(out, "model rejected") {
+		t.Errorf("expected model-rejected log for the current CLI phrasing; got: %s", out)
+	}
+	if !strings.Contains(string(body), `"modelSupported":false`) {
+		t.Errorf("legacy field: report body missing modelSupported:false; got: %s", body)
+	}
+	if !strings.Contains(string(body), `"modelProbeExit":1`) {
+		t.Errorf("report body missing modelProbeExit:1; got: %s", body)
+	}
+	if !strings.Contains(string(body), "issue with the selected model") {
+		t.Errorf("report body missing the probe output; got: %s", body)
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("report body is not valid JSON: %v\n%s", err, body)
+	}
+}
+
+func TestStartClaude_Probe_RawFieldsPresentOnTimeout(t *testing.T) {
+	// Legacy modelSupported stays absent on timeout, but the raw exit
+	// (124) must ship so the control plane can distinguish "timed out"
+	// from "never probed".
+	claude := `if [[ "$*" == "--version" ]]; then echo "2.1.240 (Claude Code)"; exit 0; fi
+if [[ "$*" == *"--print"* ]]; then sleep 5; exit 0; fi
+exit 0`
+	_, body := probeRun(t, claude, "CLAUDE_MODEL=claude-sonnet-5", "KYBER_PROBE_TIMEOUT_SECONDS=1")
+	if strings.Contains(string(body), `"modelSupported"`) {
+		t.Errorf("modelSupported must stay ABSENT on timeout; got: %s", body)
+	}
+	if !strings.Contains(string(body), `"modelProbeExit":124`) {
+		t.Errorf("report body missing modelProbeExit:124 on timeout; got: %s", body)
+	}
+}
+
+func TestStartClaude_Probe_OutputSanitizedForJSON(t *testing.T) {
+	// Quotes, backslashes and newlines in probe output must not corrupt
+	// the hand-assembled JSON body.
+	claude := `if [[ "$*" == "--version" ]]; then echo "2.1.240 (Claude Code)"; exit 0; fi
+if [[ "$*" == *"--print"* ]]; then
+  printf 'line "one" with \\ slash\nline two\n'
+  exit 1
+fi
+exit 1`
+	_, body := probeRun(t, claude, "CLAUDE_MODEL=claude-sonnet-5")
+	var parsed map[string]any
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		t.Fatalf("report body is not valid JSON after hostile probe output: %v\n%s", err, body)
+	}
+	if _, ok := parsed["modelProbeOutput"]; !ok {
+		t.Errorf("sanitized output missing from body: %s", body)
+	}
+}

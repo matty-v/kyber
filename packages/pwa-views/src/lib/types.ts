@@ -178,6 +178,9 @@ export interface AgentRuntimeVersion {
   // PR-E: pre-flight model probe outcome. Absent when the probe didn't
   // run or the report came from an older sidecar.
   modelSupported?: boolean
+  // The probe's diagnostic output when it did not succeed — the CLI's
+  // actual rejection or error text. Absent on success or older images.
+  modelProbeMessage?: string
 }
 
 export interface AgentJob {

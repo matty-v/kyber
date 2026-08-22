@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.6 — 2026-08-22
+
+### Changed
+- The model-rejected banner now leads with the common cause (a wrong model
+  id, including one inherited from the fleet default) and renders the
+  boot-time probe's actual diagnostic output, which names the rejected
+  model even when the agent has no model of its own.
+
 ## 0.28.5 — 2026-08-22
 
 ### Fixed

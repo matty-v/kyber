@@ -286,15 +286,22 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
           <div className="flex items-start gap-3">
             <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
             <div className="space-y-1">
-              <h2 className="text-sm font-semibold text-text-primary">Model not supported by installed Claude Code</h2>
+              <h2 className="text-sm font-semibold text-text-primary">Model rejected by installed Claude Code</h2>
               <p className="text-xs text-text-muted">
                 The pre-flight probe reported the configured model
                 {agent.model ? <> (<code className="font-mono">{agent.model}</code>)</> : null}
-                {' '}as unsupported by the installed Claude Code{installed ? <> ({installed})</> : null}.
-                Apply a newer Claude Code version (set <code className="font-mono">spec.runtimeVersion</code>
-                {' '}per-agent or bump the fleet <code className="font-mono">defaultRuntimeVersion</code>
-                {' '}via Settings) and restart.
+                {' '}as rejected by the installed Claude Code{installed ? <> ({installed})</> : null}.
+                {' '}Every turn will fail until this is fixed. Check the model id first (Change model on
+                this page, or the fleet default in Settings — an agent with no model of its own inherits
+                the fleet default); if the id is right, apply a newer Claude Code version
+                (<code className="font-mono">spec.runtimeVersion</code> per-agent or the fleet
+                {' '}<code className="font-mono">defaultRuntimeVersion</code>) and restart.
               </p>
+              {agent.runtimeVersion?.modelProbeMessage ? (
+                <p className="text-xs text-text-muted font-mono border-l-2 border-danger/40 pl-2">
+                  {agent.runtimeVersion.modelProbeMessage}
+                </p>
+              ) : null}
             </div>
           </div>
         </Card>
