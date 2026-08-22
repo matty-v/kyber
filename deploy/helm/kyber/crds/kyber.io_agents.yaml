@@ -792,6 +792,16 @@ spec:
                       has not yet reported or the version could not be determined (in which
                       case the reporter sends the literal string "unknown").
                     type: string
+                  modelProbeMessage:
+                    description: |-
+                      ModelProbeMessage carries the pre-flight probe's diagnostic output
+                      (sanitized, truncated) when the probe did not succeed — the CLI's
+                      actual rejection or error text. Empty on success or when the pod
+                      runs an older image that reports only the legacy boolean. Lets the
+                      ModelUnsupported condition (and the PWA via blockedReason) show
+                      WHY the model was rejected, and lets an inconclusive probe surface
+                      as Unknown instead of silently reporting nothing.
+                    type: string
                   modelSupported:
                     description: |-
                       ModelSupported is true when the pre-flight probe
