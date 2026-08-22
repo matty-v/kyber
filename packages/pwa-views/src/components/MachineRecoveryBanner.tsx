@@ -11,6 +11,7 @@ export function MachineRecoveryBanner({ machine }: { machine: Machine }) {
   if (!recovering) return null
 
   const interruptible = machine.spec.availabilityClass === 'costOptimized' || machine.spec.spot
+  const replacing = machine.phase === 'Preempted' || machine.phase === 'Replacing'
   const details = [
     `machine: ${machine.id}`,
     `phase: ${machine.phase}`,
@@ -26,11 +27,15 @@ export function MachineRecoveryBanner({ machine }: { machine: Machine }) {
       <div className="flex items-start gap-3">
         <RefreshCw className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-accent" aria-hidden="true" />
         <div className="min-w-0 flex-1 space-y-2">
-          <h2 className="text-sm font-semibold text-text-primary">Machine capacity is recovering</h2>
+          <h2 className="text-sm font-semibold text-text-primary">
+            {replacing ? 'Machine capacity is recovering' : 'Machine capacity is starting'}
+          </h2>
           <p className="text-xs text-text-secondary">
-            {interruptible
+            {replacing && interruptible
               ? 'The provider reclaimed this cost-optimized node. Kyber is waiting for replacement capacity and will resume its agents automatically.'
-              : 'This machine does not currently have a Ready node. Kyber is repairing its capacity and will resume its agents automatically.'}
+              : replacing
+                ? 'This machine lost its Ready node. Kyber is repairing its capacity and will resume its agents automatically.'
+                : 'Kyber requested provider capacity for this machine. Its agents will start automatically when a Ready node joins.'}
           </p>
           {details && <DiagnosticDetails details={details} />}
         </div>

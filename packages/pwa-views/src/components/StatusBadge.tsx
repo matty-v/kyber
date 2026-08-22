@@ -3,11 +3,14 @@ import { phaseStyle, toneBadgeClasses, type PhaseKey } from '../lib/design/statu
 
 interface Props {
   phase: PhaseKey
+  label?: string
+  pulse?: boolean
   className?: string
 }
 
-export function StatusBadge({ phase, className = '' }: Props) {
-  const { tone, pulse } = phaseStyle(phase)
+export function StatusBadge({ phase, label, pulse: pulseOverride, className = '' }: Props) {
+  const { tone, pulse: phasePulse } = phaseStyle(phase)
+  const pulse = pulseOverride ?? phasePulse
   const prev = useRef<PhaseKey>(phase)
   const [flash, setFlash] = useState(false)
 
@@ -27,7 +30,7 @@ export function StatusBadge({ phase, className = '' }: Props) {
       {pulse && (
         <span className="h-1.5 w-1.5 rounded-full bg-current opacity-80" />
       )}
-      {phase || 'Unknown'}
+      {label ?? (phase || 'Unknown')}
     </span>
   )
 }

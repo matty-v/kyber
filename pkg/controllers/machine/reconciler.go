@@ -57,7 +57,7 @@ const (
 // +kubebuilder:rbac:groups=kyber.io,resources=machines/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kyber.io,resources=machines/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch;delete
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 type MachineReconciler struct {
 	client.Client
@@ -174,6 +174,14 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	// 3. Ensure finalizer is registered.
 	if err := r.ensureFinalizer(ctx, machine); err != nil {
+		return ctrl.Result{}, err
+	}
+
+	// Regional autoscaling providers need an unschedulable Pod as their demand
+	// signal. Agents intentionally remove their stale pods while parked in
+	// WaitingForMachine, so the Machine controller owns a minimal replacement
+	// signal until provider capacity attaches.
+	if err := r.reconcileCapacityRequestPod(ctx, machine); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -983,6 +991,9 @@ func (r *MachineReconciler) handleDeletion(ctx context.Context, machine *kyberv1
 	}
 
 	logger.Info("running machine finalizer", "machine", machine.Name)
+	if err := r.removeCapacityRequestPod(ctx, machine); err != nil {
+		return ctrl.Result{}, fmt.Errorf("removing capacity demand during finalizer: %w", err)
+	}
 
 	if r.capacityProviderFor(machine) != nil {
 		observation, err := r.reconcileCapacity(ctx, machine, adapters.DesiredDeleted)

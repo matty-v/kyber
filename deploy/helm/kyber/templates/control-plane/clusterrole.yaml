@@ -26,7 +26,8 @@ rules:
   - apiGroups: ["kyber.io"]
     resources: ["machines/finalizers"]
     verbs: ["update"]
-  # Pod management (Agent Controller — creates/deletes agent pods)
+  # Pod management (Agent Controller manages agent pods; Machine Controller
+  # manages credential-free autoscaling demand pods for regional providers)
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]

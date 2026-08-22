@@ -224,3 +224,21 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
 
 - **Fragile area:** `pkg/api/routes_webhooks.go` and any change to the auth contract of a route (webhook secret, API-key wall, header requirements). The mirror tests live in **two** places: unit tests in `pkg/api/routes_webhooks_test.go` (fake k8s, no Redis) **and** integration tests in `test/integration/api_test.go` + `helpers.go` (real Redis via `sharedRDB`, gated behind the CI `integration` job).
 - **The trap:** `test/integration/newTestAPIServer` (`helpers.go`) builds the `api.Server` with **no `WebhookSecret`** and `sendWebhook` (`api_test.go`) sends **no** `X-Telegram-Bot-Api-Secret-Token` header — both written against the old "empty secret = auth disabled, request accepted" behavior. kyber#564 made an empty secret **fail closed**, so those integration tests (`TestAPI_WebhookBuffersMessageInRedis`, `TestAPI_WebhookSurvivesRestart`, `TestAPI_WebhookMultipleMessages`) flip from buffering to rejected and FAIL — while the PR's updated unit suite is green. A builder who runs only `go test ./pkg/api/...` locally sees all-green and ships a red `integration` check, because that package needs a Redis the local run doesn't have. **Look harder at:** any auth-contract change to a route — grep `test/integration` for the same route/helper (`sendWebhook`, `newTestAPIServer`) and confirm both the unit AND the integration harness were migrated; as reviewer, never take a local-`pkg/api`-green claim as proof the suite passes — check the `integration` CI check (or run `go test ./test/integration/...` with Redis) before a `merge: yes`.
+
+### 16. Regional scale-from-zero needs scheduler demand after Agents park
+
+- **Fragile area:** `pkg/controllers/machine/capacity_request.go`, the Agent
+  watch in `pkg/controllers/machine/controller.go`, and provider implementations
+  of `CapacityNeedsSchedulerDemand`.
+- **The trap:** GKE's configured autoscaling minimum does not proactively grow
+  a pool from zero. It scales only for unschedulable Pod demand, while the Agent
+  recovery contract intentionally deletes stale Agent pods in
+  `WaitingForMachine`. Removing the Machine-owned capacity-request Pod, failing
+  to enqueue the Machine when Agent intent changes, or marking a
+  scheduler-driven provider as not needing demand wedges every new Agent on a
+  zero-node pool indefinitely. Keep the request Pod credential-free and scoped
+  to the provider's node selector; delete it as soon as capacity attaches or
+  active demand disappears. The PWA must consume
+  `compute.managed.capabilities.requiresSchedulerDemand`; inferring this from
+  a location string diverges from provider configuration (for example, a GKE
+  pool can have a regional location but only one configured node location).

@@ -171,6 +171,18 @@ func TestGKEObservationOnlyCapabilities(t *testing.T) {
 	if got.CanProvision || !got.CanDiscoverExisting || got.SuspendMode != SuspendUnsupported || got.DeletionMode != UnregisterOnly {
 		t.Fatalf("Capabilities = %+v", got)
 	}
+	if got.RequiresSchedulerDemand {
+		t.Fatal("zonal GKE provider must not advertise scheduler demand")
+	}
+
+	provider.nodeLocations = []string{"us-central1-a", "us-central1-b", "us-central1-c"}
+	got, err = provider.Capabilities(context.Background())
+	if err != nil {
+		t.Fatalf("regional Capabilities: %v", err)
+	}
+	if !got.RequiresSchedulerDemand {
+		t.Fatal("regional GKE provider must advertise scheduler demand")
+	}
 }
 
 func TestGKEValidateRejectsUnsupportedAvailabilityClass(t *testing.T) {
@@ -210,6 +222,9 @@ func TestGKERegionalManagedPoolUsesOneTotalNodeAcrossZones(t *testing.T) {
 			DiskSizeGB: 200, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD",
 			AvailabilityClasses: []string{"reliable", "costOptimized"},
 		}},
+	}
+	if !provider.NeedsSchedulerDemand() {
+		t.Fatal("regional GKE provider must request scheduler demand")
 	}
 	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{
 		Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true,

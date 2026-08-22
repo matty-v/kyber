@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import { MachineAvailableCell } from './MachineList'
-import type { Machine } from '../lib/types'
+import { isMachineStandby, MachineAvailableCell, MachineStatusBadge } from './MachineList'
+import type { Agent, Machine } from '../lib/types'
 
 function machine(over: Partial<Machine> = {}): Machine {
   return {
@@ -13,6 +13,73 @@ function machine(over: Partial<Machine> = {}): Machine {
     ...over,
   }
 }
+
+function agent(over: Partial<Agent> = {}): Agent {
+  return {
+    id: 'alice',
+    phase: 'Running',
+    machine: 'razer',
+    runtime: 'codex',
+    model: '',
+    scaling: 'warm',
+    resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
+    status: { phase: 'Running' },
+    ...over,
+  }
+}
+
+function regionalPendingMachine(): Machine {
+  return machine({
+    phase: 'Provisioning',
+    spec: {
+      provider: 'gke',
+      managementMode: 'Managed',
+      location: 'us-central1',
+      capacity: { cpu: '8', memory: '32Gi' },
+    },
+    status: { phase: 'Provisioning', availability: 'Recovering' },
+  })
+}
+
+describe('MachineStatusBadge', () => {
+  it('shows idle regional managed GKE capacity as Standby', () => {
+    const pending = regionalPendingMachine()
+    expect(isMachineStandby(pending, [], true)).toBe(true)
+
+    render(<MachineStatusBadge machine={pending} agents={[]} requiresSchedulerDemand />)
+    expect(screen.getByText('Standby')).toBeInTheDocument()
+    expect(screen.getByText(/starts on Agent demand/i)).toBeInTheDocument()
+  })
+
+  it('keeps Provisioning when an active Agent is waiting for the machine', () => {
+    const pending = regionalPendingMachine()
+    expect(isMachineStandby(pending, [agent({ phase: 'WaitingForMachine' })], true)).toBe(false)
+
+    render(
+      <MachineStatusBadge
+        machine={pending}
+        agents={[agent({ phase: 'WaitingForMachine' })]}
+        requiresSchedulerDemand
+      />,
+    )
+    expect(screen.getByText('Provisioning')).toBeInTheDocument()
+  })
+
+  it('keeps Provisioning until Agent demand is known', () => {
+    expect(isMachineStandby(regionalPendingMachine(), undefined, true)).toBe(false)
+  })
+
+  it('does not call a machine Standby when its provider does not require scheduler demand', () => {
+    const pending = regionalPendingMachine()
+    expect(isMachineStandby(pending, [], false)).toBe(false)
+  })
+
+  it('ignores stopped and suspended Agent assignments', () => {
+    const pending = regionalPendingMachine()
+    expect(isMachineStandby(pending, [agent({ phase: 'Stopped' })], true)).toBe(true)
+    expect(isMachineStandby(pending, [agent({ phase: 'Suspended' })], true)).toBe(true)
+  })
+})
 
 describe('MachineAvailableCell', () => {
   it('renders CPU + Memory free/total when assignable + available are populated', () => {

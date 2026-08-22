@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { Plus, Play, Server, Square, RotateCcw, Trash2, Zap, MoreHorizontal } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
-import { useMachines, useStartMachine, useStopMachine, useRebootMachine, useDeleteMachine, useRestartMachineAgents } from '../hooks/useAPI'
+import { useAgents, useComputeConfig, useMachines, useStartMachine, useStopMachine, useRebootMachine, useDeleteMachine, useRestartMachineAgents } from '../hooks/useAPI'
 import { machineCapacity, parseCpu, parseMemoryGi } from '../lib/machineTypes'
 import { capacityBand, pctUsed, BAND_BG_CLASS } from '../lib/capacityBars'
 import { CapacityBar } from '../components/CapacityBar'
@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { DataTable } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
-import type { Machine } from '../lib/types'
+import type { Agent, Machine } from '../lib/types'
 
 type MachineActionKind = 'start' | 'stop' | 'reboot' | 'delete' | 'restart-agents'
 
@@ -34,6 +34,9 @@ export function MachineList() {
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
   const { data: machines, isLoading, error } = useMachines()
+  const { data: agents } = useAgents()
+  const { data: computeConfig } = useComputeConfig()
+  const requiresSchedulerDemand = computeConfig?.compute.managed?.capabilities?.requiresSchedulerDemand === true
   const [pending, setPending] = useState<ActionState | null>(null)
 
   const startMachine = useStartMachine()
@@ -60,7 +63,9 @@ export function MachineList() {
       {
         accessorKey: 'phase',
         header: 'Status',
-        cell: ({ row }) => <StatusBadge phase={row.original.phase} />,
+        cell: ({ row }) => (
+          <MachineStatusBadge machine={row.original} agents={agents} requiresSchedulerDemand={requiresSchedulerDemand} />
+        ),
       },
       {
         id: 'type',
@@ -129,7 +134,7 @@ export function MachineList() {
         ),
       },
     ],
-    [],
+    [agents, requiresSchedulerDemand],
   )
 
   async function executeAction() {
@@ -213,7 +218,7 @@ export function MachineList() {
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="font-medium text-text-primary truncate">{m.id}</span>
-                      <StatusBadge phase={m.phase} />
+                      <MachineStatusBadge machine={m} agents={agents} requiresSchedulerDemand={requiresSchedulerDemand} />
                     </div>
                     <p className="mt-1 text-xs text-text-muted">
                       {m.spec.machineType ?? m.spec.provider}
@@ -296,6 +301,60 @@ export function MachineList() {
         onCancel={() => setPending(null)}
       />
     </div>
+  )
+}
+
+const inactiveAgentPhases = new Set(['Stopped', 'Suspended', 'Deleted'])
+
+/**
+ * Some managed providers intentionally stay at zero nodes until scheduler
+ * demand exists. The controller still reports Provisioning because no Ready
+ * Node exists; this helper derives the less alarming display state.
+ * `agents === undefined` means demand is not known yet, so fail closed to the
+ * controller phase rather than briefly labelling real provisioning Standby.
+ */
+export function isMachineStandby(
+  machine: Machine,
+  agents: Agent[] | undefined,
+  requiresSchedulerDemand: boolean,
+): boolean {
+  if (agents === undefined) return false
+  if (
+    machine.phase !== 'Provisioning' ||
+    machine.status.availability !== 'Recovering' ||
+    machine.spec.managementMode !== 'Managed' ||
+    !requiresSchedulerDemand
+  ) {
+    return false
+  }
+
+  return !agents.some(
+    (agent) =>
+      agent.machine === machine.id &&
+      !inactiveAgentPhases.has(agent.phase),
+  )
+}
+
+export function MachineStatusBadge({
+  machine,
+  agents,
+  requiresSchedulerDemand,
+}: {
+  machine: Machine
+  agents: Agent[] | undefined
+  requiresSchedulerDemand: boolean
+}) {
+  if (!isMachineStandby(machine, agents, requiresSchedulerDemand)) {
+    return <StatusBadge phase={machine.phase} />
+  }
+
+  return (
+    <span className="inline-flex flex-col items-start gap-1">
+      <StatusBadge phase={machine.phase} label="Standby" pulse={false} />
+      <span className="text-[10px] leading-tight text-text-muted">
+        starts on Agent demand
+      </span>
+    </span>
   )
 }
 
