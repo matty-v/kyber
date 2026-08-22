@@ -20,7 +20,7 @@ Every screen shows a cluster identifier with the cluster's name and version, so 
 
 Each agent in the Agents list shows a status dot plus a short activity signal: "Working" while the agent is mid-turn, or "Idle" with a relative time once it is waiting for input. This is the same signal the agent detail view shows, so you can tell at a glance which agents have been idle longest without opening each one. An agent that has not reported an activity state yet shows nothing rather than a fabricated state.
 
-The agent detail view's Activity tab is a structured record of what the agent has actually done: its conversation, its tool calls, and the work it delegated to subagents, shown in place as collapsible blocks at the point it happened. The recent conversation is pinned at the top; the full per-session history sits below it. The tab opens on the last 24 hours and widens on request to 3 and then 7 days, and Export downloads everything loaded as a plain text file. A window holding more than can be returned at once is shown truncated, with a banner saying so.
+The agent detail view's Activity tab is a structured record of what the agent has actually done: its conversation, its tool calls, and the work it delegated to subagents, shown in place as collapsible blocks at the point it happened. The recent conversation is pinned at the top; the full per-session history sits below it. The tab opens on the last 24 hours and widens on request to 3 and then 7 days, and Export downloads everything loaded as a plain text file. A window holding more than can be returned at once is shown truncated, with a banner saying so. The tab reads from the cluster's durable log archive, so it needs the archive bucket configured; on an install without one it shows an error instead of history.
 
 ## Agent logs
 
@@ -29,7 +29,15 @@ Logs come from two sources, chosen with a Live / Archive toggle:
 - **Live** tails the current pod's output as it happens. It covers only the current pod lifetime: a restart starts a fresh buffer.
 - **Archive** is a durable, off-cluster copy. Pick a time window and read what the agent logged in that window, even across restarts, back to a retention window that defaults to 30 days. The retention window is an operator setting.
 
-Very large reads come back truncated rather than unbounded, and the API says so explicitly, so one heavy log read cannot destabilize the control plane. A third source, Transcript, is available at the API level: the agent's real session record, every message and tool call, durably archived. Live and Archive carry the pod's own output; Transcript is the surface for auditing what an agent actually did.
+Very large reads come back truncated rather than unbounded, and the API says so explicitly, so one heavy log read cannot destabilize the control plane. A third source, Transcript, is available at the API level: the agent's real session record, every message and tool call, durably archived. Live and Archive carry the pod's own output; Transcript is the surface for auditing what an agent actually did. Archive and Transcript both depend on the cluster's log archive bucket being configured; without it those reads return an explicit unavailable error while Live keeps working.
+
+## Secrets, model changes, and webhooks
+
+The Secrets tab manages an agent's own secrets. Adding a brand-new key never interrupts a running agent; the value becomes available at the agent's next natural pod start. Replacing an existing value, moving a key between the text and file kinds, or deleting a key restarts the agent's pod automatically so a stale value never lingers.
+
+Changing an agent's model from its detail page restarts a live agent's pod so the new model takes effect right away. The restart takes around half a minute, and a message that arrives during that window is answered by the outgoing session. A stopped or suspended agent keeps the new model for its next start without being woken, and a failed agent is started fresh on it. The model list comes from the catalog the agent's own authenticated runtime reports, so it shows what your subscription actually offers; a newly created agent's list fills in once its runtime has reported.
+
+The Webhooks tab manages the signed inbound bindings that let other senders reach the agent. The signing secret is shown exactly once when a binding is created and once again when it is rotated, and is never readable afterward, so capture it then. Rotating keeps the old secret valid for 24 hours so an in-flight cutover does not drop traffic. Each binding is rate-limited to 10 requests per minute by default, duplicate request bodies are dropped for 24 hours, and each agent queues at most 5 pending messages; excess load is shed with an explicit reason rather than buffered without bound.
 
 ## Metrics
 

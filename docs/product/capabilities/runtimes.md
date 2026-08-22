@@ -12,7 +12,7 @@ Codex also supports an explicit OpenAI API key mode, chosen at creation time.
 
 ## Adopting new versions and models
 
-The control plane runs a detection poller that periodically queries the npm registry for newly released Claude Code and Codex versions, and the Anthropic Models API for new Claude models. The console's pickers read from that feed, so you can adopt a new version or model with no Kyber code change and no rebuild. Codex model choices come from the catalog the agent's own authenticated runtime reports, so the picker reflects what your ChatGPT subscription actually offers. Detection failures are handled softly: the last known list keeps serving, and agents are never disrupted by a detection outage.
+The control plane runs a detection poller that periodically queries the npm registry for newly released Claude Code and Codex versions, and the Anthropic Models API for new Claude models. The console's harness version pickers read from that feed, so you can adopt a new version with no Kyber code change and no rebuild. Model choices work differently: the change-model picker on an agent's page reads the model catalog that agent's own authenticated runtime reports, for both runtimes, so it shows what your subscription actually offers; a freshly created agent's list fills in once its runtime has reported. Detection failures are handled softly: the last known list keeps serving, and agents are never disrupted by a detection outage.
 
 The same detection feed reports each Claude model's real context window, which is what keeps the console's token-budget gauges honest for brand-new models.
 

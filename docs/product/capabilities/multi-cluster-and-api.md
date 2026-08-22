@@ -18,6 +18,8 @@ For agent lifecycle actions, you can also issue scoped keys. A `lifecycle:write`
 
 Agents authenticate to the platform separately, with per-pod credentials that only let an agent act on itself; no agent can drive another agent through the API.
 
+One rule to know when creating agents over the API rather than the console: an agent that signs in with a Claude subscription must be created with the complete authorization exchange, meaning the authorization code and both PKCE values, in the create call itself. Skip them and the agent is created without stored credentials, and the re-authorize action cannot backfill them later; the only fix is to delete the agent and recreate it with the full flow. An invalid or already-used code fails the create immediately with a clear error, so a create that succeeds always leaves working credentials.
+
 ## Learn more
 
 - [Cluster naming convention](../../clusters.md): the pattern, examples, and the GitOps note.

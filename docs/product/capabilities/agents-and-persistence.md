@@ -24,7 +24,7 @@ An agent moves through named phases. Most transitions are automatic: Kyber drive
 | `NeedsAuth` | Its stored authorization is no longer valid. Re-authorize it to bring it back. |
 | `MemoryExhausted` | Killed for exceeding its memory limit. Give it more memory, then restart it. |
 | `Failed` | An unrecoverable error, or automatic restart attempts used up. Investigate, then restart. |
-| `Deleted` | Fully removed, including storage and identity. |
+| `Deleted` | Fully removed, including storage. An identity repo, if the agent has one, is preserved. |
 
 Two of those states are deliberately human-required, because a silent retry would only hide the real problem: an agent whose stored authorization has expired (`NeedsAuth`), and an agent killed for running out of memory (`MemoryExhausted`). Kyber stops and waits for you instead of retrying into a loop.
 
