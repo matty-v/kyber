@@ -238,4 +238,7 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
   scheduler-driven provider as not needing demand wedges every new Agent on a
   zero-node pool indefinitely. Keep the request Pod credential-free and scoped
   to the provider's node selector; delete it as soon as capacity attaches or
-  active demand disappears.
+  active demand disappears. The PWA must consume
+  `compute.managed.capabilities.requiresSchedulerDemand`; inferring this from
+  a location string diverges from provider configuration (for example, a GKE
+  pool can have a regional location but only one configured node location).

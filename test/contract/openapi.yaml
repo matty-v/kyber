@@ -872,7 +872,7 @@ components:
 
     ComputeCapabilities:
       type: object
-      required: [canProvision, canDiscoverExisting, suspendMode, deletionMode, supportsReliable, supportsInterruptible, supportsLocations]
+      required: [canProvision, canDiscoverExisting, suspendMode, deletionMode, supportsReliable, supportsInterruptible, supportsLocations, requiresSchedulerDemand]
       properties:
         canProvision:
           type: boolean
@@ -889,6 +889,8 @@ components:
         supportsInterruptible:
           type: boolean
         supportsLocations:
+          type: boolean
+        requiresSchedulerDemand:
           type: boolean
 
     ComputeProfile:

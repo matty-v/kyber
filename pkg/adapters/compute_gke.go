@@ -166,6 +166,7 @@ func (g *GKEAdapter) Capabilities(context.Context) (Capabilities, error) {
 		CanProvision: managed, CanDiscoverExisting: true,
 		SuspendMode: suspendMode, DeletionMode: deletionMode,
 		SupportsReliable: true, SupportsInterruptible: true, SupportsLocations: true,
+		RequiresSchedulerDemand: g.regional(),
 	}, nil
 }
 

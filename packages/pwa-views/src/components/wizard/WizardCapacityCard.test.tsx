@@ -155,22 +155,22 @@ describe('WizardCapacityCard', () => {
     expect(screen.getByText(/0\.0 \+ 50\.0 = 50\.0 \/ 100\.0 GiB/)).toBeInTheDocument()
   })
 
-	it('treats zero disk on a pending machine as unknown instead of an overflow', () => {
-		render(
-			<WizardCapacityCard
-				selectedMachine={machineWith({ cpu: '8', memory: '32Gi', ephemeralStorage: '0' })}
-				machineAvailable={{ cpu: 8, memoryGi: 32, diskGi: 0 }}
-				newCpu={1}
-				newMemoryGi={2}
-				newDiskGi={50}
-			/>,
-		)
-		const card = screen.getByTestId('wizard-capacity-card')
-		expect(card).not.toHaveAttribute('data-exceeds')
-		expect(screen.queryByTestId('proposed-bar-disk')).not.toBeInTheDocument()
-		expect(screen.getByTestId('proposed-disk-unknown')).toHaveTextContent(/available after node provisioning/)
-		expect(screen.getByTestId('capacity-verdict')).toHaveTextContent(
-			/CPU and memory fit on razer. Disk capacity will be checked after node provisioning./,
-		)
-	})
+  it('treats zero disk on a pending machine as unknown instead of an overflow', () => {
+    render(
+      <WizardCapacityCard
+        selectedMachine={machineWith({ cpu: '8', memory: '32Gi', ephemeralStorage: '0' })}
+        machineAvailable={{ cpu: 8, memoryGi: 32, diskGi: 0 }}
+        newCpu={1}
+        newMemoryGi={2}
+        newDiskGi={50}
+      />,
+    )
+    const card = screen.getByTestId('wizard-capacity-card')
+    expect(card).not.toHaveAttribute('data-exceeds')
+    expect(screen.queryByTestId('proposed-bar-disk')).not.toBeInTheDocument()
+    expect(screen.getByTestId('proposed-disk-unknown')).toHaveTextContent(/available after node provisioning/)
+    expect(screen.getByTestId('capacity-verdict')).toHaveTextContent(
+      /CPU and memory fit on razer. Disk capacity will be checked after node provisioning./,
+    )
+  })
 })

@@ -97,6 +97,34 @@ func TestCapacityRequestPodLifecycle(t *testing.T) {
 	if err := k8sClient.Get(ctx, key, &corev1.Pod{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("capacity request Pod still exists after demand disappeared: %v", err)
 	}
+
+	patch = client.MergeFrom(agent.DeepCopy())
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	if err := k8sClient.Patch(ctx, agent, patch); err != nil {
+		t.Fatalf("resuming Agent: %v", err)
+	}
+	for _, phase := range []kyberv1.MachinePhase{
+		kyberv1.MachinePhasePreempted,
+		kyberv1.MachinePhaseReplacing,
+	} {
+		if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(machine), machine); err != nil {
+			t.Fatalf("getting Machine before %s check: %v", phase, err)
+		}
+		machine.Status.Phase = phase
+		if err := k8sClient.Status().Update(ctx, machine); err != nil {
+			t.Fatalf("setting Machine status to %s: %v", phase, err)
+		}
+		if err := r.reconcileCapacityRequestPod(ctx, machine); err != nil {
+			t.Fatalf("creating capacity request for %s Machine: %v", phase, err)
+		}
+		pod = &corev1.Pod{}
+		if err := k8sClient.Get(ctx, key, pod); err != nil {
+			t.Fatalf("getting capacity request Pod for %s Machine: %v", phase, err)
+		}
+		if err := k8sClient.Delete(ctx, pod); err != nil {
+			t.Fatalf("deleting capacity request Pod after %s check: %v", phase, err)
+		}
+	}
 }
 
 func TestAgentNeedsMachineCapacity(t *testing.T) {

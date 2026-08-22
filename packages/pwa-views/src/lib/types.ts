@@ -513,6 +513,7 @@ export interface ComputeCapabilities {
   supportsReliable: boolean
   supportsInterruptible: boolean
   supportsLocations: boolean
+  requiresSchedulerDemand: boolean
 }
 
 export interface MachinePreflightResponse {

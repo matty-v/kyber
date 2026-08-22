@@ -44,40 +44,40 @@ function regionalPendingMachine(): Machine {
 describe('MachineStatusBadge', () => {
   it('shows idle regional managed GKE capacity as Standby', () => {
     const pending = regionalPendingMachine()
-    expect(isMachineStandby(pending, [])).toBe(true)
+    expect(isMachineStandby(pending, [], true)).toBe(true)
 
-    render(<MachineStatusBadge machine={pending} agents={[]} />)
+    render(<MachineStatusBadge machine={pending} agents={[]} requiresSchedulerDemand />)
     expect(screen.getByText('Standby')).toBeInTheDocument()
     expect(screen.getByText(/starts on Agent demand/i)).toBeInTheDocument()
   })
 
   it('keeps Provisioning when an active Agent is waiting for the machine', () => {
     const pending = regionalPendingMachine()
-    expect(isMachineStandby(pending, [agent({ phase: 'WaitingForMachine' })])).toBe(false)
+    expect(isMachineStandby(pending, [agent({ phase: 'WaitingForMachine' })], true)).toBe(false)
 
     render(
       <MachineStatusBadge
         machine={pending}
         agents={[agent({ phase: 'WaitingForMachine' })]}
+        requiresSchedulerDemand
       />,
     )
     expect(screen.getByText('Provisioning')).toBeInTheDocument()
   })
 
   it('keeps Provisioning until Agent demand is known', () => {
-    expect(isMachineStandby(regionalPendingMachine(), undefined)).toBe(false)
+    expect(isMachineStandby(regionalPendingMachine(), undefined, true)).toBe(false)
   })
 
-  it('does not call a fixed-size zonal GKE machine Standby', () => {
+  it('does not call a machine Standby when its provider does not require scheduler demand', () => {
     const pending = regionalPendingMachine()
-    pending.spec.location = 'us-central1-a'
-    expect(isMachineStandby(pending, [])).toBe(false)
+    expect(isMachineStandby(pending, [], false)).toBe(false)
   })
 
   it('ignores stopped and suspended Agent assignments', () => {
     const pending = regionalPendingMachine()
-    expect(isMachineStandby(pending, [agent({ phase: 'Stopped' })])).toBe(true)
-    expect(isMachineStandby(pending, [agent({ phase: 'Suspended' })])).toBe(true)
+    expect(isMachineStandby(pending, [agent({ phase: 'Stopped' })], true)).toBe(true)
+    expect(isMachineStandby(pending, [agent({ phase: 'Suspended' })], true)).toBe(true)
   })
 })
 

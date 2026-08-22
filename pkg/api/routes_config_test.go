@@ -8,8 +8,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 )
+
+type schedulerDemandConfigProvider struct {
+	*adapters.FakeComputeAdapter
+}
+
+func (p *schedulerDemandConfigProvider) Capabilities(ctx context.Context) (adapters.Capabilities, error) {
+	capabilities, err := p.FakeComputeAdapter.Capabilities(ctx)
+	capabilities.RequiresSchedulerDemand = true
+	return capabilities, err
+}
 
 func TestHandleConfig_ReturnsProvider(t *testing.T) {
 	s := &Server{
@@ -28,6 +39,30 @@ func TestHandleConfig_ReturnsProvider(t *testing.T) {
 	}
 	if got.Compute.Provider != "mock" {
 		t.Errorf("provider = %q, want mock", got.Compute.Provider)
+	}
+}
+
+func TestHandleConfig_ReturnsSchedulerDemandCapability(t *testing.T) {
+	s := &Server{
+		ComputeProvider:  "fake",
+		CapacityProvider: &schedulerDemandConfigProvider{FakeComputeAdapter: adapters.NewFakeComputeAdapter()},
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+	s.handleConfig(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+	var got ConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got.Compute.Managed == nil || got.Compute.Managed.Capabilities == nil {
+		t.Fatalf("managed capabilities missing: %+v", got.Compute.Managed)
+	}
+	if !got.Compute.Managed.Capabilities.RequiresSchedulerDemand {
+		t.Fatal("requiresSchedulerDemand = false, want true")
 	}
 }
 

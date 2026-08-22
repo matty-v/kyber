@@ -74,10 +74,14 @@ scheduler-driven provider. The Pod has no service-account token, requests only
 1m CPU and 1Mi memory, selects the provider's node pool, and is deleted when a
 Ready node attaches or Agent demand disappears. Agent changes enqueue their
 Machine immediately; the periodic Machine resync is only a fallback.
+Providers expose the same behavior through the provider-neutral
+`requiresSchedulerDemand` config capability. Operator surfaces use that flag
+instead of guessing from provider-specific region or zone naming conventions.
 
-No CRD or REST shape changes are required. Existing Machine `status.message`
-stores a provider-neutral recovery explanation. PWA banners derive recovery
-copy from existing Agent/Machine phases and availability. Verbatim scheduler
+No CRD shape change is required. The additive config capability is the only
+REST shape change. Existing Machine `status.message` stores a provider-neutral
+recovery explanation. PWA banners derive recovery copy from existing
+Agent/Machine phases, availability, and capabilities. Verbatim scheduler
 messages and provider references render only inside an expandable panel with a
 copy action.
 
@@ -92,5 +96,6 @@ copy action.
 - GKE adapter test: a pool with zero attached Nodes reports Recovering and
   continues asserting the Online size target.
 - Machine envtest: active Agent demand creates one provider-targeted,
-  credential-free capacity-request Pod and removes it when demand disappears.
+  credential-free capacity-request Pod during Provisioning, Preempted, and
+  Replacing, and removes it when demand disappears.
 - PWA tests: friendly recovery copy is visible and raw details are collapsed.

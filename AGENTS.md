@@ -122,7 +122,10 @@ testable without a cluster. Authoritative transition table:
   `docs/design/2026-08-21-machine-capacity-recovery.md`. Scheduler-driven
   regional providers keep autoscaling demand alive with one Machine-owned,
   credential-free capacity-request Pod while active Agents are parked; Agent
-  changes must continue to enqueue their assigned Machine immediately.
+  changes must continue to enqueue their assigned Machine immediately. The
+  matching provider capability is exposed as
+  `compute.managed.capabilities.requiresSchedulerDemand`; PWA status must use
+  that capability rather than infer behavior from provider location strings.
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each

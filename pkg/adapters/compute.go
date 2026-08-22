@@ -77,13 +77,14 @@ type ProviderRef string
 // Capabilities describes portable operator actions. It intentionally omits
 // provider resource kinds such as VM, node pool, or managed instance group.
 type Capabilities struct {
-	CanProvision          bool
-	CanDiscoverExisting   bool
-	SuspendMode           SuspendMode
-	DeletionMode          DeletionMode
-	SupportsReliable      bool
-	SupportsInterruptible bool
-	SupportsLocations     bool
+	CanProvision            bool
+	CanDiscoverExisting     bool
+	SuspendMode             SuspendMode
+	DeletionMode            DeletionMode
+	SupportsReliable        bool
+	SupportsInterruptible   bool
+	SupportsLocations       bool
+	RequiresSchedulerDemand bool
 }
 
 // Profile is an installer-curated capacity promise exposed to operators. The
