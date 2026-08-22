@@ -176,6 +176,10 @@ function FleetDefaultsCard() {
   const [codexModel, setCodexModel] = useState('')
   const [codexVersion, setCodexVersion] = useState('')
   const [dirty, setDirty] = useState(false)
+  // Set when the server rejected a model id as unknown to every catalog it
+  // can see (400 VALIDATION_ERROR). Offers the force escape — the case for
+  // it is a model newer than the last detection poll.
+  const [modelRejection, setModelRejection] = useState<string | null>(null)
 
   // Sync editor state when the server-side values arrive. Skip when the
   // user has started editing — overwriting their in-progress text would
@@ -189,17 +193,27 @@ function FleetDefaultsCard() {
     setCodexVersion(query.data.codexDefaultRuntimeVersion ?? '')
   }, [query.data, dirty])
 
-  async function save() {
+  async function save(force = false) {
     try {
       await mutation.mutateAsync({
         defaultModel: claudeModel,
         defaultRuntimeVersion: claudeVersion,
         codexDefaultModel: codexModel,
         codexDefaultRuntimeVersion: codexVersion,
+        ...(force ? { force: true } : {}),
       })
       setDirty(false)
-    } catch {
-      // Surfaced via the mutation's errorPrefix toast.
+      setModelRejection(null)
+    } catch (e) {
+      // A model-validation 400 gets an inline escape hatch (the model may
+      // simply be newer than the last detection poll); everything else is
+      // surfaced via the mutation's errorPrefix toast.
+      const err = e as { status?: number; code?: string; message?: string }
+      if (err?.status === 400 && err?.code === 'VALIDATION_ERROR') {
+        setModelRejection(err.message ?? 'The model id is not in any catalog this cluster can see.')
+      } else {
+        setModelRejection(null)
+      }
     }
   }
 
@@ -256,6 +270,14 @@ function FleetDefaultsCard() {
         upstream harness whenever an agent pod is created. Concrete values pin
         that runtime until you change them.
       </p>
+      {modelRejection && (
+        <div className="mt-3 rounded border border-warning/40 bg-warning/5 p-2">
+          <p className="text-xs text-warning">{modelRejection}</p>
+          <p className="mt-1 text-[11px] text-text-muted">
+            If this model is newer than the last detection poll, you can save it anyway.
+          </p>
+        </div>
+      )}
       <div className="mt-3">
         <div className="flex items-center gap-3">
           <Button
@@ -267,6 +289,17 @@ function FleetDefaultsCard() {
           >
             Save
           </Button>
+          {modelRejection && dirty && (
+            <Button
+              variant="secondary"
+              size="md"
+              onClick={() => void save(true)}
+              loading={mutation.isPending}
+              disabled={mutation.isPending || loading || unavailable}
+            >
+              Save anyway
+            </Button>
+          )}
           {!dirty && mutation.isSuccess && (
             <span className="text-sm text-success">Saved</span>
           )}

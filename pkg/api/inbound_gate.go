@@ -40,8 +40,17 @@ func (s *Server) WaitAgentRunning(ctx context.Context, name string, timeout time
 		if err := s.K8sClient.Get(ctx, key, agent); err != nil {
 			return fmt.Errorf("inbound gate: agent lookup: %w", err)
 		}
-		if agent.Status.Phase == kyberv1.AgentPhaseRunning {
+		switch agent.Status.Phase {
+		case kyberv1.AgentPhaseRunning:
 			return nil
+		case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseFailed,
+			kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDeleted:
+			// Terminal-until-a-human-acts phases never flip on their own —
+			// waiting would pin this agent's queue worker for the full
+			// timeout per message (FIFO depth 5 → ~15 min of queue-full for
+			// a burst to a stopped agent). Fail fast, matching pre-gate
+			// behavior for undeliverable messages.
+			return fmt.Errorf("inbound gate: agent %q is %q — not a transitional phase, not waiting", name, agent.Status.Phase)
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("inbound gate: agent %q still %q after %s", name, agent.Status.Phase, timeout)

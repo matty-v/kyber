@@ -33,6 +33,8 @@ type CreateAgentRequest struct {
 	Machine      string                   `json:"machine"`
 	Runtime      string                   `json:"runtime"`
 	Model        string                   `json:"model"`
+	// Force skips catalog validation of the model id, same as set-model.
+	Force        bool                     `json:"force,omitempty"`
 	Scaling      string                   `json:"scaling"`
 	Resources    agentResourcesRequest    `json:"resources"`
 	Identity     agentIdentityRequest     `json:"identity"`
@@ -731,13 +733,14 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			"unknown runtime '"+req.Runtime+"'", "runtime")
 		return
 	}
-	// Same catalog check set-model applies — an unknown model id would
-	// otherwise fail every turn while the agent reports healthy. No
-	// force escape at create: pick a known model (or omit for the fleet
-	// default) and use set-model with force for the exotic case.
-	if msg := s.validateModelValue(r.Context(), req.Runtime, req.Model, ""); msg != "" {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
-		return
+	// Same catalog check + force escape set-model applies — an unknown
+	// model id would otherwise fail every turn while the agent reports
+	// healthy.
+	if !req.Force {
+		if msg := s.validateModelValue(r.Context(), req.Runtime, req.Model, ""); msg != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
+			return
+		}
 	}
 	// kyber#674: registered is not the same as usable. A runtime whose image
 	// was never pinned on this install (image.<runtime>.tag empty, so the
@@ -1297,7 +1300,10 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
-	if !req.Force {
+	// An UNCHANGED model is not re-validated — re-posting the current
+	// value (to trigger a roll, or from a UI resubmit) must not start
+	// failing because the catalog view shifted since it was set.
+	if !req.Force && req.Model != agent.Spec.Model {
 		if msg := s.validateModelValue(r.Context(), agent.Spec.Runtime, req.Model, name); msg != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
 			return

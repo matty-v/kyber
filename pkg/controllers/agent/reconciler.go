@@ -50,6 +50,13 @@ const (
 	// requeueWaiting is how long to wait before checking on a pod that's not yet Ready.
 	requeueWaiting = 30 * time.Second
 
+	// terminatingPodGraceWindow bounds the recently-deleted wait guard: a
+	// Running agent's pod with a DeletionTimestamp younger than this is a
+	// deliberate graceful roll in progress (wait for the roll's own
+	// transition); older means stuck Terminating (dead node) and takes
+	// the dead-pod recovery path.
+	terminatingPodGraceWindow = 60 * time.Second
+
 	// requeueImmediate is used after transitions that should quickly lead to another.
 	requeueImmediate = 2 * time.Second
 
@@ -689,6 +696,19 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 		case kyberv1.AgentPhaseWaitingForMachine:
 			base = 15 * time.Second
+		case kyberv1.AgentPhaseRunning:
+			// The recently-terminating wait guard (classifyEvent) emits no
+			// event while a graceful roll's pod delete is in flight. The
+			// stuck-Terminating recovery at the grace bound must not depend
+			// on another watch event arriving — a dead node produces none —
+			// so requeue for the remainder of the window ourselves.
+			if pod != nil && pod.DeletionTimestamp != nil {
+				remaining := terminatingPodGraceWindow - time.Since(pod.DeletionTimestamp.Time)
+				if remaining < time.Second {
+					remaining = time.Second
+				}
+				base = remaining + time.Second
+			}
 		}
 		return ctrl.Result{RequeueAfter: minNonZero(base, identityRequeue)}, nil
 	}
@@ -1133,7 +1153,7 @@ func (r *AgentReconciler) classifyEvent(
 			// stuck Terminating longer than that falls through to the
 			// existing dead-pod handling.
 			if pod != nil && pod.DeletionTimestamp != nil &&
-				time.Since(pod.DeletionTimestamp.Time) < 60*time.Second {
+				time.Since(pod.DeletionTimestamp.Time) < terminatingPodGraceWindow {
 				return "", nil
 			}
 			// Suspicious-but-uncertain: agent died with exit 137 and no

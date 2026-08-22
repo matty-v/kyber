@@ -1216,6 +1216,9 @@ components:
         model:
           type: string
           example: claude-sonnet-4
+        force:
+          type: boolean
+          description: Skip catalog validation of the model id (write-only).
         scaling:
           type: string
           enum: [warm, scale-to-zero]

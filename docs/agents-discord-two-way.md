@@ -35,10 +35,11 @@ server and use the structured `reply` tool; `/send` remains as a compatibility
 fallback for older instructions. The sidecar calls Discord's REST API. The bot
 token stays in the sidecar and is never injected into the runtime container.
 
-**The pod must be warm.** Unlike Telegram — which has a second, server-side
-delivery leg that can wake a suspended agent — a suspended Discord agent has
-nobody holding the socket, and messages sent while it sleeps are lost. Run
-Discord agents warm.
+**The pod must be warm.** This holds for Telegram too: both channels deliver
+through in-pod sidecars, so a suspended agent has nobody holding the
+socket/poll loop, and messages sent while it sleeps are lost. (A server-side
+Telegram wake leg exists in code but is not wired — nothing registers the
+webhook.) Run chat-channel agents warm.
 
 Durable Discord delivery is deliberately outside Kyber's platform contract.
 Kyber does not run a pod-independent Gateway or retain an unbounded Discord

@@ -5,7 +5,13 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // A Running agent whose pod carries a RECENT DeletionTimestamp is mid
@@ -66,5 +72,78 @@ func TestClassifyEvent_Running_TerminatingWithDesiredRestarting_RoutesRestart(t 
 	}
 	if event != EventDesiredRestarting {
 		t.Errorf("terminating pod + desired Restarting classified %q, want %q", event, EventDesiredRestarting)
+	}
+}
+
+// The wait guard must not depend on another watch event to eventually
+// recover a pod stuck Terminating: a dead node produces none. The
+// reconcile that defers must itself requeue within the grace window.
+func TestReconcile_RecentlyTerminatingPod_SchedulesRequeue(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	r.MachineGetter = &fakeMachineGetter{
+		machine: &kyberv1.Machine{Status: kyberv1.MachineStatus{Phase: kyberv1.MachinePhaseRunning}},
+	}
+	ctx := context.Background()
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-terminating-requeue"}}
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	agent := newTestAgent("dave", "test-terminating-requeue")
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	agentKey := types.NamespacedName{Name: "dave", Namespace: "test-terminating-requeue"}
+	req := ctrl.Request{NamespacedName: agentKey}
+	reconcileN(t, r, req, 1)
+
+	updated := getAgent(t, k8sClient, agentKey)
+	patch := client.MergeFrom(updated.DeepCopy())
+	now := metav1.Now()
+	updated.Status.Phase = kyberv1.AgentPhaseRunning
+	updated.Status.LastTransition = &now
+	updated.Status.StartTime = &now
+	if err := k8sClient.Status().Patch(ctx, updated, patch); err != nil {
+		t.Fatalf("patching to Running: %v", err)
+	}
+
+	// Give the reconciler's own pod a real, FRESH DeletionTimestamp: a
+	// finalizer keeps it around after Delete, exactly like a graceful
+	// roll mid-flight.
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{
+		Name: AgentPodName("dave"), Namespace: "test-terminating-requeue"}, pod); err != nil {
+		t.Fatalf("getting pod created by bootstrap reconcile: %v", err)
+	}
+	podPatch := client.MergeFrom(pod.DeepCopy())
+	pod.Finalizers = append(pod.Finalizers, "test/block-deletion")
+	if err := k8sClient.Patch(ctx, pod, podPatch); err != nil {
+		t.Fatalf("adding finalizer: %v", err)
+	}
+	if err := k8sClient.Delete(ctx, pod); err != nil {
+		t.Fatalf("deleting pod: %v", err)
+	}
+	t.Cleanup(func() {
+		fresh := &corev1.Pod{}
+		if err := k8sClient.Get(ctx, types.NamespacedName{
+			Name: AgentPodName("dave"), Namespace: "test-terminating-requeue"}, fresh); err == nil {
+			fp := client.MergeFrom(fresh.DeepCopy())
+			fresh.Finalizers = nil
+			_ = k8sClient.Patch(ctx, fresh, fp)
+		}
+	})
+
+	res, err := r.Reconcile(ctx, req)
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if res.RequeueAfter <= 0 {
+		t.Fatalf("RequeueAfter = %s — the deferral must schedule its own revisit; the dead-node case produces no further watch events", res.RequeueAfter)
+	}
+	if res.RequeueAfter > terminatingPodGraceWindow+2*time.Second {
+		t.Fatalf("RequeueAfter = %s — must revisit within the %s grace window", res.RequeueAfter, terminatingPodGraceWindow)
 	}
 }

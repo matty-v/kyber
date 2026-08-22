@@ -7,6 +7,12 @@
   id, including one inherited from the fleet default) and renders the
   boot-time probe's actual diagnostic output, which names the rejected
   model even when the agent has no model of its own.
+- A probe that failed without a clear verdict (auth, network, or an
+  unrecognized error) now shows a warning banner with the diagnostic
+  instead of rendering nothing.
+- When fleet-defaults saving rejects a model id as unknown to every
+  catalog, the card shows the reason inline and offers Save anyway for a
+  model newer than the last detection poll.
 
 ## 0.28.5 — 2026-08-22
 

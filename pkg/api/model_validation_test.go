@@ -14,6 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/fleetdefaults"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 )
 
@@ -190,5 +191,60 @@ func TestSetModel_AcceptsKnownModel(t *testing.T) {
 	s.setAgentModel(rr, req, "wedge")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestFleetDefaultsPut_UnchangedBadModelDoesNotBlockOtherEdits(t *testing.T) {
+	// A stored default that predates validation (or was force-written)
+	// must not 400 unrelated edits: the PUT replaces the whole object,
+	// so unchanged values are exempt from re-validation.
+	cm := &corev1.ConfigMap{
+		ObjectMeta: metav1.ObjectMeta{Name: fdCM, Namespace: fdNS},
+		Data: map[string]string{
+			fleetdefaults.KeyDefaultModel:          "claude-opus-4-canary-marker",
+			fleetdefaults.KeyDefaultRuntimeVersion: "latest",
+		},
+	}
+	s := &Server{
+		K8sClient:                  newFDClient(t, cm),
+		Namespace:                  fdNS,
+		FleetDefaultsConfigMapName: fdCM,
+		RuntimeDetectCache:         snapshotCache(t, []string{"claude-sonnet-5"}, nil),
+	}
+	body := `{"defaultModel":"claude-opus-4-canary-marker","defaultRuntimeVersion":"2.1.240"}`
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/fleet-defaults", bytes.NewBufferString(body))
+	rr := httptest.NewRecorder()
+	s.handleFleetDefaults(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 for an unchanged (pre-existing) model; body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Changing the model to a DIFFERENT unknown id still rejects.
+	body = `{"defaultModel":"claude-other-bogus","defaultRuntimeVersion":"2.1.240"}`
+	req = httptest.NewRequest(http.MethodPut, "/api/v1/fleet-defaults", bytes.NewBufferString(body))
+	rr = httptest.NewRecorder()
+	s.handleFleetDefaults(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 for a changed unknown model; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSetModel_UnchangedModelSkipsValidation(t *testing.T) {
+	s := newSetModelServer(t, snapshotCache(t, []string{"claude-sonnet-5"}, nil))
+	// Force-write an unknown model first, then re-post the same value —
+	// a re-roll/resubmit must not fail because the catalog disagrees.
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
+		bytes.NewBufferString(`{"model":"claude-brand-new-model","force":true}`))
+	rr := httptest.NewRecorder()
+	s.setAgentModel(rr, req, "wedge")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("force write: status = %d; body=%s", rr.Code, rr.Body.String())
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
+		bytes.NewBufferString(`{"model":"claude-brand-new-model"}`))
+	rr = httptest.NewRecorder()
+	s.setAgentModel(rr, req, "wedge")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unchanged re-post: status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
 }

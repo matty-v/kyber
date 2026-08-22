@@ -105,11 +105,20 @@ func (s *Server) handleFleetDefaultsPut(w http.ResponseWriter, r *http.Request) 
 		_ = json.Unmarshal(rawForce, &force)
 	}
 	if !force {
-		if msg := s.validateModelValue(r.Context(), "claude-code", req.DefaultModel, ""); msg != "" {
-			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "defaultModel")
-			return
+		// Values UNCHANGED from what is already stored are not re-validated:
+		// the PUT replaces the whole object, so a cluster whose stored
+		// default predates validation (or was force-written) must not 400
+		// on unrelated edits until the model is fixed.
+		stored := &corev1.ConfigMap{}
+		_ = s.K8sClient.Get(r.Context(),
+			types.NamespacedName{Namespace: s.Namespace, Name: s.FleetDefaultsConfigMapName}, stored)
+		if req.DefaultModel != stored.Data[fleetdefaults.KeyDefaultModel] {
+			if msg := s.validateModelValue(r.Context(), "claude-code", req.DefaultModel, ""); msg != "" {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "defaultModel")
+				return
+			}
 		}
-		if codexModelSet {
+		if codexModelSet && req.CodexDefaultModel != stored.Data[fleetdefaults.KeyCodexDefaultModel] {
 			if msg := s.validateModelValue(r.Context(), "codex", req.CodexDefaultModel, ""); msg != "" {
 				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "codexDefaultModel")
 				return

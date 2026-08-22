@@ -183,6 +183,36 @@ describe('AgentDetail MismatchBadges', () => {
     expect(body).toBeInTheDocument()
   })
 
+  it('renders an inconclusive-probe warning when the probe failed without a verdict', () => {
+    // modelUnsupported stays false (condition is Unknown, not True), but
+    // the diagnostic is present — "couldn't verify" must be visible in
+    // the console, not only in the CRD.
+    const agent = baseAgent({
+      modelUnsupported: false,
+      runtimeVersion: {
+        installedVersion: '2.1.240',
+        modelProbeMessage: 'Invalid bearer token. Please run /login.',
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/Model check inconclusive/i)).toBeInTheDocument()
+    expect(screen.getByText(/Invalid bearer token/)).toBeInTheDocument()
+  })
+
+  it('does not render the inconclusive warning on a definite rejection', () => {
+    const agent = baseAgent({
+      modelUnsupported: true,
+      runtimeVersion: {
+        installedVersion: '2.1.240',
+        modelSupported: false,
+        modelProbeMessage: 'no such model: claude-x',
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/Model rejected/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Model check inconclusive/i)).not.toBeInTheDocument()
+  })
+
   it('renders the probe diagnostic when the report carries one', () => {
     // The probe message names the rejected model even when the agent
     // inherits the fleet default (agent.model empty) — the case that
