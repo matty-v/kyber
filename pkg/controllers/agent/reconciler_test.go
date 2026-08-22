@@ -4087,6 +4087,7 @@ func driftedPod(name string) *corev1.Pod {
 
 func newAutoRollReconciler(t *testing.T, enabled bool, objs ...client.Object) *AgentReconciler {
 	t.Helper()
+	objs = append(objs, driftedAgent(t, metav1.ConditionTrue, 10*time.Minute, "idle"))
 	c := fake.NewClientBuilder().
 		WithScheme(schedulingTestScheme(t)).
 		WithObjects(objs...).
@@ -4245,9 +4246,17 @@ func TestMaybeAutoRollSidecar_AllGatesPass_RollsPod(t *testing.T) {
 	if !rolled {
 		t.Fatal("expected roll when all gates pass")
 	}
-	// Pod should be gone in the fake client.
-	if err := r.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, &corev1.Pod{}); !errors.IsNotFound(err) {
-		t.Fatalf("pod should have been deleted; got err=%v", err)
+	// The pod stays up until the state machine observes the durable restart
+	// request, preventing the deletion from being misclassified as a crash.
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: pod.Namespace, Name: pod.Name}, &corev1.Pod{}); err != nil {
+		t.Fatalf("pod should remain until Restarting is recorded; got err=%v", err)
+	}
+	gotAgent := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: agent.Namespace, Name: agent.Name}, gotAgent); err != nil {
+		t.Fatalf("fetching restart request: %v", err)
+	}
+	if gotAgent.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("desiredPhase=%q, want Restarting", gotAgent.Spec.DesiredPhase)
 	}
 	// FakeRecorder should have buffered the event.
 	rec, ok := r.Recorder.(*record.FakeRecorder)
@@ -4338,6 +4347,21 @@ func podWithSidecarSpecImage(name, sidecarImage string) *corev1.Pod {
 // and seed objects, ready to exercise convergeSidecarImage via the fake client.
 func newConvergeReconciler(t *testing.T, controllerImage string, objs ...client.Object) *AgentReconciler {
 	t.Helper()
+	seen := map[string]bool{}
+	for _, obj := range objs {
+		if a, ok := obj.(*kyberv1.Agent); ok {
+			seen[a.Name] = true
+		}
+	}
+	for _, obj := range objs {
+		if p, ok := obj.(*corev1.Pod); ok {
+			name := p.Labels["kyber.io/agent"]
+			if name != "" && !seen[name] {
+				objs = append(objs, idleAgent(name, p.Namespace))
+				seen[name] = true
+			}
+		}
+	}
 	c := fake.NewClientBuilder().
 		WithScheme(schedulingTestScheme(t)).
 		WithObjects(objs...).
@@ -4419,12 +4443,12 @@ func TestConvergeSidecarImage_NoMismatch_NoOp(t *testing.T) {
 	}
 }
 
-// TestConvergeSidecarImage_Mismatch_DeletesAndRequeues — kyber#358
+// TestConvergeSidecarImage_Mismatch_RequestsRestartAndRequeues — kyber#358
 // live prod case (chart bump v1.0.0 → v1.3.0) under kyber#371's
 // hardened gates: agent is idle, image is the first canary attempt
 // in this controller process. Convergence delete fires; the canary
 // FSM marks the image as in-flight.
-func TestConvergeSidecarImage_Mismatch_DeletesAndRequeues(t *testing.T) {
+func TestConvergeSidecarImage_Mismatch_RequestsRestartAndRequeues(t *testing.T) {
 	const target = "ghcr.io/matty-v/kyber-status-sidecar:v1.3.0"
 	pod := podWithSidecarSpecImage("agent-alice", "ghcr.io/matty-v/kyber-status-sidecar:v1.0.0")
 	r := newConvergeReconciler(t, target, pod)
@@ -4436,9 +4460,16 @@ func TestConvergeSidecarImage_Mismatch_DeletesAndRequeues(t *testing.T) {
 	if !rolled {
 		t.Fatal("expected convergence to fire on tag mismatch (v1.0.0 → v1.3.0)")
 	}
-	// Pod must be gone from the fake client.
-	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); !errors.IsNotFound(err) {
-		t.Errorf("pod must be deleted on mismatch; got err=%v (want IsNotFound)", err)
+	// The state machine owns deletion after it records Restarting.
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err != nil {
+		t.Errorf("pod must remain until restart intent is observed; got err=%v", err)
+	}
+	gotAgent := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "kyber", Name: "alice"}, gotAgent); err != nil {
+		t.Fatalf("fetching restart request: %v", err)
+	}
+	if gotAgent.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("desiredPhase=%q, want Restarting", gotAgent.Spec.DesiredPhase)
 	}
 	if _, inFlight := r.sidecarCanaryInFlight(target); !inFlight {
 		t.Error("expected canary to be marked in-flight after first eligible delete")
@@ -4667,8 +4698,8 @@ func TestConvergeSidecarImage_ValidBump_ConvergesIdleAgentsInOneCycle(t *testing
 	if !rolled {
 		t.Fatal("expected valid (verified) bump to converge idle agent in one cycle")
 	}
-	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); !errors.IsNotFound(err) {
-		t.Errorf("pod must be deleted; got err=%v (want IsNotFound)", err)
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err != nil {
+		t.Errorf("pod must remain until the state machine records Restarting; got err=%v", err)
 	}
 	rec, ok := r.Recorder.(*record.FakeRecorder)
 	if !ok {
@@ -5008,23 +5039,13 @@ func TestReconcile_VerifiesImageOnReadyPodMatchingControllerImage(t *testing.T) 
 	}
 }
 
-// TestReconciler_SidecarConvergence_DeletesStalePod is the AC#7 + AC#8
+// TestReconciler_SidecarConvergence_UsesIntentionalRestart is the AC#7 + AC#8
 // end-to-end integration test on envtest: bootstrap an Agent + Pod on
 // sidecar image A, change the controller's StatusSidecarImage to B, run
-// one reconcile, and assert the stale pod is marked for deletion within
-// the SLA (≤2 minutes — here, one reconcile cycle, as the design promises).
-//
-// The "rebuild with new image" half of convergence is delegated to the
-// existing createPod path. That path is already pinned: the bootstrap
-// assertion below confirms that a pod created while StatusSidecarImage=A
-// emerges with sidecar image A — by symmetry, a pod created while
-// StatusSidecarImage=B emerges with sidecar image B. State-machine
-// orchestration of the recreate (Running → PodDied → Failed → restart-
-// backoff → CreatePod) is exercised by other tests in this file; we don't
-// re-test it here. The contract this test pins is the kyber#358 contract:
-// the convergence step deletes a stale pod on every reconcile so the
-// existing recreate path gets a clean slate on the new image.
-func TestReconciler_SidecarConvergence_DeletesStalePod(t *testing.T) {
+// reconciles through the rollout. It pins the production regression: Kyber's
+// own convergence deletion must go Running → Restarting → Starting, never
+// Running → Failed, and must not consume restartCount or crash backoff.
+func TestReconciler_SidecarConvergence_UsesIntentionalRestart(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
 	defer teardown()
 
@@ -5056,6 +5077,19 @@ func TestReconciler_SidecarConvergence_DeletesStalePod(t *testing.T) {
 	}
 	originalUID := originalPod.UID
 
+	current := &kyberv1.Agent{}
+	agentKey := types.NamespacedName{Name: "alice", Namespace: "test-sidecar-converge"}
+	if err := k8sClient.Get(context.Background(), agentKey, current); err != nil {
+		t.Fatalf("re-fetching agent: %v", err)
+	}
+	phasePatch := client.MergeFrom(current.DeepCopy())
+	current.Status.Phase = kyberv1.AgentPhaseRunning
+	current.Status.RestartCount = 2
+	current.Status.Activity = &kyberv1.ActivityStatus{State: "idle"}
+	if err := k8sClient.Status().Patch(context.Background(), current, phasePatch); err != nil {
+		t.Fatalf("patching running agent status: %v", err)
+	}
+
 	// Simulate the control-plane pod rolling with a new env (chart upgrade).
 	// In production this happens when ArgoCD applies the new image.statusSidecar.tag
 	// and Kubernetes restarts the control-plane Deployment — the new controller
@@ -5066,42 +5100,51 @@ func TestReconciler_SidecarConvergence_DeletesStalePod(t *testing.T) {
 	// to interrupt an agent the runtime reports as Working (or unknown).
 	// In production the sidecar's activity probe populates this; envtest
 	// has no real pod so we patch the status directly.
-	current := &kyberv1.Agent{}
-	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "alice", Namespace: "test-sidecar-converge"}, current); err != nil {
-		t.Fatalf("re-fetching agent: %v", err)
-	}
-	patch := client.MergeFrom(current.DeepCopy())
-	current.Status.Activity = &kyberv1.ActivityStatus{State: "idle"}
-	if err := k8sClient.Status().Patch(context.Background(), current, patch); err != nil {
-		t.Fatalf("patching agent activity: %v", err)
-	}
-
-	// One reconcile detects the spec mismatch and deletes the stale pod.
-	// First eligible delete arms the kyber#371 canary; the existing
-	// recreate path rebuilds the pod on the new image.
+	// First pass records intent but deliberately leaves the pod running.
 	if _, err := r.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("convergence reconcile: %v", err)
 	}
-
-	// Pod should now be gone or marked for deletion (envtest with finalizers
-	// holds it in Terminating; either state satisfies the contract — the
-	// stale pod will not be running the v1.0.0 sidecar anymore).
-	currentPod := &corev1.Pod{}
-	err := k8sClient.Get(context.Background(), podKey, currentPod)
-	switch {
-	case errors.IsNotFound(err):
-		// Stale pod fully gone — best case.
-	case err != nil:
-		t.Fatalf("getting pod post-convergence: %v", err)
-	case currentPod.DeletionTimestamp == nil:
-		t.Errorf("stale pod still present with no DeletionTimestamp — convergence step did not fire (UID=%s, image=%s)",
-			currentPod.UID, extractSidecarSpecImage(currentPod))
-	default:
-		// Terminating: also satisfies the contract.
-		if currentPod.UID != originalUID {
-			t.Errorf("pod UID changed unexpectedly: got %s, want %s (stale pod was replaced rather than terminated)",
-				currentPod.UID, originalUID)
+	assertAgent := func(want kyberv1.AgentPhase) *kyberv1.Agent {
+		t.Helper()
+		got := &kyberv1.Agent{}
+		if err := k8sClient.Get(context.Background(), agentKey, got); err != nil {
+			t.Fatalf("getting agent: %v", err)
 		}
+		if got.Status.Phase != want {
+			t.Fatalf("phase=%q, want %q", got.Status.Phase, want)
+		}
+		if got.Status.RestartCount != 2 {
+			t.Fatalf("restartCount=%d, want unchanged 2", got.Status.RestartCount)
+		}
+		return got
+	}
+	got := assertAgent(kyberv1.AgentPhaseRunning)
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("desiredPhase=%q, want Restarting", got.Spec.DesiredPhase)
+	}
+	stillRunning := &corev1.Pod{}
+	if err := k8sClient.Get(context.Background(), podKey, stillRunning); err != nil || stillRunning.UID != originalUID {
+		t.Fatalf("old pod must remain before restart transition: uid=%s err=%v", stillRunning.UID, err)
+	}
+
+	// Second pass records Restarting and deletes via the state machine.
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("restart transition reconcile: %v", err)
+	}
+	assertAgent(kyberv1.AgentPhaseRestarting)
+
+	// Third pass observes the deletion and recreates immediately, without the
+	// Failed-phase 10/30/90-second throttle.
+	if _, err := r.Reconcile(context.Background(), req); err != nil {
+		t.Fatalf("recreate reconcile: %v", err)
+	}
+	assertAgent(kyberv1.AgentPhaseStarting)
+	replacement := &corev1.Pod{}
+	if err := k8sClient.Get(context.Background(), podKey, replacement); err != nil {
+		t.Fatalf("getting replacement pod: %v", err)
+	}
+	if got := extractSidecarSpecImage(replacement); got != newImage {
+		t.Fatalf("replacement sidecar image=%q, want %q", got, newImage)
 	}
 }
 

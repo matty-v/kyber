@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.5 — 2026-08-22
+
+### Fixed
+- Embedded Kyber PWAs now prompt to reconnect when the browser removes an
+  expired session cookie, instead of rendering a raw missing-Authorization
+  error on the current page.
+
 ## 0.28.4 — 2026-08-21
 
 ### Fixed

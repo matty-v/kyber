@@ -5,10 +5,11 @@ import (
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 func TestIsDiscordSidecarDrifted(t *testing.T) {
@@ -34,8 +35,8 @@ func TestConvergeDiscordSidecar_RollsIdlePod(t *testing.T) {
 	if err != nil || !rolled {
 		t.Fatalf("rolled=%v err=%v", rolled, err)
 	}
-	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err == nil {
-		t.Fatal("stale Discord pod was not deleted")
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err != nil {
+		t.Fatalf("pod should remain until Restarting is recorded: %v", err)
 	}
 }
 
@@ -81,8 +82,14 @@ func TestConvergeDiscordSidecar_EnvtestDeletesOnlyWhenIdle(t *testing.T) {
 	if err != nil || !rolled {
 		t.Fatalf("idle rolled=%v err=%v", rolled, err)
 	}
-	err = k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("idle stale pod still exists: %v", err)
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{}); err != nil {
+		t.Fatalf("pod should remain until Restarting is recorded: %v", err)
+	}
+	got := &kyberv1.Agent{}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(ag), got); err != nil {
+		t.Fatalf("fetching restart request: %v", err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("desiredPhase=%q, want Restarting", got.Spec.DesiredPhase)
 	}
 }

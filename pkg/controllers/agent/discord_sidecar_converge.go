@@ -49,8 +49,12 @@ func (r *AgentReconciler) convergeDiscordSidecar(ctx context.Context, agent *kyb
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
-	if err := r.Delete(ctx, pod); err != nil {
-		return false, fmt.Errorf("deleting Discord-drifted pod: %w", err)
+	requested, err := r.requestIntentionalRestart(ctx, agent)
+	if err != nil {
+		return false, fmt.Errorf("requesting restart for Discord-drifted pod: %w", err)
+	}
+	if !requested {
+		return false, nil
 	}
 	if r.Recorder != nil {
 		r.Recorder.Event(agent, corev1.EventTypeNormal, "DiscordConfigConverging", "Rolling idle agent pod to apply Discord configuration")

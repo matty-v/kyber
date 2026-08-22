@@ -59,20 +59,33 @@ describe('SessionExpiredDialog', () => {
     expect(screen.getByLabelText('API Key')).toBeInTheDocument()
   })
 
-  // A wrong API key is NOT a recoverable session — re-prompting for a
-  // session there would loop the operator through a dialog that cannot
-  // help. Only the dedicated code opens it.
-  it('ignores a generic 401', async () => {
+  it('opens on a generic 401 in embedded mode after the browser removes an expired cookie', async () => {
+    render(<SessionExpiredDialog />)
+    vi.stubGlobal(
+      'fetch',
+      mockFetchOnce(401, { error: { code: 'unauthorized', message: 'missing Authorization header' } }),
+    )
+
+    const api = createApiClient(cluster)
+    await expect(api.listAgents()).rejects.toThrow()
+
+    await waitFor(() => {
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+    })
+  })
+
+  // A wrong bearer key is NOT a recoverable browser session. Re-prompting
+  // there would loop a Holocron operator through a dialog that cannot help.
+  it('ignores a generic 401 for a bearer-authenticated client', async () => {
     render(<SessionExpiredDialog />)
     vi.stubGlobal(
       'fetch',
       mockFetchOnce(401, { error: { code: 'unauthorized', message: 'invalid API key' } }),
     )
 
-    const api = createApiClient(cluster)
+    const api = createApiClient({ ...cluster, apiKey: 'wrong-key' })
     await expect(api.listAgents()).rejects.toThrow()
 
-    // Give any async open a chance to land before asserting it did not.
     await new Promise((r) => setTimeout(r, 0))
     expect(screen.queryByRole('dialog')).toBeNull()
   })

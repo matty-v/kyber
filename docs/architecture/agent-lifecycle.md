@@ -394,8 +394,9 @@ silently.
   - **Shared cluster-wide delete budget.** At most
     `runtimeImageRollDefaultMaxConcurrent` (=1) agent-pod deletes in flight,
     measured by the **path-agnostic** `countAgentPodsBeingDeleted` — the *same*
-    counter the 5c sidecar auto-roll and 5d sidecar convergence use, so all three
-    causes share **one** budget and the fleet drains in bounded waves.
+    counter the sidecar auto-roll and status/Telegram/Discord convergence paths
+    use, so every automatic rollout cause shares **one** budget. Persisted
+    `desiredPhase=Restarting` reservations count before a pod begins terminating.
   - **Observed-evidence canary** (the [kyber#371](https://github.com/matty-v/kyber/issues/371)
     FSM, now the image-agnostic `imageCanaryTracker` instantiated as both
     `sidecarCanary` and `runtimeCanary`). The first eligible agent is the canary
@@ -412,12 +413,11 @@ silently.
   converge behavior, and the lone agent is always its own canary, so it rolls
   without waiting. Any knob (`RuntimeImageCanaryWindow`) is **additive** — unset =
   the documented default = current behavior; it is package-default-only (not
-  chart-wired), mirroring `SidecarImageCanaryWindow`. The asymmetry vs. the
-  sidecar path: `convergeSidecarImage` owns its `r.Delete` and arms the canary at
-  delete time, whereas this gate only *derives* the event and the state machine
-  deletes one transition later via `CaptureStateAndDeletePod` — the canary clock
-  is armed at gate-decision time anyway, since it measures pullability over
-  wall-clock, not the delete instant.
+  chart-wired), mirroring `SidecarImageCanaryWindow`. Runtime and sidecar paths
+  arm their canary at the gate decision, persist `desiredPhase=Restarting`, and
+  let the state machine delete through `CaptureStateAndDeletePod`. Persisting
+  intent first prevents a concurrent reconcile from classifying Kyber's own
+  rollout deletion as `PodDied`.
 - **Lifecycle mutations are caller-scope-gated at the API (kyber#474).** The
   `classifyEvent` allowlist above bounds the *effect* of a `desiredPhase`; the
   complementary *caller* gate lives at the `setAgentDesiredPhase` chokepoint:
