@@ -183,7 +183,9 @@ absent must provide an external relay into Kyber's signed inbound webhook.
 External senders POST signed envelopes to
 `/webhooks/inbound/<agent>/<binding>`. The pipeline, in fixed order:
 HMAC verify → dedup (body hash) → binding match + filters → per-binding rate
-limit → per-agent bounded queue (depth 5) → deliver into the agent pod's tmux.
+limit → per-agent bounded queue (depth 5) → hold until the Agent CR reports
+Running (bounded wait; a message must not be answered by a terminating pod's
+dying session mid-roll) → deliver into the agent pod's tmux.
 - Pure primitives (no HTTP/k8s/subprocess): `pkg/inbound/` (`verifier.go`,
   `dedup.go`, `dispatcher.go`, `queue.go`, `ratelimit.go`, `envelopecache.go`).
 - HTTP wiring + outcome recording on `Agent.status.inboundRuns[]`:
@@ -239,6 +241,15 @@ non-secret metadata through the status sidecar. `GET
 For an empty `spec.model`, the first transcript-backed token snapshot records
 the concrete harness choice in `status.currentModel`; do not copy that value
 into spec, because doing so would turn a dynamic default into a persistent pin.
+
+Model ids are validated at write time (fleet-defaults PUT, set-model, create)
+against the catalogs the cluster can see; `force: true` bypasses when a model
+is newer than the last detection poll. The boot-time pre-flight probe reports
+its RAW exit+output and `pkg/modelprobe` classifies it server-side — never
+re-add classification heuristics to `start-claude.sh`, and never let an
+inconclusive probe collapse to silence: it must surface as the
+`ModelUnsupported` condition status `Unknown` (an invalid fleet-default model
+once failed every agent turn while the platform showed green).
 
 Control plane = ONE binary (`cmd/control-plane/main.go`) — a modular monolith:
 REST API (`pkg/api`), both controllers, inbound, telemetry, background workers.
