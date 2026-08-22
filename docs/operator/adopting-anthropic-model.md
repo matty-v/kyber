@@ -1,31 +1,41 @@
 # Adopting a new Claude model
 
 This how-to walks through the workflow an operator follows after Anthropic
-ships a new Claude model: tell Kyber about it, set its context-window so
-the budget card and `[1m]` opt-in are accurate, and apply it to one agent
-or the whole fleet — all without rebuilding any Kyber image. PR-D of
-kyber#374 (PR #378 onwards) makes the picker data-driven and the
-context-window operator-editable.
+ships a new Claude model: get it into the per-agent model picker, set its
+context-window so the budget card and `[1m]` opt-in are accurate, and apply
+it to one agent or the whole fleet — all without rebuilding any Kyber image.
 
-> **Prerequisite:** the detection poller (PR-A, kyber#375) must be
-> reachable. That means the `kyber-anthropic-key` Secret holds a valid
-> Anthropic API key — see `docs/runtime-detection.md` § "Setup".
+There are two model levers, and they source differently:
 
-## I want to add a new model to the picker
+- **Per-agent** — the agent detail page's **Set Model** dropdown, sourced
+  from the **agent's own authenticated model catalog**
+  (`GET /api/v1/agents/{name}/models`), which the running runtime reports.
+  It reflects what that agent's subscription actually offers.
+- **Fleet-wide** — **Settings → Fleet defaults**, the model new agents (and
+  any agent with no explicit `spec.model`) inherit. Agent creation has no
+  model picker: a new agent starts on the fleet default.
 
-Most of the time you don't have to do anything. The control-plane poller
-queries the [Anthropic Models API](https://docs.anthropic.com/en/api/models)
-every `runtimeDetect.cadenceSeconds` (default 1 hour) and the new model
-shows up in the PWA's Create-Agent picker on the next refresh. To force
-a refresh sooner, restart the control-plane pod.
+The detection poller (`runtimeDetect`, fed by the `kyber-anthropic-key`
+Secret / `PUT /api/v1/settings/anthropic-key`) still matters, but for
+**context windows and harness-version pickers** (`GET /api/v1/available`),
+not for the per-agent model dropdown — see
+`docs/architecture/model-onboarding.md`.
 
-If detection is unavailable (no API key configured, air-gapped install,
-upstream outage), or the model hasn't been added to the Anthropic API yet
-but you already know its ID, use the **Manual model override** input on
-the picker — type the model ID directly. Kyber's API accepts any string;
-the model becomes the agent's `spec.model` and boot will fail visibly if
-the installed Claude Code version doesn't recognize it (PR-E's
-`ModelUnsupported` badge surfaces this).
+## I want a new model in the picker
+
+Most of the time you don't have to do anything. The Set Model dropdown is
+populated from the catalog the agent's authenticated runtime reports, so a
+model becomes selectable once the provider offers it to that account and
+the agent's runtime has reported its catalog. A freshly created or
+restarted agent reports shortly after boot; until the first report the
+models endpoint returns `409` and the dialog says no authenticated catalog
+is available yet.
+
+There is no manual free-text override input in the picker any more. If you
+know a model ID the catalog doesn't list yet, set it via the API
+(`POST /api/v1/agents/<name>/set-model` accepts any string) or as the
+fleet default. Boot fails visibly if the installed Claude Code version
+doesn't recognize the model (the `ModelUnsupported` badge surfaces this).
 
 ## I want to set a model's context-window
 
@@ -96,8 +106,10 @@ To persist the change across `helm upgrade`, mirror the new entry into
 ## I want to apply a model to one agent
 
 Open the agent's detail page in the PWA → **More** → **Set Model**. The
-dropdown is sourced from `/api/v1/available` (live detection + override
-map). Pick the new model and click **Apply**.
+dropdown is sourced from the agent's authenticated catalog
+(`GET /api/v1/agents/<name>/models` — **not** `/api/v1/available`), so it
+lists what this agent's subscription offers; it returns `409` until the
+runtime has reported. Pick the new model and click **Apply**.
 
 What happens server-side:
 
@@ -112,7 +124,8 @@ What happens server-side:
 
 If you also want to bump the Claude Code version on that one agent, use
 **More** → **Set Claude Code Version** in the same dialog flow — the
-version picker is sourced from the same `/available` data. See
+version picker, unlike the model dropdown, is sourced from `/available`
+(detection). See
 `docs/operator/adopting-cc-version.md` for the per-agent CC version
 workflow.
 
@@ -146,8 +159,9 @@ explicitly before bumping the default.
 
 | Condition | What you see |
 |---|---|
-| Anthropic API key not entered | Picker still works (uses /config knownModels fallback); new models won't appear until the key is set. |
-| Detection upstream down | `/available` serves last-good cache; picker is stale, not broken. |
-| Model not in override map | Picker shows "context unknown" indicator; budget card under-reports; `[1m]` not applied. Fix by editing the ConfigMap. |
-| Manual-entry model not recognized by installed CC | Boot fails; PR-E badge `ModelUnsupported` lights up; apply a newer CC version (see `adopting-cc-version.md`). |
+| Agent runtime hasn't reported a catalog yet | Set Model dialog says no authenticated catalog is available (the models endpoint returns `409`). Wait for the agent to boot and report, then reopen the dialog. |
+| Anthropic API key not entered | The Set Model dropdown is unaffected (it reads the agent's catalog). Context-window *detection* is off, so windows for models the catalog doesn't cover fall back to the override map. |
+| Detection upstream down | `/available` serves last-good cache; version pickers and detected windows are stale, not broken. The per-agent model catalog is unaffected. |
+| Model window in neither catalog, override map, nor detection | "context unknown" indicator; budget card under-reports; `[1m]` not applied. Fix by editing the ConfigMap. |
+| API-set model not recognized by installed CC | Boot fails; the `ModelUnsupported` badge lights up; apply a newer CC version (see `adopting-cc-version.md`). |
 | `helm upgrade` reverts ConfigMap | Mirror operator edits to `runtimeDetect.contextWindows` in kyber-deploy values.yaml to survive upgrades. |
