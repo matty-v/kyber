@@ -415,9 +415,11 @@ silently.
   the documented default = current behavior; it is package-default-only (not
   chart-wired), mirroring `SidecarImageCanaryWindow`. Runtime and sidecar paths
   arm their canary at the gate decision, persist `desiredPhase=Restarting`, and
-  let the state machine delete through `CaptureStateAndDeletePod`. Persisting
-  intent first prevents a concurrent reconcile from classifying Kyber's own
-  rollout deletion as `PodDied`.
+  let the state machine delete through `CaptureStateAndDeletePod`. Only Running
+  Agents may reserve this restart, and a canary is armed only after the request
+  succeeds. Persisting intent first prevents a concurrent reconcile from
+  classifying Kyber's own rollout deletion as `PodDied` without leaving sticky
+  restart intent or phantom canaries in parked phases.
 - **Lifecycle mutations are caller-scope-gated at the API (kyber#474).** The
   `classifyEvent` allowlist above bounds the *effect* of a `desiredPhase`; the
   complementary *caller* gate lives at the `setAgentDesiredPhase` chokepoint:

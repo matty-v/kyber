@@ -252,8 +252,10 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
   transition to `Failed`, increment `restartCount`, and impose crash backoff on
   a healthy agent. This occurred during status-sidecar and Telegram convergence
   on kyber-datawire.
-- **The invariant:** persist `spec.desiredPhase=Restarting` with optimistic
-  locking and return. The next reconcile uses the normal `DesiredRestarting`
-  transition, records `Restarting`, and owns deletion. Count persisted restart
-  requests as rollout reservations. Never add an out-of-band `r.Delete` to a
-  convergence helper.
+- **The invariant:** only a currently `Running` Agent may persist
+  `spec.desiredPhase=Restarting`; use optimistic locking and return. The next
+  reconcile uses the normal `DesiredRestarting` transition, records
+  `Restarting`, and owns deletion. Count persisted restart requests as rollout
+  reservations. Arm a convergence canary only after that persistence succeeds,
+  or conflicting operator intent creates a phantom canary that can never be
+  verified. Never add an out-of-band `r.Delete` to a convergence helper.

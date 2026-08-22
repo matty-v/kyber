@@ -437,6 +437,24 @@ func TestConvergeTelegramSidecar_VerifiedImage_ConvergesFleet(t *testing.T) {
 	}
 }
 
+func TestConvergeTelegramSidecar_ConflictingOperatorIntentDoesNotArmCanary(t *testing.T) {
+	pod := telegramPod("agent-dave", tgStale)
+	agent := telegramIdleAgent()
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	r := newTelegramConvergeReconciler(t, tgCurrent, agent, pod)
+
+	rolled, err := r.convergeTelegramSidecar(context.Background(), agent, pod, telegramWired)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rolled {
+		t.Fatal("automatic convergence must yield to operator intent")
+	}
+	if _, inFlight := r.telegramCanary.canaryInFlight(tgCurrent); inFlight {
+		t.Fatal("declined restart must not arm a phantom Telegram canary")
+	}
+}
+
 // TestConvergeTelegramSidecar_TerminatingPod_NoOp — never stack a delete on a
 // pod already going away.
 func TestConvergeTelegramSidecar_TerminatingPod_NoOp(t *testing.T) {

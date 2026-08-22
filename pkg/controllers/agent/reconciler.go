@@ -3330,6 +3330,12 @@ func (r *AgentReconciler) requestIntentionalRestart(ctx context.Context, agent *
 	if err := r.Get(ctx, client.ObjectKeyFromObject(agent), current); err != nil {
 		return false, fmt.Errorf("fetching current agent: %w", err)
 	}
+	// Restarting is consumed only from Running. Persisting it from a parked or
+	// failed phase would leave a sticky request that also reserves the shared
+	// rollout budget forever.
+	if current.Status.Phase != kyberv1.AgentPhaseRunning {
+		return false, nil
+	}
 	// Never overwrite newer operator intent. Running is the steady desired
 	// value for active agents; empty is also valid for legacy/internal paths.
 	if current.Spec.DesiredPhase != "" && current.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
@@ -3792,8 +3798,12 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
-	// Pullability gate (kyber#371 Defect A): observed-evidence canary.
+	// Pullability gate (kyber#371 Defect A): observed-evidence canary. Decide
+	// whether this request is the canary here, but arm it only after restart
+	// intent is successfully persisted. A conflicting operator intent must not
+	// create a phantom canary for a rollout that never happens.
 	target := r.StatusSidecarImage
+	armCanary := false
 	switch {
 	case r.sidecarImageFailedCanary(target):
 		r.recordSidecarImageRollHeld(agent, pod.Name, target,
@@ -3815,7 +3825,7 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 			return false, nil
 		default:
 			// No canary attempt yet for this image — THIS pod is the canary.
-			r.markSidecarCanaryStarted(target)
+			armCanary = true
 		}
 	}
 	specImage := extractSidecarSpecImage(pod)
@@ -3825,6 +3835,9 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 	}
 	if !requested {
 		return false, nil
+	}
+	if armCanary {
+		r.markSidecarCanaryStarted(target)
 	}
 	if r.Recorder != nil {
 		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "SidecarImageConverge",

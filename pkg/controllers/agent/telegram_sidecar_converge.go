@@ -143,6 +143,9 @@ func (r *AgentReconciler) convergeTelegramSidecar(
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
+	// As with status-sidecar convergence, do not arm a canary until the
+	// restart reservation succeeds; newer operator intent can decline it.
+	armCanary := false
 	switch {
 	case r.telegramCanary.failedCanary(target):
 		r.recordTelegramSidecarRollHeld(agent, pod.Name, target,
@@ -163,7 +166,7 @@ func (r *AgentReconciler) convergeTelegramSidecar(
 			return false, nil
 		default:
 			// No canary attempt yet for this image — THIS pod is the canary.
-			r.telegramCanary.markCanaryStarted(target)
+			armCanary = true
 		}
 	}
 	had := extractContainerSpecImage(pod, TelegramSidecarContainerName)
@@ -176,6 +179,9 @@ func (r *AgentReconciler) convergeTelegramSidecar(
 	}
 	if !requested {
 		return false, nil
+	}
+	if armCanary {
+		r.telegramCanary.markCanaryStarted(target)
 	}
 	if r.Recorder != nil {
 		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "TelegramSidecarConverge",

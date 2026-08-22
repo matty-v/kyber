@@ -4322,6 +4322,38 @@ func TestCountAgentPodsBeingDeleted(t *testing.T) {
 	}
 }
 
+func TestRequestIntentionalRestart_NonRunningDoesNotReserveRollout(t *testing.T) {
+	agent := idleAgent("alice", "kyber")
+	agent.Status.Phase = kyberv1.AgentPhaseMemoryExhausted
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	r := &AgentReconciler{Client: fake.NewClientBuilder().
+		WithScheme(schedulingTestScheme(t)).
+		WithObjects(agent).
+		Build()}
+
+	requested, err := r.requestIntentionalRestart(context.Background(), agent)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if requested {
+		t.Fatal("a non-Running agent must not reserve an automatic restart")
+	}
+	got := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(agent), got); err != nil {
+		t.Fatalf("fetching agent: %v", err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		t.Fatalf("desiredPhase=%q, want operator intent Running unchanged", got.Spec.DesiredPhase)
+	}
+	inflight, err := r.countAgentPodsBeingDeleted(context.Background(), agent.Namespace)
+	if err != nil {
+		t.Fatalf("counting rollouts: %v", err)
+	}
+	if inflight != 0 {
+		t.Fatalf("inflight=%d, want 0; declined restart must not consume rollout budget", inflight)
+	}
+}
+
 // ---- kyber#358 tag-level sidecar convergence ----
 
 // podWithSidecarSpecImage returns a fake agent pod whose status-sidecar
@@ -4778,6 +4810,25 @@ func TestSidecarCanary_FirstAttempt_BootstrapsCanary(t *testing.T) {
 	}
 	if _, inFlight := r.sidecarCanaryInFlight(target); !inFlight {
 		t.Error("canary must be armed after the first delete")
+	}
+}
+
+func TestSidecarCanary_ConflictingOperatorIntentDoesNotArm(t *testing.T) {
+	const target = "ghcr.io/matty-v/kyber-status-sidecar:v1.3.5"
+	pod := podWithSidecarSpecImage("agent-alice", "ghcr.io/matty-v/kyber-status-sidecar:v1.0.0")
+	agent := idleAgent("alice", "kyber")
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	r := newConvergeReconciler(t, target, agent, pod)
+
+	rolled, err := r.convergeSidecarImage(context.Background(), agent, pod)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rolled {
+		t.Fatal("automatic convergence must yield to operator intent")
+	}
+	if _, inFlight := r.sidecarCanaryInFlight(target); inFlight {
+		t.Fatal("declined restart must not arm a phantom canary")
 	}
 }
 
