@@ -54,9 +54,6 @@ func TestBuildBrief_FirstBoot(t *testing.T) {
 	if len(brief.RecentExchanges) != 0 {
 		t.Errorf("RecentExchanges: got %d entries, want 0 on first boot", len(brief.RecentExchanges))
 	}
-	if len(brief.PendingMessages) != 0 {
-		t.Errorf("PendingMessages: got %d entries, want 0 on first boot", len(brief.PendingMessages))
-	}
 	wantTimestamp := "2026-04-10T23:00:00Z"
 	if brief.Timestamp != wantTimestamp {
 		t.Errorf("Timestamp: got %q, want %q", brief.Timestamp, wantTimestamp)
@@ -135,45 +132,6 @@ func TestBuildBrief_UnplannedCrash(t *testing.T) {
 	}
 	if len(brief.RecentExchanges) != 0 {
 		t.Errorf("RecentExchanges: got %d, want 0 (crash — no state capture)", len(brief.RecentExchanges))
-	}
-}
-
-// TestBuildBrief_WakeFromSuspended verifies the brief for a wake event with pending messages.
-func TestBuildBrief_WakeFromSuspended(t *testing.T) {
-	agent := makeAgentForBriefTest("dave", "claude-sonnet-4", 0, nil)
-	fixedTime := time.Date(2026, 4, 10, 23, 0, 0, 0, time.UTC)
-
-	input := BriefInput{
-		Now:           fixedTime,
-		ShutdownType:  "wake",
-		RestartReason: "wake",
-		PreviousModel: "claude-sonnet-4",
-		PendingMessages: []briefstore.PendingMessage{
-			{
-				Source:    "telegram",
-				From:      "1000000001",
-				Text:      "Hey dave, quick question",
-				Timestamp: "2026-04-10T23:25:00Z",
-			},
-		},
-	}
-
-	brief := BuildBrief(agent, input)
-
-	if brief.ShutdownType != "wake" {
-		t.Errorf("ShutdownType: got %q, want %q", brief.ShutdownType, "wake")
-	}
-	if brief.RestartReason != "wake" {
-		t.Errorf("RestartReason: got %q, want %q", brief.RestartReason, "wake")
-	}
-	if len(brief.PendingMessages) != 1 {
-		t.Fatalf("PendingMessages: got %d, want 1", len(brief.PendingMessages))
-	}
-	if brief.PendingMessages[0].Source != "telegram" {
-		t.Errorf("PendingMessages[0].Source: got %q, want %q", brief.PendingMessages[0].Source, "telegram")
-	}
-	if brief.PendingMessages[0].Text != "Hey dave, quick question" {
-		t.Errorf("PendingMessages[0].Text: got %q", brief.PendingMessages[0].Text)
 	}
 }
 
@@ -265,19 +223,6 @@ func TestBriefInputForEvent_Crash(t *testing.T) {
 	}
 	if input.RestartReason != "crash" {
 		t.Errorf("RestartReason: got %q, want %q", input.RestartReason, "crash")
-	}
-}
-
-// TestBriefInputForEvent_Wake verifies briefInputForEvent for EventWakeReceived.
-func TestBriefInputForEvent_Wake(t *testing.T) {
-	agent := makeAgentForBriefTest("dave", "claude-sonnet-4", 0, nil)
-	input := briefInputForEvent(agent, EventWakeReceived)
-
-	if input.ShutdownType != "wake" {
-		t.Errorf("ShutdownType: got %q, want %q", input.ShutdownType, "wake")
-	}
-	if input.RestartReason != "wake" {
-		t.Errorf("RestartReason: got %q, want %q", input.RestartReason, "wake")
 	}
 }
 

@@ -10,7 +10,7 @@ back. Kyber supports two:
 | Channel | Direction | What it needs |
 | --- | --- | --- |
 | **Telegram** | two-way | a bot token and numeric user allowlist |
-| **Discord** | two-way | a bot, an allowlist, and a warm pod — see [agents-discord-two-way.md](agents-discord-two-way.md) |
+| **Discord** | two-way | a bot, an allowlist, and a running pod — see [agents-discord-two-way.md](agents-discord-two-way.md) |
 
 The older **outbound-only Discord webhook** (`spec.secrets.discordEnabled`) is
 a separate, one-way thing and is deliberately *not* part of this surface — it

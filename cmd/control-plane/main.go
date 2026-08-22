@@ -45,7 +45,6 @@ import (
 	"github.com/matty-v/kyber/pkg/gceemulator"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
@@ -217,11 +216,10 @@ func main() {
 		briefStore = briefstore.NewMemoryStore()
 	}
 
-	// MessageBuffer + TokenStore + MetricsStore + NodeStore + StateChangeAccumulator:
+	// TokenStore + MetricsStore + NodeStore + StateChangeAccumulator:
 	// all share a Redis client when KYBER_REDIS_URL is set.
 	// Fall back to in-memory implementations otherwise.
 	var (
-		msgBuffer        messagebuffer.MessageBuffer
 		tokenStore       tokenstore.TokenStore
 		tokenAccumulator tokenstore.Accumulator
 		metricsStore     metricsstore.MetricsStore
@@ -250,23 +248,21 @@ func main() {
 	}
 	redisStoreEnabled := os.Getenv("KYBER_METRICS_REDIS_STORE_ENABLED") != "false"
 	if redisClient != nil {
-		msgBuffer = messagebuffer.NewRedisBuffer(redisClient)
 		tokenStore = tokenstore.NewRedisStore(redisClient)
 		tokenAccumulator = tokenstore.NewRedisAccumulator(redisClient)
 		if redisStoreEnabled {
 			metricsStore = metricsstore.NewRedisMetricsStore(redisClient)
 			nodeStore = metricsstore.NewRedisNodeStore(redisClient)
 			stateChangeAccum = statechangestore.NewRedisAccumulator(redisClient)
-			setupLog.Info("MessageBuffer + TokenStore + MetricsStore: using Redis")
+			setupLog.Info("TokenStore + MetricsStore: using Redis")
 		} else {
-			setupLog.Info("MessageBuffer + TokenStore: using Redis; MetricsStore disabled by KYBER_METRICS_REDIS_STORE_ENABLED=false")
+			setupLog.Info("TokenStore: using Redis; MetricsStore disabled by KYBER_METRICS_REDIS_STORE_ENABLED=false")
 			metricsStore = metricsstore.NewMemoryMetricsStore()
 			nodeStore = metricsstore.NewMemoryNodeStore()
 			stateChangeAccum = statechangestore.NewMemoryAccumulator()
 		}
 	} else {
 		setupLog.Info("WARN: metrics: Redis not configured; using in-memory metrics store. Data evaporates on restart and is not shared across replicas.")
-		msgBuffer = messagebuffer.NewMemoryBuffer()
 		tokenStore = tokenstore.NewMemoryStore()
 		tokenAccumulator = tokenstore.NewMemoryAccumulator()
 		metricsStore = metricsstore.NewMemoryMetricsStore()
@@ -531,7 +527,6 @@ func main() {
 		Recorder:                      mgr.GetEventRecorderFor("agent-controller"),
 		AdapterRegistry:               adapterRegistry,
 		BriefStore:                    briefStore,
-		MessageBuffer:                 msgBuffer,
 		AlertSink:                     alertSink,
 		AgentStorageClass:             agentStorageClass,
 		TranscriptOffsetsStorageClass: transcriptOffsetsStorageClass,
@@ -1209,14 +1204,12 @@ func main() {
 
 	publicAPI = &internalapi.Server{
 		K8sClient:                mgr.GetClient(),
-		MessageBuffer:            msgBuffer,
 		TokenStore:               tokenStore,
 		TokenAccumulator:         tokenAccumulator,
 		APIKey:                   os.Getenv("KYBER_API_KEY"),
 		APIKeySecretName:         os.Getenv("KYBER_API_KEY_SECRET_NAME"),
 		Callers:                  scopedCallers,
 		AuthzEnforce:             authzEnforce,
-		WebhookSecret:            os.Getenv("KYBER_WEBHOOK_SECRET"),
 		PublicURL:                os.Getenv("KYBER_PUBLIC_URL"),
 		AnthropicTokenURL:        os.Getenv("ANTHROPIC_TOKEN_URL"),
 		Addr:                     internalapi.DefaultPublicPort,
@@ -1294,12 +1287,6 @@ func main() {
 	if publicAPI.APIKey == "" {
 		setupLog.Info("warning: KYBER_API_KEY not set — public API will reject all requests")
 	}
-	if publicAPI.WebhookSecret == "" {
-		// kyber#564: the Telegram webhook routes fail closed when no secret is
-		// configured. Loud, non-fatal — the rest of the control plane still serves.
-		setupLog.Info("warning: KYBER_WEBHOOK_SECRET not set — Telegram webhook routes will REJECT all traffic until it is set (fail-closed, kyber#564)")
-	}
-
 	// Inbound event aggregator (kyber#208 audit slice): batches high-
 	// volume Events (rate-limited, queue-full) so a flood produces 1
 	// Event per minute, not N. Wired AFTER publicAPI is constructed so it
@@ -1347,8 +1334,6 @@ func main() {
 		setupLog.Error(err, "unable to set up ready check")
 		os.Exit(1)
 	}
-
-	// TODO(A6): Start background workers (idle timeout, wake processing)
 
 	if err := mgr.Start(ctx); err != nil {
 		setupLog.Error(err, "problem running manager")

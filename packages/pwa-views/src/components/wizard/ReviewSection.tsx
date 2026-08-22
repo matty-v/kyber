@@ -44,7 +44,6 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
     { label: 'Runtime', value: state.runtime, editStep: 2 },
     { label: 'Model', value: 'Fleet default' },
     { label: 'Harness version', value: 'Fleet default' },
-    { label: 'Scaling', value: state.scaling },
     { label: 'Resources', value: `${state.cpu} CPU / ${state.memory} / ${state.disk}` },
     { label: 'Identity', value: fmtIdentity(state), editStep: 3 },
     { label: 'Auth', value: state.authType === 'oauth' ? 'OAuth' : 'API key', editStep: 4 },

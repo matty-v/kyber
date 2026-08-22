@@ -18,9 +18,6 @@ describe('agentActionConfirmMessage', () => {
     expect(agentActionConfirmMessage('stop', 'han')).toBe(
       'This will stop agent "han".'
     )
-    expect(agentActionConfirmMessage('suspend', 'han')).toBe(
-      'This will suspend agent "han".'
-    )
   })
 
   it('returns an expanded message for restart (pod-level) to disambiguate from restart-session', () => {

@@ -18,7 +18,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // buildLogsHandler creates a test handler backed by a fake controller-runtime client.
@@ -29,7 +28,6 @@ func buildLogsHandler(t *testing.T, objs []runtime.Object) http.Handler {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		// Clientset intentionally nil — tests 503 and parse paths only
@@ -46,7 +44,6 @@ func buildLogsHandlerWithClientset(t *testing.T, crObjs []runtime.Object, k8sObj
 	fakeClientset := k8sfake.NewSimpleClientset(k8sObjs...)
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Clientset:     fakeClientset,
@@ -77,7 +74,6 @@ func sampleAgentWithPod(name, podName string) *kyberv1.Agent {
 			Machine: "worker-1",
 			Runtime: "claude-code",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("1"),
 				Memory: resource.MustParse("2Gi"),
@@ -240,7 +236,6 @@ func TestAgentLogs_PodNotFound(t *testing.T) {
 
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Clientset:     realClientset,
@@ -356,7 +351,6 @@ func TestAgentLogs_DefaultContainerIsAgent(t *testing.T) {
 	cs := buildClientsetWithServer(t, mockAPIServer.URL)
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Clientset:     cs,
@@ -397,7 +391,6 @@ func TestAgentLogs_ExplicitContainerForwarded(t *testing.T) {
 			cs := buildClientsetWithServer(t, mockAPIServer.URL)
 			s := &api.Server{
 				K8sClient:     fakeClient,
-				MessageBuffer: messagebuffer.NewMemoryBuffer(),
 				APIKey:        testAPIKey,
 				Namespace:     "kyber-system",
 				Clientset:     cs,
@@ -438,7 +431,6 @@ func TestAgentLogs_InvalidContainerReturns400(t *testing.T) {
 	cs := buildClientsetWithServer(t, mockAPIServer.URL)
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Clientset:     cs,

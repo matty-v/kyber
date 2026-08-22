@@ -208,7 +208,6 @@ func TestE2E_AgentLifecycle(t *testing.T) {
 			"machine": machineName,
 			"runtime": "claude-code",
 			"model":   "claude-sonnet-4",
-			"scaling": "warm",
 			"resources": map[string]interface{}{
 				"cpu":    "100m",
 				"memory": "128Mi",
@@ -312,118 +311,6 @@ func TestE2E_AgentLifecycle(t *testing.T) {
 	})
 }
 
-// TestE2E_ScaleToZeroWake validates Phase 5: the Telegram webhook wakes a suspended agent.
-// This tests the API surface only — actual pod lifecycle requires a running agent pod.
-func TestE2E_ScaleToZeroWake(t *testing.T) {
-	c := newAPIClient(t)
-	ctx := context.Background()
-
-	const (
-		// Use a distinct machine name to avoid racing TestE2E_AgentLifecycle's t.Cleanup delete.
-		// Both tests previously shared "k3d-kyber-e2e-server-0"; Lifecycle's async delete would
-		// complete between ScaleToZeroWake's setup_machine (409) and create_scale_to_zero_agent,
-		// causing the agent-create machine-validation to 400.
-		machineName = "k3d-kyber-e2e-wake-server-0"
-		agentName   = "e2e-wake-agent"
-	)
-
-	// Pre-create the Machine CR so the agent-create validation passes.
-	// The Machine will fail to provision in k3d (no GCE credentials), but the CR
-	// existing is all that's required for POST /api/v1/agents to succeed.
-	t.Run("setup_machine", func(t *testing.T) {
-		body := map[string]interface{}{
-			"name":        machineName,
-			"provider":    "gce",
-			"machineType": "e2-small",
-			"diskSizeGb":  10,
-			"spot":        false,
-			"zone":        "us-central1-a",
-		}
-		code, respBody, err := c.PostRaw("/api/v1/machines", body)
-		requireNoErr(t, err)
-		// 201 = created; 409 = already exists from a previous run.
-		if code != http.StatusCreated && code != http.StatusConflict {
-			t.Fatalf("setup machine: expected 201 or 409, got %d (body: %s)", code, respBody)
-		}
-	})
-	t.Cleanup(func() { _, _ = c.Delete("/api/v1/machines/" + machineName) })
-
-	t.Run("create_scale_to_zero_agent", func(t *testing.T) {
-		body := map[string]interface{}{
-			"name":    agentName,
-			"machine": machineName,
-			"runtime": "claude-code",
-			"model":   "claude-sonnet-4",
-			"scaling": "scale-to-zero",
-			"resources": map[string]interface{}{
-				"cpu":    "100m",
-				"memory": "128Mi",
-				"disk":   "10Gi",
-			},
-		}
-		code, respBody, err := c.PostRaw("/api/v1/agents", body)
-		requireNoErr(t, err)
-		if code != http.StatusCreated {
-			t.Fatalf("POST /api/v1/agents: expected 201, got %d (body: %s)", code, respBody)
-		}
-	})
-
-	t.Run("suspend_agent", func(t *testing.T) {
-		code, body, err := c.PostRaw("/api/v1/agents/"+agentName+"/suspend", nil)
-		requireNoErr(t, err)
-		if code != http.StatusOK {
-			t.Fatalf("POST .../suspend: expected 200, got %d (body: %s)", code, body)
-		}
-	})
-
-	t.Run("telegram_webhook_wakes_agent", func(t *testing.T) {
-		// Send a mock Telegram update to the webhook endpoint.
-		telegramUpdate := map[string]interface{}{
-			"update_id": 123456,
-			"message": map[string]interface{}{
-				"message_id": 1,
-				"from": map[string]interface{}{
-					"id":       42,
-					"username": "testuser",
-				},
-				"chat": map[string]interface{}{"id": 42},
-				"text": "hello e2e test",
-			},
-		}
-
-		code, respBody, err := c.PostWebhook(
-			"/webhooks/telegram/"+agentName,
-			telegramUpdate,
-			defaultWebhookSecret,
-		)
-		requireNoErr(t, err)
-		// Kyber always returns 200 to Telegram (even on agent-not-found) to avoid retry storms.
-		if code != http.StatusOK {
-			t.Errorf("POST /webhooks/telegram/%s: expected 200, got %d (body: %s)", agentName, code, respBody)
-		}
-
-		// After the webhook, desiredPhase should have been patched to Running.
-		// Wait briefly and check.
-		waitCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
-		defer cancel()
-		err = WaitForCondition(waitCtx, 15*time.Second, "agent desiredPhase patched to Running", func() (bool, error) {
-			// We can infer the patch landed if the agent is no longer in Suspended phase.
-			// (The reconciler may not have had time to process it yet, so we check desiredPhase
-			// via a raw GET and look at the spec, but the API response only returns status.phase.)
-			// For now: the webhook returned 200 — that's sufficient for D3.
-			return true, nil
-		})
-		if err != nil {
-			t.Errorf("wake condition not met: %v", err)
-		}
-	})
-
-	t.Cleanup(func() {
-		// Best-effort cleanup.
-		_, _ = c.Delete("/api/v1/agents/" + agentName)
-	})
-}
-
 // TestE2E_ErrorHandling validates Phase 7: error cases produce correct HTTP status codes.
 func TestE2E_ErrorHandling(t *testing.T) {
 	c := newAPIClient(t)
@@ -455,7 +342,6 @@ func TestE2E_ErrorHandling(t *testing.T) {
 			"machine": machineName,
 			"runtime": "claude-code",
 			"model":   "claude-sonnet-4",
-			"scaling": "warm",
 			"resources": map[string]interface{}{
 				"cpu":    "100m",
 				"memory": "128Mi",
@@ -509,19 +395,6 @@ func TestE2E_ErrorHandling(t *testing.T) {
 			"name":    "e2e-no-machine",
 			"runtime": "claude-code",
 			"model":   "claude-sonnet-4",
-		}
-		code, respBody, err := c.PostRaw("/api/v1/agents", body)
-		requireNoErr(t, err)
-		requireStatus(t, http.StatusBadRequest, code, respBody)
-	})
-
-	t.Run("create_agent_invalid_scaling", func(t *testing.T) {
-		body := map[string]interface{}{
-			"name":    "e2e-bad-scaling",
-			"machine": "some-machine",
-			"runtime": "claude-code",
-			"model":   "claude-sonnet-4",
-			"scaling": "turbo-mode",
 		}
 		code, respBody, err := c.PostRaw("/api/v1/agents", body)
 		requireNoErr(t, err)

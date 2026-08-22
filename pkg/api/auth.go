@@ -25,8 +25,8 @@ const (
 	// ScopeLifecycleWrite permits the fail-safe lifecycle verbs
 	// (start/stop/restart) and the OAuth re-auth resume to Running.
 	ScopeLifecycleWrite Scope = "lifecycle:write"
-	// ScopeLifecycleAdmin permits the impactful, less-fail-safe verbs
-	// (suspend, force-needs-auth). It is strictly higher than
+	// ScopeLifecycleAdmin permits the impactful, less-fail-safe verb
+	// (force-needs-auth). It is strictly higher than
 	// ScopeLifecycleWrite (admin ⊃ write), so an admin caller also satisfies a
 	// write requirement — this nesting is what guarantees the impactful verbs are
 	// never less-protected than fail-safe Stop (the #474 privilege-ordering AC).

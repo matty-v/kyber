@@ -17,7 +17,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // buildUserSecretsHandler returns an API handler backed by a fake client with
@@ -69,7 +68,6 @@ func buildUserSecretsHandlerWithPhase(t *testing.T, agentName string, phase kybe
 		Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},

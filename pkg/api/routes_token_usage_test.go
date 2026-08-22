@@ -13,7 +13,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -33,7 +32,6 @@ func buildHandlerWithTokenStoreAndResolver(t *testing.T, ts tokenstore.TokenStor
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -77,7 +75,6 @@ func buildHandlerWithSnapshot(t *testing.T, ts tokenstore.TokenStore, windows ma
 	}
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -304,7 +301,6 @@ func buildHandlerWithTokenStore(t *testing.T, ts tokenstore.TokenStore, objs ...
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},

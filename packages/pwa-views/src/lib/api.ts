@@ -262,11 +262,8 @@ export function createApiClient(cluster: Cluster) {
         `/api/v1/agents/${encodeURIComponent(name)}/compact-session`,
       ),
 
-    suspendAgent: (name: string): Promise<void> =>
-      request<void>('POST', `/api/v1/agents/${name}/suspend`),
-
     // forceNeedsAuthAgent drops a wedged agent to NeedsAuth (deleting any live
-    // pod) so it can be re-authorized from scratch (#395). Mirrors suspendAgent.
+    // pod) so it can be re-authorized from scratch (#395).
     forceNeedsAuthAgent: (name: string): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${name}/force-needs-auth`),
 

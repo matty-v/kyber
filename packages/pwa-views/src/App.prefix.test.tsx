@@ -49,7 +49,6 @@ vi.mock('./hooks/useAPI', () => {
     useStopAgent: () => mutation,
     useRestartAgent: () => mutation,
     useRestartAgentSession: () => mutation,
-    useSuspendAgent: () => mutation,
     useSetAgentModel: () => mutation,
     useSetAgentRuntimeVersion: () => mutation,
     useSetAgentResources: () => mutation,

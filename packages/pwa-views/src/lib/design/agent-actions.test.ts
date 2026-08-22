@@ -22,21 +22,16 @@ describe('lifecycleItemsInMore', () => {
     expect(lifecycleItemsInMore('')).toEqual([])
   })
 
-  it('Running: Stop + Restart pod + Suspend + Require re-auth (no Start)', () => {
+  it('Running: Stop + Restart pod + Require re-auth (no Start)', () => {
     expect(lifecycleItemsInMore('Running')).toEqual([
       'stop',
       'restart',
-      'suspend',
       'force-needs-auth',
     ])
   })
 
-  it('Stopped: Start + Restart pod + Require re-auth (no Stop/Suspend)', () => {
+  it('Stopped: Start + Restart pod + Require re-auth (no Stop)', () => {
     expect(lifecycleItemsInMore('Stopped')).toEqual(['start', 'restart', 'force-needs-auth'])
-  })
-
-  it('Suspended: Start (resume) + Restart pod + Require re-auth', () => {
-    expect(lifecycleItemsInMore('Suspended')).toEqual(['start', 'restart', 'force-needs-auth'])
   })
 
   it('Failed: Start (recover) + Require re-auth — offers the working recovery, not the no-op restart (#599)', () => {
@@ -71,7 +66,6 @@ describe('lifecycleItemsInMore', () => {
     const others = [
       'Running',
       'Stopped',
-      'Suspended',
       'Failed',
       'MemoryExhausted',
       'Starting',
@@ -122,7 +116,7 @@ describe('lifecycleActionEndpoint', () => {
     expect(lifecycleActionEndpoint('retry-startup')).not.toBe('restart')
   })
 
-  it.each(['start', 'stop', 'restart', 'suspend', 'force-needs-auth'] as const)(
+  it.each(['start', 'stop', 'restart', 'force-needs-auth'] as const)(
     '%s fires its own like-named endpoint',
     (kind) => {
       expect(lifecycleActionEndpoint(kind)).toBe(kind)
@@ -133,7 +127,6 @@ describe('lifecycleActionEndpoint', () => {
     const phases = [
       'Running',
       'Stopped',
-      'Suspended',
       'Failed',
       'MemoryExhausted',
       'Starting',
@@ -153,7 +146,7 @@ describe('lifecycleActionEndpoint', () => {
 
 describe('isLifecycleKind', () => {
   it('accepts every lifecycle kind and rejects the session/setter kinds', () => {
-    for (const kind of ['start', 'stop', 'restart', 'suspend', 'force-needs-auth', 'retry-startup']) {
+    for (const kind of ['start', 'stop', 'restart', 'force-needs-auth', 'retry-startup']) {
       expect(isLifecycleKind(kind), kind).toBe(true)
     }
     // These must fall through the guard untouched — routing them through
@@ -180,7 +173,6 @@ describe('sessionItemsInMore', () => {
 
   it.each([
     'Stopped',
-    'Suspended',
     'Failed',
     'MemoryExhausted',
     'Starting',

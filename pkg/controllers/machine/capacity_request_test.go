@@ -54,7 +54,6 @@ func TestCapacityRequestPodLifecycle(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "sol", Namespace: namespace.Name},
 		Spec: kyberv1.AgentSpec{
 			Machine: "coders", DesiredPhase: kyberv1.AgentPhaseRunning,
-			Scaling: kyberv1.AgentScalingWarm,
 			Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 		},
 	}
@@ -87,9 +86,9 @@ func TestCapacityRequestPodLifecycle(t *testing.T) {
 	}
 
 	patch := client.MergeFrom(agent.DeepCopy())
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseSuspended
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
 	if err := k8sClient.Patch(ctx, agent, patch); err != nil {
-		t.Fatalf("suspending Agent: %v", err)
+		t.Fatalf("stopping Agent: %v", err)
 	}
 	if err := r.reconcileCapacityRequestPod(ctx, machine); err != nil {
 		t.Fatalf("deleting capacity request: %v", err)
@@ -136,8 +135,6 @@ func TestAgentNeedsMachineCapacity(t *testing.T) {
 	}{
 		{name: "new running", desired: kyberv1.AgentPhaseRunning, want: true},
 		{name: "waiting", desired: kyberv1.AgentPhaseRunning, phase: kyberv1.AgentPhaseWaitingForMachine, want: true},
-		{name: "wake", desired: kyberv1.AgentPhaseRunning, phase: kyberv1.AgentPhaseSuspended, want: true},
-		{name: "suspended", desired: kyberv1.AgentPhaseSuspended, phase: kyberv1.AgentPhaseSuspended, want: false},
 		{name: "stopped", desired: kyberv1.AgentPhaseStopped, phase: kyberv1.AgentPhaseStopped, want: false},
 		{name: "legacy failed", phase: kyberv1.AgentPhaseFailed, want: false},
 	}

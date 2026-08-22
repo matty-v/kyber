@@ -36,7 +36,6 @@ const phaseMap: Record<string, PhaseStyle> = {
   Terminating:  { tone: 'warn' },
   Preempted:    { tone: 'warn' },
   Failed:       { tone: 'danger' },
-  Suspended:    { tone: 'highlight' },
   Stopped:      { tone: 'neutral' },
   Deleted:      { tone: 'neutral' },
   NeedsAuth:        { tone: 'warn' },

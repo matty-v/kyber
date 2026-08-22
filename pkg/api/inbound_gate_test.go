@@ -39,7 +39,7 @@ func TestWaitAgentRunning_TerminalPhasesFailFast(t *testing.T) {
 	// message, turning a burst to a stopped agent into ~15 min of
 	// queue-full.
 	for _, phase := range []kyberv1.AgentPhase{
-		kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseFailed,
+		kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed,
 		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted,
 	} {
 		t.Run(string(phase), func(t *testing.T) {

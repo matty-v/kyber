@@ -7,7 +7,7 @@ const ATTENTION_PHASES = new Set<string>(['NeedsAuth', 'MemoryExhausted', 'Faile
 
 // Canonical status-bar order: healthy/transitional first, attention last.
 const PHASE_ORDER: string[] = [
-  'Running', 'Starting', 'Creating', 'Restarting', 'Suspended',
+  'Running', 'Starting', 'Creating', 'Restarting',
   'WaitingForMachine', 'Draining', 'Stopping', 'Stopped', 'Deleted',
   'NeedsAuth', 'MemoryExhausted', 'Failed',
 ]

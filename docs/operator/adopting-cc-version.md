@@ -28,7 +28,7 @@ curl -X POST "$KYBER_URL/api/v1/agents/<agent-name>/set-runtime-version" \
   -H "Content-Type: application/json" \
   -d '{"runtimeVersion": "2.2.0"}'
 
-# For a Stopped/Suspended agent the value is stored but the pod is not
+# For a Stopped agent the value is stored but the pod is not
 # rolled; start (or restart) it to run the boot-time install.
 curl -X POST "$KYBER_URL/api/v1/agents/<agent-name>/restart" \
   -H "Authorization: Bearer $KYBER_API_KEY"

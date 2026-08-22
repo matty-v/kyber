@@ -166,7 +166,6 @@ anywhere real.
 | API base URL | `http://localhost:18080` (or `--api-port`) |
 | Health endpoint | `http://localhost:18080/healthz` |
 | API key | `test-api-key-e2e` (from `values-test.yaml`) |
-| Webhook secret | `test-webhook-secret-e2e` (from `values-test.yaml`) |
 | Namespace | `kyber-system` |
 | Cluster (k3d) | `kyber-devenv` |
 | PWA URL | `http://localhost:18080/` (or `--api-port`) — the real SPA, embedded in the control-plane binary (`pkg/api/embed.go`) and served at the root path. Drive it with the [browser harness](#driving-the-pwa-headless-browser). |

@@ -12,7 +12,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // buildExecHandler creates a test handler. RestConfig and Clientset are intentionally nil
@@ -23,7 +22,6 @@ func buildExecHandler(t *testing.T, objs ...runtime.Object) http.Handler {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		// Clientset and RestConfig intentionally nil — tests error paths only
@@ -39,7 +37,6 @@ func sampleAgentForExec(name, podName string) *kyberv1.Agent {
 			Machine: "worker-1",
 			Runtime: "claude-code",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 		},
 		Status: kyberv1.AgentStatus{

@@ -29,7 +29,7 @@ Four stat cards showing current-moment counts for this cluster:
 - **Total agents** — all agents regardless of phase.
 - **Working** — Running agents whose activity state is `working`.
 - **Idle** — Running agents not working, plus agents in transient phases (Creating, Starting, etc.).
-- **Offline** — Stopped, Suspended, Failed, or Deleted agents.
+- **Offline** — Stopped, Failed, or Deleted agents.
 
 These numbers come directly from agent CRD status fields and are always available regardless of TSDB configuration.
 

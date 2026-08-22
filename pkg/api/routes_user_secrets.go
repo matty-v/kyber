@@ -500,9 +500,9 @@ func (s *Server) getOrCreateUserSecretsSecret(r *http.Request, agentName string,
 // Drive the roll the same way setModel/setResources do (routes_agents.go): a
 // live agent goes to Restarting, which the state machine honors by capturing
 // session state, deleting the pod, and recreating it with fresh env. Dormant
-// phases (Stopped/Suspended/Failed/NeedsAuth/MemoryExhausted, or an unset phase)
+// phases (Stopped/Failed/NeedsAuth/MemoryExhausted, or an unset phase)
 // are left untouched — there is no live pod to roll and a secret update must not
-// change an agent's lifecycle (no waking a Stopped agent, no force-recovering a
+// change an agent's lifecycle (no starting a Stopped agent, no force-recovering a
 // Failed/NeedsAuth one). The value is already written to the Secret and lands
 // via envFrom on the next start. Leaving DesiredPhase untouched also means no
 // spurious roll on unrelated reconciles.

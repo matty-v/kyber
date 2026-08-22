@@ -30,7 +30,6 @@ import (
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 const (
@@ -38,11 +37,6 @@ const (
 	defaultRedisAddr = "localhost:6380"
 	testAPIKey      = "integration-test-key"
 	testNamespace   = "kyber-system"
-	// testWebhookSecret configures the webhook auth for integration tests. Under
-	// fail-closed (kyber#564) an empty secret rejects every request, so any test
-	// exercising the buffer/wake path must run the server with a real secret and
-	// send the matching X-Telegram-Bot-Api-Secret-Token header (see sendWebhook).
-	testWebhookSecret = "integration-webhook-secret"
 )
 
 // sharedDB is the shared database connection for integration tests.
@@ -80,6 +74,14 @@ func openDB() (*sql.DB, error) {
 // openRedis creates a Redis client using the environment-configured address.
 func openRedis() *redis.Client {
 	return redis.NewClient(&redis.Options{Addr: redisAddr()})
+}
+
+// cleanRedisKey deletes a Redis key so a test starts from a clean slate.
+func cleanRedisKey(t *testing.T, key string) {
+	t.Helper()
+	if err := sharedRDB.Del(context.Background(), key).Err(); err != nil {
+		t.Fatalf("cleaning redis key %q: %v", key, err)
+	}
 }
 
 // waitForPostgres polls until Postgres is ready or the deadline is exceeded.
@@ -133,19 +135,17 @@ func newTestScheme(t *testing.T) *runtime.Scheme {
 	return scheme
 }
 
-// newTestAPIServer returns an api.Server backed by a fake k8s client and the
-// shared real Redis MessageBuffer. The BriefStore is not wired in the public
-// Server (it's internal-only), so this is appropriate for API-layer tests.
-func newTestAPIServer(t *testing.T, msgBuf messagebuffer.MessageBuffer, objs ...runtime.Object) *api.Server {
+// newTestAPIServer returns an api.Server backed by a fake k8s client. The
+// BriefStore is not wired in the public Server (it's internal-only), so this
+// is appropriate for API-layer tests.
+func newTestAPIServer(t *testing.T, objs ...runtime.Object) *api.Server {
 	t.Helper()
 	scheme := newTestScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	return &api.Server{
-		K8sClient:     fakeClient,
-		MessageBuffer: msgBuf,
-		APIKey:        testAPIKey,
-		WebhookSecret: testWebhookSecret,
-		Namespace:     testNamespace,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: testNamespace,
 	}
 }
 

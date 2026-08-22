@@ -19,13 +19,13 @@ import (
 
 // requiredScopeForPhase maps a desired-phase mutation to the scope it requires.
 // Fail-safe verbs (start/stop/restart, and the OAuth re-auth resume to Running)
-// require only lifecycle:write. The impactful, less-fail-safe verbs — suspend
-// and force-needs-auth (NeedsAuth) — require the strictly-higher lifecycle:admin
+// require only lifecycle:write. The impactful, less-fail-safe verb —
+// force-needs-auth (NeedsAuth) — requires the strictly-higher lifecycle:admin
 // (admin ⊃ write). This ordering is the #474 security invariant: the impactful
 // verbs can never be less-protected than fail-safe Stop.
 func requiredScopeForPhase(phase kyberv1.AgentPhase) Scope {
 	switch phase {
-	case kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseNeedsAuth:
+	case kyberv1.AgentPhaseNeedsAuth:
 		return ScopeLifecycleAdmin
 	default:
 		// Running (start / oauth resume), Stopped (stop), Restarting (restart).
@@ -53,7 +53,7 @@ func (s *Server) authorizePhase(w http.ResponseWriter, r *http.Request, agentNam
 // single-key installs are unaffected and operators can observe before enforcing.
 //
 // action is a short, audit-only label for the verb being gated (e.g.
-// "phase:Suspended", "delete", "machine-delete"); it never affects the decision,
+// "phase:NeedsAuth", "delete", "machine-delete"); it never affects the decision,
 // only the log line.
 func (s *Server) authorizeAction(w http.ResponseWriter, r *http.Request, agentName, action string, required Scope) bool {
 	caller := callerFrom(r.Context())

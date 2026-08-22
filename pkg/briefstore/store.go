@@ -2,7 +2,7 @@
 // used across the Kyber control plane.
 //
 // The session brief carries continuity information from one agent lifecycle to the next:
-// shutdown type, last activity, recent conversation exchanges, and pending messages.
+// shutdown type, last activity, and recent conversation exchanges.
 // It is written by the reconciler before pod creation and fetched by the init container
 // via the internal HTTP API endpoint /internal/agents/{name}/session-brief.
 package briefstore
@@ -22,9 +22,6 @@ const (
 	ShutdownTypePlanned = "planned"
 	// ShutdownTypeUnplanned indicates an unexpected crash or pod failure.
 	ShutdownTypeUnplanned = "unplanned"
-	// ShutdownTypeWake indicates the agent is starting from a Suspended state due to
-	// an incoming message (scale-to-zero wake). Brief.PendingMessages will be populated.
-	ShutdownTypeWake = "wake"
 	// ShutdownTypePreemption indicates the node was preempted by GCP and the agent
 	// was drained gracefully. BriefMetadata.PreemptionContext will be populated.
 	ShutdownTypePreemption = "preemption"
@@ -39,8 +36,6 @@ const (
 	RestartReasonOperator = "operator"
 	// RestartReasonCrash indicates the previous session ended unexpectedly.
 	RestartReasonCrash = "crash"
-	// RestartReasonWake indicates the agent is restarting to handle a wake event.
-	RestartReasonWake = "wake"
 	// RestartReasonPreemption indicates the agent is restarting after a node preemption.
 	RestartReasonPreemption = "preemption"
 )
@@ -59,11 +54,11 @@ type Brief struct {
 	Timestamp string `json:"timestamp"`
 
 	// ShutdownType describes how the previous session ended.
-	// Values: "planned" | "unplanned" | "wake"
+	// Values: "planned" | "unplanned" | "preemption"
 	ShutdownType string `json:"shutdown_type"`
 
 	// RestartReason is a free-form explanation for the restart.
-	// Examples: "first_boot", "operator", "crash", "wake"
+	// Examples: "first_boot", "operator", "crash"
 	RestartReason string `json:"restart_reason"`
 
 	// LastActivity is a human-readable description of what the agent was doing
@@ -73,10 +68,6 @@ type Brief struct {
 	// RecentExchanges is a short tail of the most recent conversation turns.
 	// Populated on planned shutdowns; empty on first boot.
 	RecentExchanges []Exchange `json:"recent_exchanges,omitempty"`
-
-	// PendingMessages is a list of messages buffered in Redis during suspension.
-	// Populated on wake events (B4); always empty in B2.
-	PendingMessages []PendingMessage `json:"pending_messages,omitempty"`
 
 	// Metadata holds numeric and string metadata about the previous session.
 	Metadata BriefMetadata `json:"metadata"`
@@ -89,18 +80,6 @@ type Exchange struct {
 	// Content is the message text.
 	Content string `json:"content"`
 	// Timestamp is when this exchange occurred (RFC3339).
-	Timestamp string `json:"timestamp"`
-}
-
-// PendingMessage is a message buffered in Redis during agent suspension (populated by B4).
-type PendingMessage struct {
-	// Source is the originating channel (e.g., "telegram").
-	Source string `json:"source"`
-	// From is the sender identifier (e.g., a Telegram chat_id).
-	From string `json:"from"`
-	// Text is the message content.
-	Text string `json:"text"`
-	// Timestamp is when the message arrived (RFC3339).
 	Timestamp string `json:"timestamp"`
 }
 

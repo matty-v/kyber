@@ -12,7 +12,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // newRestartSessionServer builds an api.Server for restart-session tests.
@@ -27,7 +26,6 @@ func newRestartSessionServer(t *testing.T, cmds map[string][]string, objs ...run
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	return &api.Server{
 		K8sClient:              fakeClient,
-		MessageBuffer:          messagebuffer.NewMemoryBuffer(),
 		APIKey:                 testAPIKey,
 		Namespace:              "kyber-system",
 		ValidRuntimes:          map[string]bool{"claude-code": true, "openclaw": true},

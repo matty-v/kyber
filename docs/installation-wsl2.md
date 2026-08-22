@@ -257,7 +257,7 @@ Expected output: `name: kyber` and `version: 1.0.9`, then `8` — the eight cont
 
 ## 2. Generate secrets
 
-**What this does:** Generates a 64-hex-char API key and webhook secret and writes them to a gitignored file at `~/.config/kyber/laptop-secrets.env`.
+**What this does:** Generates a 64-hex-char API key and writes it to a gitignored file at `~/.config/kyber/laptop-secrets.env`.
 
 **Preconditions:**
 - § 0.5 complete (`openssl` installed).
@@ -268,7 +268,6 @@ mkdir -p ~/.config/kyber
 umask 077
 cat > ~/.config/kyber/laptop-secrets.env <<EOF
 KYBER_API_KEY=$(openssl rand -hex 32)
-KYBER_WEBHOOK_SECRET=$(openssl rand -hex 32)
 EOF
 chmod 600 ~/.config/kyber/laptop-secrets.env
 ```
@@ -276,7 +275,7 @@ chmod 600 ~/.config/kyber/laptop-secrets.env
 **Verify:**
 ```bash
 source ~/.config/kyber/laptop-secrets.env
-test "${#KYBER_API_KEY}" = 64 && test "${#KYBER_WEBHOOK_SECRET}" = 64 && echo OK
+test "${#KYBER_API_KEY}" = 64 && echo OK
 ```
 Expected output: `OK`.
 
@@ -395,9 +394,9 @@ Expected output: `OK`.
 
 ### 5.1 Create the kyber-api-credentials Secret
 
-**What this does:** Creates one Kubernetes Secret in the `kyber-system` namespace holding the API key, webhook secret, k3s join token, and k3s server URL. The chart's `kyber.k3sSecretName` helper falls through from an empty `k3s.existingSecret` to `api.existingSecret`, so this single Secret satisfies both.
+**What this does:** Creates one Kubernetes Secret in the `kyber-system` namespace holding the API key, k3s join token, and k3s server URL. The chart's `kyber.k3sSecretName` helper falls through from an empty `k3s.existingSecret` to `api.existingSecret`, so this single Secret satisfies both.
 
-**Preconditions:** § 4c complete (laptop-secrets.env has all four keys).
+**Preconditions:** § 4c complete (laptop-secrets.env has all three keys).
 
 **Run:**
 ```bash
@@ -407,7 +406,6 @@ kubectl create namespace kyber-system --dry-run=client -o yaml | kubectl apply -
 
 kubectl -n kyber-system create secret generic kyber-api-credentials \
   --from-literal=api-key="$KYBER_API_KEY" \
-  --from-literal=webhook-secret="$KYBER_WEBHOOK_SECRET" \
   --from-literal=k3s-join-token="$K3S_JOIN_TOKEN" \
   --from-literal=k3s-server-url="$K3S_SERVER_URL" \
   --dry-run=client -o yaml | kubectl apply -f -
@@ -418,7 +416,7 @@ kubectl -n kyber-system create secret generic kyber-api-credentials \
 kubectl -n kyber-system get secret kyber-api-credentials \
   -o jsonpath='{.data}' | jq -r 'keys | join(",")'
 ```
-Expected output: `api-key,k3s-join-token,k3s-server-url,webhook-secret`.
+Expected output: `api-key,k3s-join-token,k3s-server-url`.
 
 **If it fails:** → § Troubleshooting / "kyber-api-credentials Secret missing keys".
 
@@ -538,11 +536,12 @@ namespace:
   create: false
 
 api:
-  # The Secret from § 5.1. Carries the API key, webhook secret, and — because
+  # The Secret from § 5.1. Carries the API key and — because
   # k3s.existingSecret is left empty — the k3s join credentials too.
   existingSecret: kyber-api-credentials
-  # Externally-reachable HTTPS URL, needed for Telegram webhook
-  # auto-registration. § 10 replaces this with the Tailscale Funnel URL.
+  # Externally-reachable HTTPS URL, used to build the signed inbound
+  # webhook URLs shown in the console. § 10 replaces this with the
+  # Tailscale Funnel URL.
   publicURL: ""
   service:
     # LoadBalancer so klipper-lb binds the host's port 8080. The chart
@@ -886,7 +885,7 @@ Expected output: a single line containing the public Funnel URL, like `https://k
 
 ### 10.3 Set api.publicURL and apply it
 
-**What this does:** Writes the Funnel URL into the local values file and runs `helm upgrade` so the control plane learns its own public URL. That value becomes `KYBER_PUBLIC_URL`, which Kyber uses to auto-register Telegram webhooks when agents are created.
+**What this does:** Writes the Funnel URL into the local values file and runs `helm upgrade` so the control plane learns its own public URL. That value becomes `KYBER_PUBLIC_URL`, which Kyber uses to build the signed inbound webhook URLs shown in the console.
 
 **Preconditions:** 10.2 captured the public URL; § 6.1 wrote `~/.config/kyber/values-laptop.yaml`.
 
@@ -1105,14 +1104,14 @@ If `$KUBECONFIG` is empty, re-export it. If k3s isn't running, restart it: `sudo
 
 ### kyber-api-credentials Secret missing keys
 
-**Symptom:** Step 5.2 verify shows fewer than four key names, or the comma-separated list is in a different order from expected.
+**Symptom:** Step 5.2 verify shows fewer than three key names, or the comma-separated list is in a different order from expected.
 
-**Likely cause:** One or more of `KYBER_API_KEY`, `KYBER_WEBHOOK_SECRET`, `K3S_JOIN_TOKEN`, `K3S_SERVER_URL` was empty when `kubectl create secret` ran.
+**Likely cause:** One or more of `KYBER_API_KEY`, `K3S_JOIN_TOKEN`, `K3S_SERVER_URL` was empty when `kubectl create secret` ran.
 
 **Fix:**
 ```bash
 source ~/.config/kyber/laptop-secrets.env
-for v in KYBER_API_KEY KYBER_WEBHOOK_SECRET K3S_JOIN_TOKEN K3S_SERVER_URL; do
+for v in KYBER_API_KEY K3S_JOIN_TOKEN K3S_SERVER_URL; do
   printf '%s=%s\n' "$v" "${!v:0:8}…"
 done
 ```
@@ -1204,7 +1203,7 @@ kubectl -n kyber-system logs deploy/kyber-laptop-control-plane --previous
 ```
 
 Common causes:
-- API key or webhook secret is empty — check the `kyber-api-credentials` secret has all four keys
+- API key is empty — check the `kyber-api-credentials` secret has all three keys
 - Postgres or Redis connection refused — check those pods are `Running` (`kubectl -n kyber-system get pods`) and the DSN env vars are correct (`kyber-laptop-postgres:5432`, `kyber-laptop-redis:6379`)
 - RBAC missing — check `kyber-laptop-control-plane` ClusterRole exists and is bound
 

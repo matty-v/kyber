@@ -254,25 +254,8 @@ export function useCompactAgentSession() {
   })
 }
 
-export function useSuspendAgent() {
-  const cluster = useCluster()
-  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: (name: string) => api.suspendAgent(name),
-    onSuccess: (_data, name) => {
-      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
-      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
-    },
-    meta: {
-      successMessage: (_d: unknown, name: unknown) => `Suspended ${String(name)}`,
-      errorPrefix: 'Failed to suspend agent',
-    },
-  })
-}
-
 // useForceNeedsAuthAgent drops a wedged agent to NeedsAuth (deleting any live
-// pod) so it can be re-authorized from scratch (#395). Mirrors useSuspendAgent.
+// pod) so it can be re-authorized from scratch (#395).
 export function useForceNeedsAuthAgent() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

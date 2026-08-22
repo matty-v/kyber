@@ -99,7 +99,6 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
   --namespace kyber-system \
   --set namespace.create=false \
   --set api.apiKey="$KYBER_API_KEY" \
-  --set api.webhookSecret="$(openssl rand -hex 32)" \
   --wait --timeout 10m
 ```
 

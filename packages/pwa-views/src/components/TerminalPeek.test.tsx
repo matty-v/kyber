@@ -14,7 +14,7 @@ import { TerminalPeek } from './TerminalPeek'
 const NOW = Date.parse('2026-07-06T12:00:00Z')
 const a = (id: string, secsAgo?: number): Agent => ({
   id, phase: 'Running', machine: 'm', runtime: 'claude-code', model: 'claude-sonnet-4-6',
-  scaling: 'warm', resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
+  resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
   status: {} as Agent['status'], createdAt: '2026-07-06T10:00:00Z',
   activity: secsAgo === undefined ? undefined : { lastActivityAt: new Date(NOW - secsAgo * 1000).toISOString() },
 })

@@ -8,7 +8,6 @@ namespace:
 
 api:
   apiKey: "test-api-key-e2e"
-  webhookSecret: "test-webhook-secret-e2e"
   service:
     type: ClusterIP
     port: 8080

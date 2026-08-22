@@ -29,17 +29,16 @@ Discord Gateway ──▶ kyber-mcp-discord (sidecar)
 ```
 
 Inbound reuses the same inbound-binding machinery as every other webhook
-source — verification, buffering, dedup, wake. Outbound goes back out through
+source — verification, buffering, dedup. Outbound goes back out through
 the same sidecar. Both runtimes register its loopback `kyber-discord` MCP
 server and use the structured `reply` tool; `/send` remains as a compatibility
 fallback for older instructions. The sidecar calls Discord's REST API. The bot
 token stays in the sidecar and is never injected into the runtime container.
 
-**The pod must be warm.** This holds for Telegram too: both channels deliver
-through in-pod sidecars, so a suspended agent has nobody holding the
-socket/poll loop, and messages sent while it sleeps are lost. (A server-side
-Telegram wake leg exists in code but is not wired — nothing registers the
-webhook.) Run chat-channel agents warm.
+**The agent must be running.** This holds for Telegram too: both channels
+deliver through in-pod sidecars, so a stopped agent has nobody holding the
+socket/poll loop, and messages sent while it is down are lost. Keep
+chat-channel agents up.
 
 Durable Discord delivery is deliberately outside Kyber's platform contract.
 Kyber does not run a pod-independent Gateway or retain an unbounded Discord
@@ -208,11 +207,11 @@ kubectl -n kyber-system delete pod agent-barf
 
 | | `mentionOnly: false` (default) | `mentionOnly: true` |
 | --- | --- | --- |
-| Every allowlisted message in the channel | wakes the agent | ignored |
-| `@Agent ...` (the bot user) | wakes the agent | wakes the agent |
-| `@Agent ...` (a role the bot holds) | wakes the agent | wakes the agent |
-| Reply to one of the agent's own messages | wakes the agent | wakes the agent |
-| `@everyone` / `@here` | wakes the agent | ignored |
+| Every allowlisted message in the channel | delivered to the agent | ignored |
+| `@Agent ...` (the bot user) | delivered to the agent | delivered to the agent |
+| `@Agent ...` (a role the bot holds) | delivered to the agent | delivered to the agent |
+| Reply to one of the agent's own messages | delivered to the agent | delivered to the agent |
+| `@everyone` / `@here` | delivered to the agent | ignored |
 
 Default off is right for a **dedicated** agent channel, where every message is
 for the agent anyway. Turn it **on** for a **shared** channel where humans also
@@ -226,7 +225,7 @@ agent's own mention token is stripped from the forwarded text, so the agent sees
 **Both "@Agent" forms count.** Adding a bot to a server auto-creates a *managed
 role* with the bot's name, so typing `@Barf` in the composer offers two
 autocomplete entries — the user (`<@id>`) and that role (`<@&id>`) — which look
-identical once posted. Both wake the agent, and both are stripped from the
+identical once posted. Both reach the agent, and both are stripped from the
 forwarded text. The sidecar learns which roles the bot holds from
 `GET /guilds/{guild}/members/{bot}` (no privileged intent required), caching the
 answer per guild and re-checking a failed guild every 5 minutes, so granting the
@@ -235,7 +234,7 @@ bot a new role takes effect without a pod restart. If that lookup fails, it logs
 replies still work.
 
 `@everyone` deliberately does not count, including via the `@everyone` role
-(whose ID is the guild ID) — a server-wide ping must not wake every agent.
+(whose ID is the guild ID) — a server-wide ping must not prompt every agent.
 
 ## One agent, several servers
 
@@ -285,4 +284,4 @@ curl -s -H "Authorization: Bot $TOKEN" \
 | Nothing forwards but mentions work | `mentionOnly` is on. That's the feature. |
 | Agent answers some people and ignores others | Check the `dropped inbound messages` summary. `unaddressed_mention_only` climbing while people insist they tagged the agent means the tags aren't landing as mentions — confirm the bot's roles resolved (`resolved bot roles` at startup-ish, or `bot role lookup failed`). |
 | Pod has no sidecar container | The pod predates the `spec.channels` change — delete it. |
-| Messages sent while the agent slept are lost | Expected: Gateway-only delivery. Keep Discord agents warm. |
+| Messages sent while the agent was down are lost | Expected: Gateway-only delivery. Keep Discord agents running. |

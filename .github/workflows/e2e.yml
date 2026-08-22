@@ -25,8 +25,8 @@ on:
 #   1. Every sandbox test SKIPS in CI. They guard on KYBER_E2E_AGENT_A, which
 #      names a live agent to inspect, and nothing in this workflow provisions
 #      one. A gate whose tests skip provides false assurance, not coverage.
-#   2. The lifecycle suite (TestE2E_MachineLifecycle, TestE2E_AgentLifecycle,
-#      TestE2E_ScaleToZeroWake) is currently red for reasons predating all of
+#   2. The lifecycle suite (TestE2E_MachineLifecycle, TestE2E_AgentLifecycle)
+#      is currently red for reasons predating all of
 #      this — the same flakiness that got the `push:` trigger disabled in April.
 #      Gating on it blocks unrelated PRs, including the fix for an outage.
 #

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, Pause, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2 } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -9,7 +9,6 @@ import {
   useRestartAgent,
   useRestartAgentSession,
   useCompactAgentSession,
-  useSuspendAgent,
   useForceNeedsAuthAgent,
   useSetAgentModel,
   useAgentModels,
@@ -88,7 +87,6 @@ type ActionKind =
   | 'restart' // pod-level roll (renamed "Restart pod" in the UI)
   | 'restart-session' // in-pod tmux kill + relaunch (#128)
   | 'compact-session' // in-session context compaction, pod and session both stay up
-  | 'suspend'
   | 'force-needs-auth' // operator-forced re-auth for a wedged agent (#395)
   | 'retry-startup' // NeedsAuth "try again with what you have" (kyber#26); POSTs /start
   | 'delete'
@@ -424,12 +422,6 @@ export function LifecycleMenuItems({
           Restart pod
         </DropdownMenuItem>
       )}
-      {items.includes('suspend') && (
-        <DropdownMenuItem onSelect={() => onSelect('suspend')}>
-          <Pause className="h-3.5 w-3.5" />
-          Suspend
-        </DropdownMenuItem>
-      )}
       {items.includes('force-needs-auth') && (
         <DropdownMenuItem onSelect={() => onSelect('force-needs-auth')}>
           <KeyRound className="h-3.5 w-3.5" />
@@ -488,7 +480,6 @@ export function AgentDetail() {
   const restartAgent = useRestartAgent()
   const restartAgentSession = useRestartAgentSession()
   const compactAgentSession = useCompactAgentSession()
-  const suspendAgent = useSuspendAgent()
   const forceNeedsAuthAgent = useForceNeedsAuthAgent()
   const setAgentModel = useSetAgentModel()
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
@@ -503,7 +494,6 @@ export function AgentDetail() {
     restartAgent.isPending ||
     restartAgentSession.isPending ||
     compactAgentSession.isPending ||
-    suspendAgent.isPending ||
     forceNeedsAuthAgent.isPending ||
     setAgentModel.isPending ||
     setAgentRuntimeVersion.isPending ||
@@ -525,7 +515,6 @@ export function AgentDetail() {
       if (action === 'restart') await restartAgent.mutateAsync(name)
       if (action === 'restart-session') await restartAgentSession.mutateAsync(name)
       if (action === 'compact-session') await compactAgentSession.mutateAsync(name)
-      if (action === 'suspend') await suspendAgent.mutateAsync(name)
       if (action === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
       if (pending === 'set-model' && newModel) {
         await setAgentModel.mutateAsync({ name, model: newModel })
@@ -583,7 +572,7 @@ export function AgentDetail() {
   ]
 
   // Per #128 amendment: Restart session is the primary header action when
-  // the agent is live. Other lifecycle actions (Start/Stop/Suspend/Restart
+  // the agent is live. Other lifecycle actions (Start/Stop/Restart
   // pod) move into the More dropdown — filtered per the existing
   // lifecycleItemsInMore helper so inapplicable items (e.g. Start on a
   // Running agent) stay hidden.
@@ -857,10 +846,6 @@ export function AgentDetail() {
                     </span>
                   )}
                 </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Scaling</dt>
-                <dd className="text-text-primary">{agent.scaling}</dd>
               </div>
               <div className="flex justify-between">
                 <dt className="text-text-muted">CPU</dt>

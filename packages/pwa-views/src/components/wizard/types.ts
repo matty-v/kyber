@@ -19,7 +19,6 @@ export interface WizardState {
   machine: string
   runtime: string
   model: string
-  scaling: 'warm' | 'scale-to-zero'
   cpu: string
   memory: string
   disk: string
@@ -73,7 +72,6 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     machine: '',
     runtime: 'claude-code',
     model: '',
-    scaling: 'warm',
     cpu: '1',
     memory: '2Gi',
     disk: '50Gi',

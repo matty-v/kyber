@@ -43,15 +43,15 @@ manifests with `make generate` — NEVER hand-edit `deploy/helm/kyber/crds/`.
 - Deletion is OUT-OF-BAND: `handleDeletion()` in the reconciler, driven by
   `DeletionTimestamp` — it does not go through the state machine.
 
-WHY: lifecycle logic (14+ phases: Creating, Starting, Running, Suspended,
+WHY: lifecycle logic (12 phases: Creating, Starting, Running,
 NeedsAuth, MemoryExhausted, Failed, Draining, WaitingForMachine, …) is the
 highest-blast-radius code in the repo; the pure split makes every transition
 testable without a cluster. Authoritative transition table:
 `docs/architecture/agent-lifecycle.md`. Notable design points:
 - OOM gets its own phase (`MemoryExhausted`) so undersized agents don't
   crash-loop; operator bumps memory first.
-- `Suspended` unifies spot-preemption parking and idle parking; a wake event
-  (e.g. Telegram message) or replacement machine resumes it.
+- Spot-preemption parking is `Draining` → `WaitingForMachine`; a replacement
+  machine resumes the agent automatically.
 - `pkg/controllers/machine/` mirrors the same pattern for VMs. Compute
   providers sit behind `pkg/adapters/compute.go`: GCE is the production
   adapter, fake exercises managed lifecycle locally, and static attaches an
@@ -258,7 +258,7 @@ Other binaries: `cmd/node-agent` (DaemonSet, node metrics + machine actions),
 token-usage events), `cmd/transcript-compact`, `cmd/fetch-provider-rates`
 (generates `deploy/helm/kyber/files/provider-rates.generated.{yaml,meta}`).
 
-Backing stores: k8s API (state), Redis (events/wake/token budgets), Postgres
+Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
 (session briefs/fleet metadata). All have in-memory fallbacks (used by devenv).
 
 ---

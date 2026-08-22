@@ -168,7 +168,7 @@ func TestBriefStore_Postgres_Delete(t *testing.T) {
 	brief := &briefstore.Brief{
 		Version:      1,
 		AgentName:    "r2d2",
-		ShutdownType: briefstore.ShutdownTypeWake,
+		ShutdownType: briefstore.ShutdownTypePlanned,
 	}
 	if err := store.Put(ctx, "r2d2", brief); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -221,42 +221,6 @@ func TestBriefStore_Postgres_MultipleAgents(t *testing.T) {
 		if got.LastActivity != "task for "+name {
 			t.Errorf("agent %q: LastActivity got %q, want %q", name, got.LastActivity, "task for "+name)
 		}
-	}
-}
-
-// TestBriefStore_Postgres_PendingMessages verifies PendingMessages survive a roundtrip.
-func TestBriefStore_Postgres_PendingMessages(t *testing.T) {
-	cleanBriefs(t, sharedDB)
-	store := newPostgresStore(t)
-	ctx := context.Background()
-
-	brief := &briefstore.Brief{
-		Version:      1,
-		AgentName:    "echo",
-		ShutdownType: briefstore.ShutdownTypeWake,
-		PendingMessages: []briefstore.PendingMessage{
-			{Source: "telegram", From: "@matt", Text: "continue", Timestamp: "2026-04-10T00:00:00Z"},
-			{Source: "telegram", From: "@matt", Text: "what's the status?", Timestamp: "2026-04-10T00:01:00Z"},
-		},
-	}
-
-	if err := store.Put(ctx, "echo", brief); err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-
-	got, err := store.Get(ctx, "echo")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
-
-	if len(got.PendingMessages) != 2 {
-		t.Fatalf("PendingMessages: got %d, want 2", len(got.PendingMessages))
-	}
-	if got.PendingMessages[0].Text != "continue" {
-		t.Errorf("PendingMessages[0].Text: got %q, want %q", got.PendingMessages[0].Text, "continue")
-	}
-	if got.PendingMessages[1].From != "@matt" {
-		t.Errorf("PendingMessages[1].From: got %q, want %q", got.PendingMessages[1].From, "@matt")
 	}
 }
 

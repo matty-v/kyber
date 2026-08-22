@@ -14,7 +14,6 @@ export type AgentPhase =
   | 'Stopped'
   | 'Restarting'
   | 'Failed'
-  | 'Suspended'
   | 'Deleted'
   | 'NeedsAuth'
   | 'Draining'
@@ -24,7 +23,6 @@ export type AgentPhase =
   // from it.
   | 'MemoryExhausted'
 
-export type AgentScalingMode = 'warm' | 'scale-to-zero'
 export type AgentAuthType = 'oauth' | 'api-key'
 
 export interface AgentResources {
@@ -71,7 +69,6 @@ export interface Agent {
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
-  scaling: AgentScalingMode
   resources: AgentResources
   status: AgentStatus
   // Populated when spec.identityRepo.repo is configured on the agent.
@@ -351,7 +348,6 @@ export interface CreateAgentRequest {
   machine: string
   runtime: string
   model?: string
-  scaling?: AgentScalingMode
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string

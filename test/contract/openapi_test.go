@@ -33,7 +33,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 const (
@@ -90,7 +89,6 @@ func newContractServer(t *testing.T, objs ...runtime.Object) http.Handler {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	srv := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        contractAPIKey,
 		Namespace:     contractNS,
 	}
@@ -229,7 +227,6 @@ func sampleAgentObj(name string) *kyberv1.Agent {
 			Machine: "worker-1",
 			Runtime: "claude-code",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("1"),
 				Memory: resource.MustParse("2Gi"),
@@ -355,7 +352,6 @@ func TestContract_CreateAgent(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
 			"memory": "2Gi",

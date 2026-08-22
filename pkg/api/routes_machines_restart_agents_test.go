@@ -16,7 +16,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // buildRestartAgentsHandler mirrors buildMachineHandler but returns the
@@ -27,7 +26,6 @@ func buildRestartAgentsHandler(t *testing.T, scheme *runtime.Scheme, objs ...run
 	rec := record.NewFakeRecorder(16)
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Recorder:      rec,
@@ -111,9 +109,9 @@ func TestRestartMachineAgents_HappyPath(t *testing.T) {
 	}
 }
 
-// TestRestartMachineAgents_SkipsIneligiblePhases verifies that Suspended,
-// Stopped, Draining, and WaitingForMachine agents are NOT patched and are
-// reported in the Skipped list.
+// TestRestartMachineAgents_SkipsIneligiblePhases verifies that Stopped,
+// Draining, and WaitingForMachine agents are NOT patched and are reported in
+// the Skipped list.
 func TestRestartMachineAgents_SkipsIneligiblePhases(t *testing.T) {
 	scheme := mustNewScheme(t)
 	m := &kyberv1.Machine{
@@ -121,12 +119,11 @@ func TestRestartMachineAgents_SkipsIneligiblePhases(t *testing.T) {
 		Spec:       kyberv1.MachineSpec{Provider: kyberv1.MachineProviderGCE, MachineType: "n2-standard-4", Zone: "us-central1-a", DiskSizeGb: 50},
 	}
 	running := agentOnMachine("chewie", "worker-1", kyberv1.AgentPhaseRunning)
-	suspended := agentOnMachine("r2d2", "worker-1", kyberv1.AgentPhaseSuspended)
 	stopped := agentOnMachine("c3po", "worker-1", kyberv1.AgentPhaseStopped)
 	draining := agentOnMachine("bb8", "worker-1", kyberv1.AgentPhaseDraining)
 	waiting := agentOnMachine("d0", "worker-1", kyberv1.AgentPhaseWaitingForMachine)
 
-	h, c, _ := buildRestartAgentsHandler(t, scheme, m, running, suspended, stopped, draining, waiting)
+	h, c, _ := buildRestartAgentsHandler(t, scheme, m, running, stopped, draining, waiting)
 
 	req := authedRequest(t, http.MethodPost, "/api/v1/machines/worker-1/restart-agents", nil)
 	rr := httptest.NewRecorder()
@@ -142,15 +139,14 @@ func TestRestartMachineAgents_SkipsIneligiblePhases(t *testing.T) {
 	if resp.Count != 1 || len(resp.Restarted) != 1 || resp.Restarted[0] != "chewie" {
 		t.Errorf("Restarted: got %v (count=%d), want [chewie] (count=1)", resp.Restarted, resp.Count)
 	}
-	if len(resp.Skipped) != 4 {
-		t.Fatalf("Skipped: got %d entries, want 4: %+v", len(resp.Skipped), resp.Skipped)
+	if len(resp.Skipped) != 3 {
+		t.Fatalf("Skipped: got %d entries, want 3: %+v", len(resp.Skipped), resp.Skipped)
 	}
 	reasons := map[string]string{}
 	for _, sk := range resp.Skipped {
 		reasons[sk.Name] = sk.Reason
 	}
 	expectedReasons := map[string]string{
-		"r2d2": "Suspended",
 		"c3po": "Stopped",
 		"bb8":  "Draining",
 		"d0":   "WaitingForMachine",
@@ -162,7 +158,7 @@ func TestRestartMachineAgents_SkipsIneligiblePhases(t *testing.T) {
 	}
 
 	// Ineligible agents must NOT have their desiredPhase mutated.
-	for _, name := range []string{"r2d2", "c3po", "bb8", "d0"} {
+	for _, name := range []string{"c3po", "bb8", "d0"} {
 		var got kyberv1.Agent
 		if err := c.Get(req.Context(), client.ObjectKey{Name: name, Namespace: "kyber-system"}, &got); err != nil {
 			t.Fatalf("get %s: %v", name, err)

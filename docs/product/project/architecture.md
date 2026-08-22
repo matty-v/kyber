@@ -14,7 +14,7 @@ Kyber ships as three pieces:
 
 Platform state lives in two custom resources in the `kyber.io/v1` API group:
 
-- **`Agent`**: one AI agent instance. Its runtime type, target machine, compute resources, scaling mode, identity, secrets, and model.
+- **`Agent`**: one AI agent instance. Its runtime type, target machine, compute resources, identity, secrets, and model.
 - **`Machine`**: a VM the platform manages, or a node you already have. Provider, machine type, disk size, spot pricing, zone.
 
 Humans, the fleet console, and other agents all declare intent the same way: by writing the spec. Controllers reconcile reality toward it.

@@ -165,7 +165,6 @@ describe('CreateAgent — submit happy path (api-key)', () => {
         name: 'alice',
         machine: 'razer',
         runtime: 'claude-code',
-        scaling: 'warm',
         resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
         identity: { soulDescription: undefined },
         identityRepo: { template: 'matty-v/kyber-agent-template' },

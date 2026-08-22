@@ -16,11 +16,11 @@ type BriefInput struct {
 	Now time.Time
 
 	// ShutdownType describes how the previous session ended.
-	// Values: "planned" | "unplanned" | "wake"
+	// Values: "planned" | "unplanned"
 	ShutdownType string
 
 	// RestartReason is a free-form explanation for the restart.
-	// Examples: "first_boot", "operator", "crash", "wake"
+	// Examples: "first_boot", "operator", "crash"
 	RestartReason string
 
 	// LastActivity is a human-readable description of what the agent was doing.
@@ -31,10 +31,6 @@ type BriefInput struct {
 	// Populated by planned shutdowns when the agent writes session-state.json.
 	// Empty on first boot.
 	RecentExchanges []briefstore.Exchange
-
-	// PendingMessages is the list of messages buffered in Redis during suspension.
-	// Populated on wake events (B4). Always empty in B2.
-	PendingMessages []briefstore.PendingMessage
 
 	// UptimeSeconds is how long the agent ran in the previous session.
 	// Derived from status.StartTime at the time of brief construction.
@@ -58,7 +54,6 @@ func BuildBrief(agent *kyberv1.Agent, input BriefInput) *briefstore.Brief {
 		RestartReason:   input.RestartReason,
 		LastActivity:    input.LastActivity,
 		RecentExchanges: input.RecentExchanges,
-		PendingMessages: input.PendingMessages,
 		Metadata: briefstore.BriefMetadata{
 			PreviousModel: input.PreviousModel,
 			UptimeSeconds: input.UptimeSeconds,
@@ -84,15 +79,9 @@ func briefInputForEvent(agent *kyberv1.Agent, event Event) BriefInput {
 	// the init container's `{}` fallback handles first boot per the spec.
 	switch event {
 	case EventDesiredRunning:
-		// Operator restart from Stopped or Suspended phase.
-		// Wake events (Suspended + EventWakeReceived) use a separate case below.
+		// Operator restart from Stopped phase.
 		input.ShutdownType = "planned"
 		input.RestartReason = "operator"
-
-	case EventWakeReceived:
-		// Wake from suspension (Telegram message or other trigger).
-		input.ShutdownType = "wake"
-		input.RestartReason = "wake"
 
 	case EventPodDeleted:
 		// Restarting phase: operator triggered a graceful restart.
@@ -125,7 +114,6 @@ func briefInputForEvent(agent *kyberv1.Agent, event Event) BriefInput {
 		input.PreviousModel = agent.Status.CurrentModel
 	}
 
-	// PendingMessages are always empty in B2 — B4 will populate them on wake events.
 	// RecentExchanges are always empty in B2 — populated when session-state.json is read.
 
 	return input

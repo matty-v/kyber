@@ -2,7 +2,7 @@
 //
 // The public API (this file) runs on :8080 and handles /api/v1/* requests from
 // the PWA, CLI, and operator tooling. It is authenticated via an API key.
-// Telegram webhooks at /webhooks/* bypass the API key check.
+// Webhooks at /webhooks/* bypass the API key check.
 //
 // The internal API (internal.go) runs on :8082 and handles /internal/* requests
 // from agent init containers and cluster-internal services. It has no authentication.
@@ -32,7 +32,6 @@ import (
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/oauth"
@@ -59,9 +58,6 @@ type Server struct {
 	// validation to operator-facing compute APIs. Nil preserves compatibility
 	// for tests and installations still using only the legacy adapter contract.
 	CapacityProvider adapters.CapacityProvider
-
-	// MessageBuffer buffers Telegram messages for suspended agents.
-	MessageBuffer messagebuffer.MessageBuffer
 
 	// TokenStore persists per-agent Claude Code context-budget snapshots.
 	TokenStore tokenstore.TokenStore
@@ -103,11 +99,6 @@ type Server struct {
 	// once an operator issues scoped (sub-full) keys.
 	AuthzEnforce bool
 
-	// WebhookSecret is the Telegram webhook secret token. If non-empty, inbound webhook
-	// requests must carry X-Telegram-Bot-Api-Secret-Token matching this value.
-	// If empty, webhook secret validation is skipped.
-	WebhookSecret string
-
 	// Addr is the listen address. Defaults to ":8080".
 	Addr string
 
@@ -115,9 +106,9 @@ type Server struct {
 	Namespace string
 
 	// PublicURL is the externally-reachable HTTPS URL of this Kyber instance
-	// (e.g. "https://kyber.your-tailnet.ts.net"). Used for Telegram webhook
-	// registration — the webhook callback URL is PublicURL + /webhooks/telegram/<name>.
-	// If empty, Telegram webhook auto-registration is skipped.
+	// (e.g. "https://kyber.your-tailnet.ts.net"). Used to render inbound-binding
+	// webhook URLs (PublicURL + /webhooks/inbound/<agent>/<binding>).
+	// If empty, rendered URLs fall back to a relative path.
 	PublicURL string
 
 	// AnthropicTokenURL is the OAuth token endpoint used when exchanging
@@ -775,7 +766,6 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 // registerWebhookRoutes registers all /webhooks/* routes on mux.
 // These routes bypass API key auth — they use their own secret header validation.
 func (s *Server) registerWebhookRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("/webhooks/telegram/", s.handleTelegramWebhook)
 	// Inbound prompts (kyber#208 Phase 1). HMAC auth happens inside the
 	// handler against the per-binding Secret; the top-level webhook mux
 	// only ensures the API-key middleware is bypassed.

@@ -83,7 +83,6 @@ export const mockAgent: Agent = {
   machine: MOCK_MACHINE_NAME,
   runtime: 'claude-code',
   model: 'claude-sonnet-4-6',
-  scaling: 'warm',
   resources: { cpu: '2', memory: '4Gi', disk: '50Gi' },
   status: {
     phase: 'Running',

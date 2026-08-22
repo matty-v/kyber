@@ -93,7 +93,7 @@ Codex API-key agents do not use this path.
 
 ## 3. Phases
 
-The 13 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
+The 12 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 
 | Phase | Meaning |
 |---|---|
@@ -104,7 +104,6 @@ The 13 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 | `Stopped` | pod not running, PV preserved |
 | `Restarting` | pod being replaced (state captured, new pod starting) |
 | `Failed` | exceeded restart retries or hit an unrecoverable error |
-| `Suspended` | scaled to zero (pod deleted, PV preserved) — unifies idle-park and spot-preemption-park |
 | `Deleted` | fully deleted incl. PV + identity cleanup (reached via `handleDeletion`, **not** the state machine) |
 | `Draining` | gracefully draining ahead of a machine preemption |
 | `WaitingForMachine` | waiting for a replacement machine after preemption |
@@ -116,10 +115,10 @@ The 13 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 **Events** (`Event` constants) — the triggers the reconciler feeds in:
 
 `CRDCreated`, `PodScheduled`, `PodScheduleFailed`, `PodReady`,
-`StartupTimeout`, `DesiredStopped`, `DesiredRestarting`, `DesiredSuspended`,
+`StartupTimeout`, `DesiredStopped`, `DesiredRestarting`,
 `DesiredNeedsAuth`, `DesiredRunning`, `PodDied`, `LivenessFailed`,
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
-`RetryLimitReached`, `WakeReceived`, `PreemptionNotice`, `MachinePreempted`,
+`RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
 `MachineReady`, `OAuthRefreshFailed`, `OOMKilled`.
 
 `MachineUnavailable` is the provider-neutral capacity-loss event. Active and
@@ -127,16 +126,12 @@ retrying Agents park in `WaitingForMachine` without consuming restart retries;
 the transition removes any stale pod so `MachineReady` can rebuild it against
 the replacement Node.
 
-> **`LivenessFailed` and `WakeReceived` are defined but not yet wired.** Their
-> transitions exist in `NextPhase`, but no reconciler or API code currently
-> emits either event. `LivenessFailed` carries a `TODO(B3)` — wire it when
-> `RestartPolicy` changes or a custom liveness monitor is added. `WakeReceived`
-> was designed for message-triggered wake of a `Suspended` agent (e.g. a
-> Telegram message), but no production path emits it: inbound webhooks deliver
-> only into a running agent's session, and the Telegram sidecar long-polls from
-> inside the pod, so a suspended agent resumes only via `DesiredRunning` (an
-> operator start). Every other event above is emitted by the reconciler. Both
-> transitions are documented below for completeness and marked accordingly.
+> **`LivenessFailed` is defined but not yet wired.** Its transition exists in
+> `NextPhase`, but no reconciler or API code currently emits the event. It
+> carries a `TODO(B3)` — wire it when `RestartPolicy` changes or a custom
+> liveness monitor is added. Every other event above is emitted by the
+> reconciler. The transition is documented below for completeness and marked
+> accordingly.
 >
 > **kyber#575 note — native sidecars supersede the B3 watchdog for *sidecar*
 > self-healing.** The `TODO(B3)` controller-side watchdog (recreate a pod that
@@ -151,7 +146,7 @@ the replacement Node.
 **Actions** (`Action` constants) — what the reconciler executes on a
 transition:
 
-`CreatePVAndPod`, `CreatePV`, `WaitForStart`, `LogAndEmitEvent`,
+`CreatePVAndPod`, `WaitForStart`, `LogAndEmitEvent`,
 `UpdateStatus`, `KillPodAndEmitEvent`, `SendSIGTERM`,
 `CaptureStateAndDeletePod`, `EmitEventAutoRestart`,
 `KillPodEmitEventAutoRestart`, `ForceKillPod`, `WriteBriefAndCreatePod`,
@@ -163,7 +158,6 @@ transition:
 ```mermaid
 stateDiagram-v2
     [*] --> Creating: CRDCreated
-    [*] --> Suspended: DesiredSuspended (born suspended)
 
     Creating --> Starting: PodScheduled
     Creating --> Failed: PodScheduleFailed
@@ -180,7 +174,6 @@ stateDiagram-v2
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
-    Running --> Suspended: DesiredSuspended
     Running --> Failed: PodDied / LivenessFailed*
     Running --> NeedsAuth: OAuthRefreshFailed
     Running --> MemoryExhausted: OOMKilled
@@ -194,7 +187,6 @@ stateDiagram-v2
     Failed --> Starting: AutoRestartTriggered / DesiredRunning
     Failed --> Failed: RetryLimitReached
 
-    Suspended --> Starting: WakeReceived* / DesiredRunning
     NeedsAuth --> Starting: DesiredRunning
     MemoryExhausted --> Starting: DesiredRunning
 
@@ -205,16 +197,14 @@ stateDiagram-v2
     Failed --> NeedsAuth: DesiredNeedsAuth
     MemoryExhausted --> NeedsAuth: DesiredNeedsAuth
     Stopped --> NeedsAuth: DesiredNeedsAuth
-    Suspended --> NeedsAuth: DesiredNeedsAuth
 
     %% Authoritative Stop kill switch (#468), structural twin of #395 above:
     %% Stop is honored from the crash-loop phases too, pre-empting auto-restart.
     %% Running keeps graceful SIGTERM (line above); Starting/Failed/MemoryExhausted
-    %% delete the pod via Stopping; pod-less Suspended flips status to Stopped.
+    %% delete the pod via Stopping.
     Starting --> Stopping: DesiredStopped
     Failed --> Stopping: DesiredStopped
     MemoryExhausted --> Stopping: DesiredStopped
-    Suspended --> Stopped: DesiredStopped
 
     Draining --> WaitingForMachine: PodDeleted / MachinePreempted
     WaitingForMachine --> Starting: MachineReady
@@ -226,7 +216,7 @@ stateDiagram-v2
     end note
 ```
 
-`*` `LivenessFailed` and `WakeReceived` are defined but not yet emitted (see § 4).
+`*` `LivenessFailed` is defined but not yet emitted (see § 4).
 
 ## 6. Transition table
 
@@ -237,7 +227,6 @@ is the authoritative table; it mirrors the `transitions` map in
 | Current phase | Event | Action | Next phase |
 |---|---|---|---|
 | *(none)* | `CRDCreated` | `CreatePVAndPod` | `Creating` |
-| *(none)* | `DesiredSuspended` | `CreatePV` | `Suspended` |
 | `Creating` | `PodScheduled` | `WaitForStart` | `Starting` |
 | `Creating` | `PodScheduleFailed` | `LogAndEmitEvent` | `Failed` |
 | `Starting` | `PodReady` | `UpdateStatus` | `Running` |
@@ -254,7 +243,6 @@ is the authoritative table; it mirrors the `transitions` map in
 | `WaitingForMachine` | `DesiredStopped` | `ForceKillPod` | `Stopped` |
 | `Running` | `DesiredStopped` | `SendSIGTERM` | `Stopping` |
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
-| `Running` | `DesiredSuspended` | `CaptureStateAndDeletePod` | `Suspended` |
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
 | `Running` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
@@ -268,8 +256,6 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Failed` | `AutoRestartTriggered` | `WriteBriefAndCreatePod` | `Starting` |
 | `Failed` | `RetryLimitReached` | `StayFailedAndAlert` | `Failed` |
 | `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
-| `Suspended` | `WakeReceived` *(not currently reachable — no emitter)* | `WriteBriefAndCreatePod` | `Starting` |
-| `Suspended` | `DesiredRunning` | `WriteBriefAndCreatePod` | `Starting` |
 | `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `Running` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
@@ -277,11 +263,9 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Failed` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
 | `MemoryExhausted` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
 | `Stopped` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
-| `Suspended` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
 | `Starting` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `Failed` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `MemoryExhausted` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
-| `Suspended` | `DesiredStopped` | `UpdateStatus` | `Stopped` |
 | `Draining` | `PodDeleted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Draining` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `WaitingForMachine` | `MachineReady` | `WriteBriefAndCreatePod` | `Starting` |
@@ -307,7 +291,7 @@ silently.
   After deleting the pod → PVC → agent-scoped secrets, the finalizer reaps the
   agent's external-store rows so no identity material lingers past deletion: the
   Postgres session brief, and the Redis token-usage snapshot, token + state-change
-  accumulators, activity/token time-series (`ts:*`), and wake buffer. The on-PVC
+  accumulators, and activity/token time-series (`ts:*`). The on-PVC
   git clone dies with the PVC; the **remote** GitHub identity repo is deliberately
   **not** deleted (high blast radius — Matt's decision). The non-TTL'd stores
   (brief, both accumulators) are the real orphan risk and *must* be deleted
@@ -335,7 +319,7 @@ silently.
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).
   `DesiredNeedsAuth` (set by the `force-needs-auth` API action) drops a wedged
   agent to `NeedsAuth`, but only from the recoverable phases (`Running`,
-  `Starting`, `Failed`, `MemoryExhausted`, `Stopped`, `Suspended`). The
+  `Starting`, `Failed`, `MemoryExhausted`, `Stopped`). The
   allowlist lives in `classifyEvent` — **not** in the API setter, which has no
   allowlist — so that is the security-relevant gate; transient/cleanup phases
   (`Creating`, `Stopping`, `Restarting`, `Draining`, `WaitingForMachine`,
@@ -350,7 +334,7 @@ silently.
   `desired == Stopped` allowlist in `classifyEvent`, placed **ahead of the
   per-phase and pod-state switches**, honors Stop from every phase an operator
   can hit it during an incident — `Running`, `Starting`, `Failed`,
-  `MemoryExhausted`, `Suspended`. Placing it ahead of the switches is what makes
+  `MemoryExhausted`. Placing it ahead of the switches is what makes
   it **pre-empt auto-restart**: the `Failed` arm returns `AutoRestartTriggered`
   before any later check, so a crash-looping agent (which never sits in
   `Running`) would otherwise ignore Stop entirely — the
@@ -360,8 +344,8 @@ silently.
   not a tiebreak. The `Action` splits on live-pod-ness like #395: live/terminal-pod
   phases (`Starting`, `Failed`, `MemoryExhausted`) route through `Stopping` via
   `CaptureStateAndDeletePod` (idempotent on a nil/terminal pod) so the pod is
-  provably gone; pod-less `Suspended` flips status straight to `Stopped`; `Running`
-  keeps its graceful `SendSIGTERM`. The allowlist **excludes `Stopped`** (unlike
+  provably gone; `Running` keeps its graceful `SendSIGTERM`. The allowlist
+  **excludes `Stopped`** (unlike
   the #395 allowlist): once `Phase==Stopped` with `desired==Stopped`, `classifyEvent`
   derives no event, so the agent is a **stable fixed point that stays down across
   resyncs** until `desired` flips to `Running`. As with #395 the allowlist is the
@@ -433,18 +417,13 @@ silently.
 - **Lifecycle mutations are caller-scope-gated at the API (kyber#474).** The
   `classifyEvent` allowlist above bounds the *effect* of a `desiredPhase`; the
   complementary *caller* gate lives at the `setAgentDesiredPhase` chokepoint:
-  `start`/`stop`/`restart` require `lifecycle:write`, the impactful `suspend` /
-  `force-needs-auth` require the strictly-higher `lifecycle:admin` (admin ⊃
+  `start`/`stop`/`restart` require `lifecycle:write`, the impactful
+  `force-needs-auth` requires the strictly-higher `lifecycle:admin` (admin ⊃
   write), so the impactful verbs are never less-protected than fail-safe Stop.
   Off by default (permissive/audit), legacy key = full scope. See
   [api-authorization.md](api-authorization.md).
-- **`Suspended` unifies preemption-park and idle-park.** Both a spot-preemption
-  outcome and an idle "no work right now" land an agent in `Suspended`; an
-  operator `DesiredRunning` brings it back through `Starting`. (`WakeReceived`
-  is defined for message-triggered wake but is not yet emitted by any production
-  path — see § 4; an inbound message cannot wake a suspended agent today.)
 - **`Starting` is the single recovery re-entry point.** Every resume/restart
-  path (`Stopped`, `Restarting`, `Failed`, `Suspended`, `NeedsAuth`,
+  path (`Stopped`, `Restarting`, `Failed`, `NeedsAuth`,
   `MemoryExhausted`, `WaitingForMachine`) re-enters at `Starting`, never
   directly at `Running` — readiness is always re-proven.
 - **Retries are bounded with backoff.** `Failed → Failed` on

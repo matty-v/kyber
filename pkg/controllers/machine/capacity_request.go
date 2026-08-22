@@ -145,13 +145,13 @@ func (r *MachineReconciler) capacityRequestWanted(ctx context.Context, machine *
 
 func agentNeedsMachineCapacity(agent *kyberv1.Agent) bool {
 	switch agent.Spec.DesiredPhase {
-	case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended:
+	case kyberv1.AgentPhaseStopped:
 		return false
 	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting, kyberv1.AgentPhaseNeedsAuth:
 		return true
 	}
 	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended,
+	case kyberv1.AgentPhaseStopped,
 		kyberv1.AgentPhaseDeleted, kyberv1.AgentPhaseFailed,
 		kyberv1.AgentPhaseMemoryExhausted:
 		return false

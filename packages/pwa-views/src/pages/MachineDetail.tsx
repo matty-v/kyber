@@ -297,7 +297,7 @@ export function MachineDetail() {
         }
         message={
           pending === 'restart-agents'
-            ? `Each will be brought down and back up in parallel with its session brief preserved. Expect ~30s of unavailability per agent. Skipped: Suspended, Stopped, Draining.`
+            ? `Each will be brought down and back up in parallel with its session brief preserved. Expect ~30s of unavailability per agent. Skipped: Stopped, Draining.`
             : `This will ${pending === 'delete' ? 'permanently delete' : pending} machine "${name}".`
         }
         confirmLabel={pending === 'delete' ? 'Delete' : 'Confirm'}

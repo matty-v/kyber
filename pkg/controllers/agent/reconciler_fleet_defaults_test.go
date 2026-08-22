@@ -51,7 +51,6 @@ func newResolverAgent(model string) *kyberv1.Agent {
 			Machine: "node-01",
 			Runtime: "claude-code",
 			Model:   model,
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("100m"),
 				Memory: resource.MustParse("256Mi"),

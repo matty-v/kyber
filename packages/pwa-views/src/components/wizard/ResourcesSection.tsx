@@ -61,23 +61,6 @@ export function ResourcesSection({
         </select>
       </div>
 
-      <div>
-        <label htmlFor="agent-scaling" className={labelClass}>
-          Scaling
-        </label>
-        <select
-          id="agent-scaling"
-          value={state.scaling}
-          onChange={(e) =>
-            set('scaling', e.target.value as WizardState['scaling'])
-          }
-          className={inputClass}
-        >
-          <option value="warm">Warm (always-on)</option>
-          <option value="scale-to-zero">Scale to zero</option>
-        </select>
-      </div>
-
       <div
         data-band={cpuBand}
         data-resource="cpu"

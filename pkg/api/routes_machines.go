@@ -32,7 +32,7 @@ type RestartMachineAgentsResponse struct {
 }
 
 // RestartMachineAgentsSkipped describes an agent not restarted and why.
-// Reason is the agent's current phase (e.g. "Suspended", "Draining").
+// Reason is the agent's current phase (e.g. "Stopped", "Draining").
 type RestartMachineAgentsSkipped struct {
 	Name   string `json:"name"`
 	Reason string `json:"reason"`
@@ -749,7 +749,7 @@ func trimLeadingSlash(s string) string {
 // machine-level "restart all agents" action. Anything not in this set is
 // skipped with its current phase reported as the reason. Rationale (issue
 // #127): restart anything the operator would expect to be active; respect
-// explicit pauses (Suspended/Stopped), don't interfere with in-flight infra
+// explicit pauses (Stopped), don't interfere with in-flight infra
 // transitions (Draining/WaitingForMachine), and skip tombstones (Deleted).
 // Restarting is idempotent so it's safe to re-issue.
 var restartAgentsEligiblePhases = map[kyberv1.AgentPhase]bool{
@@ -762,7 +762,7 @@ var restartAgentsEligiblePhases = map[kyberv1.AgentPhase]bool{
 }
 
 // restartMachineAgents patches spec.desiredPhase=Restarting on every eligible
-// Agent scheduled to the given machine. Ineligible agents (Suspended, Stopped,
+// Agent scheduled to the given machine. Ineligible agents (Stopped,
 // Draining, WaitingForMachine, etc.) are reported in the Skipped list with
 // their current phase as the reason.
 //

@@ -127,34 +127,36 @@ per-agent git credentials.
 - **Status:** **Worth revisiting** (Top 3 #2). The runtime-adapter interfaces (`Runtime` /
   `Adapter` in `pkg/runtimes`, conceptually the "RuntimeAdapter") were designed for
   swappability — use them.
-- **Blast radius if reversed:** The dispatcher's delivery path, wake handler, transcript
+- **Blast radius if reversed:** The dispatcher's delivery path, transcript
   tailer/compaction subsystem, status sidecar's activity heuristics, and the restart-session
   route all encode tmux semantics.
 
 ## ADR-005 — Cost-first infrastructure: spot VMs, scale-to-zero, k3s small profile
 
-- **Decision:** Machines default to spot/preemptible GCE instances; agents support a
-  Suspended phase with a Redis message buffer (5-min TTL) + wake handler so suspended
-  agents cost nothing; the small install is a single k3s VM with Postgres/Redis as Helm
-  sub-charts (commit `d0542cd` deliberately moved them out of Terraform).
+- **Decision:** Machines default to spot/preemptible GCE instances; the small install is a
+  single k3s VM with Postgres/Redis as Helm sub-charts (commit `d0542cd` deliberately moved
+  them out of Terraform). Agents originally also supported a scale-to-zero `Suspended` phase
+  with a Redis message buffer (5-min TTL) + wake handler.
 - **Context:** Personal-scale platform where idle agents would otherwise burn VM hours 24/7.
 - **Inferred rationale:** The README leads with "cost-optimized" — it's a primary product
   requirement, not an optimization. Preemption resilience (ADR-003 persistence + reconcile
   loops) is what makes spot viable.
 - **Alternatives + tradeoffs:** On-demand VMs (2-3x cost), serverless/Cloud Run for agents
-  (no persistent filesystem, no long sessions). The 5-minute message-buffer TTL is a real
-  loss window: a message to a suspended agent that fails to wake within TTL is silently
+  (no persistent filesystem, no long sessions). The 5-minute message-buffer TTL was a real
+  loss window: a message to a suspended agent that failed to wake within TTL was silently
   dropped.
-- **Status:** **Sound** in intent; the TTL-based buffer is **questionable** — durability by
-  timer is a race, and there's no dead-letter surface. A persisted queue (even a Postgres
-  table) would close it cheaply.
-- **Blast radius if reversed:** Machine controller's replacement logic, wake handler,
-  messagebuffer package, cost model of the whole platform.
+- **Status:** **Partially reversed (2026-08).** The scale-to-zero half — the `Suspended`
+  phase, `spec.scaling`, idle timeout, wake-on-message, and the TTL message buffer — was
+  removed; agents are now always on, and the questionable buffer race went with it. The
+  spot-VM + small-k3s half stands, with machine-interruption parking handled by
+  `Draining`/`WaitingForMachine`.
+- **Blast radius when reversed (observed):** Machine controller's replacement logic was
+  untouched; the wake handler and messagebuffer package were deleted outright.
 
 ## ADR-006 — Polyglot persistence by concern: CRDs + Postgres + Redis, each behind a store interface with a memory fake
 
 - **Decision:** Durable platform state → CRDs; session briefs → Postgres (`pkg/briefstore`);
-  ephemeral/time-series → Redis (tokenstore, metricsstore, messagebuffer, statechangestore,
+  ephemeral/time-series → Redis (tokenstore, metricsstore, statechangestore,
   envelope cache). Every store ships `store.go` (interface) + `redis.go`/`postgres.go` +
   `memory.go` (test fake). The pattern is rigidly consistent across 6+ packages.
 - **Context:** Different data has different durability needs; tests must run without infra.
@@ -197,7 +199,7 @@ per-agent git credentials.
   defaults to permissive (log-would-deny, allow anyway).
 - **Context:** V1 shipped fast with one trusted caller (the operator + PWA); then sibling agents
   (release automation, health monitoring, peer agents) became callers and verb-level risk diverged
-  (suspend/force-needs-auth are not fail-safe).
+  (force-needs-auth is not fail-safe).
 - **Inferred rationale:** Permissive-first is a deliberate migration strategy — observe
   would-denies before breaking single-key installs. The admin⊃write nesting invariant is
   carefully reasoned in the code comments.
@@ -381,19 +383,20 @@ per-agent git credentials.
 ## ADR-017 — Session continuity as a platform feature: brief builder + briefstore + restart semantics
 
 - **Decision:** On every lifecycle transition the controller builds a "session brief"
-  (deterministic `BuildBrief`, Postgres-persisted, drains the suspended-message buffer)
-  delivered to the waking agent; paired with agent-side tail/summary conventions.
-- **Context:** Pod recreation is *routine* (spot VMs, drift rolls); an agent that wakes
-  amnesiac after every preemption is useless.
+  (deterministic `BuildBrief`, Postgres-persisted) delivered to the restarting agent;
+  paired with agent-side tail/summary conventions. (The brief originally also drained the
+  suspended-message buffer; that buffer was removed with the `Suspended` phase in the
+  2026-08 always-on cleanup — see ADR-005.)
+- **Context:** Pod recreation is *routine* (spot VMs, drift rolls); an agent that comes
+  back amnesiac after every preemption is useless.
 - **Inferred rationale:** Continuity is split correctly across layers — platform owns
-  "why did you restart + what arrived while you slept" (the brief); the agent's identity
+  "why did you restart" (the brief); the agent's identity
   repo owns long-term memory (ADR-015/ADR 0001). The B2-era commits show determinism and
   length-guarding were reviewed in from the start.
-- **Alternatives + tradeoffs:** Agent-side-only continuity (misses buffered messages and
+- **Alternatives + tradeoffs:** Agent-side-only continuity (misses the
   restart cause), full transcript replay (token cost, stale context).
 - **Status:** **Sound.**
-- **Blast radius if reversed:** Wake handler, suspended-message delivery, every agent's
-  resume experience.
+- **Blast radius if reversed:** Every agent's resume experience.
 
 ## ADR-018 — Logs: live reads proxied through the API + node-level Vector shipping to provider-agnostic S3 archive
 

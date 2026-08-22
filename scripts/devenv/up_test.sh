@@ -152,7 +152,6 @@ run "bring-up prints the contract" 0 "${m}"
 assert_out "contract shows API base URL"        'http://localhost:18080'
 assert_out "contract shows healthz endpoint"    '/healthz'
 assert_out "contract shows the test API key"    'test-api-key-e2e'
-assert_out "contract shows the webhook secret"  'test-webhook-secret-e2e'
 rm -rf "${m}"
 
 # ---------------------------------------------------------------------------

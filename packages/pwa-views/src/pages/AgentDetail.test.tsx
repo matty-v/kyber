@@ -117,7 +117,6 @@ describe('AgentDetail MismatchBadges', () => {
       machine: 'node-01',
       model: 'claude-sonnet-4-5',
       runtime: 'claude-code',
-      scaling: 'warm',
       resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
       secrets: { authType: 'oauth' },
       status: { phase: 'Running' },
@@ -333,10 +332,9 @@ describe('AgentDetail LifecycleMenuItems (kyber#599)', () => {
       expect(screen.getByRole('menuitem', { name: /^Start$/ })).toBeInTheDocument()
       // …and the auth-wedge recovery (#395) stays…
       expect(screen.getByRole('menuitem', { name: /Require re-auth/ })).toBeInTheDocument()
-      // …while the no-op Restart pod is gone, and Stop/Suspend never applied.
+      // …while the no-op Restart pod is gone, and Stop never applied.
       expect(screen.queryByRole('menuitem', { name: /Restart pod/ })).not.toBeInTheDocument()
       expect(screen.queryByRole('menuitem', { name: /^Stop$/ })).not.toBeInTheDocument()
-      expect(screen.queryByRole('menuitem', { name: /Suspend/ })).not.toBeInTheDocument()
     },
   )
 
@@ -348,11 +346,10 @@ describe('AgentDetail LifecycleMenuItems (kyber#599)', () => {
     expect(onSelect).not.toHaveBeenCalledWith('restart')
   })
 
-  it('non-regression — Running still offers Stop/Restart pod/Suspend and no Start', () => {
+  it('non-regression — Running still offers Stop/Restart pod and no Start', () => {
     renderLifecycleMenu('Running')
     expect(screen.getByRole('menuitem', { name: /^Stop$/ })).toBeInTheDocument()
     expect(screen.getByRole('menuitem', { name: /Restart pod/ })).toBeInTheDocument()
-    expect(screen.getByRole('menuitem', { name: /Suspend/ })).toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /^Start$/ })).not.toBeInTheDocument()
   })
 
@@ -383,10 +380,9 @@ describe('AgentDetail LifecycleMenuItems — NeedsAuth (kyber#26)', () => {
     expect(onSelect).not.toHaveBeenCalledWith('restart')
   })
 
-  it('does not offer Require re-auth, Stop or Suspend — the agent is already parked', () => {
+  it('does not offer Require re-auth or Stop — the agent is already parked', () => {
     renderLifecycleMenu('NeedsAuth')
     expect(screen.queryByRole('menuitem', { name: /Require re-auth/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /^Stop$/ })).not.toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: /Suspend/ })).not.toBeInTheDocument()
   })
 })

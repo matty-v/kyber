@@ -1,14 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { Bot, Plus, Play, Square, RotateCcw, Pause, Trash2, MoreHorizontal } from 'lucide-react'
+import { Bot, Plus, Play, Square, RotateCcw, Trash2, MoreHorizontal } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
   useAgents,
   useStartAgent,
   useStopAgent,
   useRestartAgent,
-  useSuspendAgent,
   useDeleteAgent,
 } from '../hooks/useAPI'
 import { Card } from '../components/Card'
@@ -30,7 +29,7 @@ import { DataTable } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
 import type { Agent } from '../lib/types'
 
-type ActionKind = 'start' | 'stop' | 'restart' | 'suspend' | 'delete'
+type ActionKind = 'start' | 'stop' | 'restart' | 'delete'
 
 interface ActionState {
   kind: ActionKind
@@ -46,14 +45,12 @@ export function AgentList() {
   const startAgent = useStartAgent()
   const stopAgent = useStopAgent()
   const restartAgent = useRestartAgent()
-  const suspendAgent = useSuspendAgent()
   const deleteAgent = useDeleteAgent()
 
   const isActing =
     startAgent.isPending ||
     stopAgent.isPending ||
     restartAgent.isPending ||
-    suspendAgent.isPending ||
     deleteAgent.isPending
 
   function confirm(kind: ActionKind, agent: Agent) {
@@ -169,7 +166,6 @@ export function AgentList() {
       if (kind === 'start') await startAgent.mutateAsync(agent.id)
       if (kind === 'stop') await stopAgent.mutateAsync(agent.id)
       if (kind === 'restart') await restartAgent.mutateAsync(agent.id)
-      if (kind === 'suspend') await suspendAgent.mutateAsync(agent.id)
       if (kind === 'delete') await deleteAgent.mutateAsync(agent.id)
     } finally {
       setPending(null)
@@ -354,10 +350,6 @@ function AgentActionsMenu({
           <DropdownMenuItem onSelect={() => onAction('restart', agent)}>
             <RotateCcw className="h-3.5 w-3.5" />
             Restart
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onAction('suspend', agent)}>
-            <Pause className="h-3.5 w-3.5" />
-            Suspend
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

@@ -116,7 +116,6 @@ func TestShutdownTypeConstants(t *testing.T) {
 	}{
 		{"Planned", briefstore.ShutdownTypePlanned, "planned"},
 		{"Unplanned", briefstore.ShutdownTypeUnplanned, "unplanned"},
-		{"Wake", briefstore.ShutdownTypeWake, "wake"},
 		{"Preemption", briefstore.ShutdownTypePreemption, "preemption"},
 	}
 	for _, tc := range cases {
@@ -138,7 +137,6 @@ func TestRestartReasonConstants(t *testing.T) {
 		{"FirstBoot", briefstore.RestartReasonFirstBoot, "first_boot"},
 		{"Operator", briefstore.RestartReasonOperator, "operator"},
 		{"Crash", briefstore.RestartReasonCrash, "crash"},
-		{"Wake", briefstore.RestartReasonWake, "wake"},
 		{"Preemption", briefstore.RestartReasonPreemption, "preemption"},
 	}
 	for _, tc := range cases {

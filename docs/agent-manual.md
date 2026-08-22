@@ -39,7 +39,6 @@ Phases you can be in, and what each means for you:
 | Phase | What it means |
 |---|---|
 | `Running` | normal |
-| `Suspended` | scaled to zero — pod deleted, disk preserved. An inbound message wakes you |
 | `Restarting` / `Stopping` / `Stopped` | operator-driven; disk preserved |
 | `Draining` → `WaitingForMachine` | your spot machine is being preempted; you're waiting for a replacement |
 | `NeedsAuth` | your stored OAuth token is invalid — a **human** must re-authorize |
@@ -88,7 +87,7 @@ Never echo, log, paste, or commit any of these. A token in a transcript is a lea
   Both send endpoints are scoped to the conversations you actually serve — a
   `403` means the chat or channel you targeted is outside your allowlist, so
   reply into the one the prompt came from rather than retrying elsewhere.
-- **Inbound webhooks** deliver HMAC-signed messages via bindings, and can wake you from `Suspended`. Per-field truncation is binding config, so a message that arrives cut off mid-sentence is a config limit, not your reading comprehension.
+- **Inbound webhooks** deliver HMAC-signed messages via bindings. Per-field truncation is binding config, so a message that arrives cut off mid-sentence is a config limit, not your reading comprehension.
 - **Scheduled jobs** fire prompts at you on a cron.
 - **The PWA shell** is a human typing straight into your live session.
 
