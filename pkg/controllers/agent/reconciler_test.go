@@ -2398,7 +2398,11 @@ func TestClassifyEvent_TerminatingPodTreatedAsDead(t *testing.T) {
 			t.Fatalf("patching to Running: %v", err)
 		}
 
-		deletionTime := metav1.Now()
+		// Aged past the 60s recently-deleted guard: a FRESH DeletionTimestamp
+		// now means "graceful roll in progress — wait", and only a pod STUCK
+		// Terminating (the dead-node case this test documents) still
+		// classifies as dead. See reconciler_terminating_pod_test.go.
+		deletionTime := metav1.NewTime(time.Now().Add(-2 * time.Minute))
 		terminatingPod := &corev1.Pod{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:              AgentPodName("dave"),
