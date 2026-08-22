@@ -1,6 +1,6 @@
 # pwa-views publish boundary: kyber ↔ holocron
 
-> **Auto-publish is now the standard path.** `release.yml` chains a `pwa-views/v*` tag push after every successful release build, which triggers `publish-pwa-views.yml` automatically. Manual dispatch via the Actions tab remains available as a fallback. The boundary contract below is unchanged — only the trigger is automated. See the [release runbook](../operator/release-runbook.md) for details and the `[skip-publish]` opt-out.
+> **Auto-publish is now the standard path — twice over.** `release.yml` chains a `pwa-views/v*` tag push after every successful release build, and outside a release, `auto-publish-pwa-views.yml` detects a `packages/pwa-views/package.json` version bump merged to `main` and pushes the tag itself. Either tag push triggers `publish-pwa-views.yml` automatically; both paths are idempotent (skip if the version is already on the registry), so there is no double-publish. Manual dispatch via the Actions tab remains available as a fallback. The boundary contract below is unchanged — only the trigger is automated. See the [release runbook](../operator/release-runbook.md) for details and the `[skip-publish]` opt-out.
 
 `@matty-v/kyber-pwa-views` is a published npm package on GitHub Packages. This document
 explains how the package is consumed, where the version boundary lives, and what contributors
@@ -15,7 +15,7 @@ matty-v/kyber (monorepo)
 ├── packages/pwa-views/          ← the package source
 │     version: 0.4.0
 └── apps/embedded-pwa/           ← consumer A
-      package.json: "@matty-v/kyber-pwa-views": "0.4.0"
+      package.json: "@matty-v/kyber-pwa-views": "*"
       resolved: via npm workspaces (local symlink — always current)
 
 GitHub Packages
@@ -64,23 +64,18 @@ Steps to publish a new version:
 ```
 1. Bump version in packages/pwa-views/package.json
 2. Add CHANGELOG entry in packages/pwa-views/CHANGELOG.md
-3. Update apps/embedded-pwa/package.json to match the new version string
-   (keeps workspace resolution unambiguous; prevents npm ci fallback to registry)
-4. Run npm install (updates package-lock.json)
-5. Open PR → merge to main
-6. After merge, push the version tag:
-     git pull
-     git tag pwa-views/vX.Y.Z
-     git push origin pwa-views/vX.Y.Z
-7. Confirm publish-pwa-views.yml completes successfully
-8. In matty-v/holocron: update @matty-v/kyber-pwa-views dep → X.Y.Z and merge
+3. Run npm install (updates package-lock.json)
+4. Open PR → merge to main
+5. auto-publish-pwa-views.yml detects the bump on main and pushes the
+   pwa-views/vX.Y.Z tag automatically (no manual tag push)
+6. Confirm publish-pwa-views.yml completes successfully
+7. In matty-v/holocron: update @matty-v/kyber-pwa-views dep → X.Y.Z and merge
 ```
 
-> **Note on step 3:** If `apps/embedded-pwa` still references the old version string
-> after you bump `packages/pwa-views`, npm workspaces satisfies the old string locally
-> but `npm ci` inside the publish workflow — which runs against the full lockfile —
-> can 401 against the registry for the old version. Always keep both version strings
-> in sync.
+> **No embedded-pwa version sync is needed.** `apps/embedded-pwa` pins
+> `@matty-v/kyber-pwa-views` as `"*"`, so npm workspaces always resolves the
+> local package regardless of its version — the old "keep both version strings
+> in sync" step is retired.
 
 ---
 
@@ -104,15 +99,13 @@ When opening a PR that modifies anything under `packages/pwa-views/`:
 
 - [ ] **Version bump:** `packages/pwa-views/package.json` version incremented (patch / minor / major per table above)
 - [ ] **CHANGELOG:** entry added to `packages/pwa-views/CHANGELOG.md` under the new version
-- [ ] **Embedded-pwa sync:** `apps/embedded-pwa/package.json` version string updated to match
 - [ ] **Lockfile:** `package-lock.json` regenerated (`npm install` at repo root)
-- [ ] **No publish yet:** tag is pushed *after* the PR merges to main, not before
-- [ ] **PR description:** includes post-merge instruction to push `pwa-views/vX.Y.Z` tag
+- [ ] **No manual tag:** do not push a `pwa-views/v*` tag yourself — `auto-publish-pwa-views.yml` pushes it after the merge to main
 - [ ] **Holocron tracked:** if the change should reach Holocron, a follow-up Holocron dep-update is noted (issue or PR)
 
 If the change is internal to the monorepo only (no Holocron consumers need it), the
-version bump is still required to keep the workspace and registry in sync for future
-publishes — but the tag push and Holocron update can be deferred.
+version bump is still required — CI guards it, and the auto-publish keeps the
+registry in sync — but the Holocron update can be deferred.
 
 ---
 

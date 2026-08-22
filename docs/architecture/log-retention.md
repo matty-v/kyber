@@ -493,8 +493,10 @@ requests and 404s a missing agent identically.
   the audience appropriate for full session content, raising the bar for
   `source=transcript` is a separate follow-up — flagged, not gated into this
   additive feature.
-- PWA UI for transcript content, retroactive backfill, transcript search /
-  structured JSONL field parsing, and a streaming (long-poll) transcript
-  endpoint (all per kyber#446).
+- Retroactive backfill, transcript search, and a streaming (long-poll)
+  transcript endpoint (per kyber#446). A PWA UI for transcript content was
+  originally out of scope too, but **now exists**: the agent detail view's
+  Activity tab (`packages/pwa-views/src/components/AgentHistory.tsx`) renders
+  the `source=transcript` archive as structured conversation/tool-call history.
 - Downstream dedup-by-`uuid` for the rare sidecar-restart duplicate — only if
   duplicates prove noisy in practice.
