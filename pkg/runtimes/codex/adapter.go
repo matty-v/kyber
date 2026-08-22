@@ -77,7 +77,7 @@ func (a *Adapter) ReadinessProbe() *corev1.Probe {
 		// state; otherwise every healthy subscription agent remains unready. Also
 		// reject Kyber's exact {} device marker because Codex 0.146 incorrectly
 		// reports that placeholder as logged in.
-		Command: []string{"/bin/bash", "-c", `[ -n "${OPENAI_API_KEY:-}" ] || nsenter --target 1 --mount --root --wd -- runuser -u kyber -- bash -c 'marker=$(tr -d "[:space:]" < "$CODEX_HOME/auth.json" 2>/dev/null || true); [ "$marker" != "{}" ] && codex login status >/dev/null 2>&1'`},
+		Command: []string{"/bin/bash", "-c", `[ -n "${OPENAI_API_KEY:-}" ] || nsenter --target 1 --mount --root --wd -- runuser -u kyber -- bash -c 'marker=$(tr -d "[:space:]" < "/home/kyber/.codex/auth.json" 2>/dev/null || true); [ "$marker" != "{}" ] && codex login status >/dev/null 2>&1'`},
 	}}, InitialDelaySeconds: 5, PeriodSeconds: 5, FailureThreshold: 3}
 }
 func processProbe(delay, period int32) *corev1.Probe {

@@ -89,18 +89,20 @@ export default defineConfig({
       '/api': {
         target: 'http://localhost:8080',
         changeOrigin: true,
+        ws: true,
         configure: (proxy) => {
-          proxy.on('proxyReq', (proxyReq, req) => {
-            // Browser-session mutations enforce an exact same-origin check.
-            // In development the browser addresses Vite on :5173 while the
-            // proxied request addresses the control plane on :8080, so make
-            // the forwarded Origin agree with the forwarded Host. This is
-            // confined to Vite's local development proxy; production keeps
-            // the control plane's strict Origin validation unchanged.
+          const rewriteOrigin = (proxyReq: { setHeader(name: string, value: string): void }, req: { headers: { origin?: string } }) => {
+            // Browser-session mutations and WebSocket upgrades enforce an
+            // exact same-origin check. In development the browser addresses
+            // Vite on :5173 while the forwarded request addresses the control
+            // plane on :8080, so make Origin agree with the forwarded Host.
+            // Production keeps the control plane's validation unchanged.
             if (req.headers.origin) {
               proxyReq.setHeader('Origin', 'http://localhost:8080')
             }
-          })
+          }
+          proxy.on('proxyReq', rewriteOrigin)
+          proxy.on('proxyReqWs', rewriteOrigin)
         },
       },
       '/ws': {

@@ -29,6 +29,7 @@ func TestAdapter(t *testing.T) {
 	}
 	probeCommand := strings.Join(a.ReadinessProbe().Exec.Command, " ")
 	if !strings.Contains(probeCommand, "nsenter --target 1 --mount --root --wd") ||
+		!strings.Contains(probeCommand, "/home/kyber/.codex/auth.json") ||
 		!strings.Contains(probeCommand, `marker" != "{}"`) ||
 		!strings.Contains(probeCommand, "codex login status") {
 		t.Errorf("ReadinessProbe() does not check Codex inside the agent chroot: %q", probeCommand)

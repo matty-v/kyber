@@ -141,6 +141,11 @@ the PWA attaches read-only to tmux session `auth`. The exact `{}` payload in
 `<agent>-codex-auth` is the device-login marker and pauses the normal Starting
 timeout until the credential syncer replaces it. Codex API-key agents use
 `<agent>-openai` / `OPENAI_API_KEY` and never enter the device flow.
+Codex readiness enters PID 1's chroot from a kubelet exec probe; it must use
+the absolute `/home/kyber/.codex/auth.json` path because probe processes do not
+inherit the start script's `CODEX_HOME` export. Local Vite development must
+proxy WebSocket upgrades on `/api` as well as HTTP requests and rewrite both
+forwarded Origins to the backend origin, or auth and Shell terminals close.
 Authenticated model catalogs are stored per agent, separately from the public
 npm-backed harness snapshot. Claude catalog entries require Anthropic's
 authoritative context window; Codex `model/list` lacks that field, so Codex
