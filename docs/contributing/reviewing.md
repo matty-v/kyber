@@ -242,3 +242,20 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
   `compute.managed.capabilities.requiresSchedulerDemand`; inferring this from
   a location string diverges from provider configuration (for example, a GKE
   pool can have a regional location but only one configured node location).
+
+### 17. Automatic pod rollouts must persist restart intent before deletion
+
+- **Fragile area:** automatic convergence helpers in
+  `pkg/controllers/agent/` and `countAgentPodsBeingDeleted`.
+- **The trap:** deleting a Running Agent pod directly leaves its CR in
+  `Running`. A pod watch can observe the missing pod first, derive `PodDied`,
+  transition to `Failed`, increment `restartCount`, and impose crash backoff on
+  a healthy agent. This occurred during status-sidecar and Telegram convergence
+  on kyber-datawire.
+- **The invariant:** only a currently `Running` Agent may persist
+  `spec.desiredPhase=Restarting`; use optimistic locking and return. The next
+  reconcile uses the normal `DesiredRestarting` transition, records
+  `Restarting`, and owns deletion. Count persisted restart requests as rollout
+  reservations. Arm a convergence canary only after that persistence succeeds,
+  or conflicting operator intent creates a phantom canary that can never be
+  verified. Never add an out-of-band `r.Delete` to a convergence helper.

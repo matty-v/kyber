@@ -6,7 +6,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -78,9 +77,8 @@ func (r *AgentReconciler) recordTelegramSidecarRollHeld(agent *kyberv1.Agent, po
 
 // convergeTelegramSidecar rolls a running pod onto the Telegram bridge the
 // controller currently wants — whether the pod has the wrong image or no bridge
-// container at all. Returns (deleted, err); deleted=true means the caller
-// requeues and skips the rest of the reconcile, and the next pass rebuilds the
-// pod through createPod with the current env.
+// container at all. Returns (requested, err); requested=true means the caller
+// requeues and the next pass drives the normal Restarting transition.
 //
 // Gate order, and why each one is where it is:
 //
@@ -145,6 +143,9 @@ func (r *AgentReconciler) convergeTelegramSidecar(
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
+	// As with status-sidecar convergence, do not arm a canary until the
+	// restart reservation succeeds; newer operator intent can decline it.
+	armCanary := false
 	switch {
 	case r.telegramCanary.failedCanary(target):
 		r.recordTelegramSidecarRollHeld(agent, pod.Name, target,
@@ -165,22 +166,26 @@ func (r *AgentReconciler) convergeTelegramSidecar(
 			return false, nil
 		default:
 			// No canary attempt yet for this image — THIS pod is the canary.
-			r.telegramCanary.markCanaryStarted(target)
+			armCanary = true
 		}
 	}
 	had := extractContainerSpecImage(pod, TelegramSidecarContainerName)
 	if had == "" {
 		had = "<no bridge container>"
 	}
-	if err := r.Delete(ctx, pod); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("deleting pod for Telegram sidecar convergence: %w", err)
+	requested, err := r.requestIntentionalRestart(ctx, agent)
+	if err != nil {
+		return false, fmt.Errorf("requesting restart for Telegram sidecar convergence: %w", err)
+	}
+	if !requested {
+		return false, nil
+	}
+	if armCanary {
+		r.telegramCanary.markCanaryStarted(target)
 	}
 	if r.Recorder != nil {
 		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "TelegramSidecarConverge",
-			"deleted pod %s to converge the Telegram bridge (had %s, expected %s); kyber#688",
+			"requested restart of pod %s to converge the Telegram bridge (had %s, expected %s); kyber#688",
 			pod.Name, had, target,
 		)
 	}

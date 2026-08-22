@@ -3256,9 +3256,9 @@ func (r *AgentReconciler) reconcileRuntimeStatusConditions(agent *kyberv1.Agent)
 // maybeAutoRollSidecarForDrift implements kyber#299 Option B: when an
 // agent's SidecarOutOfDate condition has been True past a stability
 // window AND the agent reports idle AND no other agent's pod is
-// already mid-deletion, delete this pod to force a recreate on the
-// new sidecar digest. Returns (rolled, err); rolled=true means the
-// caller should requeue and skip the rest of the reconcile.
+// already mid-roll, request the normal Restarting transition so it recreates
+// the pod on the new sidecar digest. Returns (rolled, err); rolled=true means
+// the caller should requeue and skip the rest of the reconcile.
 //
 // All gates are intentionally restrictive — auto-roll is a
 // best-effort convenience for visibility-aware operators, not a
@@ -3302,15 +3302,16 @@ func (r *AgentReconciler) maybeAutoRollSidecarForDrift(ctx context.Context, agen
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
-	if err := r.Delete(ctx, pod); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("deleting pod for sidecar auto-roll: %w", err)
+	requested, err := r.requestIntentionalRestart(ctx, agent)
+	if err != nil {
+		return false, fmt.Errorf("requesting restart for sidecar auto-roll: %w", err)
+	}
+	if !requested {
+		return false, nil
 	}
 	if r.Recorder != nil {
 		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "SidecarOutOfDateAutoRoll",
-			"deleted pod %s to refresh status-sidecar (was %s, expected %s); kyber#299",
+			"requested restart of pod %s to refresh status-sidecar (was %s, expected %s); kyber#299",
 			pod.Name,
 			extractSidecarSpecImage(pod),
 			r.StatusSidecarImage,
@@ -3319,10 +3320,40 @@ func (r *AgentReconciler) maybeAutoRollSidecarForDrift(ctx context.Context, agen
 	return true, nil
 }
 
-// countAgentPodsBeingDeleted lists agent pods in the given namespace
-// (label kyber.io/agent set) and returns how many have a non-zero
-// DeletionTimestamp. Used by the auto-roll concurrency gate to avoid
-// stacking deletions.
+// requestIntentionalRestart persists rollout intent before any pod deletion.
+// The next reconcile derives EventDesiredRestarting and uses the normal
+// Running -> Restarting state-machine path. This ordering is load-bearing: a
+// direct delete can race another reconcile, which then mistakes Kyber's own
+// rollout for PodDied and consumes crash backoff.
+func (r *AgentReconciler) requestIntentionalRestart(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	current := &kyberv1.Agent{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(agent), current); err != nil {
+		return false, fmt.Errorf("fetching current agent: %w", err)
+	}
+	// Restarting is consumed only from Running. Persisting it from a parked or
+	// failed phase would leave a sticky request that also reserves the shared
+	// rollout budget forever.
+	if current.Status.Phase != kyberv1.AgentPhaseRunning {
+		return false, nil
+	}
+	// Never overwrite newer operator intent. Running is the steady desired
+	// value for active agents; empty is also valid for legacy/internal paths.
+	if current.Spec.DesiredPhase != "" && current.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		return false, nil
+	}
+	before := current.DeepCopy()
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+	if err := r.Patch(ctx, current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+		return false, fmt.Errorf("persisting restart intent: %w", err)
+	}
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+	return true, nil
+}
+
+// countAgentPodsBeingDeleted returns the number of distinct agent rollouts in
+// flight. A rollout counts as soon as DesiredPhase=Restarting is persisted,
+// before its pod receives a DeletionTimestamp; this closes the reservation gap
+// introduced by routing convergence through the state machine.
 func (r *AgentReconciler) countAgentPodsBeingDeleted(ctx context.Context, namespace string) (int, error) {
 	var pods corev1.PodList
 	if err := r.List(ctx, &pods,
@@ -3331,13 +3362,22 @@ func (r *AgentReconciler) countAgentPodsBeingDeleted(ctx context.Context, namesp
 	); err != nil {
 		return 0, err
 	}
-	n := 0
+	inflight := make(map[string]struct{})
 	for i := range pods.Items {
 		if pods.Items[i].DeletionTimestamp != nil {
-			n++
+			inflight[pods.Items[i].Labels["kyber.io/agent"]] = struct{}{}
 		}
 	}
-	return n, nil
+	var agents kyberv1.AgentList
+	if err := r.List(ctx, &agents, client.InNamespace(namespace)); err != nil {
+		return 0, err
+	}
+	for i := range agents.Items {
+		if agents.Items[i].Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
+			inflight[agents.Items[i].Name] = struct{}{}
+		}
+	}
+	return len(inflight), nil
 }
 
 // extractContainerSpecImage returns the named container's spec image (what
@@ -3571,17 +3611,9 @@ func (r *AgentReconciler) recordRuntimeImageRollHeld(agent *kyberv1.Agent, podNa
 // deliberate omission: there is NO idle gate. AC#4 requires single-agent envs
 // (a single-agent install) to keep the immediate roll-and-converge behavior #523/#527
 // shipped and verified; an idle gate would change that. The runtime roll also
-// goes through the state machine (capture-state-and-delete), which is the
-// graceful path — unlike the sidecar convergence's bare pod delete that the
-// idle gate exists to soften.
-//
-// Asymmetry vs. convergeSidecarImage: that path owns its r.Delete, so it arms
-// the canary at delete time. This path only DERIVES the event; the state
-// machine performs the delete one transition later via
-// ActionCaptureStateAndDeletePod. We arm the canary clock here at gate-decision
-// time anyway — the canary measures image pullability over wall-clock, not the
-// delete instant, so the one-transition lag is immaterial and arming at delete
-// would mean threading canary state through the state machine.
+// goes through the state machine (capture-state-and-delete), as do the sidecar
+// convergence paths. All arm the canary at the rollout decision point; the
+// canary measures image pullability over wall-clock, not the delete instant.
 //
 // Concurrency is the SHARED cluster-wide budget: countAgentPodsBeingDeleted is
 // path-agnostic, so the runtime roll, the 5c sidecar auto-roll, and the 5d
@@ -3740,8 +3772,8 @@ func (r *AgentReconciler) recordSidecarImageRollHeld(agent *kyberv1.Agent, podNa
 //	VERIFIED  ◀─ Ready pod observed ─┘            FAILED
 //	(steady-state convergence)                 (rolls held)
 //
-// Returns (deleted, err). When deleted=true, caller requeues and skips
-// the rest of reconcile — the next pass rebuilds the pod via createPod.
+// Returns (requested, err). When requested=true, caller requeues and skips the
+// rest of reconcile; the next pass drives the normal Restarting transition.
 func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyberv1.Agent, pod *corev1.Pod) (bool, error) {
 	if pod == nil || pod.DeletionTimestamp != nil {
 		return false, nil
@@ -3766,8 +3798,12 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 	if inflight >= sidecarAutoRollDefaultMaxConcurrent {
 		return false, nil
 	}
-	// Pullability gate (kyber#371 Defect A): observed-evidence canary.
+	// Pullability gate (kyber#371 Defect A): observed-evidence canary. Decide
+	// whether this request is the canary here, but arm it only after restart
+	// intent is successfully persisted. A conflicting operator intent must not
+	// create a phantom canary for a rollout that never happens.
 	target := r.StatusSidecarImage
+	armCanary := false
 	switch {
 	case r.sidecarImageFailedCanary(target):
 		r.recordSidecarImageRollHeld(agent, pod.Name, target,
@@ -3789,19 +3825,23 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 			return false, nil
 		default:
 			// No canary attempt yet for this image — THIS pod is the canary.
-			r.markSidecarCanaryStarted(target)
+			armCanary = true
 		}
 	}
 	specImage := extractSidecarSpecImage(pod)
-	if err := r.Delete(ctx, pod); err != nil {
-		if errors.IsNotFound(err) {
-			return false, nil
-		}
-		return false, fmt.Errorf("deleting pod for sidecar image convergence: %w", err)
+	requested, err := r.requestIntentionalRestart(ctx, agent)
+	if err != nil {
+		return false, fmt.Errorf("requesting restart for sidecar image convergence: %w", err)
+	}
+	if !requested {
+		return false, nil
+	}
+	if armCanary {
+		r.markSidecarCanaryStarted(target)
 	}
 	if r.Recorder != nil {
 		r.Recorder.Eventf(agent, corev1.EventTypeNormal, "SidecarImageConverge",
-			"deleted pod %s for sidecar image convergence (had %s, expected %s); kyber#358+kyber#371",
+			"requested restart of pod %s for sidecar image convergence (had %s, expected %s); kyber#358+kyber#371",
 			pod.Name, specImage, target,
 		)
 	}

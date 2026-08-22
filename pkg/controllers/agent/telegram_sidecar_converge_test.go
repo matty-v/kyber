@@ -68,6 +68,24 @@ var telegramWired = TelegramWiring{SecretExists: true, HasAllowlist: true}
 // with the given seed objects.
 func newTelegramConvergeReconciler(t *testing.T, controllerImage string, objs ...client.Object) *AgentReconciler {
 	t.Helper()
+	seen := map[string]bool{}
+	for _, obj := range objs {
+		if a, ok := obj.(*kyberv1.Agent); ok {
+			seen[a.Name] = true
+		}
+	}
+	for _, obj := range objs {
+		if p, ok := obj.(*corev1.Pod); ok {
+			name := p.Labels["kyber.io/agent"]
+			if name != "" && !seen[name] {
+				a := telegramIdleAgent()
+				a.Name = name
+				a.Namespace = p.Namespace
+				objs = append(objs, a)
+				seen[name] = true
+			}
+		}
+	}
 	c := fake.NewClientBuilder().
 		WithScheme(schedulingTestScheme(t)).
 		WithObjects(objs...).
@@ -155,8 +173,15 @@ func TestConvergeTelegramSidecar_MissingBridge_RollsPod(t *testing.T) {
 	if !rolled {
 		t.Fatal("expected the un-migrated pod to be rolled (the 68-minute `dave` bug)")
 	}
-	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err == nil {
-		t.Error("pod should have been deleted so the next reconcile rebuilds it with the bridge")
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(pod), &corev1.Pod{}); err != nil {
+		t.Errorf("pod should remain until the state machine records Restarting: %v", err)
+	}
+	got := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "kyber", Name: "dave"}, got); err != nil {
+		t.Fatalf("fetching restart request: %v", err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("desiredPhase=%q, want Restarting", got.Spec.DesiredPhase)
 	}
 }
 
@@ -331,6 +356,18 @@ func TestConvergeTelegramSidecar_BadPin_ContainedToCanary(t *testing.T) {
 	if !rolled {
 		t.Fatal("the first eligible agent must roll as the canary")
 	}
+	// Simulate the normal state-machine pass consuming the transient restart
+	// request. Unit tests call the convergence helper directly, so no reconciler
+	// pass would otherwise clear this rollout reservation.
+	dave := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKey{Namespace: "kyber", Name: "dave"}, dave); err != nil {
+		t.Fatalf("fetching canary agent: %v", err)
+	}
+	before := dave.DeepCopy()
+	dave.Spec.DesiredPhase = ""
+	if err := r.Patch(context.Background(), dave, client.MergeFrom(before)); err != nil {
+		t.Fatalf("consuming canary restart request: %v", err)
+	}
 
 	// Agent two, canary still mid-window: hold, silently.
 	r2 := telegramIdleAgent()
@@ -397,6 +434,24 @@ func TestConvergeTelegramSidecar_VerifiedImage_ConvergesFleet(t *testing.T) {
 
 	if !r.telegramCanary.wasVerified(tgCurrent) {
 		t.Fatal("image should be verified after a Ready observation")
+	}
+}
+
+func TestConvergeTelegramSidecar_ConflictingOperatorIntentDoesNotArmCanary(t *testing.T) {
+	pod := telegramPod("agent-dave", tgStale)
+	agent := telegramIdleAgent()
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	r := newTelegramConvergeReconciler(t, tgCurrent, agent, pod)
+
+	rolled, err := r.convergeTelegramSidecar(context.Background(), agent, pod, telegramWired)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if rolled {
+		t.Fatal("automatic convergence must yield to operator intent")
+	}
+	if _, inFlight := r.telegramCanary.canaryInFlight(tgCurrent); inFlight {
+		t.Fatal("declined restart must not arm a phantom Telegram canary")
 	}
 }
 

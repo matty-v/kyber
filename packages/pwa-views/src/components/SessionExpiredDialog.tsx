@@ -4,7 +4,7 @@ import { Input } from './ui/input'
 import { establishEmbeddedBrowserSession, onSessionExpired } from '../lib/api'
 
 /**
- * Blocking re-authentication prompt for an expired browser session.
+ * Blocking re-authentication prompt for a missing or expired browser session.
  *
  * Browser sessions are process-local to the control plane, so every restart
  * — an upgrade, a rollout, a crash — invalidates every open browser at once.
@@ -14,8 +14,9 @@ import { establishEmbeddedBrowserSession, onSessionExpired } from '../lib/api'
  * already know that Settings holds the API key field.
  *
  * Mount once, near the app root. It listens for the control plane's
- * session_expired code and puts the key field in front of the operator at
- * the moment it stops working.
+ * session-expiry signal and puts the key field in front of the operator at
+ * the moment it stops working. That signal also covers a cookie that reached
+ * its Max-Age and was removed by the browser before the next request.
  *
  * Embedded app only. Hub mode authenticates with a bearer key per request,
  * so the control plane never emits session_expired there and this never
@@ -68,9 +69,9 @@ export function SessionExpiredDialog() {
           Session expired
         </h2>
         <p className="mt-2 text-sm text-text-muted">
-          Your browser session is no longer valid. This normally means the
-          control plane restarted — sessions do not survive a restart. Paste
-          the API key to reconnect.
+          Your browser session is missing or no longer valid. This normally
+          means it expired or the control plane restarted. Paste the API key
+          to reconnect.
         </p>
         <form
           className="mt-4"

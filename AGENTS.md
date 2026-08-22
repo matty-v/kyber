@@ -398,6 +398,13 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     `SetupWithManager` fails closed when it is nil; weakening that gate can
     silently disable `WaitingForMachine` recovery and turn provider capacity
     loss into Agent startup failures.
+16. **Automatic convergence must request Restarting before pod deletion.** A
+    direct `r.Delete` while status remains Running races pod watches into
+    `PodDied` → `Failed`, spends retry budget, and adds crash backoff to a
+    healthy rollout. Only a Running Agent may persist
+    `desiredPhase=Restarting`; let the state machine own deletion, count that
+    request in the shared rollout budget, and arm any image canary only after
+    the request succeeds. See `docs/contributing/reviewing.md` #17.
 
 ---
 

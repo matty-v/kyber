@@ -149,11 +149,15 @@ export function createApiClient(cluster: Cluster) {
       } catch {
         // ignore parse failure
       }
-      // Announce a dead browser session before throwing, so the app can put
-      // up a re-auth prompt instead of leaving the caller's error to render
-      // as a dead end the operator can't act on. Still throws — callers keep
-      // their existing error handling.
-      if (res.status === 401 && code === ERR_SESSION_EXPIRED) {
+      // Announce a dead or missing browser session before throwing, so the
+      // embedded app can put up a re-auth prompt instead of leaving the
+      // caller's error to render as a dead end. A stale cookie produces the
+      // dedicated session_expired code, but once a cookie reaches its Max-Age
+      // the browser removes it and the server can only report a generic 401.
+      // An empty cluster API key identifies embedded cookie-auth mode; bearer
+      // clients must not turn a genuinely invalid key into a session prompt.
+      // Still throws so callers keep their existing error handling.
+      if (res.status === 401 && (code === ERR_SESSION_EXPIRED || !cluster.apiKey)) {
         notifySessionExpired()
       }
       throw new KyberAPIError(res.status, code, message)
