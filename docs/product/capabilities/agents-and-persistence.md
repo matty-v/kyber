@@ -2,6 +2,17 @@
 
 A Kyber agent is a long-lived worker with its own persistent filesystem, its own identity, and its own model. You declare what you want and Kyber keeps reality matching that intent, without you babysitting the machines underneath.
 
+## Start every session with an instruction
+
+An agent can have an optional startup prompt configured through the API or the
+console. Kyber sends it as the first user turn whenever a new harness session
+starts, including a pod restart, an explicit session reset, or recovery after
+the harness exits. This works the same way for Claude Code and Codex.
+
+Changing the prompt does not interrupt the current session. The console marks
+the agent as requiring a restart; the new value takes effect on the next
+session. Startup prompts are operator-visible configuration, not secrets.
+
 ## Whole-filesystem persistence
 
 An agent keeps its entire filesystem across restarts, upgrades, and preemption: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. This is the defining difference from a throwaway container: the agent picks up where it left off instead of starting from a blank disk.

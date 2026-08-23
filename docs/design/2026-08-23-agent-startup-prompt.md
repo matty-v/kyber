@@ -121,11 +121,12 @@ Each checkpoint is independently resumable. At the end of every checkpoint:
 | Checkpoint | Status | Exit criteria | Commit |
 |---|---|---|---|
 | 0. Plan and decision | Complete | Design committed; Matt approved every-session semantics and the CRD change; durable identity copy records the checkpoint. Kyber push remains blocked on missing repo credential. | `08dc0fe` + follow-up |
-| 1. CRD and API contract | In progress | `spec.startupPrompt` added with validation; deepcopy/CRD generated; create, response, and PATCH shapes implemented; API unit and OpenAPI contract tests cover set/read/update/clear/limit. | Pending |
-| 2. Pod and runtime delivery | Not started | Common env injection implemented; Claude Code and Codex safely receive exact prompt on all approved session-start paths; shell-injection and empty-value regression tests pass. | Pending |
-| 3. PWA create and edit surfaces | Not started | Wizard input/review and Agent Detail edit/clear UI implemented; handwritten types aligned; component/API-hook tests pass; `pwa-views` version and changelog bumped. | Pending |
-| 4. Documentation and focused verification | Not started | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. | Pending |
-| 5. Full verification and handoff | Not started | `make build`, `make lint`, `make test`, required PWA build/lint/test commands, and relevant Helm/contract checks pass; branch is clean and pushed; PR opened with test evidence and rollout notes. | Pending |
+| 1. CRD and API contract | Complete | Generated CRD includes the limit; focused API tests passed. | `f00e142` |
+| 2. Pod and runtime delivery | Complete | Common env injection and all three launch paths implemented; pod-builder and launcher prompt tests passed. | `7ecb41f` |
+| 3. PWA create and edit surfaces | Complete | Wizard and Agent Detail implemented; 19 focused tests, TypeScript lint, and both builds passed; package bumped to 0.29.0. | `463010e` |
+| 4. Documentation and focused verification | In progress | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. | Pending |
+| 5. GCP dev deployment and operator test | Not started | The full feature, including CRD and both runtime images, is deployed to the dedicated `kyber-dev` GKE environment; smoke checks pass; Matt can exercise create/edit/restart on both runtimes. | Pending |
+| 6. Full verification and handoff | Not started | `make build`, `make lint`, `make test`, required PWA build/lint/test commands, and relevant Helm/contract checks pass; branch is clean and pushed; PR opened with test evidence and rollout notes. | Pending |
 
 ### Checkpoint 1 — CRD and API contract
 
@@ -205,7 +206,18 @@ Update `docs/product/capabilities/agents-and-persistence.md` and, if the CLI
 behavior needs runtime-specific explanation, `docs/product/capabilities/runtimes.md`.
 Review API, CRD, PWA, and launch commands side by side for naming and semantics.
 
-### Checkpoint 5 — final gates and delivery
+### Checkpoint 5 — GCP dev deployment and operator test
+
+Use the `deploy-kyber-dev-gcp` workflow, but note that its standard script only
+rebuilds the control plane and embedded PWA. This feature also requires the
+Agent CRD plus Claude Code and Codex runtime images, so the standard warm reload
+alone is insufficient. Before deploying, select and document the repository's
+broader dev-only procedure for those artifacts; never target the regional
+cluster where sol runs. Confirm both runtimes receive the exact configured
+prompt at `https://kyber-dev-gcp.voget.io` and ask Matt to perform acceptance
+testing before PR creation.
+
+### Checkpoint 6 — final gates and delivery
 
 Run the repository-required gates from `AGENTS.md` in order:
 
