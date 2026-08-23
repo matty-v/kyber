@@ -203,6 +203,22 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Unified process logging (kyber#105). Kyber-owned binaries emit JSON lines to
+# stdout/stderr. A component override wins over the global level. Settings are
+# declarative Helm state; the API/PWA expose desired and effective values rather
+# than creating ArgoCD drift with an imperative mutation path.
+logging:
+  level: info
+  # Example:
+  # components:
+  #   status-sidecar:
+  #     level: debug
+  components: {}
+  archive:
+    # Durable object-store history. Live node logs remain governed by kubelet
+    # rotation; Vector's 256 MiB buffer is transport state, not retention.
+    retentionDays: 30
+
 # Control plane deployment
 controlPlane:
   # replicaCount: V1 runs a single replica. Leader election handles HA when >1.
@@ -413,7 +429,7 @@ transcriptCompaction:
 # Code session JSONL (~4MB/day/agent). A per-agent transcript-pruner SIDECAR
 # removes session files already durably shipped to the object-store archive once
 # they pass the age (and optional size) policy. Distinct from:
-#   - minio.retentionDays / object-store lifecycle expiry (the durable backstop)
+#   - logging.archive.retentionDays / object-store lifecycle expiry (the durable backstop)
 #   - transcriptCompaction (reclaims DUPLICATE object-store objects)
 # This is the only mechanism that bounds the *on-PVC* working set.
 #
@@ -481,9 +497,7 @@ minio:
     # storageClassName: empty = cluster default (e.g. local-path on k3s),
     # mirroring storage.agentStorageClass. Set in your per-environment values.
     storageClassName: ""
-  # retentionDays: object-expiry lifecycle for the bucket, matching the GCS
-  # default so bounded retention is preserved on local clusters (kyber#437 AC).
-  retentionDays: 30
+  # Archive retention is configured once at logging.archive.retentionDays.
   resources:
     requests:
       cpu: 100m

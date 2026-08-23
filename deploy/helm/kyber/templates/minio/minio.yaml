@@ -86,6 +86,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: minio
     spec:
       {{- with .Values.imagePullSecrets }}
@@ -172,6 +173,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: minio-bootstrap
     spec:
       restartPolicy: OnFailure
@@ -208,8 +210,8 @@ spec:
               # Bounded-retention parity with the GCS lifecycle (kyber#437 AC):
               # expire objects older than retentionDays so durable logs don't
               # accumulate unbounded on local clusters.
-              mc ilm rule add kyber/{{ .Values.minio.bucket }} --expire-days "{{ .Values.minio.retentionDays }}" \
-                || mc ilm add --expiry-days "{{ .Values.minio.retentionDays }}" kyber/{{ .Values.minio.bucket }} \
+              mc ilm rule add kyber/{{ .Values.minio.bucket }} --expire-days "{{ include "kyber.loggingRetentionDays" . }}" \
+                || mc ilm add --expiry-days "{{ include "kyber.loggingRetentionDays" . }}" kyber/{{ .Values.minio.bucket }} \
                 || true
-              echo "bootstrap complete: bucket {{ .Values.minio.bucket }}, retention {{ .Values.minio.retentionDays }}d"
+              echo "bootstrap complete: bucket {{ .Values.minio.bucket }}, retention {{ include "kyber.loggingRetentionDays" . }}d"
 {{- end }}

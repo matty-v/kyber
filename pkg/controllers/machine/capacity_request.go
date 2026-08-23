@@ -53,7 +53,11 @@ func (r *MachineReconciler) reconcileCapacityRequestPod(ctx context.Context, mac
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: key.Name, Namespace: key.Namespace,
-			Labels: map[string]string{capacityRequestLabel: "true"},
+			Labels: map[string]string{
+				"app.kubernetes.io/part-of":   "kyber",
+				"app.kubernetes.io/component": "capacity-request",
+				capacityRequestLabel:          "true",
+			},
 		},
 		Spec: corev1.PodSpec{
 			AutomountServiceAccountToken:  &no,

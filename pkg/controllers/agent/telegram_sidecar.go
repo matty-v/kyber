@@ -105,6 +105,7 @@ type TelegramSidecarConfig struct {
 	AgentName      string
 	Image          string
 	ExistingSecret string
+	LogLevel       string
 }
 
 // AppendTelegramSidecar adds the runtime-neutral Telegram polling bridge.
@@ -144,8 +145,9 @@ func AppendTelegramSidecar(spec *corev1.PodSpec, cfg TelegramSidecarConfig) {
 	}
 	spec.Containers = append(spec.Containers, corev1.Container{
 		Name: TelegramSidecarContainerName, Image: cfg.Image,
-		Env: []corev1.EnvVar{
+		Env: append([]corev1.EnvVar{
 			{Name: "KYBER_AGENT_NAME", Value: cfg.AgentName},
+			{Name: "KYBER_LOG_LEVEL", Value: cfg.LogLevel},
 			{Name: "KYBER_INBOUND_BINDING", Value: TelegramInboundBindingName},
 			{Name: "KYBER_INBOUND_URL", Value: controlPlanePublicURL()},
 			{Name: "KYBER_TELEGRAM_MCP_ADDR", Value: pkgruntimes.TelegramMCPAddr()},
@@ -159,7 +161,7 @@ func AppendTelegramSidecar(spec *corev1.PodSpec, cfg TelegramSidecarConfig) {
 			secretEnv("TELEGRAM_BOT_TOKEN", TelegramTokenKey, false),
 			secretEnv("TELEGRAM_ALLOWED_USER_IDS", TelegramAllowedUserIDsKey, true),
 			secretEnv("KYBER_INBOUND_HMAC_SECRET", TelegramWebhookSecretKey, true),
-		},
+		}, loggingContextEnv(TelegramSidecarContainerName)...),
 		VolumeMounts: []corev1.VolumeMount{
 			{Name: "persist", MountPath: "/persist"},
 		},

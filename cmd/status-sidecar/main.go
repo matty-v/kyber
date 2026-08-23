@@ -27,6 +27,8 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/logging"
 )
 
 const (
@@ -74,17 +76,19 @@ var lastLoopTick atomic.Int64
 
 func main() {
 	// KYBER_SIDECAR_LOG_LEVEL gates the snapshot/forwarder debug lines added
-	// in kyber#360. Default is info; "debug" enables a single-grep view of
+	// in kyber#360. Default is info; debug enables a single-grep view of
 	// every /event POST + every metrics-snapshot tick (empty or posting).
-	// Off by default — debug logging is opt-in per pod so production logs
-	// stay quiet but the next regression can be diagnosed without a code
-	// change. Read here (not in loadConfig) so it shapes the logger before
-	// any other startup work runs.
-	logLevel := slog.LevelInfo
-	if strings.EqualFold(os.Getenv("KYBER_SIDECAR_LOG_LEVEL"), "debug") {
-		logLevel = slog.LevelDebug
+	// The shared logger also validates info, warn, and error for the unified
+	// component-level settings added by kyber#105. Read here (not in loadConfig)
+	// so it shapes the logger before any other startup work runs.
+	logger, err := logging.New(logging.Config{
+		Component: "status-sidecar",
+		Level:     os.Getenv("KYBER_SIDECAR_LOG_LEVEL"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: logLevel}))
 	slog.SetDefault(logger)
 
 	cfg, err := loadConfig()

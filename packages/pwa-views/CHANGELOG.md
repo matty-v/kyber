@@ -1,5 +1,30 @@
 # @matty-v/kyber-pwa-views
 
+## 0.31.0 — 2026-08-23
+
+### Changed
+- Fleet Logs now defaults to one consolidated view across all agents and
+  platform components, with agent and component filters and bounded automatic
+  live refresh.
+- Structured log fields are rendered as readable timestamp, level, agent,
+  component, and message columns. Every entry retains expandable raw output,
+  and the visible merged snapshot remains downloadable as NDJSON or text.
+- Consolidated reads stay bounded by line and byte limits, cancel when filters
+  change, keep URL navigation synchronized, and show pod/container identity in
+  a dedicated source column.
+- Periodic live refresh keeps the current snapshot visible until its replacement
+  is ready and preserves the operator's scroll position away from the tail.
+
+## 0.30.0 — 2026-08-23
+
+### Added
+- API client types and methods for read-only platform logging settings and
+  managed pod/container discovery.
+- Fleet Logs provides managed component/workload/pod/container discovery,
+  live follow and archive windows, visible retention and effective verbosity,
+  bounded output state, authenticated NDJSON/text downloads, and resource
+  detail deep links.
+
 ## 0.29.0 — 2026-08-23
 
 ### Added

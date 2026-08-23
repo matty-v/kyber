@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -604,6 +604,9 @@ export function AgentDetail() {
         <SchedulingFailureBadge agent={agent} />
         <AgentActivityBadge agent={agent} />
         <div className="ml-auto flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/logs?agent=${encodeURIComponent(name)}`))}>
+            <ScrollText className="h-4 w-4" /> Logs
+          </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button

@@ -28,6 +28,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/logging"
 )
 
 // maxUpdateAttempts bounds in-place retries of a single update before it is
@@ -235,6 +237,16 @@ type inboundEnvelope struct {
 }
 
 func main() {
+	logger, err := logging.New(logging.Config{
+		Component: "telegram-sidecar",
+		Level:     os.Getenv("KYBER_LOG_LEVEL"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	slog.SetDefault(logger)
+
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("telegram-sidecar: bad config", "error", err)

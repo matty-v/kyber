@@ -604,6 +604,71 @@ export interface TranscriptResult {
   truncated: boolean
 }
 
+export type LoggingLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface LoggingSettings {
+  globalLevel: LoggingLevel
+  componentOverrides: Record<string, LoggingLevel>
+  archiveRetentionDays: number
+  managedBy: 'helm'
+}
+
+export interface LoggingContainer {
+  name: string
+  component: string
+  effectiveLevel: LoggingLevel | 'unmanaged'
+  managedLevel: boolean
+  init: boolean
+}
+
+export interface LoggingTarget {
+  namespace: string
+  pod: string
+  podUid: string
+  component: string
+  workload: string
+  agent?: string
+  machine?: string
+  phase: string
+  sources: Array<'kubelet' | 'archive'>
+  liveAvailable: boolean
+  archiveAvailable: boolean
+  containers: LoggingContainer[]
+}
+
+export interface LoggingTargetsResponse {
+  targets: LoggingTarget[]
+  selector: string
+}
+
+export interface LoggingReadOptions {
+  pod: string
+  podUid: string
+  container: string
+  component: string
+  workload: string
+  source?: 'kubelet' | 'archive'
+  follow?: boolean
+  tail?: number
+  since?: string
+  until?: string
+}
+
+export interface LoggingStreamResult {
+  stream: ReadableStream<string>
+  truncated: boolean
+}
+
+export interface LoggingExportOptions extends LoggingReadOptions {
+  format: 'ndjson' | 'text'
+}
+
+export interface LoggingExportResult {
+  blob: Blob
+  filename: string
+  truncated: boolean
+}
+
 // ---- Config types ----
 
 // Read-only public configuration exposed by GET /api/v1/config.

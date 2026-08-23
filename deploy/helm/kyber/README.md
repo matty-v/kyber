@@ -35,6 +35,15 @@ metrics:
 
 ## Operations
 
+### Platform logging
+
+All Kyber-managed pods carry `app.kubernetes.io/part-of=kyber` for fleet log
+discovery and external collectors. Configure global/component verbosity and
+durable retention under `logging`; configure the optional Vector writer under
+`logShipper`. See [Operating Kyber logs](../../../docs/operator/logging.md) for
+collector recipes, retention responsibilities, failure behavior, and API/PWA
+usage.
+
 ### Status sidecar image convergence
 
 Bumping `image.statusSidecar.tag` and reapplying the chart (e.g. ArgoCD sync after a release) automatically converges every existing agent pod to the new sidecar image — no manual `kubectl delete pod` needed. Mechanism: the Agent controller diffs each pod's `kyber-status-sidecar` container spec image against its current `KYBER_STATUS_SIDECAR_IMAGE` env on every reconcile; on mismatch it deletes the pod, and the next reconcile rebuilds it on the new image. Convergence completes within one reconcile cycle per agent (≤2 minutes for typical fleets). See kyber#358.

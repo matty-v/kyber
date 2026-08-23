@@ -17,6 +17,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: cloudflared
       annotations:
         # Roll pods when the tunnel config (ingress rules, tunnel ID) changes.

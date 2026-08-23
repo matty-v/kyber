@@ -47,6 +47,62 @@ type ArchiveReader interface {
 	ReadAgentLines(ctx context.Context, agent string, since, until time.Time) (ReadResult, error)
 }
 
+// GenericArchiveSelection identifies one discovered pod/container archive
+// prefix. Every field is resolved server-side from a live managed Pod before it
+// reaches the reader; the reader validates segments again as defense in depth.
+type GenericArchiveSelection struct {
+	Component string
+	Workload  string
+	PodUID    string
+	Container string
+}
+
+// PlatformArchiveReader reads the normalized logs/ archive lane.
+type PlatformArchiveReader interface {
+	ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error)
+	ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error)
+	StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(raw string, line LogLine) error) error
+}
+
+func parseGenericArchiveSelection(key string) (GenericArchiveSelection, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 7 || parts[0] != "logs" {
+		return GenericArchiveSelection{}, false
+	}
+	selection := GenericArchiveSelection{Component: parts[1], Workload: parts[2], PodUID: parts[3], Container: parts[4]}
+	for _, value := range []string{selection.Component, selection.Workload, selection.PodUID, selection.Container} {
+		if !validArchiveSegment(value) {
+			return GenericArchiveSelection{}, false
+		}
+	}
+	return selection, true
+}
+
+func uniqueGenericArchiveSelections(keys []string, limit int) []GenericArchiveSelection {
+	seen := map[GenericArchiveSelection]struct{}{}
+	result := make([]GenericArchiveSelection, 0)
+	for _, key := range keys {
+		selection, ok := parseGenericArchiveSelection(key)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[selection]; ok {
+			continue
+		}
+		seen[selection] = struct{}{}
+		result = append(result, selection)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
+}
+
+type ArchiveReaderWithPlatform interface {
+	ArchiveReader
+	PlatformArchiveReader
+}
+
 // archiveLine is the on-the-wire NDJSON shape the log-shipper (Vector) writes,
 // one JSON object per line. The reader only needs the emit timestamp and the
 // raw message; any other fields Vector adds are ignored.
@@ -238,6 +294,22 @@ func parseArchiveLine(raw string) (LogLine, bool) {
 		return LogLine{}, false
 	}
 	return LogLine{Timestamp: ts, Text: al.Message}, true
+}
+
+func streamArchiveRecords(reader io.Reader, since, until time.Time, emit func(string, LogLine) error) error {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		raw := scanner.Text()
+		line, ok := parseArchiveLine(raw)
+		if !ok || line.Timestamp.Before(since) || line.Timestamp.After(until) {
+			continue
+		}
+		if err := emit(raw, line); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
 }
 
 // heldLine is a retained in-window line plus its cached dedup identity. Caching
@@ -558,6 +630,29 @@ func dayPartitionPrefixes(rootPrefix, agent string, since, until time.Time) []st
 	return prefixes
 }
 
+func validArchiveSegment(value string) bool {
+	return value != "" && !strings.ContainsAny(value, "/\\") && !strings.Contains(value, "..")
+}
+
+func genericDayPartitionPrefixes(selection GenericArchiveSelection, since, until time.Time) ([]string, error) {
+	for name, value := range map[string]string{
+		"component": selection.Component, "workload": selection.Workload,
+		"pod UID": selection.PodUID, "container": selection.Container,
+	} {
+		if !validArchiveSegment(value) {
+			return nil, fmt.Errorf("invalid archive %s %q", name, value)
+		}
+	}
+	base := "logs/" + selection.Component + "/" + selection.Workload + "/" + selection.PodUID + "/" + selection.Container + "/"
+	start := since.UTC().Truncate(24 * time.Hour)
+	end := until.UTC().Truncate(24 * time.Hour)
+	var prefixes []string
+	for d := end; !d.Before(start); d = d.Add(-24 * time.Hour) {
+		prefixes = append(prefixes, base+d.Format("2006-01-02")+"/")
+	}
+	return prefixes, nil
+}
+
 // ReadAgentLines implements ArchiveReader against GCS. See the interface doc for
 // the contract; isolation is enforced by listing only under the agent prefix.
 func (g *GCSArchiveReader) ReadAgentLines(ctx context.Context, agent string, since, until time.Time) (ReadResult, error) {
@@ -592,6 +687,80 @@ func (g *GCSArchiveReader) ReadAgentLines(ctx context.Context, agent string, sin
 	return ws.result(), nil
 }
 
+func (g *GCSArchiveReader) ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error) {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return ReadResult{}, err
+	}
+	bkt := g.client.Bucket(g.bucket)
+	ws := newWindowScanner(since, until, g.caps, false)
+	for _, prefix := range prefixes {
+		it := bkt.Objects(ctx, &storage.Query{Prefix: prefix})
+		for !ws.done() {
+			attrs, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return ReadResult{}, fmt.Errorf("list %q: %w", prefix, err)
+			}
+			if err := g.scanObject(ctx, bkt, attrs.Name, ws); err != nil {
+				return ReadResult{}, err
+			}
+		}
+	}
+	return ws.result(), nil
+}
+
+func (g *GCSArchiveReader) ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error) {
+	it := g.client.Bucket(g.bucket).Objects(ctx, &storage.Query{Prefix: "logs/"})
+	keys := make([]string, 0)
+	for limit <= 0 || len(keys) < limit*4 {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list archived logging targets: %w", err)
+		}
+		keys = append(keys, attrs.Name)
+	}
+	return uniqueGenericArchiveSelections(keys, limit), nil
+}
+
+func (g *GCSArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return err
+	}
+	bkt := g.client.Bucket(g.bucket)
+	for i := len(prefixes) - 1; i >= 0; i-- {
+		it := bkt.Objects(ctx, &storage.Query{Prefix: prefixes[i]})
+		for {
+			attrs, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("list %q: %w", prefixes[i], err)
+			}
+			rc, err := bkt.Object(attrs.Name).NewReader(ctx)
+			if err != nil {
+				return fmt.Errorf("open %q: %w", attrs.Name, err)
+			}
+			err = streamArchiveRecords(rc, since, until, emit)
+			closeErr := rc.Close()
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close %q: %w", attrs.Name, closeErr)
+			}
+		}
+	}
+	return nil
+}
+
 // scanObject opens one GCS object as a stream and feeds it to the scanner,
 // closing it before returning. It never reads the whole object into memory.
 func (g *GCSArchiveReader) scanObject(ctx context.Context, bkt *storage.BucketHandle, name string, ws *windowScanner) error {
@@ -613,6 +782,7 @@ func (g *GCSArchiveReader) scanObject(ctx context.Context, bkt *storage.BucketHa
 // MinIO — the real implementation wraps a minio.Client; tests inject a fake.
 type s3ObjectStore interface {
 	listKeys(ctx context.Context, prefix string) ([]string, error)
+	listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error)
 	// getObject opens one object as a stream. The caller MUST Close the returned
 	// reader. Returning a stream (not []byte) is what lets the reader scan an
 	// object without materializing it whole — the memory bound for a single large
@@ -649,6 +819,10 @@ type minioObjectStore struct {
 }
 
 func (m *minioObjectStore) listKeys(ctx context.Context, prefix string) ([]string, error) {
+	return m.listKeysLimit(ctx, prefix, 0)
+}
+
+func (m *minioObjectStore) listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error) {
 	var keys []string
 	for obj := range m.client.ListObjects(ctx, m.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
@@ -658,6 +832,9 @@ func (m *minioObjectStore) listKeys(ctx context.Context, prefix string) ([]strin
 			return nil, fmt.Errorf("listing %q: %w", prefix, obj.Err)
 		}
 		keys = append(keys, obj.Key)
+		if limit > 0 && len(keys) >= limit {
+			break
+		}
 	}
 	return keys, nil
 }
@@ -761,6 +938,69 @@ func (s *S3ArchiveReader) ReadAgentLines(ctx context.Context, agent string, sinc
 		}
 	}
 	return ws.result(), nil
+}
+
+func (s *S3ArchiveReader) ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error) {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return ReadResult{}, err
+	}
+	ws := newWindowScanner(since, until, s.caps, false)
+	for _, prefix := range prefixes {
+		keys, err := s.store.listKeys(ctx, prefix)
+		if err != nil {
+			return ReadResult{}, fmt.Errorf("list %q: %w", prefix, err)
+		}
+		for _, key := range keys {
+			if ws.done() {
+				break
+			}
+			if err := s.scanKey(ctx, key, ws); err != nil {
+				return ReadResult{}, err
+			}
+		}
+	}
+	return ws.result(), nil
+}
+
+func (s *S3ArchiveReader) ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error) {
+	keyLimit := 0
+	if limit > 0 {
+		keyLimit = limit * 10
+	}
+	keys, err := s.store.listKeysLimit(ctx, "logs/", keyLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list archived logging targets: %w", err)
+	}
+	return uniqueGenericArchiveSelections(keys, limit), nil
+}
+
+func (s *S3ArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return err
+	}
+	for i := len(prefixes) - 1; i >= 0; i-- {
+		keys, err := s.store.listKeys(ctx, prefixes[i])
+		if err != nil {
+			return fmt.Errorf("list %q: %w", prefixes[i], err)
+		}
+		for _, key := range keys {
+			rc, err := s.store.getObject(ctx, key)
+			if err != nil {
+				return fmt.Errorf("read %q: %w", key, err)
+			}
+			err = streamArchiveRecords(rc, since, until, emit)
+			closeErr := rc.Close()
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close %q: %w", key, closeErr)
+			}
+		}
+	}
+	return nil
 }
 
 // scanKey opens one S3 object as a stream and feeds it to the scanner, closing

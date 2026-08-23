@@ -105,6 +105,12 @@ type Server struct {
 	// Namespace is the Kubernetes namespace for all CRD operations. Defaults to "kyber-system".
 	Namespace string
 
+	// LoggingGlobalLevel and LoggingComponentLevels are the Helm-desired
+	// verbosity settings exposed read-only through /api/v1/logging/settings.
+	LoggingGlobalLevel      string
+	LoggingComponentLevels  map[string]string
+	LoggingArchiveRetention int
+
 	// PublicURL is the externally-reachable HTTPS URL of this Kyber instance
 	// (e.g. "https://kyber.your-tailnet.ts.net"). Used to render inbound-binding
 	// webhook URLs (PublicURL + /webhooks/inbound/<agent>/<binding>).
@@ -149,7 +155,9 @@ type Server struct {
 	// log-shipper DaemonSet (kyber#431, #437). Optional — when nil, source=archive
 	// returns 503; the kubelet live-tail (source=kubelet, the default) is
 	// unaffected.
-	ArchiveReader ArchiveReader
+	ArchiveReader                 ArchiveReader
+	PlatformArchiveReader         PlatformArchiveReader
+	PlatformArchiveDisabledReason string
 
 	// ArchiveDisabledReason, when ArchiveReader is nil, names the config that is
 	// missing/invalid so the 503 is self-diagnosing (kyber#437). It MUST name
@@ -190,12 +198,15 @@ type Server struct {
 	// KYBER_MAX_CONCURRENT_READS. The gate wraps ONLY the read handlers, so other
 	// endpoints and the :8081 probe listener are never throttled.
 	MaxConcurrentReads int
+	MaxExportBytes     int64
 
 	// readSlots is the counting semaphore enforcing MaxConcurrentReads, lazily
 	// initialized (readSlotsOnce) so a struct-literal Server (tests + main) works
 	// without a constructor.
-	readSlots     chan struct{}
-	readSlotsOnce sync.Once
+	readSlots       chan struct{}
+	readSlotsOnce   sync.Once
+	exportSlots     chan struct{}
+	exportSlotsOnce sync.Once
 
 	// RestConfig is the rest.Config used to build SPDY executors for exec proxy.
 	// Optional — exec endpoints return 503 when nil.
@@ -477,6 +488,16 @@ func (s *Server) tryAcquireReadSlot() (release func(), ok bool) {
 	}
 }
 
+func (s *Server) tryAcquireExportSlot() (release func(), ok bool) {
+	s.exportSlotsOnce.Do(func() { s.exportSlots = make(chan struct{}, 1) })
+	select {
+	case s.exportSlots <- struct{}{}:
+		return func() { <-s.exportSlots }, true
+	default:
+		return nil, false
+	}
+}
+
 // Start begins listening. It blocks until the context is cancelled or the server errors.
 // Intended to be wrapped in manager.RunnableFunc and added to the controller-runtime manager.
 func (s *Server) Start(ctx context.Context) error {
@@ -722,6 +743,10 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 
 	// Public config.
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
+	mux.HandleFunc("/api/v1/logging/settings", s.handleLoggingSettings)
+	mux.HandleFunc("/api/v1/logging/targets", s.handleLoggingTargets)
+	mux.HandleFunc("/api/v1/logging/logs", s.handleLoggingLogs)
+	mux.HandleFunc("/api/v1/logging/export", s.handleLoggingExport)
 
 	// Fleet defaults — GET/PUT the kyber-fleet-defaults ConfigMap so the
 	// PWA Settings panel can read + edit defaultModel and

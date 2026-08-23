@@ -414,6 +414,14 @@ func (f *fakeS3Store) listKeys(_ context.Context, prefix string) ([]string, erro
 	return keys, nil
 }
 
+func (f *fakeS3Store) listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error) {
+	keys, err := f.listKeys(ctx, prefix)
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, err
+}
+
 func (f *fakeS3Store) getObject(_ context.Context, key string) (io.ReadCloser, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -454,6 +462,77 @@ func TestS3ArchiveReader_WindowAndOrdering(t *testing.T) {
 		if got[i].Text != want[i] {
 			t.Errorf("line[%d] = %q, want %q", i, got[i].Text, want[i])
 		}
+	}
+}
+
+func TestS3ArchiveReader_GenericContainerIsolation(t *testing.T) {
+	store := &fakeS3Store{objects: map[string][]byte{
+		"logs/agent/sol/uid-1/agent/2026-06-03/a.ndjson":                []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"wanted"}`),
+		"logs/agent/sol/uid-2/agent/2026-06-03/a.ndjson":                []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"stale-pod"}`),
+		"logs/agent/sol/uid-1/kyber-status-sidecar/2026-06-03/a.ndjson": []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"other-container"}`),
+	}}
+	r := &S3ArchiveReader{store: store, bucket: "logs"}
+	result, err := r.ReadContainerLines(context.Background(), GenericArchiveSelection{
+		Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent",
+	}, time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ReadContainerLines: %v", err)
+	}
+	if len(result.Lines) != 1 || result.Lines[0].Text != "wanted" {
+		t.Fatalf("lines = %+v, want only wanted", result.Lines)
+	}
+	wantPrefix := "logs/agent/sol/uid-1/agent/2026-06-03/"
+	if len(store.listedPrefixes) != 1 || store.listedPrefixes[0] != wantPrefix {
+		t.Errorf("listed prefixes = %v, want [%s]", store.listedPrefixes, wantPrefix)
+	}
+}
+
+func TestGenericArchiveRejectsUnsafeSegments(t *testing.T) {
+	_, err := genericDayPartitionPrefixes(GenericArchiveSelection{
+		Component: "agent", Workload: "../other", PodUID: "uid-1", Container: "agent",
+	}, time.Now(), time.Now())
+	if err == nil {
+		t.Fatal("expected unsafe workload to be rejected")
+	}
+}
+
+func TestUniqueGenericArchiveSelectionsParsesAndBoundsTargets(t *testing.T) {
+	keys := []string{
+		"logs/control-plane/control-plane/uid-old/control-plane/2026-08-22/a.ndjson",
+		"logs/control-plane/control-plane/uid-old/control-plane/2026-08-23/b.ndjson",
+		"logs/agent/sol/uid-new/agent/2026-08-23/c.ndjson",
+		"agents/sol/2026-08-23/legacy.ndjson",
+	}
+	got := uniqueGenericArchiveSelections(keys, 2)
+	if len(got) != 2 {
+		t.Fatalf("selections = %+v, want 2", got)
+	}
+	if got[0].Workload != "control-plane" || got[0].PodUID != "uid-old" || got[1].Workload != "sol" {
+		t.Errorf("selections = %+v", got)
+	}
+}
+
+func TestS3ArchiveReaderStreamsGenericRecordsOneObjectAtATime(t *testing.T) {
+	store := &fakeS3Store{objects: map[string][]byte{
+		"logs/agent/sol/uid-1/agent/2026-06-03/a.ndjson": []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"one"}`),
+		"logs/agent/sol/uid-1/agent/2026-06-03/b.ndjson": []byte(`{"timestamp":"2026-06-03T10:01:00Z","message":"two"}`),
+	}}
+	r := &S3ArchiveReader{store: store, bucket: "logs"}
+	var messages []string
+	err := r.StreamContainerRecords(context.Background(), GenericArchiveSelection{
+		Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent",
+	}, time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC), func(_ string, line LogLine) error {
+		messages = append(messages, line.Text)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamContainerRecords: %v", err)
+	}
+	if got := strings.Join(messages, ","); got != "one,two" {
+		t.Errorf("messages = %q, want one,two", got)
+	}
+	if store.maxOpen != 1 {
+		t.Errorf("max open objects = %d, want 1", store.maxOpen)
 	}
 }
 

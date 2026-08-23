@@ -31,6 +31,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: transcript-compact
     spec:
       restartPolicy: Never
@@ -56,6 +57,18 @@ spec:
             - {{ .Values.transcriptCompaction.agent | quote }}
             {{- end }}
           env:
+            - name: KYBER_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "transcript-compact") | quote }}
+            - name: KYBER_LOG_POD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KYBER_LOG_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KYBER_LOG_CONTAINER
+              value: transcript-compact
             # Same backend/bucket/creds the control-plane reader uses (logShipper.*).
             - name: KYBER_LOG_ARCHIVE_BACKEND
               value: {{ .Values.logShipper.backend | default "gcs" | quote }}

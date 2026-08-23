@@ -10,6 +10,43 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Labels that identify a pod as part of the Kyber logging/discovery boundary.
+Keep this separate from selectorLabels: adding a label to an existing workload
+selector is an immutable-field upgrade failure, while pod-template labels roll
+safely. Every Kyber-owned pod template and controller-built pod includes this.
+*/}}
+{{- define "kyber.podLabels" -}}
+app.kubernetes.io/part-of: kyber
+{{- end }}
+
+{{/* Resolve and validate the effective log level for a component. */}}
+{{- define "kyber.loggingLevel" -}}
+{{- $logging := default (dict) .root.Values.logging -}}
+{{- $components := default (dict) $logging.components -}}
+{{- $level := default "info" $logging.level -}}
+{{- if hasKey $components .component -}}
+{{- $component := index $components .component -}}
+{{- $level = default $level $component.level -}}
+{{- end -}}
+{{- if not (has $level (list "debug" "info" "warn" "error")) -}}
+{{- fail (printf "invalid logging level %q for component %q: want debug, info, warn, or error" $level .component) -}}
+{{- end -}}
+{{- $level -}}
+{{- end }}
+
+{{/* Upgrade-safe logging settings for releases whose reused values predate logging. */}}
+{{- define "kyber.loggingComponentsJSON" -}}
+{{- $logging := default (dict) .Values.logging -}}
+{{- default (dict) $logging.components | toJson -}}
+{{- end }}
+
+{{- define "kyber.loggingRetentionDays" -}}
+{{- $logging := default (dict) .Values.logging -}}
+{{- $archive := default (dict) $logging.archive -}}
+{{- default 30 $archive.retentionDays -}}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this
 (by the DNS naming spec).

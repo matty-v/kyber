@@ -30,6 +30,12 @@ import type {
   RestartMachineAgentsResponse,
   FleetSummary,
   LogStreamOptions,
+  LoggingSettings,
+  LoggingTargetsResponse,
+  LoggingReadOptions,
+  LoggingStreamResult,
+  LoggingExportOptions,
+  LoggingExportResult,
   TranscriptResult,
   TokenUsage,
   ComputeConfig,
@@ -48,6 +54,22 @@ import type {
   UpdateRun,
 } from './types'
 import type { Cluster } from './cluster-context'
+
+function loggingParams(opts: LoggingReadOptions): URLSearchParams {
+  const params = new URLSearchParams({
+    pod: opts.pod,
+    podUid: opts.podUid,
+    container: opts.container,
+    component: opts.component,
+    workload: opts.workload,
+  })
+  if (opts.source) params.set('source', opts.source)
+  if (opts.follow) params.set('follow', 'true')
+  if (opts.tail !== undefined) params.set('tail', String(opts.tail))
+  if (opts.since) params.set('since', opts.since)
+  if (opts.until) params.set('until', opts.until)
+  return params
+}
 
 const LEGACY_STORAGE_KEY_API_KEY = 'kyber_api_key'
 const STORAGE_KEY_SERVER_URL = 'kyber_server_url'
@@ -570,6 +592,59 @@ export function createApiClient(cluster: Cluster) {
 
     getComputeConfig: (): Promise<ComputeConfig> =>
       request<ComputeConfig>('GET', '/api/v1/config'),
+
+    getLoggingSettings: (): Promise<LoggingSettings> =>
+      request<LoggingSettings>('GET', '/api/v1/logging/settings'),
+
+    getLoggingTargets: (): Promise<LoggingTargetsResponse> =>
+      request<LoggingTargetsResponse>('GET', '/api/v1/logging/targets'),
+
+    loggingStream: async (opts: LoggingReadOptions): Promise<LoggingStreamResult> => {
+      const params = loggingParams(opts)
+      const url = `${baseURL}/api/v1/logging/logs?${params}`
+      const headers: HeadersInit = cluster.apiKey
+        ? { Authorization: `Bearer ${cluster.apiKey}` }
+        : {}
+      const controller = new AbortController()
+      const res = await fetch(url, { headers, signal: controller.signal })
+      if (!res.ok || !res.body) throw new Error(`log read failed: HTTP ${res.status}`)
+	  const body = res.body
+      return { truncated: res.headers.get('X-Kyber-Log-Truncated') === 'true', stream: new ReadableStream<string>({
+        async start(streamController) {
+          try {
+            const reader = body.getReader()
+            const decoder = new TextDecoder()
+            while (true) {
+              const { done, value } = await reader.read()
+              if (done) break
+              streamController.enqueue(decoder.decode(value, { stream: true }))
+            }
+            streamController.close()
+          } catch (err) {
+            streamController.error(err)
+          }
+        },
+        cancel() { controller.abort() },
+      }) }
+    },
+
+    exportLogging: async (opts: LoggingExportOptions): Promise<LoggingExportResult> => {
+      const params = loggingParams(opts)
+      params.set('format', opts.format)
+      const headers: HeadersInit = cluster.apiKey
+        ? { Authorization: `Bearer ${cluster.apiKey}` }
+        : {}
+      const res = await fetch(`${baseURL}/api/v1/logging/export?${params}`, { headers })
+      if (!res.ok) throw new Error(`log export failed: HTTP ${res.status}`)
+      const disposition = res.headers.get('Content-Disposition') ?? ''
+      const filename = /filename="?([^";]+)"?/.exec(disposition)?.[1]
+        ?? `kyber-logs.${opts.format === 'text' ? 'log' : 'ndjson'}`
+      return {
+        blob: await res.blob(),
+        filename,
+        truncated: res.headers.get('X-Kyber-Log-Truncated') === 'true',
+      }
+    },
 
     // ---- GitHub (#134) ----
 

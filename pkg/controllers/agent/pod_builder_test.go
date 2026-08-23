@@ -680,6 +680,12 @@ func TestBuildPodSpec_Labels(t *testing.T) {
 	if labels["kyber.io/runtime"] != wantRuntime {
 		t.Errorf("label kyber.io/runtime: got %q, want %q", labels["kyber.io/runtime"], wantRuntime)
 	}
+	if labels["app.kubernetes.io/part-of"] != "kyber" {
+		t.Errorf("label app.kubernetes.io/part-of: got %q, want kyber", labels["app.kubernetes.io/part-of"])
+	}
+	if labels["app.kubernetes.io/component"] != "agent" {
+		t.Errorf("label app.kubernetes.io/component: got %q, want agent", labels["app.kubernetes.io/component"])
+	}
 }
 
 func TestAgentPodLabels_AuthType(t *testing.T) {

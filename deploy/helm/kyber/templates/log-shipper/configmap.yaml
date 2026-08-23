@@ -9,10 +9,10 @@ metadata:
     app.kubernetes.io/component: log-shipper
 data:
   # Vector config (kyber#431/#437/#446). Reads this node's container logs, keeps
-  # only kyber-system pods carrying the kyber.io/agent label, and ships each line
-  # as NDJSON under agents/<agent>/<date>/ (agent stdout) or
-  # transcripts/<agent>/<date>/ (transcript-tailer sidecar) to the configured
-  # backend:
+  # only Kyber-managed pods and writes a normalized NDJSON envelope under
+  # logs/<component>/<workload>/<pod-uid>/<container>/<date>/. During migration,
+  # agent stdout and transcripts are also written under their existing roots so
+  # legacy detail routes stay compatible.
   #   gcs (default) → gcp_cloud_storage sink, auth via node ADC (no key file).
   #   s3            → aws_s3 sink at a custom endpoint (MinIO/AWS), creds from a
   #                   Secret (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY env).
@@ -31,10 +31,10 @@ data:
         type: kubernetes_logs
         # Tail only THIS node's pods (set from the downward API on the pod).
         self_node_name: ${VECTOR_SELF_NODE_NAME}
-        # Server-side narrowing so we never even read non-agent pods:
-        #   - only pods that carry the kyber.io/agent label
+        # Server-side narrowing so we never even read non-Kyber pods:
+        #   - only pods carrying the platform logging/discovery boundary label
         #   - only the kyber-system namespace
-        extra_label_selector: "kyber.io/agent"
+        extra_label_selector: "app.kubernetes.io/part-of=kyber"
         extra_field_selector: "metadata.namespace={{ include "kyber.namespace" . }}"
 
       # Internal Vector telemetry — lets `vector top`/metrics work; not shipped.
@@ -66,22 +66,53 @@ data:
             .archive_prefix = "agents"
           }
 
+      platform_shape:
+        type: remap
+        inputs: [agent_logs]
+        source: |
+          if .kubernetes.pod_namespace != "{{ include "kyber.namespace" . }}" {
+            abort
+          }
+          .component = string(.kubernetes.pod_labels."app.kubernetes.io/component") ?? ""
+          if .component == "" {
+            abort
+          }
+          .workload = string(.kubernetes.pod_labels."kyber.io/agent") ?? ""
+          if .workload == "" {
+            .workload = string(.kubernetes.pod_labels."kyber.io/machine") ?? ""
+          }
+          if .workload == "" {
+            # Chart workloads have stable component identities; pod UID below
+            # still distinguishes replicas and recreations.
+            .workload = .component
+          }
+          .pod = string(.kubernetes.pod_name) ?? ""
+          .pod_uid = string(.kubernetes.pod_uid) ?? ""
+          .container = string(.kubernetes.container_name) ?? ""
+          .namespace = string(.kubernetes.pod_namespace) ?? ""
+          _, parse_error = parse_json(string!(.message))
+          if parse_error == null {
+            .format = "json"
+          } else {
+            .format = "text"
+          }
+
     sinks:
-      archive:
+      legacy_archive:
         {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
         type: aws_s3
         inputs: [agent_shape]
-        bucket: ${KYBER_LOG_BUCKET}
+        bucket: "${KYBER_LOG_BUCKET}"
         # Custom S3-compatible endpoint (MinIO/AWS). The scheme (http/https) on
         # the endpoint URL selects TLS. Vector routes writes to this endpoint and
         # uses path-style addressing (bucket in the path) for custom endpoints —
         # what MinIO requires.
-        endpoint: ${KYBER_LOG_S3_ENDPOINT}
-        region: ${KYBER_LOG_S3_REGION}
+        endpoint: "${KYBER_LOG_S3_ENDPOINT}"
+        region: "${KYBER_LOG_S3_REGION}"
         # Static creds from the writer Secret (least-privilege put-object).
         auth:
-          access_key_id: ${AWS_ACCESS_KEY_ID}
-          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+          access_key_id: "${AWS_ACCESS_KEY_ID}"
+          secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
         # Disable gzip compression (Vector's aws_s3 default). The control-plane
         # archive reader parses plain NDJSON line-by-line — gzip-compressed
         # objects read back as 0 lines. (kyber#437 root cause.)
@@ -89,7 +120,7 @@ data:
         {{- else }}
         type: gcp_cloud_storage
         inputs: [agent_shape]
-        bucket: ${KYBER_LOG_BUCKET}
+        bucket: "${KYBER_LOG_BUCKET}"
         # Authenticate via Application Default Credentials (node metadata server
         # → GCE node SA). No static credential is configured.
         {{- end }}
@@ -121,6 +152,41 @@ data:
           max_size: 268435488 # 256 MiB
           when_full: block
         # Bound batching so lines land promptly enough to be queryable.
+        batch:
+          timeout_secs: 30
+        healthcheck:
+          enabled: true
+
+      platform_archive:
+        {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
+        type: aws_s3
+        inputs: [platform_shape]
+        bucket: "${KYBER_LOG_BUCKET}"
+        endpoint: "${KYBER_LOG_S3_ENDPOINT}"
+        region: "${KYBER_LOG_S3_REGION}"
+        auth:
+          access_key_id: "${AWS_ACCESS_KEY_ID}"
+          secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+        compression: none
+        {{- else }}
+        type: gcp_cloud_storage
+        inputs: [platform_shape]
+        bucket: "${KYBER_LOG_BUCKET}"
+        {{- end }}
+        key_prefix: 'logs/{{ "{{ component }}" }}/{{ "{{ workload }}" }}/{{ "{{ pod_uid }}" }}/{{ "{{ container }}" }}/%Y-%m-%d/'
+        filename_time_format: "%Y-%m-%dT%H-%M-%SZ"
+        filename_append_uuid: true
+        filename_extension: ndjson
+        encoding:
+          codec: json
+          timestamp_format: rfc3339
+          only_fields: [timestamp, message, format, component, workload, pod, pod_uid, container, namespace]
+        framing:
+          method: newline_delimited
+        buffer:
+          type: disk
+          max_size: 268435488
+          when_full: block
         batch:
           timeout_secs: 30
         healthcheck:

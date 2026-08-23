@@ -16,6 +16,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: control-plane
     spec:
       serviceAccountName: {{ include "kyber.fullname" . }}-control-plane
@@ -45,6 +46,35 @@ spec:
             - --metrics-bind-address=:{{ .Values.api.service.metricsPort }}
             - --leader-elect={{ .Values.controlPlane.leaderElection.enabled }}
           env:
+            - name: KYBER_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "control-plane") | quote }}
+            - name: KYBER_LOG_POD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KYBER_LOG_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KYBER_LOG_CONTAINER
+              value: control-plane
+            # Desired settings are surfaced read-only by the logging settings API.
+            - name: KYBER_LOG_GLOBAL_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "") | quote }}
+            - name: KYBER_LOG_COMPONENT_OVERRIDES
+              value: {{ include "kyber.loggingComponentsJSON" . | quote }}
+            - name: KYBER_LOG_ARCHIVE_RETENTION_DAYS
+              value: {{ include "kyber.loggingRetentionDays" . | quote }}
+            # The control plane builds agent pods, so pass the resolved status
+            # sidecar level through its existing reconciler configuration path.
+            - name: KYBER_SIDECAR_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "status-sidecar") | quote }}
+            - name: KYBER_DISCORD_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "discord-sidecar") | quote }}
+            - name: KYBER_TELEGRAM_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "telegram-sidecar") | quote }}
+            - name: KYBER_SELF_UPGRADE_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "self-upgrade") | quote }}
             # Namespace where agent pods are created.
             - name: KYBER_NAMESPACE
               valueFrom:

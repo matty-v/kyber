@@ -1,8 +1,12 @@
-# Durable Agent Log Retention
+# Durable Platform Log Retention
 
-How kyber retains agent logs **off-cluster** so an operator can pull a single
-agent's output for an **absolute time window** that survives pod restarts —
-alongside, not replacing, the live kubelet tail.
+How Kyber retains managed platform logs **off-cluster** so an operator can pull
+one exact pod/container's output for an **absolute time window** that survives
+pod restarts—alongside, not replacing, the live kubelet tail. The generic
+archive uses `logs/<component>/<workload>/<pod_uid>/<container>/<date>/`.
+Legacy `agents/` and `transcripts/` lanes remain dual-written during migration.
+See the [operator logging guide](../operator/logging.md) for settings, collector
+recipes, failure behavior, and API usage.
 
 **Source of truth:**
 
@@ -11,7 +15,8 @@ alongside, not replacing, the live kubelet tail.
   (Vector DaemonSet, ConfigMap, ServiceAccount + RBAC),
   `deploy/helm/kyber/templates/minio/` (optional in-cluster MinIO, gated),
   `deploy/helm/kyber/values.yaml` (`logShipper:` + `minio:` blocks).
-- Read path: `pkg/api/routes_logs.go` (`handleAgentLogs` `source` branch,
+- Read path: `pkg/api/routes_logging.go` (generic discovery, live read, archive,
+  and export) plus `pkg/api/routes_logs.go` (`handleAgentLogs` compatibility branch,
   `parseArchiveWindow`, `handleAgentLogsArchive` / `handleAgentLogsTranscript`
   over the shared `serveWindowedLines`), `pkg/api/archive_reader.go`
   (`ArchiveReader`, `GCSArchiveReader`, `S3ArchiveReader`, `rootPrefix`-keyed),
@@ -362,10 +367,15 @@ caps storage cost and how far back `source=archive` can reach.
 
 - **GCS:** an Object Lifecycle rule deletes objects older than
   `var.log_retention_days` (default **30**). GCS enforces it; no cron.
-- **S3/MinIO:** the chart's MinIO bootstrap Job applies a bucket object-expiry
-  lifecycle (`minio.retentionDays`, default **30** — parity with GCS) via `mc
+- **MinIO:** the chart's MinIO bootstrap Job applies a bucket object-expiry
+  lifecycle (`logging.archive.retentionDays`, default **30** — parity with GCS) via `mc
   ilm`. Without this the durable logs would accumulate unbounded on local
   clusters; retention parity is a product AC (kyber#437), not an option.
+- **Operator-supplied AWS S3:** Kyber reports the desired
+  `logging.archive.retentionDays` value but does not mutate an external bucket.
+  The operator must apply an equivalent expiration rule to the `logs/`,
+  `agents/`, and `transcripts/` prefixes with Terraform, CloudFormation, or the
+  bucket's native lifecycle API.
 
 Compaction is an **optional, on-demand reclaim**, not a requirement: the object
 store's expiry is the enforced backstop. The pre-kyber#458 tailer left duplicate
@@ -385,7 +395,7 @@ conflated:
 
 | Mechanism | Acts on | Enforced? | Purpose |
 |---|---|---|---|
-| Object-store lifecycle expiry (`minio.retentionDays` / GCS `log_retention_days`, 30d) | Durable archive objects | **Yes** — the backstop | Caps how far back `source=archive` reaches; bounds bucket cost |
+| Object-store lifecycle expiry (`logging.archive.retentionDays` / GCS `log_retention_days`, 30d) | Durable archive objects | **Yes** — the backstop | Caps how far back `source=archive` reaches; bounds bucket cost |
 | Transcript compaction (`transcriptCompaction`, on-demand) | **Duplicate** archive objects | No (optional reclaim) | Reclaims pre-#458 overlapping objects in the bucket |
 | **PVC-side pruning (`transcripts.retention`, new)** | **On-PVC** `*.jsonl` working set | Default-on, self-healing | Bounds the per-agent on-PVC backlog (~4MB/day/agent) |
 
@@ -417,7 +427,7 @@ unchanged (`ReadWriteOnce`).
 
 - **New object prefix.** `transcripts/<agent>/<date>/*.ndjson` lives in the
   **same bucket** as `agents/…`, under the same backend/credentials/lifecycle
-  rule (same `log_retention_days` / `minio.retentionDays` expiry applies). No new
+  rule (same `log_retention_days` / `logging.archive.retentionDays` expiry applies). No new
   bucket, key, or IAM grant is introduced.
 - **Storage footprint.** Full session transcripts are **materially larger** than
   boot stdout (every prompt, turn, and tool result — a single line can carry a

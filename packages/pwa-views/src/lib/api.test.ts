@@ -75,6 +75,34 @@ describe('getComputeConfig', () => {
   })
 })
 
+describe('logging discovery', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('loads logging settings', async () => {
+    mockFetch({
+      globalLevel: 'info',
+      componentOverrides: { 'status-sidecar': 'debug' },
+      archiveRetentionDays: 30,
+      managedBy: 'helm',
+    })
+    const settings = await createApiClient(mockCluster).getLoggingSettings()
+    expect(settings.componentOverrides['status-sidecar']).toBe('debug')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/logging/settings',
+      expect.any(Object),
+    )
+  })
+
+  it('loads logging targets', async () => {
+    mockFetch({ targets: [], selector: 'app.kubernetes.io/part-of=kyber' })
+    const response = await createApiClient(mockCluster).getLoggingTargets()
+    expect(response.targets).toEqual([])
+    expect(response.selector).toBe('app.kubernetes.io/part-of=kyber')
+  })
+})
+
 describe('kyber_server_url migration (kyber#123)', () => {
   // The migration runs once at module-import time. vitest caches modules
   // across test files, so we re-import with a fresh localStorage to observe
@@ -177,7 +205,7 @@ describe('logStream — source/window query building (kyber#431)', () => {
           c.close()
         },
       })
-      return Promise.resolve({ ok: true, status: 200, body })
+      return Promise.resolve({ ok: true, status: 200, body, headers: new Headers() })
     }) as unknown as typeof fetch
     vi.stubGlobal('fetch', fetchMock)
     return () => captured
@@ -223,5 +251,58 @@ describe('logStream — source/window query building (kyber#431)', () => {
     expect(url).toContain('tail=200')
     expect(url).not.toContain('source=')
     expect(url).not.toContain('until=')
+  })
+})
+
+describe('generic logging client (kyber#105)', () => {
+  it('streams an identity-bound live target', async () => {
+    let captured = ''
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      captured = url
+      const body = new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(new TextEncoder().encode('hello\n')); c.close() },
+      })
+      return Promise.resolve({ ok: true, status: 200, body, headers: new Headers() })
+    }))
+    const result = await createApiClient(mockCluster).loggingStream({
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', component: 'agent', workload: 'sol', follow: true, tail: 500,
+    })
+    const reader = result.stream.getReader()
+    expect((await reader.read()).value).toBe('hello\n')
+    expect(captured).toContain('/api/v1/logging/logs?')
+    expect(captured).toContain('podUid=uid-1')
+    expect(captured).toContain('container=agent')
+    expect(captured).toContain('follow=true')
+  })
+
+  it('downloads a bounded text export and reports truncation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('hello\n', {
+      status: 200,
+      headers: {
+        'Content-Disposition': 'attachment; filename="kyber-agent.log"',
+        'X-Kyber-Log-Truncated': 'true',
+      },
+    })))
+    const result = await createApiClient(mockCluster).exportLogging({
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', component: 'agent', workload: 'sol', format: 'text',
+      since: '2026-06-03T10:00:00Z', until: '2026-06-03T11:00:00Z',
+    })
+    expect(result.filename).toBe('kyber-agent.log')
+    expect(result.truncated).toBe(true)
+    expect(await result.blob.text()).toBe('hello\n')
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('format=text'), expect.any(Object))
+  })
+
+  it('propagates archive truncation headers with the stream', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('partial\n', {
+      status: 200,
+      headers: { 'X-Kyber-Log-Truncated': 'true' },
+    })))
+    const result = await createApiClient(mockCluster).loggingStream({
+      pod: 'archived-uid-old', podUid: 'uid-old', container: 'control-plane',
+      component: 'control-plane', workload: 'control-plane', source: 'archive',
+    })
+    expect(result.truncated).toBe(true)
+    expect((await result.stream.getReader().read()).value).toBe('partial\n')
   })
 })

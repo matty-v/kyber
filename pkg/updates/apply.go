@@ -80,6 +80,8 @@ type Applier struct {
 	// HealthURL is the in-cluster control-plane health endpoint the Job probes
 	// after the rollout.
 	HealthURL string
+	// LogLevel is the effective component verbosity passed to the upgrade Job.
+	LogLevel string
 
 	Logger *slog.Logger
 }
@@ -319,9 +321,10 @@ func (a *Applier) buildJob(target, image string) *batchv1.Job {
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{
-						"app.kubernetes.io/name": "kyber",
-						upgradeComponentLabel:    upgradeComponent,
-						upgradeTargetLabel:       target,
+						"app.kubernetes.io/name":    "kyber",
+						"app.kubernetes.io/part-of": "kyber",
+						upgradeComponentLabel:       upgradeComponent,
+						upgradeTargetLabel:          target,
 					},
 				},
 				Spec: corev1.PodSpec{
@@ -339,6 +342,10 @@ func (a *Applier) buildJob(target, image string) *batchv1.Job {
 							{Name: "KYBER_UPGRADE_CONTROL_PLANE_DEPLOYMENT", Value: a.ControlPlaneDeployment},
 							{Name: "KYBER_UPGRADE_HEALTH_URL", Value: a.HealthURL},
 							{Name: "KYBER_UPGRADE_WORKDIR", Value: "/work"},
+							{Name: "KYBER_LOG_LEVEL", Value: a.LogLevel},
+							{Name: "KYBER_LOG_POD", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+							{Name: "KYBER_LOG_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+							{Name: "KYBER_LOG_CONTAINER", Value: "upgrade"},
 							// helm writes cache, config and repository state
 							// under $HOME by default. The root filesystem is
 							// read-only and the pod runs as a non-root uid with
