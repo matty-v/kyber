@@ -11,12 +11,12 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 const managedPodSelector = "app.kubernetes.io/part-of=kyber"
 const maxGenericLogTail = 10_000
+const maxArchivedLoggingTargets = 1000
 
 // Export is deliberately larger than the measured 8 MiB interactive-view cap
 // (see archive_reader.go's production line-size measurements) but remains
@@ -101,8 +101,21 @@ func (s *Server) handleLoggingTargets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	targets := make([]loggingTargetResponse, 0, len(pods.Items))
+	live := map[GenericArchiveSelection]struct{}{}
 	for i := range pods.Items {
-		targets = append(targets, s.loggingTarget(&pods.Items[i]))
+		target := s.loggingTarget(&pods.Items[i])
+		targets = append(targets, target)
+		for _, container := range target.Containers {
+			live[GenericArchiveSelection{Component: target.Component, Workload: target.Workload, PodUID: target.PodUID, Container: container.Name}] = struct{}{}
+		}
+	}
+	if s.PlatformArchiveReader != nil {
+		selections, err := s.PlatformArchiveReader.ListContainerSelections(r.Context(), maxArchivedLoggingTargets)
+		if err != nil {
+			slog.Error("failed to list archived logging targets", "error", err)
+		} else {
+			targets = append(targets, s.archivedLoggingTargets(selections, live)...)
+		}
 	}
 	sort.Slice(targets, func(i, j int) bool {
 		if targets[i].Component != targets[j].Component {
@@ -153,6 +166,19 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if source == "archive" {
+		selection, ok := archiveSelectionFromQuery(q)
+		if !ok {
+			writeJSONError(w, http.StatusBadRequest, "invalid_target", "component, workload, podUid, and container are required")
+			return
+		}
+		if !s.isArchivedSelection(r, selection) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
+			return
+		}
+		s.serveGenericArchivedLogs(w, r, selection)
+		return
+	}
 	pod := &corev1.Pod{}
 	if err := s.K8sClient.Get(r.Context(), client.ObjectKey{Namespace: s.Namespace, Name: podName}, pod); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -165,10 +191,6 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if pod.Labels["app.kubernetes.io/part-of"] != "kyber" || string(pod.UID) != podUID || !loggingPodHasContainer(pod, container) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
-		return
-	}
-	if source == "archive" {
-		s.serveGenericArchivedLogs(w, r, pod, container)
 		return
 	}
 	if s.Clientset == nil {
@@ -257,9 +279,12 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_window", "export window must not exceed 31 days")
 		return
 	}
-	pod := &corev1.Pod{}
-	if err := s.K8sClient.Get(r.Context(), client.ObjectKey{Namespace: s.Namespace, Name: podName}, pod); err != nil ||
-		pod.Labels["app.kubernetes.io/part-of"] != "kyber" || string(pod.UID) != podUID || !loggingPodHasContainer(pod, container) {
+	selection, ok := archiveSelectionFromQuery(q)
+	if !ok {
+		writeJSONError(w, http.StatusBadRequest, "invalid_target", "component, workload, podUid, and container are required")
+		return
+	}
+	if !s.isArchivedSelection(r, selection) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
 		return
 	}
@@ -285,7 +310,6 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 	if maxBytes <= 0 {
 		maxBytes = maxLoggingExportBytes
 	}
-	selection := GenericArchiveSelection{Component: pod.Labels["app.kubernetes.io/component"], Workload: loggingWorkload(pod), PodUID: podUID, Container: container}
 	err := s.PlatformArchiveReader.StreamContainerRecords(r.Context(), selection, since, until, func(raw string, line LogLine) error {
 		output := raw + "\n"
 		if format == "text" {
@@ -312,7 +336,7 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) serveGenericArchivedLogs(w http.ResponseWriter, r *http.Request, pod *corev1.Pod, container string) {
+func (s *Server) serveGenericArchivedLogs(w http.ResponseWriter, r *http.Request, selection GenericArchiveSelection) {
 	since, until, errMsg := parseArchiveWindow(r)
 	if errMsg != "" {
 		writeJSONError(w, http.StatusBadRequest, "invalid_window", errMsg)
@@ -333,12 +357,9 @@ func (s *Server) serveGenericArchivedLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	defer release()
-	result, err := s.PlatformArchiveReader.ReadContainerLines(r.Context(), GenericArchiveSelection{
-		Component: pod.Labels["app.kubernetes.io/component"], Workload: loggingWorkload(pod),
-		PodUID: string(pod.UID), Container: container,
-	}, since, until)
+	result, err := s.PlatformArchiveReader.ReadContainerLines(r.Context(), selection, since, until)
 	if err != nil {
-		slog.Error("generic archive read failed", "pod", pod.Name, "container", container, "error", err)
+		slog.Error("generic archive read failed", "pod_uid", selection.PodUID, "container", selection.Container, "error", err)
 		writeJSONError(w, http.StatusBadGateway, "archive_read_error", "failed to read archived logs")
 		return
 	}
@@ -425,9 +446,52 @@ func loggingWorkload(pod *corev1.Pod) string {
 	if value := pod.Labels["kyber.io/machine"]; value != "" {
 		return value
 	}
-	owner := metav1.GetControllerOf(pod)
-	if owner != nil {
-		return owner.Kind + "/" + owner.Name
+	return pod.Labels["app.kubernetes.io/component"]
+}
+
+func archiveSelectionFromQuery(q mapQuery) (GenericArchiveSelection, bool) {
+	selection := GenericArchiveSelection{Component: q.Get("component"), Workload: q.Get("workload"), PodUID: q.Get("podUid"), Container: q.Get("container")}
+	for _, value := range []string{selection.Component, selection.Workload, selection.PodUID, selection.Container} {
+		if !validArchiveSegment(value) {
+			return GenericArchiveSelection{}, false
+		}
 	}
-	return pod.Name
+	return selection, true
+}
+
+type mapQuery interface{ Get(string) string }
+
+func (s *Server) isArchivedSelection(r *http.Request, want GenericArchiveSelection) bool {
+	selections, err := s.PlatformArchiveReader.ListContainerSelections(r.Context(), maxArchivedLoggingTargets)
+	if err != nil {
+		slog.Error("failed to validate archived logging target", "error", err)
+		return false
+	}
+	for _, selection := range selections {
+		if selection == want {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) archivedLoggingTargets(selections []GenericArchiveSelection, live map[GenericArchiveSelection]struct{}) []loggingTargetResponse {
+	byPod := map[string]*loggingTargetResponse{}
+	for _, selection := range selections {
+		if _, ok := live[selection]; ok {
+			continue
+		}
+		key := selection.Component + "\x00" + selection.Workload + "\x00" + selection.PodUID
+		target := byPod[key]
+		if target == nil {
+			target = &loggingTargetResponse{Namespace: s.Namespace, Pod: "archived-" + selection.PodUID, PodUID: selection.PodUID, Component: selection.Component, Workload: selection.Workload, Phase: "Archived", Sources: []string{"archive"}, ArchiveAvailable: true}
+			byPod[key] = target
+		}
+		target.Containers = append(target.Containers, s.loggingContainer(selection.Component, selection.Container, false))
+	}
+	result := make([]loggingTargetResponse, 0, len(byPod))
+	for _, target := range byPod {
+		result = append(result, *target)
+	}
+	return result
 }

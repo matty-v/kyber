@@ -59,8 +59,43 @@ type GenericArchiveSelection struct {
 
 // PlatformArchiveReader reads the normalized logs/ archive lane.
 type PlatformArchiveReader interface {
+	ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error)
 	ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error)
 	StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(raw string, line LogLine) error) error
+}
+
+func parseGenericArchiveSelection(key string) (GenericArchiveSelection, bool) {
+	parts := strings.Split(key, "/")
+	if len(parts) < 7 || parts[0] != "logs" {
+		return GenericArchiveSelection{}, false
+	}
+	selection := GenericArchiveSelection{Component: parts[1], Workload: parts[2], PodUID: parts[3], Container: parts[4]}
+	for _, value := range []string{selection.Component, selection.Workload, selection.PodUID, selection.Container} {
+		if !validArchiveSegment(value) {
+			return GenericArchiveSelection{}, false
+		}
+	}
+	return selection, true
+}
+
+func uniqueGenericArchiveSelections(keys []string, limit int) []GenericArchiveSelection {
+	seen := map[GenericArchiveSelection]struct{}{}
+	result := make([]GenericArchiveSelection, 0)
+	for _, key := range keys {
+		selection, ok := parseGenericArchiveSelection(key)
+		if !ok {
+			continue
+		}
+		if _, ok := seen[selection]; ok {
+			continue
+		}
+		seen[selection] = struct{}{}
+		result = append(result, selection)
+		if limit > 0 && len(result) >= limit {
+			break
+		}
+	}
+	return result
 }
 
 type ArchiveReaderWithPlatform interface {
@@ -677,6 +712,22 @@ func (g *GCSArchiveReader) ReadContainerLines(ctx context.Context, selection Gen
 	return ws.result(), nil
 }
 
+func (g *GCSArchiveReader) ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error) {
+	it := g.client.Bucket(g.bucket).Objects(ctx, &storage.Query{Prefix: "logs/"})
+	keys := make([]string, 0)
+	for limit <= 0 || len(keys) < limit*4 {
+		attrs, err := it.Next()
+		if err == iterator.Done {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list archived logging targets: %w", err)
+		}
+		keys = append(keys, attrs.Name)
+	}
+	return uniqueGenericArchiveSelections(keys, limit), nil
+}
+
 func (g *GCSArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {
 	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
 	if err != nil {
@@ -731,6 +782,7 @@ func (g *GCSArchiveReader) scanObject(ctx context.Context, bkt *storage.BucketHa
 // MinIO — the real implementation wraps a minio.Client; tests inject a fake.
 type s3ObjectStore interface {
 	listKeys(ctx context.Context, prefix string) ([]string, error)
+	listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error)
 	// getObject opens one object as a stream. The caller MUST Close the returned
 	// reader. Returning a stream (not []byte) is what lets the reader scan an
 	// object without materializing it whole — the memory bound for a single large
@@ -767,6 +819,10 @@ type minioObjectStore struct {
 }
 
 func (m *minioObjectStore) listKeys(ctx context.Context, prefix string) ([]string, error) {
+	return m.listKeysLimit(ctx, prefix, 0)
+}
+
+func (m *minioObjectStore) listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error) {
 	var keys []string
 	for obj := range m.client.ListObjects(ctx, m.bucket, minio.ListObjectsOptions{
 		Prefix:    prefix,
@@ -776,6 +832,9 @@ func (m *minioObjectStore) listKeys(ctx context.Context, prefix string) ([]strin
 			return nil, fmt.Errorf("listing %q: %w", prefix, obj.Err)
 		}
 		keys = append(keys, obj.Key)
+		if limit > 0 && len(keys) >= limit {
+			break
+		}
 	}
 	return keys, nil
 }
@@ -902,6 +961,18 @@ func (s *S3ArchiveReader) ReadContainerLines(ctx context.Context, selection Gene
 		}
 	}
 	return ws.result(), nil
+}
+
+func (s *S3ArchiveReader) ListContainerSelections(ctx context.Context, limit int) ([]GenericArchiveSelection, error) {
+	keyLimit := 0
+	if limit > 0 {
+		keyLimit = limit * 10
+	}
+	keys, err := s.store.listKeysLimit(ctx, "logs/", keyLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list archived logging targets: %w", err)
+	}
+	return uniqueGenericArchiveSelections(keys, limit), nil
 }
 
 func (s *S3ArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {

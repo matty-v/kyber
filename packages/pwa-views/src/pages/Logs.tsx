@@ -76,16 +76,19 @@ export function Logs() {
     if (!target || !selectedContainer) return
     setLines([]); setError(null); setTruncated(false); setPaused(false)
     const archive = source === 'archive'
-    const stream = api.loggingStream({
+    let reader: ReadableStreamDefaultReader<string> | undefined
+    void (async () => {
+      try {
+        const result = await api.loggingStream({
       pod: target.pod, podUid: target.podUid, container: selectedContainer.name,
+      component: target.component, workload: target.workload,
       source, follow: !archive && follow, tail: archive ? undefined : 500,
       since: archive ? new Date(since).toISOString() : undefined,
       until: archive ? new Date(until).toISOString() : undefined,
-    })
-    const reader = stream.getReader()
-    let buffer = ''
-    void (async () => {
-      try {
+        })
+        setTruncated(result.truncated)
+        reader = result.stream.getReader()
+        let buffer = ''
         while (true) {
           const { done, value } = await reader.read(); if (done) break
           buffer += value
@@ -95,7 +98,7 @@ export function Logs() {
         if (buffer) setLines((old) => [...old, buffer].slice(-MAX_LINES))
       } catch (e) { if ((e as Error).name !== 'AbortError') setError((e as Error).message) }
     })()
-    return () => { void reader.cancel() }
+    return () => { void reader?.cancel() }
   }, [api, target?.podUid, selectedContainer?.name, source, follow, loadKey])
 
   useEffect(() => {
@@ -112,6 +115,7 @@ export function Logs() {
     try {
       const opts: LoggingExportOptions = {
         pod: target.pod, podUid: target.podUid, container: selectedContainer.name, format,
+        component: target.component, workload: target.workload,
         since: new Date(since).toISOString(), until: new Date(until).toISOString(),
       }
       const result = await api.exportLogging(opts)

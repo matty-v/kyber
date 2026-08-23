@@ -33,6 +33,7 @@ import type {
   LoggingSettings,
   LoggingTargetsResponse,
   LoggingReadOptions,
+  LoggingStreamResult,
   LoggingExportOptions,
   LoggingExportResult,
   TranscriptResult,
@@ -59,6 +60,8 @@ function loggingParams(opts: LoggingReadOptions): URLSearchParams {
     pod: opts.pod,
     podUid: opts.podUid,
     container: opts.container,
+    component: opts.component,
+    workload: opts.workload,
   })
   if (opts.source) params.set('source', opts.source)
   if (opts.follow) params.set('follow', 'true')
@@ -596,20 +599,20 @@ export function createApiClient(cluster: Cluster) {
     getLoggingTargets: (): Promise<LoggingTargetsResponse> =>
       request<LoggingTargetsResponse>('GET', '/api/v1/logging/targets'),
 
-    loggingStream: (opts: LoggingReadOptions): ReadableStream<string> => {
+    loggingStream: async (opts: LoggingReadOptions): Promise<LoggingStreamResult> => {
       const params = loggingParams(opts)
       const url = `${baseURL}/api/v1/logging/logs?${params}`
       const headers: HeadersInit = cluster.apiKey
         ? { Authorization: `Bearer ${cluster.apiKey}` }
         : {}
-      let controller: AbortController | null = null
-      return new ReadableStream<string>({
+      const controller = new AbortController()
+      const res = await fetch(url, { headers, signal: controller.signal })
+      if (!res.ok || !res.body) throw new Error(`log read failed: HTTP ${res.status}`)
+	  const body = res.body
+      return { truncated: res.headers.get('X-Kyber-Log-Truncated') === 'true', stream: new ReadableStream<string>({
         async start(streamController) {
-          controller = new AbortController()
           try {
-            const res = await fetch(url, { headers, signal: controller.signal })
-            if (!res.ok || !res.body) throw new Error(`log read failed: HTTP ${res.status}`)
-            const reader = res.body.getReader()
+            const reader = body.getReader()
             const decoder = new TextDecoder()
             while (true) {
               const { done, value } = await reader.read()
@@ -621,8 +624,8 @@ export function createApiClient(cluster: Cluster) {
             streamController.error(err)
           }
         },
-        cancel() { controller?.abort() },
-      })
+        cancel() { controller.abort() },
+      }) }
     },
 
     exportLogging: async (opts: LoggingExportOptions): Promise<LoggingExportResult> => {

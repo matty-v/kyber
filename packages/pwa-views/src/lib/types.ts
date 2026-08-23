@@ -645,11 +645,18 @@ export interface LoggingReadOptions {
   pod: string
   podUid: string
   container: string
+  component: string
+  workload: string
   source?: 'kubelet' | 'archive'
   follow?: boolean
   tail?: number
   since?: string
   until?: string
+}
+
+export interface LoggingStreamResult {
+  stream: ReadableStream<string>
+  truncated: boolean
 }
 
 export interface LoggingExportOptions extends LoggingReadOptions {

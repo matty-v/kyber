@@ -228,6 +228,9 @@ next begins.
 - [x] **Checkpoint 8 — migration docs and acceptance.** Document collector recipes,
   retention/failure behavior, and verify every Helm-rendered pod/container is
   discoverable, viewable, archived when enabled, and exportable.
+- [x] **Checkpoint 9 — review findings.** Unify chart-workload archive identity,
+  expose bounded retained archive targets after pod replacement, and propagate
+  server truncation metadata through the PWA client.
 
 ## Acceptance criteria
 

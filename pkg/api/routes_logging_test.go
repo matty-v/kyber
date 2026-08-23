@@ -18,9 +18,17 @@ import (
 )
 
 type fakePlatformArchiveReader struct {
-	selection GenericArchiveSelection
-	records   []string
-	err       error
+	selection  GenericArchiveSelection
+	selections []GenericArchiveSelection
+	records    []string
+	err        error
+}
+
+func (f *fakePlatformArchiveReader) ListContainerSelections(_ context.Context, limit int) ([]GenericArchiveSelection, error) {
+	if limit > 0 && len(f.selections) > limit {
+		return f.selections[:limit], f.err
+	}
+	return f.selections, f.err
 }
 
 func (f *fakePlatformArchiveReader) ReadContainerLines(_ context.Context, selection GenericArchiveSelection, _, _ time.Time) (ReadResult, error) {
@@ -100,6 +108,37 @@ func TestLoggingTargetsDiscoversManagedPodsAndContainers(t *testing.T) {
 	}
 	if target.Containers[1].ManagedLevel {
 		t.Error("agent runtime must report unmanaged verbosity")
+	}
+}
+
+func TestLoggingTargetsIncludesRetainedReplacedPod(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "control-plane-new", Namespace: "kyber-system", UID: types.UID("uid-new"), Labels: map[string]string{
+		"app.kubernetes.io/part-of": "kyber", "app.kubernetes.io/component": "control-plane",
+	}}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "control-plane"}}}}
+	reader := &fakePlatformArchiveReader{selections: []GenericArchiveSelection{
+		{Component: "control-plane", Workload: "control-plane", PodUID: "uid-old", Container: "control-plane"},
+		{Component: "control-plane", Workload: "control-plane", PodUID: "uid-new", Container: "control-plane"},
+	}}
+	s := &Server{K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(), Namespace: "kyber-system", PlatformArchiveReader: reader}
+	rr := httptest.NewRecorder()
+	s.handleLoggingTargets(rr, httptest.NewRequest(http.MethodGet, "/api/v1/logging/targets", nil))
+	var got struct {
+		Targets []loggingTargetResponse `json:"targets"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Targets) != 2 {
+		t.Fatalf("targets = %+v, want live and retained", got.Targets)
+	}
+	for _, target := range got.Targets {
+		if target.Workload != "control-plane" {
+			t.Errorf("target = %+v, want stable chart workload identity", target)
+		}
 	}
 }
 
@@ -184,12 +223,12 @@ func TestLoggingLogsReadsGenericArchive(t *testing.T) {
 		},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}},
 	}
-	reader := &fakePlatformArchiveReader{}
+	reader := &fakePlatformArchiveReader{selections: []GenericArchiveSelection{{Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent"}}}
 	s := &Server{
 		K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
 		Namespace: "kyber-system", PlatformArchiveReader: reader,
 	}
-	url := "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&source=archive&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
+	url := "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&component=agent&workload=sol&source=archive&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
 	rr := httptest.NewRecorder()
 	s.handleLoggingLogs(rr, httptest.NewRequest(http.MethodGet, url, nil))
 	if rr.Code != http.StatusOK || rr.Body.String() != "archived line\n" {
@@ -211,7 +250,7 @@ func TestLoggingExportStreamsAndSignalsLimit(t *testing.T) {
 		}},
 		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}},
 	}
-	reader := &fakePlatformArchiveReader{records: []string{
+	reader := &fakePlatformArchiveReader{selections: []GenericArchiveSelection{{Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent"}}, records: []string{
 		`{"timestamp":"2026-06-03T10:00:00Z","message":"first"}`,
 		`{"timestamp":"2026-06-03T10:01:00Z","message":"second"}`,
 	}}
@@ -219,7 +258,7 @@ func TestLoggingExportStreamsAndSignalsLimit(t *testing.T) {
 		K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(), Namespace: "kyber-system",
 		PlatformArchiveReader: reader, MaxExportBytes: 6,
 	}
-	url := "/api/v1/logging/export?pod=agent-sol&podUid=uid-1&container=agent&format=text&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
+	url := "/api/v1/logging/export?pod=agent-sol&podUid=uid-1&container=agent&component=agent&workload=sol&format=text&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
 	rr := httptest.NewRecorder()
 	s.handleLoggingExport(rr, httptest.NewRequest(http.MethodGet, url, nil))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "first\n") || !strings.Contains(rr.Body.String(), "truncated") {

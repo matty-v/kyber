@@ -205,7 +205,7 @@ describe('logStream — source/window query building (kyber#431)', () => {
           c.close()
         },
       })
-      return Promise.resolve({ ok: true, status: 200, body })
+      return Promise.resolve({ ok: true, status: 200, body, headers: new Headers() })
     }) as unknown as typeof fetch
     vi.stubGlobal('fetch', fetchMock)
     return () => captured
@@ -262,11 +262,12 @@ describe('generic logging client (kyber#105)', () => {
       const body = new ReadableStream<Uint8Array>({
         start(c) { c.enqueue(new TextEncoder().encode('hello\n')); c.close() },
       })
-      return Promise.resolve({ ok: true, status: 200, body })
+      return Promise.resolve({ ok: true, status: 200, body, headers: new Headers() })
     }))
-    const reader = createApiClient(mockCluster).loggingStream({
-      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', follow: true, tail: 500,
-    }).getReader()
+    const result = await createApiClient(mockCluster).loggingStream({
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', component: 'agent', workload: 'sol', follow: true, tail: 500,
+    })
+    const reader = result.stream.getReader()
     expect((await reader.read()).value).toBe('hello\n')
     expect(captured).toContain('/api/v1/logging/logs?')
     expect(captured).toContain('podUid=uid-1')
@@ -283,12 +284,25 @@ describe('generic logging client (kyber#105)', () => {
       },
     })))
     const result = await createApiClient(mockCluster).exportLogging({
-      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', format: 'text',
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', component: 'agent', workload: 'sol', format: 'text',
       since: '2026-06-03T10:00:00Z', until: '2026-06-03T11:00:00Z',
     })
     expect(result.filename).toBe('kyber-agent.log')
     expect(result.truncated).toBe(true)
     expect(await result.blob.text()).toBe('hello\n')
     expect(fetch).toHaveBeenCalledWith(expect.stringContaining('format=text'), expect.any(Object))
+  })
+
+  it('propagates archive truncation headers with the stream', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('partial\n', {
+      status: 200,
+      headers: { 'X-Kyber-Log-Truncated': 'true' },
+    })))
+    const result = await createApiClient(mockCluster).loggingStream({
+      pod: 'archived-uid-old', podUid: 'uid-old', container: 'control-plane',
+      component: 'control-plane', workload: 'control-plane', source: 'archive',
+    })
+    expect(result.truncated).toBe(true)
+    expect((await result.stream.getReader().read()).value).toBe('partial\n')
   })
 })

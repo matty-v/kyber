@@ -101,7 +101,7 @@ paths:
   /api/v1/logging/targets:
     get:
       operationId: listLoggingTargets
-      summary: Discover every currently running Kyber-managed pod and container
+      summary: Discover live and retained Kyber-managed pod/container log targets
       tags: [logging]
       responses:
         '200':
@@ -119,8 +119,9 @@ paths:
       summary: Stream live logs from a discovered Kyber-managed container
       description: >
         Streams kubelet or durable archive logs for one pod/container resolved from logging
-        discovery. The pod UID is required to reject stale selections after pod
-        recreation. Reads are namespace-bound, concurrency-limited, and tail is
+        discovery. Live reads validate the current pod UID; archive reads validate
+        the component/workload/pod UID/container tuple against the bounded retained
+        target index. Reads are namespace-bound, concurrency-limited, and tail is
         capped at 10,000 lines.
       tags: [logging]
       parameters:
@@ -139,6 +140,16 @@ paths:
           required: true
           schema:
             type: string
+        - name: component
+          in: query
+          required: false
+          description: Required for archive reads.
+          schema: {type: string}
+        - name: workload
+          in: query
+          required: false
+          description: Required for archive reads.
+          schema: {type: string}
         - name: source
           in: query
           required: false
@@ -181,6 +192,9 @@ paths:
       responses:
         '200':
           description: Plain-text live log stream.
+          headers:
+            X-Kyber-Log-Truncated:
+              schema: {type: string, enum: ['true']}
           content:
             text/plain:
               schema:
@@ -218,6 +232,14 @@ paths:
           required: true
           schema: {type: string}
         - name: container
+          in: query
+          required: true
+          schema: {type: string}
+        - name: component
+          in: query
+          required: true
+          schema: {type: string}
+        - name: workload
           in: query
           required: true
           schema: {type: string}

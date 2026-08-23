@@ -414,6 +414,14 @@ func (f *fakeS3Store) listKeys(_ context.Context, prefix string) ([]string, erro
 	return keys, nil
 }
 
+func (f *fakeS3Store) listKeysLimit(ctx context.Context, prefix string, limit int) ([]string, error) {
+	keys, err := f.listKeys(ctx, prefix)
+	if limit > 0 && len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, err
+}
+
 func (f *fakeS3Store) getObject(_ context.Context, key string) (io.ReadCloser, error) {
 	if f.getErr != nil {
 		return nil, f.getErr
@@ -485,6 +493,22 @@ func TestGenericArchiveRejectsUnsafeSegments(t *testing.T) {
 	}, time.Now(), time.Now())
 	if err == nil {
 		t.Fatal("expected unsafe workload to be rejected")
+	}
+}
+
+func TestUniqueGenericArchiveSelectionsParsesAndBoundsTargets(t *testing.T) {
+	keys := []string{
+		"logs/control-plane/control-plane/uid-old/control-plane/2026-08-22/a.ndjson",
+		"logs/control-plane/control-plane/uid-old/control-plane/2026-08-23/b.ndjson",
+		"logs/agent/sol/uid-new/agent/2026-08-23/c.ndjson",
+		"agents/sol/2026-08-23/legacy.ndjson",
+	}
+	got := uniqueGenericArchiveSelections(keys, 2)
+	if len(got) != 2 {
+		t.Fatalf("selections = %+v, want 2", got)
+	}
+	if got[0].Workload != "control-plane" || got[0].PodUID != "uid-old" || got[1].Workload != "sol" {
+		t.Errorf("selections = %+v", got)
 	}
 }
 
