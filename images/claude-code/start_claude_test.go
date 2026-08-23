@@ -2635,9 +2635,12 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// The stub answers tmux has-session from a flag file (absent = dead
+	// session, the normal watchdog case) and logs everything else.
 	sudoLog := filepath.Join(work, "sudo.log")
+	aliveFlag := filepath.Join(work, "session-alive")
 	if err := os.WriteFile(filepath.Join(bin, "sudo"),
-		[]byte("#!/usr/bin/env bash\necho \"sudo $*\" >> '"+sudoLog+"'\n"), 0o755); err != nil {
+		[]byte("#!/usr/bin/env bash\ncase \"$*\" in *has-session*) [ -f '"+aliveFlag+"' ] && exit 0 || exit 1;; esac\necho \"sudo $*\" >> '"+sudoLog+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(bin, "pkill"),
@@ -2708,5 +2711,28 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 
 	if got := run("--fresh"); strings.Contains(got, "--continue") {
 		t.Errorf("--fresh: intentional restart must stay fresh, got:\n%s", got)
+	}
+
+	// Race guard: a bare (watchdog) invocation that finds the session alive
+	// must do nothing — a concurrent restart-session already relaunched, and
+	// killing it here could resurrect the conversation that restart just
+	// discarded. --fresh still kills + relaunches.
+	if err := os.WriteFile(aliveFlag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(sudoLog)
+	cmd := exec.Command("/bin/bash", gen)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bare run with live session: %v\n%s", err, out)
+	} else if !strings.Contains(string(out), "already alive") {
+		t.Errorf("bare run with live session did not report the race skip:\n%s", out)
+	}
+	if _, err := os.Stat(sudoLog); err == nil {
+		log, _ := os.ReadFile(sudoLog)
+		t.Errorf("bare run with live session must not kill/relaunch, but ran:\n%s", log)
+	}
+	if got := run("--fresh"); !strings.Contains(got, "new-session") {
+		t.Errorf("--fresh with live session must still relaunch, got:\n%s", got)
 	}
 }

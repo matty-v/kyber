@@ -354,6 +354,7 @@ export interface CreateAgentRequest {
   runtime: string
   model?: string
   startupPrompt?: string
+  sessionResume?: boolean
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string

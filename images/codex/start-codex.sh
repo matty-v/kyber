@@ -380,6 +380,13 @@ if [ "\$(id -u)" -eq 0 ]; then
 else
     TMUX=(tmux)
 fi
+# kyber#118: bare (crash-watchdog) invocations only revive a DEAD session —
+# if one is alive under the lock, a concurrent restart-session already
+# relaunched and killing it could resurrect the discarded conversation.
+if [ "\$KYBER_FRESH" = "0" ] && "\${TMUX[@]}" has-session -t agent 2>/dev/null; then
+    echo "[kyber] relaunch: session already alive — a concurrent restart won the race, nothing to do (kyber#118)"
+    exit 0
+fi
 "\${TMUX[@]}" kill-session -t agent 2>/dev/null || true
 # The restart lock lives on fd 9 in this shell. Close it in the tmux child:
 # tmux becomes the long-lived server process on the first relaunch, and an

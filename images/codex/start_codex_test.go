@@ -448,9 +448,12 @@ func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
 	if err := os.MkdirAll(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// has-session answers from a flag file (absent = dead session, the
+	// normal watchdog case); everything else is logged.
 	tmuxLog := filepath.Join(work, "tmux.log")
+	aliveFlag := filepath.Join(work, "session-alive")
 	if err := os.WriteFile(filepath.Join(bin, "tmux"),
-		[]byte("#!/usr/bin/env bash\necho \"tmux $*\" >> '"+tmuxLog+"'\n"), 0o755); err != nil {
+		[]byte("#!/usr/bin/env bash\ncase \"$*\" in *has-session*) [ -f '"+aliveFlag+"' ] && exit 0 || exit 1;; esac\necho \"tmux $*\" >> '"+tmuxLog+"'\n"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -504,6 +507,27 @@ func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
 
 	if got := run("--fresh"); strings.Contains(got, "resume --last") {
 		t.Errorf("--fresh: intentional restart must stay fresh, got:\n%s", got)
+	}
+
+	// Race guard: a bare (watchdog) invocation that finds the session alive
+	// must do nothing; --fresh still kills + relaunches.
+	if err := os.WriteFile(aliveFlag, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	os.Remove(tmuxLog)
+	cmd := exec.Command("/bin/bash", gen)
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("bare run with live session: %v\n%s", err, out)
+	} else if !strings.Contains(string(out), "already alive") {
+		t.Errorf("bare run with live session did not report the race skip:\n%s", out)
+	}
+	if _, err := os.Stat(tmuxLog); err == nil {
+		log, _ := os.ReadFile(tmuxLog)
+		t.Errorf("bare run with live session must not kill/relaunch, but ran:\n%s", log)
+	}
+	if got := run("--fresh"); !strings.Contains(got, "new-session") {
+		t.Errorf("--fresh with live session must still relaunch, got:\n%s", got)
 	}
 }
 

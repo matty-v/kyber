@@ -918,6 +918,17 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     # status=skipped_restart_in_progress instead of dispatching.
     flock -w 30 200 || { echo "[kyber] restart-session: could not acquire session.lock within 30s" >&2; exit 1; }
 
+    # kyber#118: the bare (crash-watchdog) invocation only exists to revive a
+    # DEAD session. If a session is alive by the time we hold the lock, a
+    # concurrent restart-session already relaunched — proceeding would kill
+    # that fresh session and, with resume enabled, could resurrect the very
+    # conversation the intentional restart just discarded. --fresh (the API
+    # path) still always kills + relaunches; that is its purpose.
+    if [ "\$KYBER_FRESH" = "0" ] && sudo -iu kyber tmux has-session -t agent 2>/dev/null; then
+        echo "[kyber] relaunch: session already alive — a concurrent restart won the race, nothing to do (kyber#118)"
+        exit 0
+    fi
+
     # Kill existing session. Ignore error — the agent may have crashed or
     # never started.
     sudo -iu kyber tmux kill-session -t agent 2>/dev/null || true
