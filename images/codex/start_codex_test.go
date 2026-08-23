@@ -144,10 +144,12 @@ func TestStartCodexLatestInstallsAsRootOnEveryBoot(t *testing.T) {
 // boot path completes.
 func runBoot(t *testing.T, home, authJSON, path string, extraEnv ...string) ([]byte, error) {
 	t.Helper()
+	persistRoot := t.TempDir()
 	cmd := exec.Command("/bin/bash", scriptPath(t))
 	env := []string{
 		"HOME=" + home,
 		"CODEX_HOME=" + filepath.Join(home, ".codex"),
+		"KYBER_PERSIST_ROOT=" + persistRoot,
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
