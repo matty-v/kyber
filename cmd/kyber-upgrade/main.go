@@ -33,6 +33,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/matty-v/kyber/pkg/logging"
 	"github.com/matty-v/kyber/pkg/selfupgrade"
 )
 
@@ -55,7 +56,15 @@ func main() {
 	)
 	flag.Parse()
 
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	logger, err := logging.New(logging.Config{
+		Component: "self-upgrade",
+		Level:     os.Getenv("KYBER_LOG_LEVEL"),
+		Writer:    os.Stdout,
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	slog.SetDefault(logger)
 
 	cfg := selfupgrade.Config{

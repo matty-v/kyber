@@ -207,7 +207,7 @@ next begins.
 
 - [x] **Checkpoint 0 — investigation and design.** Inventory current logging,
   storage, settings, API/PWA behavior, and agree this design.
-- [ ] **Checkpoint 1 — shared logging foundation.** Add a small logging package,
+- [x] **Checkpoint 1 — shared logging foundation.** Add a small logging package,
   standard fields/level parsing, tests, and migrate representative binaries before
   mechanically moving the remainder.
 - [ ] **Checkpoint 2 — chart settings and identity.** Add global/component Helm
