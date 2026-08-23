@@ -39,6 +39,7 @@ type DiscordSidecarConfig struct {
 	AgentName      string
 	Image          string
 	ExistingSecret string
+	LogLevel       string
 	// MentionOnly mirrors spec.channels.discord.mentionOnly: forward only
 	// messages that address the bot (@-mention or a reply to the bot).
 	MentionOnly bool
@@ -76,6 +77,7 @@ func AppendDiscordSidecar(spec *corev1.PodSpec, cfg DiscordSidecarConfig) {
 
 	env := []corev1.EnvVar{
 		{Name: "KYBER_AGENT_NAME", Value: cfg.AgentName},
+		{Name: "KYBER_LOG_LEVEL", Value: cfg.LogLevel},
 		{Name: "KYBER_INBOUND_BINDING", Value: DiscordInboundBindingName},
 		{Name: "KYBER_INBOUND_URL", Value: controlPlanePublicURL()},
 		{Name: "KYBER_INBOUND_SIGNATURE_HEADER", Value: "X-Kyber-Signature-256"},
@@ -88,6 +90,7 @@ func AppendDiscordSidecar(spec *corev1.PodSpec, cfg DiscordSidecarConfig) {
 		secretEnv("DISCORD_ALLOWED_CHANNEL_IDS", "channel-id", true),
 		secretEnv("DISCORD_ALLOWED_USER_IDS", "allowed-user-ids", true),
 	}
+	env = append(env, loggingContextEnv(DiscordSidecarContainerName)...)
 	if cfg.MentionOnly {
 		// Only set when enabled — an absent var is the sidecar's default (off),
 		// so an older sidecar image ignores it rather than misreading "false".

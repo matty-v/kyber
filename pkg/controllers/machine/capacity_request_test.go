@@ -84,6 +84,12 @@ func TestCapacityRequestPodLifecycle(t *testing.T) {
 	if len(pod.OwnerReferences) != 1 || pod.OwnerReferences[0].UID != machine.UID {
 		t.Errorf("ownerReferences = %+v, want Machine UID %s", pod.OwnerReferences, machine.UID)
 	}
+	if got := pod.Labels["app.kubernetes.io/part-of"]; got != "kyber" {
+		t.Errorf("part-of label = %q, want kyber", got)
+	}
+	if got := pod.Labels["app.kubernetes.io/component"]; got != "capacity-request" {
+		t.Errorf("component label = %q, want capacity-request", got)
+	}
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped

@@ -237,16 +237,26 @@ func AgentPodName(agentName string) string {
 	return fmt.Sprintf("agent-%s", agentName)
 }
 
+func loggingContextEnv(container string) []corev1.EnvVar {
+	return []corev1.EnvVar{
+		{Name: "KYBER_LOG_POD", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+		{Name: "KYBER_LOG_NAMESPACE", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.namespace"}}},
+		{Name: "KYBER_LOG_CONTAINER", Value: container},
+	}
+}
+
 // AgentPodLabels returns the labels to apply to an agent pod.
-// Labels: kyber.io/agent={name}, kyber.io/runtime={type}, kyber.io/auth-type={authType}
+// Labels include the platform logging/discovery boundary plus agent identity.
 //
 // kyber.io/auth-type is used by node-agent (Task 5.2) to classify refresh failures:
 // only pods with auth-type="oauth" emit NeedsAuth events on token expiry.
 func AgentPodLabels(agent *kyberv1.Agent, adapter pkgruntimes.Adapter) map[string]string {
 	return map[string]string{
-		"kyber.io/agent":     agent.Name,
-		"kyber.io/runtime":   adapter.Type(),
-		"kyber.io/auth-type": string(agent.Spec.Secrets.AuthType),
+		"app.kubernetes.io/part-of":   "kyber",
+		"app.kubernetes.io/component": "agent",
+		"kyber.io/agent":              agent.Name,
+		"kyber.io/runtime":            adapter.Type(),
+		"kyber.io/auth-type":          string(agent.Spec.Secrets.AuthType),
 	}
 }
 

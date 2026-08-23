@@ -105,3 +105,31 @@ func TestNewRejectsMissingComponent(t *testing.T) {
 		t.Fatal("New() error = nil, want missing-component error")
 	}
 }
+
+func TestNewIncludesProcessContextFromEnvironment(t *testing.T) {
+	t.Setenv("KYBER_AGENT_NAME", "sol")
+	t.Setenv("KYBER_MACHINE_NAME", "worker-a")
+	t.Setenv("KYBER_LOG_POD", "sol-0")
+	t.Setenv("KYBER_LOG_CONTAINER", "kyber-status-sidecar")
+	t.Setenv("KYBER_LOG_NAMESPACE", "kyber-system")
+
+	var output bytes.Buffer
+	logger, err := New(Config{Component: "status-sidecar", Writer: &output})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	logger.Info("ready")
+
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatalf("unmarshal log record: %v", err)
+	}
+	for key, want := range map[string]string{
+		"agent": "sol", "machine": "worker-a", "pod": "sol-0",
+		"container": "kyber-status-sidecar", "namespace": "kyber-system",
+	} {
+		if got := record[key]; got != want {
+			t.Errorf("%s = %v, want %q", key, got, want)
+		}
+	}
+}

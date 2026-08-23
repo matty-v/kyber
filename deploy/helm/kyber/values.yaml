@@ -203,6 +203,22 @@ ingress:
           pathType: Prefix
   tls: []
 
+# Unified process logging (kyber#105). Kyber-owned binaries emit JSON lines to
+# stdout/stderr. A component override wins over the global level. Settings are
+# declarative Helm state; the API/PWA expose desired and effective values rather
+# than creating ArgoCD drift with an imperative mutation path.
+logging:
+  level: info
+  # Example:
+  # components:
+  #   status-sidecar:
+  #     level: debug
+  components: {}
+  archive:
+    # Durable object-store history. Live node logs remain governed by kubelet
+    # rotation; Vector's 256 MiB buffer is transport state, not retention.
+    retentionDays: 30
+
 # Control plane deployment
 controlPlane:
   # replicaCount: V1 runs a single replica. Leader election handles HA when >1.

@@ -16,7 +16,7 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,10 +24,21 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/matty-v/kyber/pkg/logging"
 	"github.com/matty-v/kyber/pkg/nodeagent"
 )
 
 func main() {
+	logger, err := logging.New(logging.Config{
+		Component: "node-agent",
+		Level:     os.Getenv("KYBER_LOG_LEVEL"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	slog.SetDefault(logger)
+
 	args := os.Args[1:]
 
 	if len(args) > 0 && args[0] == "action" {
@@ -41,11 +52,13 @@ func main() {
 		switch args[1] {
 		case "reboot":
 			if err := executor.Reboot(ctx); err != nil {
-				log.Fatalf("reboot failed: %v", err)
+				logger.Error("reboot failed", "error", err)
+				os.Exit(1)
 			}
 		case "stop":
 			if err := executor.Stop(ctx); err != nil {
-				log.Fatalf("stop failed: %v", err)
+				logger.Error("stop failed", "error", err)
+				os.Exit(1)
 			}
 		default:
 			fmt.Fprintf(os.Stderr, "unknown action: %s\n", args[1])
@@ -67,12 +80,13 @@ func main() {
 
 	exporter, shutdownOTEL, err := nodeagent.NewOTELExporter(ctx)
 	if err != nil {
-		log.Fatalf("initializing OTEL: %v", err)
+		logger.Error("initializing OTEL", "error", err)
+		os.Exit(1)
 	}
 	defer func() {
 		shutdownCtx := context.Background()
 		if err := shutdownOTEL(shutdownCtx); err != nil {
-			log.Printf("OTEL shutdown error: %v", err)
+			logger.Warn("OTEL shutdown failed", "error", err)
 		}
 	}()
 
@@ -82,7 +96,7 @@ func main() {
 	if machineName != "" && controlPlaneURL != "" {
 		pw := &nodeagent.PreemptionWatcher{
 			OnPreemption: func() {
-				log.Println("preemption detected, notifying control plane")
+				logger.Info("preemption detected; notifying control plane", "machine", machineName)
 				notifyControlPlane(controlPlaneURL, machineName)
 			},
 		}
@@ -91,9 +105,9 @@ func main() {
 
 	reporter := nodeagent.NewResourceReporter()
 
-	log.Printf("node-agent: starting metrics loop (interval=30s)")
+	logger.Info("starting metrics loop", "interval", "30s", "machine", machineName)
 	nodeagent.RunMetricsLoop(ctx, collector, exporter, 30*time.Second, reporter)
-	log.Printf("node-agent: shutting down")
+	logger.Info("shutting down")
 }
 
 func notifyControlPlane(baseURL, machineName string) {
@@ -102,7 +116,7 @@ func notifyControlPlane(baseURL, machineName string) {
 		time.Now().UTC().Format(time.RFC3339), os.Getenv("HOSTNAME"))
 	req, err := http.NewRequest(http.MethodPost, url, strings.NewReader(body)) //nolint:noctx
 	if err != nil {
-		log.Printf("failed to build preemption-notice request: %v", err)
+		slog.Error("building preemption notice request", "machine", machineName, "error", err)
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -114,9 +128,9 @@ func notifyControlPlane(baseURL, machineName string) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Printf("failed to notify control plane: %v", err)
+		slog.Error("notifying control plane of preemption", "machine", machineName, "error", err)
 		return
 	}
 	resp.Body.Close()
-	log.Printf("control plane notified: %d", resp.StatusCode)
+	slog.Info("control plane notified of preemption", "machine", machineName, "status_code", resp.StatusCode)
 }

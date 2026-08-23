@@ -22,6 +22,18 @@ type Config struct {
 	Attributes []slog.Attr
 }
 
+var processContextEnv = []struct {
+	env string
+	key string
+}{
+	{"KYBER_AGENT_NAME", "agent"},
+	{"AGENT_NAME", "agent"},
+	{"KYBER_MACHINE_NAME", "machine"},
+	{"KYBER_LOG_POD", "pod"},
+	{"KYBER_LOG_CONTAINER", "container"},
+	{"KYBER_LOG_NAMESPACE", "namespace"},
+}
+
 // New constructs a JSON logger with Kyber's standard fields and level names.
 func New(cfg Config) (*slog.Logger, error) {
 	if strings.TrimSpace(cfg.Component) == "" {
@@ -55,6 +67,11 @@ func New(cfg Config) (*slog.Logger, error) {
 	})
 
 	logger := slog.New(handler).With("component", cfg.Component)
+	for _, field := range processContextEnv {
+		if value := strings.TrimSpace(os.Getenv(field.env)); value != "" {
+			logger = logger.With(field.key, value)
+		}
+	}
 	if len(cfg.Attributes) > 0 {
 		attrs := make([]any, 0, len(cfg.Attributes))
 		for _, attr := range cfg.Attributes {

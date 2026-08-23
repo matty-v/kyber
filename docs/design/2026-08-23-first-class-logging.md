@@ -210,7 +210,7 @@ next begins.
 - [x] **Checkpoint 1 — shared logging foundation.** Add a small logging package,
   standard fields/level parsing, tests, and migrate representative binaries before
   mechanically moving the remainder.
-- [ ] **Checkpoint 2 — chart settings and identity.** Add global/component Helm
+- [x] **Checkpoint 2 — chart settings and identity.** Add global/component Helm
   values, inject effective levels and downward-API context, standardize managed-pod
   labels, and cover every rendered workload with Helm tests.
 - [ ] **Checkpoint 3 — settings and target APIs.** Implement read-only effective

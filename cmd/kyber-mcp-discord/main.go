@@ -40,6 +40,8 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+
+	"github.com/matty-v/kyber/pkg/logging"
 )
 
 // config is the sidecar's runtime configuration, all from the environment.
@@ -124,6 +126,16 @@ type inboundMessageContext struct {
 const discordGatewayIntents = discordgo.IntentsGuilds | discordgo.IntentsGuildMessages | discordgo.IntentsMessageContent
 
 func main() {
+	logger, err := logging.New(logging.Config{
+		Component: "discord-sidecar",
+		Level:     os.Getenv("KYBER_LOG_LEVEL"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	slog.SetDefault(logger)
+
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("discord-sidecar: bad config", "error", err)

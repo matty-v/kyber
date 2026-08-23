@@ -56,6 +56,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: postgres
     spec:
       {{- with .Values.postgresql.nodeSelector }}

@@ -18,6 +18,7 @@ spec:
     metadata:
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
         app.kubernetes.io/component: node-agent
     spec:
       serviceAccountName: {{ include "kyber.fullname" . }}-node-agent
@@ -45,6 +46,18 @@ spec:
           securityContext:
             privileged: true
           env:
+            - name: KYBER_LOG_LEVEL
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "node-agent") | quote }}
+            - name: KYBER_LOG_POD
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: KYBER_LOG_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: KYBER_LOG_CONTAINER
+              value: node-agent
             # KYBER_NODE_NAME is injected from the k8s downward API so each DaemonSet
             # pod knows which node it's running on and can tag its metrics accordingly.
             - name: KYBER_NODE_NAME

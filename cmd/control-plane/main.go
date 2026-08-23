@@ -9,6 +9,8 @@ import (
 	"context"
 	"database/sql"
 	"flag"
+	"fmt"
+	"log/slog"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -16,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
 	_ "github.com/lib/pq"
 	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
@@ -30,7 +33,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 
@@ -45,6 +47,7 @@ import (
 	"github.com/matty-v/kyber/pkg/gceemulator"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/inbound"
+	"github.com/matty-v/kyber/pkg/logging"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
@@ -84,13 +87,18 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":9090", "The address the metrics endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the health probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false, "Enable leader election for controller manager.")
-	opts := zap.Options{
-		Development: true,
-	}
-	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	processLog, err := logging.New(logging.Config{
+		Component: "control-plane",
+		Level:     os.Getenv("KYBER_LOG_LEVEL"),
+	})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+	slog.SetDefault(processLog)
+	ctrl.SetLogger(logr.FromSlogHandler(processLog.Handler()))
 
 	ctx := ctrl.SetupSignalHandler()
 
@@ -385,6 +393,8 @@ func main() {
 	// info. Set to "debug" on the CP deployment to enable the forwarder +
 	// snapshot diagnostic logs across the fleet without per-pod patches.
 	sidecarLogLevel := os.Getenv("KYBER_SIDECAR_LOG_LEVEL")
+	discordLogLevel := os.Getenv("KYBER_DISCORD_LOG_LEVEL")
+	telegramLogLevel := os.Getenv("KYBER_TELEGRAM_LOG_LEVEL")
 	// Sidecar auto-roll (kyber#299 Option B). Off by default — operators
 	// opt in by setting KYBER_SIDECAR_AUTO_ROLL=true in the chart's
 	// controlPlane.env. The optional KYBER_SIDECAR_AUTO_ROLL_MIN_STABLE
@@ -538,6 +548,8 @@ func main() {
 		TelegramDefaultAllowedUserIDs: telegramDefaultAllowedUserIDs,
 		SidecarOtelEndpoint:           sidecarOtelEndpoint,
 		SidecarLogLevel:               sidecarLogLevel,
+		DiscordLogLevel:               discordLogLevel,
+		TelegramLogLevel:              telegramLogLevel,
 		SidecarAutoRollEnabled:        sidecarAutoRollEnabled,
 		SidecarAutoRollMinStable:      sidecarAutoRollMinStable,
 		FleetDefaults:                 fleetDefaultsResolver,
@@ -962,6 +974,7 @@ func main() {
 			ChartRef:               os.Getenv("KYBER_SELF_UPGRADE_CHART_REF"),
 			ServiceAccount:         os.Getenv("KYBER_SELF_UPGRADE_SERVICE_ACCOUNT"),
 			HealthURL:              os.Getenv("KYBER_SELF_UPGRADE_HEALTH_URL"),
+			LogLevel:               os.Getenv("KYBER_SELF_UPGRADE_LOG_LEVEL"),
 		}
 		if !updateApplier.Configured() {
 			setupLog.Info("updates: self-upgrade not configured; /api/v1/updates/apply will return 503 and applySupported will be false")

@@ -78,6 +78,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 		{Name: "AGENT_NAME", Value: cfg.AgentName},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 	}
+	env = append(env, loggingContextEnv(StatusSidecarContainerName)...)
 	// Only emit the OTel + runtime envs when a value is set so old tests +
 	// dev installs that didn't configure a collector keep their existing
 	// pod spec shape (and the sidecar's empty-endpoint branch disables

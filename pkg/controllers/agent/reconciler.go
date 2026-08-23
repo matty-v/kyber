@@ -252,6 +252,10 @@ type AgentReconciler struct {
 	// to LevelInfo. Set to "debug" to enable the forwarder + snapshot
 	// debug log lines that would otherwise hide the next regression.
 	SidecarLogLevel string
+	// DiscordLogLevel and TelegramLogLevel are component-specific effective
+	// levels passed to the channel sidecars as KYBER_LOG_LEVEL.
+	DiscordLogLevel  string
+	TelegramLogLevel string
 
 	// SidecarAutoRollEnabled toggles the kyber#299 Option B auto-roll
 	// behavior: when an agent's SidecarOutOfDate condition has been True
@@ -2003,6 +2007,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			Image:          r.DiscordSidecarImage,
 			ExistingSecret: agent.Spec.Channels.Discord.ExistingSecret,
 			MentionOnly:    agent.Spec.Channels.Discord.MentionOnly,
+			LogLevel:       r.DiscordLogLevel,
 		})
 	}
 	// Runtime-neutral since kyber#684: every agent with Telegram enabled gets
@@ -2020,6 +2025,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		AppendTelegramSidecar(&podSpec, TelegramSidecarConfig{
 			AgentName: agent.Name, Image: r.TelegramSidecarImage,
 			ExistingSecret: agent.Name + "-telegram",
+			LogLevel:       r.TelegramLogLevel,
 		})
 	}
 

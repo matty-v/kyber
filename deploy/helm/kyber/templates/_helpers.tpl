@@ -10,6 +10,29 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Labels that identify a pod as part of the Kyber logging/discovery boundary.
+Keep this separate from selectorLabels: adding a label to an existing workload
+selector is an immutable-field upgrade failure, while pod-template labels roll
+safely. Every Kyber-owned pod template and controller-built pod includes this.
+*/}}
+{{- define "kyber.podLabels" -}}
+app.kubernetes.io/part-of: kyber
+{{- end }}
+
+{{/* Resolve and validate the effective log level for a component. */}}
+{{- define "kyber.loggingLevel" -}}
+{{- $level := default "info" .root.Values.logging.level -}}
+{{- if hasKey .root.Values.logging.components .component -}}
+{{- $component := index .root.Values.logging.components .component -}}
+{{- $level = default $level $component.level -}}
+{{- end -}}
+{{- if not (has $level (list "debug" "info" "warn" "error")) -}}
+{{- fail (printf "invalid logging level %q for component %q: want debug, info, warn, or error" $level .component) -}}
+{{- end -}}
+{{- $level -}}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this
 (by the DNS naming spec).
