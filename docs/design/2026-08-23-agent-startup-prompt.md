@@ -1,6 +1,6 @@
 # Agent startup prompt
 
-**Status:** Implemented — deployed to dev for operator acceptance
+**Status:** Implemented — live dev acceptance complete
 **Owner:** sol  
 **Branch:** `sol/agent-startup-prompt`  
 **Last updated:** 2026-08-23 UTC
@@ -125,7 +125,7 @@ Each checkpoint is independently resumable. At the end of every checkpoint:
 | 2. Pod and runtime delivery | Complete | Common env injection and all three launch paths implemented; pod-builder and launcher prompt tests passed. | `7ecb41f` |
 | 3. PWA create and edit surfaces | Complete | Wizard and Agent Detail implemented; 19 focused tests, TypeScript lint, and both builds passed; package bumped to 0.29.0. | `463010e` |
 | 4. Documentation and focused verification | Complete | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. The broad Go suite passed except the controller package exceeded its global 10-minute envtest timeout; focused feature tests pass. | `9991de3` |
-| 5. GCP dev deployment and operator test | Awaiting operator acceptance | Full rollout completed to `datawire-dev` / zonal `kyber-dev` with CRD, control plane, Claude Code, and Codex images tagged `worktree-20260823144052-9991de3`. Public health, rollout, runtime pins, and live CRD schema passed. Matt still needs to exercise create/edit/restart on both runtimes. | Dev rollout 2026-08-23 |
+| 5. GCP dev deployment and operator test | Complete | Full rollout completed to `datawire-dev` / zonal `kyber-dev` with CRD, control plane, Claude Code, and Codex images tagged `worktree-20260823144052-9991de3`. Public health, rollout, runtime pins, and live CRD schema passed. Purpose-built live Claude Code and Codex agents both consumed exact marker prompts on initial launch and `restart-session`; test agents and auth state were cleaned up. | Dev rollout and acceptance 2026-08-23 |
 | 6. Full verification and handoff | Not started | `make build`, `make lint`, `make test`, required PWA build/lint/test commands, and relevant Helm/contract checks pass; branch is clean and pushed; PR opened with test evidence and rollout notes. | Pending |
 
 ### Checkpoint 1 — CRD and API contract
