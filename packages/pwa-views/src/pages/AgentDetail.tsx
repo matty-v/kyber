@@ -37,6 +37,7 @@ import { CommsTab } from '../components/CommsTab'
 import { SecretsTab } from '../components/SecretsTab'
 import { ShellTab } from '../components/ShellTab'
 import { ExecTerminal } from '../components/ExecTerminal'
+import { AgentTerminalPeek } from '../components/TerminalPeek'
 import { WebhooksTab } from '../components/WebhooksTab'
 import {
   DropdownMenu,
@@ -818,6 +819,7 @@ export function AgentDetail() {
               )}
             </Card>
           )}
+          <AgentTerminalPeek agentName={name} />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />

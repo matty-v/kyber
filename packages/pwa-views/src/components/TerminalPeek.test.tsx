@@ -9,7 +9,7 @@ vi.mock('./ExecTerminal', () => ({
 }))
 vi.mock('../hooks/usePageVisible', () => ({ usePageVisible: () => true }))
 
-import { TerminalPeek } from './TerminalPeek'
+import { AgentTerminalPeek, TerminalPeek } from './TerminalPeek'
 
 const NOW = Date.parse('2026-07-06T12:00:00Z')
 const a = (id: string, secsAgo?: number): Agent => ({
@@ -29,5 +29,20 @@ describe('TerminalPeek', () => {
   it('renders an empty state with no agents', () => {
     render(<TerminalPeek agents={[]} />)
     expect(screen.getByText('No agents to watch')).toBeInTheDocument()
+  })
+
+  it('attaches directly to a fixed agent without rendering the fleet selector', () => {
+    render(<AgentTerminalPeek agentName="alice" />)
+    const exec = screen.getByTestId('exec')
+    expect(exec).toHaveAttribute('data-name', 'alice')
+    expect(exec).toHaveAttribute('data-mode', 'attach')
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.getByText(/live · read-only/i)).toBeInTheDocument()
+  })
+
+  it('renders a clear unavailable state without an agent name', () => {
+    render(<AgentTerminalPeek agentName="" />)
+    expect(screen.getByText('Terminal unavailable')).toBeInTheDocument()
+    expect(screen.queryByTestId('exec')).not.toBeInTheDocument()
   })
 })

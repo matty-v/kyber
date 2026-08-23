@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.8 — 2026-08-22
+
+### Added
+- Agent Details Overview now includes a live read-only terminal peek for that
+  agent, reusing the Dashboard terminal stream while leaving the interactive
+  Shell tab unchanged.
+
 ## 0.28.7 — 2026-08-22
 
 ### Changed

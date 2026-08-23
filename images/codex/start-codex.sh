@@ -16,12 +16,26 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
         CURRENT_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
         if [ "$CURRENT_CODEX_VERSION" != "$KYBER_REQUESTED_CODEX_VERSION" ]; then
             echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION}"
-            if ! npm install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" >/dev/null 2>&1; then
+            # The baked-in package and /usr/bin/codex are root-owned. Runtime
+            # startup runs as the unprivileged kyber user, so a plain global
+            # npm install fails with EACCES while trying to replace them. The
+            # image grants kyber passwordless sudo for this kind of boot-time
+            # maintenance; resolve npm first because sudo's secure_path may
+            # differ from the runtime PATH.
+            _npm="$(command -v npm || echo /usr/bin/npm)"
+            if ! sudo "$_npm" install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" >/dev/null 2>&1; then
                 echo "[kyber] WARNING: requested Codex harness install failed; using baked-in version"
                 KYBER_CODEX_REQUESTED_SATISFIED="false"
             else
-                KYBER_CODEX_REQUESTED_SATISFIED="true"
+                INSTALLED_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
+                if [ -n "$INSTALLED_CODEX_VERSION" ] && { [ "$KYBER_REQUESTED_CODEX_VERSION" = "latest" ] || [ "$INSTALLED_CODEX_VERSION" = "$KYBER_REQUESTED_CODEX_VERSION" ]; }; then
+                    KYBER_CODEX_REQUESTED_SATISFIED="true"
+                else
+                    echo "[kyber] WARNING: Codex harness install completed but the requested version is not active"
+                    KYBER_CODEX_REQUESTED_SATISFIED="false"
+                fi
             fi
+            unset _npm INSTALLED_CODEX_VERSION
         else
             KYBER_CODEX_REQUESTED_SATISFIED="true"
         fi
@@ -346,7 +360,7 @@ fi
 EOF
 chmod 0755 /persist/last-codex-launch.sh
 
-echo "[kyber] Starting Codex ${KYBER_RUNTIME_DEFAULT_VERSION:-unknown} in tmux (cwd=$LAUNCH_DIR)"
+echo "[kyber] Starting Codex ${CODEX_VERSION} in tmux (cwd=$LAUNCH_DIR)"
 tmux new-session -d -s agent -c "$LAUNCH_DIR" "$CODEX_LAUNCH_CMD"
 
 while true; do
