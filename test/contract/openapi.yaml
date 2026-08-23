@@ -778,7 +778,7 @@ components:
             type: integer
           example:
             Running: 3
-            Suspended: 2
+            Stopped: 2
         machinesByPhase:
           type: object
           description: Machine count grouped by phase
@@ -1120,7 +1120,6 @@ components:
         - Stopped
         - Restarting
         - Failed
-        - Suspended
         - Deleted
         - ""
 
@@ -1155,7 +1154,7 @@ components:
 
     Agent:
       type: object
-      required: [id, phase, machine, runtime, authType, model, scaling, resources, createdAt]
+      required: [id, phase, machine, runtime, authType, model, resources, createdAt]
       properties:
         id:
           type: string
@@ -1177,10 +1176,6 @@ components:
         currentModel:
           type: string
           description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
-        scaling:
-          type: string
-          enum: [warm, scale-to-zero]
-          example: warm
         resources:
           $ref: '#/components/schemas/AgentResources'
         status:
@@ -1219,11 +1214,6 @@ components:
         force:
           type: boolean
           description: Skip catalog validation of the model id (write-only).
-        scaling:
-          type: string
-          enum: [warm, scale-to-zero]
-          default: warm
-          example: warm
         resources:
           type: object
           properties:

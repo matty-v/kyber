@@ -23,8 +23,6 @@ const (
 	AgentPhaseRestarting AgentPhase = "Restarting"
 	// AgentPhaseFailed means the agent has exceeded its restart retries or encountered an unrecoverable error.
 	AgentPhaseFailed AgentPhase = "Failed"
-	// AgentPhaseSuspended means the agent is scaled to zero (pod deleted, PV preserved).
-	AgentPhaseSuspended AgentPhase = "Suspended"
 	// AgentPhaseDeleted means the agent has been fully deleted including cleanup of PV and identity.
 	AgentPhaseDeleted AgentPhase = "Deleted"
 	// AgentPhaseDraining means the agent is being gracefully drained before its machine is preempted.
@@ -125,16 +123,6 @@ const (
 	// (`spec.runtimeVersion` per-agent or `defaultRuntimeVersion`
 	// fleet-wide) that supports the model. See kyber#379.
 	AgentConditionModelUnsupported = "ModelUnsupported"
-)
-
-// AgentScalingMode controls whether the agent uses warm (always-on) or scale-to-zero mode.
-type AgentScalingMode string
-
-const (
-	// AgentScalingWarm means the agent pod is always running.
-	AgentScalingWarm AgentScalingMode = "warm"
-	// AgentScalingScaleToZero means the agent pod is suspended when idle and woken on demand.
-	AgentScalingScaleToZero AgentScalingMode = "scale-to-zero"
 )
 
 // AgentAuthType is the authentication method for Claude Code.
@@ -529,19 +517,8 @@ type AgentSpec struct {
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 
-	// Scaling controls whether the agent uses warm (always-on) or scale-to-zero mode.
-	// +kubebuilder:validation:Enum=warm;scale-to-zero
-	// +kubebuilder:default=warm
-	Scaling AgentScalingMode `json:"scaling"`
-
-	// IdleTimeout is how long the agent can be idle before suspending.
-	// Format: Go duration string (e.g., "15m", "1h").
-	// Only applies when scaling is "scale-to-zero".
-	// +optional
-	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
-
 	// DesiredPhase is written by the API module to signal a lifecycle intent.
-	// Valid values: Running, Stopped, Suspended, Restarting, NeedsAuth.
+	// Valid values: Running, Stopped, Restarting, NeedsAuth.
 	// The controller reads this and drives state transitions.
 	//
 	// NeedsAuth is the operator-forced re-auth intent (#395), written by
@@ -553,7 +530,7 @@ type AgentSpec struct {
 	// because they build the Agent in memory and call classifyEvent directly,
 	// never writing through an API server that would apply this schema; see
 	// TestDesiredPhaseEnum_AcceptsEveryAPISettablePhase, which closes that gap.
-	// +kubebuilder:validation:Enum=Running;Stopped;Suspended;Restarting;NeedsAuth
+	// +kubebuilder:validation:Enum=Running;Stopped;Restarting;NeedsAuth
 	// +optional
 	DesiredPhase AgentPhase `json:"desiredPhase,omitempty"`
 

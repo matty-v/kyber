@@ -8,7 +8,7 @@ An agent keeps its entire filesystem across restarts, upgrades, and preemption: 
 
 ## A lifecycle you can read at a glance
 
-An agent moves through named phases. Most transitions are automatic: Kyber drives the agent toward your declared intent (run it, stop it, suspend it) and recovers it across machine interruptions. If the cheaper interruptible machine under an agent is reclaimed, Kyber drains the agent gracefully, parks it, and brings it back when a replacement machine is ready. You see the state change but do not have to act.
+An agent moves through named phases. Most transitions are automatic: Kyber drives the agent toward your declared intent (run it, stop it) and recovers it across machine interruptions. If the cheaper interruptible machine under an agent is reclaimed, Kyber drains the agent gracefully, parks it, and brings it back when a replacement machine is ready. You see the state change but do not have to act.
 
 | Phase | What it means to you |
 |---|---|
@@ -18,7 +18,6 @@ An agent moves through named phases. Most transitions are automatic: Kyber drive
 | `Stopping` | Being gracefully shut down at your request. |
 | `Stopped` | Not running; filesystem preserved. Stop is an authoritative kill switch: a stopped agent stays down, even if it was crash-looping, until you start it again. |
 | `Restarting` | The pod is being replaced with the agent's work preserved. Usually operator-initiated, but Kyber also enters it on its own when the agent's runtime image is updated. |
-| `Suspended` | Scaled to zero with the filesystem preserved, either idle or parked after a machine interruption. Start it to wake it; an inbound message does not. |
 | `Draining` | Being gracefully drained ahead of its machine being reclaimed. Kyber is protecting its work. |
 | `WaitingForMachine` | Waiting for a replacement machine after preemption. It resumes when capacity returns. |
 | `NeedsAuth` | Its stored authorization is no longer valid. Re-authorize it to bring it back. |

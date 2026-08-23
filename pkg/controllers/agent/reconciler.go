@@ -23,7 +23,6 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
@@ -127,12 +126,6 @@ type AgentReconciler struct {
 	// Written before pod creation so the init container can fetch the brief via the internal API.
 	// If nil, brief writing is skipped and the init container falls back to an empty brief.
 	BriefStore briefstore.BriefStore
-
-	// MessageBuffer holds pending messages for suspended agents.
-	// On a wake transition (Suspended + EventDesiredRunning, or EventWakeReceived),
-	// writeBrief drains the buffer and populates Brief.PendingMessages.
-	// If nil, pending messages are silently omitted.
-	MessageBuffer messagebuffer.MessageBuffer
 
 	// The following four stores are reaped by the delete finalizer so a
 	// confirmed agent delete leaves zero orphaned identity state (kyber#565
@@ -818,13 +811,8 @@ func (r *AgentReconciler) classifyEvent(
 	phase := agent.Status.Phase
 	desired := agent.Spec.DesiredPhase
 
-	// New agent (no phase yet). If the operator explicitly asked for Suspended
-	// on creation, respect it — create the PVC only, no pod. This lets operators
-	// pre-populate a PV (restore from backup, clone, migrate) before unsuspending.
+	// New agent (no phase yet).
 	if phase == "" {
-		if desired == kyberv1.AgentPhaseSuspended {
-			return EventDesiredSuspended, nil
-		}
 		return EventCRDCreated, nil
 	}
 
@@ -842,7 +830,7 @@ func (r *AgentReconciler) classifyEvent(
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-			kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended:
+			kyberv1.AgentPhaseStopped:
 			return EventDesiredNeedsAuth, nil
 		}
 	}
@@ -871,7 +859,7 @@ func (r *AgentReconciler) classifyEvent(
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-			kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseWaitingForMachine:
+			kyberv1.AgentPhaseWaitingForMachine:
 			return EventDesiredStopped, nil
 		}
 	}
@@ -905,11 +893,8 @@ func (r *AgentReconciler) classifyEvent(
 		// truth, mirroring the NeedsAuth kill switch. It still routes to the
 		// same {Running, EventDesiredStopped} → graceful SIGTERM → Stopping
 		// transition, so the healthy-stop path is unchanged.
-		switch desired {
-		case kyberv1.AgentPhaseRestarting:
+		if desired == kyberv1.AgentPhaseRestarting {
 			return EventDesiredRestarting, nil
-		case kyberv1.AgentPhaseSuspended:
-			return EventDesiredSuspended, nil
 		}
 
 		// Runtime-image drift (#523): roll a steady Running agent onto a new
@@ -924,7 +909,7 @@ func (r *AgentReconciler) classifyEvent(
 		// spec-image drift detector (isSidecarSpecMismatched).
 		//
 		// Precedence: lower than the desired-phase checks above (preemption, the
-		// desired Restarting/Suspended switch, and the centralized Stop/NeedsAuth
+		// desired Restarting check, and the centralized Stop/NeedsAuth
 		// blocks) by ordering — operator intent always wins. Running-only by
 		// construction: physically inside case AgentPhaseRunning, so
 		// Starting/Restarting/Creating/dormant phases never reach it (they pick up
@@ -955,11 +940,6 @@ func (r *AgentReconciler) classifyEvent(
 		}
 
 	case kyberv1.AgentPhaseStopped:
-		if desired == kyberv1.AgentPhaseRunning {
-			return EventDesiredRunning, nil
-		}
-
-	case kyberv1.AgentPhaseSuspended:
 		if desired == kyberv1.AgentPhaseRunning {
 			return EventDesiredRunning, nil
 		}
@@ -1283,26 +1263,12 @@ func (r *AgentReconciler) executeAction(
 	switch action {
 	case ActionCreatePVAndPod:
 		// Both PVCs are ensured inside createPod, which covers every
-		// pod-creation path including wake and retry recreations, so no
+		// pod-creation path including retry recreations, so no
 		// explicit call is needed here.
 		if err := r.createPod(ctx, agent); err != nil {
 			return 0, err
 		}
 		return requeueWaiting, nil
-
-	case ActionCreatePV:
-		if err := r.ensurePVC(ctx, agent); err != nil {
-			return 0, err
-		}
-		// kyber#467: this path provisions storage WITHOUT creating a pod (Suspended
-		// birth — operator pre-populates the PV before the agent starts), so it
-		// won't hit createPod's offsets-PVC ensure. Provision the offsets PVC here
-		// too, alongside the persist PVC, so both volumes exist as early as the
-		// persist PVC (the wake-time createPod is idempotent over it).
-		if err := r.ensureOffsetsPVC(ctx, agent); err != nil {
-			return 0, err
-		}
-		return 0, nil
 
 	case ActionWaitForStart:
 		return requeueWaiting, nil
@@ -1598,7 +1564,7 @@ func (r *AgentReconciler) handleDeletion(ctx context.Context, agent *kyberv1.Age
 }
 
 // cleanupAgentStores reaps all of an agent's owned state in the external stores
-// (Postgres brief + the Redis token-usage/accumulator/time-series/wake keys) so
+// (Postgres brief + the Redis token-usage/accumulator/time-series keys) so
 // a confirmed delete leaves zero orphaned identity material (kyber#565 AC-5).
 //
 // Each store is optional: a nil handle means that backend isn't configured, so
@@ -1645,12 +1611,6 @@ func (r *AgentReconciler) cleanupAgentStores(ctx context.Context, agent *kyberv1
 				return nil
 			}
 			return r.MetricsStore.DeleteAgent(ctx, ns, name)
-		}},
-		{"wake-buffer", func() error {
-			if r.MessageBuffer == nil {
-				return nil
-			}
-			return r.MessageBuffer.Delete(ctx, name)
 		}},
 	}
 
@@ -1984,7 +1944,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	// kyber#467 established this for the offsets PVC: it MUST live in createPod
 	// rather than only in the ActionCreatePVAndPod case, so EVERY pod-creation
 	// path is covered — an agent recreated via ActionWriteBriefAndCreatePod
-	// (wake) or ActionResetRetryAndCreatePod (retry) never runs the birth-time
+	// or ActionResetRetryAndCreatePod (retry) never runs the birth-time
 	// ensure.
 	//
 	// The persist PVC needed the same treatment and did not have it, which made
@@ -2697,33 +2657,12 @@ func (r *AgentReconciler) shouldThrottleRestart(agent *kyberv1.Agent) (time.Dura
 // writeBrief builds and stores a session brief for the agent before pod creation.
 // Brief write failures are logged but do not block pod creation — the init container
 // falls back to an empty brief ({}) if the endpoint returns an error.
-//
-// If this is a wake-from-suspended transition and a MessageBuffer is configured,
-// writeBrief drains any pending messages and includes them in the brief, overriding
-// the shutdown_type to "wake".
 func (r *AgentReconciler) writeBrief(ctx context.Context, agent *kyberv1.Agent, event Event) {
 	if r.BriefStore == nil {
 		return
 	}
 	logger := log.FromContext(ctx)
 	input := briefInputForEvent(agent, event)
-
-	// If this is a wake-from-suspended transition, drain pending messages and
-	// override the shutdown_type. briefInputForEvent sets shutdown_type="wake"
-	// for EventWakeReceived already; for EventDesiredRunning from Suspended we
-	// need the override here (briefInputForEvent can't see the current phase).
-	if r.MessageBuffer != nil && isWakeEvent(agent, event) {
-		msgs, err := r.MessageBuffer.Drain(ctx, agent.Name)
-		if err != nil {
-			logger.Error(err, "draining wake buffer (non-fatal, continuing without pending messages)",
-				"agent", agent.Name)
-		} else {
-			input.PendingMessages = msgs
-		}
-		// Always mark as a wake transition, even if Drain returned an error or no messages.
-		input.ShutdownType = briefstore.ShutdownTypeWake
-		input.RestartReason = "wake"
-	}
 
 	brief := BuildBrief(agent, input)
 	if err := r.BriefStore.Put(ctx, agent.Name, brief); err != nil {
@@ -2733,26 +2672,8 @@ func (r *AgentReconciler) writeBrief(ctx context.Context, agent *kyberv1.Agent, 
 		logger.Info("session brief written",
 			"agent", agent.Name,
 			"shutdown_type", brief.ShutdownType,
-			"restart_reason", brief.RestartReason,
-			"pending_messages", len(brief.PendingMessages))
+			"restart_reason", brief.RestartReason)
 	}
-}
-
-// isWakeEvent returns true when the transition should be treated as a wake-from-suspension.
-// This covers:
-//   - EventWakeReceived: explicit wake event (e.g., future C1 webhook emitting this event)
-//   - EventDesiredRunning from Suspended: operator or API set desiredPhase=Running on a Suspended agent
-//
-// briefInputForEvent already handles EventWakeReceived correctly; the Suspended+DesiredRunning
-// case needs the phase check here because briefInputForEvent does not receive the current phase.
-func isWakeEvent(agent *kyberv1.Agent, event Event) bool {
-	if event == EventWakeReceived {
-		return true
-	}
-	if event == EventDesiredRunning && agent.Status.Phase == kyberv1.AgentPhaseSuspended {
-		return true
-	}
-	return false
 }
 
 // fireAlert sends an alert to the configured AlertSink. Errors are logged but

@@ -40,7 +40,7 @@ Legacy `localStorage['kyber_api_key']` values are consumed once and removed.
 Single-tenant install — **everything**:
 
 - Create / edit / delete agents and machines
-- Restart pods, suspend agents, set-resources
+- Restart pods, stop and start agents, set-resources
 - Read agent activity (heartbeat, last-activity)
 - Manage user secrets, inbound bindings, scheduled jobs
 - Rotate the API key itself
@@ -61,9 +61,9 @@ optional `callers` JSON document on the same `kyber-api-credentials` Secret:
 ```
 
 - `lifecycle:write` — `start` / `stop` / `restart` (and OAuth re-auth resume).
-- `lifecycle:admin` — the impactful verbs `suspend` / `force-needs-auth`, **and**
+- `lifecycle:admin` — the impactful verb `force-needs-auth`, **and**
   everything `write` grants (scopes nest: `admin` ⊃ `write`). So a `write`-only
-  key cannot suspend or force-needs-auth an agent.
+  key cannot force-needs-auth an agent.
 
 The legacy `api-key` keeps working as a **full-scope** caller, so this is
 backward-compatible. Enforcement is **off by default** (`api.authz.enforce:
@@ -144,11 +144,8 @@ Then create the Secret:
 
 ```bash
 kubectl -n kyber-system create secret generic kyber-api-credentials \
-  --from-literal=api-key="$KYBER_API_KEY" \
-  --from-literal=webhook-secret="$KYBER_WEBHOOK_SECRET"
+  --from-literal=api-key="$KYBER_API_KEY"
 ```
-
-(`webhook-secret` is a separate concern — the inbound webhook receiver's HMAC shared secret. Lives in the same Secret for convenience but rotates independently.)
 
 > Never commit the key to git. The install scripts write it to `prod-secrets.env`, which is gitignored. If you need to share the key with a teammate, use an out-of-band channel (1Password, Bitwarden, signal). Don't paste into Slack / email / chat backups.
 
@@ -220,13 +217,7 @@ kubectl -n kyber-system logs deployment/kyber-laptop-control-plane --since=24h \
 The control-plane logs every API request with method, path, status, and request ID — but does **not** log the source IP today (single-tenant assumption). If you need richer audit, enable cloudflared or your ingress's request log.
 
 3. **Rotate adjacent credentials if the same threat actor could have reached them**:
-   - **Webhook secret** (`webhook-secret` in the same Secret) — if the API key was leaked from an environment that also held this, regenerate both:
-     ```bash
-     NEW_WEBHOOK=$(openssl rand -hex 32)
-     kubectl -n kyber-system patch secret kyber-api-credentials \
-       --type=merge -p "{\"data\":{\"webhook-secret\":\"$(echo -n "$NEW_WEBHOOK" | base64 -w0)\"}}"
-     # Update GitHub / Linear / Sentry webhook configs to use $NEW_WEBHOOK.
-     ```
+   - **Inbound binding secrets** — the per-binding HMAC secrets for signed inbound webhooks rotate through the binding rotate endpoint (each agent's Webhooks tab, or the API); rotate any binding whose secret lived in the same compromised environment.
    - **GitHub App private key** (separate Secret, see [`docs/agents-identity-repos.md`](agents-identity-repos.md)) — only if the actor could reach the cluster, not just the API key.
    - **Anthropic OAuth tokens, agent Telegram bot tokens, user-uploaded secrets** — separately scoped per agent, not affected by a platform-API-key compromise.
 

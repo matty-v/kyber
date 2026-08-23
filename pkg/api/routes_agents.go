@@ -35,7 +35,6 @@ type CreateAgentRequest struct {
 	Model        string                   `json:"model"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
-	Scaling      string                   `json:"scaling"`
 	Resources    agentResourcesRequest    `json:"resources"`
 	Identity     agentIdentityRequest     `json:"identity"`
 	IdentityRepo agentIdentityRepoRequest `json:"identityRepo,omitempty"`
@@ -109,7 +108,6 @@ type agentSecretsRequest struct {
 // PatchAgentRequest is the JSON body for PATCH /api/v1/agents/{name}.
 type PatchAgentRequest struct {
 	Model     *string                `json:"model,omitempty"`
-	Scaling   *string                `json:"scaling,omitempty"`
 	Resources *agentResourcesRequest `json:"resources,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
@@ -168,7 +166,6 @@ type AgentResponse struct {
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
-	Scaling      kyberv1.AgentScalingMode   `json:"scaling"`
 	Resources    agentResourcesResponse     `json:"resources"`
 	IdentityRepo *agentIdentityRepoResponse `json:"identityRepo,omitempty"`
 	Status       agentStatusResponse        `json:"status,omitempty"`
@@ -388,7 +385,6 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		AuthType:     authType,
 		Model:        a.Spec.Model,
 		CurrentModel: a.Status.CurrentModel,
-		Scaling:      a.Spec.Scaling,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
 			Memory: a.Spec.Resources.Memory.String(),
@@ -654,11 +650,9 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseStopped)
 	case "restart":
 		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseRestarting)
-	case "suspend":
-		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseSuspended)
 	case "force-needs-auth":
-		// Operator-forced re-auth for a wedged agent (#395). Same path as
-		// suspend — set spec.desiredPhase; the controller's classifyEvent gate
+		// Operator-forced re-auth for a wedged agent (#395). Set
+		// spec.desiredPhase; the controller's classifyEvent gate
 		// honors it only from recoverable phases and (for live-pod phases)
 		// deletes the pod. No new handler or auth surface.
 		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseNeedsAuth)
@@ -817,16 +811,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	scaling := kyberv1.AgentScalingMode(req.Scaling)
-	if scaling == "" {
-		scaling = kyberv1.AgentScalingWarm
-	}
-	if scaling != kyberv1.AgentScalingWarm && scaling != kyberv1.AgentScalingScaleToZero {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			`scaling must be "warm" or "scale-to-zero"`, "scaling")
-		return
-	}
-
 	// Capacity check: fetch all agents in the namespace, then compute what's
 	// still free on the target Machine.
 	var agentList kyberv1.AgentList
@@ -863,7 +847,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			Machine: req.Machine,
 			Runtime: req.Runtime,
 			Model:   req.Model,
-			Scaling: scaling,
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1044,16 +1027,6 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		agent.Spec.Model = *req.Model
 	}
 
-	if req.Scaling != nil {
-		mode := kyberv1.AgentScalingMode(*req.Scaling)
-		if mode != kyberv1.AgentScalingWarm && mode != kyberv1.AgentScalingScaleToZero {
-			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				`scaling must be "warm" or "scale-to-zero"`, "scaling")
-			return
-		}
-		agent.Spec.Scaling = mode
-	}
-
 	if req.Resources != nil {
 		if req.Resources.CPU != "" {
 			q, err := resource.ParseQuantity(req.Resources.CPU)
@@ -1187,7 +1160,7 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 
 func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, name string, phase kyberv1.AgentPhase) {
 	// Caller-level authorization chokepoint (kyber#474): every lifecycle verb
-	// (start/stop/restart/suspend/force-needs-auth) funnels through here, so
+	// (start/stop/restart/force-needs-auth) funnels through here, so
 	// enforcing scope at the setter cannot be bypassed by hitting a route
 	// directly. Audit-logs the decision; in permissive mode (default) it allows
 	// but logs a would-deny.
@@ -1312,8 +1285,8 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.Model = req.Model
-	// Only roll the pod for actively-running phases; leave Stopped/Suspended alone
-	// so a model change doesn't wake a dormant agent.
+	// Only roll the pod for actively-running phases; leave Stopped alone
+	// so a model change doesn't start a dormant agent.
 	switch agent.Status.Phase {
 	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
@@ -1377,7 +1350,7 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.RuntimeVersion = req.RuntimeVersion
 	// Mirror setAgentModel: only roll the pod for actively-running phases.
-	// Stopped/Suspended agents keep their disk state; the new version takes
+	// Stopped agents keep their disk state; the new version takes
 	// effect on the next manual start.
 	switch agent.Status.Phase {
 	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
@@ -1635,19 +1608,10 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 		})
 	}
 
-	// NOTE: Telegram's public setWebhook registration is NOT done at agent
-	// creation time. The runtime-neutral sidecar uses getUpdates (long-polling)
-	// while the agent is Running; registering a public webhook would disable
-	// polling for that bot.
-	//
-	// The Kyber webhook should only be registered when the agent enters
-	// Suspended phase (scale-to-zero) so Kyber can buffer messages and wake
-	// the agent. The Agent Controller handles this transition:
-	//   Running → Suspended: register webhook (Kyber takes over)
-	//   Suspended → Starting: unregister webhook (the sidecar takes over)
-	//
-	// For V1, this transition-based registration is a follow-up. The bot
-	// token is stored in the k8s Secret so it's available when needed.
+	// NOTE: Telegram's public setWebhook registration is deliberately never
+	// done. The runtime-neutral sidecar uses getUpdates (long-polling) from
+	// inside the running agent pod; registering a public webhook would
+	// disable polling for that bot.
 
 	created := make([]string, 0, len(defs))
 	for _, d := range defs {

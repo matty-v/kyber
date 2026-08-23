@@ -87,9 +87,8 @@ values_field() {
 
 # --- The contract: stable entry points downstream agent skills bind to ----
 print_contract() {
-    local api_key webhook_secret
+    local api_key
     api_key="$(values_field apiKey)"
-    webhook_secret="$(values_field webhookSecret)"
     cat <<EOF
 
 === devenv: ready — Kyber dev/test environment contract ===
@@ -99,7 +98,6 @@ print_contract() {
   API base URL:      http://localhost:${API_PORT}
   Health endpoint:   http://localhost:${API_PORT}/healthz
   API key:           ${api_key:-<unset>}
-  Webhook secret:    ${webhook_secret:-<unset>}
   PWA URL:           http://localhost:${API_PORT}/   (real SPA, embedded in the
                      control-plane binary and served at the root path; drive it
                      with the headless-browser harness in scripts/devenv/browser)

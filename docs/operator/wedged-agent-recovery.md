@@ -15,7 +15,7 @@ Triggering **Require re-auth** on an agent:
 1. Sets the agent's desired phase to `NeedsAuth`.
 2. **Deletes the running pod** if the agent has one (`Running` / `Starting`), so
    it stops executing on bad state. For phases with no live pod (`Failed`,
-   `MemoryExhausted`, `Stopped`, `Suspended`) it just flips the status — there
+   `MemoryExhausted`, `Stopped`) it just flips the status — there
    is nothing to tear down.
 3. Parks the agent in `NeedsAuth` until an operator re-authorizes it.
 
@@ -32,7 +32,7 @@ From the **agent detail page → Lifecycle menu** (the "More" dropdown), labeled
 **Require re-auth**. It is offered only from the phases a wedged agent can be
 recovered from:
 
-`Running`, `Starting`, `Failed`, `MemoryExhausted`, `Stopped`, `Suspended`.
+`Running`, `Starting`, `Failed`, `MemoryExhausted`, `Stopped`.
 
 It is **not** offered from transient/cleanup phases (`Creating`, `Stopping`,
 `Restarting`, `Draining`, `WaitingForMachine`, `Deleted`) or from `NeedsAuth`
@@ -46,9 +46,9 @@ shows a "Forced {name} into re-authorization" toast and the agent moves to
 `NeedsAuth`.
 
 > **Authorization note.** Require re-auth carries the same operator privilege as
-> Stop / Suspend / Restart — anyone with the platform API key can invoke it.
+> Stop / Restart — anyone with the platform API key can invoke it.
 > Its blast radius is a denial-of-availability for the targeted agent until a
-> human re-authorizes it, the same as Stop/Suspend. It adds no new privilege
+> human re-authorizes it, the same as Stop. It adds no new privilege
 > tier.
 
 ---
@@ -91,9 +91,8 @@ it again.
 ### What Stop does now
 
 1. Sets the agent's desired phase to `Stopped`.
-2. **Deletes the pod** (routing live/terminal-pod phases — `Running`, `Starting`,
-   `Failed`, `MemoryExhausted` — through `Stopping`) or, for the pod-less
-   `Suspended` phase, flips status straight to `Stopped`.
+2. **Deletes the pod**, routing live/terminal-pod phases — `Running`, `Starting`,
+   `Failed`, `MemoryExhausted` — through `Stopping`.
 3. **Pre-empts auto-restart** and **stays down across resyncs**: the agent is a
    stable `Stopped` fixed point — no pod is recreated on the periodic reconcile —
    until you set it back to `Running`.
@@ -120,7 +119,7 @@ offline remediation: stop the agent, inspect or clear the PVC, then start it.
    agent rebuilds its pod and converges `Stopped → Starting → Running`.
 
 > **Authorization note.** Stop carries the same operator privilege as
-> Suspend / Restart / Require re-auth — anyone with the platform API key can
+> Restart / Require re-auth — anyone with the platform API key can
 > invoke it. Broadening which phases honor Stop (kyber#468) does **not** widen
 > who can call it, and Stop is **fail-safe**: a forged or stale
 > `desiredPhase=Stopped` can only *halt* an agent (recoverable by starting it),

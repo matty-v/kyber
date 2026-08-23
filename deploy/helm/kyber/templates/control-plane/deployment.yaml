@@ -130,8 +130,8 @@ spec:
             - name: KYBER_TRANSCRIPT_OFFSETS_SIZE
               value: {{ .Values.storage.transcriptOffsets.size | quote }}
             # API credentials from Secret.
-            # KYBER_API_KEY and KYBER_WEBHOOK_SECRET are already read via os.Getenv in main.go.
-            # The Helm Secret (or existingSecret) mounts them here.
+            # KYBER_API_KEY is already read via os.Getenv in main.go.
+            # The Helm Secret (or existingSecret) mounts it here.
             - name: KYBER_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -142,12 +142,6 @@ spec:
             # env var is unset.
             - name: KYBER_API_KEY_SECRET_NAME
               value: {{ include "kyber.secretName" . | quote }}
-            - name: KYBER_WEBHOOK_SECRET
-              valueFrom:
-                secretKeyRef:
-                  name: {{ include "kyber.secretName" . }}
-                  key: webhook-secret
-                  optional: true
             # Caller-level authorization (kyber#474). KYBER_API_CALLERS is an
             # optional `callers` JSON doc on the api-key Secret (scoped keys);
             # absent ⇒ only the legacy full-scope api-key is accepted (prior

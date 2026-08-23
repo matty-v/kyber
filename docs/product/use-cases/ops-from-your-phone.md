@@ -16,7 +16,7 @@ The conversation is the audit trail. What you asked for, what the agent decided,
 
 ## Not just notifications
 
-Plenty of tools can page you. The difference here is that the thing messaging you can also do the work. Channels are two-way: an inbound message lands as the agent's next prompt, and the agent replies from inside the pod where the work actually happened. Both channels need the agent running to receive; a suspended agent resumes when you start it from the console or the API, not from a chat message.
+Plenty of tools can page you. The difference here is that the thing messaging you can also do the work. Channels are two-way: an inbound message lands as the agent's next prompt, and the agent replies from inside the pod where the work actually happened. Both channels need the agent running to receive; a stopped agent comes back when you start it from the console or the API, not from a chat message.
 
 When you do want a screen, the [fleet console](../capabilities/fleet-console.md) shows the whole fleet: status, activity, and a shell into any agent, from a browser.
 

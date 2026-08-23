@@ -61,7 +61,7 @@ truth for platform state. Operators (humans, the PWA, or other agents) declare
 intent on the spec; controllers reconcile.
 
 - **`Agent`** — a single AI agent instance: target machine, runtime type,
-  compute resources, scaling mode, identity, secrets, model, and
+  compute resources, identity, secrets, model, and
   `spec.desiredPhase`.
 - **`Machine`** — a cloud VM the platform manages: provider, machine type, disk
   size, spot pricing, zone.
@@ -137,7 +137,7 @@ docs (§ 8) before touching a subsystem that has one.
 The REST surface sits behind a Bearer **API-key wall** (`pkg/api/auth.go`):
 `authMiddleware` authenticates every request against the shared key and returns
 401 on failure. On top of that authentication, agent **lifecycle** mutations
-(`start`/`stop`/`restart`/`suspend`/`force-needs-auth`, all funnelling through
+(`start`/`stop`/`restart`/`force-needs-auth`, all funnelling through
 `setAgentDesiredPhase`) carry a **caller-level authorization** gate (kyber#474):
 a caller resolves to a scope set and each verb requires a scope (`lifecycle:write`
 for the fail-safe verbs, the strictly-higher `lifecycle:admin` for the impactful
@@ -169,7 +169,6 @@ stateDiagram-v2
     Starting --> MemoryExhausted: OOMKilled
 
     Running --> Stopping: DesiredStopped
-    Running --> Suspended: DesiredSuspended
     Running --> Restarting: DesiredRestarting
     Running --> Failed: PodDied
     Running --> NeedsAuth: OAuthRefreshFailed
@@ -180,7 +179,6 @@ stateDiagram-v2
     Stopping --> Stopped: PodTerminated
     Stopped --> Starting: DesiredRunning
     Restarting --> Starting: PodDeleted
-    Suspended --> Starting: WakeReceived / DesiredRunning
     NeedsAuth --> Starting: DesiredRunning
     MemoryExhausted --> Starting: DesiredRunning
     Draining --> WaitingForMachine: PodDeleted
@@ -195,7 +193,6 @@ stateDiagram-v2
     Failed --> NeedsAuth: DesiredNeedsAuth
     MemoryExhausted --> NeedsAuth: DesiredNeedsAuth
     Stopped --> NeedsAuth: DesiredNeedsAuth
-    Suspended --> NeedsAuth: DesiredNeedsAuth
 ```
 
 The diagram above is a summary. The **authoritative** lifecycle reference —
@@ -208,13 +205,10 @@ extending it:
 - **OOM is its own phase.** A kernel-OOM-killed container routes to
   `MemoryExhausted` (operator bumps `spec.resources.memory` before retry) rather
   than `Failed`-with-auto-restart, so a too-small agent doesn't crash-loop.
-- **Suspension is how preemption and idle wake are unified.** A spot-preemption
-  notice and a "no work right now" both park the agent in `Suspended`; an
-  operator start (`DesiredRunning`, via `POST …/start` or the console) brings it
-  back to `Running`. A `WakeReceived` event exists in the state machine for
-  message-triggered wake, but no production path emits it today — an inbound
-  message does not wake a suspended agent (see
-  [`agent-lifecycle.md`](agent-lifecycle.md) § 4).
+- **Machine interruption parks the agent, not the operator.** A spot-preemption
+  notice drains the agent into `Draining` → `WaitingForMachine`, and the
+  controller brings it back through `Starting` once a replacement machine is
+  ready — no operator action needed.
 
 How the running agent reports `status.activity` back up — the in-pod signal
 source → status sidecar → control plane path — is the **status pipeline**, and

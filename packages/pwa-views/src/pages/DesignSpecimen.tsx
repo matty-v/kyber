@@ -13,7 +13,6 @@ import {
   Gem,
   Play,
   RotateCcw,
-  Pause,
   Trash2,
   Activity,
   ChevronRight,
@@ -293,7 +292,6 @@ type SamplePhase =
   | 'Stopping'
   | 'Preempted'
   | 'Failed'
-  | 'Suspended'
   | 'Stopped'
 
 const phaseTone: Record<
@@ -308,7 +306,6 @@ const phaseTone: Record<
   Stopping: { bg: 'bg-warn-muted', text: 'text-warn', ring: 'ring-warn/30' },
   Preempted: { bg: 'bg-warn-muted', text: 'text-warn', ring: 'ring-warn/30' },
   Failed: { bg: 'bg-danger-muted', text: 'text-danger', ring: 'ring-danger/30' },
-  Suspended: { bg: 'bg-highlight-muted', text: 'text-highlight', ring: 'ring-highlight/30' },
   Stopped: { bg: 'bg-surface-overlay', text: 'text-text-muted', ring: 'ring-border-default' },
 }
 
@@ -458,9 +455,6 @@ function PrimitivesSection() {
           </SampleButton>
           <SampleButton variant="danger">
             <Trash2 className="h-4 w-4" /> Delete
-          </SampleButton>
-          <SampleButton variant="ghost">
-            <Pause className="h-4 w-4" /> Suspend
           </SampleButton>
           <SampleButton variant="primary" disabled>
             Disabled

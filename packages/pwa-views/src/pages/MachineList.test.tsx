@@ -21,7 +21,6 @@ function agent(over: Partial<Agent> = {}): Agent {
     machine: 'razer',
     runtime: 'codex',
     model: '',
-    scaling: 'warm',
     resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
     status: { phase: 'Running' },
     ...over,
@@ -74,10 +73,9 @@ describe('MachineStatusBadge', () => {
     expect(isMachineStandby(pending, [], false)).toBe(false)
   })
 
-  it('ignores stopped and suspended Agent assignments', () => {
+  it('ignores stopped Agent assignments', () => {
     const pending = regionalPendingMachine()
     expect(isMachineStandby(pending, [agent({ phase: 'Stopped' })], true)).toBe(true)
-    expect(isMachineStandby(pending, [agent({ phase: 'Suspended' })], true)).toBe(true)
   })
 })
 

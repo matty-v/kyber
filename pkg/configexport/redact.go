@@ -50,7 +50,6 @@ const Redacted = "<redacted — provide this yourself>"
 // memory; the classification test keeps it honest.
 var secretPaths = map[string]bool{
 	"api.apiKey":                    true,
-	"api.webhookSecret":             true,
 	"k3s.joinToken":                 true,
 	"minio.rootPassword":            true,
 	"postgresql.auth.password":      true,

@@ -9,7 +9,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/matty-v/kyber/pkg/api"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -22,7 +21,6 @@ func buildTranscriptHandler(t *testing.T, transcript api.ArchiveReader, archive 
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:        fakeClient,
-		MessageBuffer:    messagebuffer.NewMemoryBuffer(),
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",
 		ArchiveReader:    archive,
@@ -122,7 +120,6 @@ func TestTranscriptLogs_NoReader(t *testing.T) {
 		WithRuntimeObjects(sampleAgentCRD("dave")).Build()
 	s := &api.Server{
 		K8sClient:                fakeClient,
-		MessageBuffer:            messagebuffer.NewMemoryBuffer(),
 		APIKey:                   testAPIKey,
 		Namespace:                "kyber-system",
 		TranscriptReader:         nil,

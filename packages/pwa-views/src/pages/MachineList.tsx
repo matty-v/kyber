@@ -291,7 +291,7 @@ export function MachineList() {
         }
         message={
           pending?.kind === 'restart-agents'
-            ? `Each agent on "${pending?.machine.id}" will be brought down and back up in parallel with its session brief preserved. Expect ~30s of unavailability per agent. Skipped: Suspended, Stopped, Draining.`
+            ? `Each agent on "${pending?.machine.id}" will be brought down and back up in parallel with its session brief preserved. Expect ~30s of unavailability per agent. Skipped: Stopped, Draining.`
             : `${pending?.kind === 'delete' ? 'This will permanently delete' : 'This will ' + pending?.kind} machine "${pending?.machine.id}".`
         }
         confirmLabel={pending?.kind === 'delete' ? 'Delete' : 'Confirm'}
@@ -304,7 +304,7 @@ export function MachineList() {
   )
 }
 
-const inactiveAgentPhases = new Set(['Stopped', 'Suspended', 'Deleted'])
+const inactiveAgentPhases = new Set(['Stopped', 'Deleted'])
 
 /**
  * Some managed providers intentionally stay at zero nodes until scheduler

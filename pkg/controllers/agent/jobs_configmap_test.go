@@ -32,7 +32,6 @@ func newJobsTestAgent(name string, jobs []kyberv1.AgentJob) *kyberv1.Agent {
 				Memory: resource.MustParse("2Gi"),
 				Disk:   resource.MustParse("50Gi"),
 			},
-			Scaling: kyberv1.AgentScalingWarm,
 			Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			Model:   "claude-sonnet-4-6",
 			Jobs:    jobs,

@@ -149,7 +149,7 @@ still has the first-generated password and fails auth.
 {{- end }}
 
 {{/*
-Return the name of the preview credentials Secret (api-key + webhook-secret +
+Return the name of the preview credentials Secret (api-key +
 k3s config) created by the bootstrap Job.
 When preview.credentialsSecretName is set use that; otherwise default to
 <release-name>-credentials.

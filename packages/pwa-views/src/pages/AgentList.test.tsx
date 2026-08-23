@@ -19,7 +19,6 @@ vi.mock('../hooks/useAPI', () => ({
   useStartAgent: vi.fn(),
   useStopAgent: vi.fn(),
   useRestartAgent: vi.fn(),
-  useSuspendAgent: vi.fn(),
   useDeleteAgent: vi.fn(),
 }))
 
@@ -43,7 +42,6 @@ function renderList(agents: Agent[]) {
     useAPIModule.useStartAgent,
     useAPIModule.useStopAgent,
     useAPIModule.useRestartAgent,
-    useAPIModule.useSuspendAgent,
     useAPIModule.useDeleteAgent,
   ]) {
     vi.mocked(hook).mockReturnValue(

@@ -201,7 +201,7 @@ func TestClassifyEvent_ImageDrift_NonRunningPhases_NotRolled(t *testing.T) {
 	nonRunning := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting,
 		kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStopped,
-		kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseFailed,
+		kyberv1.AgentPhaseFailed,
 		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted,
 		kyberv1.AgentPhase(""), // unset
 	}

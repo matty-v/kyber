@@ -44,7 +44,7 @@ func GetFleetSummary(ctx context.Context, k8s client.Client, namespace string) (
 			} else {
 				summary.Idle++
 			}
-		case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended,
+		case kyberv1.AgentPhaseStopped,
 			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseDeleted:
 			summary.Offline++
 		default:

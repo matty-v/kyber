@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 
 	"github.com/matty-v/kyber/pkg/api"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -54,7 +53,6 @@ func buildArchiveHandler(t *testing.T, reader api.ArchiveReader, objs ...runtime
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ArchiveReader: reader,
@@ -237,7 +235,6 @@ func TestArchiveLogs_NoReader_NamesMissingConfig(t *testing.T) {
 		WithRuntimeObjects(sampleAgentCRD("dave")).Build()
 	s := &api.Server{
 		K8sClient:             fakeClient,
-		MessageBuffer:         messagebuffer.NewMemoryBuffer(),
 		APIKey:                testAPIKey,
 		Namespace:             "kyber-system",
 		ArchiveReader:         nil,
@@ -355,7 +352,6 @@ func buildArchiveHandlerWithCap(t *testing.T, reader api.ArchiveReader, cap int,
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:          fakeClient,
-		MessageBuffer:      messagebuffer.NewMemoryBuffer(),
 		APIKey:             testAPIKey,
 		Namespace:          "kyber-system",
 		ArchiveReader:      reader,

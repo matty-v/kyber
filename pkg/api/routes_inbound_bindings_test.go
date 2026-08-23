@@ -91,7 +91,6 @@ func bareAgent(name string) *kyberv1.Agent {
 			Machine: "worker-1",
 			Runtime: "claude-code",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("1"),
 				Memory: resource.MustParse("2Gi"),

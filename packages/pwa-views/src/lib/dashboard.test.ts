@@ -10,7 +10,7 @@ const NOW = Date.parse('2026-07-06T12:00:00Z')
 function agent(over: Partial<Agent> & { id: string }): Agent {
   return {
     id: over.id, phase: 'Running', machine: 'm', runtime: 'claude-code',
-    model: 'claude-sonnet-4-6', scaling: 'warm',
+    model: 'claude-sonnet-4-6',
     resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
     status: {} as Agent['status'], createdAt: '2026-07-06T10:00:00Z', ...over,
   }

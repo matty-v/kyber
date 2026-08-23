@@ -30,7 +30,7 @@ Made to run with your existing Claude or ChatGPT subscription.
   running agent from the console.
 - **Put agents on schedules, and let them hand work to each other.** Cron inside
   each agent survives restarts. Agents send each other signed messages, so one
-  agent's output becomes another's next prompt and can wake it from sleep.
+  agent's output becomes another's next prompt.
 - **Use the subscriptions you already pay for.** Claude Code agents sign in with
   your Claude subscription, Codex agents with your ChatGPT subscription, instead
   of paying per token. API keys work too.
@@ -53,7 +53,6 @@ helm install kyber oci://ghcr.io/matty-v/charts/kyber \
   --namespace kyber-system \
   --set namespace.create=false \
   --set api.apiKey="$KYBER_API_KEY" \
-  --set api.webhookSecret="$(openssl rand -hex 32)" \
   --wait --timeout 10m
 ```
 

@@ -25,7 +25,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/oauth/mockserver"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -100,7 +99,6 @@ func buildAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler, clie
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -125,7 +123,6 @@ func buildScopedAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		AuthzEnforce:  true,
 		Callers: []api.ScopedCaller{
@@ -154,7 +151,6 @@ func sampleAgentCRD(name string) *kyberv1.Agent {
 			Machine: "worker-1",
 			Runtime: "claude-code",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("1"),
 				Memory: resource.MustParse("2Gi"),
@@ -172,7 +168,6 @@ func TestAgents_Create_HappyPath(t *testing.T) {
 		"name":    "dave",
 		"machine": "worker-1",
 		"runtime": "claude-code",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
 			"memory": "2Gi",
@@ -564,7 +559,6 @@ func TestAgents_Create_IdentityRepoPassthrough(t *testing.T) {
 		Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -576,7 +570,6 @@ func TestAgents_Create_IdentityRepoPassthrough(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
 			"memory": "2Gi",
@@ -617,7 +610,6 @@ func TestAgents_Create_IdentityRepoOmittedDefaultsEmpty(t *testing.T) {
 		Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -629,7 +621,6 @@ func TestAgents_Create_IdentityRepoOmittedDefaultsEmpty(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
 			"memory": "2Gi",
@@ -667,7 +658,6 @@ func TestAgents_Create_ValidationErrors(t *testing.T) {
 		{"invalid name", map[string]interface{}{"name": "UPPER", "machine": "w1", "runtime": "claude-code", "model": "m"}},
 		{"missing machine", map[string]interface{}{"name": "dave", "runtime": "claude-code", "model": "m"}},
 		{"missing runtime", map[string]interface{}{"name": "dave", "machine": "w1", "model": "m"}},
-		{"invalid scaling", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "r", "model": "m", "scaling": "turbo"}},
 		{"invalid cpu", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "r", "model": "m", "resources": map[string]interface{}{"cpu": "notavalue"}}},
 		{"telegram with api-key", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "claude-code", "model": "m", "secrets": map[string]interface{}{"authType": "api-key", "telegramEnabled": true, "anthropicApiKey": "sk-ant-test"}}},
 		{"telegram without allowlist", map[string]interface{}{"name": "dave", "machine": "w1", "runtime": "claude-code", "model": "m", "secrets": map[string]interface{}{"authType": "oauth", "telegramEnabled": true}}},
@@ -719,7 +709,6 @@ func TestAgents_Create_OrphanedSecret_DoesNotSilentlyOverwrite(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu": "1", "memory": "2Gi", "disk": "50Gi",
 		},
@@ -776,7 +765,6 @@ func TestAgents_Create_AgentAlreadyExists_CleansUpSecrets(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu": "1", "memory": "2Gi", "disk": "50Gi",
 		},
@@ -817,7 +805,6 @@ func TestAgents_Create_PersistsDiscordWebhookSecret(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu": "1", "memory": "2Gi", "disk": "50Gi",
 		},
@@ -870,7 +857,6 @@ func TestAgents_Create_OmitsDiscordSecretWhenDisabled(t *testing.T) {
 		"machine": "worker-1",
 		"runtime": "claude-code",
 		"model":   "claude-sonnet-4",
-		"scaling": "warm",
 		"resources": map[string]interface{}{
 			"cpu": "1", "memory": "2Gi", "disk": "50Gi",
 		},
@@ -1045,20 +1031,6 @@ func TestAgents_Patch(t *testing.T) {
 	}
 }
 
-// TestAgents_Patch_InvalidScaling verifies 400 for invalid scaling in PATCH.
-func TestAgents_Patch_InvalidScaling(t *testing.T) {
-	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
-	badScaling := "turbo"
-	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{
-		"scaling": badScaling,
-	})
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusBadRequest {
-		t.Errorf("want 400, got %d: %s", rr.Code, rr.Body.String())
-	}
-}
-
 // TestAgents_Delete verifies a confirmed, authorized DELETE returns 204 (AC-4).
 // kyber#565: DELETE now requires ?confirm=<name>.
 func TestAgents_Delete(t *testing.T) {
@@ -1173,7 +1145,6 @@ func buildStatusAwareAgentHandler(t *testing.T, objs ...runtime.Object) (http.Ha
 		Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -1356,20 +1327,9 @@ func TestAgents_Restart(t *testing.T) {
 	}
 }
 
-// TestAgents_Suspend verifies POST /api/v1/agents/{name}/suspend sets desiredPhase.
-func TestAgents_Suspend(t *testing.T) {
-	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
-	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/suspend", nil)
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Errorf("want 200, got %d: %s", rr.Code, rr.Body.String())
-	}
-}
-
 // TestAgents_ForceNeedsAuth verifies the operator-forced re-auth action (#395):
 // POST /force-needs-auth sets spec.desiredPhase=NeedsAuth via the shared
-// setAgentDesiredPhase path (mirrors suspend). Which phases actually honor it,
+// setAgentDesiredPhase path. Which phases actually honor it,
 // and the pod-delete, are enforced by the controller's classifyEvent gate; the
 // API layer's job is just to patch the desired phase, asserted here.
 func TestAgents_ForceNeedsAuth(t *testing.T) {

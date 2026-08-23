@@ -93,7 +93,6 @@ metadata:
 spec:
   machine: ${MACHINE}
   runtime: claude-code
-  scaling: warm
   resources:
     cpu: "1"
     memory: 2Gi

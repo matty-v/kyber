@@ -18,7 +18,6 @@ import (
 	"github.com/matty-v/kyber/pkg/adapters"
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 const testAPIKey = "test-key-xyz"
@@ -29,7 +28,6 @@ func buildMachineHandler(t *testing.T, scheme *runtime.Scheme, objs ...runtime.O
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:        fakeClient,
-		MessageBuffer:    messagebuffer.NewMemoryBuffer(),
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",
 		GCEVMTypeCatalog: api.DefaultGCEVMTypeCatalog(),
@@ -384,7 +382,6 @@ func buildScopedMachineHandler(t *testing.T, scheme *runtime.Scheme, objs ...run
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
 		K8sClient:        fakeClient,
-		MessageBuffer:    messagebuffer.NewMemoryBuffer(),
 		APIKey:           testAPIKey,
 		AuthzEnforce:     true,
 		Callers:          []api.ScopedCaller{{Name: "write-caller", Key: writeScopedKey, Scopes: []string{"lifecycle:write"}}},
@@ -562,7 +559,6 @@ func TestCreateMachine_NewProviderKinds(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
 			s := &api.Server{
 				K8sClient:       fakeClient,
-				MessageBuffer:   messagebuffer.NewMemoryBuffer(),
 				APIKey:          testAPIKey,
 				Namespace:       "kyber-system",
 				ComputeProvider: tc.provider,
@@ -581,7 +577,6 @@ func TestCreateMachineRejectsProviderMismatchedToInstall(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
 	s := &api.Server{
 		K8sClient:       fakeClient,
-		MessageBuffer:   messagebuffer.NewMemoryBuffer(),
 		APIKey:          testAPIKey,
 		Namespace:       "kyber-system",
 		ComputeProvider: "fake",
@@ -704,7 +699,6 @@ func TestCreateMachine_GCE_CustomCatalog(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
 	s := &api.Server{
 		K8sClient:        fakeClient,
-		MessageBuffer:    messagebuffer.NewMemoryBuffer(),
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",
 		GCEVMTypeCatalog: customCatalog,

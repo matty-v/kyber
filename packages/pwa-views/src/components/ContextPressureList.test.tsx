@@ -31,7 +31,7 @@ const ctx = (
   model = 'claude-sonnet-4-6', phase: Agent['phase'] = 'Running',
 ): Agent => ({
   id, phase, machine: 'm', runtime: 'claude-code', model,
-  scaling: 'warm', resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
+  resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
   status: {} as Agent['status'], createdAt: '2026-07-06T10:00:00Z',
   tokenUsage: { model, tokens: { used, limit, input: 0, cacheCreation: 0, cacheRead: 0 }, percentage: pct, effortLevel: '', speed: '', updatedAt: '', contextWindowKnown: true },
 })

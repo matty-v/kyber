@@ -729,7 +729,7 @@ k3s upgrades are usually safe but occasionally change container runtime behavior
 
 ## Rotating secrets
 
-Rotating the API key or webhook secret requires both updating the k8s secret and updating any clients (PWA, external tooling) that use the old value:
+Rotating the API key requires both updating the k8s secret and updating any clients (PWA, external tooling) that use the old value:
 
 ```bash
 NEW_API_KEY=$(openssl rand -hex 32)

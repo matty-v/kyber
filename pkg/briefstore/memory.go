@@ -28,9 +28,6 @@ func (m *MemoryStore) Put(_ context.Context, agentName string, brief *Brief) err
 	if brief.RecentExchanges != nil {
 		stored.RecentExchanges = append([]Exchange(nil), brief.RecentExchanges...)
 	}
-	if brief.PendingMessages != nil {
-		stored.PendingMessages = append([]PendingMessage(nil), brief.PendingMessages...)
-	}
 	m.briefs[agentName] = &stored
 	return nil
 }
@@ -48,9 +45,6 @@ func (m *MemoryStore) Get(_ context.Context, agentName string) (*Brief, error) {
 	out := *b
 	if b.RecentExchanges != nil {
 		out.RecentExchanges = append([]Exchange(nil), b.RecentExchanges...)
-	}
-	if b.PendingMessages != nil {
-		out.PendingMessages = append([]PendingMessage(nil), b.PendingMessages...)
 	}
 	return &out, nil
 }

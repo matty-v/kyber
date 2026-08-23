@@ -18,7 +18,6 @@ func TestRequiredScopeForPhase(t *testing.T) {
 		{kyberv1.AgentPhaseRunning, ScopeLifecycleWrite},    // start / oauth resume
 		{kyberv1.AgentPhaseStopped, ScopeLifecycleWrite},    // stop (fail-safe)
 		{kyberv1.AgentPhaseRestarting, ScopeLifecycleWrite}, // restart
-		{kyberv1.AgentPhaseSuspended, ScopeLifecycleAdmin},  // suspend (impactful)
 		{kyberv1.AgentPhaseNeedsAuth, ScopeLifecycleAdmin},  // force-needs-auth (impactful)
 	}
 	for _, c := range cases {
@@ -31,7 +30,7 @@ func TestRequiredScopeForPhase(t *testing.T) {
 // reqWithCaller builds a request carrying the given caller in context, as
 // authMiddleware would have stashed it.
 func reqWithCaller(c *Caller) *http.Request {
-	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/suspend", nil)
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/force-needs-auth", nil)
 	if c != nil {
 		r = r.WithContext(context.WithValue(r.Context(), callerCtxKey{}, c))
 	}
@@ -53,11 +52,9 @@ func TestAuthorizePhase_Enforcing(t *testing.T) {
 	}{
 		{"write key on stop → allow", writeCaller, kyberv1.AgentPhaseStopped, true, 0},
 		{"write key on restart → allow", writeCaller, kyberv1.AgentPhaseRestarting, true, 0},
-		{"write key on suspend → 403", writeCaller, kyberv1.AgentPhaseSuspended, false, http.StatusForbidden},
 		{"write key on force-needs-auth → 403", writeCaller, kyberv1.AgentPhaseNeedsAuth, false, http.StatusForbidden},
-		{"admin key on suspend → allow", adminCaller, kyberv1.AgentPhaseSuspended, true, 0},
 		{"admin key on force-needs-auth → allow", adminCaller, kyberv1.AgentPhaseNeedsAuth, true, 0},
-		{"legacy full-scope on suspend → allow", legacyCaller, kyberv1.AgentPhaseSuspended, true, 0},
+		{"legacy full-scope on force-needs-auth → allow", legacyCaller, kyberv1.AgentPhaseNeedsAuth, true, 0},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -147,7 +144,7 @@ func TestAuthorizePhase_PermissiveModeNeverBlocks(t *testing.T) {
 	writeCaller := &Caller{Name: "pwa", Scopes: newScopeSet(ScopeLifecycleWrite)}
 
 	w := httptest.NewRecorder()
-	if !s.authorizePhase(w, reqWithCaller(writeCaller), "x", kyberv1.AgentPhaseSuspended) {
+	if !s.authorizePhase(w, reqWithCaller(writeCaller), "x", kyberv1.AgentPhaseNeedsAuth) {
 		t.Error("permissive mode must allow an under-scoped caller through")
 	}
 	if w.Code != http.StatusOK { // recorder defaults to 200; nothing written

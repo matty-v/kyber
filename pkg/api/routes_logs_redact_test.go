@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"github.com/matty-v/kyber/pkg/api"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -69,7 +68,6 @@ func TestAgentLogs_StreamError_RedactsError(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		Clientset:     buildClientsetWithServer(t, mockAPIServer.URL),

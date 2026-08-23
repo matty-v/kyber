@@ -25,7 +25,6 @@ function makeAgent(id: string, phase = 'Running'): Agent {
     machine: 'm1',
     runtime: 'claude-code',
     model: 'sonnet',
-    scaling: 'manual' as Agent['scaling'],
     resources: { cpu: '500m', memory: '1Gi' } as unknown as Agent['resources'],
     status: { phase: phase as Agent['phase'] } as unknown as Agent['status'],
     createdAt: '2026-05-08T00:00:00Z',

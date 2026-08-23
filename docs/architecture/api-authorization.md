@@ -9,10 +9,10 @@
 Authentication answers *"is this a valid key?"*; it does **not** answer *"may
 this caller do this?"*. Before #474, authorization was binary: any holder of the
 single shared API key could drive every lifecycle verb — `start`, `stop`,
-`restart`, `suspend`, and the #395 `force-needs-auth` — through the one setter
-`setAgentDesiredPhase`. `suspend` and `force-needs-auth` are materially more
+`restart`, and the #395 `force-needs-auth` — through the one setter
+`setAgentDesiredPhase`. `force-needs-auth` is materially more
 impactful than fail-safe `stop` (a leaked key could wedge the whole fleet into
-`NeedsAuth`), yet were no better protected.
+`NeedsAuth`), yet was no better protected.
 
 #474 adds a **caller-level** gate: a caller carries a scope set, and each verb
 requires a scope. This is complementary to — not a replacement for — the
@@ -28,9 +28,8 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
               ▼                                    ▼  (callerFrom)
    setAgentDesiredPhase(phase) ── authorizePhase(ctx, phase) ──┐
         start/stop/restart       → require lifecycle:write       │ deny → 403 + audit
-        suspend/force-needs-auth → require lifecycle:admin  ─────┤ allow → audit + proceed
-   handleReauthorize → Running   → require lifecycle:write       │
-   (Telegram webhook wake → EXEMPT; handler currently unreachable) ┘
+        force-needs-auth         → require lifecycle:admin  ─────┤ allow → audit + proceed
+   handleReauthorize → Running   → require lifecycle:write  ─────┘
 ```
 
 - **`Authenticator.Authenticate`** (`pkg/api/auth.go`) now returns a `*Caller`
@@ -49,12 +48,12 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
 | Scope | Grants | Verbs |
 |---|---|---|
 | `lifecycle:write` | the fail-safe verbs | `start`, `stop`, `restart`, OAuth re-auth resume to `Running` |
-| `lifecycle:admin` | the impactful verbs (⊃ `write`) | `suspend`, `force-needs-auth`, **agent/machine `DELETE`** (kyber#565) — **and** everything `write` grants |
+| `lifecycle:admin` | the impactful verbs (⊃ `write`) | `force-needs-auth`, **agent/machine `DELETE`** (kyber#565) — **and** everything `write` grants |
 
 **Privilege ordering (the #474 invariant):** scopes nest — `lifecycle:admin` ⊃
 `lifecycle:write`. The impactful verbs require the strictly-higher scope, so they
 can **never** be less-protected than fail-safe `stop`. A caller scoped only for
-routine start/stop **cannot** suspend or wedge an agent into `NeedsAuth`.
+routine start/stop **cannot** wedge an agent into `NeedsAuth`.
 `DELETE` is the single most impactful verb — irreversible identity destruction —
 so it requires `lifecycle:admin`, the maximum (nothing is more impactful than
 delete).
@@ -176,19 +175,6 @@ Both allow and deny decisions on a phase mutation are structured-logged with the
 caller name, agent, requested phase, required scope, decision
 (`allow`/`would-deny`/`deny`), and whether enforcement was on. This is the #474
 audit AC and the observability that makes permissive-mode migration safe.
-
-## Exempt path
-
-The Telegram **webhook wake** (`routes_webhooks.go`) patches
-`desiredPhase=Running` but is **exempt**: webhook routes bypass the Bearer wall
-entirely and are gated by their own secret-header validation
-(`X-Telegram-Bot-Api-Secret-Token`, compared against the server-wide
-`WebhookSecret`) — there is no API `Caller` in context to authorize; the
-webhook secret *is* the authorization. Note the handler is currently
-**unreachable in practice**: nothing registers the Telegram webhook
-(`registerTelegramWebhook` has no production callers, and the in-pod sidecar
-deletes any registered webhook at boot to long-poll instead), so this exempt
-path is dormant until transition-based registration is wired.
 
 ## See also
 

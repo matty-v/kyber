@@ -15,7 +15,7 @@ import { Dashboard } from './Dashboard'
 
 const a = (id: string): Agent => ({
   id, phase: 'Running', machine: 'm', runtime: 'claude-code', model: 'claude-sonnet-4-6',
-  scaling: 'warm', resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
+  resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
   status: {} as Agent['status'], createdAt: '2026-07-06T10:00:00Z',
 })
 

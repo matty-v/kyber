@@ -28,7 +28,6 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/githubapp"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 )
 
@@ -136,7 +135,6 @@ func newTestAgent(name, namespace string) *kyberv1.Agent {
 			Machine: "node-01",
 			Runtime: "stub",
 			Model:   "claude-sonnet-4",
-			Scaling: kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{
 				CPU:    resource.MustParse("100m"),
 				Memory: resource.MustParse("256Mi"),
@@ -320,7 +318,7 @@ func TestEnsureOffsetsPVC_Idempotent(t *testing.T) {
 // TestCreatePod_EnsuresOffsetsPVC_PreExistingAgent is the kyber#467 review-fix
 // (Chewie HOLD on #475) regression guard. An agent that pre-dates the offsets-PVC
 // change already has its persist PVC but NO offsets PVC. When its pod is recreated
-// via a path OTHER than birth-time ActionCreatePVAndPod — i.e. wake
+// via a path OTHER than birth-time ActionCreatePVAndPod — i.e. restart
 // (ActionWriteBriefAndCreatePod) or retry (ActionResetRetryAndCreatePod), both of
 // which call createPod directly without the birth-time ensure — the offsets PVC
 // must still be created, or the pod references a non-existent PVC and is stuck
@@ -361,7 +359,7 @@ func TestCreatePod_EnsuresOffsetsPVC_PreExistingAgent(t *testing.T) {
 		t.Fatalf("precondition: offsets PVC must be absent before recreation, got err=%v", err)
 	}
 
-	// Recreate the pod via the direct createPod path (what wake/retry actions do).
+	// Recreate the pod via the direct createPod path (what retry/restart actions do).
 	if err := r.createPod(ctx, agent); err != nil {
 		t.Fatalf("createPod (recreation): %v", err)
 	}
@@ -398,7 +396,7 @@ func TestCreatePod_EnsuresOffsetsPVC_PreExistingAgent(t *testing.T) {
 // On the canary, an agent's persist PVC had to be deleted to correct its
 // StorageClass. The reconciler then rebuilt the POD on every reconcile and
 // never the CLAIM — because the persist ensure lived only on the birth-time
-// ActionCreatePVAndPod path, while wake and retry call createPod directly. The
+// ActionCreatePVAndPod path, while retry and restart call createPod directly. The
 // agent flapped Starting → Failed → Starting forever on
 // "persistentvolumeclaim not found", with no route back short of deleting the
 // agent or hand-writing the PVC. The offsets PVC was already immune, having
@@ -428,7 +426,7 @@ func TestCreatePod_EnsuresPersistPVC_WhenMissing(t *testing.T) {
 		t.Fatalf("precondition: persist PVC must be absent, got err=%v", err)
 	}
 
-	// The recreation path — what wake and retry actually call.
+	// The recreation path — what retry and restart actually call.
 	if err := r.createPod(ctx, agent); err != nil {
 		t.Fatalf("createPod (recreation): %v", err)
 	}
@@ -499,60 +497,6 @@ func TestCreatePod_LeavesExistingPersistPVCAlone(t *testing.T) {
 	}
 	if got.Spec.StorageClassName == nil || *got.Spec.StorageClassName != "someone-elses-class" {
 		t.Errorf("existing PVC was modified: storageClassName = %v, want it left alone", got.Spec.StorageClassName)
-	}
-}
-
-// TestReconciler_NewAgent_DesiredSuspended_NoPod verifies that when a new
-// Agent CRD is created with spec.desiredPhase=Suspended, the reconciler
-// creates the PVC but NOT a pod, and parks the agent in the Suspended phase.
-// Ops scenarios: restore-from-backup, migration, clone — the operator needs
-// a window to pre-populate the PV before the agent starts.
-func TestReconciler_NewAgent_DesiredSuspended_NoPod(t *testing.T) {
-	k8sClient, teardown := setupEnvtest(t)
-	defer teardown()
-
-	scheme := buildTestScheme()
-	r := newReconciler(k8sClient, scheme)
-
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-suspended-birth"}}
-	if err := k8sClient.Create(context.Background(), ns); err != nil {
-		t.Fatalf("creating namespace: %v", err)
-	}
-
-	agent := newTestAgent("dave", "test-suspended-birth")
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseSuspended
-	if err := k8sClient.Create(context.Background(), agent); err != nil {
-		t.Fatalf("creating agent: %v", err)
-	}
-
-	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "dave", Namespace: "test-suspended-birth"}}
-
-	// First reconcile: add finalizer, classify as DesiredSuspended-from-empty,
-	// create PVC only, set Suspended.
-	reconcileN(t, r, req, 1)
-
-	agentKey := types.NamespacedName{Name: "dave", Namespace: "test-suspended-birth"}
-	updated := getAgent(t, k8sClient, agentKey)
-
-	if updated.Status.Phase != kyberv1.AgentPhaseSuspended {
-		t.Errorf("phase: got %q, want %q", updated.Status.Phase, kyberv1.AgentPhaseSuspended)
-	}
-
-	// PVC should exist.
-	pvc := &corev1.PersistentVolumeClaim{}
-	pvcKey := types.NamespacedName{Name: PVCName("dave"), Namespace: "test-suspended-birth"}
-	if err := k8sClient.Get(context.Background(), pvcKey, pvc); err != nil {
-		t.Errorf("PVC not found (should have been created): %v", err)
-	}
-
-	// Pod must NOT exist.
-	pod := &corev1.Pod{}
-	podKey := types.NamespacedName{Name: AgentPodName("dave"), Namespace: "test-suspended-birth"}
-	err := k8sClient.Get(context.Background(), podKey, pod)
-	if err == nil {
-		t.Errorf("pod was created but should not exist for Suspended birth")
-	} else if !errors.IsNotFound(err) {
-		t.Errorf("expected NotFound on pod, got: %v", err)
 	}
 }
 
@@ -1695,14 +1639,6 @@ func TestReconciler_AutoCreatePending_GatesPodCreation(t *testing.T) {
 	}
 }
 
-// newReconcilerWithStoreAndBuffer builds a test AgentReconciler with a caller-provided
-// BriefStore and MessageBuffer. Used in tests that exercise wake-from-suspended behaviour.
-func newReconcilerWithStoreAndBuffer(k8sClient client.Client, scheme *runtime.Scheme, store briefstore.BriefStore, buf *messagebuffer.MemoryBuffer) *AgentReconciler {
-	r := newReconcilerWithStore(k8sClient, scheme, store)
-	r.MessageBuffer = buf
-	return r
-}
-
 // TestReconciler_RestartFromStopped_BriefWritten verifies that when an agent restarts from Stopped,
 // a brief is written with shutdown_type=planned and restart_reason=operator.
 func TestReconciler_RestartFromStopped_BriefWritten(t *testing.T) {
@@ -1775,124 +1711,6 @@ func TestReconciler_RestartFromStopped_BriefWritten(t *testing.T) {
 	finalAgent := getAgent(t, k8sClient, agentKey)
 	if finalAgent.Status.Phase != kyberv1.AgentPhaseStarting {
 		t.Errorf("phase: got %q, want Starting", finalAgent.Status.Phase)
-	}
-}
-
-// TestReconciler_WakeFromSuspendedDrainsBuffer verifies the scale-to-zero wake flow:
-// - Agent is Suspended with messages buffered in the MessageBuffer
-// - Operator sets spec.desiredPhase=Running
-// - Reconciler drains the buffer, writes a brief with shutdown_type=wake and the pending messages
-// - Buffer is empty after the reconcile
-func TestReconciler_WakeFromSuspendedDrainsBuffer(t *testing.T) {
-	k8sClient, teardown := setupEnvtest(t)
-	defer teardown()
-
-	scheme := buildTestScheme()
-	store := briefstore.NewMemoryStore()
-	buf := messagebuffer.NewMemoryBuffer()
-	r := newReconcilerWithStoreAndBuffer(k8sClient, scheme, store, buf)
-
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-wake"}}
-	if err := k8sClient.Create(context.Background(), ns); err != nil {
-		t.Fatalf("creating namespace: %v", err)
-	}
-
-	agent := newTestAgent("dave", "test-wake")
-	if err := k8sClient.Create(context.Background(), agent); err != nil {
-		t.Fatalf("creating agent: %v", err)
-	}
-
-	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "dave", Namespace: "test-wake"}}
-	agentKey := types.NamespacedName{Name: "dave", Namespace: "test-wake"}
-	ctx := context.Background()
-
-	// Bootstrap: first reconcile creates PVC + pod, phase → Creating.
-	reconcileN(t, r, req, 1)
-
-	// Delete the bootstrap pod so ActionWriteBriefAndCreatePod can create a fresh one.
-	podKey := types.NamespacedName{Name: AgentPodName("dave"), Namespace: "test-wake"}
-	existingPod := &corev1.Pod{}
-	if err := k8sClient.Get(ctx, podKey, existingPod); err == nil {
-		if err := k8sClient.Delete(ctx, existingPod); err != nil && !errors.IsNotFound(err) {
-			t.Fatalf("deleting bootstrap pod: %v", err)
-		}
-	}
-
-	// Drive agent to Suspended.
-	updated := getAgent(t, k8sClient, agentKey)
-	statusPatch := client.MergeFrom(updated.DeepCopy())
-	now := metav1.Now()
-	updated.Status.Phase = kyberv1.AgentPhaseSuspended
-	updated.Status.LastTransition = &now
-	if err := k8sClient.Status().Patch(ctx, updated, statusPatch); err != nil {
-		t.Fatalf("patching to Suspended: %v", err)
-	}
-
-	// Seed the MessageBuffer with two pending messages (simulating what C1 will do).
-	msg1 := messagebuffer.PendingMessage{
-		Source:    "telegram",
-		From:      "12345",
-		Text:      "hey, you there?",
-		Timestamp: "2026-04-10T10:00:00Z",
-	}
-	msg2 := messagebuffer.PendingMessage{
-		Source:    "telegram",
-		From:      "12345",
-		Text:      "ping again",
-		Timestamp: "2026-04-10T10:00:05Z",
-	}
-	if err := buf.Push(ctx, "dave", msg1); err != nil {
-		t.Fatalf("Push msg1: %v", err)
-	}
-	if err := buf.Push(ctx, "dave", msg2); err != nil {
-		t.Fatalf("Push msg2: %v", err)
-	}
-
-	// Operator (or API webhook C1) sets desiredPhase=Running to wake the agent.
-	agentObj := getAgent(t, k8sClient, agentKey)
-	specPatch := client.MergeFrom(agentObj.DeepCopy())
-	agentObj.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := k8sClient.Patch(ctx, agentObj, specPatch); err != nil {
-		t.Fatalf("setting desiredPhase=Running: %v", err)
-	}
-
-	// Reconcile: Suspended + desired=Running → ActionWriteBriefAndCreatePod → Starting.
-	reconcileN(t, r, req, 1)
-
-	// Assert: agent moved to Starting.
-	finalAgent := getAgent(t, k8sClient, agentKey)
-	if finalAgent.Status.Phase != kyberv1.AgentPhaseStarting {
-		t.Errorf("phase: got %q, want Starting", finalAgent.Status.Phase)
-	}
-
-	// Assert: brief has shutdown_type=wake with 2 pending messages.
-	brief, err := store.Get(ctx, "dave")
-	if err != nil {
-		t.Fatalf("brief not found in store after wake: %v", err)
-	}
-	if brief.ShutdownType != briefstore.ShutdownTypeWake {
-		t.Errorf("ShutdownType: got %q, want %q", brief.ShutdownType, briefstore.ShutdownTypeWake)
-	}
-	if brief.RestartReason != "wake" {
-		t.Errorf("RestartReason: got %q, want %q", brief.RestartReason, "wake")
-	}
-	if len(brief.PendingMessages) != 2 {
-		t.Fatalf("PendingMessages len: got %d, want 2", len(brief.PendingMessages))
-	}
-	if brief.PendingMessages[0].Text != "hey, you there?" {
-		t.Errorf("PendingMessages[0].Text: got %q", brief.PendingMessages[0].Text)
-	}
-	if brief.PendingMessages[1].Text != "ping again" {
-		t.Errorf("PendingMessages[1].Text: got %q", brief.PendingMessages[1].Text)
-	}
-
-	// Assert: buffer is drained — second Drain returns empty.
-	remaining, err := buf.Drain(ctx, "dave")
-	if err != nil {
-		t.Fatalf("second Drain: %v", err)
-	}
-	if len(remaining) != 0 {
-		t.Errorf("buffer not drained: got %d remaining messages", len(remaining))
 	}
 }
 
@@ -2746,7 +2564,7 @@ func TestClassifyEvent_ForceNeedsAuth(t *testing.T) {
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-		kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseSuspended,
+		kyberv1.AgentPhaseStopped,
 	}
 	for _, ph := range allowed {
 		event, err := r.classifyEvent(ctx, forced(ph), nil)
@@ -2798,12 +2616,12 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	}
 
 	// Honored phases: Stop must derive EventDesiredStopped (the AC's required set
-	// plus Suspended and WaitingForMachine for parity). Notably this includes
-	// the crash-loop and machine-recovery phases.
+	// plus WaitingForMachine for parity). Notably this includes the crash-loop
+	// and machine-recovery phases.
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
-		kyberv1.AgentPhaseSuspended, kyberv1.AgentPhaseWaitingForMachine,
+		kyberv1.AgentPhaseWaitingForMachine,
 	}
 	for _, ph := range allowed {
 		event, err := r.classifyEvent(ctx, stopped(ph), nil)
@@ -5237,7 +5055,7 @@ func TestDesiredPhaseEnum_AcceptsEveryAPISettablePhase(t *testing.T) {
 	ctx := context.Background()
 
 	// Mirrors the action switch in pkg/api/routes_agents.go: start, stop,
-	// restart, suspend, force-needs-auth. Keep in lockstep with that switch.
+	// restart, force-needs-auth. Keep in lockstep with that switch.
 	settable := []struct {
 		action string
 		phase  kyberv1.AgentPhase
@@ -5245,7 +5063,6 @@ func TestDesiredPhaseEnum_AcceptsEveryAPISettablePhase(t *testing.T) {
 		{"start", kyberv1.AgentPhaseRunning},
 		{"stop", kyberv1.AgentPhaseStopped},
 		{"restart", kyberv1.AgentPhaseRestarting},
-		{"suspend", kyberv1.AgentPhaseSuspended},
 		{"force-needs-auth", kyberv1.AgentPhaseNeedsAuth},
 	}
 

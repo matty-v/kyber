@@ -18,7 +18,7 @@ Every accepted message, from either service, enters the same signed, rate-limite
 
 ## Channels need a running agent
 
-Both channels deliver to a running agent. A suspended agent does not receive chat messages, and a message does not wake it; you resume it by starting it from the [fleet console](fleet-console.md) or the API. Keep chat-driven agents running. Discord in particular delivers messages only over a live gateway connection held by the agent's pod, so messages sent while a Discord agent is down are lost.
+Both channels deliver to a running agent. A stopped agent does not receive chat messages; you bring it back by starting it from the [fleet console](fleet-console.md) or the API. Keep chat-driven agents running. Discord in particular delivers messages only over a live gateway connection held by the agent's pod, so messages sent while a Discord agent is down are lost.
 
 There is also a lighter, one-way Discord option: an outbound webhook the agent posts progress and status into, with no bot and no gateway connection. Use it when you want notifications, not conversation.
 

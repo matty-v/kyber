@@ -13,7 +13,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // compactCmd is a stand-in argv. The handler never inspects its contents —
@@ -31,7 +30,6 @@ func newCompactSessionServer(t *testing.T, cmds map[string][]string, objs ...run
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	return &api.Server{
 		K8sClient:              fakeClient,
-		MessageBuffer:          messagebuffer.NewMemoryBuffer(),
 		APIKey:                 testAPIKey,
 		Namespace:              "kyber-system",
 		ValidRuntimes:          map[string]bool{"claude-code": true, "codex": true, "openclaw": true},
@@ -124,7 +122,6 @@ func TestCompactSession_EmptyCommandIs501(t *testing.T) {
 func TestCompactSession_409NotRunning(t *testing.T) {
 	phases := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseStopped,
-		kyberv1.AgentPhaseSuspended,
 		kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseNeedsAuth,
 		// The tempting one: an OOM-killed agent looks like the perfect
@@ -317,7 +314,6 @@ func TestCompactSession_CooldownIndependentOfRestart(t *testing.T) {
 		WithRuntimeObjects(defaultMachine(), agent).Build()
 	srv := &api.Server{
 		K8sClient:              fakeClient,
-		MessageBuffer:          messagebuffer.NewMemoryBuffer(),
 		APIKey:                 testAPIKey,
 		Namespace:              "kyber-system",
 		ValidRuntimes:          map[string]bool{"claude-code": true},

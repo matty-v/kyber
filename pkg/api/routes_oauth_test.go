@@ -14,7 +14,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"github.com/matty-v/kyber/pkg/oauth/mockserver"
 )
 
@@ -55,7 +54,6 @@ func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
 		Build()
 	s := &api.Server{
 		K8sClient:         fakeClient,
-		MessageBuffer:     messagebuffer.NewMemoryBuffer(),
 		APIKey:            testAPIKey,
 		Namespace:         "kyber-system",
 		ValidRuntimes:     map[string]bool{"claude-code": true},
@@ -99,7 +97,6 @@ func TestReauthorize_AgentNotFound(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(defaultMachine()).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -123,7 +120,6 @@ func TestReauthorize_MissingFields(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(defaultMachine()).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},

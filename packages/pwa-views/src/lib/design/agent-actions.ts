@@ -34,7 +34,6 @@ export type AgentLifecycleKind =
   | 'start'
   | 'stop'
   | 'restart'
-  | 'suspend'
   // Operator-forced re-auth for a wedged agent (#395): drops it to NeedsAuth
   // (deleting any live pod) so it can be re-authorized from scratch.
   | 'force-needs-auth'
@@ -57,7 +56,6 @@ const LIFECYCLE_KINDS: readonly AgentLifecycleKind[] = [
   'start',
   'stop',
   'restart',
-  'suspend',
   'force-needs-auth',
   'retry-startup',
 ]
@@ -80,15 +78,14 @@ export function lifecycleActionEndpoint(kind: AgentLifecycleKind): AgentLifecycl
     case 'start':
     case 'stop':
     case 'restart':
-    case 'suspend':
     case 'force-needs-auth':
       return kind
   }
 }
 
 // Per-phase lifecycle subsets. Rules:
-//   - Don't offer Start on a Running agent; don't offer Stop/Suspend on a
-//     Stopped or Suspended agent.
+//   - Don't offer Start on a Running agent; don't offer Stop on a
+//     Stopped agent.
 //   - Restart (pod roll) is offered where it actually fires — i.e. from
 //     Running (EventDesiredRestarting only transitions {Running → Restarting},
 //     state_machine.go:213). It is NOT offered from crashed phases, where it
@@ -124,9 +121,8 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
     case '':
       return []
     case 'Running':
-      return ['stop', 'restart', 'suspend', 'force-needs-auth']
+      return ['stop', 'restart', 'force-needs-auth']
     case 'Stopped':
-    case 'Suspended':
       return ['start', 'restart', 'force-needs-auth']
     case 'Failed':
     case 'MemoryExhausted':

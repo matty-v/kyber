@@ -127,7 +127,6 @@ mkdir -p ~/.config/kyber
 umask 077
 cat > ~/.config/kyber/gcp-secrets.env <<EOF
 KYBER_API_KEY=$(openssl rand -hex 32)
-KYBER_WEBHOOK_SECRET=$(openssl rand -hex 32)
 KYBER_SIGNING_KEY=$(openssl rand -hex 32)
 POSTGRES_PASSWORD=$(openssl rand -hex 24)
 EOF
@@ -137,17 +136,6 @@ EOF
 password. Store it in a password manager alongside the GCP project credentials.
 Its full lifecycle — rotation, revocation, scopes — is in
 [`api-keys.md`](api-keys.md).
-
-**The webhook secret** is **mandatory** for Telegram inbound (kyber#564). The
-`/webhooks/telegram/*` routes sit outside the API-key wall and are authenticated
-solely by the `X-Telegram-Bot-Api-Secret-Token` header Telegram echoes back — so
-they **fail closed**: an install with an empty `webhookSecret` **rejects all
-webhook traffic** (no message buffered, no suspended agent woken) until one is
-configured. After setting it, the secret must also be registered with Telegram
-via `setWebhook` so the bot sends the matching header; Kyber's webhook
-auto-registration (see `api.publicURL` in § 5) does this for you when both are
-set. Leaving `webhookSecret` empty does not disable webhook auth — it disables
-webhook *inbound*.
 
 **The signing key** authenticates the internal API on `:8082`, which every agent
 pod uses to report status. It is delivered out of band on purpose, so a
@@ -279,7 +267,6 @@ kubectl create namespace kyber-system --dry-run=client -o yaml | kubectl apply -
 
 kubectl -n kyber-system create secret generic kyber-api-credentials \
   --from-literal=api-key="$KYBER_API_KEY" \
-  --from-literal=webhook-secret="$KYBER_WEBHOOK_SECRET" \
   --dry-run=client -o yaml | kubectl apply -f -
 
 # The key names matter: the control-plane Deployment reads exactly
@@ -313,7 +300,7 @@ done
 Expected:
 
 ```
-kyber-api-credentials        api-key,webhook-secret
+kyber-api-credentials        api-key
 kyber-k3s-credentials        k3s-join-token,k3s-server-url
 kyber-internal-signing-key   signing-key
 kyber-postgres-credentials   postgres-password
@@ -339,11 +326,11 @@ namespace:
   create: false
 
 api:
-  # The Secret created in § 4. Overrides apiKey/webhookSecret in the chart.
+  # The Secret created in § 4. Overrides apiKey in the chart.
   existingSecret: kyber-api-credentials
-  # Externally-reachable HTTPS URL. Required for Telegram webhook
-  # auto-registration. Set this to your Funnel URL from § 10, or to
-  # http://<VM_IP>:8080 if you are not using HTTPS yet.
+  # Externally-reachable HTTPS URL. Used to build the signed inbound
+  # webhook URLs shown in the console. Set this to your Funnel URL from
+  # § 10, or to http://<VM_IP>:8080 if you are not using HTTPS yet.
   publicURL: "https://kyber.<your-tailnet>.ts.net"
   service:
     # LoadBalancer so klipper-lb binds the node IP and the API is reachable
@@ -728,8 +715,8 @@ works), and API calls + WebSockets use `wss://` automatically.
 - **Zero config.** Tailscale handles DNS, cert provisioning, and renewal.
 - **Zero maintenance.** No cert rotation, no DNS TTL drift, no CA changes.
 - **Public reachable.** Unlike `tailscale serve` (tailnet-only), Funnel exposes
-  the service to the public internet — Telegram webhooks work, phones on cellular
-  work, etc.
+  the service to the public internet — signed inbound webhooks work, phones on
+  cellular work, etc.
 - **Upgradeable.** If you later want a custom domain
   (`kyber.yourdomain.com`), install cert-manager + ingress-nginx in the cluster
   and point an A record at the VM IP. The plain HTTP API on `:8080` still works
@@ -893,7 +880,7 @@ kubectl -n kyber-system logs deploy/kyber-gcp-control-plane --previous
 ```
 
 Common causes:
-- API key or webhook secret is empty → check the `kyber-api-credentials` secret
+- API key is empty → check the `kyber-api-credentials` secret
   and that `api.existingSecret` names it
 - Postgres or Redis connection refused → check those pods are `Running` and the
   DSN env vars are correct (`kyber-gcp-postgres:5432`, `kyber-gcp-redis:6379`)
@@ -925,19 +912,13 @@ StorageClass binds the volume.
 The API key in the browser doesn't match the one in the k8s secret. Open the PWA
 Settings page and paste the correct key.
 
-### Telegram messages don't reach agents (webhook drops)
+### Telegram messages don't reach agents
 
-The webhook routes **fail closed** (kyber#564): if `webhookSecret` is empty,
-every webhook request is rejected — Telegram still gets a `200` (so it doesn't
-retry-storm) but nothing is buffered and no suspended agent is woken. The
-control-plane log shows `telegram webhook rejected: no webhook secret configured
-(fail-closed, kyber#564)` and, at startup, `KYBER_WEBHOOK_SECRET not set —
-Telegram webhook routes will REJECT all traffic`. Fix: set a non-empty
-`webhookSecret` (or `existingSecret`) **and** re-register the bot with the same
-secret via Telegram `setWebhook` so it sends the matching
-`X-Telegram-Bot-Api-Secret-Token` header. A `telegram webhook secret mismatch`
-log instead means the registered secret and the configured one differ —
-re-register with the configured value.
+Telegram delivery is the in-pod sidecar long-polling the Bot API — there is no
+server-side webhook route involved. Check that the agent is `Running`, that the
+Telegram sidecar container in the agent pod is up, and that the sender's user ID
+is on the agent's allowlist. A second process polling the same bot token (a
+`409 Conflict` in the sidecar log) also silences delivery.
 
 ### LoadBalancer stuck in Pending
 

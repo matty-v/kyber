@@ -412,11 +412,6 @@ func (in *AgentSecrets) DeepCopy() *AgentSecrets {
 func (in *AgentSpec) DeepCopyInto(out *AgentSpec) {
 	*out = *in
 	in.Resources.DeepCopyInto(&out.Resources)
-	if in.IdleTimeout != nil {
-		in, out := &in.IdleTimeout, &out.IdleTimeout
-		*out = new(metav1.Duration)
-		**out = **in
-	}
 	out.Identity = in.Identity
 	out.IdentityRepo = in.IdentityRepo
 	out.Secrets = in.Secrets

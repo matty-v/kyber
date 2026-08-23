@@ -79,7 +79,6 @@ image-list:
 helm-lint:
 	helm lint $(HELM_CHART_DIR) \
 		--set api.apiKey=test123 \
-		--set api.webhookSecret=webhook123 \
 		--set k3s.joinToken=K10abc \
 		--set k3s.serverUrl=https://10.0.0.1:6443 \
 		--set image.controlPlane.tag=local \
@@ -94,7 +93,6 @@ helm-lint:
 helm-template:
 	helm template $(HELM_RELEASE) $(HELM_CHART_DIR) \
 		--set api.apiKey=test123 \
-		--set api.webhookSecret=webhook123 \
 		--set k3s.joinToken=K10abc \
 		--set k3s.serverUrl=https://10.0.0.1:6443 \
 		--set image.controlPlane.tag=local \
@@ -110,7 +108,6 @@ helm-install-k3d:
 	k3d cluster create kyber-d1 --no-rollback || true
 	helm upgrade --install $(HELM_RELEASE) $(HELM_CHART_DIR) \
 		--set api.apiKey=test123 \
-		--set api.webhookSecret=webhook123 \
 		--set k3s.joinToken=K10abc \
 		--set k3s.serverUrl=https://10.0.0.1:6443 \
 		--set image.controlPlane.tag=local \

@@ -392,7 +392,6 @@ func TestInboundAudit_PerBindingCap(t *testing.T) {
 			Machine:   "worker-1",
 			Runtime:   "claude-code",
 			Model:     "claude-sonnet-4",
-			Scaling:   kyberv1.AgentScalingWarm,
 			Resources: kyberv1.AgentResources{},
 			Secrets:   kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 			InboundBindings: []kyberv1.AgentInboundBinding{

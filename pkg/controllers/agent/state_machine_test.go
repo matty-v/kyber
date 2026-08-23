@@ -7,8 +7,8 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
-// TestNextPhase_AllTransitions covers 18 of the 20 transitions in the state machine table.
-// RetryLimitReached is covered by TestNextPhase_FailedRetryLimit; the overall count is 20.
+// TestNextPhase_AllTransitions covers the transitions in the state machine table.
+// RetryLimitReached is covered by TestNextPhase_FailedRetryLimit.
 func TestNextPhase_AllTransitions(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -72,13 +72,6 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseRestarting,
 		},
 		{
-			name:       "Running: desired=Suspended → Suspended",
-			current:    kyberv1.AgentPhaseRunning,
-			event:      EventDesiredSuspended,
-			wantAction: ActionCaptureStateAndDeletePod,
-			wantNext:   kyberv1.AgentPhaseSuspended,
-		},
-		{
 			name:       "Running: pod dies (crash), retries available → Failed",
 			current:    kyberv1.AgentPhaseRunning,
 			event:      EventPodDied,
@@ -136,29 +129,6 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			current:    kyberv1.AgentPhaseFailed,
 			event:      EventDesiredRunning,
 			wantAction: ActionResetRetryAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
-		},
-		// New CRD with desiredPhase=Suspended — create PVC only, go directly to Suspended.
-		{
-			name:       "empty phase: desiredPhase=Suspended → Suspended (PVC only)",
-			current:    "",
-			event:      EventDesiredSuspended,
-			wantAction: ActionCreatePV,
-			wantNext:   kyberv1.AgentPhaseSuspended,
-		},
-		// Suspended transitions
-		{
-			name:       "Suspended: wake event received → Starting",
-			current:    kyberv1.AgentPhaseSuspended,
-			event:      EventWakeReceived,
-			wantAction: ActionWriteBriefAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
-		},
-		{
-			name:       "Suspended: desired=Running → Starting",
-			current:    kyberv1.AgentPhaseSuspended,
-			event:      EventDesiredRunning,
-			wantAction: ActionWriteBriefAndCreatePod,
 			wantNext:   kyberv1.AgentPhaseStarting,
 		},
 		// NeedsAuth transitions
@@ -242,19 +212,11 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantAction: ActionUpdateStatus,
 			wantNext:   kyberv1.AgentPhaseNeedsAuth,
 		},
-		{
-			name:       "Suspended + DesiredNeedsAuth → NeedsAuth (status only)",
-			current:    kyberv1.AgentPhaseSuspended,
-			event:      EventDesiredNeedsAuth,
-			wantAction: ActionUpdateStatus,
-			wantNext:   kyberv1.AgentPhaseNeedsAuth,
-		},
 		// Authoritative Stop kill switch (#468), mirroring the #395 NeedsAuth
 		// shape. Live/terminal-pod phases route through Stopping via
 		// CaptureStateAndDeletePod (idempotent on a nil/terminal pod) so the pod
-		// is provably gone before converging to Stopped; the pod-less Suspended
-		// phase flips status straight to Stopped. Running keeps its existing
-		// graceful SIGTERM row (asserted elsewhere) — not re-added here.
+		// is provably gone before converging to Stopped. Running keeps its
+		// existing graceful SIGTERM row (asserted elsewhere) — not re-added here.
 		{
 			name:       "Starting + DesiredStopped → Stopping (deletes pod)",
 			current:    kyberv1.AgentPhaseStarting,
@@ -275,13 +237,6 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			event:      EventDesiredStopped,
 			wantAction: ActionCaptureStateAndDeletePod,
 			wantNext:   kyberv1.AgentPhaseStopping,
-		},
-		{
-			name:       "Suspended + DesiredStopped → Stopped (status only, no live pod)",
-			current:    kyberv1.AgentPhaseSuspended,
-			event:      EventDesiredStopped,
-			wantAction: ActionUpdateStatus,
-			wantNext:   kyberv1.AgentPhaseStopped,
 		},
 	}
 
@@ -319,7 +274,6 @@ func TestNextPhase_InvalidTransitions(t *testing.T) {
 		{"Running cannot receive CRD created", kyberv1.AgentPhaseRunning, EventCRDCreated},
 		{"Stopped cannot receive pod died", kyberv1.AgentPhaseStopped, EventPodDied},
 		{"Creating cannot receive desired stopped", kyberv1.AgentPhaseCreating, EventDesiredStopped},
-		{"Suspended cannot receive pod scheduled", kyberv1.AgentPhaseSuspended, EventPodScheduled},
 		{"NeedsAuth cannot receive PodDied", kyberv1.AgentPhaseNeedsAuth, EventPodDied},
 	}
 

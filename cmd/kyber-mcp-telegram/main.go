@@ -261,8 +261,8 @@ func main() {
 		_ = mcp.Shutdown(shutdownCtx)
 	}()
 
-	// Telegram forbids getUpdates while a webhook is set. A running Codex pod
-	// owns polling, so clear any scale-to-zero webhook left from an older state.
+	// Telegram forbids getUpdates while a webhook is set. A running pod
+	// owns polling, so clear any webhook left registered from an older state.
 	// Retry rather than exit: a Telegram outage must not crashloop this
 	// container and hold the whole agent pod in Starting — the same rationale
 	// the Discord sidecar applies to its Gateway connect.

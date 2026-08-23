@@ -11,7 +11,6 @@ import (
 	"github.com/gorilla/websocket"
 
 	"github.com/matty-v/kyber/pkg/api"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -23,7 +22,6 @@ func newTestEventsServer(t *testing.T) *api.Server {
 	bus := api.NewEventBus()
 	return &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		EventBus:      bus,
@@ -160,7 +158,6 @@ func TestEvents_NilBus(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	s := &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
 		// EventBus intentionally nil

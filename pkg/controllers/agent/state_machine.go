@@ -32,24 +32,21 @@ const (
 	// EventDesiredStopped fires when an operator sets spec.desiredPhase to
 	// Stopped — the authoritative kill switch (#468). Honored from every phase an
 	// operator can hit Stop during an incident (Running, Starting, Failed,
-	// MemoryExhausted, Suspended) — see classifyEvent's centralized allowlist,
+	// MemoryExhausted) — see classifyEvent's centralized allowlist,
 	// which pre-empts the Failed/MemoryExhausted auto-restart. The Action differs
 	// by phase: live/terminal-pod phases tear the pod down
-	// (CaptureStateAndDeletePod → Stopping); the pod-less Suspended phase flips
-	// status straight to Stopped. Running keeps a graceful SIGTERM → Stopping.
+	// (CaptureStateAndDeletePod → Stopping). Running keeps a graceful SIGTERM → Stopping.
 	EventDesiredStopped Event = "DesiredStopped"
 	// EventDesiredRestarting fires when spec.desiredPhase is set to Restarting while Running.
 	EventDesiredRestarting Event = "DesiredRestarting"
-	// EventDesiredSuspended fires when spec.desiredPhase is set to Suspended while Running.
-	EventDesiredSuspended Event = "DesiredSuspended"
 	// EventDesiredNeedsAuth fires when an operator sets spec.desiredPhase to
 	// NeedsAuth to force a wedged agent down into the re-authorize flow (#395).
 	// Honored only from the recoverable phases (Running, Starting, Failed,
-	// MemoryExhausted, Stopped, Suspended) — see classifyEvent. The Action
+	// MemoryExhausted, Stopped) — see classifyEvent. The Action
 	// differs by phase: live-pod phases tear the pod down
 	// (CaptureStateAndDeletePod), pod-less phases flip status only (UpdateStatus).
 	EventDesiredNeedsAuth Event = "DesiredNeedsAuth"
-	// EventDesiredRunning fires when spec.desiredPhase is set to Running from Stopped/Suspended/Failed.
+	// EventDesiredRunning fires when spec.desiredPhase is set to Running from Stopped/Failed.
 	EventDesiredRunning Event = "DesiredRunning"
 	// EventPodDied fires when the pod terminates unexpectedly while the agent is Running.
 	EventPodDied Event = "PodDied"
@@ -66,8 +63,6 @@ const (
 	EventAutoRestartTriggered Event = "AutoRestartTriggered"
 	// EventRetryLimitReached fires when restartCount >= 3 and no more retries are allowed.
 	EventRetryLimitReached Event = "RetryLimitReached"
-	// EventWakeReceived fires when a wake event arrives (e.g., Telegram message) for a Suspended agent.
-	EventWakeReceived Event = "WakeReceived"
 	// EventPreemptionNotice fires when the platform receives advance warning that the agent's machine
 	// will be preempted, giving the agent time to drain gracefully.
 	EventPreemptionNotice Event = "PreemptionNotice"
@@ -99,10 +94,6 @@ type Action string
 const (
 	// ActionCreatePVAndPod means create the PVC and agent pod (first boot).
 	ActionCreatePVAndPod Action = "CreatePVAndPod"
-	// ActionCreatePV means create the PVC only, without a pod. Used when a new
-	// Agent CRD arrives with desiredPhase=Suspended so operators can pre-populate
-	// the PV before unsuspending.
-	ActionCreatePV Action = "CreatePV"
 	// ActionWaitForStart means wait for the pod to start (no k8s action required).
 	ActionWaitForStart Action = "WaitForStart"
 	// ActionLogAndEmitEvent means log the error and emit a k8s event.
@@ -162,12 +153,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: "", event: EventCRDCreated}: {
 			Action:    ActionCreatePVAndPod,
 			NextPhase: kyberv1.AgentPhaseCreating,
-		},
-		// (none) → Suspended: new CRD born with desiredPhase=Suspended.
-		// Creates the PVC so an operator can pre-populate it, then parks.
-		{phase: "", event: EventDesiredSuspended}: {
-			Action:    ActionCreatePV,
-			NextPhase: kyberv1.AgentPhaseSuspended,
 		},
 		// Creating transitions
 		{phase: kyberv1.AgentPhaseCreating, event: EventPodScheduled}: {
@@ -233,10 +218,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionCaptureStateAndDeletePod,
 			NextPhase: kyberv1.AgentPhaseRestarting,
 		},
-		{phase: kyberv1.AgentPhaseRunning, event: EventDesiredSuspended}: {
-			Action:    ActionCaptureStateAndDeletePod,
-			NextPhase: kyberv1.AgentPhaseSuspended,
-		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventPodDied}: {
 			Action:    ActionEmitEventAutoRestart,
 			NextPhase: kyberv1.AgentPhaseFailed,
@@ -292,15 +273,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionResetRetryAndCreatePod,
 			NextPhase: kyberv1.AgentPhaseStarting,
 		},
-		// Suspended transitions
-		{phase: kyberv1.AgentPhaseSuspended, event: EventWakeReceived}: {
-			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
-		},
-		{phase: kyberv1.AgentPhaseSuspended, event: EventDesiredRunning}: {
-			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
-		},
 		// NeedsAuth transitions: operator re-authorizes → restarts the agent.
 		//
 		// The re-authorization is what this row waits for, and classifyEvent is
@@ -315,9 +287,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseStarting,
 		},
 		// Operator-forced re-auth (#395): drop a wedged agent to NeedsAuth so it
-		// can be re-authorized from scratch. Mirrors the suspend rows above.
+		// can be re-authorized from scratch.
 		// Live-pod phases (Running, Starting) must actually delete the pod —
-		// CaptureStateAndDeletePod, same as suspend — so a wedged agent stops
+		// CaptureStateAndDeletePod — so a wedged agent stops
 		// running on bad state; a bare status flip would leave the stale pod up.
 		{phase: kyberv1.AgentPhaseRunning, event: EventDesiredNeedsAuth}: {
 			Action:    ActionCaptureStateAndDeletePod,
@@ -327,7 +299,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionCaptureStateAndDeletePod,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
-		// Pod-less phases (Failed, MemoryExhausted, Stopped, Suspended): no pod
+		// Pod-less phases (Failed, MemoryExhausted, Stopped): no pod
 		// to delete, so a bare status flip — same Action the OAuth-failure
 		// auto-transitions use.
 		{phase: kyberv1.AgentPhaseFailed, event: EventDesiredNeedsAuth}: {
@@ -339,10 +311,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
 		{phase: kyberv1.AgentPhaseStopped, event: EventDesiredNeedsAuth}: {
-			Action:    ActionUpdateStatus,
-			NextPhase: kyberv1.AgentPhaseNeedsAuth,
-		},
-		{phase: kyberv1.AgentPhaseSuspended, event: EventDesiredNeedsAuth}: {
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
@@ -369,12 +337,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseMemoryExhausted, event: EventDesiredStopped}: {
 			Action:    ActionCaptureStateAndDeletePod,
 			NextPhase: kyberv1.AgentPhaseStopping,
-		},
-		// Suspended has no live pod (suspend already deleted it), so a bare status
-		// flip straight to Stopped — same shape as the pod-less NeedsAuth rows.
-		{phase: kyberv1.AgentPhaseSuspended, event: EventDesiredStopped}: {
-			Action:    ActionUpdateStatus,
-			NextPhase: kyberv1.AgentPhaseStopped,
 		},
 		{phase: kyberv1.AgentPhaseWaitingForMachine, event: EventDesiredStopped}: {
 			Action:    ActionForceKillPod,

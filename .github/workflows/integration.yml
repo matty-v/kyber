@@ -7,7 +7,6 @@ on:
       - main
     paths:
       - 'pkg/briefstore/**'
-      - 'pkg/messagebuffer/**'
       - 'pkg/api/**'
       - 'test/integration/**'
       - 'test/contract/**'

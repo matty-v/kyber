@@ -105,21 +105,13 @@ api:
   # apiKey: REQUIRED unless existingSecret is set.
   # The control plane rejects all requests when this is unset.
   apiKey: ""
-  # webhookSecret: REQUIRED for the Telegram webhook routes to accept traffic.
-  # The webhook secret Telegram echoes back in the X-Telegram-Bot-Api-Secret-Token
-  # header. Empty = FAIL CLOSED (kyber#564): the routes reject ALL webhook traffic
-  # until a secret is set — an empty value is no longer "auth disabled". Set this
-  # (or existingSecret) and re-register the bot via Telegram setWebhook with the
-  # same value, or inbound Telegram messages will be dropped.
-  webhookSecret: ""
   # publicURL: externally-reachable HTTPS URL for this Kyber instance.
-  # Used for Telegram webhook auto-registration when agents are created.
+  # Used to render inbound-binding webhook URLs shown in the PWA/API.
   # Example: "https://kyber.your-tailnet.ts.net"
-  # If empty, Telegram webhook registration is skipped (operator must call setWebhook manually).
   publicURL: ""
-  # existingSecret: name of a pre-created Secret that provides api-key and webhook-secret
-  # keys. When set, the chart does NOT create a Secret — the operator is responsible.
-  # Overrides apiKey / webhookSecret above.
+  # existingSecret: name of a pre-created Secret that provides the api-key
+  # key. When set, the chart does NOT create a Secret — the operator is responsible.
+  # Overrides apiKey above.
   existingSecret: ""
   # authz (kyber#474): caller-level authorization on agent lifecycle mutations.
   # Scoped API keys are an optional `callers` JSON doc on the api-key Secret, e.g.
@@ -127,7 +119,7 @@ api:
   #     {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
   # The legacy api-key above always resolves to a full-scope caller (backward-
   # compatible). Scopes nest: lifecycle:admin ⊃ lifecycle:write — the impactful
-  # verbs (suspend, force-needs-auth) require admin; start/stop/restart require write.
+  # verb (force-needs-auth) requires admin; start/stop/restart require write.
   authz:
     # enforce: when false (default) authz decisions are audit-logged but never
     # block (permissive/observation mode) — single-key installs are unaffected.
@@ -1139,7 +1131,7 @@ preview:
   # already knows (provisioned identically as the CI secret KYBER_DEV_PROBE_API_KEY).
   # Empty → the bootstrap Job generates a random per-PR key (the default).
   # DEV-ONLY: never set on a non-preview install — it makes the API key
-  # predictable. The webhook-secret stays random regardless.
+  # predictable.
   devApiKeySecretName: ""
   # devApiKeySourceNamespace: namespace holding devApiKeySecretName. Empty →
   # the preview namespace itself (no cross-namespace read needed).

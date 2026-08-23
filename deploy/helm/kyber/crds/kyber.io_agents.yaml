@@ -102,7 +102,7 @@ spec:
               desiredPhase:
                 description: |-
                   DesiredPhase is written by the API module to signal a lifecycle intent.
-                  Valid values: Running, Stopped, Suspended, Restarting, NeedsAuth.
+                  Valid values: Running, Stopped, Restarting, NeedsAuth.
                   The controller reads this and drives state transitions.
 
                   NeedsAuth is the operator-forced re-auth intent (#395), written by
@@ -117,7 +117,6 @@ spec:
                 enum:
                 - Running
                 - Stopped
-                - Suspended
                 - Restarting
                 - NeedsAuth
                 type: string
@@ -154,12 +153,6 @@ spec:
                       the operator must supply Repo directly.
                     type: string
                 type: object
-              idleTimeout:
-                description: |-
-                  IdleTimeout is how long the agent can be idle before suspending.
-                  Format: Go duration string (e.g., "15m", "1h").
-                  Only applies when scaling is "scale-to-zero".
-                type: string
               inboundBindings:
                 description: |-
                   InboundBindings declares generic HMAC-authenticated inbound prompt
@@ -418,14 +411,6 @@ spec:
                 maxLength: 64
                 pattern: ^[0-9A-Za-z.\-]+$
                 type: string
-              scaling:
-                default: warm
-                description: Scaling controls whether the agent uses warm (always-on)
-                  or scale-to-zero mode.
-                enum:
-                - warm
-                - scale-to-zero
-                type: string
               secrets:
                 description: Secrets holds references to GCP Secret Manager paths
                   for this agent.
@@ -464,7 +449,6 @@ spec:
             - machine
             - resources
             - runtime
-            - scaling
             - secrets
             type: object
           status:

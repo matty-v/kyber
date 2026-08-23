@@ -14,7 +14,7 @@ All operator-facing requests go through the control plane's REST API under `/api
 
 The key can be rotated programmatically with no downtime: one authenticated call swaps the key, and the old one stops working on the next request. A manual rotation path exists for compromise recovery.
 
-For agent lifecycle actions, you can also issue scoped keys. A `lifecycle:write` key can start, stop, and restart agents; the more impactful suspend and force-re-auth verbs need `lifecycle:admin`, which includes everything `write` grants. Enforcement is opt-in per cluster: under-scoped callers are audit-logged but not blocked until you turn it on, so you can define scoped callers, watch the audit log, and then enable enforcement.
+For agent lifecycle actions, you can also issue scoped keys. A `lifecycle:write` key can start, stop, and restart agents; the more impactful force-re-auth verb needs `lifecycle:admin`, which includes everything `write` grants. Enforcement is opt-in per cluster: under-scoped callers are audit-logged but not blocked until you turn it on, so you can define scoped callers, watch the audit log, and then enable enforcement.
 
 Agents authenticate to the platform separately, with per-pod credentials that only let an agent act on itself; no agent can drive another agent through the API.
 

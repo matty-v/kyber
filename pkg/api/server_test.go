@@ -11,7 +11,6 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/messagebuffer"
 )
 
 // newTestPublicServer builds a Server with a fake k8s client and a fixed API key for testing.
@@ -27,7 +26,6 @@ func newTestPublicServer(t *testing.T, apiKey string) *api.Server {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	return &api.Server{
 		K8sClient:     fakeClient,
-		MessageBuffer: messagebuffer.NewMemoryBuffer(),
 		APIKey:        apiKey,
 		Namespace:     "kyber-system",
 	}
@@ -122,13 +120,16 @@ func TestMiddleware_WebhooksBypassAuth(t *testing.T) {
 	s := newTestPublicServer(t, "my-secret-key")
 	h := buildTestHandler(s)
 
-	// POST to a webhook with a non-existent agent — no auth header.
-	req := httptest.NewRequest(http.MethodPost, "/webhooks/telegram/dave", nil)
+	// POST to a webhook with a non-existent binding — no auth header.
+	req := httptest.NewRequest(http.MethodPost, "/webhooks/inbound/dave/telegram", nil)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 
-	// Should not return 401 — webhook routes bypass API key auth.
-	if rr.Code == http.StatusUnauthorized {
-		t.Errorf("webhook route returned 401 — it should bypass API key auth")
+	// The inbound handler's own auth returns a flat {"error":"unauthorized"}
+	// body for an unknown agent; the API-key middleware's 401 has a different
+	// structured body. Seeing the handler's body proves the request bypassed
+	// the API-key middleware and reached the webhook handler.
+	if got := rr.Body.String(); got != `{"error":"unauthorized"}` {
+		t.Errorf("webhook route did not reach the inbound handler (API-key middleware intercepted?): status=%d body=%s", rr.Code, got)
 	}
 }

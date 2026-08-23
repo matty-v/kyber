@@ -10,7 +10,7 @@ The console is organized into surfaces, each for one job:
 
 - **Dashboard**: the cluster at a glance. Agent status counts, the recently active agents, which agents are running low on context budget, and a live read-only peek into any agent's terminal.
 - **Machines**: create and manage the machines agents run on.
-- **Agents**: create and manage agents, stream logs, open a shell into an agent, and drive lifecycle actions such as stop, start, suspend, restart, re-authorize, and delete. An agent's detail view carries its own tabs: Overview, Comms, Secrets, Jobs, Webhooks, Activity, and Shell.
+- **Agents**: create and manage agents, stream logs, open a shell into an agent, and drive lifecycle actions such as stop, start, restart, re-authorize, and delete. An agent's detail view carries its own tabs: Overview, Comms, Secrets, Jobs, Webhooks, Activity, and Shell.
 - **Metrics**: per-agent working time, token usage, cost, and live node resource gauges. See [Metrics](#metrics) below.
 - **Settings**: manage the API key, choose the update channel and install cluster updates, see the full version breakdown (build, chart version, and the substrate the cluster runs on), and set fleet-wide harness defaults.
 
@@ -35,7 +35,7 @@ Very large reads come back truncated rather than unbounded, and the API says so 
 
 The Secrets tab manages an agent's own secrets. Adding a brand-new key never interrupts a running agent; the value becomes available at the agent's next natural pod start. Replacing an existing value, moving a key between the text and file kinds, or deleting a key restarts the agent's pod automatically so a stale value never lingers.
 
-Changing an agent's model from its detail page restarts a live agent's pod so the new model takes effect right away. The restart takes around half a minute, and a message that arrives during that window is held and delivered once the agent is back up. A stopped or suspended agent keeps the new model for its next start without being woken, and a failed agent is started fresh on it. The model list comes from the catalog the agent's own authenticated runtime reports, so it shows what your subscription actually offers; a newly created agent's list fills in once its runtime has reported.
+Changing an agent's model from its detail page restarts a live agent's pod so the new model takes effect right away. The restart takes around half a minute, and a message that arrives during that window is held and delivered once the agent is back up. A stopped agent keeps the new model for its next start, and a failed agent is started fresh on it. The model list comes from the catalog the agent's own authenticated runtime reports, so it shows what your subscription actually offers; a newly created agent's list fills in once its runtime has reported.
 
 The Webhooks tab manages the signed inbound bindings that let other senders reach the agent. The signing secret is shown exactly once when a binding is created and once again when it is rotated, and is never readable afterward, so capture it then. Rotating keeps the old secret valid for 24 hours so an in-flight cutover does not drop traffic. Each binding is rate-limited to 10 requests per minute by default, duplicate request bodies are dropped for 24 hours, and each agent queues at most 5 pending messages; excess load is shed with an explicit reason rather than buffered without bound.
 
