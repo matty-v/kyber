@@ -9,6 +9,9 @@
 - Structured log fields are rendered as readable timestamp, level, agent,
   component, and message columns. Every entry retains expandable raw output,
   and the visible merged snapshot remains downloadable as NDJSON or text.
+- Consolidated reads stay bounded by line and byte limits, cancel when filters
+  change, keep URL navigation synchronized, and show pod/container identity in
+  a dedicated source column.
 
 ## 0.30.0 — 2026-08-23
 

@@ -11,6 +11,7 @@ import type { LoggingReadOptions, LoggingTarget } from '../lib/types'
 
 type Source = 'kubelet' | 'archive'
 const MAX_LINES = 5000
+const MAX_BUFFER_BYTES = 8 << 20
 const LIVE_REFRESH_MS = 5000
 const READ_CONCURRENCY = 2
 
@@ -39,6 +40,36 @@ export interface DisplayLogLine {
   source: string
   message: string
   raw: string
+}
+
+function compareLogLines(a: DisplayLogLine, b: DisplayLogLine): number {
+  if (a.timestampMs === null && b.timestampMs === null) return a.source.localeCompare(b.source)
+  if (a.timestampMs === null) return 1
+  if (b.timestampMs === null) return -1
+  return a.timestampMs - b.timestampMs
+}
+
+export class BoundedLogBuffer {
+  private lines: DisplayLogLine[] = []
+  private bytes = 0
+  truncated = false
+
+  add(batch: DisplayLogLine[]) {
+    this.lines.push(...batch)
+    this.bytes += batch.reduce((total, line) => total + line.raw.length * 2, 0)
+    if (this.lines.length <= MAX_LINES && this.bytes <= MAX_BUFFER_BYTES) return
+    this.lines.sort(compareLogLines)
+    while (this.lines.length > MAX_LINES || this.bytes > MAX_BUFFER_BYTES) {
+      const removed = this.lines.shift()
+      if (!removed) break
+      this.bytes -= removed.raw.length * 2
+      this.truncated = true
+    }
+  }
+
+  snapshot(): DisplayLogLine[] {
+    return [...this.lines].sort(compareLogLines)
+  }
 }
 
 function localValue(date: Date): string {
@@ -96,9 +127,13 @@ function Select({ label, value, onChange, children }: React.PropsWithChildren<{
   </label>
 }
 
-async function readTextStream(stream: ReadableStream<string>): Promise<string[]> {
+async function readTextStream(
+  stream: ReadableStream<string>,
+  activeReaders: Set<ReadableStreamDefaultReader<string>>,
+  onLines: (lines: string[]) => void,
+): Promise<void> {
   const reader = stream.getReader()
-  const lines: string[] = []
+  activeReaders.add(reader)
   let buffer = ''
   try {
     while (true) {
@@ -107,11 +142,12 @@ async function readTextStream(stream: ReadableStream<string>): Promise<string[]>
       buffer += value
       const chunks = buffer.split('\n')
       buffer = chunks.pop() ?? ''
-      lines.push(...chunks.filter(Boolean))
+      const complete = chunks.filter(Boolean)
+      if (complete.length) onLines(complete)
     }
-    if (buffer) lines.push(buffer)
-    return lines
+    if (buffer) onLines([buffer])
   } finally {
+    activeReaders.delete(reader)
     reader.releaseLock()
   }
 }
@@ -133,8 +169,8 @@ export function Logs() {
   const allTargets = useMemo(() => targets.data?.targets ?? [], [targets.data?.targets])
   const agents = [...new Set(allTargets.flatMap((target) => target.agent ? [target.agent] : []))].sort()
   const components = [...new Set(allTargets.flatMap((target) => target.containers.map((container) => container.component || target.component)))].sort()
-  const [agent, setAgent] = useState(params.get('agent') ?? '')
-  const [component, setComponent] = useState(params.get('component') ?? '')
+  const agent = params.get('agent') ?? ''
+  const component = params.get('component') ?? ''
   const [source, setSource] = useState<Source>('kubelet')
   const [paused, setPaused] = useState(false)
   const [since, setSince] = useState(localValue(new Date(Date.now() - 60 * 60_000)))
@@ -152,12 +188,11 @@ export function Logs() {
     [allTargets, machine, agent, component, source],
   )
 
-  useEffect(() => {
+  function setFilter(name: 'agent' | 'component', value: string) {
     const next = Object.fromEntries(params.entries())
-    if (agent) next.agent = agent; else delete next.agent
-    if (component) next.component = component; else delete next.component
+    if (value) next[name] = value; else delete next[name]
     setParams(next, { replace: true })
-  }, [agent, component])
+  }
 
   useEffect(() => {
     if (source !== 'kubelet' || paused || loading) return
@@ -168,8 +203,9 @@ export function Logs() {
   useEffect(() => {
     if (!selections.length) { setLines([]); setErrors([]); setLoading(false); return }
     let cancelled = false
-    setLoading(true); setErrors([]); setTruncated(false)
-    const results: DisplayLogLine[][] = Array.from({ length: selections.length }, () => [])
+    setLoading(true); setLines([]); setErrors([]); setTruncated(false)
+    const buffer = new BoundedLogBuffer()
+    const activeReaders = new Set<ReadableStreamDefaultReader<string>>()
     const failures: string[] = []
     let wasTruncated = false
     let nextIndex = 0
@@ -195,26 +231,26 @@ export function Logs() {
         try {
           const result = await api.loggingStream(opts)
           wasTruncated ||= result.truncated
-          const rawLines = await readTextStream(result.stream)
-          results[index] = rawLines.map((raw, lineIndex) => formatLogLine(raw, selection, lineIndex))
+          let lineIndex = 0
+          await readTextStream(result.stream, activeReaders, (rawLines) => {
+            buffer.add(rawLines.map((raw) => formatLogLine(raw, selection, lineIndex++)))
+          })
         } catch (error) {
-          failures.push(`${selection.target.pod}/${selection.container.name}: ${(error as Error).message}`)
+          if (!cancelled && (error as Error).name !== 'AbortError') {
+            failures.push(`${selection.target.pod}/${selection.container.name}: ${(error as Error).message}`)
+          }
         }
       }
     }
 
     void Promise.all(Array.from({ length: Math.min(READ_CONCURRENCY, selections.length) }, worker)).then(() => {
       if (cancelled) return
-      const allLines = results.flat()
-      const merged = allLines.sort((a, b) => {
-        if (a.timestampMs === null && b.timestampMs === null) return a.source.localeCompare(b.source)
-        if (a.timestampMs === null) return 1
-        if (b.timestampMs === null) return -1
-        return a.timestampMs - b.timestampMs
-      }).slice(-MAX_LINES)
-      setLines(merged); setErrors(failures); setTruncated(wasTruncated || allLines.length > MAX_LINES); setLoading(false)
+      setLines(buffer.snapshot()); setErrors(failures); setTruncated(wasTruncated || buffer.truncated); setLoading(false)
     })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+      for (const reader of activeReaders) void reader.cancel()
+    }
   }, [api, selections, source, loadKey, refreshKey])
 
   useEffect(() => {
@@ -240,8 +276,8 @@ export function Logs() {
     <div><h2 className="font-display text-2xl font-semibold">Fleet Logs</h2><p className="mt-1 text-sm text-text-muted">One time-ordered view across every Kyber workload.</p></div>
     <Card className="space-y-4">
       <div className="flex flex-wrap gap-3">
-        <Select label="Agent" value={agent} onChange={setAgent}><option value="">All agents and platform</option>{agents.map((value) => <option key={value}>{value}</option>)}</Select>
-        <Select label="Component" value={component} onChange={setComponent}><option value="">All components</option>{components.map((value) => <option key={value}>{value}</option>)}</Select>
+        <Select label="Agent" value={agent} onChange={(value) => setFilter('agent', value)}><option value="">All agents and platform</option>{agents.map((value) => <option key={value}>{value}</option>)}</Select>
+        <Select label="Component" value={component} onChange={(value) => setFilter('component', value)}><option value="">All components</option>{components.map((value) => <option key={value}>{value}</option>)}</Select>
       </div>
       <div className="flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-border-subtle pt-3 text-xs text-text-muted">
         <span><strong className="font-mono text-text-primary">{selections.length}</strong> log sources</span>
@@ -266,11 +302,12 @@ export function Logs() {
       {(truncated || lines.length === MAX_LINES) && <p role="status" className="rounded bg-warning/10 px-3 py-2 text-xs text-warning">Output was truncated to protect the control plane and browser.</p>}
       {!!errors.length && <p role="alert" className="rounded bg-danger/10 px-3 py-2 text-xs text-danger">{errors.length} source{errors.length === 1 ? '' : 's'} could not be read. <span className="font-mono">{errors[0]}</span></p>}
       <div ref={boxRef} className="h-[32rem] overflow-auto rounded-lg border border-border-subtle bg-surface-sunken font-mono text-xs text-text-secondary">
-        {!lines.length && !errors.length ? <p className="p-3 text-text-disabled">{loading ? 'Loading telemetry…' : 'No logs match these filters.'}</p> : lines.map((line) => <div key={line.id} className="grid grid-cols-[10rem_4rem_7rem_11rem_minmax(18rem,1fr)] gap-2 border-b border-border-subtle/60 px-3 py-1.5 last:border-0">
+        {!lines.length && !errors.length ? <p className="p-3 text-text-disabled">{loading ? 'Loading telemetry…' : 'No logs match these filters.'}</p> : lines.map((line) => <div key={line.id} className="grid grid-cols-[8rem_4rem_7rem_10rem_14rem_minmax(18rem,1fr)] gap-2 border-b border-border-subtle/60 px-3 py-1.5 last:border-0">
           <span className="truncate text-text-muted" title={line.timestamp}>{line.timestamp ? new Date(line.timestamp).toLocaleTimeString() : '—'}</span>
           <span className={`truncate uppercase ${levelClass(line.level)}`}>{line.level || '—'}</span>
           <span className="truncate text-text-primary" title={line.agent}>{line.agent}</span>
-          <span className="truncate" title={`${line.component} · ${line.source}`}>{line.component}</span>
+          <span className="truncate" title={line.component}>{line.component}</span>
+          <span className="truncate text-text-muted" title={line.source}>{line.source}</span>
           <details className="min-w-0"><summary className="cursor-pointer whitespace-pre-wrap break-words marker:text-text-disabled">{line.message}</summary><pre className="mt-2 whitespace-pre-wrap break-all rounded bg-surface-base p-2 text-text-muted">{line.raw}</pre></details>
         </div>)}
       </div>

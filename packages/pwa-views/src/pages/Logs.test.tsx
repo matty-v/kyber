@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LoggingTarget } from '../lib/types'
-import { filterLogSelections, formatLogLine } from './Logs'
+import { BoundedLogBuffer, filterLogSelections, formatLogLine } from './Logs'
 
 const targets: LoggingTarget[] = [
   {
@@ -47,5 +47,23 @@ describe('fleet log formatting', () => {
   it('keeps unstructured third-party output readable and intact', () => {
     const raw = 'redis ready to accept connections'
     expect(formatLogLine(raw, selection, 0)).toMatchObject({ message: raw, raw, timestamp: '', level: '' })
+  })
+})
+
+describe('fleet log buffering', () => {
+  const selection = filterLogSelections(targets, 'sol', 'agent', 'kubelet')[0]
+
+  it('caps the merged result while sources are still being consumed', () => {
+    const buffer = new BoundedLogBuffer()
+    buffer.add(Array.from({ length: 6000 }, (_, index) => formatLogLine(`line ${index}`, selection, index)))
+    expect(buffer.snapshot()).toHaveLength(5000)
+    expect(buffer.truncated).toBe(true)
+  })
+
+  it('caps aggregate raw bytes independently of line count', () => {
+    const buffer = new BoundedLogBuffer()
+    buffer.add(Array.from({ length: 10 }, (_, index) => formatLogLine('x'.repeat(500_000), selection, index)))
+    expect(buffer.snapshot().length).toBeLessThan(10)
+    expect(buffer.truncated).toBe(true)
   })
 })

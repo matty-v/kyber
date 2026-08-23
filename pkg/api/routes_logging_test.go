@@ -142,6 +142,28 @@ func TestLoggingTargetsIncludesRetainedReplacedPod(t *testing.T) {
 	}
 }
 
+func TestArchivedLoggingTargetsRetainResourceIdentity(t *testing.T) {
+	targets := (&Server{Namespace: "kyber-system"}).archivedLoggingTargets([]GenericArchiveSelection{
+		{Component: "agent", Workload: "sol", PodUID: "agent-uid", Container: "agent"},
+		{Component: "node-agent", Workload: "machine-1", PodUID: "node-uid", Container: "node-agent"},
+	}, nil)
+	if len(targets) != 2 {
+		t.Fatalf("targets = %+v, want agent and machine", targets)
+	}
+	for _, target := range targets {
+		switch target.Component {
+		case "agent":
+			if target.Agent != "sol" {
+				t.Errorf("agent target = %+v, want agent identity sol", target)
+			}
+		case "node-agent":
+			if target.Machine != "machine-1" {
+				t.Errorf("node target = %+v, want machine identity machine-1", target)
+			}
+		}
+	}
+}
+
 func TestLoggingRoutesRequireAuthentication(t *testing.T) {
 	s := &Server{APIKey: "test-key"}
 	for _, path := range []string{"/api/v1/logging/settings", "/api/v1/logging/targets", "/api/v1/logging/logs", "/api/v1/logging/export"} {

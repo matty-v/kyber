@@ -485,6 +485,12 @@ func (s *Server) archivedLoggingTargets(selections []GenericArchiveSelection, li
 		target := byPod[key]
 		if target == nil {
 			target = &loggingTargetResponse{Namespace: s.Namespace, Pod: "archived-" + selection.PodUID, PodUID: selection.PodUID, Component: selection.Component, Workload: selection.Workload, Phase: "Archived", Sources: []string{"archive"}, ArchiveAvailable: true}
+			switch selection.Component {
+			case "agent":
+				target.Agent = selection.Workload
+			case "node-agent":
+				target.Machine = selection.Workload
+			}
 			byPod[key] = target
 		}
 		target.Containers = append(target.Containers, s.loggingContainer(selection.Component, selection.Container, false))
