@@ -128,6 +128,23 @@ export function usePatchAgent() {
   })
 }
 
+// useSetSessionResume flips the kyber#118 per-agent session-resume toggle.
+// Separate from usePatchAgent so each control keeps its own toast copy.
+export function useSetSessionResume() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, sessionResume }: { name: string; sessionResume: boolean }) =>
+      api.patchAgent(name, { sessionResume }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    meta: { successMessage: 'Session resume setting saved', errorPrefix: 'Failed to save session resume setting' },
+  })
+}
+
 // useRotateApiKey: rotates the control-plane API key. Cookie-authenticated
 // browsers receive a replacement HttpOnly session in the same response.
 export function useRotateApiKey() {

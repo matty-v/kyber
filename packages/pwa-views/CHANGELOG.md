@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.32.0 — 2026-08-23
+
+### Added
+- Agent Details gains a Session resume toggle (kyber#118): when enabled, the
+  agent resumes its previous harness session after an unexpected restart
+  (pod recreate, preemption, crash). Intentional session restarts still
+  start fresh.
+
 ## 0.31.0 — 2026-08-23
 
 ### Changed

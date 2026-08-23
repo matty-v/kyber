@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DropdownMenu, DropdownMenuContent } from '../components/ui/dropdown-menu'
-import { LifecycleMenuItems, MismatchBadges, StatusCardBody } from './AgentDetail'
+import { LifecycleMenuItems, MismatchBadges, SessionResumeCard, StatusCardBody } from './AgentDetail'
 import type { Agent, AgentPhase, AgentStatus } from '../lib/types'
 
 // AgentDetail.test.tsx — kyber#355 regression coverage for the Status
@@ -384,5 +384,43 @@ describe('AgentDetail LifecycleMenuItems — NeedsAuth (kyber#26)', () => {
     renderLifecycleMenu('NeedsAuth')
     expect(screen.queryByRole('menuitem', { name: /Require re-auth/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('menuitem', { name: /^Stop$/ })).not.toBeInTheDocument()
+  })
+})
+
+// SessionResumeCard — kyber#118 per-agent toggle. The checkbox reflects the
+// spec value, flipping it reports the NEW value, and the pending state
+// blocks double-submits while a PATCH is in flight.
+describe('AgentDetail SessionResumeCard', () => {
+  it('reflects the enabled state and reports the flipped value', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<SessionResumeCard enabled={false} pending={false} onChange={onChange} />)
+
+    const box = screen.getByRole('checkbox')
+    expect(box).not.toBeChecked()
+    await user.click(box)
+    expect(onChange).toHaveBeenCalledWith(true)
+  })
+
+  it('reports disabling when currently enabled', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<SessionResumeCard enabled={true} pending={false} onChange={onChange} />)
+
+    const box = screen.getByRole('checkbox')
+    expect(box).toBeChecked()
+    await user.click(box)
+    expect(onChange).toHaveBeenCalledWith(false)
+  })
+
+  it('ignores clicks while a save is pending', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<SessionResumeCard enabled={false} pending={true} onChange={onChange} />)
+
+    const box = screen.getByRole('checkbox')
+    expect(box).toBeDisabled()
+    await user.click(box)
+    expect(onChange).not.toHaveBeenCalled()
   })
 })
