@@ -1,6 +1,6 @@
 # Agent startup prompt
 
-**Status:** Proposed — awaiting operator approval of delivery semantics  
+**Status:** Approved — implementation in progress  
 **Owner:** sol  
 **Branch:** `sol/agent-startup-prompt`  
 **Last updated:** 2026-08-23 UTC
@@ -29,12 +29,10 @@ continue to start exactly as they do today.
   argument. Newlines, quotes, shell metacharacters, and leading dashes must be
   preserved as data and must never be interpreted by a shell.
 - Empty or absent prompts preserve the current launch command byte-for-byte.
-- Recommended semantics: apply the configured prompt to every new harness
+- Apply the configured prompt to every new harness
   session, including a pod boot, an explicit in-pod session reset, or the
-  guarded relaunch after an unexpected harness exit. This is still awaiting
-  Matt's approval. The alternative is first-agent-boot-only consumption,
-  which requires durable consumed-state and has materially different failure
-  semantics.
+  guarded relaunch after an unexpected harness exit. Matt approved these
+  semantics on 2026-08-23.
 
 ## Non-goals
 
@@ -122,8 +120,8 @@ Each checkpoint is independently resumable. At the end of every checkpoint:
 
 | Checkpoint | Status | Exit criteria | Commit |
 |---|---|---|---|
-| 0. Plan and decision | In progress | This document is pushed; Matt approves every-session or first-boot-only semantics and the CRD change; decision is recorded here. | Pending |
-| 1. CRD and API contract | Not started | `spec.startupPrompt` added with validation; deepcopy/CRD generated; create, response, and PATCH shapes implemented; API unit and OpenAPI contract tests cover set/read/update/clear/limit. | Pending |
+| 0. Plan and decision | Complete | Design committed; Matt approved every-session semantics and the CRD change; durable identity copy records the checkpoint. Kyber push remains blocked on missing repo credential. | `08dc0fe` + follow-up |
+| 1. CRD and API contract | In progress | `spec.startupPrompt` added with validation; deepcopy/CRD generated; create, response, and PATCH shapes implemented; API unit and OpenAPI contract tests cover set/read/update/clear/limit. | Pending |
 | 2. Pod and runtime delivery | Not started | Common env injection implemented; Claude Code and Codex safely receive exact prompt on all approved session-start paths; shell-injection and empty-value regression tests pass. | Pending |
 | 3. PWA create and edit surfaces | Not started | Wizard input/review and Agent Detail edit/clear UI implemented; handwritten types aligned; component/API-hook tests pass; `pwa-views` version and changelog bumped. | Pending |
 | 4. Documentation and focused verification | Not started | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. | Pending |
@@ -250,5 +248,5 @@ a prompt edit requires an Agent restart.
 
 - 2026-08-23: Proposed persistent `startupPrompt`, optional, max 32 KiB,
   editable through create/PATCH/UI, activated after restart.
-- 2026-08-23: Recommended delivery on every harness session start. Awaiting
-  Matt's selection between every-session and first-agent-boot-only semantics.
+- 2026-08-23: Matt approved delivery on every harness session start, including
+  pod boot, explicit session reset, and guarded relaunch.
