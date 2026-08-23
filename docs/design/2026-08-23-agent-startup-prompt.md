@@ -1,0 +1,254 @@
+# Agent startup prompt
+
+**Status:** Proposed — awaiting operator approval of delivery semantics  
+**Owner:** sol  
+**Branch:** `sol/agent-startup-prompt`  
+**Last updated:** 2026-08-23 UTC
+
+## Goal
+
+Let an operator configure an optional prompt for an Agent through the Kyber
+API and PWA. Every supported runtime receives that prompt as its initial user
+turn when a new harness session starts. Agents without a configured prompt
+continue to start exactly as they do today.
+
+## Proposed behavior
+
+- Add optional `Agent.spec.startupPrompt` with a 32 KiB UTF-8 limit.
+- Accept `startupPrompt` during agent creation.
+- Return `startupPrompt` from agent list/detail responses.
+- Allow `PATCH /api/v1/agents/{name}` to set, replace, or clear it. A JSON
+  string sets/replaces it; an empty string clears it; omission leaves it
+  unchanged.
+- Editing a running Agent does not inject text into its live session. The spec
+  generation advances, so the existing dirty/restart-required UI tells the
+  operator that a restart is needed.
+- Inject the value into the runtime container as `KYBER_STARTUP_PROMPT` from
+  the runtime-neutral pod builder.
+- Claude Code and Codex append the prompt as one safely quoted positional CLI
+  argument. Newlines, quotes, shell metacharacters, and leading dashes must be
+  preserved as data and must never be interpreted by a shell.
+- Empty or absent prompts preserve the current launch command byte-for-byte.
+- Recommended semantics: apply the configured prompt to every new harness
+  session, including a pod boot, an explicit in-pod session reset, or the
+  guarded relaunch after an unexpected harness exit. This is still awaiting
+  Matt's approval. The alternative is first-agent-boot-only consumption,
+  which requires durable consumed-state and has materially different failure
+  semantics.
+
+## Non-goals
+
+- Injecting a newly edited prompt into an already-running harness session.
+- Treating the prompt as a secret. It is visible in the Agent CR and API to
+  authorized operators.
+- Fleet-wide default startup prompts.
+- Prompt templating, variables, attachments, or per-runtime prompt variants.
+- Supporting arbitrary unregistered runtimes without a runtime-image change;
+  the contract is runtime-neutral, but each runtime launcher must consume it.
+
+## API and storage contract
+
+The Agent CR is the source of truth:
+
+```yaml
+spec:
+  startupPrompt: |-
+    Review open work and continue from the highest-priority task.
+```
+
+Validation:
+
+- Optional and empty by default for backward compatibility.
+- Maximum length: 32,768 bytes/characters as enforced by the Kubernetes CRD
+  schema and API handler. The implementation must choose one precise unit and
+  use it consistently; Kubernetes `MaxLength` is character-oriented, so the
+  API should match that behavior.
+- No content filtering beyond the length limit. The value is user-authored
+  agent input, not a shell fragment.
+
+Wire-shape changes must stay synchronized across:
+
+1. `pkg/api/routes_agents.go`
+2. `test/contract/openapi.yaml`
+3. `packages/pwa-views/src/lib/types.ts`
+
+## UI contract
+
+- The Create Agent wizard includes an optional multiline **Startup prompt**
+  field with concise copy explaining that it becomes the first user turn on
+  each new session and that it is not secret.
+- The Review step shows either a compact preview or “none”; it must not dump a
+  multi-page prompt into the review screen.
+- Agent Detail shows the configured value and provides edit/clear controls.
+- Saving a change uses the existing PATCH endpoint and then presents the
+  existing dirty/restart-required state. The UI must not silently restart the
+  agent.
+- The field displays its 32 KiB limit and prevents over-limit submission while
+  the server remains authoritative.
+
+## Runtime delivery design
+
+`BuildPodSpec` owns the common `KYBER_STARTUP_PROMPT` environment variable so
+the Agent-to-pod contract does not fork by runtime. The Claude Code and Codex
+start scripts consume the same variable and add it to their argument arrays.
+
+The implementation must not concatenate the raw prompt into generated shell
+source. For Claude Code, the current string-based `CLAUDE_ARGS` launch path
+needs a safely shell-quoted command representation (or an equivalent argument
+array serialized with `printf %q`) shared by initial launch and generated
+relaunch script. Codex already builds its command from an array with
+`printf %q`; extend that path and retain the single command definition.
+
+Prompt delivery must be covered for:
+
+- initial pod boot;
+- `/restart-session` generated launch script;
+- automatic harness relaunch;
+- both empty and non-empty prompt values;
+- multiline content containing single quotes, double quotes, `$()`, backticks,
+  semicolons, and leading `-` characters.
+
+## Checkpoints and restart protocol
+
+Each checkpoint is independently resumable. At the end of every checkpoint:
+
+1. update the status table below with the commit SHA and verification result;
+2. commit the coherent change;
+3. push `sol/agent-startup-prompt`;
+4. send Matt a short Telegram update;
+5. after any restart, fetch the branch, read this document, inspect `git
+   status`, and resume at the first incomplete checkpoint. Never assume an
+   unrecorded command completed.
+
+| Checkpoint | Status | Exit criteria | Commit |
+|---|---|---|---|
+| 0. Plan and decision | In progress | This document is pushed; Matt approves every-session or first-boot-only semantics and the CRD change; decision is recorded here. | Pending |
+| 1. CRD and API contract | Not started | `spec.startupPrompt` added with validation; deepcopy/CRD generated; create, response, and PATCH shapes implemented; API unit and OpenAPI contract tests cover set/read/update/clear/limit. | Pending |
+| 2. Pod and runtime delivery | Not started | Common env injection implemented; Claude Code and Codex safely receive exact prompt on all approved session-start paths; shell-injection and empty-value regression tests pass. | Pending |
+| 3. PWA create and edit surfaces | Not started | Wizard input/review and Agent Detail edit/clear UI implemented; handwritten types aligned; component/API-hook tests pass; `pwa-views` version and changelog bumped. | Pending |
+| 4. Documentation and focused verification | Not started | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. | Pending |
+| 5. Full verification and handoff | Not started | `make build`, `make lint`, `make test`, required PWA build/lint/test commands, and relevant Helm/contract checks pass; branch is clean and pushed; PR opened with test evidence and rollout notes. | Pending |
+
+### Checkpoint 1 — CRD and API contract
+
+Expected files:
+
+- `pkg/api/v1/agent_types.go`
+- `pkg/api/v1/zz_generated.deepcopy.go` (generated only)
+- `deploy/helm/kyber/crds/kyber.io_agents.yaml` (generated only)
+- `pkg/api/routes_agents.go`
+- `pkg/api/routes_agents_test.go`
+- `test/contract/openapi.yaml`
+- relevant contract fixtures/tests if required
+
+Focused verification:
+
+```bash
+make generate
+go test ./pkg/api/... ./test/contract/...
+git diff --check
+```
+
+### Checkpoint 2 — pod and runtime delivery
+
+Expected files:
+
+- `pkg/controllers/agent/pod_builder.go`
+- `pkg/controllers/agent/pod_builder_test.go`
+- `images/claude-code/start-claude.sh`
+- `images/codex/start-codex.sh`
+- existing or new runtime boot-script tests under the corresponding image test
+  surfaces
+
+Focused verification:
+
+```bash
+go test ./pkg/controllers/agent/... ./pkg/runtimes/claudecode/... ./pkg/runtimes/codex/...
+# Run the repository's existing Claude/Codex boot-script test targets located
+# during implementation; record exact commands in the checkpoint table.
+git diff --check
+```
+
+Security assertions:
+
+- A prompt such as ``$(touch /tmp/pwned)`` remains literal and creates no file.
+- Quotes/newlines survive as one CLI argument.
+- Prompt content is not emitted into bootstrap logs.
+
+### Checkpoint 3 — PWA surfaces
+
+Expected files:
+
+- `packages/pwa-views/src/lib/types.ts`
+- `packages/pwa-views/src/pages/CreateAgent.tsx`
+- `packages/pwa-views/src/components/wizard/types.ts`
+- `packages/pwa-views/src/components/wizard/BasicsSection.tsx` or a dedicated
+  prompt section
+- `packages/pwa-views/src/components/wizard/ReviewSection.tsx`
+- `packages/pwa-views/src/pages/AgentDetail.tsx`
+- relevant hooks/tests
+- `packages/pwa-views/package.json`
+- `packages/pwa-views/CHANGELOG.md`
+
+Focused verification:
+
+```bash
+npm run lint --workspace=packages/pwa-views
+npm run test --workspace=packages/pwa-views
+npm run build --workspace=packages/pwa-views
+npm run lint --workspace=apps/embedded-pwa
+npm run test --workspace=apps/embedded-pwa
+npm run build --workspace=apps/embedded-pwa
+```
+
+### Checkpoint 4 — docs and integration review
+
+Update `docs/product/capabilities/agents-and-persistence.md` and, if the CLI
+behavior needs runtime-specific explanation, `docs/product/capabilities/runtimes.md`.
+Review API, CRD, PWA, and launch commands side by side for naming and semantics.
+
+### Checkpoint 5 — final gates and delivery
+
+Run the repository-required gates from `AGENTS.md` in order:
+
+```bash
+make build
+make lint
+make test
+make generate
+npm run build --workspace=packages/pwa-views
+npm run build --workspace=apps/embedded-pwa
+npm run lint --workspace=packages/pwa-views
+npm run lint --workspace=apps/embedded-pwa
+npm run test --workspace=packages/pwa-views
+npm run test --workspace=apps/embedded-pwa
+git diff --check
+git status --short --branch
+```
+
+Open one consolidated PR. The PR must call out that rollout updates the Agent
+CRD and both runtime images, that existing Agents remain compatible, and that
+a prompt edit requires an Agent restart.
+
+## Risks and mitigations
+
+- **Shell injection or argument splitting:** build commands from arrays and
+  shell-quote once; test hostile content against both launchers.
+- **Repeated work after a crash:** make the chosen every-session behavior
+  explicit in UI/docs. If Matt chooses first-boot-only, stop and redesign with
+  durable acknowledgement before implementation.
+- **Oversized pod environment:** cap the field at 32 KiB, well below the Agent
+  object and process environment limits.
+- **Accidental live interruption:** PATCH only changes spec and uses the
+  existing dirty/restart-required workflow.
+- **Cross-runtime drift:** keep one CRD/API/env name and test both runtime
+  launch commands from the same behavioral fixture set where practical.
+- **Holocron missing the UI:** bump the shared package version and changelog;
+  include the normal publish/tag follow-up in the PR handoff.
+
+## Decision log
+
+- 2026-08-23: Proposed persistent `startupPrompt`, optional, max 32 KiB,
+  editable through create/PATCH/UI, activated after restart.
+- 2026-08-23: Recommended delivery on every harness session start. Awaiting
+  Matt's selection between every-session and first-agent-boot-only semantics.
