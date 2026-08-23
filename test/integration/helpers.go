@@ -25,9 +25,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 )
@@ -133,20 +131,6 @@ func newTestScheme(t *testing.T) *runtime.Scheme {
 		t.Fatalf("AddToScheme corev1: %v", err)
 	}
 	return scheme
-}
-
-// newTestAPIServer returns an api.Server backed by a fake k8s client. The
-// BriefStore is not wired in the public Server (it's internal-only), so this
-// is appropriate for API-layer tests.
-func newTestAPIServer(t *testing.T, objs ...runtime.Object) *api.Server {
-	t.Helper()
-	scheme := newTestScheme(t)
-	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	return &api.Server{
-		K8sClient: fakeClient,
-		APIKey:    testAPIKey,
-		Namespace: testNamespace,
-	}
 }
 
 // authedRequest builds an HTTP request with the test API key set.

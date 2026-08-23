@@ -222,7 +222,7 @@ _Added 2026-06-10 — surfaced reviewing #553._
 
 _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
 
-- **Fragile area:** any change to the auth contract of a route (API-key wall, secret validation, header requirements). Mirror tests can live in **two** places: unit tests in `pkg/api` (fake k8s, no Redis) **and** integration tests in `test/integration/api_test.go` + `helpers.go` (real Redis via `sharedRDB`, gated behind the CI `integration` job).
+- **Fragile area:** any change to the auth contract of a route (API-key wall, secret validation, header requirements). Mirror tests can live in **two** places: unit tests in `pkg/api` (fake k8s, no Redis) **and** integration tests under `test/integration/` (real Redis via `sharedRDB`, gated behind the CI `integration` job).
 - **The trap** (surfaced on the since-removed Telegram webhook routes): `test/integration`'s server builder and request helpers were written against the old auth behavior, so when kyber#564 flipped an empty secret to **fail closed**, the integration tests broke — while the PR's updated unit suite was green. A builder who runs only `go test ./pkg/api/...` locally sees all-green and ships a red `integration` check, because `test/integration` needs a Redis the local run doesn't have. **Look harder at:** any auth-contract change to a route — grep `test/integration` for the same route/helper and confirm both the unit AND the integration harness were migrated; as reviewer, never take a local-`pkg/api`-green claim as proof the suite passes — check the `integration` CI check (or run `go test ./test/integration/...` with Redis) before a `merge: yes`.
 
 ### 16. Regional scale-from-zero needs scheduler demand after Agents park

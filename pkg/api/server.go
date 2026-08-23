@@ -108,7 +108,7 @@ type Server struct {
 	// PublicURL is the externally-reachable HTTPS URL of this Kyber instance
 	// (e.g. "https://kyber.your-tailnet.ts.net"). Used to render inbound-binding
 	// webhook URLs (PublicURL + /webhooks/inbound/<agent>/<binding>).
-	// If empty, rendered URLs fall back to a relative path.
+	// If empty, bindingURL returns "" and the PWA renders the bare path.
 	PublicURL string
 
 	// AnthropicTokenURL is the OAuth token endpoint used when exchanging

@@ -631,6 +631,16 @@ Kyber CRDs live in `deploy/helm/kyber/crds/` (not under `templates/`). ArgoCD ap
 3. Deploy a version that stops writing the old field
 4. After all objects are migrated, deploy a version that drops the old field
 
+One recorded exception: the 2026-08 removal of `spec.scaling` / `spec.idleTimeout` and the
+`Suspended` phase skipped the 4-step migration deliberately — no code ever read the fields, so
+there was nothing to backfill, and the structural schema prunes the stored values harmlessly.
+The one thing that migration does require: **before upgrading, no Agent CR may have
+`status.phase: Suspended` or `spec.desiredPhase: Suspended`.** A `desiredPhase: Suspended` is
+recoverable after the fact (clear the field; the enum otherwise rejects spec writes). A
+`status.phase: Suspended` is worse: status carries no enum so it survives the upgrade, but every
+operator verb (start/stop/restart/force-needs-auth) then derives no event and the agent goes
+inert — recovery is a status-subresource patch or delete/recreate, not a spec write.
+
 ## Image publishing
 
 The `build.yml` workflow (rewritten 2026-04-14 with path filters + per-image jobs) runs on every push to `main`. It builds only the images affected by the changed paths and publishes them to GHCR. Typical build times:
