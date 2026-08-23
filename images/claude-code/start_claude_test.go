@@ -129,7 +129,7 @@ func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T
 	s := string(script)
 	resolve := strings.Index(s, `LAUNCH_DIR="$REPO_DIR"`)
 	trust := strings.Index(s, `.projects[$launch_dir]`)
-	launch := strings.LastIndex(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"`)
+	launch := strings.LastIndex(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`)
 	if resolve < 0 || trust < 0 || launch < 0 {
 		t.Fatalf("missing launch-dir resolution, trust merge, or Claude launch")
 	}
@@ -1761,7 +1761,7 @@ func TestStartClaude_BootSweepsStalePollerBeforeLaunch(t *testing.T) {
 	}
 	s := string(src)
 
-	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"`+"\n\necho \"[kyber] tmux session 'agent' started")
+	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`+"\n\necho \"[kyber] tmux session 'agent' started")
 	if launch < 0 {
 		t.Fatal("could not locate the boot tmux launch")
 	}
