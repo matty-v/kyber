@@ -60,11 +60,11 @@ spec:
               value: control-plane
             # Desired settings are surfaced read-only by the logging settings API.
             - name: KYBER_LOG_GLOBAL_LEVEL
-              value: {{ .Values.logging.level | quote }}
+              value: {{ include "kyber.loggingLevel" (dict "root" . "component" "") | quote }}
             - name: KYBER_LOG_COMPONENT_OVERRIDES
-              value: {{ .Values.logging.components | toJson | quote }}
+              value: {{ include "kyber.loggingComponentsJSON" . | quote }}
             - name: KYBER_LOG_ARCHIVE_RETENTION_DAYS
-              value: {{ .Values.logging.archive.retentionDays | quote }}
+              value: {{ include "kyber.loggingRetentionDays" . | quote }}
             # The control plane builds agent pods, so pass the resolved status
             # sidecar level through its existing reconciler configuration path.
             - name: KYBER_SIDECAR_LOG_LEVEL

@@ -107,6 +107,22 @@ func TestLoggingRejectsInvalidLevel(t *testing.T) {
 	}
 }
 
+func TestLoggingDefaultsSurviveMissingReusedValues(t *testing.T) {
+	// Helm --reuse-values does not merge newly introduced chart defaults into an
+	// older release. A null logging map models that upgrade input and must still
+	// render safe defaults rather than dereference .Values.logging.
+	rendered := helmTemplate(t, "logging=null")
+	for _, want := range []string{
+		"name: KYBER_LOG_GLOBAL_LEVEL\n              value: \"info\"",
+		"name: KYBER_LOG_COMPONENT_OVERRIDES\n              value: \"{}\"",
+		"name: KYBER_LOG_ARCHIVE_RETENTION_DAYS\n              value: \"30\"",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("missing upgrade-safe logging default %q", want)
+		}
+	}
+}
+
 func TestLoggingArchiveRendersGenericAndLegacyLanes(t *testing.T) {
 	rendered := helmTemplate(t, "logShipper.enabled=true", "logShipper.bucket=test-logs")
 	for _, want := range []string{

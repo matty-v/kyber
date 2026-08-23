@@ -21,15 +21,29 @@ app.kubernetes.io/part-of: kyber
 
 {{/* Resolve and validate the effective log level for a component. */}}
 {{- define "kyber.loggingLevel" -}}
-{{- $level := default "info" .root.Values.logging.level -}}
-{{- if hasKey .root.Values.logging.components .component -}}
-{{- $component := index .root.Values.logging.components .component -}}
+{{- $logging := default (dict) .root.Values.logging -}}
+{{- $components := default (dict) $logging.components -}}
+{{- $level := default "info" $logging.level -}}
+{{- if hasKey $components .component -}}
+{{- $component := index $components .component -}}
 {{- $level = default $level $component.level -}}
 {{- end -}}
 {{- if not (has $level (list "debug" "info" "warn" "error")) -}}
 {{- fail (printf "invalid logging level %q for component %q: want debug, info, warn, or error" $level .component) -}}
 {{- end -}}
 {{- $level -}}
+{{- end }}
+
+{{/* Upgrade-safe logging settings for releases whose reused values predate logging. */}}
+{{- define "kyber.loggingComponentsJSON" -}}
+{{- $logging := default (dict) .Values.logging -}}
+{{- default (dict) $logging.components | toJson -}}
+{{- end }}
+
+{{- define "kyber.loggingRetentionDays" -}}
+{{- $logging := default (dict) .Values.logging -}}
+{{- $archive := default (dict) $logging.archive -}}
+{{- default 30 $archive.retentionDays -}}
 {{- end }}
 
 {{/*
