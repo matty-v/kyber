@@ -10,6 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -66,7 +67,7 @@ func TestLoggingTargetsDiscoversManagedPodsAndContainers(t *testing.T) {
 		t.Fatalf("target count = %d, want 1: %s", len(got.Targets), rr.Body.String())
 	}
 	target := got.Targets[0]
-	if target.Workload != "sol" || target.PodUID != "uid-1" || len(target.Containers) != 3 {
+	if target.Workload != "sol" || target.PodUID != "uid-1" || len(target.Containers) != 3 || len(target.Sources) != 1 {
 		t.Errorf("target = %+v", target)
 	}
 	if gotLevel := target.Containers[2].EffectiveLevel; gotLevel != "debug" {
@@ -79,7 +80,7 @@ func TestLoggingTargetsDiscoversManagedPodsAndContainers(t *testing.T) {
 
 func TestLoggingRoutesRequireAuthentication(t *testing.T) {
 	s := &Server{APIKey: "test-key"}
-	for _, path := range []string{"/api/v1/logging/settings", "/api/v1/logging/targets"} {
+	for _, path := range []string{"/api/v1/logging/settings", "/api/v1/logging/targets", "/api/v1/logging/logs"} {
 		t.Run(path, func(t *testing.T) {
 			rr := httptest.NewRecorder()
 			s.BuildHandler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -90,6 +91,60 @@ func TestLoggingRoutesRequireAuthentication(t *testing.T) {
 	}
 }
 
+func TestLoggingLogsValidatesDiscoveredTarget(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "agent-sol", Namespace: "kyber-system", UID: types.UID("uid-1"),
+			Labels: map[string]string{"app.kubernetes.io/part-of": "kyber"},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}},
+	}
+	s := &Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
+		Clientset: k8sfake.NewSimpleClientset(), Namespace: "kyber-system",
+	}
+	tests := []struct {
+		name string
+		url  string
+		code int
+	}{
+		{"missing identity", "/api/v1/logging/logs", http.StatusBadRequest},
+		{"stale uid", "/api/v1/logging/logs?pod=agent-sol&podUid=old&container=agent", http.StatusNotFound},
+		{"unknown container", "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=secret-sidecar", http.StatusNotFound},
+		{"tail cap", "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&tail=10001", http.StatusBadRequest},
+		{"invalid since", "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&since=yesterday", http.StatusBadRequest},
+		{"archive deferred", "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&source=archive", http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rr := httptest.NewRecorder()
+			s.handleLoggingLogs(rr, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			if rr.Code != tc.code {
+				t.Errorf("status = %d, want %d: %s", rr.Code, tc.code, rr.Body.String())
+			}
+		})
+	}
+}
+
+func TestPodHasContainerIncludesInitAndRegular(t *testing.T) {
+	pod := &corev1.Pod{Spec: corev1.PodSpec{
+		InitContainers: []corev1.Container{{Name: "setup"}},
+		Containers:     []corev1.Container{{Name: "agent"}},
+	}}
+	for _, name := range []string{"setup", "agent"} {
+		if !loggingPodHasContainer(pod, name) {
+			t.Errorf("podHasContainer(%q) = false, want true", name)
+		}
+	}
+	if loggingPodHasContainer(pod, "missing") {
+		t.Error("podHasContainer(missing) = true, want false")
+	}
+}
+
 func TestLoggingRoutesRejectUnsupportedMethods(t *testing.T) {
 	tests := []struct {
 		path    string
@@ -97,6 +152,7 @@ func TestLoggingRoutesRejectUnsupportedMethods(t *testing.T) {
 	}{
 		{"/api/v1/logging/settings", (&Server{}).handleLoggingSettings},
 		{"/api/v1/logging/targets", (&Server{}).handleLoggingTargets},
+		{"/api/v1/logging/logs", (&Server{}).handleLoggingLogs},
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {

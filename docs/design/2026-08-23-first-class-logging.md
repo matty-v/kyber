@@ -216,7 +216,7 @@ next begins.
 - [x] **Checkpoint 3 — settings and target APIs.** Implement read-only effective
   settings and label-based pod/container discovery; update OpenAPI and PWA wire
   types; add authorization and API tests.
-- [ ] **Checkpoint 4 — generic live reads.** Add the bounded resource-neutral
+- [x] **Checkpoint 4 — generic live reads.** Add the bounded resource-neutral
   kubelet stream while preserving legacy agent/machine routes.
 - [ ] **Checkpoint 5 — generic durable archive.** Expand Vector to all managed
   pods, introduce the `logs/` envelope/key contract and compatible reader, and

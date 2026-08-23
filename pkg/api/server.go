@@ -730,6 +730,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
 	mux.HandleFunc("/api/v1/logging/settings", s.handleLoggingSettings)
 	mux.HandleFunc("/api/v1/logging/targets", s.handleLoggingTargets)
+	mux.HandleFunc("/api/v1/logging/logs", s.handleLoggingLogs)
 
 	// Fleet defaults — GET/PUT the kyber-fleet-defaults ConfigMap so the
 	// PWA Settings panel can read + edit defaultModel and

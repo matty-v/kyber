@@ -630,6 +630,9 @@ export interface LoggingTarget {
   agent?: string
   machine?: string
   phase: string
+  sources: Array<'kubelet' | 'archive'>
+  liveAvailable: boolean
+  archiveAvailable: boolean
   containers: LoggingContainer[]
 }
 
