@@ -66,7 +66,7 @@ tracked in the per-agent skill issues, not here.
 | [`model-onboarding.md`](model-onboarding.md) | data-driven model onboarding: context-window auto-detect (Anthropic Models API) + feed-derived pricing (build-time vendored LiteLLM — **not** a runtime proxy) | deep-dive |
 | [`metricsstore.md`](metricsstore.md) | the metrics store backing model | deep-dive |
 | [`pwa-views-publish-boundary.md`](pwa-views-publish-boundary.md) | PWA views publish boundary | deep-dive |
-| [`log-retention.md`](log-retention.md) | durable off-cluster agent log retention: Vector shipper → GCS → `source=archive` read path | deep-dive |
+| [`log-retention.md`](log-retention.md) | durable platform log retention: Vector shipper → GCS/S3 → generic archive/export read path | deep-dive |
 | [`internal-api-auth.md`](internal-api-auth.md) | per-agent identity + authz on the internal `:8082` API (pod-tokens, act-on-self-only, the `:8082`-scoped NetworkPolicy) | deep-dive |
 | [`_TEMPLATE.md`](_TEMPLATE.md) | the per-subsystem deep-dive template — copy this to start a new page | template |
 

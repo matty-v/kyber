@@ -1,8 +1,12 @@
-# Durable Agent Log Retention
+# Durable Platform Log Retention
 
-How kyber retains agent logs **off-cluster** so an operator can pull a single
-agent's output for an **absolute time window** that survives pod restarts —
-alongside, not replacing, the live kubelet tail.
+How Kyber retains managed platform logs **off-cluster** so an operator can pull
+one exact pod/container's output for an **absolute time window** that survives
+pod restarts—alongside, not replacing, the live kubelet tail. The generic
+archive uses `logs/<component>/<workload>/<pod_uid>/<container>/<date>/`.
+Legacy `agents/` and `transcripts/` lanes remain dual-written during migration.
+See the [operator logging guide](../operator/logging.md) for settings, collector
+recipes, failure behavior, and API usage.
 
 **Source of truth:**
 
@@ -11,7 +15,8 @@ alongside, not replacing, the live kubelet tail.
   (Vector DaemonSet, ConfigMap, ServiceAccount + RBAC),
   `deploy/helm/kyber/templates/minio/` (optional in-cluster MinIO, gated),
   `deploy/helm/kyber/values.yaml` (`logShipper:` + `minio:` blocks).
-- Read path: `pkg/api/routes_logs.go` (`handleAgentLogs` `source` branch,
+- Read path: `pkg/api/routes_logging.go` (generic discovery, live read, archive,
+  and export) plus `pkg/api/routes_logs.go` (`handleAgentLogs` compatibility branch,
   `parseArchiveWindow`, `handleAgentLogsArchive` / `handleAgentLogsTranscript`
   over the shared `serveWindowedLines`), `pkg/api/archive_reader.go`
   (`ArchiveReader`, `GCSArchiveReader`, `S3ArchiveReader`, `rootPrefix`-keyed),

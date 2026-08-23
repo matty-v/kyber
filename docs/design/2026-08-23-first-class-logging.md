@@ -225,7 +225,7 @@ next begins.
   content disposition, truncation contract, and memory/concurrency tests.
 - [x] **Checkpoint 7 — PWA.** Build the fleet Logs page and settings visibility,
   deep-link resource views, bump `pwa-views`, and add component/API-client tests.
-- [ ] **Checkpoint 8 — migration docs and acceptance.** Document collector recipes,
+- [x] **Checkpoint 8 — migration docs and acceptance.** Document collector recipes,
   retention/failure behavior, and verify every Helm-rendered pod/container is
   discoverable, viewable, archived when enabled, and exportable.
 

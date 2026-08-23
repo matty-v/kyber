@@ -359,6 +359,6 @@ This overview is the index. For subsystem detail, follow these:
 | [`metrics-data-flow.md`](metrics-data-flow.md) | metrics emission and aggregation flow |
 | [`metricsstore.md`](metricsstore.md) | the metrics store backing model |
 | [`pwa-views-publish-boundary.md`](pwa-views-publish-boundary.md) | PWA views publish boundary |
-| [`log-retention.md`](log-retention.md) | durable off-cluster agent log retention: Vector shipper → GCS → `source=archive` read path |
+| [`log-retention.md`](log-retention.md) | durable platform log retention: Vector shipper → GCS/S3 → generic archive/export read path |
 | [`../adr/`](../adr/) | architecture decision records (memory system, file anatomy index) |
 | [`../../AGENTS.md`](../../AGENTS.md) | orientation + the patterns/gotchas every agent should read before touching a subsystem |
