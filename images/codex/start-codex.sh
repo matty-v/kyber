@@ -23,7 +23,7 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
             # maintenance; resolve npm first because sudo's secure_path may
             # differ from the runtime PATH.
             _npm="$(command -v npm || echo /usr/bin/npm)"
-            if ! sudo "$_npm" install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" >/dev/null 2>&1; then
+            if ! sudo "$_npm" install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" 2>&1; then
                 echo "[kyber] WARNING: requested Codex harness install failed; using baked-in version"
                 KYBER_CODEX_REQUESTED_SATISFIED="false"
             else
@@ -31,7 +31,7 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
                 if [ -n "$INSTALLED_CODEX_VERSION" ] && { [ "$KYBER_REQUESTED_CODEX_VERSION" = "latest" ] || [ "$INSTALLED_CODEX_VERSION" = "$KYBER_REQUESTED_CODEX_VERSION" ]; }; then
                     KYBER_CODEX_REQUESTED_SATISFIED="true"
                 else
-                    echo "[kyber] WARNING: Codex harness install completed but the requested version is not active"
+                    echo "[kyber] WARNING: Codex harness install completed but requested=${KYBER_REQUESTED_CODEX_VERSION} observed=${INSTALLED_CODEX_VERSION:-unknown}"
                     KYBER_CODEX_REQUESTED_SATISFIED="false"
                 fi
             fi

@@ -72,11 +72,11 @@ export function TerminalPeek({ agents }: { agents: Agent[] }) {
   return <PeekFrame name={name} selector={selector} heightClassName="h-64" />
 }
 
-export function AgentTerminalPeek({ agentName }: { agentName: string }) {
-  if (!agentName) {
+export function AgentTerminalPeek({ agentName, hasPod }: { agentName: string; hasPod: boolean }) {
+  if (!agentName || !hasPod) {
     return (
       <Card>
-        <EmptyState title="Terminal unavailable" />
+        <EmptyState title="Terminal unavailable" description="The live terminal appears while this agent has a running pod." />
       </Card>
     )
   }

@@ -5,7 +5,8 @@
 ### Added
 - Agent Details Overview now includes a live read-only terminal peek for that
   agent, reusing the Dashboard terminal stream while leaving the interactive
-  Shell tab unchanged.
+  Shell tab unchanged. Agents without a running pod show a clear unavailable
+  state instead of exposing a raw Kubernetes exec error.
 
 ## 0.28.7 — 2026-08-22
 

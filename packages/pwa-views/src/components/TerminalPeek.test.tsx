@@ -32,7 +32,7 @@ describe('TerminalPeek', () => {
   })
 
   it('attaches directly to a fixed agent without rendering the fleet selector', () => {
-    render(<AgentTerminalPeek agentName="alice" />)
+    render(<AgentTerminalPeek agentName="alice" hasPod />)
     const exec = screen.getByTestId('exec')
     expect(exec).toHaveAttribute('data-name', 'alice')
     expect(exec).toHaveAttribute('data-mode', 'attach')
@@ -41,7 +41,14 @@ describe('TerminalPeek', () => {
   })
 
   it('renders a clear unavailable state without an agent name', () => {
-    render(<AgentTerminalPeek agentName="" />)
+    render(<AgentTerminalPeek agentName="" hasPod={false} />)
+    expect(screen.getByText('Terminal unavailable')).toBeInTheDocument()
+    expect(screen.getByText(/while this agent has a running pod/i)).toBeInTheDocument()
+    expect(screen.queryByTestId('exec')).not.toBeInTheDocument()
+  })
+
+  it('does not attempt an exec connection when the agent has no pod', () => {
+    render(<AgentTerminalPeek agentName="sleeping" hasPod={false} />)
     expect(screen.getByText('Terminal unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('exec')).not.toBeInTheDocument()
   })

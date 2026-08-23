@@ -115,7 +115,7 @@ esac`)
 }
 
 func TestStartCodexLatestInstallsAsRootOnEveryBoot(t *testing.T) {
-	path, sudoLog, npmLog := stubVersionInstallBin(t, "0.149.0")
+	path, sudoLog, npmLog := stubVersionInstallBin(t, "0.146.0")
 	home := t.TempDir()
 	out, err := runBoot(t, home, "", path,
 		"KYBER_REQUESTED_CODEX_VERSION=latest",
@@ -209,7 +209,13 @@ func TestStartCodexRejectsUnreplacedDeviceMarker(t *testing.T) {
 	// login by replacing auth.json. This stub ends the auth session immediately
 	// while leaving Kyber's marker in place; `codex login status` still succeeds.
 	stubDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(stubDir, "tmux"), []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(stubDir, "tmux"), []byte(`#!/usr/bin/env bash
+case "${1:-}" in
+  new-session) exit 0 ;;
+  has-session) exit 1 ;;
+  *) exit 0 ;;
+esac
+`), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runBoot(t, t.TempDir(), `{}`, stubDir+":"+path)

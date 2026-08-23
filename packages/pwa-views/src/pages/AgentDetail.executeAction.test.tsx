@@ -42,8 +42,8 @@ vi.mock('../hooks/useAPI', () => ({
 }))
 vi.mock('../lib/models', () => ({ useEffectiveModelList: () => ({ data: undefined }) }))
 vi.mock('../components/TerminalPeek', () => ({
-  AgentTerminalPeek: ({ agentName }: { agentName: string }) => (
-    <div data-testid="agent-terminal-peek" data-agent-name={agentName} />
+  AgentTerminalPeek: ({ agentName, hasPod }: { agentName: string; hasPod: boolean }) => (
+    <div data-testid="agent-terminal-peek" data-agent-name={agentName} data-has-pod={String(hasPod)} />
   ),
 }))
 
@@ -103,6 +103,7 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     )
 
     expect(screen.getByTestId('agent-terminal-peek')).toHaveAttribute('data-agent-name', 'lando')
+    expect(screen.getByTestId('agent-terminal-peek')).toHaveAttribute('data-has-pod', 'false')
 
     await user.click(screen.getByRole('button', { name: /More actions/i }))
     await user.click(await screen.findByRole('menuitem', { name: /Restart pod/ }))

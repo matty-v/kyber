@@ -819,7 +819,7 @@ export function AgentDetail() {
               )}
             </Card>
           )}
-          <AgentTerminalPeek agentName={name} />
+          <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />
