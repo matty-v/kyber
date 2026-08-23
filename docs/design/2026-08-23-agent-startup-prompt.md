@@ -126,7 +126,7 @@ Each checkpoint is independently resumable. At the end of every checkpoint:
 | 3. PWA create and edit surfaces | Complete | Wizard and Agent Detail implemented; 19 focused tests, TypeScript lint, and both builds passed; package bumped to 0.29.0. | `463010e` |
 | 4. Documentation and focused verification | Complete | Product capability docs explain behavior; changed Go/package tests, generation checks, TypeScript lint, PWA tests, and builds pass. The broad Go suite passed except the controller package exceeded its global 10-minute envtest timeout; focused feature tests pass. | `9991de3` |
 | 5. GCP dev deployment and operator test | Complete | Full rollout completed to `datawire-dev` / zonal `kyber-dev` with CRD, control plane, Claude Code, and Codex images tagged `worktree-20260823144052-9991de3`. Public health, rollout, runtime pins, and live CRD schema passed. Purpose-built live Claude Code and Codex agents both consumed exact marker prompts on initial launch and `restart-session`; test agents and auth state were cleaned up. | Dev rollout and acceptance 2026-08-23 |
-| 6. Full verification and handoff | Not started | `make build`, `make lint`, `make test`, required PWA build/lint/test commands, and relevant Helm/contract checks pass; branch is clean and pushed; PR opened with test evidence and rollout notes. | Pending |
+| 6. Full verification and handoff | In progress | Branch is clean and pushed; PR #114 is open with test evidence and rollout notes. CI is running. Luna received the webhook but skipped because the current inbound binding envelope omits header metadata required by its review policy; Matt has the exact manual-review prompt and the platform contract gap is durably recorded. | PR #114 |
 
 ### Checkpoint 1 — CRD and API contract
 
