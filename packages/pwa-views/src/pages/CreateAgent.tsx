@@ -234,6 +234,7 @@ export function CreateAgent() {
         name: toKebabCase(state.name),
         machine: state.machine,
         runtime: state.runtime,
+        startupPrompt: state.startupPrompt || undefined,
         resources: { cpu: state.cpu, memory: state.memory, disk: state.disk },
         identity: { soulDescription: state.soulDescription || undefined },
         identityRepo,

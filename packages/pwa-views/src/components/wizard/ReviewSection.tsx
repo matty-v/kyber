@@ -30,6 +30,12 @@ function fmtChannels(state: WizardState): string {
   return ch.length ? ch.join(', ') : 'none'
 }
 
+function fmtStartupPrompt(prompt: string): string {
+  if (!prompt) return 'none'
+  const compact = prompt.replace(/\s+/g, ' ').trim()
+  return compact.length > 80 ? `${compact.slice(0, 77)}…` : compact
+}
+
 interface ReviewRow {
   label: string
   value: string
@@ -41,6 +47,7 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
   const rows: ReviewRow[] = [
     { label: 'Name', value: state.name || '(unset)', editStep: 1 },
     { label: 'Machine', value: state.machine || '(unset)' },
+    { label: 'Startup prompt', value: fmtStartupPrompt(state.startupPrompt) },
     { label: 'Runtime', value: state.runtime, editStep: 2 },
     { label: 'Model', value: 'Fleet default' },
     { label: 'Harness version', value: 'Fleet default' },

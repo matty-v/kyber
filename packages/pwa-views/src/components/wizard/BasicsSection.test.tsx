@@ -67,6 +67,17 @@ describe('BasicsSection', () => {
     expect(set).toHaveBeenCalledWith('soulDescription', expect.any(String))
   })
 
+  it('binds the optional startup prompt and enforces the UI limit', async () => {
+    const user = userEvent.setup()
+    const set = vi.fn()
+    render(<BasicsSection state={{ ...initialWizardState([]), startupPrompt: 'Begin here' }} set={set} machines={machines} agents={[]} />)
+    const textarea = screen.getByLabelText(/startup prompt/i) as HTMLTextAreaElement
+    expect(textarea.value).toBe('Begin here')
+    expect(textarea.maxLength).toBe(32768)
+    await user.type(textarea, '!')
+    expect(set).toHaveBeenCalledWith('startupPrompt', expect.any(String))
+  })
+
   // Regression for #189: typing "my-agent" character-by-character must leave
   // the input showing "my-agent". Pre-fix, the on-keystroke toKebabCase
   // stripped trailing hyphens, eating '-' between 'y' and 'a' so the user

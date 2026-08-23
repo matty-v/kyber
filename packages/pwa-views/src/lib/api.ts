@@ -187,6 +187,9 @@ export function createApiClient(cluster: Cluster) {
     createAgent: (req: CreateAgentRequest): Promise<Agent> =>
       request<Agent>('POST', '/api/v1/agents', req),
 
+    patchAgent: (name: string, req: import('./types').PatchAgentRequest): Promise<Agent> =>
+      request<Agent>('PATCH', `/api/v1/agents/${encodeURIComponent(name)}`, req),
+
     getAgentModels: (name: string): Promise<AgentModelsResponse> =>
       request<AgentModelsResponse>('GET', `/api/v1/agents/${encodeURIComponent(name)}/models`),
 

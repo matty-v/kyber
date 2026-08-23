@@ -43,6 +43,13 @@ describe('ReviewSection', () => {
     expect(screen.getByText(/API key/)).toBeInTheDocument()
   })
 
+  it('shows a compact startup prompt preview', () => {
+    render(<ReviewSection state={{ ...initialWizardState([]), startupPrompt: `First line\n${'x'.repeat(100)}` }} />)
+    const preview = screen.getByText(/First line x+/)
+    expect(preview.textContent?.endsWith('…')).toBe(true)
+    expect(preview.textContent?.length).toBeLessThanOrEqual(80)
+  })
+
   it('shows the identity-repo mode', () => {
     render(
       <ReviewSection
@@ -77,8 +84,8 @@ describe('ReviewSection', () => {
         state={{ ...initialWizardState([]), identityRepoMode: 'none' }}
       />,
     )
-    // Identity row shows literal "none"; Channels also shows "none" when no channel enabled
-    expect(screen.getAllByText('none')).toHaveLength(2)
+    // Identity, startup prompt, and Channels each show literal "none".
+    expect(screen.getAllByText('none')).toHaveLength(3)
   })
 
   it('renders Channels as "Telegram" when telegramEnabled', () => {
