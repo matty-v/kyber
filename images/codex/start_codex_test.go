@@ -84,14 +84,72 @@ esac`)
 	return dir + ":" + os.Getenv("PATH"), logPath, donePath
 }
 
+func stubVersionInstallBin(t *testing.T, initialVersion string) (path, sudoLog, npmLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	versionFile := filepath.Join(dir, "codex.version")
+	sudoLog = filepath.Join(dir, "sudo.log")
+	npmLog = filepath.Join(dir, "npm.log")
+	if err := os.WriteFile(versionFile, []byte(initialVersion), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("codex", `
+if [ "${1:-}" = "--version" ]; then echo "codex-cli $(cat "$VERSION_FILE")"; exit 0; fi
+if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then exit 0; fi
+exit 0`)
+	write("npm", `
+printf '%s\n' "$*" >> "$NPM_LOG"
+case "$*" in
+  *"@openai/codex@latest"*) printf '%s' '0.149.0' > "$VERSION_FILE" ;;
+  *) requested="${*: -1}"; printf '%s' "${requested##*@}" > "$VERSION_FILE" ;;
+esac`)
+	write("sudo", `printf '%s\n' "$*" >> "$SUDO_LOG"; exec "$@"`)
+	write("curl", `exit 0`)
+	write("tmux", `exit 0`)
+	return dir + ":" + os.Getenv("PATH"), sudoLog, npmLog
+}
+
+func TestStartCodexLatestInstallsAsRootOnEveryBoot(t *testing.T) {
+	path, sudoLog, npmLog := stubVersionInstallBin(t, "0.146.0")
+	home := t.TempDir()
+	out, err := runBoot(t, home, "", path,
+		"KYBER_REQUESTED_CODEX_VERSION=latest",
+		"VERSION_FILE="+filepath.Join(strings.Split(path, ":")[0], "codex.version"),
+		"SUDO_LOG="+sudoLog,
+		"NPM_LOG="+npmLog,
+	)
+	if err != nil {
+		t.Fatalf("latest boot failed: %v\n%s", err, out)
+	}
+	for _, logPath := range []string{sudoLog, npmLog} {
+		got, err := os.ReadFile(logPath)
+		if err != nil {
+			t.Fatalf("read %s: %v", logPath, err)
+		}
+		if !strings.Contains(string(got), "install -g @openai/codex@latest") {
+			t.Fatalf("install log %q does not contain latest global install", got)
+		}
+	}
+	if !strings.Contains(string(out), "runtime version reported: 0.149.0") {
+		t.Fatalf("boot did not launch/report installed latest version:\n%s", out)
+	}
+}
+
 // runBoot invokes start-codex.sh with SKIP_CODEX_LAUNCH so it stops after the
 // boot path completes.
 func runBoot(t *testing.T, home, authJSON, path string, extraEnv ...string) ([]byte, error) {
 	t.Helper()
+	persistRoot := t.TempDir()
 	cmd := exec.Command("/bin/bash", scriptPath(t))
 	env := []string{
 		"HOME=" + home,
 		"CODEX_HOME=" + filepath.Join(home, ".codex"),
+		"KYBER_PERSIST_ROOT=" + persistRoot,
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
@@ -153,7 +211,13 @@ func TestStartCodexRejectsUnreplacedDeviceMarker(t *testing.T) {
 	// login by replacing auth.json. This stub ends the auth session immediately
 	// while leaving Kyber's marker in place; `codex login status` still succeeds.
 	stubDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(stubDir, "tmux"), []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+	if err := os.WriteFile(filepath.Join(stubDir, "tmux"), []byte(`#!/usr/bin/env bash
+case "${1:-}" in
+  new-session) exit 0 ;;
+  has-session) exit 1 ;;
+  *) exit 0 ;;
+esac
+`), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	out, err := runBoot(t, t.TempDir(), `{}`, stubDir+":"+path)

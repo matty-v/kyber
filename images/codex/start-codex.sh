@@ -3,7 +3,8 @@ set -euo pipefail
 
 export HOME="${HOME:-/home/kyber}"
 export CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-mkdir -p "$CODEX_HOME" /persist/var/log /persist/var/lock
+PERSIST_ROOT="${KYBER_PERSIST_ROOT:-/persist}"
+mkdir -p "$CODEX_HOME" "$PERSIST_ROOT/var/log" "$PERSIST_ROOT/var/lock"
 chmod 0700 "$CODEX_HOME"
 
 # Optional per-agent harness pin. The API validates the same conservative
@@ -16,12 +17,26 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
         CURRENT_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
         if [ "$CURRENT_CODEX_VERSION" != "$KYBER_REQUESTED_CODEX_VERSION" ]; then
             echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION}"
-            if ! npm install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" >/dev/null 2>&1; then
+            # The baked-in package and /usr/bin/codex are root-owned. Runtime
+            # startup runs as the unprivileged kyber user, so a plain global
+            # npm install fails with EACCES while trying to replace them. The
+            # image grants kyber passwordless sudo for this kind of boot-time
+            # maintenance; resolve npm first because sudo's secure_path may
+            # differ from the runtime PATH.
+            _npm="$(command -v npm || echo /usr/bin/npm)"
+            if ! sudo "$_npm" install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" 2>&1; then
                 echo "[kyber] WARNING: requested Codex harness install failed; using baked-in version"
                 KYBER_CODEX_REQUESTED_SATISFIED="false"
             else
-                KYBER_CODEX_REQUESTED_SATISFIED="true"
+                INSTALLED_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
+                if [ -n "$INSTALLED_CODEX_VERSION" ] && { [ "$KYBER_REQUESTED_CODEX_VERSION" = "latest" ] || [ "$INSTALLED_CODEX_VERSION" = "$KYBER_REQUESTED_CODEX_VERSION" ]; }; then
+                    KYBER_CODEX_REQUESTED_SATISFIED="true"
+                else
+                    echo "[kyber] WARNING: Codex harness install completed but requested=${KYBER_REQUESTED_CODEX_VERSION} observed=${INSTALLED_CODEX_VERSION:-unknown}"
+                    KYBER_CODEX_REQUESTED_SATISFIED="false"
+                fi
             fi
+            unset _npm INSTALLED_CODEX_VERSION
         else
             KYBER_CODEX_REQUESTED_SATISFIED="true"
         fi
@@ -234,7 +249,7 @@ fi
 # Surface the previous Codex session before launching a fresh one. The
 # session-saver sidecar continuously normalizes the active runtime transcript
 # into this durable JSON file; a pod replacement preserves it on /persist.
-STATE_FILE="${KYBER_SESSION_STATE_FILE:-/persist/session-state.json}"
+STATE_FILE="${KYBER_SESSION_STATE_FILE:-$PERSIST_ROOT/session-state.json}"
 if [ -f "$STATE_FILE" ]; then
     RECALL_LAST_ACTIVITY=$(jq -r '.last_activity // ""' "$STATE_FILE" 2>/dev/null || echo "")
     RECALL_N=$(jq -r '(.recent_exchanges | length) // 0' "$STATE_FILE" 2>/dev/null || echo 0)
@@ -325,12 +340,12 @@ if [ -n "${SKIP_CODEX_LAUNCH:-}" ]; then
     exit 0
 fi
 
-nohup /usr/local/bin/kyber-codex-reporter >> /persist/var/log/kyber-codex-reporter.log 2>&1 &
+nohup /usr/local/bin/kyber-codex-reporter >> "$PERSIST_ROOT/var/log/kyber-codex-reporter.log" 2>&1 &
 
-cat > /persist/last-codex-launch.sh <<EOF
+cat > "$PERSIST_ROOT/last-codex-launch.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
-exec 9>/persist/var/lock/session.lock
+exec 9>"$PERSIST_ROOT/var/lock/session.lock"
 flock -x 9
 if [ "\$(id -u)" -eq 0 ]; then
     TMUX=(runuser -u kyber -- tmux)
@@ -344,14 +359,14 @@ fi
 # look like it arrived during a restart (and make the next restart hang).
 "\${TMUX[@]}" new-session -d -s agent -c $(printf '%q' "$LAUNCH_DIR") $(printf '%q' "$CODEX_LAUNCH_CMD") 9>&-
 EOF
-chmod 0755 /persist/last-codex-launch.sh
+chmod 0755 "$PERSIST_ROOT/last-codex-launch.sh"
 
-echo "[kyber] Starting Codex ${KYBER_RUNTIME_DEFAULT_VERSION:-unknown} in tmux (cwd=$LAUNCH_DIR)"
+echo "[kyber] Starting Codex ${CODEX_VERSION} in tmux (cwd=$LAUNCH_DIR)"
 tmux new-session -d -s agent -c "$LAUNCH_DIR" "$CODEX_LAUNCH_CMD"
 
 while true; do
     while tmux has-session -t agent 2>/dev/null; do sleep 5; done
     echo "[kyber] Codex tmux session ended; relaunching"
-    /persist/last-codex-launch.sh || true
+    "$PERSIST_ROOT/last-codex-launch.sh" || true
     sleep 2
 done
