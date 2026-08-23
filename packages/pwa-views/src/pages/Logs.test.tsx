@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { LoggingTarget } from '../lib/types'
-import { BoundedLogBuffer, filterLogSelections, formatLogLine } from './Logs'
+import { BoundedLogBuffer, filterLogSelections, formatLogLine, isAtLogTail, logSelectionKey } from './Logs'
 
 const targets: LoggingTarget[] = [
   {
@@ -30,6 +30,22 @@ describe('fleet log selection', () => {
 
   it('omits targets that do not support the selected source', () => {
     expect(filterLogSelections(targets, '', '', 'archive')).toHaveLength(2)
+  })
+
+  it('keeps the selection identity stable across periodic refreshes', () => {
+    const selected = filterLogSelections(targets, 'sol', '', 'kubelet')
+    expect(logSelectionKey(selected, 'kubelet')).toBe('kubelet:uid-sol/agent,uid-sol/kyber-status-sidecar')
+    expect(logSelectionKey([...selected].reverse(), 'kubelet')).toBe(logSelectionKey(selected, 'kubelet'))
+    expect(logSelectionKey(selected, 'kubelet')).not.toBe(logSelectionKey(selected, 'archive'))
+    expect(logSelectionKey(selected, 'kubelet')).not.toBe(logSelectionKey(selected.slice(0, 1), 'kubelet'))
+  })
+})
+
+describe('fleet log live refresh', () => {
+  it('follows the tail only while the operator remains near it', () => {
+    expect(isAtLogTail(461, 1000, 500)).toBe(true)
+    expect(isAtLogTail(460, 1000, 500)).toBe(false)
+    expect(isAtLogTail(100, 1000, 500)).toBe(false)
   })
 })
 

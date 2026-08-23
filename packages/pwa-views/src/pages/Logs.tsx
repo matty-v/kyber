@@ -30,6 +30,15 @@ export function filterLogSelections(targets: LoggingTarget[], agent: string, com
   })
 }
 
+export function logSelectionKey(selections: Selection[], source: Source): string {
+  const sources = selections.map(({ target, container }) => `${target.podUid}/${container.name}`).sort()
+  return `${source}:${sources.join(',')}`
+}
+
+export function isAtLogTail(scrollTop: number, scrollHeight: number, clientHeight: number): boolean {
+  return scrollHeight - scrollTop - clientHeight < 40
+}
+
 export interface DisplayLogLine {
   id: string
   timestamp: string
@@ -182,6 +191,8 @@ export function Logs() {
   const [truncated, setTruncated] = useState(false)
   const [loading, setLoading] = useState(false)
   const boxRef = useRef<HTMLDivElement>(null)
+  const autoScrollRef = useRef(true)
+  const selectionKeyRef = useRef('')
 
   const selections = useMemo(
     () => filterLogSelections(allTargets.filter((target) => !machine || target.machine === machine), agent, component, source),
@@ -201,9 +212,21 @@ export function Logs() {
   }, [source, paused, loading])
 
   useEffect(() => {
-    if (!selections.length) { setLines([]); setErrors([]); setLoading(false); return }
+    if (!selections.length) {
+      selectionKeyRef.current = ''
+      autoScrollRef.current = true
+      setLines([]); setErrors([]); setLoading(false)
+      return
+    }
     let cancelled = false
-    setLoading(true); setLines([]); setErrors([]); setTruncated(false)
+    const selectionKey = logSelectionKey(selections, source)
+    const selectionChanged = selectionKeyRef.current !== selectionKey
+    selectionKeyRef.current = selectionKey
+    setLoading(true); setErrors([]); setTruncated(false)
+    if (selectionChanged) {
+      autoScrollRef.current = true
+      setLines([])
+    }
     const buffer = new BoundedLogBuffer()
     const activeReaders = new Set<ReadableStreamDefaultReader<string>>()
     const failures: string[] = []
@@ -254,8 +277,14 @@ export function Logs() {
   }, [api, selections, source, loadKey, refreshKey])
 
   useEffect(() => {
-    if (!paused && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
-  }, [lines, paused])
+    if (autoScrollRef.current && boxRef.current) boxRef.current.scrollTop = boxRef.current.scrollHeight
+  }, [lines])
+
+  function handleScroll() {
+    if (!boxRef.current) return
+    const { scrollTop, scrollHeight, clientHeight } = boxRef.current
+    autoScrollRef.current = isAtLogTail(scrollTop, scrollHeight, clientHeight)
+  }
 
   function downloadVisible(format: 'ndjson' | 'text') {
     const output = lines.map((line) => format === 'ndjson'
@@ -301,7 +330,7 @@ export function Logs() {
       </div>}
       {(truncated || lines.length === MAX_LINES) && <p role="status" className="rounded bg-warning/10 px-3 py-2 text-xs text-warning">Output was truncated to protect the control plane and browser.</p>}
       {!!errors.length && <p role="alert" className="rounded bg-danger/10 px-3 py-2 text-xs text-danger">{errors.length} source{errors.length === 1 ? '' : 's'} could not be read. <span className="font-mono">{errors[0]}</span></p>}
-      <div ref={boxRef} className="h-[32rem] overflow-auto rounded-lg border border-border-subtle bg-surface-sunken font-mono text-xs text-text-secondary">
+      <div ref={boxRef} onScroll={handleScroll} className="h-[32rem] overflow-auto rounded-lg border border-border-subtle bg-surface-sunken font-mono text-xs text-text-secondary">
         {!lines.length && !errors.length ? <p className="p-3 text-text-disabled">{loading ? 'Loading telemetry…' : 'No logs match these filters.'}</p> : lines.map((line) => <div key={line.id} className="grid grid-cols-[8rem_4rem_7rem_10rem_14rem_minmax(18rem,1fr)] gap-2 border-b border-border-subtle/60 px-3 py-1.5 last:border-0">
           <span className="truncate text-text-muted" title={line.timestamp}>{line.timestamp ? new Date(line.timestamp).toLocaleTimeString() : '—'}</span>
           <span className={`truncate uppercase ${levelClass(line.level)}`}>{line.level || '—'}</span>

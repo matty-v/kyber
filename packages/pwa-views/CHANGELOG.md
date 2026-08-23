@@ -12,6 +12,8 @@
 - Consolidated reads stay bounded by line and byte limits, cancel when filters
   change, keep URL navigation synchronized, and show pod/container identity in
   a dedicated source column.
+- Periodic live refresh keeps the current snapshot visible until its replacement
+  is ready and preserves the operator's scroll position away from the tail.
 
 ## 0.30.0 — 2026-08-23
 

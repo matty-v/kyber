@@ -244,7 +244,7 @@ next begins.
   new selection, retain archived agent identity, synchronize filters with URL
   navigation, render pod/container source visibly, and cover those regressions
   before repeating dev-GCP acceptance.
-- [ ] **Checkpoint 13 — non-disruptive live refresh.** Keep the current snapshot
+- [x] **Checkpoint 13 — non-disruptive live refresh.** Keep the current snapshot
   mounted while periodic reads build its replacement, swap successful refreshes
   atomically, preserve an operator's scroll position away from the tail, and
   cover the refresh-state behavior before redeploying dev GCP.
