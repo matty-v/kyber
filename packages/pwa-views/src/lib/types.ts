@@ -66,6 +66,7 @@ export interface Agent {
   // Optional while older Kyber control planes roll forward.
   authType?: AgentAuthType
   model: string
+  startupPrompt?: string
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
@@ -348,6 +349,7 @@ export interface CreateAgentRequest {
   machine: string
   runtime: string
   model?: string
+  startupPrompt?: string
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string
@@ -374,6 +376,10 @@ export interface CreateAgentRequest {
     telegramBotToken?: string
     telegramAllowedUserIds?: string[]
   }
+}
+
+export interface PatchAgentRequest {
+  startupPrompt?: string
 }
 
 export interface SetModelRequest {

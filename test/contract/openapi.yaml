@@ -1173,6 +1173,10 @@ components:
         model:
           type: string
           example: claude-sonnet-4
+        startupPrompt:
+          type: string
+          maxLength: 32768
+          description: Initial user turn delivered whenever a new harness session starts.
         currentModel:
           type: string
           description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
@@ -1211,6 +1215,10 @@ components:
         model:
           type: string
           example: claude-sonnet-4
+        startupPrompt:
+          type: string
+          maxLength: 32768
+          description: Initial user turn delivered whenever a new harness session starts.
         force:
           type: boolean
           description: Skip catalog validation of the model id (write-only).

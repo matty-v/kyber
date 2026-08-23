@@ -514,6 +514,13 @@ type AgentSpec struct {
 	// Runtime identifies the RuntimeAdapter type (e.g., "claude-code").
 	Runtime string `json:"runtime"`
 
+	// StartupPrompt is delivered as the initial user turn whenever a new
+	// runtime harness session starts. Empty preserves the runtime's normal
+	// interactive startup behavior.
+	// +optional
+	// +kubebuilder:validation:MaxLength=32768
+	StartupPrompt string `json:"startupPrompt,omitempty"`
+
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 
