@@ -218,7 +218,7 @@ next begins.
   types; add authorization and API tests.
 - [x] **Checkpoint 4 — generic live reads.** Add the bounded resource-neutral
   kubelet stream while preserving legacy agent/machine routes.
-- [ ] **Checkpoint 5 — generic durable archive.** Expand Vector to all managed
+- [x] **Checkpoint 5 — generic durable archive.** Expand Vector to all managed
   pods, introduce the `logs/` envelope/key contract and compatible reader, and
   align GCS/S3/MinIO lifecycle configuration.
 - [ ] **Checkpoint 6 — export.** Add streaming NDJSON/text export, measured limits,

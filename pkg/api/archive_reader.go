@@ -47,6 +47,26 @@ type ArchiveReader interface {
 	ReadAgentLines(ctx context.Context, agent string, since, until time.Time) (ReadResult, error)
 }
 
+// GenericArchiveSelection identifies one discovered pod/container archive
+// prefix. Every field is resolved server-side from a live managed Pod before it
+// reaches the reader; the reader validates segments again as defense in depth.
+type GenericArchiveSelection struct {
+	Component string
+	Workload  string
+	PodUID    string
+	Container string
+}
+
+// PlatformArchiveReader reads the normalized logs/ archive lane.
+type PlatformArchiveReader interface {
+	ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error)
+}
+
+type ArchiveReaderWithPlatform interface {
+	ArchiveReader
+	PlatformArchiveReader
+}
+
 // archiveLine is the on-the-wire NDJSON shape the log-shipper (Vector) writes,
 // one JSON object per line. The reader only needs the emit timestamp and the
 // raw message; any other fields Vector adds are ignored.
@@ -558,6 +578,29 @@ func dayPartitionPrefixes(rootPrefix, agent string, since, until time.Time) []st
 	return prefixes
 }
 
+func validArchiveSegment(value string) bool {
+	return value != "" && !strings.ContainsAny(value, "/\\") && !strings.Contains(value, "..")
+}
+
+func genericDayPartitionPrefixes(selection GenericArchiveSelection, since, until time.Time) ([]string, error) {
+	for name, value := range map[string]string{
+		"component": selection.Component, "workload": selection.Workload,
+		"pod UID": selection.PodUID, "container": selection.Container,
+	} {
+		if !validArchiveSegment(value) {
+			return nil, fmt.Errorf("invalid archive %s %q", name, value)
+		}
+	}
+	base := "logs/" + selection.Component + "/" + selection.Workload + "/" + selection.PodUID + "/" + selection.Container + "/"
+	start := since.UTC().Truncate(24 * time.Hour)
+	end := until.UTC().Truncate(24 * time.Hour)
+	var prefixes []string
+	for d := end; !d.Before(start); d = d.Add(-24 * time.Hour) {
+		prefixes = append(prefixes, base+d.Format("2006-01-02")+"/")
+	}
+	return prefixes, nil
+}
+
 // ReadAgentLines implements ArchiveReader against GCS. See the interface doc for
 // the contract; isolation is enforced by listing only under the agent prefix.
 func (g *GCSArchiveReader) ReadAgentLines(ctx context.Context, agent string, since, until time.Time) (ReadResult, error) {
@@ -584,6 +627,31 @@ func (g *GCSArchiveReader) ReadAgentLines(ctx context.Context, agent string, sin
 			}
 			// Stream this object straight into the scanner and release it before
 			// fetching the next, so at most one object's bytes are resident.
+			if err := g.scanObject(ctx, bkt, attrs.Name, ws); err != nil {
+				return ReadResult{}, err
+			}
+		}
+	}
+	return ws.result(), nil
+}
+
+func (g *GCSArchiveReader) ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error) {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return ReadResult{}, err
+	}
+	bkt := g.client.Bucket(g.bucket)
+	ws := newWindowScanner(since, until, g.caps, false)
+	for _, prefix := range prefixes {
+		it := bkt.Objects(ctx, &storage.Query{Prefix: prefix})
+		for !ws.done() {
+			attrs, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return ReadResult{}, fmt.Errorf("list %q: %w", prefix, err)
+			}
 			if err := g.scanObject(ctx, bkt, attrs.Name, ws); err != nil {
 				return ReadResult{}, err
 			}
@@ -755,6 +823,29 @@ func (s *S3ArchiveReader) ReadAgentLines(ctx context.Context, agent string, sinc
 			// Fetch+scan+release one object at a time so the whole window is never
 			// resident — the OOM fix. The list above is already agent-prefix scoped,
 			// so isolation holds the same way it does for GCS.
+			if err := s.scanKey(ctx, key, ws); err != nil {
+				return ReadResult{}, err
+			}
+		}
+	}
+	return ws.result(), nil
+}
+
+func (s *S3ArchiveReader) ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error) {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return ReadResult{}, err
+	}
+	ws := newWindowScanner(since, until, s.caps, false)
+	for _, prefix := range prefixes {
+		keys, err := s.store.listKeys(ctx, prefix)
+		if err != nil {
+			return ReadResult{}, fmt.Errorf("list %q: %w", prefix, err)
+		}
+		for _, key := range keys {
+			if ws.done() {
+				break
+			}
 			if err := s.scanKey(ctx, key, ws); err != nil {
 				return ReadResult{}, err
 			}

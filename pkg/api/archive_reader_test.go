@@ -457,6 +457,37 @@ func TestS3ArchiveReader_WindowAndOrdering(t *testing.T) {
 	}
 }
 
+func TestS3ArchiveReader_GenericContainerIsolation(t *testing.T) {
+	store := &fakeS3Store{objects: map[string][]byte{
+		"logs/agent/sol/uid-1/agent/2026-06-03/a.ndjson":                []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"wanted"}`),
+		"logs/agent/sol/uid-2/agent/2026-06-03/a.ndjson":                []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"stale-pod"}`),
+		"logs/agent/sol/uid-1/kyber-status-sidecar/2026-06-03/a.ndjson": []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"other-container"}`),
+	}}
+	r := &S3ArchiveReader{store: store, bucket: "logs"}
+	result, err := r.ReadContainerLines(context.Background(), GenericArchiveSelection{
+		Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent",
+	}, time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("ReadContainerLines: %v", err)
+	}
+	if len(result.Lines) != 1 || result.Lines[0].Text != "wanted" {
+		t.Fatalf("lines = %+v, want only wanted", result.Lines)
+	}
+	wantPrefix := "logs/agent/sol/uid-1/agent/2026-06-03/"
+	if len(store.listedPrefixes) != 1 || store.listedPrefixes[0] != wantPrefix {
+		t.Errorf("listed prefixes = %v, want [%s]", store.listedPrefixes, wantPrefix)
+	}
+}
+
+func TestGenericArchiveRejectsUnsafeSegments(t *testing.T) {
+	_, err := genericDayPartitionPrefixes(GenericArchiveSelection{
+		Component: "agent", Workload: "../other", PodUID: "uid-1", Container: "agent",
+	}, time.Now(), time.Now())
+	if err == nil {
+		t.Fatal("expected unsafe workload to be rejected")
+	}
+}
+
 // TestS3ArchiveReader_EmptyWindows is the regression for the failure mode caught
 // during #431 verification: a future-dated window and a pre-shipper window each
 // return EMPTY — not the same lines as a recent window.

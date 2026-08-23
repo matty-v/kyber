@@ -107,7 +107,7 @@ type Server struct {
 
 	// LoggingGlobalLevel and LoggingComponentLevels are the Helm-desired
 	// verbosity settings exposed read-only through /api/v1/logging/settings.
-	LoggingGlobalLevel       string
+	LoggingGlobalLevel      string
 	LoggingComponentLevels  map[string]string
 	LoggingArchiveRetention int
 
@@ -155,7 +155,9 @@ type Server struct {
 	// log-shipper DaemonSet (kyber#431, #437). Optional — when nil, source=archive
 	// returns 503; the kubelet live-tail (source=kubelet, the default) is
 	// unaffected.
-	ArchiveReader ArchiveReader
+	ArchiveReader                 ArchiveReader
+	PlatformArchiveReader         PlatformArchiveReader
+	PlatformArchiveDisabledReason string
 
 	// ArchiveDisabledReason, when ArchiveReader is nil, names the config that is
 	// missing/invalid so the 503 is self-diagnosing (kyber#437). It MUST name

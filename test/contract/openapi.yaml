@@ -118,7 +118,7 @@ paths:
       operationId: getLoggingLogs
       summary: Stream live logs from a discovered Kyber-managed container
       description: >
-        Streams the kubelet log for one pod/container resolved from logging
+        Streams kubelet or durable archive logs for one pod/container resolved from logging
         discovery. The pod UID is required to reject stale selections after pod
         recreation. Reads are namespace-bound, concurrency-limited, and tail is
         capped at 10,000 lines.
@@ -144,12 +144,18 @@ paths:
           required: false
           schema:
             type: string
-            enum: [kubelet]
+            enum: [kubelet, archive]
             default: kubelet
         - name: since
           in: query
           required: false
-          description: Positive Go duration relative to now, for example 5m.
+          description: Positive Go duration for kubelet; required RFC3339 start for archive.
+          schema:
+            type: string
+        - name: until
+          in: query
+          required: false
+          description: Required RFC3339 end for archive reads.
           schema:
             type: string
         - name: tail

@@ -106,3 +106,26 @@ func TestLoggingRejectsInvalidLevel(t *testing.T) {
 		t.Errorf("error does not identify invalid logging level:\n%s", stderr)
 	}
 }
+
+func TestLoggingArchiveRendersGenericAndLegacyLanes(t *testing.T) {
+	rendered := helmTemplate(t, "logShipper.enabled=true", "logShipper.bucket=test-logs")
+	for _, want := range []string{
+		`extra_label_selector: "app.kubernetes.io/part-of=kyber"`,
+		"platform_shape:", "legacy_archive:", "platform_archive:",
+		"logs/{{ component }}/{{ workload }}/{{ pod_uid }}/{{ container }}/%Y-%m-%d/",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("rendered Vector config missing %q", want)
+		}
+	}
+}
+
+func TestMinIORetentionUsesUnifiedLoggingSetting(t *testing.T) {
+	rendered := helmTemplate(t,
+		"minio.enabled=true", "minio.rootPassword=test-password",
+		"logging.archive.retentionDays=17",
+	)
+	if !strings.Contains(rendered, `--expire-days "17"`) {
+		t.Error("MinIO lifecycle does not use logging.archive.retentionDays")
+	}
+}

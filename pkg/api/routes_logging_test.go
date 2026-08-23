@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -13,6 +15,15 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+type fakePlatformArchiveReader struct {
+	selection GenericArchiveSelection
+}
+
+func (f *fakePlatformArchiveReader) ReadContainerLines(_ context.Context, selection GenericArchiveSelection, _, _ time.Time) (ReadResult, error) {
+	f.selection = selection
+	return ReadResult{Lines: []LogLine{{Text: "archived line"}}}, nil
+}
 
 func TestLoggingSettings(t *testing.T) {
 	s := &Server{LoggingGlobalLevel: "info", LoggingComponentLevels: map[string]string{"status-sidecar": "debug"}, LoggingArchiveRetention: 30}
@@ -142,6 +153,36 @@ func TestPodHasContainerIncludesInitAndRegular(t *testing.T) {
 	}
 	if loggingPodHasContainer(pod, "missing") {
 		t.Error("podHasContainer(missing) = true, want false")
+	}
+}
+
+func TestLoggingLogsReadsGenericArchive(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "agent-sol", Namespace: "kyber-system", UID: types.UID("uid-1"),
+			Labels: map[string]string{
+				"app.kubernetes.io/part-of": "kyber", "app.kubernetes.io/component": "agent", "kyber.io/agent": "sol",
+			},
+		},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}},
+	}
+	reader := &fakePlatformArchiveReader{}
+	s := &Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(),
+		Namespace: "kyber-system", PlatformArchiveReader: reader,
+	}
+	url := "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&source=archive&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
+	rr := httptest.NewRecorder()
+	s.handleLoggingLogs(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	if rr.Code != http.StatusOK || rr.Body.String() != "archived line\n" {
+		t.Fatalf("response = %d %q", rr.Code, rr.Body.String())
+	}
+	if reader.selection.Workload != "sol" || reader.selection.PodUID != "uid-1" || reader.selection.Container != "agent" {
+		t.Errorf("selection = %+v", reader.selection)
 	}
 }
 

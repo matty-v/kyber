@@ -1049,7 +1049,7 @@ func main() {
 		archiveBackend = "gcs"
 	}
 	archiveBucket := os.Getenv("KYBER_LOG_ARCHIVE_BUCKET")
-	buildArchiveReader := func(rootPrefix, surface string) (internalapi.ArchiveReader, string) {
+	buildArchiveReader := func(rootPrefix, surface string) (internalapi.ArchiveReaderWithPlatform, string) {
 		switch archiveBackend {
 		case "gcs":
 			if archiveBucket != "" {
@@ -1246,33 +1246,35 @@ func main() {
 	}
 
 	publicAPI = &internalapi.Server{
-		K8sClient:                mgr.GetClient(),
-		TokenStore:               tokenStore,
-		TokenAccumulator:         tokenAccumulator,
-		APIKey:                   os.Getenv("KYBER_API_KEY"),
-		APIKeySecretName:         os.Getenv("KYBER_API_KEY_SECRET_NAME"),
-		Callers:                  scopedCallers,
-		AuthzEnforce:             authzEnforce,
-		PublicURL:                os.Getenv("KYBER_PUBLIC_URL"),
-		AnthropicTokenURL:        os.Getenv("ANTHROPIC_TOKEN_URL"),
-		Addr:                     internalapi.DefaultPublicPort,
-		Namespace:                kyberNamespace,
-		LoggingGlobalLevel:       os.Getenv("KYBER_LOG_GLOBAL_LEVEL"),
-		LoggingComponentLevels:   loggingComponentLevels,
-		LoggingArchiveRetention:  loggingArchiveRetention,
-		ValidRuntimes:            validRuntimes,
-		RuntimeImages:            runtimeImages,
-		RestartSessionCommands:   restartSessionCommands,
-		CompactSessionCommands:   compactSessionCommands,
-		Clientset:                clientset,
-		ArchiveReader:            archiveReader,
-		ArchiveDisabledReason:    archiveDisabledReason,
-		TranscriptReader:         transcriptReader,
-		TranscriptDisabledReason: transcriptDisabledReason,
-		MaxConcurrentReads:       maxConcurrentReads,
-		RestConfig:               restCfg,
-		InformerCache:            mgr.GetCache(),
-		ComputeProvider:          os.Getenv("KYBER_COMPUTE_PROVIDER"),
+		K8sClient:                     mgr.GetClient(),
+		TokenStore:                    tokenStore,
+		TokenAccumulator:              tokenAccumulator,
+		APIKey:                        os.Getenv("KYBER_API_KEY"),
+		APIKeySecretName:              os.Getenv("KYBER_API_KEY_SECRET_NAME"),
+		Callers:                       scopedCallers,
+		AuthzEnforce:                  authzEnforce,
+		PublicURL:                     os.Getenv("KYBER_PUBLIC_URL"),
+		AnthropicTokenURL:             os.Getenv("ANTHROPIC_TOKEN_URL"),
+		Addr:                          internalapi.DefaultPublicPort,
+		Namespace:                     kyberNamespace,
+		LoggingGlobalLevel:            os.Getenv("KYBER_LOG_GLOBAL_LEVEL"),
+		LoggingComponentLevels:        loggingComponentLevels,
+		LoggingArchiveRetention:       loggingArchiveRetention,
+		ValidRuntimes:                 validRuntimes,
+		RuntimeImages:                 runtimeImages,
+		RestartSessionCommands:        restartSessionCommands,
+		CompactSessionCommands:        compactSessionCommands,
+		Clientset:                     clientset,
+		ArchiveReader:                 archiveReader,
+		PlatformArchiveReader:         archiveReader,
+		PlatformArchiveDisabledReason: archiveDisabledReason,
+		ArchiveDisabledReason:         archiveDisabledReason,
+		TranscriptReader:              transcriptReader,
+		TranscriptDisabledReason:      transcriptDisabledReason,
+		MaxConcurrentReads:            maxConcurrentReads,
+		RestConfig:                    restCfg,
+		InformerCache:                 mgr.GetCache(),
+		ComputeProvider:               os.Getenv("KYBER_COMPUTE_PROVIDER"),
 		CapacityProvider: func() adapters.CapacityProvider {
 			provider, _ := computeAdapter.(adapters.CapacityProvider)
 			return provider

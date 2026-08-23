@@ -110,13 +110,17 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
-	if s.K8sClient == nil || s.Clientset == nil {
+	if s.K8sClient == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "log streaming not available")
 		return
 	}
 	q := r.URL.Query()
-	if source := q.Get("source"); source != "" && source != "kubelet" {
-		writeJSONError(w, http.StatusBadRequest, "invalid_source", "source must be 'kubelet'")
+	source := q.Get("source")
+	if source == "" {
+		source = "kubelet"
+	}
+	if source != "kubelet" && source != "archive" {
+		writeJSONError(w, http.StatusBadRequest, "invalid_source", "source must be 'kubelet' or 'archive'")
 		return
 	}
 	podName, podUID, container := q.Get("pod"), q.Get("podUid"), q.Get("container")
@@ -124,14 +128,14 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid_target", "pod, podUid, and container are required")
 		return
 	}
-	if value := q.Get("tail"); value != "" {
+	if value := q.Get("tail"); source == "kubelet" && value != "" {
 		tail, err := strconv.ParseInt(value, 10, 64)
 		if err != nil || tail < 0 || tail > maxGenericLogTail {
 			writeJSONError(w, http.StatusBadRequest, "invalid_tail", "tail must be between 0 and 10000")
 			return
 		}
 	}
-	if value := q.Get("since"); value != "" {
+	if value := q.Get("since"); source == "kubelet" && value != "" {
 		if duration, err := time.ParseDuration(value); err != nil || duration <= 0 {
 			writeJSONError(w, http.StatusBadRequest, "invalid_since", "since must be a positive duration")
 			return
@@ -150,6 +154,14 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	if pod.Labels["app.kubernetes.io/part-of"] != "kyber" || string(pod.UID) != podUID || !loggingPodHasContainer(pod, container) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
+		return
+	}
+	if source == "archive" {
+		s.serveGenericArchivedLogs(w, r, pod, container)
+		return
+	}
+	if s.Clientset == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "live log streaming not available")
 		return
 	}
 
@@ -202,6 +214,50 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) serveGenericArchivedLogs(w http.ResponseWriter, r *http.Request, pod *corev1.Pod, container string) {
+	since, until, errMsg := parseArchiveWindow(r)
+	if errMsg != "" {
+		writeJSONError(w, http.StatusBadRequest, "invalid_window", errMsg)
+		return
+	}
+	if s.PlatformArchiveReader == nil {
+		message := "archive log surface not configured"
+		if s.PlatformArchiveDisabledReason != "" {
+			message += ": " + s.PlatformArchiveDisabledReason
+		}
+		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", message)
+		return
+	}
+	release, ok := s.tryAcquireReadSlot()
+	if !ok {
+		w.Header().Set("Retry-After", "2")
+		writeJSONError(w, http.StatusTooManyRequests, "too_many_concurrent_reads", "too many concurrent log reads in flight; retry shortly")
+		return
+	}
+	defer release()
+	result, err := s.PlatformArchiveReader.ReadContainerLines(r.Context(), GenericArchiveSelection{
+		Component: pod.Labels["app.kubernetes.io/component"], Workload: loggingWorkload(pod),
+		PodUID: string(pod.UID), Container: container,
+	}, since, until)
+	if err != nil {
+		slog.Error("generic archive read failed", "pod", pod.Name, "container", container, "error", err)
+		writeJSONError(w, http.StatusBadGateway, "archive_read_error", "failed to read archived logs")
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if result.Truncated {
+		w.Header().Set("X-Kyber-Log-Truncated", "true")
+	}
+	w.WriteHeader(http.StatusOK)
+	for _, line := range result.Lines {
+		if _, err := io.WriteString(w, line.Text+"\n"); err != nil {
+			return
+		}
+	}
+}
+
 func loggingPodHasContainer(pod *corev1.Pod, name string) bool {
 	for _, container := range pod.Spec.InitContainers {
 		if container.Name == name {
@@ -226,11 +282,15 @@ func (s *Server) loggingTarget(pod *corev1.Pod) loggingTargetResponse {
 	for _, container := range pod.Spec.Containers {
 		containers = append(containers, s.loggingContainer(component, container.Name, false))
 	}
+	sources := []string{"kubelet"}
+	if s.PlatformArchiveReader != nil {
+		sources = append(sources, "archive")
+	}
 	return loggingTargetResponse{
 		Namespace: pod.Namespace, Pod: pod.Name, PodUID: string(pod.UID), Component: component,
 		Workload: workload, Agent: pod.Labels["kyber.io/agent"], Machine: pod.Labels["kyber.io/machine"],
-		Phase: pod.Status.Phase, Sources: []string{"kubelet"}, LiveAvailable: s.Clientset != nil,
-		ArchiveAvailable: false, Containers: containers,
+		Phase: pod.Status.Phase, Sources: sources, LiveAvailable: s.Clientset != nil,
+		ArchiveAvailable: s.PlatformArchiveReader != nil, Containers: containers,
 	}
 }
 
