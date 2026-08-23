@@ -102,17 +102,17 @@ data:
         {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
         type: aws_s3
         inputs: [agent_shape]
-        bucket: ${KYBER_LOG_BUCKET}
+        bucket: "${KYBER_LOG_BUCKET}"
         # Custom S3-compatible endpoint (MinIO/AWS). The scheme (http/https) on
         # the endpoint URL selects TLS. Vector routes writes to this endpoint and
         # uses path-style addressing (bucket in the path) for custom endpoints —
         # what MinIO requires.
-        endpoint: ${KYBER_LOG_S3_ENDPOINT}
-        region: ${KYBER_LOG_S3_REGION}
+        endpoint: "${KYBER_LOG_S3_ENDPOINT}"
+        region: "${KYBER_LOG_S3_REGION}"
         # Static creds from the writer Secret (least-privilege put-object).
         auth:
-          access_key_id: ${AWS_ACCESS_KEY_ID}
-          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+          access_key_id: "${AWS_ACCESS_KEY_ID}"
+          secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
         # Disable gzip compression (Vector's aws_s3 default). The control-plane
         # archive reader parses plain NDJSON line-by-line — gzip-compressed
         # objects read back as 0 lines. (kyber#437 root cause.)
@@ -120,7 +120,7 @@ data:
         {{- else }}
         type: gcp_cloud_storage
         inputs: [agent_shape]
-        bucket: ${KYBER_LOG_BUCKET}
+        bucket: "${KYBER_LOG_BUCKET}"
         # Authenticate via Application Default Credentials (node metadata server
         # → GCE node SA). No static credential is configured.
         {{- end }}
@@ -161,17 +161,17 @@ data:
         {{- if eq (.Values.logShipper.backend | default "gcs") "s3" }}
         type: aws_s3
         inputs: [platform_shape]
-        bucket: ${KYBER_LOG_BUCKET}
-        endpoint: ${KYBER_LOG_S3_ENDPOINT}
-        region: ${KYBER_LOG_S3_REGION}
+        bucket: "${KYBER_LOG_BUCKET}"
+        endpoint: "${KYBER_LOG_S3_ENDPOINT}"
+        region: "${KYBER_LOG_S3_REGION}"
         auth:
-          access_key_id: ${AWS_ACCESS_KEY_ID}
-          secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+          access_key_id: "${AWS_ACCESS_KEY_ID}"
+          secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
         compression: none
         {{- else }}
         type: gcp_cloud_storage
         inputs: [platform_shape]
-        bucket: ${KYBER_LOG_BUCKET}
+        bucket: "${KYBER_LOG_BUCKET}"
         {{- end }}
         key_prefix: 'logs/{{ "{{ component }}" }}/{{ "{{ workload }}" }}/{{ "{{ pod_uid }}" }}/{{ "{{ container }}" }}/%Y-%m-%d/'
         filename_time_format: "%Y-%m-%dT%H-%M-%SZ"

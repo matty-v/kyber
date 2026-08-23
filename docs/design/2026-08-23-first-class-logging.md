@@ -231,6 +231,9 @@ next begins.
 - [x] **Checkpoint 9 — review findings.** Unify chart-workload archive identity,
   expose bounded retained archive targets after pod replacement, and propagate
   server truncation metadata through the PWA client.
+- [ ] **Checkpoint 10 — dev-GCP acceptance.** Deploy the exact control-plane/PWA
+  worktree, verify live/settings/target surfaces, roll the chart resources that
+  create MinIO and configure Vector, then verify archive retention and export.
 
 ## Acceptance criteria
 
