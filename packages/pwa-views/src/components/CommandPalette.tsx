@@ -1,7 +1,7 @@
 import { useEffect, useId } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Command } from 'cmdk'
-import { ArrowLeft, LayoutDashboard, Server, Bot, Settings } from 'lucide-react'
+import { ArrowLeft, LayoutDashboard, Server, Bot, Settings, ScrollText } from 'lucide-react'
 import { useAgents, useMachines } from '../hooks/useAPI'
 import { useBackTo, usePrefixedPath } from '../lib/route-prefix'
 
@@ -32,6 +32,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
     { id: 'route:fleet', label: 'Fleet', path: prefixed('/'), icon: LayoutDashboard },
     { id: 'route:machines', label: 'Machines', path: prefixed('/machines'), icon: Server },
     { id: 'route:agents', label: 'Agents', path: prefixed('/agents'), icon: Bot },
+    { id: 'route:logs', label: 'Logs', path: prefixed('/logs'), icon: ScrollText },
     { id: 'route:settings', label: 'Settings', path: prefixed('/settings'), icon: Settings },
   ]
   const titleId = useId()

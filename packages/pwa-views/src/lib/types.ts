@@ -641,6 +641,27 @@ export interface LoggingTargetsResponse {
   selector: string
 }
 
+export interface LoggingReadOptions {
+  pod: string
+  podUid: string
+  container: string
+  source?: 'kubelet' | 'archive'
+  follow?: boolean
+  tail?: number
+  since?: string
+  until?: string
+}
+
+export interface LoggingExportOptions extends LoggingReadOptions {
+  format: 'ndjson' | 'text'
+}
+
+export interface LoggingExportResult {
+  blob: Blob
+  filename: string
+  truncated: boolean
+}
+
 // ---- Config types ----
 
 // Read-only public configuration exposed by GET /api/v1/config.

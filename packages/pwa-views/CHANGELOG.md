@@ -5,6 +5,10 @@
 ### Added
 - API client types and methods for read-only platform logging settings and
   managed pod/container discovery.
+- Fleet Logs provides managed component/workload/pod/container discovery,
+  live follow and archive windows, visible retention and effective verbosity,
+  bounded output state, authenticated NDJSON/text downloads, and resource
+  detail deep links.
 
 ## 0.29.0 — 2026-08-23
 

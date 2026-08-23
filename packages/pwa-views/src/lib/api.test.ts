@@ -253,3 +253,42 @@ describe('logStream — source/window query building (kyber#431)', () => {
     expect(url).not.toContain('until=')
   })
 })
+
+describe('generic logging client (kyber#105)', () => {
+  it('streams an identity-bound live target', async () => {
+    let captured = ''
+    vi.stubGlobal('fetch', vi.fn().mockImplementation((url: string) => {
+      captured = url
+      const body = new ReadableStream<Uint8Array>({
+        start(c) { c.enqueue(new TextEncoder().encode('hello\n')); c.close() },
+      })
+      return Promise.resolve({ ok: true, status: 200, body })
+    }))
+    const reader = createApiClient(mockCluster).loggingStream({
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', follow: true, tail: 500,
+    }).getReader()
+    expect((await reader.read()).value).toBe('hello\n')
+    expect(captured).toContain('/api/v1/logging/logs?')
+    expect(captured).toContain('podUid=uid-1')
+    expect(captured).toContain('container=agent')
+    expect(captured).toContain('follow=true')
+  })
+
+  it('downloads a bounded text export and reports truncation', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('hello\n', {
+      status: 200,
+      headers: {
+        'Content-Disposition': 'attachment; filename="kyber-agent.log"',
+        'X-Kyber-Log-Truncated': 'true',
+      },
+    })))
+    const result = await createApiClient(mockCluster).exportLogging({
+      pod: 'agent-sol-0', podUid: 'uid-1', container: 'agent', format: 'text',
+      since: '2026-06-03T10:00:00Z', until: '2026-06-03T11:00:00Z',
+    })
+    expect(result.filename).toBe('kyber-agent.log')
+    expect(result.truncated).toBe(true)
+    expect(await result.blob.text()).toBe('hello\n')
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining('format=text'), expect.any(Object))
+  })
+})

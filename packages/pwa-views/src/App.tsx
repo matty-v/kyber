@@ -10,6 +10,7 @@ import { CreateAgent } from './pages/CreateAgent'
 import { Settings } from './pages/Settings'
 import { DesignSpecimen } from './pages/DesignSpecimen'
 import { MetricsTab } from './pages/MetricsTab'
+import { Logs } from './pages/Logs'
 import { useWebSocket } from './hooks/useWebSocket'
 
 function AppRoutes() {
@@ -42,6 +43,7 @@ function AppRoutes() {
           <Route path="agents/new" element={<CreateAgent />} />
           <Route path="agents/:name" element={<AgentDetail />} />
           <Route path="metrics" element={<MetricsTab />} />
+          <Route path="logs" element={<Logs />} />
           <Route path="settings" element={<Settings />} />
         </Routes>
       </div>
