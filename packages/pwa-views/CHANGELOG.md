@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.31.0 — 2026-08-23
+
+### Changed
+- Fleet Logs now defaults to one consolidated view across all agents and
+  platform components, with agent and component filters and bounded automatic
+  live refresh.
+- Structured log fields are rendered as readable timestamp, level, agent,
+  component, and message columns. Every entry retains expandable raw output,
+  and the visible merged snapshot remains downloadable as NDJSON or text.
+
 ## 0.30.0 — 2026-08-23
 
 ### Added

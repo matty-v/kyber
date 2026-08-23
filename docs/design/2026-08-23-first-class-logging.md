@@ -234,7 +234,7 @@ next begins.
 - [ ] **Checkpoint 10 — dev-GCP acceptance.** Deploy the exact control-plane/PWA
   worktree, verify live/settings/target surfaces, roll the chart resources that
   create MinIO and configure Vector, then verify archive retention and export.
-- [ ] **Checkpoint 11 — consolidated viewer.** Replace the single-target viewer
+- [x] **Checkpoint 11 — consolidated viewer.** Replace the single-target viewer
   with an all-target stream filtered by agent and component, render structured
   timestamp/level/source/message fields while preserving each raw line, add PWA
   regression coverage, bump the published view package, and verify its tests,
