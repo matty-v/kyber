@@ -24,8 +24,12 @@ func TestAdapter(t *testing.T) {
 	if got := env[2].ValueFrom.SecretKeyRef.Name; got != "echo-codex-auth" {
 		t.Errorf("auth secret = %q", got)
 	}
-	if len(a.RestartSessionCommand()) == 0 {
+	if cmd := a.RestartSessionCommand(); len(cmd) == 0 {
 		t.Error("RestartSessionCommand() is empty")
+	} else if cmd[len(cmd)-1] != "--fresh" {
+		// kyber#118: an intentional restart-session must force a fresh
+		// session even when spec.sessionResume is enabled.
+		t.Errorf("RestartSessionCommand() does not end with --fresh: %v", cmd)
 	}
 	probeCommand := strings.Join(a.ReadinessProbe().Exec.Command, " ")
 	if !strings.Contains(probeCommand, "nsenter --target 1 --mount --root --wd") ||

@@ -390,7 +390,12 @@ func (a *ClaudeCodeAdapter) RestartSessionCommand() []string {
 		"--mount", "--uts", "--ipc", "--net", "--pid",
 		"--root", "--wd",
 		"--",
-		"/bin/bash", "/persist/last-claude-launch.sh",
+		// --fresh: an intentional restart-session always starts a fresh
+		// session, even when spec.sessionResume is enabled — restart is
+		// the operator's context-clearing tool (kyber#118). The crash
+		// watchdog calls the same script WITHOUT --fresh, which is where
+		// resume applies.
+		"/bin/bash", "/persist/last-claude-launch.sh", "--fresh",
 	}
 }
 

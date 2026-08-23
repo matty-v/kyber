@@ -256,6 +256,29 @@ func TestBuildPodSpec_PreStopHook(t *testing.T) {
 	}
 }
 
+// TestBuildPodSpec_SessionResumeEnv verifies spec.sessionResume=true reaches
+// the agent container as KYBER_SESSION_RESUME=true (kyber#118) — the launch
+// scripts key their resume-vs-fresh decision on it.
+func TestBuildPodSpec_SessionResumeEnv(t *testing.T) {
+	agent := testAgent()
+	agent.Spec.SessionResume = true
+	adapter := testAdapter()
+
+	pod, err := BuildPodSpec(agent, adapter, "node-01")
+	if err != nil {
+		t.Fatalf("BuildPodSpec: %v", err)
+	}
+	for _, e := range pod.Containers[0].Env {
+		if e.Name == "KYBER_SESSION_RESUME" {
+			if e.Value != "true" {
+				t.Errorf("KYBER_SESSION_RESUME: got %q, want %q", e.Value, "true")
+			}
+			return
+		}
+	}
+	t.Error("KYBER_SESSION_RESUME env var not found")
+}
+
 func TestBuildPodSpec_Image(t *testing.T) {
 	agent := testAgent()
 	adapter := testAdapter()
@@ -299,6 +322,14 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 		t.Error("KYBER_STARTUP_PROMPT env var not found")
 	} else if v != "" {
 		t.Errorf("KYBER_STARTUP_PROMPT: got %q, want empty", v)
+	}
+
+	// kyber#118: rendered even when disabled, so the launch scripts see an
+	// explicit "false" rather than distinguishing unset from disabled.
+	if v, ok := envMap["KYBER_SESSION_RESUME"]; !ok {
+		t.Error("KYBER_SESSION_RESUME env var not found")
+	} else if v != "false" {
+		t.Errorf("KYBER_SESSION_RESUME: got %q, want %q (spec default)", v, "false")
 	}
 
 	// Adapter env vars must be injected.

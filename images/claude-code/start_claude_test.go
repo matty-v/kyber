@@ -2563,3 +2563,149 @@ func TestStartClaude_StartupPromptIsQuotedForEveryLaunch(t *testing.T) {
 		t.Fatal("startup prompt must not be emitted in boot logs")
 	}
 }
+
+// TestStartClaudeSessionResumeSourceContract pins the kyber#118 source
+// invariants the rendered-script test below cannot see: boot gates resume on
+// the enable flag plus a recorded transcript, resume launches use CLAUDE_ARGS
+// (no startup prompt — a resumed session is not a new session), and the crash
+// watchdog keeps its --fresh fallback for poison transcripts.
+func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	for what, want := range map[string]string{
+		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
+		"boot gate":                  `if [ "$SESSION_RESUME_ENABLED" = "1" ] && claude_has_prior_session; then`,
+		"relaunch resume selection":  `RELAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
+		"watchdog --fresh fallback":  `/persist/last-claude-launch.sh $RELAUNCH_FLAG || echo`,
+		"restart-session fresh flag": `[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("%s missing from start-claude.sh (want %q)", what, want)
+		}
+	}
+}
+
+// TestGeneratedClaudeRelaunchScript_SessionResume renders the
+// last-claude-launch.sh heredoc exactly as boot would (resume enabled) and
+// executes the result in all three modes, asserting against a logging sudo
+// stub:
+//
+//	bare + empty transcript store -> fresh launch (with startup prompt)
+//	bare + prior transcript       -> `claude ... --continue` (no prompt)
+//	--fresh + prior transcript    -> fresh launch (intentional restart wins)
+func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	start, end := -1, -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, `cat > /persist/last-claude-launch.sh <<LAUNCH_SH`) {
+			start = i
+		} else if start >= 0 && l == "LAUNCH_SH" {
+			end = i
+			break
+		}
+	}
+	if start < 0 || end < 0 {
+		t.Fatalf("could not locate last-claude-launch.sh heredoc (start=%d end=%d)", start, end)
+	}
+
+	work := t.TempDir()
+	gen := filepath.Join(work, "last-claude-launch.sh")
+	block := strings.ReplaceAll(
+		strings.Join(lines[start:end+1], "\n"),
+		"/persist/last-claude-launch.sh", gen)
+
+	store := filepath.Join(work, "store")
+	if err := os.MkdirAll(store, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	lockDir := filepath.Join(work, "lock")
+	if err := os.MkdirAll(lockDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(work, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sudoLog := filepath.Join(work, "sudo.log")
+	if err := os.WriteFile(filepath.Join(bin, "sudo"),
+		[]byte("#!/usr/bin/env bash\necho \"sudo $*\" >> '"+sudoLog+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "pkill"),
+		[]byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := strings.Join([]string{
+		"set -u",
+		"HOME='" + work + "'", // keeps the baked bot.pid rm inside the sandbox
+		"LAUNCH_DIR='/home/kyber/dev/test-agent'",
+		`CLAUDE_ARGS="--dangerously-skip-permissions --model claude-test"`,
+		`CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS -- startup\ prompt"`,
+		"SESSION_RESUME_ENABLED=1",
+		"CLAUDE_PROJECT_STORE='" + store + "'",
+		"USER_PRESERVE_SUFFIX=''",
+		"KYBER_SYNC_SCRIPT='" + filepath.Join(work, "no-such-sync") + "'",
+		block,
+		"",
+	}, "\n")
+	wrapperPath := filepath.Join(work, "wrapper.sh")
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("/bin/bash", wrapperPath).CombinedOutput(); err != nil {
+		t.Fatalf("rendering heredoc: %v\n%s", err, out)
+	}
+
+	// The generated script hardcodes /persist/var/lock, which doesn't exist
+	// off a pod — repoint it at the sandbox before executing.
+	raw, err := os.ReadFile(gen)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(gen,
+		[]byte(strings.ReplaceAll(string(raw), "/persist/var/lock", lockDir)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	run := func(arg ...string) string {
+		t.Helper()
+		os.Remove(sudoLog)
+		cmd := exec.Command("/bin/bash", append([]string{gen}, arg...)...)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("running generated script %v: %v\n%s", arg, err, out)
+		}
+		log, err := os.ReadFile(sudoLog)
+		if err != nil {
+			t.Fatalf("sudo stub never ran: %v", err)
+		}
+		return string(log)
+	}
+
+	if got := run(); !strings.Contains(got, "claude --dangerously-skip-permissions --model claude-test -- startup") ||
+		strings.Contains(got, "--continue") {
+		t.Errorf("empty store: want fresh launch with prompt, got:\n%s", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(store, "session-1.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(); !strings.Contains(got, "--continue") {
+		t.Errorf("prior transcript: want --continue launch, got:\n%s", got)
+	} else if strings.Contains(got, "startup") {
+		t.Errorf("resume launch must not carry the startup prompt, got:\n%s", got)
+	}
+
+	if got := run("--fresh"); strings.Contains(got, "--continue") {
+		t.Errorf("--fresh: intentional restart must stay fresh, got:\n%s", got)
+	}
+}

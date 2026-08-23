@@ -370,9 +370,140 @@ func TestRestartSessionDoesNotLeakSessionLockIntoTmux(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const want = `"\${TMUX[@]}" new-session -d -s agent -c $(printf '%q' "$LAUNCH_DIR") $(printf '%q' "$CODEX_LAUNCH_CMD") 9>&-`
+	const want = `"\${TMUX[@]}" new-session -d -s agent -c $(printf '%q' "$LAUNCH_DIR") "\$RELAUNCH_CMD" 9>&-`
 	if !strings.Contains(string(script), want) {
 		t.Fatal("restart-session tmux launch does not close fd 9; tmux would inherit the session lock and permanently block inbound dispatch")
+	}
+}
+
+// TestStartCodexSessionResumeSourceContract pins the kyber#118 source
+// invariants that the rendered-script test below cannot see: the resume
+// command is captured BEFORE the startup prompt joins CODEX_ARGS (a resumed
+// session must not receive the new-session prompt), and boot gates on the
+// enable flag plus a recorded session.
+func TestStartCodexSessionResumeSourceContract(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	resumeDef := strings.Index(s, `CODEX_RESUME_CMD="codex resume --last $(printf '%q ' "${CODEX_ARGS[@]}")"`)
+	promptAppend := strings.Index(s, `CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")`)
+	if resumeDef < 0 {
+		t.Fatal("CODEX_RESUME_CMD definition missing")
+	}
+	if promptAppend < 0 {
+		t.Fatal("startup prompt append missing")
+	}
+	if resumeDef > promptAppend {
+		t.Fatal("CODEX_RESUME_CMD is built AFTER the startup prompt joins CODEX_ARGS — a resumed session would replay the new-session prompt")
+	}
+	if !strings.Contains(s, `BOOT_LAUNCH_CMD="$CODEX_RESUME_CMD"`) {
+		t.Fatal("boot launch never selects the resume command")
+	}
+	if !strings.Contains(s, `"$PERSIST_ROOT/last-codex-launch.sh" $RELAUNCH_FLAG || true`) {
+		t.Fatal("crash watchdog lost the --fresh fallback for poison transcripts")
+	}
+}
+
+// TestGeneratedCodexRelaunchScript_SessionResume renders the last-codex-launch.sh
+// heredoc exactly as boot would (resume enabled) and executes the result in
+// all three modes, asserting against a logging tmux stub:
+//
+//	bare + empty session store  -> fresh launch (with startup prompt)
+//	bare + recorded session     -> `codex resume --last` (no prompt)
+//	--fresh + recorded session  -> fresh launch (intentional restart wins)
+func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(src), "\n")
+	start, end := -1, -1
+	for i, l := range lines {
+		if strings.HasPrefix(l, `cat > "$PERSIST_ROOT/last-codex-launch.sh" <<EOF`) {
+			start = i
+		} else if start >= 0 && l == "EOF" {
+			end = i
+			break
+		}
+	}
+	if start < 0 || end < 0 {
+		t.Fatalf("could not locate last-codex-launch.sh heredoc (start=%d end=%d)", start, end)
+	}
+	block := strings.Join(lines[start:end+1], "\n")
+
+	work := t.TempDir()
+	persist := filepath.Join(work, "persist")
+	if err := os.MkdirAll(filepath.Join(persist, "var", "lock"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	codexHome := filepath.Join(work, "codex-home")
+	sessionDay := filepath.Join(codexHome, "sessions", "2026", "08", "23")
+	if err := os.MkdirAll(sessionDay, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	bin := filepath.Join(work, "bin")
+	if err := os.MkdirAll(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	tmuxLog := filepath.Join(work, "tmux.log")
+	if err := os.WriteFile(filepath.Join(bin, "tmux"),
+		[]byte("#!/usr/bin/env bash\necho \"tmux $*\" >> '"+tmuxLog+"'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wrapper := strings.Join([]string{
+		"set -u",
+		"PERSIST_ROOT='" + persist + "'",
+		"LAUNCH_DIR='/home/kyber/dev/test-agent'",
+		"CODEX_HOME='" + codexHome + "'",
+		`CODEX_LAUNCH_CMD='codex --model gpt-test --ask-for-approval never --sandbox danger-full-access -- startup\ prompt'`,
+		`CODEX_RESUME_CMD='codex resume --last --model gpt-test --ask-for-approval never --sandbox danger-full-access'`,
+		"SESSION_RESUME_ENABLED=1",
+		block,
+		"",
+	}, "\n")
+	wrapperPath := filepath.Join(work, "wrapper.sh")
+	if err := os.WriteFile(wrapperPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := exec.Command("/bin/bash", wrapperPath).CombinedOutput(); err != nil {
+		t.Fatalf("rendering heredoc: %v\n%s", err, out)
+	}
+	gen := filepath.Join(persist, "last-codex-launch.sh")
+
+	run := func(arg ...string) string {
+		t.Helper()
+		os.Remove(tmuxLog)
+		cmd := exec.Command("/bin/bash", append([]string{gen}, arg...)...)
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("running generated script %v: %v\n%s", arg, err, out)
+		}
+		log, err := os.ReadFile(tmuxLog)
+		if err != nil {
+			t.Fatalf("tmux stub never ran: %v", err)
+		}
+		return string(log)
+	}
+
+	if got := run(); !strings.Contains(got, "codex --model gpt-test") || strings.Contains(got, "resume --last") {
+		t.Errorf("empty store: want fresh launch, got:\n%s", got)
+	}
+
+	if err := os.WriteFile(filepath.Join(sessionDay, "rollout-1.jsonl"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := run(); !strings.Contains(got, "codex resume --last") {
+		t.Errorf("recorded session: want resume launch, got:\n%s", got)
+	} else if strings.Contains(got, "startup") {
+		t.Errorf("resume launch must not carry the startup prompt, got:\n%s", got)
+	}
+
+	if got := run("--fresh"); strings.Contains(got, "resume --last") {
+		t.Errorf("--fresh: intentional restart must stay fresh, got:\n%s", got)
 	}
 }
 

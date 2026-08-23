@@ -521,6 +521,14 @@ type AgentSpec struct {
 	// +kubebuilder:validation:MaxLength=32768
 	StartupPrompt string `json:"startupPrompt,omitempty"`
 
+	// SessionResume, when true, makes the runtime resume its previous
+	// harness session after an unexpected session end — pod recreate,
+	// machine preemption, or an in-pod crash (kyber#118). An intentional
+	// restart-session always starts a fresh session regardless of this
+	// flag: intentional restart is the operator's context-clearing tool.
+	// +optional
+	SessionResume bool `json:"sessionResume,omitempty"`
+
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 

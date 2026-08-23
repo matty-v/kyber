@@ -406,6 +406,11 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
 		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
+		// kyber#118: launch scripts read this to decide whether an
+		// unexpected session end relaunches with the harness's native
+		// resume flag. Rendered even when false so the scripts see an
+		// explicit value rather than distinguishing unset from disabled.
+		{Name: "KYBER_SESSION_RESUME", Value: strconv.FormatBool(agent.Spec.SessionResume)},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 		{Name: "KYBER_REFRESH_TOKEN_URL", Value: fmt.Sprintf("%s/internal/agents/%s/refresh-token", controlPlaneInternalURL(), agent.Name)},
 		// Persistence model and the fail-closed sandbox check (kyber#78).

@@ -35,6 +35,7 @@ type CreateAgentRequest struct {
 	Runtime       string `json:"runtime"`
 	Model         string `json:"model"`
 	StartupPrompt string `json:"startupPrompt,omitempty"`
+	SessionResume bool   `json:"sessionResume,omitempty"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
 	Resources    agentResourcesRequest    `json:"resources"`
@@ -111,6 +112,7 @@ type agentSecretsRequest struct {
 type PatchAgentRequest struct {
 	Model         *string                `json:"model,omitempty"`
 	StartupPrompt *string                `json:"startupPrompt,omitempty"`
+	SessionResume *bool                  `json:"sessionResume,omitempty"`
 	Resources     *agentResourcesRequest `json:"resources,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
@@ -167,6 +169,7 @@ type AgentResponse struct {
 	AuthType      kyberv1.AgentAuthType `json:"authType"`
 	Model         string                `json:"model"`
 	StartupPrompt string                `json:"startupPrompt,omitempty"`
+	SessionResume bool                  `json:"sessionResume,omitempty"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
@@ -389,6 +392,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		AuthType:      authType,
 		Model:         a.Spec.Model,
 		StartupPrompt: a.Spec.StartupPrompt,
+		SessionResume: a.Spec.SessionResume,
 		CurrentModel:  a.Status.CurrentModel,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
@@ -857,6 +861,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			Runtime:       req.Runtime,
 			Model:         req.Model,
 			StartupPrompt: req.StartupPrompt,
+			SessionResume: req.SessionResume,
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1035,6 +1040,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			return
 		}
 		agent.Spec.StartupPrompt = *req.StartupPrompt
+	}
+
+	if req.SessionResume != nil {
+		agent.Spec.SessionResume = *req.SessionResume
 	}
 
 	if req.Model != nil {
