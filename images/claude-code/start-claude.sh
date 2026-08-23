@@ -998,11 +998,18 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
 fi
 
 BOOT_LAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
-if [ "$SESSION_RESUME_ENABLED" = "1" ] && claude_has_prior_session; then
-    # kyber#118: pod boot after a recreate/preemption/crash — pick the
-    # previous conversation back up instead of starting fresh.
-    BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"
-    echo "[kyber] session resume: continuing previous session (kyber#118)"
+if [ "$SESSION_RESUME_ENABLED" = "1" ]; then
+    if claude_has_prior_session; then
+        # kyber#118: pod boot after a recreate/preemption/crash — pick the
+        # previous conversation back up instead of starting fresh.
+        BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"
+        echo "[kyber] session resume: continuing previous session (kyber#118)"
+    else
+        # Deliberately loud: the store path replicates Claude Code's
+        # cwd-munging, and if a CC version changes that scheme this branch
+        # is the only signal that resume silently stopped engaging.
+        echo "[kyber] session resume: enabled but no prior transcript at $CLAUDE_PROJECT_STORE — starting fresh (kyber#118)"
+    fi
 fi
 echo "[kyber] Starting Claude Code in tmux (cwd=$LAUNCH_DIR)"
 tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"

@@ -367,8 +367,8 @@ export function SessionResumeCard({
           Resume the previous session after an unexpected restart
           <span className="mt-0.5 block text-xs text-text-muted">
             Applies when the pod is recreated, preempted, or crashes. An
-            intentional session restart still starts fresh. Takes effect on
-            the next launch.
+            intentional session restart still starts fresh. Saving marks this
+            agent for restart; the setting lands the next time its pod starts.
           </span>
         </span>
       </label>

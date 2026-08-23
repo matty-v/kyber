@@ -2577,7 +2577,8 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	s := string(src)
 	for what, want := range map[string]string{
 		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
-		"boot gate":                  `if [ "$SESSION_RESUME_ENABLED" = "1" ] && claude_has_prior_session; then`,
+		"boot gate":                  `if claude_has_prior_session; then`,
+		"boot gate enable flag":      `if [ "$SESSION_RESUME_ENABLED" = "1" ]; then`,
 		"relaunch resume selection":  `RELAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
 		"watchdog --fresh fallback":  `/persist/last-claude-launch.sh $RELAUNCH_FLAG || echo`,
 		"restart-session fresh flag": `[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1`,

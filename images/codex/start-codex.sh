@@ -419,6 +419,14 @@ while true; do
         relaunch_count=0
     fi
     relaunch_count=$((relaunch_count + 1))
+    # kyber#118: give-up rung, mirroring start-claude.sh (kyber#563). The
+    # liveness probe (`pgrep -f codex`) matches this start script itself, so
+    # a permanently-dying session would otherwise loop here forever with the
+    # pod reporting healthy. Exit so the controller recreates the pod.
+    if [ "$relaunch_count" -gt 5 ]; then
+        echo "[kyber] Codex session died ${relaunch_count}x within seconds — exiting so the controller recreates the pod" >&2
+        exit 1
+    fi
     echo "[kyber] Codex tmux session ended; relaunching"
     RELAUNCH_FLAG=""
     if [ "$relaunch_count" -ge 3 ] && [ "$SESSION_RESUME_ENABLED" = "1" ]; then
