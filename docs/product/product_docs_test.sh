@@ -130,9 +130,14 @@ assert_grep "${REPO_ROOT}/docs/architecture/overview.md" 'docs/product|\.\./prod
 assert_grep "${REPO_ROOT}/README.md" 'docs/product' "root README links to docs/product/"
 
 # --- lifecycle vocabulary survives on the persistence page ---
-for ph in 'Running' 'Suspended' 'NeedsAuth'; do
+for ph in 'Running' 'NeedsAuth'; do
     assert_grep "${PROD}/capabilities/agents-and-persistence.md" "$ph" "agents-and-persistence names the ${ph} phase"
 done
+if grep -q 'Suspended' "${PROD}/capabilities/agents-and-persistence.md"; then
+    bad "agents-and-persistence omits the removed Suspended phase"
+else
+    ok "agents-and-persistence omits the removed Suspended phase"
+fi
 
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"

@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.28.7 — 2026-08-22
+
+### Changed
+- Agents are now always on: removed the unused scaling field, Suspended state,
+  and manual Suspend action from the fleet UI.
+
 ## 0.28.6 — 2026-08-22
 
 ### Changed
