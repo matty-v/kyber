@@ -322,6 +322,9 @@ CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
 if [ -n "${CODEX_MODEL:-}" ]; then
     CODEX_ARGS=(--model "$CODEX_MODEL" "${CODEX_ARGS[@]}")
 fi
+if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
+    CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")
+fi
 
 # Build the tmux command string once, shell-quoting every argument. CODEX_MODEL
 # comes from spec.model, which the API does not charset-validate, and it is

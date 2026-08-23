@@ -395,6 +395,7 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	// directly to the control plane — that migration is a follow-up.
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
+		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 		{Name: "KYBER_REFRESH_TOKEN_URL", Value: fmt.Sprintf("%s/internal/agents/%s/refresh-token", controlPlaneInternalURL(), agent.Name)},
 		// Persistence model and the fail-closed sandbox check (kyber#78).
