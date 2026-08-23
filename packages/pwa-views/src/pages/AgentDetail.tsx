@@ -19,6 +19,7 @@ import {
   useReauthorizeAgent,
   useStartCodexDeviceAuth,
   useComputeConfig,
+  usePatchAgent,
 } from '../hooks/useAPI'
 import { useEffectiveModelList } from '../lib/models'
 import { StatusBadge } from '../components/StatusBadge'
@@ -460,6 +461,7 @@ export function AgentDetail() {
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
   const [newCPU, setNewCPU] = useState('')
   const [newMemory, setNewMemory] = useState('')
+  const [startupPrompt, setStartupPrompt] = useState('')
   const agentModels = useAgentModels(name, pending === 'set-model')
 
   useEffect(() => {
@@ -485,9 +487,14 @@ export function AgentDetail() {
   const setAgentModel = useSetAgentModel()
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
   const setAgentResources = useSetAgentResources()
+  const patchAgent = usePatchAgent()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent()
   const startCodexDeviceAuth = useStartCodexDeviceAuth()
+
+  useEffect(() => {
+    setStartupPrompt(agent?.startupPrompt ?? '')
+  }, [agent?.startupPrompt])
 
   const isActing =
     startAgent.isPending ||
@@ -820,6 +827,31 @@ export function AgentDetail() {
             </Card>
           )}
           <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} />
+          <Card>
+            <h2 className="text-sm font-medium text-text-primary mb-2">Startup prompt</h2>
+            <p className="text-xs text-text-muted mb-3">
+              Sent as the first user turn on every new session. Saving marks this agent for restart; it does not interrupt the live session.
+            </p>
+            <textarea
+              value={startupPrompt}
+              onChange={(e) => setStartupPrompt(e.target.value)}
+              maxLength={32768}
+              rows={6}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary"
+              placeholder="No startup prompt configured"
+            />
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <span className="text-xs text-text-muted">{startupPrompt.length.toLocaleString()} / 32,768</span>
+              <Button
+                size="sm"
+                loading={patchAgent.isPending}
+                disabled={patchAgent.isPending || startupPrompt === (agent.startupPrompt ?? '')}
+                onClick={() => patchAgent.mutate({ name, startupPrompt })}
+              >
+                Save prompt
+              </Button>
+            </div>
+          </Card>
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />

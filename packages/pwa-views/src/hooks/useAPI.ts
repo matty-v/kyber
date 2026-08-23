@@ -113,6 +113,21 @@ export function useCreateAgent() {
   })
 }
 
+export function usePatchAgent() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, startupPrompt }: { name: string; startupPrompt: string }) =>
+      api.patchAgent(name, { startupPrompt }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    meta: { successMessage: 'Startup prompt saved', errorPrefix: 'Failed to save startup prompt' },
+  })
+}
+
 // useRotateApiKey: rotates the control-plane API key. Cookie-authenticated
 // browsers receive a replacement HttpOnly session in the same response.
 export function useRotateApiKey() {

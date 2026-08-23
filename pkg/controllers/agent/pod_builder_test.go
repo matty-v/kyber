@@ -295,6 +295,11 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 	} else if v != "dave" {
 		t.Errorf("AGENT_NAME: got %q, want %q", v, "dave")
 	}
+	if v, ok := envMap["KYBER_STARTUP_PROMPT"]; !ok {
+		t.Error("KYBER_STARTUP_PROMPT env var not found")
+	} else if v != "" {
+		t.Errorf("KYBER_STARTUP_PROMPT: got %q, want empty", v)
+	}
 
 	// Adapter env vars must be injected.
 	if _, ok := envMap["CLAUDE_MODEL"]; !ok {

@@ -533,3 +533,17 @@ func TestStartCodex_EmptyLocalFile_Reseeds(t *testing.T) {
 		t.Fatalf("auth.json = %s, want the secret copy %s", got, secretCred)
 	}
 }
+
+func TestStartCodex_StartupPromptIsSingleQuotedArgument(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(src)
+	if !strings.Contains(s, `CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")`) {
+		t.Fatal("startup prompt is not appended as one argument after --")
+	}
+	if !strings.Contains(s, `CODEX_LAUNCH_CMD="codex $(printf '%q ' "${CODEX_ARGS[@]}")"`) {
+		t.Fatal("Codex launch command no longer shell-quotes its argument array")
+	}
+}

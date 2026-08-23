@@ -565,6 +565,14 @@ if [ -n "${CLAUDE_MODEL:-}" ]; then
     CLAUDE_ARGS="$CLAUDE_ARGS --model $CLAUDE_MODEL"
 fi
 
+# A configured startup prompt is the initial user turn for every new harness
+# session. Quote it as one shell argument because the tmux command is a command
+# string; never interpolate its raw contents into generated shell source.
+CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS"
+if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
+    CLAUDE_LAUNCH_ARGS="$CLAUDE_LAUNCH_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"
+fi
+
 # Test-only early exit (kyber#377 / PR-C). Lets start_claude_test.go
 # exercise the boot-prep block above (charset guard, install branch, [1m]
 # gate) without spinning up tmux + claude. Gated behind an env var so
@@ -932,7 +940,7 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     # /root/.claude.json, miss the onboarding bypass written by
     # start-claude.sh at /home/kyber/.claude.json, and fall into the
     # interactive theme picker on every restart-session.
-    sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_ARGS"
+    sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"
 
     echo "[kyber] restart-session: tmux 'agent' session restarted"
 ) 200>"\$SESSION_LOCK"
@@ -950,8 +958,8 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     rm -f "${HOME:-/home/kyber}/.claude/channels/telegram/bot.pid"
 fi
 
-echo "[kyber] Starting Claude Code in tmux (cwd=$LAUNCH_DIR): claude $CLAUDE_ARGS"
-tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_ARGS"
+echo "[kyber] Starting Claude Code in tmux (cwd=$LAUNCH_DIR)"
+tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"
 
 echo "[kyber] tmux session 'agent' started — waiting"
 
@@ -983,7 +991,7 @@ while true; do
     if [ -x /persist/last-claude-launch.sh ]; then
         /persist/last-claude-launch.sh || echo "[kyber] relaunch script returned non-zero — retrying" >&2
     else
-        tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_ARGS" || true
+        tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS" || true
     fi
     sleep 3
 done

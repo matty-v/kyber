@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.29.0 — 2026-08-23
+
+### Added
+- Agents can configure a startup prompt during creation or from Agent Details.
+  The prompt becomes the first user turn on every new Claude Code or Codex
+  session, and edits use the existing restart-required workflow.
+
 ## 0.28.8 — 2026-08-22
 
 ### Added

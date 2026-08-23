@@ -122,9 +122,9 @@ func buildScopedAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler
 	all := append([]runtime.Object{defaultMachine()}, objs...)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		AuthzEnforce:  true,
+		K8sClient:    fakeClient,
+		APIKey:       testAPIKey,
+		AuthzEnforce: true,
 		Callers: []api.ScopedCaller{
 			{Name: "write-caller", Key: writeScopedKey, Scopes: []string{"lifecycle:write"}},
 			{Name: "admin-caller", Key: adminScopedKey, Scopes: []string{"lifecycle:admin"}},
@@ -165,9 +165,10 @@ func sampleAgentCRD(name string) *kyberv1.Agent {
 func TestAgents_Create_HappyPath(t *testing.T) {
 	h, _ := buildAgentHandler(t)
 	req := authedRequest(t, http.MethodPost, "/api/v1/agents", map[string]interface{}{
-		"name":    "dave",
-		"machine": "worker-1",
-		"runtime": "claude-code",
+		"name":          "dave",
+		"machine":       "worker-1",
+		"runtime":       "claude-code",
+		"startupPrompt": "Continue the work.\nTreat $(echo nope) literally.",
 		"resources": map[string]interface{}{
 			"cpu":    "1",
 			"memory": "2Gi",
@@ -192,6 +193,9 @@ func TestAgents_Create_HappyPath(t *testing.T) {
 	}
 	if resp.Model != "" {
 		t.Errorf("Model: got %q, want empty fleet-default override", resp.Model)
+	}
+	if resp.StartupPrompt != "Continue the work.\nTreat $(echo nope) literally." {
+		t.Errorf("StartupPrompt: got %q", resp.StartupPrompt)
 	}
 }
 
@@ -1028,6 +1032,43 @@ func TestAgents_Patch(t *testing.T) {
 	}
 	if resp.Model != newModel {
 		t.Errorf("Model: got %q, want %q", resp.Model, newModel)
+	}
+}
+
+func TestAgents_PatchStartupPromptSetAndClear(t *testing.T) {
+	h, k := buildAgentHandler(t, sampleAgentCRD("dave"))
+	for _, tc := range []struct {
+		name  string
+		value string
+	}{
+		{"set", "First line\n'\" $() `ticks` ; --flag"},
+		{"clear", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"startupPrompt": tc.value})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var got kyberv1.Agent
+			if err := k.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+				t.Fatalf("getting agent: %v", err)
+			}
+			if got.Spec.StartupPrompt != tc.value {
+				t.Errorf("StartupPrompt=%q, want %q", got.Spec.StartupPrompt, tc.value)
+			}
+		})
+	}
+}
+
+func TestAgents_PatchStartupPromptRejectsOverLimit(t *testing.T) {
+	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
+	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"startupPrompt": strings.Repeat("界", 32769)})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "startupPrompt") {
+		t.Fatalf("want field-specific 400, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
 

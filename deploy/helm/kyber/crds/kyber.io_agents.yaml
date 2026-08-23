@@ -445,6 +445,13 @@ spec:
                 required:
                 - authType
                 type: object
+              startupPrompt:
+                description: |-
+                  StartupPrompt is delivered as the initial user turn whenever a new
+                  runtime harness session starts. Empty preserves the runtime's normal
+                  interactive startup behavior.
+                maxLength: 32768
+                type: string
             required:
             - machine
             - resources

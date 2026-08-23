@@ -80,6 +80,22 @@ export function BasicsSection({ state, set, machines, agents: _agents }: BasicsS
           ))}
         </select>
       </div>
+
+      <div>
+        <label htmlFor="agent-startup-prompt" className={labelClass}>Startup prompt</label>
+        <textarea
+          id="agent-startup-prompt"
+          value={state.startupPrompt}
+          onChange={(e) => set('startupPrompt', e.target.value)}
+          maxLength={32768}
+          rows={5}
+          placeholder="What should this agent do whenever a new session starts?"
+          className={inputClass}
+        />
+        <p className="mt-1.5 text-xs text-text-muted">
+          Optional. Sent as the first user turn on every new session. Visible to operators; not a secret.
+        </p>
+      </div>
     </section>
   )
 }

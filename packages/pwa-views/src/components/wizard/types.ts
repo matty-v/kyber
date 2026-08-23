@@ -23,6 +23,7 @@ export interface WizardState {
   memory: string
   disk: string
   soulDescription: string
+  startupPrompt: string
   telegramEnabled: boolean
   authType: 'oauth' | 'api-key'
   oauthCode: string
@@ -76,6 +77,7 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     memory: '2Gi',
     disk: '50Gi',
     soulDescription: '',
+    startupPrompt: '',
     telegramEnabled: false,
     authType: 'oauth',
     oauthCode: '',
