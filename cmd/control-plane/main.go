@@ -8,6 +8,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -1157,6 +1158,35 @@ func main() {
 		}
 	}
 
+	loggingComponentLevels := map[string]string{}
+	if raw := os.Getenv("KYBER_LOG_COMPONENT_OVERRIDES"); raw != "" {
+		var configured map[string]struct {
+			Level string `json:"level"`
+		}
+		if err := json.Unmarshal([]byte(raw), &configured); err != nil {
+			setupLog.Error(err, "invalid KYBER_LOG_COMPONENT_OVERRIDES")
+			os.Exit(1)
+		}
+		for component, config := range configured {
+			if _, err := logging.ParseLevel(config.Level); err != nil {
+				setupLog.Error(err, "invalid component logging level", "component", component)
+				os.Exit(1)
+			}
+			if config.Level != "" {
+				loggingComponentLevels[component] = strings.ToLower(config.Level)
+			}
+		}
+	}
+	loggingArchiveRetention := 0
+	if raw := os.Getenv("KYBER_LOG_ARCHIVE_RETENTION_DAYS"); raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil || value < 0 {
+			setupLog.Error(err, "invalid KYBER_LOG_ARCHIVE_RETENTION_DAYS", "value", raw)
+			os.Exit(1)
+		}
+		loggingArchiveRetention = value
+	}
+
 	// Caller-level authorization (kyber#474). Scoped API keys are an optional
 	// `callers` JSON document on the api-key Secret; KYBER_AUTHZ_ENFORCE gates
 	// whether an under-scoped caller is blocked (default off = permissive/audit).
@@ -1227,6 +1257,9 @@ func main() {
 		AnthropicTokenURL:        os.Getenv("ANTHROPIC_TOKEN_URL"),
 		Addr:                     internalapi.DefaultPublicPort,
 		Namespace:                kyberNamespace,
+		LoggingGlobalLevel:       os.Getenv("KYBER_LOG_GLOBAL_LEVEL"),
+		LoggingComponentLevels:   loggingComponentLevels,
+		LoggingArchiveRetention:  loggingArchiveRetention,
 		ValidRuntimes:            validRuntimes,
 		RuntimeImages:            runtimeImages,
 		RestartSessionCommands:   restartSessionCommands,

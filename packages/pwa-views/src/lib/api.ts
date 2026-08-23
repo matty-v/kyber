@@ -30,6 +30,8 @@ import type {
   RestartMachineAgentsResponse,
   FleetSummary,
   LogStreamOptions,
+  LoggingSettings,
+  LoggingTargetsResponse,
   TranscriptResult,
   TokenUsage,
   ComputeConfig,
@@ -570,6 +572,12 @@ export function createApiClient(cluster: Cluster) {
 
     getComputeConfig: (): Promise<ComputeConfig> =>
       request<ComputeConfig>('GET', '/api/v1/config'),
+
+    getLoggingSettings: (): Promise<LoggingSettings> =>
+      request<LoggingSettings>('GET', '/api/v1/logging/settings'),
+
+    getLoggingTargets: (): Promise<LoggingTargetsResponse> =>
+      request<LoggingTargetsResponse>('GET', '/api/v1/logging/targets'),
 
     // ---- GitHub (#134) ----
 

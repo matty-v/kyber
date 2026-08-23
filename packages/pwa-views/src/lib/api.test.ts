@@ -75,6 +75,34 @@ describe('getComputeConfig', () => {
   })
 })
 
+describe('logging discovery', () => {
+  beforeEach(() => {
+    localStorage.clear()
+  })
+
+  it('loads logging settings', async () => {
+    mockFetch({
+      globalLevel: 'info',
+      componentOverrides: { 'status-sidecar': 'debug' },
+      archiveRetentionDays: 30,
+      managedBy: 'helm',
+    })
+    const settings = await createApiClient(mockCluster).getLoggingSettings()
+    expect(settings.componentOverrides['status-sidecar']).toBe('debug')
+    expect(fetch).toHaveBeenCalledWith(
+      'http://localhost:8080/api/v1/logging/settings',
+      expect.any(Object),
+    )
+  })
+
+  it('loads logging targets', async () => {
+    mockFetch({ targets: [], selector: 'app.kubernetes.io/part-of=kyber' })
+    const response = await createApiClient(mockCluster).getLoggingTargets()
+    expect(response.targets).toEqual([])
+    expect(response.selector).toBe('app.kubernetes.io/part-of=kyber')
+  })
+})
+
 describe('kyber_server_url migration (kyber#123)', () => {
   // The migration runs once at module-import time. vitest caches modules
   // across test files, so we re-import with a fresh localStorage to observe

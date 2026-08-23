@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.30.0 — 2026-08-23
+
+### Added
+- API client types and methods for read-only platform logging settings and
+  managed pod/container discovery.
+
 ## 0.29.0 — 2026-08-23
 
 ### Added

@@ -105,6 +105,12 @@ type Server struct {
 	// Namespace is the Kubernetes namespace for all CRD operations. Defaults to "kyber-system".
 	Namespace string
 
+	// LoggingGlobalLevel and LoggingComponentLevels are the Helm-desired
+	// verbosity settings exposed read-only through /api/v1/logging/settings.
+	LoggingGlobalLevel       string
+	LoggingComponentLevels  map[string]string
+	LoggingArchiveRetention int
+
 	// PublicURL is the externally-reachable HTTPS URL of this Kyber instance
 	// (e.g. "https://kyber.your-tailnet.ts.net"). Used to render inbound-binding
 	// webhook URLs (PublicURL + /webhooks/inbound/<agent>/<binding>).
@@ -722,6 +728,8 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 
 	// Public config.
 	mux.HandleFunc("/api/v1/config", s.handleConfig)
+	mux.HandleFunc("/api/v1/logging/settings", s.handleLoggingSettings)
+	mux.HandleFunc("/api/v1/logging/targets", s.handleLoggingTargets)
 
 	// Fleet defaults — GET/PUT the kyber-fleet-defaults ConfigMap so the
 	// PWA Settings panel can read + edit defaultModel and

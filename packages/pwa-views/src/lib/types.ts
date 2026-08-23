@@ -604,6 +604,40 @@ export interface TranscriptResult {
   truncated: boolean
 }
 
+export type LoggingLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export interface LoggingSettings {
+  globalLevel: LoggingLevel
+  componentOverrides: Record<string, LoggingLevel>
+  archiveRetentionDays: number
+  managedBy: 'helm'
+}
+
+export interface LoggingContainer {
+  name: string
+  component: string
+  effectiveLevel: LoggingLevel | 'unmanaged'
+  managedLevel: boolean
+  init: boolean
+}
+
+export interface LoggingTarget {
+  namespace: string
+  pod: string
+  podUid: string
+  component: string
+  workload: string
+  agent?: string
+  machine?: string
+  phase: string
+  containers: LoggingContainer[]
+}
+
+export interface LoggingTargetsResponse {
+  targets: LoggingTarget[]
+  selector: string
+}
+
 // ---- Config types ----
 
 // Read-only public configuration exposed by GET /api/v1/config.

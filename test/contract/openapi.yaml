@@ -83,6 +83,36 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /api/v1/logging/settings:
+    get:
+      operationId: getLoggingSettings
+      summary: Get desired and effective platform logging settings
+      tags: [logging]
+      responses:
+        '200':
+          description: Helm-managed logging settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoggingSettings'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/v1/logging/targets:
+    get:
+      operationId: listLoggingTargets
+      summary: Discover every currently running Kyber-managed pod and container
+      tags: [logging]
+      responses:
+        '200':
+          description: Logging target inventory
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoggingTargets'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /api/v1/available:
     get:
       operationId: getAvailableRuntimes
@@ -858,6 +888,77 @@ components:
             type: object
         identity:
           type: object
+
+    LoggingSettings:
+      type: object
+      required: [globalLevel, componentOverrides, archiveRetentionDays, managedBy]
+      properties:
+        globalLevel:
+          type: string
+          enum: [debug, info, warn, error]
+        componentOverrides:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [debug, info, warn, error]
+        archiveRetentionDays:
+          type: integer
+          minimum: 0
+        managedBy:
+          type: string
+          enum: [helm]
+
+    LoggingTargets:
+      type: object
+      required: [targets, selector]
+      properties:
+        selector:
+          type: string
+        targets:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoggingTarget'
+
+    LoggingTarget:
+      type: object
+      required: [namespace, pod, podUid, component, workload, phase, containers]
+      properties:
+        namespace:
+          type: string
+        pod:
+          type: string
+        podUid:
+          type: string
+        component:
+          type: string
+        workload:
+          type: string
+        agent:
+          type: string
+        machine:
+          type: string
+        phase:
+          type: string
+        containers:
+          type: array
+          items:
+            $ref: '#/components/schemas/LoggingContainer'
+
+    LoggingContainer:
+      type: object
+      required: [name, component, effectiveLevel, managedLevel, init]
+      properties:
+        name:
+          type: string
+        component:
+          type: string
+        effectiveLevel:
+          type: string
+          enum: [debug, info, warn, error, unmanaged]
+        managedLevel:
+          type: boolean
+        init:
+          type: boolean
 
     ManagedComputeCapabilities:
       type: object

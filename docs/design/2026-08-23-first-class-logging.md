@@ -213,7 +213,7 @@ next begins.
 - [x] **Checkpoint 2 — chart settings and identity.** Add global/component Helm
   values, inject effective levels and downward-API context, standardize managed-pod
   labels, and cover every rendered workload with Helm tests.
-- [ ] **Checkpoint 3 — settings and target APIs.** Implement read-only effective
+- [x] **Checkpoint 3 — settings and target APIs.** Implement read-only effective
   settings and label-based pod/container discovery; update OpenAPI and PWA wire
   types; add authorization and API tests.
 - [ ] **Checkpoint 4 — generic live reads.** Add the bounded resource-neutral
