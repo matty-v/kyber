@@ -239,6 +239,11 @@ next begins.
   timestamp/level/source/message fields while preserving each raw line, add PWA
   regression coverage, bump the published view package, and verify its tests,
   type-check, and build before landing the branch.
+- [ ] **Checkpoint 12 — consolidated-view review fixes.** Bound aggregate lines
+  while each stream is consumed, cancel obsolete reads, clear stale rows on a
+  new selection, retain archived agent identity, synchronize filters with URL
+  navigation, render pod/container source visibly, and cover those regressions
+  before repeating dev-GCP acceptance.
 
 ## Acceptance criteria
 
