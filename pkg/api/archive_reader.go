@@ -60,6 +60,7 @@ type GenericArchiveSelection struct {
 // PlatformArchiveReader reads the normalized logs/ archive lane.
 type PlatformArchiveReader interface {
 	ReadContainerLines(ctx context.Context, selection GenericArchiveSelection, since, until time.Time) (ReadResult, error)
+	StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(raw string, line LogLine) error) error
 }
 
 type ArchiveReaderWithPlatform interface {
@@ -258,6 +259,22 @@ func parseArchiveLine(raw string) (LogLine, bool) {
 		return LogLine{}, false
 	}
 	return LogLine{Timestamp: ts, Text: al.Message}, true
+}
+
+func streamArchiveRecords(reader io.Reader, since, until time.Time, emit func(string, LogLine) error) error {
+	scanner := bufio.NewScanner(reader)
+	scanner.Buffer(make([]byte, 0, 64*1024), 4*1024*1024)
+	for scanner.Scan() {
+		raw := scanner.Text()
+		line, ok := parseArchiveLine(raw)
+		if !ok || line.Timestamp.Before(since) || line.Timestamp.After(until) {
+			continue
+		}
+		if err := emit(raw, line); err != nil {
+			return err
+		}
+	}
+	return scanner.Err()
 }
 
 // heldLine is a retained in-window line plus its cached dedup identity. Caching
@@ -660,6 +677,39 @@ func (g *GCSArchiveReader) ReadContainerLines(ctx context.Context, selection Gen
 	return ws.result(), nil
 }
 
+func (g *GCSArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return err
+	}
+	bkt := g.client.Bucket(g.bucket)
+	for i := len(prefixes) - 1; i >= 0; i-- {
+		it := bkt.Objects(ctx, &storage.Query{Prefix: prefixes[i]})
+		for {
+			attrs, err := it.Next()
+			if err == iterator.Done {
+				break
+			}
+			if err != nil {
+				return fmt.Errorf("list %q: %w", prefixes[i], err)
+			}
+			rc, err := bkt.Object(attrs.Name).NewReader(ctx)
+			if err != nil {
+				return fmt.Errorf("open %q: %w", attrs.Name, err)
+			}
+			err = streamArchiveRecords(rc, since, until, emit)
+			closeErr := rc.Close()
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close %q: %w", attrs.Name, closeErr)
+			}
+		}
+	}
+	return nil
+}
+
 // scanObject opens one GCS object as a stream and feeds it to the scanner,
 // closing it before returning. It never reads the whole object into memory.
 func (g *GCSArchiveReader) scanObject(ctx context.Context, bkt *storage.BucketHandle, name string, ws *windowScanner) error {
@@ -852,6 +902,34 @@ func (s *S3ArchiveReader) ReadContainerLines(ctx context.Context, selection Gene
 		}
 	}
 	return ws.result(), nil
+}
+
+func (s *S3ArchiveReader) StreamContainerRecords(ctx context.Context, selection GenericArchiveSelection, since, until time.Time, emit func(string, LogLine) error) error {
+	prefixes, err := genericDayPartitionPrefixes(selection, since, until)
+	if err != nil {
+		return err
+	}
+	for i := len(prefixes) - 1; i >= 0; i-- {
+		keys, err := s.store.listKeys(ctx, prefixes[i])
+		if err != nil {
+			return fmt.Errorf("list %q: %w", prefixes[i], err)
+		}
+		for _, key := range keys {
+			rc, err := s.store.getObject(ctx, key)
+			if err != nil {
+				return fmt.Errorf("read %q: %w", key, err)
+			}
+			err = streamArchiveRecords(rc, since, until, emit)
+			closeErr := rc.Close()
+			if err != nil {
+				return err
+			}
+			if closeErr != nil {
+				return fmt.Errorf("close %q: %w", key, closeErr)
+			}
+		}
+	}
+	return nil
 }
 
 // scanKey opens one S3 object as a stream and feeds it to the scanner, closing

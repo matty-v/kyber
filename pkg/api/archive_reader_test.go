@@ -488,6 +488,30 @@ func TestGenericArchiveRejectsUnsafeSegments(t *testing.T) {
 	}
 }
 
+func TestS3ArchiveReaderStreamsGenericRecordsOneObjectAtATime(t *testing.T) {
+	store := &fakeS3Store{objects: map[string][]byte{
+		"logs/agent/sol/uid-1/agent/2026-06-03/a.ndjson": []byte(`{"timestamp":"2026-06-03T10:00:00Z","message":"one"}`),
+		"logs/agent/sol/uid-1/agent/2026-06-03/b.ndjson": []byte(`{"timestamp":"2026-06-03T10:01:00Z","message":"two"}`),
+	}}
+	r := &S3ArchiveReader{store: store, bucket: "logs"}
+	var messages []string
+	err := r.StreamContainerRecords(context.Background(), GenericArchiveSelection{
+		Component: "agent", Workload: "sol", PodUID: "uid-1", Container: "agent",
+	}, time.Date(2026, 6, 3, 9, 0, 0, 0, time.UTC), time.Date(2026, 6, 3, 11, 0, 0, 0, time.UTC), func(_ string, line LogLine) error {
+		messages = append(messages, line.Text)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("StreamContainerRecords: %v", err)
+	}
+	if got := strings.Join(messages, ","); got != "one,two" {
+		t.Errorf("messages = %q, want one,two", got)
+	}
+	if store.maxOpen != 1 {
+		t.Errorf("max open objects = %d, want 1", store.maxOpen)
+	}
+}
+
 // TestS3ArchiveReader_EmptyWindows is the regression for the failure mode caught
 // during #431 verification: a future-dated window and a pre-shipper window each
 // return EMPTY — not the same lines as a recent window.

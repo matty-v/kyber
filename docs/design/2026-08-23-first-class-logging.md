@@ -221,7 +221,7 @@ next begins.
 - [x] **Checkpoint 5 — generic durable archive.** Expand Vector to all managed
   pods, introduce the `logs/` envelope/key contract and compatible reader, and
   align GCS/S3/MinIO lifecycle configuration.
-- [ ] **Checkpoint 6 — export.** Add streaming NDJSON/text export, measured limits,
+- [x] **Checkpoint 6 — export.** Add streaming NDJSON/text export, measured limits,
   content disposition, truncation contract, and memory/concurrency tests.
 - [ ] **Checkpoint 7 — PWA.** Build the fleet Logs page and settings visibility,
   deep-link resource views, bump `pwa-views`, and add component/API-client tests.

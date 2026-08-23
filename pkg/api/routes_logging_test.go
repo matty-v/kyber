@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,11 +19,24 @@ import (
 
 type fakePlatformArchiveReader struct {
 	selection GenericArchiveSelection
+	records   []string
+	err       error
 }
 
 func (f *fakePlatformArchiveReader) ReadContainerLines(_ context.Context, selection GenericArchiveSelection, _, _ time.Time) (ReadResult, error) {
 	f.selection = selection
 	return ReadResult{Lines: []LogLine{{Text: "archived line"}}}, nil
+}
+
+func (f *fakePlatformArchiveReader) StreamContainerRecords(_ context.Context, selection GenericArchiveSelection, _, _ time.Time, emit func(string, LogLine) error) error {
+	f.selection = selection
+	for _, raw := range f.records {
+		line, _ := parseArchiveLine(raw)
+		if err := emit(raw, line); err != nil {
+			return err
+		}
+	}
+	return f.err
 }
 
 func TestLoggingSettings(t *testing.T) {
@@ -91,7 +105,7 @@ func TestLoggingTargetsDiscoversManagedPodsAndContainers(t *testing.T) {
 
 func TestLoggingRoutesRequireAuthentication(t *testing.T) {
 	s := &Server{APIKey: "test-key"}
-	for _, path := range []string{"/api/v1/logging/settings", "/api/v1/logging/targets", "/api/v1/logging/logs"} {
+	for _, path := range []string{"/api/v1/logging/settings", "/api/v1/logging/targets", "/api/v1/logging/logs", "/api/v1/logging/export"} {
 		t.Run(path, func(t *testing.T) {
 			rr := httptest.NewRecorder()
 			s.BuildHandler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
@@ -186,6 +200,36 @@ func TestLoggingLogsReadsGenericArchive(t *testing.T) {
 	}
 }
 
+func TestLoggingExportStreamsAndSignalsLimit(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatalf("add core scheme: %v", err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-sol", Namespace: "kyber-system", UID: types.UID("uid-1"), Labels: map[string]string{
+			"app.kubernetes.io/part-of": "kyber", "app.kubernetes.io/component": "agent", "kyber.io/agent": "sol",
+		}},
+		Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}},
+	}
+	reader := &fakePlatformArchiveReader{records: []string{
+		`{"timestamp":"2026-06-03T10:00:00Z","message":"first"}`,
+		`{"timestamp":"2026-06-03T10:01:00Z","message":"second"}`,
+	}}
+	s := &Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(scheme).WithObjects(pod).Build(), Namespace: "kyber-system",
+		PlatformArchiveReader: reader, MaxExportBytes: 6,
+	}
+	url := "/api/v1/logging/export?pod=agent-sol&podUid=uid-1&container=agent&format=text&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
+	rr := httptest.NewRecorder()
+	s.handleLoggingExport(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "first\n") || !strings.Contains(rr.Body.String(), "truncated") {
+		t.Fatalf("response = %d %q", rr.Code, rr.Body.String())
+	}
+	if got := rr.Header().Get("Content-Disposition"); !strings.Contains(got, "kyber-agent-sol-agent.log") {
+		t.Errorf("Content-Disposition = %q", got)
+	}
+}
+
 func TestLoggingRoutesRejectUnsupportedMethods(t *testing.T) {
 	tests := []struct {
 		path    string
@@ -194,6 +238,7 @@ func TestLoggingRoutesRejectUnsupportedMethods(t *testing.T) {
 		{"/api/v1/logging/settings", (&Server{}).handleLoggingSettings},
 		{"/api/v1/logging/targets", (&Server{}).handleLoggingTargets},
 		{"/api/v1/logging/logs", (&Server{}).handleLoggingLogs},
+		{"/api/v1/logging/export", (&Server{}).handleLoggingExport},
 	}
 	for _, tc := range tests {
 		t.Run(tc.path, func(t *testing.T) {

@@ -198,6 +198,66 @@ paths:
         '503':
           $ref: '#/components/responses/ServiceUnavailable'
 
+  /api/v1/logging/export:
+    get:
+      operationId: exportLoggingLogs
+      summary: Stream a bounded durable log export
+      description: >
+        Streams one discovered pod/container without buffering the complete
+        export in control-plane memory. Windows are capped at 31 days and output
+        at 64 MiB by default. A late limit or upstream failure emits a terminal
+        marker and the X-Kyber-Log-Truncated trailer.
+      tags: [logging]
+      parameters:
+        - name: pod
+          in: query
+          required: true
+          schema: {type: string}
+        - name: podUid
+          in: query
+          required: true
+          schema: {type: string}
+        - name: container
+          in: query
+          required: true
+          schema: {type: string}
+        - name: since
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+        - name: until
+          in: query
+          required: true
+          schema: {type: string, format: date-time}
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ndjson, text]
+            default: ndjson
+      responses:
+        '200':
+          description: Streaming attachment.
+          headers:
+            X-Kyber-Log-Truncated:
+              schema: {type: string, enum: ['true']}
+          content:
+            application/x-ndjson:
+              schema: {type: string}
+            text/plain:
+              schema: {type: string}
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/available:
     get:
       operationId: getAvailableRuntimes

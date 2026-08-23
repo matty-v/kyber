@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +17,16 @@ import (
 
 const managedPodSelector = "app.kubernetes.io/part-of=kyber"
 const maxGenericLogTail = 10_000
+
+// Export is deliberately larger than the measured 8 MiB interactive-view cap
+// (see archive_reader.go's production line-size measurements) but remains
+// bounded: 64 MiB is eight view windows and one export runs at a time. A
+// 31-day ceiling matches the default 30-day object lifecycle with one day of
+// clock/expiry margin.
+const maxLoggingExportBytes = 64 << 20
+const maxLoggingExportWindow = 31 * 24 * time.Hour
+
+var errLoggingExportLimit = errors.New("logging export byte limit reached")
 
 var managedLoggingComponents = map[string]struct{}{
 	"control-plane": {}, "node-agent": {}, "status-sidecar": {},
@@ -211,6 +222,93 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 			}
 			return
 		}
+	}
+}
+
+func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+		return
+	}
+	if s.K8sClient == nil || s.PlatformArchiveReader == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "archive export not available")
+		return
+	}
+	q := r.URL.Query()
+	podName, podUID, container := q.Get("pod"), q.Get("podUid"), q.Get("container")
+	if podName == "" || podUID == "" || container == "" {
+		writeJSONError(w, http.StatusBadRequest, "invalid_target", "pod, podUid, and container are required")
+		return
+	}
+	format := q.Get("format")
+	if format == "" {
+		format = "ndjson"
+	}
+	if format != "ndjson" && format != "text" {
+		writeJSONError(w, http.StatusBadRequest, "invalid_format", "format must be 'ndjson' or 'text'")
+		return
+	}
+	since, until, errMsg := parseArchiveWindow(r)
+	if errMsg != "" {
+		writeJSONError(w, http.StatusBadRequest, "invalid_window", errMsg)
+		return
+	}
+	if until.Sub(since) > maxLoggingExportWindow {
+		writeJSONError(w, http.StatusBadRequest, "invalid_window", "export window must not exceed 31 days")
+		return
+	}
+	pod := &corev1.Pod{}
+	if err := s.K8sClient.Get(r.Context(), client.ObjectKey{Namespace: s.Namespace, Name: podName}, pod); err != nil ||
+		pod.Labels["app.kubernetes.io/part-of"] != "kyber" || string(pod.UID) != podUID || !loggingPodHasContainer(pod, container) {
+		writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
+		return
+	}
+	release, ok := s.tryAcquireExportSlot()
+	if !ok {
+		w.Header().Set("Retry-After", "2")
+		writeJSONError(w, http.StatusTooManyRequests, "too_many_concurrent_exports", "another log export is in flight; retry shortly")
+		return
+	}
+	defer release()
+
+	extension, contentType := "ndjson", "application/x-ndjson"
+	if format == "text" {
+		extension, contentType = "log", "text/plain; charset=utf-8"
+	}
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Disposition", `attachment; filename="kyber-`+podName+`-`+container+`.`+extension+`"`)
+	w.Header().Set("Trailer", "X-Kyber-Log-Truncated")
+	w.WriteHeader(http.StatusOK)
+
+	written := int64(0)
+	maxBytes := s.MaxExportBytes
+	if maxBytes <= 0 {
+		maxBytes = maxLoggingExportBytes
+	}
+	selection := GenericArchiveSelection{Component: pod.Labels["app.kubernetes.io/component"], Workload: loggingWorkload(pod), PodUID: podUID, Container: container}
+	err := s.PlatformArchiveReader.StreamContainerRecords(r.Context(), selection, since, until, func(raw string, line LogLine) error {
+		output := raw + "\n"
+		if format == "text" {
+			output = line.Text + "\n"
+		}
+		if written+int64(len(output)) > maxBytes {
+			return errLoggingExportLimit
+		}
+		n, err := io.WriteString(w, output)
+		written += int64(n)
+		return err
+	})
+	if err == nil {
+		return
+	}
+	w.Header().Set("X-Kyber-Log-Truncated", "true")
+	if format == "ndjson" {
+		_, _ = io.WriteString(w, `{"kyber_export":{"truncated":true,"reason":"limit_or_upstream_error"}}`+"\n")
+	} else {
+		_, _ = io.WriteString(w, "[kyber export truncated: limit or upstream error]\n")
+	}
+	if !errors.Is(err, errLoggingExportLimit) {
+		slog.Error("generic log export failed", "pod", podName, "container", container, "error", err)
 	}
 }
 
