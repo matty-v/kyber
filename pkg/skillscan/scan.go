@@ -341,6 +341,9 @@ func collect(repoDir string) []Skill {
 			continue
 		}
 		for _, e := range entries {
+			if isHidden(e.Name()) {
+				continue
+			}
 			// Follow symlinked skill directories: a vendored tree is
 			// sometimes a link, and os.ReadDir reports the link itself.
 			info, err := os.Stat(filepath.Join(repoDir, src.rel, e.Name()))
@@ -470,6 +473,14 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 			continue
 		}
 		for _, e := range entries {
+			// A runtime owns the dot-entries in its own skills home — Codex
+			// keeps a `.system` directory there. They are not skills (nothing
+			// can invoke a name starting with a dot), so reporting them as
+			// stray state would put a permanent warning on every Codex agent.
+			// Found exactly that way, on a real agent.
+			if isHidden(e.Name()) {
+				continue
+			}
 			full := filepath.Join(dir, e.Name())
 			li, err := os.Lstat(full)
 			if err != nil {
@@ -577,6 +588,10 @@ func describeSource(s Skill) string {
 	}
 	return "the agent's own skills/"
 }
+
+// isHidden reports whether a directory entry is a dot-entry, which belongs to
+// the tool that made it rather than to the agent.
+func isHidden(name string) bool { return strings.HasPrefix(name, ".") }
 
 func hasIssue(issues []Issue, code string) bool {
 	for _, i := range issues {

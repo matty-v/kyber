@@ -625,3 +625,28 @@ func TestScan_EveryIssueCarriesASeverity(t *testing.T) {
 		}
 	}
 }
+
+// Codex keeps a `.system` directory inside its own skills home. Nothing can
+// invoke a name starting with a dot, so it is not a skill — and reporting it as
+// stray state put a permanent, unfixable warning on every Codex agent. Found on
+// a real agent in the dev instance, not in review.
+func TestScan_RuntimeOwnedDotEntriesAreNotSkillsOrIssues(t *testing.T) {
+	f := newFixture(t)
+	for _, home := range []string{".claude", ".codex"} {
+		if err := os.MkdirAll(filepath.Join(f.home, home, "skills", ".system"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A dot-entry in the repo's skills/ is equally not a skill.
+	if err := os.MkdirAll(filepath.Join(f.repo, "skills", ".cache"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := f.scan()
+	if len(rep.Issues) != 0 {
+		t.Errorf("dot-entries must not be reported as problems; got %v", rep.Issues)
+	}
+	if len(rep.Skills) != 0 {
+		t.Errorf("dot-entries must not be reported as skills; got %v", names(rep))
+	}
+}
