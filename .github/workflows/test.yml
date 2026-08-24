@@ -182,6 +182,34 @@ jobs:
             echo "No packages/pwa-views source changes in this PR — version-bump guard skipped."
             exit 0
           fi
+          # Dev-tool updates change this workspace manifest but do not change
+          # the published library. Requiring a release for those updates makes
+          # every Dependabot devDependency PR fail before its build can run.
+          # Keep enforcing a release for runtime manifest fields, scripts, and
+          # all other pwa-views files.
+          if [ "$CHANGED" = "packages/pwa-views/package.json" ]; then
+            if BASE_SHA="$BASE_SHA" node <<'NODE'
+          const { execFileSync } = require('node:child_process')
+          const manifest = (revision) => {
+            const value = JSON.parse(execFileSync(
+              'git', ['show', `${revision}:packages/pwa-views/package.json`],
+              { encoding: 'utf8' },
+            ))
+            delete value.version
+            delete value.devDependencies
+            return value
+          }
+          process.exit(
+            JSON.stringify(manifest(process.env.BASE_SHA)) === JSON.stringify(manifest('HEAD'))
+              ? 0
+              : 1,
+          )
+          NODE
+            then
+              echo "Only pwa-views devDependencies changed — version-bump guard skipped."
+              exit 0
+            fi
+          fi
           ver() { git show "$1:packages/pwa-views/package.json" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1; }
           BASE_VER="$(ver "$BASE_SHA")"
           HEAD_VER="$(ver HEAD)"
