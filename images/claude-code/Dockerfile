@@ -6,7 +6,7 @@ ARG BASE_IMAGE=kyber/runtime-base:local
 
 # Build the token-reporter binary from source. Multi-stage keeps the runtime
 # image free of the Go toolchain.
-FROM golang:1.26-alpine AS tokenreporter-builder
+FROM golang:1.27-alpine AS tokenreporter-builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download

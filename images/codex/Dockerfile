@@ -1,5 +1,5 @@
 ARG BASE_IMAGE=kyber/runtime-base:local
-FROM golang:1.26-alpine AS reporter-builder
+FROM golang:1.27-alpine AS reporter-builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download

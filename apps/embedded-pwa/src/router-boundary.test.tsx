@@ -95,8 +95,9 @@ describe('react-router package boundary', () => {
     // way main.tsx imports it.
     //
     // Supply App's required providers so this remains a real cross-workspace
-    // render. Large dependency graphs can make the dynamic workspace import
-    // exceed Vitest's default timeout even though the render is healthy.
+    // render. Vitest 4.1.11 reports React render errors asynchronously, so the
+    // old try/catch around a deliberately incomplete provider tree timed out
+    // instead of observing the error.
     //
     // CAVEAT — measured, not assumed: this assertion still PASSES with two
     // copies installed, because Vite dedupes them at test time. It documents
