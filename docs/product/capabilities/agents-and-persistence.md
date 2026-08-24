@@ -7,7 +7,10 @@ A Kyber agent is a long-lived worker with its own persistent filesystem, its own
 An agent can have an optional startup prompt configured through the API or the
 console. Kyber sends it as the first user turn whenever a new harness session
 starts, including a pod restart, an explicit session reset, or recovery after
-the harness exits. This works the same way for Claude Code and Codex.
+the harness exits. When session resume is also enabled, resumed sessions get
+the prompt too. Kyber delivers it into the restored conversation as the trigger
+to continue interrupted work, so an agent that dies mid-task picks the task
+back up instead of idling. This works the same way for Claude Code and Codex.
 
 Changing the prompt does not interrupt the current session. The console marks
 the agent as requiring a restart; the new value takes effect on the next
