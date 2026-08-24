@@ -1,6 +1,6 @@
 # Dependabot PR triage — 2026-08-24
 
-**Status:** Awaiting merge approval
+**Status:** Coordinated Node 26 adoption in progress for #86
 
 ## Goal
 
@@ -14,8 +14,10 @@ approval before merging anything.
 - [x] Review upstream compatibility and release notes for each update.
 - [x] Reproduce failures and apply the smallest branch-local fixes needed.
 - [x] Run targeted local verification and confirm required GitHub checks.
-- [ ] Report per-PR risk and recommendation to Matt; wait for yes/no approval.
-- [ ] Merge only the PRs Matt approves, then verify the resulting main branch.
+- [x] Report per-PR risk and recommendation to Matt; wait for yes/no approval.
+- [x] Merge the fourteen approved PRs and verify the resulting main branch.
+- [ ] Coordinate Node 26 across development, CI, publishing, and the production
+  PWA builder on #86; validate and request a separate merge approval.
 
 ## Current evidence
 
@@ -32,10 +34,15 @@ approval before merging anything.
 - #139 now carries the required pwa-views 0.32.2 version and changelog entry;
   local builds, type checks, and 721 tests pass after hardening the slow router
   boundary test.
-- All fifteen PRs are mergeable and all required GitHub checks are green.
-- The exact next action is Matt's yes/no merge decision; #86 is recommended
-  against because it moves the production frontend image from the repository's
-  supported Node 22 line directly to Node 26.
+- Matt approved and all fourteen recommended PRs (#126–#139) were merged.
+- Main is green at `79a655e59c5a75755cc5ce2511373e3199b1168b` (test, build,
+  CodeQL, and pwa-views auto-publish all succeeded).
+- Matt chose to adopt Node 26 early. #86 is being expanded into a coordinated
+  change: `.nvmrc`, the package engine contract, control-plane PWA builder, and
+  holocron publishing job will agree on Node 26, with a CI drift guard and the
+  Node 26 test-environment compatibility fix discovered during validation.
+- The exact next action is to push the repaired #86 branch, wait for required
+  GitHub checks, then ask Matt for an explicit yes/no merge approval.
 
 ## Safety
 
