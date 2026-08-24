@@ -49,13 +49,13 @@ if (
   Element.prototype.scrollIntoView = function () {}
 }
 
-function renderLayout(initialPath: string, backTo?: BackTo) {
+function renderLayout(initialPath: string, backTo?: BackTo, cluster: Cluster = mockCluster) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
     <MemoryRouter initialEntries={[initialPath]}>
       <QueryClientProvider client={qc}>
         <TooltipProvider>
-            <ClusterProvider value={mockCluster}>
+            <ClusterProvider value={cluster}>
               <RoutePrefixProvider prefix="" backTo={backTo}>
                 <Layout>
                   <div>page content</div>
@@ -74,6 +74,23 @@ function renderLayout(initialPath: string, backTo?: BackTo) {
 // aria-current="page" on the active link; we assert via aria-current (router-
 // provided, robust) plus the active class token the render-prop applies.
 describe('Layout — NavLink/Link under react-router-dom', () => {
+  it('includes the cluster name in the document title and restores the host title on unmount', () => {
+    document.title = 'Host application'
+    const { unmount } = renderLayout('/')
+
+    expect(document.title).toBe('Kyber: kyber-test')
+
+    unmount()
+    expect(document.title).toBe('Host application')
+  })
+
+  it('falls back to Kyber when the cluster name is empty', () => {
+    const { unmount } = renderLayout('/', undefined, { ...mockCluster, name: '' })
+
+    expect(document.title).toBe('Kyber')
+    unmount()
+  })
+
   it('renders all nav destinations as links with correct hrefs', () => {
     renderLayout('/')
     // Each nav item renders in both the desktop sidebar and the mobile bottom

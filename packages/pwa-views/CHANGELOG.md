@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.33.1 — 2026-08-24
+
+### Changed
+- The PWA browser title now includes the active cluster name and restores the
+  host title when the shared view unmounts.
+- Removed the redundant “Fleet Command Console” sidebar tagline.
+
 ## 0.33.0 — 2026-08-24
 
 ### Added

@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { Link, NavLink } from 'react-router-dom'
 import {
   ArrowLeft,
@@ -17,6 +17,7 @@ import { CommandPalette } from './CommandPalette'
 import { useBackTo, usePrefixedPath } from '../lib/route-prefix'
 import { ClusterIdentifier } from './ClusterIdentifier'
 import { UpgradeBanner } from './UpgradeBanner'
+import { useCluster } from '../lib/cluster-context'
 
 interface Props {
   children: ReactNode
@@ -54,6 +55,7 @@ function NavItem({
 }
 
 export function Layout({ children }: Props) {
+  const cluster = useCluster()
   const prefixed = usePrefixedPath()
   const backTo = useBackTo()
   const [helpOpen, setHelpOpen] = useState(false)
@@ -77,6 +79,14 @@ export function Layout({ children }: Props) {
     enabled: !helpOpen && !paletteOpen,
   })
   useCommandPaletteShortcut({ onToggle: togglePalette, enabled: !helpOpen })
+
+  useEffect(() => {
+    const previousTitle = document.title
+    document.title = cluster.name ? `Kyber: ${cluster.name}` : 'Kyber'
+    return () => {
+      document.title = previousTitle
+    }
+  }, [cluster.name])
 
   return (
     <div className="flex h-dvh flex-col bg-surface-base text-text-primary lg:flex-row">
@@ -118,9 +128,6 @@ export function Layout({ children }: Props) {
               Kyber
             </h1>
           </div>
-          <p className="mt-1 font-mono text-[10px] uppercase tracking-[0.15em] text-text-disabled">
-            Fleet Command Console
-          </p>
           <ClusterIdentifier />
         </div>
         {navItems.map((item) => (
