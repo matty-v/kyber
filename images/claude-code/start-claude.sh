@@ -573,6 +573,16 @@ if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CLAUDE_LAUNCH_ARGS="$CLAUDE_LAUNCH_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"
 fi
 
+# Resume launches (kyber#118) also deliver the startup prompt, as the first
+# turn AFTER the restored conversation: a resumed session otherwise sits idle
+# with no turn to act on, so an agent interrupted mid-task would never pick
+# the task back up. --continue sits before the `--` separator because flags
+# must precede the positional prompt.
+CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue"
+if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
+    CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"
+fi
+
 # Test-only early exit (kyber#377 / PR-C). Lets start_claude_test.go
 # exercise the boot-prep block above (charset guard, install branch, [1m]
 # gate) without spinning up tmux + claude. Gated behind an env var so
@@ -815,9 +825,9 @@ fi
 # pod-boot and crash-relaunch paths launch with `--continue` so the harness
 # picks up its previous conversation; an intentional restart-session passes
 # --fresh to the generated relaunch script below and always starts clean.
-# Resume launches use CLAUDE_ARGS rather than CLAUDE_LAUNCH_ARGS: the startup
-# prompt is the initial turn of a NEW session, and on a resumed one it would
-# land as a spurious extra user turn.
+# Resume launches use CLAUDE_RESUME_ARGS, which carries the startup prompt
+# when one is configured — the prompt is what makes a resumed agent act on
+# its restored context instead of idling (see CLAUDE_RESUME_ARGS above).
 SESSION_RESUME_ENABLED=0
 case "${KYBER_SESSION_RESUME:-}" in
     1|true|True|TRUE) SESSION_RESUME_ENABLED=1 ;;
@@ -987,7 +997,7 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     RELAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
     if [ "$SESSION_RESUME_ENABLED" = "1" ] && [ "\$KYBER_FRESH" = "0" ] \\
        && [ -n "\$(find "$CLAUDE_PROJECT_STORE" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]; then
-        RELAUNCH_CMD="claude $CLAUDE_ARGS --continue"
+        RELAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"
         echo "[kyber] relaunch: resuming previous session (kyber#118)"
     fi
     sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
@@ -1013,7 +1023,7 @@ if [ "$SESSION_RESUME_ENABLED" = "1" ]; then
     if claude_has_prior_session; then
         # kyber#118: pod boot after a recreate/preemption/crash — pick the
         # previous conversation back up instead of starting fresh.
-        BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"
+        BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"
         echo "[kyber] session resume: continuing previous session (kyber#118)"
     else
         # Deliberately loud: the store path replicates Claude Code's
