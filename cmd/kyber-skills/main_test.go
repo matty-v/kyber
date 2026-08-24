@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -337,8 +338,8 @@ func TestReport_NoIdentityRepoStillPostsPlatformSkills(t *testing.T) {
 	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
 	t.Setenv("KYBER_IDENTITY_REPO", "")
 
-	// Exactly what start-claude.sh and start-codex.sh pass in this case.
-	code := runReport([]string{"--repo-dir", "", "--home", home, "--platform-dir", platform})
+	// Exactly what the identity sync passes in this case.
+	code := runReport([]string{"--once", "--repo-dir", "", "--home", home, "--platform-dir", platform})
 	if code != 0 {
 		t.Fatalf("report exit code = %d, want 0", code)
 	}
@@ -360,7 +361,7 @@ func TestReport_NothingInstalledStillPosts(t *testing.T) {
 	sidecar, reports := captureSidecar(t, http.StatusNoContent)
 	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
 	t.Setenv("KYBER_IDENTITY_REPO", "")
-	if code := runReport([]string{"--repo-dir", "", "--home", t.TempDir()}); code != 0 {
+	if code := runReport([]string{"--once", "--repo-dir", "", "--home", t.TempDir()}); code != 0 {
 		t.Fatalf("report exit code = %d, want 0", code)
 	}
 	if len(*reports) != 1 {
@@ -387,4 +388,164 @@ func TestResolve_DerivesRepoDirFromTheIdentitySlug(t *testing.T) {
 	if want := filepath.Join(home, "dev", "dave-agent"); p.repoDir != want {
 		t.Errorf("repoDir = %q, want %q", p.repoDir, want)
 	}
+}
+
+// This is the regression that sent the whole design back: Echo wrote
+// skills/cowsay/SKILL.md, committed it, and pushed it — everything an agent
+// following the identity-repo convention should do — and the skill was neither
+// loadable nor visible, because linking only ever ran at boot. Convergence is
+// the platform's job, not the agent's memory.
+func TestConverge_PicksUpASkillWrittenAfterBoot(t *testing.T) {
+	f := newRepoFixture(t)
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	p := paths{repoDir: f.repoDir, homeDir: f.home}
+
+	// Boot: nothing to find.
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatalf("first pass: %v", err)
+	}
+	if n := len((*reports)[0].Skills); n != 0 {
+		t.Fatalf("expected an empty first report, got %d skills", n)
+	}
+
+	// The agent writes a skill mid-session and commits it, exactly as Echo
+	// did. It never runs `kyber-skills install`.
+	f.writeSkill(t, "cowsay", "---\nname: cowsay\ndescription: Make a cow say something.\n---\nbody\n")
+	runGit(t, f.home, f.repoDir, "add", "-A")
+	runGit(t, f.home, f.repoDir, "commit", "-m", "skill: add cowsay skill")
+	runGit(t, f.home, f.repoDir, "push", "origin", "main")
+
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatalf("second pass: %v", err)
+	}
+	if len(*reports) != 2 {
+		t.Fatalf("expected a second report, got %d", len(*reports))
+	}
+	rep := (*reports)[1]
+	if len(rep.Skills) != 1 || rep.Skills[0].Name != "cowsay" {
+		t.Fatalf("reported skills = %+v", rep.Skills)
+	}
+	// Loadable, not just listed: the convergence has to actually link it.
+	if len(rep.Skills[0].Linked) != 2 {
+		t.Errorf("linked = %v, want both runtimes", rep.Skills[0].Linked)
+	}
+	for _, home := range []string{".claude", ".codex"} {
+		if _, err := os.Lstat(filepath.Join(f.home, home, "skills", "cowsay")); err != nil {
+			t.Errorf("~/%s/skills/cowsay was not linked: %v", home, err)
+		}
+	}
+	if !rep.Skills[0].Healthy() {
+		t.Errorf("a committed, pushed, linked skill should be clean; got %+v", rep.Skills[0].Issues)
+	}
+}
+
+// Auto-linking makes a skill work before it is safe. Without this the tab would
+// show a brand-new uncommitted skill as perfectly healthy, right up until the
+// pod was reprovisioned and it vanished — the false-healthy state this whole
+// feature exists to remove.
+func TestConverge_FlagsASkillThatIsNotInGitHubYet(t *testing.T) {
+	f := newRepoFixture(t)
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	p := paths{repoDir: f.repoDir, homeDir: f.home}
+
+	// Written, never committed.
+	f.writeSkill(t, "draft", "---\nname: draft\ndescription: Not saved yet.\n---\nbody\n")
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatal(err)
+	}
+	sk := (*reports)[0].Skills[0]
+	if !hasIssueCode(sk.Issues, skillscan.IssueNotPushed) {
+		t.Fatalf("expected %s on an uncommitted skill; got %+v", skillscan.IssueNotPushed, sk.Issues)
+	}
+	if sk.Broken() {
+		t.Error("not being pushed yet is a warning, not a failure — the skill works right now")
+	}
+
+	// Committed but not pushed is the same durability story.
+	runGit(t, f.home, f.repoDir, "add", "-A")
+	runGit(t, f.home, f.repoDir, "commit", "-m", "wip")
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatal(err)
+	}
+	sk = (*reports)[1].Skills[0]
+	if !hasIssueCode(sk.Issues, skillscan.IssueNotPushed) {
+		t.Fatalf("expected %s on a committed-but-unpushed skill; got %+v", skillscan.IssueNotPushed, sk.Issues)
+	}
+
+	// Pushed: clean.
+	runGit(t, f.home, f.repoDir, "push", "origin", "main")
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatal(err)
+	}
+	sk = (*reports)[2].Skills[0]
+	if hasIssueCode(sk.Issues, skillscan.IssueNotPushed) {
+		t.Errorf("a pushed skill must not be flagged; got %+v", sk.Issues)
+	}
+}
+
+// A steady state must be silent. An endless drip of identical reports would
+// bury the one tick that matters, and writes to the store for no reason.
+func TestConverge_SnapshotIsStableWhenNothingChanges(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "deploy", skillBody)
+	sidecar, _ := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	p := paths{repoDir: f.repoDir, homeDir: f.home}
+
+	first, err := convergeAndReport(p, postReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := convergeAndReport(p, postReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, second) {
+		t.Errorf("an unchanged pod produced two different snapshots:\n%s\n%s", first, second)
+	}
+}
+
+// Relinking on a loop must not churn: an already-correct link is left alone, so
+// a runtime reading the directory never sees it disappear and reappear.
+func TestLinkAll_LeavesCorrectLinksAlone(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "deploy", skillBody)
+
+	n, err := linkAll(f.repoDir, f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("first link count = %d, want 1", n)
+	}
+	before, err := os.Lstat(filepath.Join(f.home, ".claude", "skills", "deploy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	n, err = linkAll(f.repoDir, f.home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Errorf("second link count = %d, want 0 — an already-correct link must not be recreated", n)
+	}
+	after, err := os.Lstat(filepath.Join(f.home, ".claude", "skills", "deploy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !before.ModTime().Equal(after.ModTime()) {
+		t.Error("the link was recreated despite already being correct")
+	}
+}
+
+func hasIssueCode(issues []skillscan.Issue, code string) bool {
+	for _, i := range issues {
+		if i.Code == code {
+			return true
+		}
+	}
+	return false
 }

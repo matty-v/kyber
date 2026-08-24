@@ -97,9 +97,13 @@ The linker walks identity first and vendor second, and each pass replaces the li
 |---|---|
 | `kyber-skills install [--from PATH]` | Normalize the skill into `<repo>/skills/<name>/`, link it into both runtimes so it is live immediately, commit, push, then report. Idempotent. |
 | `kyber-skills list [--json]` | Print what the agent has, and what is wrong with it. |
-| `kyber-skills report` | Scan and push the report to the control plane. Run at boot and on every identity sync. |
+| `kyber-skills report` | Converge and report on a loop (default every 2 minutes, `KYBER_SKILLS_REPORT_INTERVAL`): relink every repo skill into both runtime homes, scan, and push the result. Started at boot; `--once` does a single pass and is what the identity sync runs. |
 
 A skill written straight into a runtime home works until the pod is reprovisioned and is committed nowhere; that state is reported as `unmanaged`.
+
+**Convergence is the platform's job, not the agent's memory.** An agent asked to save a skill does the obvious thing — write `skills/<name>/SKILL.md`, then sync its identity. If linking only ran at boot, that skill would be committed, pushed, invisible to the UI, and *not loadable in the session that created it*. So the reporter runs as a loop: it relinks, rescans, and reports every couple of minutes, and only POSTs when something actually changed. `kyber-skills install` remains the make-it-live-right-now fast path, not the only path.
+
+Because linking is automatic, durability has to be reported separately — otherwise a brand-new skill that had never been pushed would render as perfectly healthy right up until it vanished. That is what `not_pushed` is for.
 
 ### The read-only surface
 
@@ -113,6 +117,7 @@ The report is a scan of the **pod**, not of GitHub. During [kyber#691](https://g
 | `missing_skill_md` | error | a directory under `skills/` with no `SKILL.md`; the linker skips it entirely |
 | `invalid_frontmatter` | error | no YAML frontmatter block, or it does not parse |
 | `shadowed` | error | a vendored skill of the same name replaces this one |
+| `not_pushed` | warning | in the identity repo but not in GitHub (uncommitted, or committed and unpushed) — it works in this pod and dies with it |
 | `missing_description` | warning | loads, but can only ever be invoked explicitly |
 | `name_mismatch` | warning | frontmatter `name` disagrees with the directory name, which is what is actually invoked |
 | `dangling_link` | warning | a link in a runtime home whose target is gone |

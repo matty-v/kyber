@@ -10,9 +10,9 @@
   loadable in.
 - The tab also names what is broken: a skill committed to the repo that no
   runtime can load, a missing or malformed `SKILL.md`, a name collision where
-  a vendored skill silently replaces the agent's own, and skill directories
-  written straight into a runtime home that are committed nowhere and will not
-  survive a reprovision.
+  a vendored skill silently replaces the agent's own, skill directories
+  written straight into a runtime home, and skills that are not pushed to
+  GitHub — none of which survive a reprovision.
 
 ## 0.32.2 — 2026-08-24
 

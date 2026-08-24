@@ -89,7 +89,9 @@ After you write (or download) a skill, run:
 kyber-skills install
 ```
 
-That one command does the whole job: it links the skill into both runtimes so it works **immediately** rather than at your next boot, commits it, and pushes it to your identity repo. It is idempotent, so running it again is always safe. To pull in something you downloaded elsewhere, point it at the source: `kyber-skills install --from /tmp/some-skill`.
+That one command does the whole job: it links the skill into both runtimes so it works **immediately**, commits it, and pushes it to your identity repo. It is idempotent, so running it again is always safe. To pull in something you downloaded elsewhere, point it at the source: `kyber-skills install --from /tmp/some-skill`.
+
+If you forget, the platform catches up on its own within a couple of minutes — it relinks and re-reports on a loop. `install` just makes it instant, and makes sure the skill is actually pushed. Until it is pushed it shows as `not_pushed`, because a skill that lives only in this pod dies with it.
 
 Writing a skill straight into `~/.claude/skills/` or `~/.codex/skills/` looks like it works and is the one way to lose it — nothing there is committed, so it is gone the moment you are reprovisioned.
 

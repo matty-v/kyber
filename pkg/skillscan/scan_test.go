@@ -650,3 +650,64 @@ func TestScan_RuntimeOwnedDotEntriesAreNotSkillsOrIssues(t *testing.T) {
 		t.Errorf("dot-entries must not be reported as skills; got %v", names(rep))
 	}
 }
+
+// Linking is automatic now, so a skill starts working the moment it is
+// written. Durability has to be reported separately or a brand-new skill that
+// had never been pushed would render as perfectly healthy right up until the
+// pod was reprovisioned and it vanished.
+func TestScan_NotPushedIsReportedPerSkill(t *testing.T) {
+	f := newFixture(t)
+	saved := f.skill("saved", goodFrontmatter)
+	draft := f.skill("draft", "---\nname: draft\ndescription: Not in GitHub yet.\n---\n")
+	f.link("saved", saved)
+	f.link("draft", draft)
+
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: f.repo, HomeDir: f.home,
+		UnpushedPaths: []string{"skills/draft/SKILL.md"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := findSkill(t, rep, "draft")
+	if !hasCode(got.Issues, skillscan.IssueNotPushed) {
+		t.Fatalf("expected %s; got %v", skillscan.IssueNotPushed, codes(got.Issues))
+	}
+	if got.Broken() {
+		t.Error("not being pushed is a warning — the skill works right now")
+	}
+	// The neighbouring skill shares a parent directory and must not be caught
+	// by a sloppy prefix match.
+	if other := findSkill(t, rep, "saved"); hasCode(other.Issues, skillscan.IssueNotPushed) {
+		t.Errorf("a pushed skill was flagged; got %v", codes(other.Issues))
+	}
+}
+
+// Platform skills live in the image, not the repo, so "is it pushed" is not a
+// question that applies to them.
+func TestScan_PlatformSkillsAreNeverFlaggedNotPushed(t *testing.T) {
+	f := newFixture(t)
+	platform := filepath.Join(t.TempDir(), "opt-kyber-skills")
+	dir := filepath.Join(platform, "telegram-messaging")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"),
+		[]byte("---\nname: telegram-messaging\ndescription: x\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.link("telegram-messaging", dir, ".claude")
+
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: f.repo, HomeDir: f.home, PlatformDir: platform,
+		// A deliberately over-broad list: even so, a platform skill is not
+		// a repo path and must not match.
+		UnpushedPaths: []string{"skills", "telegram-messaging"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sk := findSkill(t, rep, "telegram-messaging"); hasCode(sk.Issues, skillscan.IssueNotPushed) {
+		t.Errorf("platform skill flagged %s; got %v", skillscan.IssueNotPushed, codes(sk.Issues))
+	}
+}

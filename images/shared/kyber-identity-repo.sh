@@ -380,7 +380,10 @@ echo "[kyber] sync: skills re-linked for Claude Code and Codex"
 # pod's environment is not visible and anything read from it would be wrong.
 # Fail-soft: a report that does not land must never break a boot or a restart.
 if command -v kyber-skills >/dev/null 2>&1; then
-    RUN kyber-skills report --repo-dir "$REPO_DIR" --home "$HOME_DIR" \
+    # --once: a converge loop is already running from boot, so this is just an
+    # immediate refresh for the restart-session path, which is exactly when
+    # newly-merged skills arrive.
+    RUN kyber-skills report --once --repo-dir "$REPO_DIR" --home "$HOME_DIR" \
         || echo "[kyber] sync: skill report failed (continuing)"
 fi
 exit 0

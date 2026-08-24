@@ -313,11 +313,19 @@ elif [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ ! -r "$DISCORD_SKILL_SRC/SKILL.md"
 fi
 
 # ---- Skill inventory ----
-# Report what this agent can ACTUALLY invoke, now that both the identity-repo
-# skills and the image-bundled capability skills above are linked. The identity
-# sync already reported once, but it runs BEFORE the Telegram/Discord blocks,
-# so that earlier report cannot see them. Backgrounded: the reporter retries a
-# sidecar that is still binding, and boot must not wait on it.
+# Converge and report what this agent can ACTUALLY invoke, now that both the
+# identity-repo skills and the image-bundled capability skills above are linked.
+#
+# This is a LOOP, not a one-shot. An agent asked to save a skill does the
+# obvious thing — write skills/<name>/SKILL.md and sync its identity — and if
+# linking only ran at boot, that skill would be committed, pushed, invisible to
+# the UI, and not loadable in the very session that created it. Making the
+# platform converge on a timer is what removes the "works if the agent
+# remembers the extra command" dependency; `kyber-skills install` stays as the
+# make-it-live-right-now fast path.
+#
+# Backgrounded: boot must not wait on it, and the reporter retries a sidecar
+# that is still binding.
 #
 # This runs under `set -e`, well before the token-reporter block creates
 # /persist/var/log, so the log path is resolved defensively — an unwritable
@@ -326,9 +334,9 @@ if command -v kyber-skills >/dev/null 2>&1; then
     KYBER_SKILLS_LOG="${KYBER_SKILLS_LOG:-/persist/var/log/kyber-skills.log}"
     mkdir -p "$(dirname "$KYBER_SKILLS_LOG")" 2>/dev/null || true
     [ -w "$(dirname "$KYBER_SKILLS_LOG")" ] || KYBER_SKILLS_LOG="$HOME/.kyber-skills.log"
-    kyber-skills report --repo-dir "${REPO_DIR:-}" --home "$HOME" \
+    nohup kyber-skills report --repo-dir "${REPO_DIR:-}" --home "$HOME" \
         >> "$KYBER_SKILLS_LOG" 2>&1 &
-    echo "[kyber] skill report started (pid=$!, log=$KYBER_SKILLS_LOG)"
+    echo "[kyber] skill reporter started (pid=$!, log=$KYBER_SKILLS_LOG)"
 fi
 
 cat >> "$CODEX_HOME/config.toml" <<EOF

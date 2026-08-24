@@ -103,8 +103,13 @@ func TestStartClaude_SkillReport_FiresAtBootAndCannotBreakIt(t *testing.T) {
 	if !strings.Contains(got, "--home "+tmpHome) {
 		t.Errorf("expected --home %s in the invocation, got %q", tmpHome, got)
 	}
-	if !strings.Contains(string(out), "skill report started") {
-		t.Errorf("expected the boot log to name the skill report; got:\n%s", out)
+	// The boot invocation must NOT be one-shot — convergence is what makes a
+	// skill written mid-session become loadable and visible.
+	if strings.Contains(got, "--once") {
+		t.Errorf("boot must start the converge loop, not a single pass; got %q", got)
+	}
+	if !strings.Contains(string(out), "skill reporter started") {
+		t.Errorf("expected the boot log to name the skill reporter; got:\n%s", out)
 	}
 }
 
@@ -121,8 +126,8 @@ func TestStartClaude_SkillReport_AbsentBinaryIsHarmless(t *testing.T) {
 	if err != nil {
 		t.Fatalf("boot failed with no kyber-skills present: %v\noutput:\n%s", err, out)
 	}
-	if strings.Contains(string(out), "skill report started") {
-		t.Errorf("skill report should not run without the binary; got:\n%s", out)
+	if strings.Contains(string(out), "skill reporter started") {
+		t.Errorf("skill reporter should not run without the binary; got:\n%s", out)
 	}
 }
 
@@ -152,6 +157,11 @@ func TestStartClaude_SyncScript_ReportsSkillsWithExplicitPaths(t *testing.T) {
 	src := string(body)
 	if !strings.Contains(src, "kyber-skills report") {
 		t.Fatalf("generated sync script does not report skills:\n%s", src)
+	}
+	// --once, because a converge loop is already running from boot; this call
+	// is the immediate refresh for the restart-session path.
+	if !strings.Contains(src, "kyber-skills report --once") {
+		t.Errorf("the sync script's report must be one-shot:\n%s", src)
 	}
 	for _, want := range []string{`--repo-dir "$REPO_DIR"`, `--home "$HOME_DIR"`} {
 		if !strings.Contains(src, want) {

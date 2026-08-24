@@ -34,9 +34,11 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/matty-v/kyber/pkg/skillscan"
@@ -95,8 +97,12 @@ func usage() {
   kyber-skills list [--json]
         Print this agent's skills and any problems found.
 
-  kyber-skills report
-        Scan and push the report to the control plane. Fail-soft.
+  kyber-skills report [--interval 2m | --once]
+        Converge and report: relink every skill in the identity repo into both
+        runtime homes, scan, and push the result to the control plane. Runs as
+        a loop by default — that is what makes a skill written mid-session
+        become loadable and visible without anyone remembering a command.
+        --once does a single pass (used by the identity sync).
 
 Common flags:
   --repo-dir PATH   identity repo clone (default: $HOME/dev/<KYBER_IDENTITY_REPO name>)
@@ -155,9 +161,20 @@ func (p *paths) requireRepo() error {
 	return nil
 }
 
+// defaultReportInterval is how often the reporter converges and re-reports.
+//
+// A scan is a shallow directory walk plus two git queries, so this is cheap;
+// the number is set by how long an operator should wait after asking an agent
+// for a skill before the UI shows it. Two minutes is short enough to feel
+// live and long enough that the POST is noise-free (a report is only sent when
+// something actually changed).
+const defaultReportInterval = 2 * time.Minute
+
 func runReport(args []string) int {
 	fs := flag.NewFlagSet("report", flag.ContinueOnError)
 	var p paths
+	once := fs.Bool("once", false, "make a single pass instead of looping")
+	interval := fs.Duration("interval", 0, "how often to converge and report (default 2m)")
 	addPathFlags(fs, &p)
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -166,25 +183,93 @@ func runReport(args []string) int {
 		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
 		return 0
 	}
-	rep, err := skillscan.Scan(skillscan.Options{RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir})
+	if *interval == 0 {
+		*interval = defaultReportInterval
+		if env := os.Getenv("KYBER_SKILLS_REPORT_INTERVAL"); env != "" {
+			if d, err := time.ParseDuration(env); err == nil && d > 0 {
+				*interval = d
+			} else {
+				fmt.Fprintf(os.Stderr, "kyber-skills: ignoring invalid KYBER_SKILLS_REPORT_INTERVAL %q\n", env)
+			}
+		}
+	}
+
+	// First pass is always delivered, with the boot-time retry: the sidecar is
+	// a sibling container and may still be binding.
+	last, err := convergeAndReport(p, postReportWithRetry)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "kyber-skills: scan failed: %v\n", err)
-		return 0
-	}
-	// The status sidecar is a sibling container, so at boot this can run
-	// before it has bound its listener. Retry briefly rather than lose the
-	// report until the agent's next restart, which could be days away.
-	if err := postReportWithRetry(rep); err != nil {
-		// Fail-soft on purpose: this runs inside the boot path, and a
-		// control plane that is briefly unreachable must never stop an
-		// agent from starting. Say so loudly in the log instead — silence
-		// on failure is how a dead reporter goes unnoticed for releases.
 		fmt.Fprintf(os.Stderr, "kyber-skills: report NOT delivered: %v\n", err)
+	}
+	if *once {
 		return 0
 	}
-	fmt.Printf("kyber-skills: reported %d skill(s), %d broken, %d other issue(s)\n",
-		len(rep.Skills), countBroken(rep), len(rep.Issues))
-	return 0
+
+	// Then converge on a loop. This is what makes the platform, rather than
+	// the agent's memory, responsible for a new skill becoming loadable and
+	// visible: an agent that just writes skills/<name>/SKILL.md and syncs its
+	// identity — the normal thing to do — gets picked up within one tick.
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
+	defer stop()
+	fmt.Printf("kyber-skills: converging every %s\n", *interval)
+	ticker := time.NewTicker(*interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return 0
+		case <-ticker.C:
+			next, err := convergeAndReport(p, func(rep *skillscan.Report) error {
+				// Only POST when something actually changed. A steady
+				// state should be silent — an endless drip of identical
+				// reports would bury the one that matters.
+				if last != nil && bytes.Equal(last, mustJSON(rep)) {
+					return nil
+				}
+				return postReport(rep)
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "kyber-skills: report NOT delivered: %v\n", err)
+				continue
+			}
+			if last == nil || !bytes.Equal(last, next) {
+				last = next
+			}
+		}
+	}
+}
+
+// convergeAndReport relinks, scans, and hands the result to deliver. It returns
+// the report's canonical JSON so the caller can tell one tick from the next.
+func convergeAndReport(p paths, deliver func(*skillscan.Report) error) ([]byte, error) {
+	if p.repoDir != "" {
+		if n, err := linkAll(p.repoDir, p.homeDir); err != nil {
+			// Report anyway: a link that could not be made is exactly the
+			// state worth surfacing, and it shows up as not_linked.
+			fmt.Fprintf(os.Stderr, "kyber-skills: linking failed: %v\n", err)
+		} else if n > 0 {
+			fmt.Printf("kyber-skills: linked %d new or changed skill(s)\n", n)
+		}
+	}
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir:       p.repoDir,
+		HomeDir:       p.homeDir,
+		PlatformDir:   p.platformDir,
+		UnpushedPaths: unpushedPaths(p.repoDir),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("scan failed: %w", err)
+	}
+	if err := deliver(rep); err != nil {
+		return nil, err
+	}
+	return mustJSON(rep), nil
+}
+
+// mustJSON renders a report for change comparison. Marshal cannot fail for this
+// shape; an error would mean an empty snapshot, which only costs one extra POST.
+func mustJSON(rep *skillscan.Report) []byte {
+	b, _ := json.Marshal(rep)
+	return b
 }
 
 func runList(args []string) int {
@@ -199,7 +284,10 @@ func runList(args []string) int {
 		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
 		return 1
 	}
-	rep, err := skillscan.Scan(skillscan.Options{RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir})
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir,
+		UnpushedPaths: unpushedPaths(p.repoDir),
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "kyber-skills: scan failed: %v\n", err)
 		return 1
@@ -264,7 +352,10 @@ func runInstall(args []string) int {
 		}
 	}
 
-	rep, err := skillscan.Scan(skillscan.Options{RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir})
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir,
+		UnpushedPaths: unpushedPaths(p.repoDir),
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "kyber-skills: scan failed: %v\n", err)
 		return 1
@@ -375,19 +466,85 @@ func linkAll(repoDir, homeDir string) (int, error) {
 			if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
 				continue
 			}
+			var relinked bool
 			for _, rel := range runtimeSkillDirs {
 				dst := filepath.Join(homeDir, rel, e.Name())
+				// Only touch a link that is missing or points somewhere
+				// else. This runs on a loop now, and blindly re-creating
+				// every link each tick would race a runtime reading the
+				// directory for no gain.
+				if linkPointsAt(dst, dir) {
+					continue
+				}
 				if err := os.RemoveAll(dst); err != nil {
 					return count, err
 				}
 				if err := os.Symlink(dir, dst); err != nil {
 					return count, err
 				}
+				relinked = true
 			}
-			count++
+			if relinked {
+				count++
+			}
 		}
 	}
 	return count, nil
+}
+
+// linkPointsAt reports whether path is a symlink already resolving to want.
+func linkPointsAt(path, want string) bool {
+	got, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	resolvedWant, err := filepath.EvalSymlinks(want)
+	if err != nil {
+		return false
+	}
+	return got == resolvedWant
+}
+
+// unpushedPaths returns the repo-relative paths under skills/ and vendor/ that
+// exist locally but not in GitHub: uncommitted, untracked, or committed and
+// unpushed. Best-effort — a git failure returns nothing rather than inventing a
+// warning, because "we could not check" must not render as "this is fine OR
+// this is broken".
+func unpushedPaths(repoDir string) []string {
+	if repoDir == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	add := func(out string) {
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if line != "" {
+				seen[line] = true
+			}
+		}
+	}
+	// Working tree: modified, staged, or untracked.
+	if out, err := git(repoDir, "status", "--porcelain", "--untracked-files=all", "--", "skills", "vendor"); err == nil {
+		for _, line := range strings.Split(out, "\n") {
+			// "XY path" — the status columns are fixed width.
+			if len(line) > 3 {
+				add(strings.TrimSpace(line[3:]))
+			}
+		}
+	}
+	// Committed locally but not on the tracking branch.
+	if out, err := git(repoDir, "diff", "--name-only", "@{u}..HEAD", "--", "skills", "vendor"); err == nil {
+		add(out)
+	}
+	if len(seen) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(seen))
+	for p := range seen {
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths
 }
 
 // commitAndPush persists everything under skills/ to the identity repo. Git

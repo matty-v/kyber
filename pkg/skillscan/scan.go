@@ -100,6 +100,12 @@ const (
 	// symlink into the identity repo. It works today and is invisible to
 	// git, so it is lost the moment the agent is reprovisioned.
 	IssueUnmanaged = "unmanaged"
+	// IssueNotPushed is a skill that is in the identity repo but not yet in
+	// GitHub — uncommitted, or committed and unpushed. It works right now and
+	// dies with the pod. This exists because the platform links a new skill
+	// automatically: without it, a skill that had never been pushed would
+	// render as perfectly healthy right up until it vanished.
+	IssueNotPushed = "not_pushed"
 )
 
 // Severity separates "this does not work" from "this works, but something is
@@ -186,6 +192,12 @@ type Options struct {
 	// DefaultPlatformDir when empty. Links into this directory are expected
 	// and healthy, not stray state.
 	PlatformDir string
+	// UnpushedPaths are repo-relative paths that exist locally but not in
+	// GitHub — uncommitted, untracked, or committed-but-unpushed. Supplied by
+	// the caller (which owns the git queries) so this package stays a pure
+	// filesystem scan and stays testable without a repo. A skill is flagged
+	// when any unpushed path falls inside its directory.
+	UnpushedPaths []string
 }
 
 // Scan walks the identity repo and both runtime homes and returns what the
@@ -242,6 +254,23 @@ func Scan(opts Options) (*Report, error) {
 					name, describeSource(winner)),
 			})
 		}
+	}
+
+	// Durability: a skill that is not in GitHub dies with the pod. Checked
+	// before the not_linked pass so both can be reported on one skill.
+	for i := range skills {
+		if skills[i].Source == SourcePlatform {
+			continue // lives in the image, not the repo
+		}
+		if !anyPathUnder(opts.UnpushedPaths, skills[i].Path) {
+			continue
+		}
+		skills[i].Issues = append(skills[i].Issues, Issue{
+			Code:     IssueNotPushed,
+			Severity: SeverityWarning,
+			Detail: fmt.Sprintf("%s is not pushed to GitHub — it works in this pod and will not survive a reprovision; run `kyber-skills install`",
+				skills[i].Path),
+		})
 	}
 
 	// not_linked is only meaningful for a skill the linker would accept —
@@ -587,6 +616,18 @@ func describeSource(s Skill) string {
 		return fmt.Sprintf("vendor package %q", s.SourcePackage)
 	}
 	return "the agent's own skills/"
+}
+
+// anyPathUnder reports whether any of paths is dir itself or lives beneath it.
+// Paths are repo-relative and slash-separated, as git reports them.
+func anyPathUnder(paths []string, dir string) bool {
+	prefix := dir + "/"
+	for _, p := range paths {
+		if p == dir || strings.HasPrefix(p, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // isHidden reports whether a directory entry is a dot-entry, which belongs to
