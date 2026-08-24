@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.32.1 — 2026-08-24
+
+### Changed
+- The startup prompt helper text in the agent creation wizard now notes that
+  the prompt is also sent when a resumed session starts (with session resume
+  enabled), so interrupted work continues.
+
 ## 0.32.0 — 2026-08-23
 
 ### Added

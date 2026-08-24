@@ -93,7 +93,8 @@ export function BasicsSection({ state, set, machines, agents: _agents }: BasicsS
           className={inputClass}
         />
         <p className="mt-1.5 text-xs text-text-muted">
-          Optional. Sent as the first user turn on every new session. Visible to operators; not a secret.
+          Optional. Sent as the first user turn on every new session — and on resumed sessions when
+          session resume is enabled, so interrupted work continues. Visible to operators; not a secret.
         </p>
       </div>
     </section>
