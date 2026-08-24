@@ -1,6 +1,6 @@
 # Dependabot PR triage — 2026-08-24
 
-**Status:** Awaiting explicit merge approval for #86
+**Status:** Complete
 
 ## Goal
 
@@ -44,7 +44,11 @@ approval before merging anything.
 - #86 is cleanly mergeable at `82b488497f425641886a872fe8d212f4ef1d3430`.
   Its PWA build, full Go suite, integration test, production control-plane image
   build, CodeQL, design lint, and GitGuardian checks all pass.
-- The exact next action is Matt's explicit yes/no merge approval for #86.
+- Matt approved and #86 merged as `ce24359c111b97d7b7fabe32d24571339a668e74`;
+  its post-merge build, test, and CodeQL workflows all passed on main.
+- The coordinated Holocron follow-up merged as matty-v/holocron#103 at
+  `0634e966422e32f8370071f3ebe152d03e47a34b`; its post-merge Node 26
+  install, type-check, tests, build, and Firebase production deploy passed.
 
 ## Safety
 
