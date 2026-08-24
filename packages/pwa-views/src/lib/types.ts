@@ -67,6 +67,10 @@ export interface Agent {
   authType?: AgentAuthType
   model: string
   startupPrompt?: string
+  // kyber#118: resume the previous harness session after an unexpected
+  // session end (pod recreate, preemption, crash). Intentional session
+  // restarts always start fresh.
+  sessionResume?: boolean
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
@@ -350,6 +354,7 @@ export interface CreateAgentRequest {
   runtime: string
   model?: string
   startupPrompt?: string
+  sessionResume?: boolean
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string
@@ -380,6 +385,7 @@ export interface CreateAgentRequest {
 
 export interface PatchAgentRequest {
   startupPrompt?: string
+  sessionResume?: boolean
 }
 
 export interface SetModelRequest {

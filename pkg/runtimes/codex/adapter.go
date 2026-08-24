@@ -90,7 +90,10 @@ func (a *Adapter) SessionBriefPath() string       { return "/persist/session-bri
 func (a *Adapter) SessionStatePath() string       { return "/persist/session-state.json" }
 func (a *Adapter) ModelEnvVar() string            { return "CODEX_MODEL" }
 func (a *Adapter) RestartSessionCommand() []string {
-	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/bin/bash", "/persist/last-codex-launch.sh"}
+	// --fresh mirrors the claude-code adapter: an intentional
+	// restart-session always starts a fresh session even when
+	// spec.sessionResume is enabled (kyber#118).
+	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/bin/bash", "/persist/last-codex-launch.sh", "--fresh"}
 }
 
 // CompactSessionCommand pastes "/compact" into the live tmux session. Codex

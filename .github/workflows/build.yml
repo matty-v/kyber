@@ -596,9 +596,20 @@ jobs:
   push-codex:
     runs-on: ubuntu-latest
     needs: [changes, push-runtime-base]
-    if: always() && github.event_name == 'push' && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.codex == 'true') && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
+    # kyber#120: mirrors push-claude-code — PR heads publish a single
+    # <head-sha> tag so runtime changes can be live-verified pre-merge;
+    # only pushes to main move :latest and the version tag.
+    if: >-
+      always()
+      && (github.event_name == 'push' ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+      && github.actor != 'dependabot[bot]'
+      && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.codex == 'true')
+      && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || '' }}
       - uses: docker/login-action@v4
         with:
           registry: ghcr.io
@@ -608,8 +619,15 @@ jobs:
       - name: Determine BASE_IMAGE tag
         id: base
         run: |
+          # On a PR the head sha is the only tag runtime-base was pushed
+          # under (github.sha is the synthetic merge commit).
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA="${{ github.sha }}"
+          fi
           if [ "${{ needs.changes.outputs.runtimeBase }}" = "true" ]; then
-            echo "tag=${{ github.sha }}" >> $GITHUB_OUTPUT
+            echo "tag=${SHA}" >> $GITHUB_OUTPUT
           else
             echo "tag=latest" >> $GITHUB_OUTPUT
           fi
@@ -624,6 +642,25 @@ jobs:
           echo "version=$version" >> $GITHUB_OUTPUT
           echo "Pinned codex version: $version"
 
+      # As with claude-code: a PR gets the head-sha tag only. The moving
+      # :latest and :<npm-version> tags are what the fleet consumes, and a
+      # PR must not be able to move them.
+      - id: cxtags
+        name: Resolve codex image tags
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TAGS="ghcr.io/matty-v/kyber-codex:${{ github.event.pull_request.head.sha }}"
+          else
+            TAGS=$(printf 'ghcr.io/matty-v/kyber-codex:latest\nghcr.io/matty-v/kyber-codex:%s\nghcr.io/matty-v/kyber-codex:%s' \
+              "${{ github.sha }}" "${{ steps.cxver.outputs.version }}")
+          fi
+          {
+            echo "tags<<TAGS_EOF"
+            echo "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+          echo "Tags resolved:"; echo "${TAGS}"
+
       - name: Build and push Codex image
         uses: docker/build-push-action@v7
         with:
@@ -636,10 +673,7 @@ jobs:
             BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ steps.base.outputs.tag }}
             CODEX_VERSION=${{ steps.cxver.outputs.version }}
           push: true
-          tags: |
-            ghcr.io/matty-v/kyber-codex:latest
-            ghcr.io/matty-v/kyber-codex:${{ github.sha }}
-            ghcr.io/matty-v/kyber-codex:${{ steps.cxver.outputs.version }}
+          tags: ${{ steps.cxtags.outputs.tags }}
           cache-from: type=gha,scope=codex
           cache-to: type=gha,scope=codex,mode=max
   # Deployment is managed by ArgoCD — see matty-v/kyber-deploy. The

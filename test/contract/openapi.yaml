@@ -1454,6 +1454,9 @@ components:
           type: string
           maxLength: 32768
           description: Initial user turn delivered whenever a new harness session starts.
+        sessionResume:
+          type: boolean
+          description: Resume the previous harness session after an unexpected session end (pod recreate, preemption, crash). Intentional session restarts always start fresh.
         currentModel:
           type: string
           description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
@@ -1496,6 +1499,9 @@ components:
           type: string
           maxLength: 32768
           description: Initial user turn delivered whenever a new harness session starts.
+        sessionResume:
+          type: boolean
+          description: Resume the previous harness session after an unexpected session end (pod recreate, preemption, crash). Intentional session restarts always start fresh.
         force:
           type: boolean
           description: Skip catalog validation of the model id (write-only).

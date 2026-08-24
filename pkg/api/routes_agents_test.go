@@ -1062,6 +1062,43 @@ func TestAgents_PatchStartupPromptSetAndClear(t *testing.T) {
 	}
 }
 
+// TestAgents_PatchSessionResume covers the kyber#118 toggle: PATCH true
+// lands on spec.sessionResume, PATCH false clears it, and the response
+// reflects the new value.
+func TestAgents_PatchSessionResume(t *testing.T) {
+	h, k := buildAgentHandler(t, sampleAgentCRD("dave"))
+	for _, tc := range []struct {
+		name  string
+		value bool
+	}{
+		{"enable", true},
+		{"disable", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"sessionResume": tc.value})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var got kyberv1.Agent
+			if err := k.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+				t.Fatalf("getting agent: %v", err)
+			}
+			if got.Spec.SessionResume != tc.value {
+				t.Errorf("SessionResume=%v, want %v", got.Spec.SessionResume, tc.value)
+			}
+			var resp api.AgentResponse
+			if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+				t.Fatalf("decoding: %v", err)
+			}
+			if resp.SessionResume != tc.value {
+				t.Errorf("response SessionResume=%v, want %v", resp.SessionResume, tc.value)
+			}
+		})
+	}
+}
+
 func TestAgents_PatchStartupPromptRejectsOverLimit(t *testing.T) {
 	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
 	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"startupPrompt": strings.Repeat("界", 32769)})

@@ -322,6 +322,12 @@ CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
 if [ -n "${CODEX_MODEL:-}" ]; then
     CODEX_ARGS=(--model "$CODEX_MODEL" "${CODEX_ARGS[@]}")
 fi
+# kyber#118: build the resume command from the arg set BEFORE the startup
+# prompt lands — the prompt is the initial turn of a NEW session, and a
+# resumed session is not a new session. `resume --last` picks the newest
+# recorded session; config.toml's tui.resume_cwd="current" scopes that to
+# this launch dir.
+CODEX_RESUME_CMD="codex resume --last $(printf '%q ' "${CODEX_ARGS[@]}")"
 if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")
 fi
@@ -333,6 +339,20 @@ fi
 # restart-session. Both launch paths use this single definition so they cannot
 # drift apart.
 CODEX_LAUNCH_CMD="codex $(printf '%q ' "${CODEX_ARGS[@]}")"
+
+# kyber#118: native session resume. When spec.sessionResume is enabled, the
+# pod-boot and crash-relaunch paths resume the previous session; an
+# intentional restart-session passes --fresh to the generated relaunch
+# script below and always starts clean. Resume only when the session store
+# already holds a transcript — `codex resume --last` with nothing recorded
+# would die immediately and read as a crash loop.
+SESSION_RESUME_ENABLED=0
+case "${KYBER_SESSION_RESUME:-}" in
+    1|true|True|TRUE) SESSION_RESUME_ENABLED=1 ;;
+esac
+codex_has_prior_session() {
+    [ -n "$(find "$CODEX_HOME/sessions" -name '*.jsonl' -print -quit 2>/dev/null)" ]
+}
 
 # Test hook, mirroring SKIP_CLAUDE_LAUNCH in start-claude.sh: run the whole boot
 # path (credential seeding, identity repo, config render) and stop before
@@ -348,6 +368,11 @@ nohup /usr/local/bin/kyber-codex-reporter >> "$PERSIST_ROOT/var/log/kyber-codex-
 cat > "$PERSIST_ROOT/last-codex-launch.sh" <<EOF
 #!/usr/bin/env bash
 set -euo pipefail
+# kyber#118: --fresh (the restart-session API's argv passes it) forces a
+# fresh session; the crash watchdog calls this script bare, which is where
+# resume applies.
+KYBER_FRESH=0
+[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1
 exec 9>"$PERSIST_ROOT/var/lock/session.lock"
 flock -x 9
 if [ "\$(id -u)" -eq 0 ]; then
@@ -355,21 +380,69 @@ if [ "\$(id -u)" -eq 0 ]; then
 else
     TMUX=(tmux)
 fi
+# kyber#118: bare (crash-watchdog) invocations only revive a DEAD session —
+# if one is alive under the lock, a concurrent restart-session already
+# relaunched and killing it could resurrect the discarded conversation.
+if [ "\$KYBER_FRESH" = "0" ] && "\${TMUX[@]}" has-session -t agent 2>/dev/null; then
+    echo "[kyber] relaunch: session already alive — a concurrent restart won the race, nothing to do (kyber#118)"
+    exit 0
+fi
 "\${TMUX[@]}" kill-session -t agent 2>/dev/null || true
 # The restart lock lives on fd 9 in this shell. Close it in the tmux child:
 # tmux becomes the long-lived server process on the first relaunch, and an
 # inherited locked descriptor would otherwise make every later inbound prompt
 # look like it arrived during a restart (and make the next restart hang).
-"\${TMUX[@]}" new-session -d -s agent -c $(printf '%q' "$LAUNCH_DIR") $(printf '%q' "$CODEX_LAUNCH_CMD") 9>&-
+# kyber#118: decide fresh-vs-resume at RUN time — the store may have gained
+# its first transcript since boot, and --fresh must always win. Command
+# strings and paths are baked at boot (unquoted heredoc); only the decision
+# runs here.
+RELAUNCH_CMD=$(printf '%q' "$CODEX_LAUNCH_CMD")
+if [ "$SESSION_RESUME_ENABLED" = "1" ] && [ "\$KYBER_FRESH" = "0" ] \\
+   && [ -n "\$(find $(printf '%q' "$CODEX_HOME")/sessions -name '*.jsonl' -print -quit 2>/dev/null)" ]; then
+    RELAUNCH_CMD=$(printf '%q' "$CODEX_RESUME_CMD")
+    echo "[kyber] relaunch: resuming previous session (kyber#118)"
+fi
+"\${TMUX[@]}" new-session -d -s agent -c $(printf '%q' "$LAUNCH_DIR") "\$RELAUNCH_CMD" 9>&-
 EOF
 chmod 0755 "$PERSIST_ROOT/last-codex-launch.sh"
 
+BOOT_LAUNCH_CMD="$CODEX_LAUNCH_CMD"
+if [ "$SESSION_RESUME_ENABLED" = "1" ] && codex_has_prior_session; then
+    # kyber#118: pod boot after a recreate/preemption/crash — pick the
+    # previous conversation back up instead of starting fresh.
+    BOOT_LAUNCH_CMD="$CODEX_RESUME_CMD"
+    echo "[kyber] session resume: continuing previous session (kyber#118)"
+fi
 echo "[kyber] Starting Codex ${CODEX_VERSION} in tmux (cwd=$LAUNCH_DIR)"
-tmux new-session -d -s agent -c "$LAUNCH_DIR" "$CODEX_LAUNCH_CMD"
+tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"
 
+relaunch_count=0
 while true; do
+    session_started=$(date +%s 2>/dev/null || echo 0)
     while tmux has-session -t agent 2>/dev/null; do sleep 5; done
+    now=$(date +%s 2>/dev/null || echo 0)
+    # A session that ran healthily (>=60s) before dying is not a crash loop.
+    if [ $(( now - session_started )) -ge 60 ]; then
+        relaunch_count=0
+    fi
+    relaunch_count=$((relaunch_count + 1))
+    # kyber#118: give-up rung, mirroring start-claude.sh (kyber#563). The
+    # liveness probe (`pgrep -f codex`) matches this start script itself, so
+    # a permanently-dying session would otherwise loop here forever with the
+    # pod reporting healthy. Exit so the controller recreates the pod.
+    if [ "$relaunch_count" -gt 5 ]; then
+        echo "[kyber] Codex session died ${relaunch_count}x within seconds — exiting so the controller recreates the pod" >&2
+        exit 1
+    fi
     echo "[kyber] Codex tmux session ended; relaunching"
-    "$PERSIST_ROOT/last-codex-launch.sh" || true
+    RELAUNCH_FLAG=""
+    if [ "$relaunch_count" -ge 3 ] && [ "$SESSION_RESUME_ENABLED" = "1" ]; then
+        # kyber#118: repeated fast deaths with resume on — the resumed
+        # transcript itself may be the poison (e.g. corrupted by a hard
+        # kill mid-write). Drop to a fresh session instead of looping.
+        echo "[kyber] session resume: ${relaunch_count} fast deaths — falling back to a fresh session (kyber#118)"
+        RELAUNCH_FLAG="--fresh"
+    fi
+    "$PERSIST_ROOT/last-codex-launch.sh" $RELAUNCH_FLAG || true
     sleep 2
 done

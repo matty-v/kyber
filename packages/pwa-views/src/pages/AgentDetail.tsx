@@ -20,6 +20,7 @@ import {
   useStartCodexDeviceAuth,
   useComputeConfig,
   usePatchAgent,
+  useSetSessionResume,
 } from '../hooks/useAPI'
 import { useEffectiveModelList } from '../lib/models'
 import { StatusBadge } from '../components/StatusBadge'
@@ -339,6 +340,42 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   )
 }
 
+// SessionResumeCard is the kyber#118 per-agent toggle. Presentational and
+// exported (like StatusCardBody / MismatchBadges) so tests can exercise it
+// without the page's data providers.
+export function SessionResumeCard({
+  enabled,
+  pending,
+  onChange,
+}: {
+  enabled: boolean
+  pending: boolean
+  onChange: (enabled: boolean) => void
+}) {
+  return (
+    <Card>
+      <h2 className="text-sm font-medium text-text-primary mb-2">Session resume</h2>
+      <label className="flex items-start gap-2 text-sm text-text-primary">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={enabled}
+          disabled={pending}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>
+          Resume the previous session after an unexpected restart
+          <span className="mt-0.5 block text-xs text-text-muted">
+            Applies when the pod is recreated, preempted, or crashes. An
+            intentional session restart still starts fresh. Saving marks this
+            agent for restart; the setting lands the next time its pod starts.
+          </span>
+        </span>
+      </label>
+    </Card>
+  )
+}
+
 function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
   return (
     <Card>
@@ -488,6 +525,7 @@ export function AgentDetail() {
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
   const setAgentResources = useSetAgentResources()
   const patchAgent = usePatchAgent()
+  const setSessionResume = useSetSessionResume()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent()
   const startCodexDeviceAuth = useStartCodexDeviceAuth()
@@ -855,6 +893,11 @@ export function AgentDetail() {
               </Button>
             </div>
           </Card>
+          <SessionResumeCard
+            enabled={agent.sessionResume ?? false}
+            pending={setSessionResume.isPending}
+            onChange={(enabled) => setSessionResume.mutate({ name, sessionResume: enabled })}
+          />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />

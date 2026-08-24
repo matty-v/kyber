@@ -811,6 +811,28 @@ if [ -n "${REPO_DIR:-}" ] && [ -d "$REPO_DIR" ]; then
     LAUNCH_DIR="$REPO_DIR"
 fi
 
+# kyber#118: native session resume. When spec.sessionResume is enabled, the
+# pod-boot and crash-relaunch paths launch with `--continue` so the harness
+# picks up its previous conversation; an intentional restart-session passes
+# --fresh to the generated relaunch script below and always starts clean.
+# Resume launches use CLAUDE_ARGS rather than CLAUDE_LAUNCH_ARGS: the startup
+# prompt is the initial turn of a NEW session, and on a resumed one it would
+# land as a spurious extra user turn.
+SESSION_RESUME_ENABLED=0
+case "${KYBER_SESSION_RESUME:-}" in
+    1|true|True|TRUE) SESSION_RESUME_ENABLED=1 ;;
+esac
+
+# Claude Code keys its transcript store on the launch cwd with every
+# non-alphanumeric byte mapped to '-' (~/.claude/projects/-home-kyber-…).
+# Resume only when that store already holds a transcript: `claude --continue`
+# with no prior conversation for the cwd exits immediately, which the
+# kyber#563 watchdog would read as a crash loop and take the pod down with it.
+CLAUDE_PROJECT_STORE="${HOME:-/home/kyber}/.claude/projects/$(printf '%s' "$LAUNCH_DIR" | sed 's|[^A-Za-z0-9]|-|g')"
+claude_has_prior_session() {
+    [ -n "$(find "$CLAUDE_PROJECT_STORE" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]
+}
+
 # Claude Code's workspace-trust decision is keyed by the exact launch path in
 # ~/.claude.json. The old boot path wrote trust for $PWD near the top of this
 # script (normally "/"), before identity-repo setup resolved REPO_DIR, and then
@@ -881,6 +903,12 @@ cat > /persist/last-claude-launch.sh <<LAUNCH_SH
 
 set -u
 
+# kyber#118: --fresh (the restart-session API's argv passes it) forces a
+# fresh session. Without it — the kyber#563 crash watchdog calls this script
+# bare — resume applies when enabled and a prior transcript exists.
+KYBER_FRESH=0
+[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1
+
 SESSION_LOCK="/persist/var/lock/session.lock"
 mkdir -p "\$(dirname "\$SESSION_LOCK")"
 
@@ -889,6 +917,17 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     # that fire during this window will flock-fail and record
     # status=skipped_restart_in_progress instead of dispatching.
     flock -w 30 200 || { echo "[kyber] restart-session: could not acquire session.lock within 30s" >&2; exit 1; }
+
+    # kyber#118: the bare (crash-watchdog) invocation only exists to revive a
+    # DEAD session. If a session is alive by the time we hold the lock, a
+    # concurrent restart-session already relaunched — proceeding would kill
+    # that fresh session and, with resume enabled, could resurrect the very
+    # conversation the intentional restart just discarded. --fresh (the API
+    # path) still always kills + relaunches; that is its purpose.
+    if [ "\$KYBER_FRESH" = "0" ] && sudo -iu kyber tmux has-session -t agent 2>/dev/null; then
+        echo "[kyber] relaunch: session already alive — a concurrent restart won the race, nothing to do (kyber#118)"
+        exit 0
+    fi
 
     # Kill existing session. Ignore error — the agent may have crashed or
     # never started.
@@ -940,7 +979,18 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     # /root/.claude.json, miss the onboarding bypass written by
     # start-claude.sh at /home/kyber/.claude.json, and fall into the
     # interactive theme picker on every restart-session.
-    sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"
+    #
+    # kyber#118: decide fresh-vs-resume at RUN time, not boot time — the
+    # store may have gained its first transcript since boot, and --fresh
+    # must always win. The enable flag, store path, and arg strings are
+    # baked at boot (this heredoc is unquoted); only the decision runs here.
+    RELAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
+    if [ "$SESSION_RESUME_ENABLED" = "1" ] && [ "\$KYBER_FRESH" = "0" ] \\
+       && [ -n "\$(find "$CLAUDE_PROJECT_STORE" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]; then
+        RELAUNCH_CMD="claude $CLAUDE_ARGS --continue"
+        echo "[kyber] relaunch: resuming previous session (kyber#118)"
+    fi
+    sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
 
     echo "[kyber] restart-session: tmux 'agent' session restarted"
 ) 200>"\$SESSION_LOCK"
@@ -958,8 +1008,22 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     rm -f "${HOME:-/home/kyber}/.claude/channels/telegram/bot.pid"
 fi
 
+BOOT_LAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
+if [ "$SESSION_RESUME_ENABLED" = "1" ]; then
+    if claude_has_prior_session; then
+        # kyber#118: pod boot after a recreate/preemption/crash — pick the
+        # previous conversation back up instead of starting fresh.
+        BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"
+        echo "[kyber] session resume: continuing previous session (kyber#118)"
+    else
+        # Deliberately loud: the store path replicates Claude Code's
+        # cwd-munging, and if a CC version changes that scheme this branch
+        # is the only signal that resume silently stopped engaging.
+        echo "[kyber] session resume: enabled but no prior transcript at $CLAUDE_PROJECT_STORE — starting fresh (kyber#118)"
+    fi
+fi
 echo "[kyber] Starting Claude Code in tmux (cwd=$LAUNCH_DIR)"
-tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS"
+tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"
 
 echo "[kyber] tmux session 'agent' started — waiting"
 
@@ -989,7 +1053,16 @@ while true; do
     fi
     echo "[kyber] tmux session 'agent' ended (ran ${ran_for}s) — relaunching #${relaunch_count} (kyber#563)"
     if [ -x /persist/last-claude-launch.sh ]; then
-        /persist/last-claude-launch.sh || echo "[kyber] relaunch script returned non-zero — retrying" >&2
+        RELAUNCH_FLAG=""
+        if [ "$relaunch_count" -ge 3 ] && [ "$SESSION_RESUME_ENABLED" = "1" ]; then
+            # kyber#118: three fast deaths in a row with resume on — the
+            # resumed transcript itself may be the poison (e.g. corrupted
+            # by a hard kill mid-write). Drop to a fresh session before the
+            # crash-loop guard above gives up the whole pod.
+            echo "[kyber] session resume: ${relaunch_count} fast deaths — falling back to a fresh session (kyber#118)"
+            RELAUNCH_FLAG="--fresh"
+        fi
+        /persist/last-claude-launch.sh $RELAUNCH_FLAG || echo "[kyber] relaunch script returned non-zero — retrying" >&2
     else
         tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS" || true
     fi

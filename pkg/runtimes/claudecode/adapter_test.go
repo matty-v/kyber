@@ -560,6 +560,20 @@ func TestClaudeCodeAdapter_EnvVars_SnapshotWindow(t *testing.T) {
 	})
 }
 
+// TestClaudeCodeAdapter_RestartSessionCommand_ForcesFresh: kyber#118 — an
+// intentional restart-session must start a fresh session even when
+// spec.sessionResume is enabled, so the argv passes --fresh to the generated
+// relaunch script (the crash watchdog calls the same script bare).
+func TestClaudeCodeAdapter_RestartSessionCommand_ForcesFresh(t *testing.T) {
+	cmd := (&ClaudeCodeAdapter{}).RestartSessionCommand()
+	if len(cmd) < 2 {
+		t.Fatalf("RestartSessionCommand() too short: %v", cmd)
+	}
+	if cmd[len(cmd)-2] != "/persist/last-claude-launch.sh" || cmd[len(cmd)-1] != "--fresh" {
+		t.Errorf("RestartSessionCommand() must invoke the relaunch script with --fresh, got %v", cmd)
+	}
+}
+
 func TestClaudeCodeAdapter_LivenessProbe(t *testing.T) {
 	a := &ClaudeCodeAdapter{}
 	probe := a.LivenessProbe()
