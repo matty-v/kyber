@@ -1,6 +1,6 @@
 # Dependabot PR triage — 2026-08-24
 
-**Status:** In progress
+**Status:** Awaiting merge approval
 
 ## Goal
 
@@ -13,7 +13,7 @@ approval before merging anything.
 - [x] Inventory all open Dependabot PRs, branch state, changed files, and CI.
 - [x] Review upstream compatibility and release notes for each update.
 - [x] Reproduce failures and apply the smallest branch-local fixes needed.
-- [ ] Run targeted local verification and confirm required GitHub checks.
+- [x] Run targeted local verification and confirm required GitHub checks.
 - [ ] Report per-PR risk and recommendation to Matt; wait for yes/no approval.
 - [ ] Merge only the PRs Matt approves, then verify the resulting main branch.
 
@@ -32,7 +32,10 @@ approval before merging anything.
 - #139 now carries the required pwa-views 0.32.2 version and changelog entry;
   local builds, type checks, and 721 tests pass after hardening the slow router
   boundary test.
-- GitHub checks for the repaired frontend branches are the exact next action.
+- All fifteen PRs are mergeable and all required GitHub checks are green.
+- The exact next action is Matt's yes/no merge decision; #86 is recommended
+  against because it moves the production frontend image from the repository's
+  supported Node 22 line directly to Node 26.
 
 ## Safety
 
