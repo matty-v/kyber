@@ -4,7 +4,7 @@
 # kubectl/k8s-client deps. Final image is distroless to keep the
 # attack surface minimal.
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /build
 
 # Download deps first to maximise layer cache reuse.
