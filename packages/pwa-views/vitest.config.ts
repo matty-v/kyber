@@ -28,9 +28,10 @@ export default defineConfig({
     //   6 workers              41s, green
     //   4 workers              37s, green
     //
-    // Fewer workers is both faster AND stable here, so this costs nothing. 4
-    // also matches a standard GitHub-hosted runner, making CI and local runs
-    // behave the same.
-    maxWorkers: 4,
+    // jsdom 30 increases each worker's DOM cost enough that four concurrent
+    // workers again push interaction tests past 5s on the dev runner. The
+    // previously failing files pass together with two workers, so retain the
+    // real timeout and reduce contention instead of masking it.
+    maxWorkers: 2,
   },
 })

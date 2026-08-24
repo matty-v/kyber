@@ -178,7 +178,8 @@ jobs:
         run: |
           set -euo pipefail
           CHANGED="$(git diff --name-only "${BASE_SHA}...HEAD" -- packages/pwa-views/ ':(exclude)packages/pwa-views/CHANGELOG.md')"
-          if [ -z "$CHANGED" ]; then
+          RELEASE_CHANGED="$(printf '%s\n' "$CHANGED" | grep -v '^packages/pwa-views/vitest.config.ts$' || true)"
+          if [ -z "$RELEASE_CHANGED" ]; then
             echo "No packages/pwa-views source changes in this PR — version-bump guard skipped."
             exit 0
           fi
@@ -187,7 +188,7 @@ jobs:
           # every Dependabot devDependency PR fail before its build can run.
           # Keep enforcing a release for runtime manifest fields, scripts, and
           # all other pwa-views files.
-          if [ "$CHANGED" = "packages/pwa-views/package.json" ]; then
+          if [ "$RELEASE_CHANGED" = "packages/pwa-views/package.json" ]; then
             if BASE_SHA="$BASE_SHA" node <<'NODE'
           const { execFileSync } = require('node:child_process')
           const manifest = (revision) => {
@@ -213,7 +214,7 @@ jobs:
           ver() { git show "$1:packages/pwa-views/package.json" | sed -nE 's/.*"version"[[:space:]]*:[[:space:]]*"([^"]+)".*/\1/p' | head -1; }
           BASE_VER="$(ver "$BASE_SHA")"
           HEAD_VER="$(ver HEAD)"
-          echo "Changed pwa-views files:"; echo "$CHANGED" | sed 's/^/  - /'
+          echo "Changed pwa-views release files:"; echo "$RELEASE_CHANGED" | sed 's/^/  - /'
           echo "pwa-views version: base=${BASE_VER} head=${HEAD_VER}"
           if [ "$BASE_VER" = "$HEAD_VER" ]; then
             echo "::error::packages/pwa-views changed but its package.json version is unchanged (${HEAD_VER}). Bump packages/pwa-views/package.json (and add a CHANGELOG entry). The library is published to holocron only on a version bump (a 'pwa-views/v*' tag via publish-pwa-views.yml); without a bump the change never reaches holocron."
