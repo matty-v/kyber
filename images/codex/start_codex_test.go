@@ -378,9 +378,10 @@ func TestRestartSessionDoesNotLeakSessionLockIntoTmux(t *testing.T) {
 
 // TestStartCodexSessionResumeSourceContract pins the kyber#118 source
 // invariants that the rendered-script test below cannot see: the resume
-// command is captured BEFORE the startup prompt joins CODEX_ARGS (a resumed
-// session must not receive the new-session prompt), and boot gates on the
-// enable flag plus a recorded session.
+// command is captured AFTER the startup prompt joins CODEX_ARGS (a resumed
+// session receives the prompt as its wake-up turn, so an agent interrupted
+// mid-task continues instead of idling), and boot gates on the enable flag
+// plus a recorded session.
 func TestStartCodexSessionResumeSourceContract(t *testing.T) {
 	src, err := os.ReadFile(scriptPath(t))
 	if err != nil {
@@ -395,8 +396,8 @@ func TestStartCodexSessionResumeSourceContract(t *testing.T) {
 	if promptAppend < 0 {
 		t.Fatal("startup prompt append missing")
 	}
-	if resumeDef > promptAppend {
-		t.Fatal("CODEX_RESUME_CMD is built AFTER the startup prompt joins CODEX_ARGS — a resumed session would replay the new-session prompt")
+	if resumeDef < promptAppend {
+		t.Fatal("CODEX_RESUME_CMD is built BEFORE the startup prompt joins CODEX_ARGS — a resumed session would idle with no turn to act on")
 	}
 	if !strings.Contains(s, `BOOT_LAUNCH_CMD="$CODEX_RESUME_CMD"`) {
 		t.Fatal("boot launch never selects the resume command")
@@ -411,7 +412,8 @@ func TestStartCodexSessionResumeSourceContract(t *testing.T) {
 // all three modes, asserting against a logging tmux stub:
 //
 //	bare + empty session store  -> fresh launch (with startup prompt)
-//	bare + recorded session     -> `codex resume --last` (no prompt)
+//	bare + recorded session     -> `codex resume --last` (prompt delivered
+//	                               into the resumed session)
 //	--fresh + recorded session  -> fresh launch (intentional restart wins)
 func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
 	src, err := os.ReadFile(scriptPath(t))
@@ -463,7 +465,7 @@ func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
 		"LAUNCH_DIR='/home/kyber/dev/test-agent'",
 		"CODEX_HOME='" + codexHome + "'",
 		`CODEX_LAUNCH_CMD='codex --model gpt-test --ask-for-approval never --sandbox danger-full-access -- startup\ prompt'`,
-		`CODEX_RESUME_CMD='codex resume --last --model gpt-test --ask-for-approval never --sandbox danger-full-access'`,
+		`CODEX_RESUME_CMD='codex resume --last --model gpt-test --ask-for-approval never --sandbox danger-full-access -- startup\ prompt'`,
 		"SESSION_RESUME_ENABLED=1",
 		block,
 		"",
@@ -501,8 +503,8 @@ func TestGeneratedCodexRelaunchScript_SessionResume(t *testing.T) {
 	}
 	if got := run(); !strings.Contains(got, "codex resume --last") {
 		t.Errorf("recorded session: want resume launch, got:\n%s", got)
-	} else if strings.Contains(got, "startup") {
-		t.Errorf("resume launch must not carry the startup prompt, got:\n%s", got)
+	} else if !strings.Contains(got, "startup") {
+		t.Errorf("resume launch must deliver the startup prompt, got:\n%s", got)
 	}
 
 	if got := run("--fresh"); strings.Contains(got, "resume --last") {

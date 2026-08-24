@@ -2566,9 +2566,11 @@ func TestStartClaude_StartupPromptIsQuotedForEveryLaunch(t *testing.T) {
 
 // TestStartClaudeSessionResumeSourceContract pins the kyber#118 source
 // invariants the rendered-script test below cannot see: boot gates resume on
-// the enable flag plus a recorded transcript, resume launches use CLAUDE_ARGS
-// (no startup prompt — a resumed session is not a new session), and the crash
-// watchdog keeps its --fresh fallback for poison transcripts.
+// the enable flag plus a recorded transcript, resume launches use
+// CLAUDE_RESUME_ARGS (--continue plus the startup prompt when configured —
+// the prompt is what makes a resumed agent act on its restored context
+// instead of idling), and the crash watchdog keeps its --fresh fallback for
+// poison transcripts.
 func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	src, err := os.ReadFile(scriptPath(t))
 	if err != nil {
@@ -2576,10 +2578,12 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	}
 	s := string(src)
 	for what, want := range map[string]string{
-		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
+		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue"`,
+		"resume arg set prompt":      `CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"`,
+		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
 		"boot gate":                  `if claude_has_prior_session; then`,
 		"boot gate enable flag":      `if [ "$SESSION_RESUME_ENABLED" = "1" ]; then`,
-		"relaunch resume selection":  `RELAUNCH_CMD="claude $CLAUDE_ARGS --continue"`,
+		"relaunch resume selection":  `RELAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
 		"watchdog --fresh fallback":  `/persist/last-claude-launch.sh $RELAUNCH_FLAG || echo`,
 		"restart-session fresh flag": `[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1`,
 	} {
@@ -2595,7 +2599,8 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 // stub:
 //
 //	bare + empty transcript store -> fresh launch (with startup prompt)
-//	bare + prior transcript       -> `claude ... --continue` (no prompt)
+//	bare + prior transcript       -> `claude ... --continue` (prompt delivered
+//	                                 into the resumed session)
 //	--fresh + prior transcript    -> fresh launch (intentional restart wins)
 func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	src, err := os.ReadFile(scriptPath(t))
@@ -2654,6 +2659,7 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 		"LAUNCH_DIR='/home/kyber/dev/test-agent'",
 		`CLAUDE_ARGS="--dangerously-skip-permissions --model claude-test"`,
 		`CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS -- startup\ prompt"`,
+		`CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue -- startup\ prompt"`,
 		"SESSION_RESUME_ENABLED=1",
 		"CLAUDE_PROJECT_STORE='" + store + "'",
 		"USER_PRESERVE_SUFFIX=''",
@@ -2705,8 +2711,8 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	}
 	if got := run(); !strings.Contains(got, "--continue") {
 		t.Errorf("prior transcript: want --continue launch, got:\n%s", got)
-	} else if strings.Contains(got, "startup") {
-		t.Errorf("resume launch must not carry the startup prompt, got:\n%s", got)
+	} else if !strings.Contains(got, "--continue -- startup") {
+		t.Errorf("resume launch must deliver the startup prompt after --continue, got:\n%s", got)
 	}
 
 	if got := run("--fresh"); strings.Contains(got, "--continue") {
