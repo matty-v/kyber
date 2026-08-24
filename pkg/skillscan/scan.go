@@ -316,6 +316,15 @@ func Scan(opts Options) (*Report, error) {
 	sort.SliceStable(skills, func(i, j int) bool {
 		return sourceRank(skills[i].Source) < sourceRank(skills[j].Source)
 	})
+	// Never nil: a nil slice marshals to `null`, and every consumer would
+	// then need a null branch to say "no skills" — which is a real answer,
+	// not a missing one.
+	if skills == nil {
+		skills = []Skill{}
+	}
+	if issues == nil {
+		issues = []Issue{}
+	}
 	rep.Skills = skills
 	rep.Issues = issues
 	return rep, nil

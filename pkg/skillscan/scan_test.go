@@ -1,6 +1,7 @@
 package skillscan_test
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -709,5 +710,30 @@ func TestScan_PlatformSkillsAreNeverFlaggedNotPushed(t *testing.T) {
 	}
 	if sk := findSkill(t, rep, "telegram-messaging"); hasCode(sk.Issues, skillscan.IssueNotPushed) {
 		t.Errorf("platform skill flagged %s; got %v", skillscan.IssueNotPushed, codes(sk.Issues))
+	}
+}
+
+// An empty report must serialize as `[]`, not `null`. Every consumer would
+// otherwise need a null branch to express "this agent has no skills" — which
+// is a real answer, not a missing one.
+func TestScan_EmptyReportSerializesAsEmptyArrays(t *testing.T) {
+	root := t.TempDir()
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: filepath.Join(root, "no-repo"),
+		HomeDir: filepath.Join(root, "no-home"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(b)
+	if !strings.Contains(got, `"skills":[]`) {
+		t.Errorf("skills serialized as null: %s", got)
+	}
+	if strings.Contains(got, "null") {
+		t.Errorf("report contains a null: %s", got)
 	}
 }
