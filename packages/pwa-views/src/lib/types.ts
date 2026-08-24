@@ -1007,3 +1007,64 @@ export interface UpdateStatus {
   applySupported: boolean
   lastRun?: UpdateRun
 }
+
+// ---- Agent skills (read-only) ----
+//
+// What the agent found on its OWN filesystem, reported by kyber-skills at boot
+// and on every identity sync. Read-only by design: skills are added, changed,
+// and removed by talking to the agent, which writes them into its identity repo
+// and pushes. There is no write path from the UI or the API.
+
+/** Where a skill came from. */
+export type AgentSkillSource = 'identity' | 'vendor' | 'platform'
+
+/**
+ * How much a finding matters. 'error' means the skill does not work; 'warning'
+ * means it works but something will bite later.
+ */
+export type AgentSkillSeverity = 'error' | 'warning'
+
+/** One concrete problem found with a skill, or with a runtime skills home. */
+export interface AgentSkillIssue {
+  /** Stable machine code, e.g. 'not_linked', 'unmanaged', 'shadowed'. */
+  code: string
+  severity: AgentSkillSeverity
+  /** Human-readable explanation, safe to render directly. */
+  detail: string
+}
+
+export interface AgentSkill {
+  /** Directory name — this is what the runtime actually invokes. */
+  name: string
+  /** From the SKILL.md frontmatter; empty when there is none. */
+  description: string
+  source: AgentSkillSource
+  /** Vendor package name; only set when source is 'vendor'. */
+  sourcePackage?: string
+  /** Repo-relative for identity/vendor skills, absolute for platform ones. */
+  path: string
+  /** Runtimes this skill is genuinely loadable in. Empty means it is dead. */
+  linked: string[]
+  issues?: AgentSkillIssue[]
+}
+
+export interface AgentSkillsSummary {
+  total: number
+  /** At least one error-severity issue: exists, does not work. */
+  broken: number
+  /** Works, but has something worth fixing. */
+  warnings: number
+  /** Nothing reported against it at all. */
+  healthy: number
+  otherIssues: number
+}
+
+export interface AgentSkills {
+  agent: string
+  /** When the control plane accepted the report (RFC3339). */
+  reportedAt: string
+  skills: AgentSkill[]
+  /** Problems belonging to no single skill — stray or dangling runtime state. */
+  issues: AgentSkillIssue[]
+  summary: AgentSkillsSummary
+}

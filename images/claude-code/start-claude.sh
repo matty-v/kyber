@@ -148,6 +148,33 @@ elif [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ ! -r "$DISCORD_SKILL_SRC/SKILL.md"
     echo "[kyber] WARNING: Discord messaging skill is missing or unreadable at $DISCORD_SKILL_SRC" >&2
 fi
 
+# ---- Skill inventory ----
+# Converge and report what this agent can ACTUALLY invoke, now that both the
+# identity-repo skills and the image-bundled capability skills above are linked.
+#
+# This is a LOOP, not a one-shot. An agent asked to save a skill does the
+# obvious thing — write skills/<name>/SKILL.md and sync its identity — and if
+# linking only ran at boot, that skill would be committed, pushed, invisible to
+# the UI, and not loadable in the very session that created it. Making the
+# platform converge on a timer is what removes the "works if the agent
+# remembers the extra command" dependency; `kyber-skills install` stays as the
+# make-it-live-right-now fast path.
+#
+# Backgrounded: boot must not wait on it, and the reporter retries a sidecar
+# that is still binding.
+#
+# This runs under `set -e`, well before the token-reporter block creates
+# /persist/var/log, so the log path is resolved defensively — an unwritable
+# redirect target here would kill the whole boot.
+if command -v kyber-skills >/dev/null 2>&1; then
+    KYBER_SKILLS_LOG="${KYBER_SKILLS_LOG:-/persist/var/log/kyber-skills.log}"
+    mkdir -p "$(dirname "$KYBER_SKILLS_LOG")" 2>/dev/null || true
+    [ -w "$(dirname "$KYBER_SKILLS_LOG")" ] || KYBER_SKILLS_LOG="$HOME/.kyber-skills.log"
+    nohup kyber-skills report --repo-dir "${REPO_DIR:-}" --home "$HOME" \
+        >> "$KYBER_SKILLS_LOG" 2>&1 &
+    echo "[kyber] skill reporter started (pid=$!, log=$KYBER_SKILLS_LOG)"
+fi
+
 # ---- gh CLI bootstrap ----
 # If the agent has a user-secret named `github-token` (surfaced as
 # $USER_GITHUB_TOKEN), expose it as GH_TOKEN so the `gh` CLI works out of the

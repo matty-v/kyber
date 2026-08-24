@@ -75,6 +75,60 @@ For a configured identity repo, the controller's `reconcileIdentityRepo` records
 
 ---
 
+## Skills
+
+Skills live in the identity repo, at `skills/<name>/SKILL.md` plus whatever else the package needs alongside it. That path is the contract: at boot and on every identity sync, the shared syncer links each package into **both** runtime homes (`~/.claude/skills/` and `~/.codex/skills/`), so the same repo works whichever runtime the agent runs.
+
+Three sources of skills end up in those homes, and the API reports all three:
+
+| Source | Where it lives | Who owns it |
+|---|---|---|
+| `identity` | `<repo>/skills/<name>/` | the agent |
+| `vendor` | `<repo>/vendor/<package>/skills/<name>/` | a shared package the repo vendored |
+| `platform` | `/opt/kyber/skills/<name>/` in the runtime image | Kyber; linked in only when the matching sidecar is attached (Telegram, Discord) |
+
+The linker walks identity first and vendor second, and each pass replaces the link, so **a vendored skill of the same name silently wins**. That collision is reported rather than left to be discovered.
+
+### Agents add skills; operators only look
+
+`kyber-skills`, installed in both runtime images, is how an agent saves a skill:
+
+| Command | What it does |
+|---|---|
+| `kyber-skills install [--from PATH]` | Normalize the skill into `<repo>/skills/<name>/`, link it into both runtimes so it is live immediately, commit, push, then report. Idempotent. |
+| `kyber-skills list [--json]` | Print what the agent has, and what is wrong with it. |
+| `kyber-skills report` | Converge and report on a loop (default every 2 minutes, `KYBER_SKILLS_REPORT_INTERVAL`): relink every repo skill into both runtime homes, scan, and push the result. Started at boot; `--once` does a single pass and is what the identity sync runs. |
+
+A skill written straight into a runtime home works until the pod is reprovisioned and is committed nowhere; that state is reported as `unmanaged`.
+
+**Convergence is the platform's job, not the agent's memory.** An agent asked to save a skill does the obvious thing — write `skills/<name>/SKILL.md`, then sync its identity. If linking only ran at boot, that skill would be committed, pushed, invisible to the UI, and *not loadable in the session that created it*. So the reporter runs as a loop: it relinks, rescans, and reports every couple of minutes, and only POSTs when something actually changed. `kyber-skills install` remains the make-it-live-right-now fast path, not the only path.
+
+Because linking is automatic, durability has to be reported separately — otherwise a brand-new skill that had never been pushed would render as perfectly healthy right up until it vanished. That is what `not_pushed` is for.
+
+### The read-only surface
+
+`GET /api/v1/agents/{name}/skills` serves the agent's most recent report, and the PWA renders it as the **Skills** tab. There is no write path — no POST, PUT, or DELETE — by design. Skills are added, changed, and removed by talking to the agent; an operator editing them from outside would put the repo and the pod out of sync, which is the state this surface exists to reveal.
+
+The report is a scan of the **pod**, not of GitHub. During [kyber#691](https://github.com/matty-v/kyber/issues/691) every identity repo on the fleet held a full set of skills and none were linked into a path the runtime read, and every reporting surface called that healthy. Reading GitHub would have reproduced exactly that lie. Alongside the list, the scan reports:
+
+| Issue | Severity | Meaning |
+|---|---|---|
+| `not_linked` | error | in the repo, absent from a runtime's skills home — committed and unloadable |
+| `missing_skill_md` | error | a directory under `skills/` with no `SKILL.md`; the linker skips it entirely |
+| `invalid_frontmatter` | error | no YAML frontmatter block, or it does not parse |
+| `shadowed` | error | a vendored skill of the same name replaces this one |
+| `not_pushed` | warning | in the identity repo but not in GitHub (uncommitted, or committed and unpushed) — it works in this pod and dies with it |
+| `missing_description` | warning | loads, but can only ever be invoked explicitly |
+| `name_mismatch` | warning | frontmatter `name` disagrees with the directory name, which is what is actually invoked |
+| `dangling_link` | warning | a link in a runtime home whose target is gone |
+| `unmanaged` | warning | real state in a runtime home that is not a link into the identity repo — it will not survive a reprovision |
+
+Severity is what keeps the tab worth looking at: `error` means the agent cannot do the thing, `warning` means it can but something will bite later. An older runtime image that predates severities reports none, and the control plane treats those as errors rather than rejecting the report — image pins move independently of the control plane.
+
+A 404 from the endpoint means the agent has never reported — a pod that has not booted since this shipped — and is deliberately distinct from an empty list. An agent configured **without** an identity repo does still report: it owns no skills, but it has whatever the runtime image bundles plus anything hand-written into a runtime home, and that second category is exactly what is worth seeing, since none of it survives a reprovision.
+
+---
+
 ## Memory-backup pattern
 
 The standard agent setup keeps `memory/` and `state/` durable through `scripts/save-state.sh`. Claude Code's project-local `.claude/settings.json` invokes it as a `PostToolUse(Write|Edit)` hook; the runtime-neutral `AGENTS.md` and memory skills also require an explicit invocation, which covers Codex and safely no-ops when Claude's hook already committed the write.
@@ -90,6 +144,7 @@ Claude Code's Stop hook writes `.runtime/last-session-tail.md` at the end of eve
 When an agent is deleted:
 
 - Any **legacy** `<agent-name>-github` Secret (from before kyber#509 removed the git-token delivery loop) is garbage-collected via the owner-ref on the Agent CR and the finalizer's label-scoped sweep. Kyber no longer creates these Secrets; orphans simply age out on agent deletion (a one-time `kubectl delete secret -l kyber.io/purpose=github-identity` is a harmless optional cleanup, not required for correctness).
+- The agent's stored **skill report** is reaped along with its other external state, so a later agent that reuses the name never inherits a stale inventory. The repo it described is untouched.
 - The GitHub identity repo is **preserved**. Kyber never deletes it. Rationale: identity data — memory, session summaries, skills — is valuable post-mortem and the operator should decide when (and whether) to delete it.
 
 To delete the repo: use the GitHub web UI or `gh repo delete owner/repo`.

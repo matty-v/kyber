@@ -56,6 +56,7 @@ import (
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
+	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 
@@ -194,7 +195,12 @@ func main() {
 	// without any alerting (issue #60). Instead, retry the migration on a
 	// bounded loop (~2min) and os.Exit on persistent failure so the pod
 	// crashes and Kubernetes re-schedules it.
+	// SkillStore rides the same database. It is durable rather than a cache
+	// because agents report only at boot and on identity sync: an expiring
+	// store would blank the Skills tab between reports and read as "this agent
+	// has no skills", which is the false-healthy state the tab exists to kill.
 	var briefStore briefstore.BriefStore
+	var skillStore skillstore.Store
 	if pgURL := os.Getenv("KYBER_POSTGRES_URL"); pgURL != "" {
 		db, err := sql.Open("postgres", pgURL)
 		if err != nil {
@@ -220,9 +226,27 @@ func main() {
 		}
 		setupLog.Info("BriefStore: using Postgres", "url", maskDSN(pgURL))
 		briefStore = pgStore
+
+		// Same connection, same retry budget, same fail-loud posture: a
+		// silent fall back to memory here would drop every agent's skill
+		// report on the next control-plane restart.
+		pgSkills := skillstore.NewPostgresStore(db)
+		skillMigrateCtx, cancelSkills := context.WithTimeout(ctx, 2*time.Minute+30*time.Second)
+		err = briefstore.MigrateWithRetry(skillMigrateCtx, pgSkills.Migrate,
+			2*time.Minute, 5*time.Second, setupLog.Info)
+		cancelSkills()
+		if err != nil {
+			setupLog.Error(err, "SkillStore Postgres migration never succeeded within the retry budget — exiting so Kubernetes restarts the pod")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		setupLog.Info("SkillStore: using Postgres")
+		skillStore = pgSkills
 	} else {
 		setupLog.Info("BriefStore: KYBER_POSTGRES_URL not set — using in-memory store (briefs will not survive pod restart)")
 		briefStore = briefstore.NewMemoryStore()
+		setupLog.Info("SkillStore: KYBER_POSTGRES_URL not set — using in-memory store (agents re-report on their next boot or identity sync)")
+		skillStore = skillstore.NewMemoryStore()
 	}
 
 	// TokenStore + MetricsStore + NodeStore + StateChangeAccumulator:
@@ -569,6 +593,7 @@ func main() {
 		TokenAccumulator:       tokenAccumulator,
 		MetricsStore:           metricsStore,
 		StateChangeAccumulator: stateChangeAccum,
+		SkillStore:             skillStore,
 
 		// Mint per-agent pod-tokens when the signing key is configured (#566).
 		PodTokenKey: internalSigningKey,
@@ -598,6 +623,7 @@ func main() {
 		internalapi.WithMetricsStore(metricsStore),
 		internalapi.WithNodeStore(nodeStore),
 		internalapi.WithStateChangeAccumulator(stateChangeAccum),
+		internalapi.WithSkillStore(skillStore),
 	}
 	// kyber#508 Stage 3/4: when a GitHub App is configured, let each agent mint a
 	// short-lived token scoped to its OWN identity repo via
@@ -1249,6 +1275,7 @@ func main() {
 		K8sClient:                     mgr.GetClient(),
 		TokenStore:                    tokenStore,
 		TokenAccumulator:              tokenAccumulator,
+		SkillStore:                    skillStore,
 		APIKey:                        os.Getenv("KYBER_API_KEY"),
 		APIKeySecretName:              os.Getenv("KYBER_API_KEY_SECRET_NAME"),
 		Callers:                       scopedCallers,

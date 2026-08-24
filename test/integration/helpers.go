@@ -30,13 +30,14 @@ import (
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/skillstore"
 )
 
 const (
-	defaultPGDSN    = "postgres://kyber:test@localhost:5433/kyber?sslmode=disable"
+	defaultPGDSN     = "postgres://kyber:test@localhost:5433/kyber?sslmode=disable"
 	defaultRedisAddr = "localhost:6380"
-	testAPIKey      = "integration-test-key"
-	testNamespace   = "kyber-system"
+	testAPIKey       = "integration-test-key"
+	testNamespace    = "kyber-system"
 )
 
 // sharedDB is the shared database connection for integration tests.
@@ -118,8 +119,13 @@ func waitForRedis(rdb *redis.Client) error {
 
 // runMigrations runs the BriefStore schema migration against the shared DB.
 func runMigrations(db *sql.DB) error {
-	store := briefstore.NewPostgresStore(db)
-	return store.Migrate(context.Background())
+	if err := briefstore.NewPostgresStore(db).Migrate(context.Background()); err != nil {
+		return err
+	}
+	// The skill store rides the same database and is migrated at control-plane
+	// startup alongside the brief store. Migrating it here too keeps this
+	// harness a faithful stand-in for a real install.
+	return skillstore.NewPostgresStore(db).Migrate(context.Background())
 }
 
 // newTestScheme builds a runtime.Scheme with CRD types registered.

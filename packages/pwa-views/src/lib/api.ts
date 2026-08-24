@@ -38,6 +38,7 @@ import type {
   LoggingExportResult,
   TranscriptResult,
   TokenUsage,
+  AgentSkills,
   ComputeConfig,
   GitHubReposResponse,
   GitHubRepoExistsResponse,
@@ -352,6 +353,24 @@ export function createApiClient(cluster: Cluster) {
       if (res.status === 404) return null
       if (!res.ok) throw new Error(`token-usage: ${res.status}`)
       return res.json() as Promise<TokenUsage>
+    },
+
+    // ---- Agent skills (read-only) ----
+    //
+    // 404 means the agent has never reported, which is different from "has no
+    // skills" — a pod that has not booted since this shipped, or an install
+    // with no identity repo. Returning null keeps those two distinguishable in
+    // the UI instead of both rendering as an empty list.
+    getAgentSkills: async (name: string): Promise<AgentSkills | null> => {
+      const headers: Record<string, string> = {}
+      if (cluster.apiKey) headers['Authorization'] = `Bearer ${cluster.apiKey}`
+      const res = await fetch(
+        `${baseURL}/api/v1/agents/${encodeURIComponent(name)}/skills`,
+        { headers },
+      )
+      if (res.status === 404) return null
+      if (!res.ok) throw new Error(`skills: ${res.status}`)
+      return res.json() as Promise<AgentSkills>
     },
 
     // ---- Inbound prompt bindings (#208) ----

@@ -36,6 +36,7 @@ import (
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/oauth"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
@@ -61,6 +62,10 @@ type Server struct {
 
 	// TokenStore persists per-agent Claude Code context-budget snapshots.
 	TokenStore tokenstore.TokenStore
+
+	// SkillStore serves the read-only Skills tab: the most recent report each
+	// agent scanned from its own filesystem. Nil disables the endpoint (503).
+	SkillStore skillstore.Store
 
 	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
 	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)

@@ -358,9 +358,12 @@ for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
         done
     done
     # Compat layout: flat skills/<name>.md (link just the file as SKILL.md).
+    # A README in skills/ is documentation, not a skill — linking it would
+    # publish a junk "README" command to both runtimes.
     for f in "$skills_src"/*.md; do
         [ -f "$f" ] || continue
         name=$(basename "$f" .md)
+        case "$name" in README | readme | index) continue ;; esac
         for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
             rm -rf "$runtime_skills/$name"
             mkdir -p "$runtime_skills/$name"
@@ -370,6 +373,19 @@ for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
 done
 chown -R kyber:kyber "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" 2>/dev/null || true
 echo "[kyber] sync: skills re-linked for Claude Code and Codex"
+# Push the resulting inventory to the control plane so the Kyber UI shows what
+# this agent can ACTUALLY invoke, not what its repo happens to contain — the two
+# were silently different for the whole of kyber#691. Paths are passed
+# explicitly because this script also runs under nsenter as root, where the
+# pod's environment is not visible and anything read from it would be wrong.
+# Fail-soft: a report that does not land must never break a boot or a restart.
+if command -v kyber-skills >/dev/null 2>&1; then
+    # --once: a converge loop is already running from boot, so this is just an
+    # immediate refresh for the restart-session path, which is exactly when
+    # newly-merged skills arrive.
+    RUN kyber-skills report --once --repo-dir "$REPO_DIR" --home "$HOME_DIR" \
+        || echo "[kyber] sync: skill report failed (continuing)"
+fi
 exit 0
 SYNC_BODY
         } > "$KYBER_SYNC_SCRIPT"

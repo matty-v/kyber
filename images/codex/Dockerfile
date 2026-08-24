@@ -5,6 +5,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-codex-reporter ./cmd/codex-reporter
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-skills ./cmd/kyber-skills
 
 FROM ${BASE_IMAGE}
 
@@ -25,6 +26,9 @@ COPY --chmod=0755 images/codex/start-codex.sh /usr/local/bin/start-codex.sh
 # drifting apart is the failure this consolidation exists to prevent.
 COPY --chmod=0755 images/shared/kyber-identity-repo.sh /usr/local/bin/kyber-identity-repo.sh
 COPY --from=reporter-builder /build/kyber-codex-reporter /usr/local/bin/kyber-codex-reporter
+# Same binary in both runtime images, for the same reason the identity script
+# is shared: skills are a cross-runtime contract, and two copies would drift.
+COPY --from=reporter-builder /build/kyber-skills /usr/local/bin/kyber-skills
 RUN install -d -m 0755 /opt/kyber
 COPY --chmod=0644 docs/agent-manual.md /opt/kyber/KYBER.md
 COPY images/shared/skills/telegram-messaging /opt/kyber/skills/telegram-messaging

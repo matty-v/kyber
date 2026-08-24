@@ -31,6 +31,7 @@ import (
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/modelprobe"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -119,6 +120,7 @@ type InternalServer struct {
 	nodeStore              metricsstore.NodeStore
 	stateChangeAccum       statechangestore.Accumulator
 	runtimeDetectCache     runtimedetect.Cache
+	skillStore             skillstore.Store
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
 	// per (agent, state) so handleStatusSnapshot can store incremental delta seconds
@@ -186,6 +188,17 @@ func WithNodeStore(ns metricsstore.NodeStore) InternalServerOption {
 func WithStateChangeAccumulator(acc statechangestore.Accumulator) InternalServerOption {
 	return func(s *InternalServer) {
 		s.stateChangeAccum = acc
+	}
+}
+
+// WithSkillStore wires a skillstore so POST /internal/agents/{name}/skills can
+// persist the skill report an agent scanned from its own filesystem. Omit it
+// and the endpoint 503s; the in-pod reporter logs that and gives up for this
+// boot rather than retrying, since a missing store is a deployment fact, not a
+// transient one.
+func WithSkillStore(st skillstore.Store) InternalServerOption {
+	return func(s *InternalServer) {
+		s.skillStore = st
 	}
 }
 
@@ -345,6 +358,8 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleRuntimeVersion(w, r, agentName)
 	case "runtime-catalog":
 		s.handleRuntimeCatalog(w, r, agentName)
+	case "skills":
+		s.handleSkillsReport(w, r, agentName)
 	case "status-event":
 		s.handleStatusEvent(w, r, agentName)
 	case "status":

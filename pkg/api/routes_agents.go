@@ -617,6 +617,11 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	case "models":
 		s.handleAgentModels(w, r, name)
 		return
+	case "skills":
+		// Read-only by design: skills are managed by talking to the
+		// agent, never from the API. See routes_agent_skills.go.
+		s.handleAgentSkills(w, r, name)
+		return
 	}
 
 	// User-defined per-agent secrets (#75): dispatch anything under "secrets".
