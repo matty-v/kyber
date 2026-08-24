@@ -378,12 +378,46 @@ func TestScan_NoIdentityRepoIsNotAnError(t *testing.T) {
 	}
 }
 
-func TestScan_RequiresBothPaths(t *testing.T) {
+// An agent configured with NO identity repo is a supported setup, and it still
+// has whatever the runtime image bundles plus anything hand-written into a
+// runtime home. Refusing to scan without a repo would leave exactly those
+// agents invisible — the blind spot this feature exists to remove.
+func TestScan_NoRepoDirStillReportsPlatformAndUnmanagedSkills(t *testing.T) {
+	f := newFixture(t)
+	platform := filepath.Join(t.TempDir(), "opt-kyber-skills")
+	tg := filepath.Join(platform, "telegram-messaging")
+	if err := os.MkdirAll(tg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tg, "SKILL.md"),
+		[]byte("---\nname: telegram-messaging\ndescription: Talk on Telegram.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.link("telegram-messaging", tg, ".claude")
+	stray := filepath.Join(f.home, ".codex", "skills", "handwritten")
+	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := skillscan.Scan(skillscan.Options{HomeDir: f.home, PlatformDir: platform})
+	if err != nil {
+		t.Fatalf("Scan with no RepoDir: %v", err)
+	}
+	sk := findSkill(t, rep, "telegram-messaging")
+	if sk.Source != skillscan.SourcePlatform || !sk.Healthy() {
+		t.Errorf("platform skill = %+v", sk)
+	}
+	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
+		t.Errorf("expected %s for the hand-written directory; got %v", skillscan.IssueUnmanaged, codes(rep.Issues))
+	}
+}
+
+func TestScan_RequiresHomeDir(t *testing.T) {
 	if _, err := skillscan.Scan(skillscan.Options{RepoDir: "/tmp"}); err == nil {
 		t.Error("expected an error when HomeDir is empty")
 	}
-	if _, err := skillscan.Scan(skillscan.Options{HomeDir: "/tmp"}); err == nil {
-		t.Error("expected an error when RepoDir is empty")
+	if _, err := skillscan.Scan(skillscan.Options{HomeDir: "/tmp"}); err != nil {
+		t.Errorf("an empty RepoDir must be accepted: %v", err)
 	}
 }
 

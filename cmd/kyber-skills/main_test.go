@@ -310,13 +310,70 @@ func TestPostReportWithRetry_DoesNotRetryAnHTTPResponse(t *testing.T) {
 	}
 }
 
-func TestReport_MissingIdentityRepoIsNotAFailure(t *testing.T) {
+// Both start scripts pass `--repo-dir ""` for an agent with no identity repo.
+// That agent still has the image's bundled skills, so it must still POST — an
+// early return here is what would leave it stuck on "No report yet" forever,
+// which is the blind spot the feature exists to remove.
+func TestReport_NoIdentityRepoStillPostsPlatformSkills(t *testing.T) {
+	home := t.TempDir()
+	platform := filepath.Join(t.TempDir(), "opt-kyber-skills")
+	tg := filepath.Join(platform, "telegram-messaging")
+	if err := os.MkdirAll(tg, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tg, "SKILL.md"),
+		[]byte("---\nname: telegram-messaging\ndescription: Talk on Telegram.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(home, ".claude", "skills")
+	if err := os.MkdirAll(link, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(tg, filepath.Join(link, "telegram-messaging")); err != nil {
+		t.Fatal(err)
+	}
+
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
 	t.Setenv("KYBER_IDENTITY_REPO", "")
-	t.Setenv("HOME", t.TempDir())
-	// An agent configured with no identity repo has no skills to report; that
-	// must not surface as a boot-time failure.
-	if code := runReport([]string{"--home", t.TempDir()}); code != 0 {
-		t.Errorf("report exit code = %d, want 0", code)
+
+	// Exactly what start-claude.sh and start-codex.sh pass in this case.
+	code := runReport([]string{"--repo-dir", "", "--home", home, "--platform-dir", platform})
+	if code != 0 {
+		t.Fatalf("report exit code = %d, want 0", code)
+	}
+	if len(*reports) != 1 {
+		t.Fatalf("expected one POST, got %d — an agent with no identity repo never reports", len(*reports))
+	}
+	rep := (*reports)[0]
+	if len(rep.Skills) != 1 || rep.Skills[0].Name != "telegram-messaging" {
+		t.Fatalf("reported skills = %+v", rep.Skills)
+	}
+	if rep.Skills[0].Source != skillscan.SourcePlatform {
+		t.Errorf("source = %q, want %q", rep.Skills[0].Source, skillscan.SourcePlatform)
+	}
+}
+
+// An agent with nothing at all still reports, so the tab says "no skills"
+// rather than "never reported" — those are different facts.
+func TestReport_NothingInstalledStillPosts(t *testing.T) {
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	t.Setenv("KYBER_IDENTITY_REPO", "")
+	if code := runReport([]string{"--repo-dir", "", "--home", t.TempDir()}); code != 0 {
+		t.Fatalf("report exit code = %d, want 0", code)
+	}
+	if len(*reports) != 1 {
+		t.Fatalf("expected one POST, got %d", len(*reports))
+	}
+}
+
+// install is the one command that genuinely needs a repo: there is nowhere
+// else a skill can be saved and survive a reprovision.
+func TestInstall_WithoutAnIdentityRepoFailsLoudly(t *testing.T) {
+	t.Setenv("KYBER_IDENTITY_REPO", "")
+	if code := runInstall([]string{"--repo-dir", "", "--home", t.TempDir(), "--no-push"}); code == 0 {
+		t.Error("install must fail when there is no identity repo to save into")
 	}
 }
 

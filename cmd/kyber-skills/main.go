@@ -120,8 +120,14 @@ func addPathFlags(fs *flag.FlagSet, p *paths) {
 	fs.StringVar(&p.platformDir, "platform-dir", "", "image-bundled skills directory")
 }
 
-// resolve fills anything the caller left blank from the environment. A missing
-// identity repo is reported as such rather than guessed at.
+// resolve fills anything the caller left blank from the environment.
+//
+// An absent identity repo is NOT an error. Both start scripts pass
+// `--repo-dir ""` for agents configured without one, and such an agent still
+// has the runtime image's bundled skills plus anything hand-written into a
+// runtime home. Failing here would leave exactly those agents showing "no
+// report yet" forever — the blind spot the feature exists to remove. Commands
+// that genuinely need a repo (install) check for one themselves.
 func (p *paths) resolve() error {
 	if p.homeDir == "" {
 		p.homeDir = os.Getenv("HOME")
@@ -133,11 +139,18 @@ func (p *paths) resolve() error {
 		p.platformDir = os.Getenv("KYBER_PLATFORM_SKILLS_DIR")
 	}
 	if p.repoDir == "" {
-		slug := os.Getenv("KYBER_IDENTITY_REPO")
-		if slug == "" {
-			return errors.New("no identity repo: pass --repo-dir or set KYBER_IDENTITY_REPO")
+		if slug := os.Getenv("KYBER_IDENTITY_REPO"); slug != "" {
+			p.repoDir = filepath.Join(p.homeDir, "dev", slug[strings.LastIndex(slug, "/")+1:])
 		}
-		p.repoDir = filepath.Join(p.homeDir, "dev", slug[strings.LastIndex(slug, "/")+1:])
+	}
+	return nil
+}
+
+// requireRepo is the check for commands that write to the identity repo. There
+// is nowhere else a skill can be saved and survive a reprovision.
+func (p *paths) requireRepo() error {
+	if p.repoDir == "" {
+		return errors.New("no identity repo: pass --repo-dir or set KYBER_IDENTITY_REPO")
 	}
 	return nil
 }
@@ -150,9 +163,7 @@ func runReport(args []string) int {
 		return 2
 	}
 	if err := p.resolve(); err != nil {
-		// An agent with no identity repo has no skills to report. That is a
-		// legitimate configuration, not a failure.
-		fmt.Fprintf(os.Stderr, "kyber-skills: %v — nothing to report\n", err)
+		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
 		return 0
 	}
 	rep, err := skillscan.Scan(skillscan.Options{RepoDir: p.repoDir, HomeDir: p.homeDir, PlatformDir: p.platformDir})
@@ -214,6 +225,10 @@ func runInstall(args []string) int {
 		return 2
 	}
 	if err := p.resolve(); err != nil {
+		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
+		return 1
+	}
+	if err := p.requireRepo(); err != nil {
 		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
 		return 1
 	}
@@ -500,7 +515,11 @@ func countBroken(rep *skillscan.Report) int {
 // printReport writes the human-readable view an agent reads when it wants to
 // know what it can actually do.
 func printReport(w io.Writer, rep *skillscan.Report, repoDir string) {
-	fmt.Fprintf(w, "\nSkills in %s\n", repoDir)
+	if repoDir == "" {
+		fmt.Fprint(w, "\nSkills (no identity repo — only what the runtime image provides)\n")
+	} else {
+		fmt.Fprintf(w, "\nSkills in %s\n", repoDir)
+	}
 	if len(rep.Skills) == 0 {
 		fmt.Fprintln(w, "  (none)")
 	}

@@ -55,9 +55,10 @@ type SkillsSummary struct {
 // handleAgentSkills handles GET /api/v1/agents/{name}/skills.
 //
 // 404 means the agent has never reported — a pod that has not booted since the
-// feature shipped, or an install with no identity repo. That is reported as its
-// own state rather than an empty list, because "no skills" and "we have not
-// heard from this agent" must not render the same.
+// feature shipped. That is reported as its own state rather than an empty list,
+// because "no skills" and "we have not heard from this agent" must not render
+// the same. An agent with no identity repo still reports: it owns no skills but
+// may carry the runtime image's bundled ones.
 func (s *Server) handleAgentSkills(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")

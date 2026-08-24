@@ -120,7 +120,7 @@ The report is a scan of the **pod**, not of GitHub. During [kyber#691](https://g
 
 Severity is what keeps the tab worth looking at: `error` means the agent cannot do the thing, `warning` means it can but something will bite later. An older runtime image that predates severities reports none, and the control plane treats those as errors rather than rejecting the report — image pins move independently of the control plane.
 
-A 404 from the endpoint means the agent has never reported (a pod that has not booted since this shipped, or an install with no identity repo) — deliberately distinct from an empty list.
+A 404 from the endpoint means the agent has never reported — a pod that has not booted since this shipped — and is deliberately distinct from an empty list. An agent configured **without** an identity repo does still report: it owns no skills, but it has whatever the runtime image bundles plus anything hand-written into a runtime home, and that second category is exactly what is worth seeing, since none of it survives a reprovision.
 
 ---
 

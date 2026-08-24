@@ -172,10 +172,13 @@ type Report struct {
 	Issues []Issue `json:"issues,omitempty"`
 }
 
-// Options controls a scan. Both fields are required; Scan does no environment
+// Options controls a scan. Only HomeDir is required; Scan does no environment
 // lookups of its own so tests drive it entirely from a temp dir.
 type Options struct {
 	// RepoDir is the identity repo clone (e.g. /home/kyber/dev/dave-agent).
+	// Empty when the agent has no identity repo, which is a supported
+	// configuration: such an agent still has the image's platform skills, and
+	// anything written into a runtime home by hand.
 	RepoDir string
 	// HomeDir is the agent's home, holding .claude/skills and .codex/skills.
 	HomeDir string
@@ -190,12 +193,13 @@ type Options struct {
 // be read becomes a skill carrying an issue, because "we could not tell" and
 // "there is nothing wrong" must not look the same in the UI.
 //
-// A missing RepoDir is not an error either — an agent with no identity repo
-// legitimately has no skills — but a missing repo with skills linked into a
-// runtime home still surfaces those as unmanaged.
+// An absent or empty RepoDir is not an error either. An agent with no identity
+// repo owns no skills, but it still has whatever the runtime image bundles, and
+// anything hand-written into a runtime home — which is precisely the state
+// worth surfacing, since none of it survives a reprovision.
 func Scan(opts Options) (*Report, error) {
-	if opts.RepoDir == "" || opts.HomeDir == "" {
-		return nil, fmt.Errorf("skillscan: RepoDir and HomeDir are required")
+	if opts.HomeDir == "" {
+		return nil, fmt.Errorf("skillscan: HomeDir is required")
 	}
 	if opts.PlatformDir == "" {
 		opts.PlatformDir = DefaultPlatformDir
@@ -305,6 +309,9 @@ func sourceRank(source string) int {
 // returns one Skill per directory found, each already carrying its own
 // content-level issues.
 func collect(repoDir string) []Skill {
+	if repoDir == "" {
+		return nil
+	}
 	var out []Skill
 	sources := []struct {
 		rel     string
@@ -546,8 +553,13 @@ func linkResolvesTo(link, want string) bool {
 }
 
 // underDir reports whether path is dir or lives beneath it. Both are resolved
-// first so a symlinked home does not produce a false negative.
+// first so a symlinked home does not produce a false negative. An empty dir is
+// never a container: with no identity repo, filepath.Rel("", …) would otherwise
+// report every absolute path as living under it and hide real findings.
 func underDir(path, dir string) bool {
+	if dir == "" {
+		return false
+	}
 	resolvedDir, err := filepath.EvalSymlinks(dir)
 	if err != nil {
 		resolvedDir = dir
