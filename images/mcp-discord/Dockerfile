@@ -5,7 +5,7 @@
 # inbound binding. Distroless final image to keep the attack surface minimal
 # (it carries a bot token).
 
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /build
 
 # Download deps first to maximise layer cache reuse.
