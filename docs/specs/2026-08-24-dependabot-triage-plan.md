@@ -11,8 +11,8 @@ approval before merging anything.
 ## Checkpoints
 
 - [x] Inventory all open Dependabot PRs, branch state, changed files, and CI.
-- [ ] Review upstream compatibility and release notes for each update.
-- [ ] Reproduce failures and apply the smallest branch-local fixes needed.
+- [x] Review upstream compatibility and release notes for each update.
+- [x] Reproduce failures and apply the smallest branch-local fixes needed.
 - [ ] Run targeted local verification and confirm required GitHub checks.
 - [ ] Report per-PR risk and recommendation to Matt; wait for yes/no approval.
 - [ ] Merge only the PRs Matt approves, then verify the resulting main branch.
@@ -21,8 +21,18 @@ approval before merging anything.
 
 - Fifteen Dependabot PRs are open: #86 and #126–#139.
 - All are currently reported mergeable by GitHub.
-- #126–#134 and #86 have green required checks.
-- #135–#139 fail `pwa-build`; investigation is the next action.
+- #126–#134 and #86 had green required checks at inventory time.
+- #135–#139 initially failed the pwa-views release guard before builds ran.
+- #135 repairs the guard for devDependency-only updates and fixes the router
+  boundary test for Vitest 4.1.11; local builds, type checks, and 721 tests pass.
+- #136 lowers the jsdom worker pool from four to two after jsdom 30 caused four
+  deterministic timeouts; local builds, type checks, and 721 tests pass.
+- #137 builds and type-checks cleanly with the Node 26 type definitions.
+- #138 builds, type-checks, and passes all 721 tests with jest-dom 7.
+- #139 now carries the required pwa-views 0.32.2 version and changelog entry;
+  local builds, type checks, and 721 tests pass after hardening the slow router
+  boundary test.
+- GitHub checks for the repaired frontend branches are the exact next action.
 
 ## Safety
 
