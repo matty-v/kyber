@@ -1,6 +1,6 @@
 # Dependabot PR triage — 2026-08-24
 
-**Status:** Coordinated Node 26 adoption in progress for #86
+**Status:** Awaiting explicit merge approval for #86
 
 ## Goal
 
@@ -16,7 +16,7 @@ approval before merging anything.
 - [x] Run targeted local verification and confirm required GitHub checks.
 - [x] Report per-PR risk and recommendation to Matt; wait for yes/no approval.
 - [x] Merge the fourteen approved PRs and verify the resulting main branch.
-- [ ] Coordinate Node 26 across development, CI, publishing, and the production
+- [x] Coordinate Node 26 across development, CI, publishing, and the production
   PWA builder on #86; validate and request a separate merge approval.
 
 ## Current evidence
@@ -41,8 +41,10 @@ approval before merging anything.
   change: `.nvmrc`, the package engine contract, control-plane PWA builder, and
   holocron publishing job will agree on Node 26, with a CI drift guard and the
   Node 26 test-environment compatibility fix discovered during validation.
-- The exact next action is to push the repaired #86 branch, wait for required
-  GitHub checks, then ask Matt for an explicit yes/no merge approval.
+- #86 is cleanly mergeable at `82b488497f425641886a872fe8d212f4ef1d3430`.
+  Its PWA build, full Go suite, integration test, production control-plane image
+  build, CodeQL, design lint, and GitGuardian checks all pass.
+- The exact next action is Matt's explicit yes/no merge approval for #86.
 
 ## Safety
 
