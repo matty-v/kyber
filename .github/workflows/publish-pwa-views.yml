@@ -104,7 +104,7 @@ jobs:
         with:
           # Literal, not node-version-file: this job's checkout is HOLOCRON,
           # so kyber's .nvmrc is not on disk. Keep in sync with .nvmrc.
-          node-version: '22'
+          node-version: '26'
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
