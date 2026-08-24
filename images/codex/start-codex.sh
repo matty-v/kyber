@@ -322,15 +322,16 @@ CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
 if [ -n "${CODEX_MODEL:-}" ]; then
     CODEX_ARGS=(--model "$CODEX_MODEL" "${CODEX_ARGS[@]}")
 fi
-# kyber#118: build the resume command from the arg set BEFORE the startup
-# prompt lands — the prompt is the initial turn of a NEW session, and a
-# resumed session is not a new session. `resume --last` picks the newest
-# recorded session; config.toml's tui.resume_cwd="current" scopes that to
-# this launch dir.
-CODEX_RESUME_CMD="codex resume --last $(printf '%q ' "${CODEX_ARGS[@]}")"
 if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")
 fi
+# kyber#118: build the resume command from the arg set AFTER the startup
+# prompt lands — a resumed session restores its conversation but has no turn
+# to act on, so the prompt (`codex resume [SESSION_ID] [PROMPT]`) is what
+# makes an agent interrupted mid-task pick the task back up. `resume --last`
+# picks the newest recorded session; config.toml's tui.resume_cwd="current"
+# scopes that to this launch dir.
+CODEX_RESUME_CMD="codex resume --last $(printf '%q ' "${CODEX_ARGS[@]}")"
 
 # Build the tmux command string once, shell-quoting every argument. CODEX_MODEL
 # comes from spec.model, which the API does not charset-validate, and it is
