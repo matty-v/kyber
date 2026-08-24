@@ -146,6 +146,9 @@ jobs:
       - name: Product docs invariants
         run: bash docs/product/product_docs_test.sh
 
+      - name: Node version alignment
+        run: bash scripts/node-version-guard_test.sh
+
       - name: Lint
         if: needs.changes.outputs.go == 'true'
         run: make lint

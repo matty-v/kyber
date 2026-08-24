@@ -3,6 +3,9 @@
   "version": "0.0.0",
   "private": true,
   "description": "kyber repo workspaces root — see packages/ and apps/",
+  "engines": {
+    "node": ">=26 <27"
+  },
   "workspaces": [
     "packages/*",
     "apps/*"
