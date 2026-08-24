@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.32.2 — 2026-08-24
+
+### Changed
+- Updated `lucide-react` from 0.468.0 to 1.33.0. Existing Kyber icon imports
+  remain compatible and are covered by the library and embedded-PWA builds.
+
 ## 0.32.1 — 2026-08-24
 
 ### Changed
