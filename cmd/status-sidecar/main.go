@@ -161,6 +161,7 @@ func main() {
 //	POST /token-usage    → /internal/agents/{name}/token-usage
 //	POST /runtime-version → /internal/agents/{name}/runtime-version
 //	POST /runtime-catalog → /internal/agents/{name}/runtime-catalog
+//	POST /skills          → /internal/agents/{name}/skills
 //	POST /refresh-token  → /internal/agents/{name}/refresh-token
 //	POST /codex-auth     → /internal/agents/{name}/codex-auth
 //
@@ -177,6 +178,9 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	mux.HandleFunc("/token-usage", forwardHandler(client, cfg, metrics, logger, "token-usage", false))
 	mux.HandleFunc("/runtime-version", forwardHandler(client, cfg, metrics, logger, "runtime-version", false))
 	mux.HandleFunc("/runtime-catalog", forwardHandler(client, cfg, metrics, logger, "runtime-catalog", false))
+	// The agent's skill inventory, scanned from its own filesystem by
+	// kyber-skills at boot and on every identity sync.
+	mux.HandleFunc("/skills", forwardHandler(client, cfg, metrics, logger, "skills", false))
 	mux.HandleFunc("/refresh-token", forwardHandler(client, cfg, metrics, logger, "refresh-token", false))
 	// Codex's equivalent of /refresh-token. Separate endpoint because the
 	// payload is Codex's opaque auth.json document, not the Anthropic

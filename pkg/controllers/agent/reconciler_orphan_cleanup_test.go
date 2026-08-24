@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	stderrors "errors"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -14,6 +15,8 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/metricsstore"
+	"github.com/matty-v/kyber/pkg/skillscan"
+	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
@@ -27,6 +30,7 @@ type orphanTestStores struct {
 	tokAccum tokenstore.Accumulator
 	stAccum  statechangestore.Accumulator
 	metrics  metricsstore.MetricsStore
+	skills   skillstore.Store
 }
 
 func newOrphanTestStores() orphanTestStores {
@@ -36,6 +40,7 @@ func newOrphanTestStores() orphanTestStores {
 		tokAccum: tokenstore.NewMemoryAccumulator(),
 		stAccum:  statechangestore.NewMemoryAccumulator(),
 		metrics:  metricsstore.NewMemoryMetricsStore(),
+		skills:   skillstore.NewMemoryStore(),
 	}
 }
 
@@ -46,6 +51,10 @@ func (s orphanTestStores) seed(ctx context.Context, ns, agent string) {
 	_ = s.tokAccum.IncrBy(ctx, ns, agent, "claude-opus-4", tokenstore.TokenDelta{Input: 10})
 	_ = s.stAccum.IncrBy(ctx, ns, agent, "working", 1)
 	_ = s.metrics.AddPoint(ctx, metricsstore.ActivityKey(ns, agent, "working"), 100, 0.5)
+	_ = s.skills.Put(ctx, agent, &skillscan.Report{
+		Version: skillscan.ReportVersion,
+		Skills:  []skillscan.Skill{{Name: "restart", Source: skillscan.SourceIdentity, Path: "skills/restart"}},
+	})
 }
 
 func (s orphanTestStores) wire(r *AgentReconciler) {
@@ -54,6 +63,7 @@ func (s orphanTestStores) wire(r *AgentReconciler) {
 	r.TokenAccumulator = s.tokAccum
 	r.StateChangeAccumulator = s.stAccum
 	r.MetricsStore = s.metrics
+	r.SkillStore = s.skills
 }
 
 // TestReconciler_Deletion_ReapsAllOrphanState covers kyber#565 AC-5 + AC-7: a
@@ -124,6 +134,11 @@ func TestReconciler_Deletion_ReapsAllOrphanState(t *testing.T) {
 	if pts, _ := stores.metrics.RangeQuery(ctx, metricsstore.ActivityKey(ns, "dave", "working"), 0, 1<<62); len(pts) != 0 {
 		t.Error("metrics time-series for dave must be reaped")
 	}
+	// A durable store, so a surviving row would be served to whatever agent
+	// next takes this name.
+	if _, err := stores.skills.Get(ctx, "dave"); !stderrors.Is(err, skillstore.ErrNotFound) {
+		t.Error("skill report for dave must be reaped")
+	}
 
 	// The unrelated agent han must be fully intact (no collateral cleanup).
 	if b, _ := stores.brief.Get(ctx, "han"); b == nil {
@@ -134,6 +149,9 @@ func TestReconciler_Deletion_ReapsAllOrphanState(t *testing.T) {
 	}
 	if pts, _ := stores.metrics.RangeQuery(ctx, metricsstore.ActivityKey(ns, "han", "working"), 0, 1<<62); len(pts) != 1 {
 		t.Error("han's metrics time-series must survive")
+	}
+	if _, err := stores.skills.Get(ctx, "han"); err != nil {
+		t.Errorf("han's skill report must survive dave's deletion: %v", err)
 	}
 }
 

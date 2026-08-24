@@ -36,6 +36,7 @@ import { TokenUsageCard } from '../components/TokenUsage'
 import { ActivityTab } from '../components/ActivityTab'
 import { JobsTab } from '../components/JobsTab'
 import { CommsTab } from '../components/CommsTab'
+import { SkillsTab } from '../components/SkillsTab'
 import { SecretsTab } from '../components/SecretsTab'
 import { ShellTab } from '../components/ShellTab'
 import { ExecTerminal } from '../components/ExecTerminal'
@@ -102,7 +103,7 @@ type ActionKind =
 // now interactive-only (root-in-chroot default). Webhooks (#208) sits between
 // Jobs and Activity — both are inbound-prompt surfaces (cron-driven vs
 // webhook-driven respectively).
-type Tab = 'overview' | 'comms' | 'secrets' | 'jobs' | 'webhooks' | 'activity' | 'shell'
+type Tab = 'overview' | 'comms' | 'skills' | 'secrets' | 'jobs' | 'webhooks' | 'activity' | 'shell'
 
 function identityRepoPhaseBadgeClass(phase: AgentIdentityRepoPhase | undefined): string {
   switch (phase) {
@@ -610,6 +611,7 @@ export function AgentDetail() {
   const tabs: { id: Tab; label: string }[] = [
     { id: 'overview', label: 'Overview' },
     { id: 'comms', label: 'Comms' },
+    { id: 'skills', label: 'Skills' },
     { id: 'secrets', label: 'Secrets' },
     { id: 'jobs', label: 'Jobs' },
     { id: 'webhooks', label: 'Webhooks' },
@@ -954,6 +956,11 @@ export function AgentDetail() {
               "apply this change" path is the same one the More menu uses —
               including its warning that the live session ends. */}
           <CommsTab agentName={name} onRestartPod={() => setPending('restart')} />
+        </TabsContent>
+
+        <TabsContent value="skills">
+          {/* Read-only: skills are managed by talking to the agent. */}
+          <SkillsTab agentName={name} />
         </TabsContent>
 
         <TabsContent value="secrets">

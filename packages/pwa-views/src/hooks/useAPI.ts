@@ -615,6 +615,25 @@ export function useInboundDebug() {
   })
 }
 
+// ---- Agent skills (read-only) ----
+
+// Skills change rarely — an agent reports at boot and on every identity sync,
+// which can be days apart — so this polls slowly. There is nothing to refetch
+// aggressively for; a stale-looking tab is answered by the "as of" timestamp,
+// not by hammering the endpoint.
+export function useAgentSkills(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agentSkills', name],
+    queryFn: () => api.getAgentSkills(name),
+    enabled: enabled && Boolean(name),
+    staleTime: 60000,
+    // 404 → null is a valid answer ("never reported"), not an error.
+    retry: false,
+  })
+}
+
 // ---- Per-agent comms channels (#664) ----
 
 export function useAgentComms(name: string) {

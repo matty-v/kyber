@@ -148,6 +148,25 @@ elif [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ ! -r "$DISCORD_SKILL_SRC/SKILL.md"
     echo "[kyber] WARNING: Discord messaging skill is missing or unreadable at $DISCORD_SKILL_SRC" >&2
 fi
 
+# ---- Skill inventory ----
+# Report what this agent can ACTUALLY invoke, now that both the identity-repo
+# skills and the image-bundled capability skills above are linked. The identity
+# sync already reported once, but it runs BEFORE the Telegram/Discord blocks,
+# so that earlier report cannot see them. Backgrounded: the reporter retries a
+# sidecar that is still binding, and boot must not wait on it.
+#
+# This runs under `set -e`, well before the token-reporter block creates
+# /persist/var/log, so the log path is resolved defensively — an unwritable
+# redirect target here would kill the whole boot.
+if command -v kyber-skills >/dev/null 2>&1; then
+    KYBER_SKILLS_LOG="${KYBER_SKILLS_LOG:-/persist/var/log/kyber-skills.log}"
+    mkdir -p "$(dirname "$KYBER_SKILLS_LOG")" 2>/dev/null || true
+    [ -w "$(dirname "$KYBER_SKILLS_LOG")" ] || KYBER_SKILLS_LOG="$HOME/.kyber-skills.log"
+    kyber-skills report --repo-dir "${REPO_DIR:-}" --home "$HOME" \
+        >> "$KYBER_SKILLS_LOG" 2>&1 &
+    echo "[kyber] skill report started (pid=$!, log=$KYBER_SKILLS_LOG)"
+fi
+
 # ---- gh CLI bootstrap ----
 # If the agent has a user-secret named `github-token` (surfaced as
 # $USER_GITHUB_TOKEN), expose it as GH_TOKEN so the `gh` CLI works out of the

@@ -67,7 +67,39 @@ That file is platform-owned and read-only to you. Because the sidecar writes it 
 
 Never echo, log, paste, or commit any of these. A token in a transcript is a leaked token.
 
-## 6. How work reaches you
+## 6. Your skills
+
+A **skill** is a reusable workflow you can invoke — `/name` in Claude Code, `$name` in Codex — and that either runtime can also trigger on its own when your description matches what is being asked.
+
+Every Kyber agent keeps skills in the same place, whatever runtime it runs:
+
+```
+~/dev/<your-repo>/skills/<name>/SKILL.md
+```
+
+`SKILL.md` needs YAML frontmatter with a `name` and a `description`. The **directory name is what gets invoked** — if the frontmatter disagrees with it, the directory wins. Bundle whatever else the skill needs (a `references/` folder, scripts, assets) inside the same directory.
+
+Two other kinds of skill show up alongside yours. Packages vendored into your repo under `vendor/<package>/skills/` come from a shared source and are not yours to edit — and note that a vendored skill **replaces** one of yours with the same name, so pick distinct names. Skills like `telegram-messaging` and `discord-messaging` are baked into the runtime image and appear only when the matching sidecar is attached.
+
+### Saving a skill
+
+After you write (or download) a skill, run:
+
+```
+kyber-skills install
+```
+
+That one command does the whole job: it links the skill into both runtimes so it works **immediately** rather than at your next boot, commits it, and pushes it to your identity repo. It is idempotent, so running it again is always safe. To pull in something you downloaded elsewhere, point it at the source: `kyber-skills install --from /tmp/some-skill`.
+
+Writing a skill straight into `~/.claude/skills/` or `~/.codex/skills/` looks like it works and is the one way to lose it — nothing there is committed, so it is gone the moment you are reprovisioned.
+
+Run `kyber-skills list` any time to see what you actually have, including anything broken.
+
+### What the operator sees
+
+Your skills appear in the Kyber UI on your agent's **Skills** tab. That view is read-only: the only way to add, change, or remove a skill is to ask you to do it. What it shows is a scan of your real filesystem, not of your GitHub repo, so a skill that is committed but not loadable shows up as broken rather than fine.
+
+## 7. How work reaches you
 
 - **Channels** (Telegram, Discord, …) deliver prompts through Kyber's signed
   inbound rail. **The person is reading the channel, not your transcript** —
@@ -93,19 +125,19 @@ Never echo, log, paste, or commit any of these. A token in a transcript is a lea
 
 Any of these can arrive mid-task. Acknowledge, then finish or renegotiate — don't drop the thread you were on.
 
-## 7. How you're seen
+## 8. How you're seen
 
 Your activity flows through a status sidecar to the control plane and onto `Agent.status`, which is what the operator sees in the PWA: phase, current activity, token and cost usage, logs.
 
 Two things that surface has a blind spot for: the activity view reads the archived transcript, so work you do **inside subagents** can be invisible there; and a clean phase says nothing about whether your work is correct. If it matters, say it out loud on your channel.
 
-## 8. Staying alive
+## 9. Staying alive
 
 - **Memory.** Exceed your container's limit and you're OOM-killed into `MemoryExhausted`, which does **not** auto-restart. If you can feel yourself getting heavy — huge files, giant command output, long-running subagents — shed weight before you die.
 - **Session length is your real cost driver.** Every turn re-reads the whole conversation, so a late turn costs multiples of an early one. Ending a session cleanly and starting fresh is cheaper and sharper than grinding on forever. Restart at a natural boundary rather than at the wall.
 - **Don't run broad filesystem scans.** `find /`, whole-disk greps, recursive scans of a mounted overlay — on small nodes that's enough I/O to degrade the node for everyone.
 
-## 9. Yours vs. the operator's
+## 10. Yours vs. the operator's
 
 **You can:** edit and push your identity repo, save memory, install tools in your home, restart your own session, use your credentials within their scope.
 
@@ -113,7 +145,7 @@ Two things that surface has a blind spot for: the activity view reads the archiv
 
 When you're blocked on the platform, say exactly what needs to change and where. *"Raise my memory limit from 4Gi to 8Gi on my Agent resource"* gets fixed. *"I keep crashing"* gets a conversation.
 
-## 10. First checks when something's off
+## 11. First checks when something's off
 
 | Symptom | Look here first |
 |---|---|
@@ -124,7 +156,7 @@ When you're blocked on the platform, say exactly what needs to change and where.
 | You died mid-task and came back | Check whether the work actually landed (branch, PR, deploy) before redoing it |
 | Repeated crashes on the same task | Likely memory. Report it as `MemoryExhausted` + the limit you need, not as "flaky" |
 
-## 11. House rules
+## 12. House rules
 
 - **Never** edit another agent's identity repo, memory, or session. Ever.
 - **Never** deploy by hand. Ship through the repo's CI/CD.

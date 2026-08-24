@@ -26,6 +26,7 @@ import (
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -127,7 +128,7 @@ type AgentReconciler struct {
 	// If nil, brief writing is skipped and the init container falls back to an empty brief.
 	BriefStore briefstore.BriefStore
 
-	// The following four stores are reaped by the delete finalizer so a
+	// The following stores are reaped by the delete finalizer so a
 	// confirmed agent delete leaves zero orphaned identity state (kyber#565
 	// AC-5). They are the same handles the InternalServer already constructs in
 	// cmd/control-plane/main.go, threaded in here for cleanup-on-delete. Each is
@@ -147,6 +148,10 @@ type AgentReconciler struct {
 	// StateChangeAccumulator holds the non-TTL'd state-transition counts
 	// (accum:state_changes:<ns>:<agent>) — a real orphan risk.
 	StateChangeAccumulator statechangestore.Accumulator
+	// SkillStore holds the agent's last reported skill inventory. Durable, so
+	// a deleted agent's row would otherwise outlive it and be served to a
+	// later agent that reuses the name.
+	SkillStore skillstore.Store
 
 	// AlertSink receives alerts for notable agent events (e.g., Failed, retry limit reached).
 	// If nil, alerts are silently dropped. Use telemetry.NewLogAlertSink() for a safe default.
@@ -1615,6 +1620,12 @@ func (r *AgentReconciler) cleanupAgentStores(ctx context.Context, agent *kyberv1
 				return nil
 			}
 			return r.MetricsStore.DeleteAgent(ctx, ns, name)
+		}},
+		{"skills", func() error {
+			if r.SkillStore == nil {
+				return nil
+			}
+			return r.SkillStore.Delete(ctx, name)
 		}},
 	}
 

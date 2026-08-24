@@ -97,7 +97,7 @@ export function UpdatesCard() {
         </dl>
 
         {s.lastError && (
-          <p className="mb-3 text-xs text-warning">
+          <p className="mb-3 text-xs text-warn">
             Last check failed: {s.lastError}
           </p>
         )}
@@ -141,7 +141,7 @@ export function UpdatesCard() {
           </div>
 
           {onMain && (
-            <p className="mt-3 flex items-start gap-2 rounded border border-warning/40 bg-warning/10 p-2 text-[11px] text-warning">
+            <p className="mt-3 flex items-start gap-2 rounded border border-warn/40 bg-warn/10 p-2 text-[11px] text-warn">
               <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-px" aria-hidden />
               <span>
                 This cluster follows unreleased code. Changes arrive as soon as they

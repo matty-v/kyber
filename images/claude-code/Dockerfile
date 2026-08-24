@@ -12,6 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-token-reporter ./cmd/token-reporter
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-skills ./cmd/kyber-skills
 
 FROM ${BASE_IMAGE}
 
@@ -91,5 +92,8 @@ COPY images/shared/skills/discord-messaging /opt/kyber/skills/discord-messaging
 # Kyber token-usage reporter — runs as a background process alongside
 # Claude Code. See cmd/token-reporter/ for details.
 COPY --from=tokenreporter-builder /build/kyber-token-reporter /usr/local/bin/kyber-token-reporter
+# The agent's own tool for its skills: install/link/commit/push, and the
+# scan+report the identity-repo sync fires at boot. See cmd/kyber-skills/.
+COPY --from=tokenreporter-builder /build/kyber-skills /usr/local/bin/kyber-skills
 
 ENV KYBER_START_CMD="/usr/local/bin/start-claude.sh"

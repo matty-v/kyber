@@ -1,5 +1,19 @@
 # @matty-v/kyber-pwa-views
 
+## 0.33.0 — 2026-08-24
+
+### Added
+- Agent Details gains a read-only **Skills** tab: what the agent can actually
+  invoke, scanned from its own pod rather than read from GitHub. Each skill
+  shows its description, where it came from (the agent's own identity repo, a
+  vendored package, or a Kyber runtime image), and which runtimes it is
+  loadable in.
+- The tab also names what is broken: a skill committed to the repo that no
+  runtime can load, a missing or malformed `SKILL.md`, a name collision where
+  a vendored skill silently replaces the agent's own, and skill directories
+  written straight into a runtime home that are committed nowhere and will not
+  survive a reprovision.
+
 ## 0.32.2 — 2026-08-24
 
 ### Changed
