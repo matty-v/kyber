@@ -13,6 +13,11 @@
   a vendored skill silently replaces the agent's own, skill directories
   written straight into a runtime home, and skills that are not pushed to
   GitHub — none of which survive a reprovision.
+- Each skill is an expandable row: collapsed shows its health, name, origin and
+  a one-line summary; expanding reveals the full description, which runtimes it
+  loads in, its path, and any problems. A skill with problems opens by default
+  and shows a problem count even when collapsed, so folding the list away can
+  never hide one.
 
 ## 0.32.2 — 2026-08-24
 

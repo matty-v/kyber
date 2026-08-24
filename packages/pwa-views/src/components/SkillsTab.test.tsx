@@ -2,7 +2,8 @@
 // sees, not the network.
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
 vi.mock('../hooks/useAPI', () => ({
@@ -66,15 +67,18 @@ beforeEach(() => {
 })
 
 describe('SkillsTab', () => {
-  it('lists a healthy skill with its description, origin, and runtimes', () => {
+  it('lists a healthy skill with its description, origin, and runtimes', async () => {
+    const user = userEvent.setup()
     mockSkills(report())
     renderWithQuery(<SkillsTab agentName="dave" />)
 
     expect(screen.getByText('restart')).toBeInTheDocument()
     expect(screen.getByText('Planned shutdown: save, commit, push.')).toBeInTheDocument()
     expect(screen.getByText('Own')).toBeInTheDocument()
-    expect(screen.getByText(/Loadable in Claude Code, Codex/)).toBeInTheDocument()
     expect(screen.getByLabelText('Loadable')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /restart/ }))
+    expect(screen.getByText(/Loadable in Claude Code, Codex/)).toBeInTheDocument()
   })
 
   // The whole point of the tab: a skill that is committed and present but
@@ -113,7 +117,8 @@ describe('SkillsTab', () => {
     expect(screen.getByText('Vendored · falcon-dev-common')).toBeInTheDocument()
   })
 
-  it('shows image-bundled skills as platform skills', () => {
+  it('shows image-bundled skills as platform skills', async () => {
+    const user = userEvent.setup()
     mockSkills(
       report({
         skills: [skill({ name: 'telegram-messaging', source: 'platform', linked: ['claude-code'] })],
@@ -121,6 +126,8 @@ describe('SkillsTab', () => {
     )
     renderWithQuery(<SkillsTab agentName="dave" />)
     expect(screen.getByText('Platform')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /telegram-messaging/ }))
     expect(screen.getByText(/Loadable in Claude Code/)).toBeInTheDocument()
   })
 
@@ -192,11 +199,83 @@ describe('SkillsTab', () => {
   })
 
   // Read-only by design: skills are managed by talking to the agent. A write
-  // control here would let an operator desync the repo from the pod.
+  // control here would let an operator desync the repo from the pod. The
+  // disclosure buttons are the only interactive elements, so assert on what a
+  // control DOES rather than counting buttons — a count would have silently
+  // started passing for the wrong reason the moment a real write control
+  // appeared next to an expander.
   it('exposes no controls that add, edit, or remove a skill', () => {
     mockSkills(report())
     renderWithQuery(<SkillsTab agentName="dave" />)
-    const buttons = screen.queryAllByRole('button')
-    expect(buttons).toHaveLength(0)
+
+    for (const button of screen.queryAllByRole('button')) {
+      expect(button).toHaveAttribute('aria-expanded')
+    }
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByRole('form')).toBeNull()
+  })
+
+  it('collapses a healthy skill and reveals its detail on click', async () => {
+    const user = userEvent.setup()
+    mockSkills(report())
+    renderWithQuery(<SkillsTab agentName="dave" />)
+
+    const toggle = screen.getByRole('button', { name: /restart/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    // Collapsed still carries enough to scan by: name and a one-line summary.
+    expect(screen.getByText('Planned shutdown: save, commit, push.')).toBeInTheDocument()
+    expect(screen.queryByText(/Loadable in Claude Code, Codex/)).toBeNull()
+
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByText(/Loadable in Claude Code, Codex/)).toBeInTheDocument()
+    expect(screen.getByText('skills/restart')).toBeInTheDocument()
+
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText(/Loadable in Claude Code, Codex/)).toBeNull()
+  })
+
+  // Collapsing is for making a healthy list scannable. It must never be the
+  // reason a problem goes unseen — that is the one thing this tab exists to
+  // prevent.
+  it('opens a skill with problems by default and shows the count when collapsed', async () => {
+    const user = userEvent.setup()
+    mockSkills(
+      report({
+        skills: [
+          skill({
+            linked: [],
+            issues: [
+              { code: 'not_linked', severity: 'error', detail: 'not loadable by claude-code' },
+              { code: 'not_linked', severity: 'error', detail: 'not loadable by codex' },
+            ],
+          }),
+        ],
+      }),
+    )
+    renderWithQuery(<SkillsTab agentName="dave" />)
+
+    const toggle = screen.getByRole('button', { name: /restart/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByText('not_linked')).toHaveLength(2)
+
+    // Even folded away, the row still says something is wrong.
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(toggle).getByText('2 problems')).toBeInTheDocument()
+    expect(within(toggle).getByLabelText('Broken')).toBeInTheDocument()
+  })
+
+  it('singularises the problem count', () => {
+    mockSkills(
+      report({
+        skills: [
+          skill({ issues: [{ code: 'missing_description', severity: 'warning', detail: 'no description' }] }),
+        ],
+      }),
+    )
+    renderWithQuery(<SkillsTab agentName="dave" />)
+    expect(screen.getByText('1 problem')).toBeInTheDocument()
   })
 })

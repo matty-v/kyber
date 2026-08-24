@@ -12,9 +12,19 @@
 // There is no add/edit/remove here on purpose. Skills are managed by talking to
 // the agent, which writes them into its identity repo and pushes; an operator
 // editing them from here would put the repo and the pod out of sync, which is
-// the exact state this tab exists to reveal.
+// the exact state this tab exists to reveal. The only interactive element is
+// the per-skill disclosure.
 
-import { AlertCircle, AlertTriangle, BookOpen, CheckCircle2, Package, Puzzle } from 'lucide-react'
+import { useState } from 'react'
+import {
+  AlertCircle,
+  AlertTriangle,
+  BookOpen,
+  CheckCircle2,
+  ChevronRight,
+  Package,
+  Puzzle,
+} from 'lucide-react'
 import { useAgentSkills } from '../hooks/useAPI'
 import type { AgentSkill, AgentSkillIssue, AgentSkillSource } from '../lib/types'
 import { Button } from './Button'
@@ -110,25 +120,56 @@ function SkillRow({ skill }: { skill: AgentSkill }) {
   const healthy = issues.length === 0
   const runtimes = skill.linked.map((r) => RUNTIME_LABEL[r] ?? r)
 
+  // A skill with something wrong opens by default. Collapsing is for making a
+  // healthy list scannable — it must never be the reason a problem goes unseen,
+  // which is the one thing this tab exists to prevent.
+  const [open, setOpen] = useState(!healthy)
+  const detailId = `skill-detail-${skill.source}-${skill.sourcePackage ?? ''}-${skill.name}`
+
   return (
-    <li className="border-b border-border-subtle px-3 py-2.5 last:border-b-0">
-      <div className="flex items-start gap-2">
+    <li className="border-b border-border-subtle last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-controls={detailId}
+        className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-surface-raised"
+      >
+        <ChevronRight
+          className={`h-3.5 w-3.5 shrink-0 text-text-muted transition-transform ${open ? 'rotate-90' : ''}`}
+          aria-hidden="true"
+        />
         {broken ? (
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-danger" aria-label="Broken" />
+          <AlertCircle className="h-4 w-4 shrink-0 text-danger" aria-label="Broken" />
         ) : healthy ? (
-          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" aria-label="Loadable" />
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-success" aria-label="Loadable" />
         ) : (
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warn" aria-label="Has warnings" />
+          <AlertTriangle className="h-4 w-4 shrink-0 text-warn" aria-label="Has warnings" />
         )}
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-mono text-sm text-text-primary">{skill.name}</span>
-            <SourceBadge skill={skill} />
-          </div>
+        <span className="font-mono text-sm text-text-primary">{skill.name}</span>
+        <SourceBadge skill={skill} />
+        {/* The count rides the collapsed row so a folded-away problem still
+            announces itself without the detail being open. */}
+        {!healthy && (
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${
+              broken ? 'bg-danger-muted text-danger' : 'bg-warn-muted text-warn'
+            }`}
+          >
+            {issues.length} {issues.length === 1 ? 'problem' : 'problems'}
+          </span>
+        )}
+        {!open && skill.description && (
+          <span className="min-w-0 flex-1 truncate text-xs text-text-muted">{skill.description}</span>
+        )}
+      </button>
+
+      {open && (
+        <div id={detailId} className="px-3 pb-3 pl-11">
           {skill.description ? (
-            <p className="mt-0.5 text-xs text-text-secondary">{skill.description}</p>
+            <p className="text-xs text-text-secondary">{skill.description}</p>
           ) : (
-            <p className="mt-0.5 text-xs italic text-text-muted">No description</p>
+            <p className="text-xs italic text-text-muted">No description</p>
           )}
           <p className="mt-1 text-[11px] text-text-muted">
             {runtimes.length > 0 ? (
@@ -141,7 +182,7 @@ function SkillRow({ skill }: { skill: AgentSkill }) {
           </p>
           {!healthy && <IssueList issues={issues} />}
         </div>
-      </div>
+      )}
     </li>
   )
 }
