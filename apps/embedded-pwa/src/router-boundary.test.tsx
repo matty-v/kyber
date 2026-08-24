@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import { BrowserRouter, useLocation } from 'react-router-dom'
 import { createElement } from 'react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
@@ -93,24 +94,46 @@ describe('react-router package boundary', () => {
     // calls useLocation() internally, while BrowserRouter is imported here the
     // way main.tsx imports it.
     //
-    // App legitimately throws for an unrelated reason in this bare harness (it
-    // requires a ClusterProvider), so assert on the FAILURE MODE rather than
-    // on not throwing at all: whatever happens, it must not be the router
-    // context error. That keeps the guard pinned to this bug and stops it
-    // becoming a brittle full-app render test.
+    // Supply App's required providers so this remains a real cross-workspace
+    // render. Vitest 4.1.11 reports React render errors asynchronously, so the
+    // old try/catch around a deliberately incomplete provider tree timed out
+    // instead of observing the error.
     //
     // CAVEAT — measured, not assumed: this assertion still PASSES with two
     // copies installed, because Vite dedupes them at test time. It documents
     // the intended contract and would catch a genuine "App renders outside a
     // Router" mistake, but it is NOT what protects against the dual-copy
     // regression. The install-tree check above is.
-    const { App } = await import('@matty-v/kyber-pwa-views')
+    const { App, ClusterProvider, TooltipProvider } = await import('@matty-v/kyber-pwa-views')
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    const cluster = {
+      id: 'local',
+      name: 'Kyber',
+      baseURL: 'http://localhost/',
+      apiKey: '',
+      version: 'test',
+      capabilities: [],
+    }
     let message = ''
     try {
-      render(createElement(BrowserRouter, null, createElement(App)))
+      render(
+        createElement(
+          BrowserRouter,
+          null,
+          createElement(
+            QueryClientProvider,
+            { client: queryClient },
+            createElement(
+              TooltipProvider,
+              null,
+              createElement(ClusterProvider, { value: cluster }, createElement(App)),
+            ),
+          ),
+        ),
+      )
     } catch (err) {
       message = err instanceof Error ? err.message : String(err)
     }
     expect(message).not.toMatch(ROUTER_CONTEXT_ERROR)
-  })
+  }, 15_000)
 })
