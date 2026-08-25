@@ -18,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
@@ -291,9 +292,99 @@ func (s *Server) handleMachines(w http.ResponseWriter, r *http.Request) {
 		s.setMachineDesiredPhase(w, r, name, kyberv1.MachinePhaseRunning)
 	case "restart-agents":
 		s.restartMachineAgents(w, r, name)
+	case "retry-cost-optimized":
+		s.retryCostOptimized(w, r, name)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "unknown action")
 	}
+}
+
+// RetryCostOptimizedRequest carries the caller's idempotency token. Retrying
+// the same HTTP operation with the same token is a no-op; a different token
+// conflicts while an earlier request remains unobserved.
+type RetryCostOptimizedRequest struct {
+	RequestID string `json:"requestId"`
+}
+
+func (s *Server) retryCostOptimized(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.authorizeAction(w, r, name, "retry-cost-optimized", ScopeLifecycleWrite) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req RetryCostOptimizedRequest
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "request body must contain requestId")
+		return
+	}
+	req.RequestID = strings.TrimSpace(req.RequestID)
+	if req.RequestID == "" || len(req.RequestID) > 128 {
+		writeJSONError(w, http.StatusBadRequest, "invalid_request_id", "requestId must be between 1 and 128 characters")
+		return
+	}
+
+	machine := &kyberv1.Machine{}
+	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
+	if err := s.K8sClient.Get(r.Context(), key, machine); err != nil {
+		if k8serrors.IsNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "machine '"+name+"' not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get machine")
+		return
+	}
+	if s.CapacityProvider == nil || s.CapacityProvider.Type() != string(machine.Spec.Provider) {
+		writeJSONError(w, http.StatusConflict, "fallback_unsupported", "the machine provider does not support cost-optimized retry")
+		return
+	}
+	capabilities, err := s.CapacityProvider.Capabilities(r.Context())
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "compute_unavailable", "compute capabilities unavailable")
+		return
+	}
+	if capabilities.ReliableFallbackMode == "" || capabilities.ReliableFallbackMode == adapters.ReliableFallbackUnsupported {
+		writeJSONError(w, http.StatusConflict, "fallback_unsupported", "the machine provider does not support cost-optimized retry")
+		return
+	}
+	if machine.Spec.ManagementMode == kyberv1.MachineManagementExternal || machineRequestedAvailability(machine) != kyberv1.MachineAvailabilityCostOptimized {
+		writeJSONError(w, http.StatusConflict, "retry_not_applicable", "cost-optimized retry requires a managed cost-optimized machine")
+		return
+	}
+	if !machine.DeletionTimestamp.IsZero() || (machine.Status.Phase != kyberv1.MachinePhaseReady && machine.Status.Phase != kyberv1.MachinePhaseRunning) || machine.Spec.DesiredPhase == kyberv1.MachinePhaseStopped {
+		writeJSONError(w, http.StatusConflict, "lifecycle_conflict", "the machine lifecycle is not ready for cost-optimized retry")
+		return
+	}
+	if machine.Status.EffectiveAvailabilityClass != kyberv1.MachineAvailabilityReliable {
+		writeJSONError(w, http.StatusConflict, "retry_not_applicable", "the machine is not currently using reliable fallback capacity")
+		return
+	}
+	if machine.Spec.CostOptimizedRetryRequest == req.RequestID {
+		writeJSON(w, http.StatusOK, machineToResponse(machine))
+		return
+	}
+	if machine.Spec.CostOptimizedRetryRequest != "" && machine.Status.CostOptimizedRetryObserved != machine.Spec.CostOptimizedRetryRequest {
+		writeJSONError(w, http.StatusConflict, "retry_in_progress", "a cost-optimized retry is already in progress")
+		return
+	}
+
+	patch := client.MergeFrom(machine.DeepCopy())
+	machine.Spec.CostOptimizedRetryRequest = req.RequestID
+	if err := s.K8sClient.Patch(r.Context(), machine, patch); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to request cost-optimized retry")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, machineToResponse(machine))
+}
+
+func machineRequestedAvailability(machine *kyberv1.Machine) kyberv1.MachineAvailabilityClass {
+	if machine.Spec.AvailabilityClass != "" {
+		return machine.Spec.AvailabilityClass
+	}
+	if machine.Spec.Spot {
+		return kyberv1.MachineAvailabilityCostOptimized
+	}
+	return kyberv1.MachineAvailabilityReliable
 }
 
 func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
