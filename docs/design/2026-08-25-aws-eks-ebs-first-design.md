@@ -4,6 +4,8 @@
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 **Evidence:** [AWS EFS Phase 1 qualification](../specs/2026-08-25-aws-efs-phase1-qualification-plan.md)
+**Implementation:**
+[EBS-first implementation plan](../specs/2026-08-25-aws-eks-ebs-first-implementation-plan.md)
 
 ## Decision summary
 
