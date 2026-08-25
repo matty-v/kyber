@@ -47,6 +47,8 @@ checkpoint. In particular:
   fallback, suspend/resume, and manual return to cost-optimized capacity.
 - The EKS cluster is regional/multi-AZ; each exact EBS volume and its Machine
   capacity remain zonal.
+- Treat Regional GKE, Zonal GKE, and regional EKS with zonal EBS-backed
+  Machines as three explicit installation topology profiles.
 - Reliable Machine: one single-AZ On-Demand group, size zero or one.
 - Cost-optimized Machine: one single-AZ Spot group plus one pre-created,
   size-zero On-Demand fallback group; never two desired writers.
@@ -207,10 +209,14 @@ This phase designs and tests; it does not change production GKE behavior.
 
 - Can a managed GKE node pool safely change between Spot and standard, or is
   the provisioning model immutable?
-- If replacement/paired pools are required, how are regional pool autoscaling,
-  provider refs, ownership labels, quota, and one-active-node enforced?
-- How does the transition retain the same regional Persistent Disk and Agent
-  Machine affinity?
+- If replacement/paired pools are required, how are pool autoscaling, provider
+  refs, ownership labels, quota, and one-active-node enforced?
+- For regional GKE, can standard fallback use either regional-PD replica zone
+  after Spot has been unavailable across both eligible zones?
+- For zonal GKE, how does same-zone fallback retain the zonal Persistent Disk,
+  and how are its whole-zone outage limits presented to the operator?
+- How does each transition retain the same Persistent Disk and Agent Machine
+  affinity?
 - What is the rollback path when Spot capacity remains unavailable?
 - Should GKE eventually support automatic fallback or manual transition only?
 
@@ -220,6 +226,11 @@ Add a focused GKE transition design beside this plan with a recommendation,
 API compatibility proof, resource/quota impact, and live-test proposal. Extend
 fake GKE client tests for the chosen resource model, but keep the capability
 `Unsupported` until a later separately approved implementation.
+
+Update GKE installation documentation to distinguish the regional and zonal
+profiles, their disk mobility, fallback scope, and zone-outage behavior. The
+spike must evaluate the shared fallback contract for both profiles; regional
+GKE's larger Spot capacity pool reduces risk but does not guarantee capacity.
 
 ### Exit gate
 

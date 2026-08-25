@@ -204,6 +204,21 @@ alter a running GKE Machine's availability class.
 
 ### Regional cluster versus zonal Agent storage
 
+Kyber should describe these as three installation topology profiles, rather
+than implying that every cluster from one provider has identical failure
+boundaries:
+
+| Profile | Cluster and worker placement | Durable Agent disk | Spot recovery boundary |
+| --- | --- | --- | --- |
+| Regional GKE | Regional cluster; a Machine pool can replace capacity in either regional-PD replica zone | Regional Persistent Disk replicated across exactly two zones | Spot may be retried in either eligible zone; a provider-neutral standard fallback remains useful when both lack Spot capacity |
+| Zonal GKE | Zonal cluster and Machine capacity | Zonal Persistent Disk | Same-zone replacement only; a future Spot-to-standard fallback cannot survive a whole-zone outage |
+| Regional EKS with zonal Machines | Regional control plane and different Machines distributed across allowed AZs | One single-AZ EBS volume per Agent | Same-AZ Spot-to-On-Demand fallback; a whole-AZ outage waits for recovery or requires cold snapshot restoration to a new disk |
+
+Thus EKS is not single-AZ as a cluster. Each stateful EBS-backed Machine and
+Agent is single-AZ. Kyber may distribute those independent Machines across
+AZs, while the first platform-data design may still have its own dedicated
+single-AZ failure boundary.
+
 EKS itself is regional: AWS runs the managed control plane across three
 Availability Zones, and worker capacity may span multiple zones in the region.
 Stateless Spot workloads can use that regional pool of zones.
