@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.33.4 — 2026-08-25
+
+### Added
+- Machine details explicitly distinguish requested and effective availability.
+  When a cost-optimized Machine is using reliable fallback capacity, the UI
+  warns that reliable-rate cost is active and offers a provider-neutral,
+  confirmed retry action when the provider supports it.
+
 ## 0.33.3 — 2026-08-25
 
 ### Added
