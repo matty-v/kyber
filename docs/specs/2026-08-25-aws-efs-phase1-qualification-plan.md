@@ -1,6 +1,6 @@
 # AWS EFS parity qualification — Phase 1 execution plan
 
-**Status:** Approved, blocked on CI identity decision
+**Status:** Approved, in progress
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 
@@ -72,16 +72,18 @@ strictly out of scope: the qualification must not mount, alter, or reuse it.
 
 ## Delivery path
 
-Kyber's platform rules prohibit ad-hoc manual deployment. The qualification
-therefore requires a manually dispatched, environment-protected GitHub Actions
-workflow using short-lived AWS OIDC credentials. It must not store long-lived
-AWS keys in GitHub or the repository.
+This is a session-scoped research and deployment exercise, not a permanent
+Kyber deployment path. Matt explicitly approved using the current interactive
+AWS login to provision and clean up the disposable qualification resources.
+Do not add CI, a GitHub OIDC provider, an AWS IAM role, access keys, or another
+long-lived authentication path for this exercise.
 
-This adds `id-token: write` to one narrowly scoped workflow and requires a
-dedicated AWS IAM OIDC role restricted to this repository, workflow
-environment, region, resource-name prefix, and required ownership tags.
-Repository guidance requires explicit approval before changing CI permissions,
-so implementation stops at this checkpoint until that decision is approved.
+Terraform remains the only mutation interface so the intended resources,
+ownership tags, cost boundary, and cleanup inventory are reviewable before
+apply. The local state is a temporary test artifact and must be retained until
+independent cleanup verification succeeds, then removed from the worktree.
+This exception is limited to the approved research resources; it is not the
+eventual installer or maintainer authentication design.
 
 ## Checkpoints
 
@@ -90,10 +92,10 @@ so implementation stops at this checkpoint until that decision is approved.
 - [x] Inventory live GKE topology read-only.
 - [x] Inventory AWS EKS/EFS resources read-only.
 - [x] Receive Phase 1 cost and resource approval.
-- [ ] Receive explicit approval for the protected workflow's
-  `id-token: write` permission and dedicated AWS OIDC role.
+- [x] Confirm session-scoped Terraform deployment with the current interactive
+  AWS login; no CI or long-lived credential is in scope.
 
-Exit criterion: the CI identity and environment approval boundary are agreed.
+Exit criterion: the deployment and identity boundary is agreed.
 
 ### 1. Qualification harness
 
@@ -102,8 +104,7 @@ Exit criterion: the CI identity and environment approval boundary are agreed.
 - [ ] Require the unique run ID, expiry, owner tags, and cost ceiling inputs.
 - [ ] Add a remote test entrypoint that runs the repository-pinned test suite
   without accepting arbitrary shell input.
-- [ ] Add cleanup that is ownership-gated and runs after success, failure, or
-  cancellation.
+- [ ] Add cleanup that is ownership-gated and run it after success or failure.
 - [ ] Add static tests for Terraform formatting/validation, forbidden existing
   resource IDs, tag requirements, expiry bounds, and cleanup targeting.
 
