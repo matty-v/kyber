@@ -1,0 +1,104 @@
+#!/bin/bash
+# kyber-cron-postrun — Stop hook: run the platform-owned post-work for any
+# scheduled job whose turn just ended.
+#
+# kyber-job-dispatch writes a pending marker per named job when it injects the
+# prompt (see CRON_PENDING_DIR there), and kyber-cron-turn-start arms that
+# marker when the prompt is actually submitted. This hook fires when the agent
+# finishes a turn. For each ARMED marker it:
+#
+#   - clears the agent's context, if that job asked for it
+#     (spec.jobs[].clearContextAfter → --clear-context-after → clear_context=true)
+#   - removes the marker, which is also what releases the --exclusive
+#     agent-busy guard for that job
+#
+# Removing the marker is unconditional for armed markers and happens even when
+# the clear fails. A marker that outlives its turn is worse than a missed clear:
+# it mutes the job's schedule until the staleness TTL expires.
+#
+# QUEUED markers are left strictly alone. A queued prompt is one the agent has
+# not run yet — it is sitting in the input queue behind whatever turn is ending
+# right now. Consuming it here would clear context before the scheduled work
+# ever happened and release --exclusive while the job was still pending, which
+# is exactly the mis-correlation the two-state marker exists to prevent.
+#
+# Why a separate directory from the kyber-cron-complete markers: that one is a
+# notify queue, and an operator-installed Stop hook (falcon-dev-common ships
+# one) consumes and deletes everything in it. Platform state cannot live
+# somewhere another hook is entitled to clear.
+#
+# Best-effort throughout — a Stop hook must never block session end, so every
+# failure is logged and the script always exits 0.
+
+set -uo pipefail
+
+PENDING_DIR="${KYBER_CRON_PENDING_DIR:-/persist/var/run/kyber-cron-pending}"
+LOG_FILE="${KYBER_CRON_POSTRUN_LOG:-/persist/var/log/kyber-cron-postrun.log}"
+# Overridable so tests can substitute a stub; in the image this is the script
+# installed alongside this one.
+CLEAR_CMD="${KYBER_CLEAR_SESSION_CMD:-/usr/local/bin/kyber-compact-session}"
+# The runtime's clear command, overridable by the runtime's start script since
+# only it knows the right one (/clear on Claude Code).
+#
+# ${VAR-default} not ${VAR:-default}: the colon form also substitutes on an
+# EMPTY value, which would turn "this runtime has no clear command" into a real
+# /clear pasted at a runtime that does not understand it. Only an ABSENT var
+# gets the default; an explicitly empty one is honoured as "no clear" below.
+# Same reasoning as the argument default in kyber-compact-session.
+CLEAR_TEXT="${KYBER_CLEAR_SESSION_TEXT-/clear}"
+
+log() {
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    echo "ts=$(date -Iseconds) $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+main() {
+    [ -d "$PENDING_DIR" ] || return 0
+    shopt -s nullglob
+    local markers=("$PENDING_DIR"/*)
+    shopt -u nullglob
+    [ ${#markers[@]} -gt 0 ] || return 0
+
+    # At most one clear per turn no matter how many jobs asked for it — the
+    # context is shared, so a second /clear would land in an already-empty
+    # session and be read as a stray prompt.
+    local want_clear="" requested_by=""
+    local marker job
+    for marker in "${markers[@]}"; do
+        [ -f "$marker" ] || continue
+        # Only this turn's work. A marker still queued belongs to a prompt that
+        # has not run; leave it for the Stop event of the turn that runs it.
+        grep -qx 'state=armed' "$marker" 2>/dev/null || continue
+        job="$(basename "$marker")"
+        if grep -qx 'clear_context=true' "$marker" 2>/dev/null; then
+            want_clear=1
+            requested_by="${requested_by:+$requested_by,}$job"
+        fi
+        rm -f "$marker" 2>/dev/null || true
+    done
+
+    [ -n "$want_clear" ] || return 0
+
+    if [ -z "$CLEAR_TEXT" ]; then
+        log "event=clear_skipped reason=runtime_has_no_clear_command jobs=$requested_by"
+        return 0
+    fi
+    if [ ! -x "$CLEAR_CMD" ]; then
+        log "event=clear_failed reason=clear_command_missing cmd=$CLEAR_CMD jobs=$requested_by"
+        return 0
+    fi
+    local out rc
+    out="$("$CLEAR_CMD" "$CLEAR_TEXT" 2>&1)"
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        log "event=clear_sent jobs=$requested_by"
+    else
+        # Exit codes are documented in kyber-compact-session: 3 = session
+        # restart in progress, 4 = tmux session absent. Both mean the context
+        # is about to be fresh anyway, so neither is worth escalating.
+        log "event=clear_failed rc=$rc jobs=$requested_by detail=${out//$'\n'/ }"
+    fi
+}
+
+{ main 2>&1; } || log "event=error detail=unexpected_failure"
+exit 0

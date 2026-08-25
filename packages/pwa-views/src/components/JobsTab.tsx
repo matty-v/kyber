@@ -29,10 +29,11 @@ type DraftJob = {
   schedule: string
   prompt: string
   exclusive: boolean
+  clearContextAfter: boolean
 }
 
 function emptyDraft(): DraftJob {
-  return { name: '', schedule: '0 9 * * *', prompt: '', exclusive: false }
+  return { name: '', schedule: '0 9 * * *', prompt: '', exclusive: false, clearContextAfter: false }
 }
 
 function formatTimestamp(iso: string | undefined): string {
@@ -108,6 +109,11 @@ function JobCard({
                 exclusive
               </span>
             ) : null}
+            {job.clearContextAfter ? (
+              <span className="rounded bg-surface-subtle px-1 text-[10px] uppercase text-text-secondary">
+                clears context
+              </span>
+            ) : null}
           </div>
           <p className="mt-0.5 text-xs text-text-secondary">
             {human ?? <span className="font-mono">{job.schedule}</span>}
@@ -175,7 +181,13 @@ export function JobsTab({ agentName }: Props) {
 
   function openEdit(index: number) {
     const j = jobs[index]
-    setDraft({ name: j.name, schedule: j.schedule, prompt: j.prompt, exclusive: !!j.exclusive })
+    setDraft({
+      name: j.name,
+      schedule: j.schedule,
+      prompt: j.prompt,
+      exclusive: !!j.exclusive,
+      clearContextAfter: !!j.clearContextAfter,
+    })
     setFormError(null)
     setEditing({ mode: 'edit', index })
   }
@@ -217,6 +229,7 @@ export function JobsTab({ agentName }: Props) {
       schedule: draft.schedule,
       prompt: draft.prompt,
       exclusive: draft.exclusive || undefined,
+      clearContextAfter: draft.clearContextAfter || undefined,
     }
     if (editing.mode === 'create') {
       next.push(rendered)
@@ -325,6 +338,11 @@ export function JobsTab({ agentName }: Props) {
                           exclusive
                         </span>
                       ) : null}
+                      {j.clearContextAfter ? (
+                        <span className="mt-1 ml-1 inline-block rounded bg-surface-subtle px-1 text-[10px] uppercase">
+                          clears context
+                        </span>
+                      ) : null}
                     </td>
                     <td className="p-3 text-text-secondary" title={j.prompt}>
                       {truncate(j.prompt.replace(/\n/g, ' '), 60)}
@@ -409,8 +427,19 @@ export function JobsTab({ agentName }: Props) {
               onChange={(e) => setDraft({ ...draft, exclusive: e.target.checked })}
             />
             <span>
-              Exclusive — skip the next fire if a previous run of this job is still holding the
-              per-job lock.
+              Exclusive — skip the next fire while the previous run of this job is still being
+              worked.
+            </span>
+          </label>
+          <label className="flex items-center gap-2 text-xs text-text-secondary">
+            <input
+              type="checkbox"
+              checked={draft.clearContextAfter}
+              onChange={(e) => setDraft({ ...draft, clearContextAfter: e.target.checked })}
+            />
+            <span>
+              Clear context after — start each fire from a clean conversation. Claude Code agents
+              only; accepted but inert on other runtimes.
             </span>
           </label>
           {formError ? <div className="text-xs text-danger">{formError}</div> : null}

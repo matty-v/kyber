@@ -1,5 +1,21 @@
 # @matty-v/kyber-pwa-views
 
+## 0.33.2 — 2026-08-24
+
+### Added
+- Scheduled jobs can declare **Clear context after**, so each fire of a job
+  starts from a clean conversation instead of accumulating every previous run.
+  Shown as a badge on the job in both the card and table views. Claude Code
+  agents only; accepted but inert on other runtimes.
+
+### Fixed
+- Editing a job no longer discards `clearContextAfter`. The editor rebuilt each
+  job from name, schedule, prompt and exclusive only, so saving any change to a
+  job that cleared its context silently turned that off.
+- The **Exclusive** checkbox described holding a per-job lock, which was never
+  what it did for the agent's work. It now says what it means: skip the next
+  fire while the previous run of this job is still being worked.
+
 ## 0.33.1 — 2026-08-24
 
 ### Changed

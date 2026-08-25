@@ -123,10 +123,11 @@ type PatchAgentRequest struct {
 
 // AgentJobRequest mirrors kyberv1.AgentJob for the API surface.
 type AgentJobRequest struct {
-	Name      string `json:"name"`
-	Schedule  string `json:"schedule"`
-	Prompt    string `json:"prompt"`
-	Exclusive bool   `json:"exclusive,omitempty"`
+	Name              string `json:"name"`
+	Schedule          string `json:"schedule"`
+	Prompt            string `json:"prompt"`
+	Exclusive         bool   `json:"exclusive,omitempty"`
+	ClearContextAfter bool   `json:"clearContextAfter,omitempty"`
 }
 
 // SetRuntimeVersionRequest is the JSON body for POST
@@ -308,10 +309,11 @@ type agentRuntimeVersionResponse struct {
 }
 
 type agentJobResponse struct {
-	Name      string `json:"name"`
-	Schedule  string `json:"schedule"`
-	Prompt    string `json:"prompt"`
-	Exclusive bool   `json:"exclusive,omitempty"`
+	Name              string `json:"name"`
+	Schedule          string `json:"schedule"`
+	Prompt            string `json:"prompt"`
+	Exclusive         bool   `json:"exclusive,omitempty"`
+	ClearContextAfter bool   `json:"clearContextAfter,omitempty"`
 }
 
 type agentJobRunResponse struct {
@@ -482,10 +484,11 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	}
 	for _, j := range a.Spec.Jobs {
 		resp.Jobs = append(resp.Jobs, agentJobResponse{
-			Name:      j.Name,
-			Schedule:  j.Schedule,
-			Prompt:    j.Prompt,
-			Exclusive: j.Exclusive,
+			Name:              j.Name,
+			Schedule:          j.Schedule,
+			Prompt:            j.Prompt,
+			Exclusive:         j.Exclusive,
+			ClearContextAfter: j.ClearContextAfter,
 		})
 	}
 	// Collapse status.jobs[] to "last run per name" for the response — full
@@ -1135,10 +1138,11 @@ func validateJobsRequest(reqs []AgentJobRequest) ([]kyberv1.AgentJob, error) {
 			return nil, fmt.Errorf("jobs[%d].prompt: must not be empty", i)
 		}
 		out = append(out, kyberv1.AgentJob{
-			Name:      j.Name,
-			Schedule:  j.Schedule,
-			Prompt:    j.Prompt,
-			Exclusive: j.Exclusive,
+			Name:              j.Name,
+			Schedule:          j.Schedule,
+			Prompt:            j.Prompt,
+			Exclusive:         j.Exclusive,
+			ClearContextAfter: j.ClearContextAfter,
 		})
 	}
 	return out, nil

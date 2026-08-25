@@ -35,6 +35,68 @@ EOF
     echo "[kyber] settings.json written"
 fi
 
+# ---- Scheduled-job post-run hook ----
+# kyber-cron-postrun is the platform's Stop hook for scheduled jobs: it clears
+# the agent's context when a job declared clearContextAfter, and removes the
+# job's pending marker, which is what releases the --exclusive agent-busy guard
+# in kyber-job-dispatch.
+#
+# Registered in the USER settings (~/.claude/settings.json) rather than in the
+# identity repo's project settings, so it merges with whatever hooks the agent
+# owns instead of two writers competing for one file.
+#
+# The sentinel is the contract with the dispatcher: no sentinel means nothing
+# will ever clear a pending marker, so the dispatcher must not write one — an
+# --exclusive job would otherwise skip every fire until the staleness TTL. That
+# is what keeps this feature inert rather than harmful on a runtime with no
+# Stop-hook equivalent.
+KYBER_POSTRUN_CMD="/usr/local/bin/kyber-cron-postrun"
+KYBER_TURNSTART_CMD="/usr/local/bin/kyber-cron-turn-start"
+KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
+
+# register_kyber_hook <event> <command> — idempotent jq merge into the user
+# settings. Returns non-zero if the hook is not present afterwards.
+register_kyber_hook() {
+    local event="$1" cmd="$2"
+    if grep -qF "$cmd" ~/.claude/settings.json 2>/dev/null; then
+        return 0
+    fi
+    if jq --arg ev "$event" --arg cmd "$cmd" \
+        '.hooks //= {} | .hooks[$ev] //= []
+         | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd,"timeout":20}]}]' \
+        ~/.claude/settings.json > ~/.claude/settings.json.tmp 2>/dev/null \
+        && [ -s ~/.claude/settings.json.tmp ]; then
+        mv ~/.claude/settings.json.tmp ~/.claude/settings.json
+        return 0
+    fi
+    # A truncated settings.json would break the runtime entirely, not just this
+    # feature — same guard as the legacy-plugin strip below.
+    rm -f ~/.claude/settings.json.tmp
+    return 1
+}
+
+if [ -x "$KYBER_POSTRUN_CMD" ] && [ -x "$KYBER_TURNSTART_CMD" ] && command -v jq >/dev/null 2>&1; then
+    register_kyber_hook Stop "$KYBER_POSTRUN_CMD" \
+        || echo "[kyber] WARNING: could not register cron post-run hook" >&2
+    register_kyber_hook UserPromptSubmit "$KYBER_TURNSTART_CMD" \
+        || echo "[kyber] WARNING: could not register cron turn-start hook" >&2
+
+    # Both or neither. The pair is the mechanism: arming without consuming
+    # leaks markers and mutes --exclusive; consuming without arming is the
+    # mis-correlation bug (clearing on an unrelated turn). Claiming the
+    # capability with only half of it registered would be worse than not
+    # claiming it at all.
+    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null \
+        && grep -qF "$KYBER_TURNSTART_CMD" ~/.claude/settings.json 2>/dev/null; then
+        mkdir -p "$(dirname "$KYBER_POSTRUN_SENTINEL")" 2>/dev/null || true
+        : > "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+        echo "[kyber] cron context hooks registered"
+    else
+        rm -f "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+        echo "[kyber] WARNING: cron context hooks incomplete; feature disabled" >&2
+    fi
+fi
+
 # ---- Telegram: MCP sidecar (kyber#684) ----
 # The native channel plugin is GONE from this path. Telegram is served by the
 # kyber-mcp-telegram sidecar for every runtime now, and the controller no longer

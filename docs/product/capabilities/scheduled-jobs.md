@@ -8,6 +8,10 @@ The agent detail view's Jobs tab manages declared jobs: each one is a named prom
 
 This is the difference between cron running a script and cron running judgment: the schedule delivers a prompt, and the agent brings everything it knows to the work.
 
+A job can also clear the agent's context once it finishes the turn that job started, so every fire begins from a clean conversation instead of piling onto the last one. That matters for a job meant to run unattended for days: a session that only ever grows eventually fills up and the agent stops being able to act on new prompts. The platform performs the clear, not the agent, so it still happens if the agent ends its turn early or dies mid-run. Clearing is available on Claude Code agents.
+
+Exclusive and clearing are independent, and both are worth having on a job that pulls its own work: exclusive stops a second fire landing on an agent that is still working the first, and clearing keeps each fire's context to just that piece of work.
+
 ## Cron that persists
 
 For plain scripts, any cron job installed at the user or system level survives pod restarts and is picked up by a fresh daemon on the next boot. The supported surfaces are the standard ones:

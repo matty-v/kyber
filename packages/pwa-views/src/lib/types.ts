@@ -190,6 +190,7 @@ export interface AgentJob {
   schedule: string
   prompt: string
   exclusive?: boolean
+  clearContextAfter?: boolean
 }
 
 export type AgentJobOutcome = 'success' | 'failed' | 'skipped'

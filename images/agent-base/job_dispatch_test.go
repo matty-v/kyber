@@ -2,6 +2,8 @@ package agent_base_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +46,8 @@ type dispatchHarness struct {
 	tmuxLog  string
 	curlLog  string
 	cronDir  string // $persist/var/run/kyber-cron-complete (completion markers)
+	pendDir  string // $persist/var/run/kyber-cron-pending (in-flight markers)
+	sentinel string // postrun-hook-registered sentinel; absent unless enabled
 	pathEnv  string
 	baseArgs []string // script args (after flags)
 }
@@ -114,9 +118,38 @@ exit 0
 		lockDir: filepath.Join(persist, "var", "lock"),
 		tmuxLog: tmuxLog,
 		curlLog: curlLog,
-		cronDir: filepath.Join(persist, "var", "run", "kyber-cron-complete"),
-		pathEnv: pathEnv,
+		cronDir:  filepath.Join(persist, "var", "run", "kyber-cron-complete"),
+		pendDir:  filepath.Join(persist, "var", "run", "kyber-cron-pending"),
+		sentinel: filepath.Join(persist, "var", "run", "kyber-cron-postrun-enabled"),
+		pathEnv:  pathEnv,
 	}
+}
+
+// enablePostrun creates the sentinel that tells the dispatcher a Stop hook is
+// registered and will clear pending markers. Without it the pending-marker
+// machinery stays inert by design, so every test that expects a marker must
+// call this first.
+func (h *dispatchHarness) enablePostrun() {
+	h.t.Helper()
+	if err := os.MkdirAll(filepath.Dir(h.sentinel), 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	if err := os.WriteFile(h.sentinel, nil, 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+// writePendingMarker fakes an in-flight turn for the named job.
+func (h *dispatchHarness) writePendingMarker(job, body string) string {
+	h.t.Helper()
+	if err := os.MkdirAll(h.pendDir, 0o755); err != nil {
+		h.t.Fatal(err)
+	}
+	p := filepath.Join(h.pendDir, job)
+	if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+		h.t.Fatal(err)
+	}
+	return p
 }
 
 func writeStub(t *testing.T, path string, body string) {
@@ -144,6 +177,8 @@ func (h *dispatchHarness) run(args []string, extraEnv ...string) (string, int) {
 		"KYBER_JOBS_SRC_DIR="+h.jobsSrc,
 		"KYBER_JOBS_TMUX_SESSION=agent",
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
+		"KYBER_CRON_PENDING_DIR="+h.pendDir,
+		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
@@ -176,6 +211,8 @@ func (h *dispatchHarness) runStdin(args []string, stdin string, extraEnv ...stri
 		"KYBER_JOBS_SRC_DIR="+h.jobsSrc,
 		"KYBER_JOBS_TMUX_SESSION=agent",
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
+		"KYBER_CRON_PENDING_DIR="+h.pendDir,
+		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = strings.NewReader(stdin)
@@ -459,5 +496,161 @@ func TestKyberJobDispatch_InboundWritesNoMarker(t *testing.T) {
 
 	if _, err := os.Stat(filepath.Join(h.cronDir, "inbound-req123")); !os.IsNotExist(err) {
 		t.Errorf("inbound dispatch must not write a completion marker (err=%v)", err)
+	}
+}
+
+// --- Pending markers: --clear-context-after and the --exclusive busy guard ---
+
+// TestKyberJobDispatch_ClearContextAfterWritesPendingMarker verifies the
+// dispatcher records the clear request for kyber-cron-postrun to act on when
+// the turn ends.
+func TestKyberJobDispatch_ClearContextAfterWritesPendingMarker(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "run your work tick\n")
+
+	out, code := h.run([]string{"--clear-context-after", "work-tick"})
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (output: %s)", code, out)
+	}
+
+	b, err := os.ReadFile(filepath.Join(h.pendDir, "work-tick"))
+	if err != nil {
+		t.Fatalf("expected pending marker: %v", err)
+	}
+	if !strings.Contains(string(b), "clear_context=true") {
+		t.Errorf("marker must record the clear request, got %q", b)
+	}
+	if !strings.Contains(string(b), "started_at=") {
+		t.Errorf("marker must record started_at, got %q", b)
+	}
+	// queued, not armed: the prompt was pasted, not necessarily run. Arming is
+	// kyber-cron-turn-start's job once the prompt is actually submitted.
+	if !strings.Contains(string(b), "state=queued") {
+		t.Errorf("a freshly dispatched marker must be queued, got %q", b)
+	}
+	// The hash is how the turn-start hook recognises this job's prompt.
+	want := sha256.Sum256([]byte("run your work tick"))
+	if !strings.Contains(string(b), "prompt_sha256="+hex.EncodeToString(want[:])) {
+		t.Errorf("marker must carry the pasted prompt's hash, got %q", b)
+	}
+}
+
+// TestKyberJobDispatch_ExclusiveMarkerRecordsNoClear guards the two flags
+// staying independent: --exclusive alone must not silently clear context.
+func TestKyberJobDispatch_ExclusiveMarkerRecordsNoClear(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("digest", "run digest\n")
+
+	if _, code := h.run([]string{"--exclusive", "digest"}); code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+
+	b, err := os.ReadFile(filepath.Join(h.pendDir, "digest"))
+	if err != nil {
+		t.Fatalf("expected pending marker: %v", err)
+	}
+	if !strings.Contains(string(b), "clear_context=false") {
+		t.Errorf("--exclusive alone must not request a clear, got %q", b)
+	}
+}
+
+// TestKyberJobDispatch_ExclusiveSkipsWhileAgentBusy is the core of the fix: a
+// live pending marker means the previous fire's turn is still running, so this
+// fire must not stack another prompt onto a working single-threaded agent.
+func TestKyberJobDispatch_ExclusiveSkipsWhileAgentBusy(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "run your work tick\n")
+	h.writePendingMarker("work-tick", "started_at=2026-08-24T10:00:00Z\nclear_context=true\n")
+
+	out, code := h.run([]string{"--exclusive", "work-tick"})
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (output: %s)", code, out)
+	}
+
+	log := h.logContents()
+	if !strings.Contains(log, "event=skipped") || !strings.Contains(log, "error=agent_busy") {
+		t.Errorf("want skipped/agent_busy in log, got: %s", log)
+	}
+	pasted, _ := os.ReadFile(h.tmuxLog)
+	if strings.Contains(string(pasted), "paste-buffer") {
+		t.Errorf("a busy agent must not be pasted into; tmux log: %s", pasted)
+	}
+}
+
+// TestKyberJobDispatch_NonExclusiveIgnoresPendingMarker — the busy guard is
+// opt-in via --exclusive. Default behaviour still lets fires overlap.
+func TestKyberJobDispatch_NonExclusiveIgnoresPendingMarker(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("noisy", "go\n")
+	h.writePendingMarker("noisy", "started_at=2026-08-24T10:00:00Z\nclear_context=false\n")
+
+	if _, code := h.run([]string{"noisy"}); code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if !strings.Contains(h.logContents(), "event=success") {
+		t.Errorf("non-exclusive job must dispatch anyway, log: %s", h.logContents())
+	}
+}
+
+// TestKyberJobDispatch_StalePendingMarkerIsCleared — an agent that died
+// mid-turn leaves a marker nobody clears. Past the TTL it must be discarded,
+// not allowed to mute the schedule forever.
+func TestKyberJobDispatch_StalePendingMarkerIsCleared(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "run your work tick\n")
+	marker := h.writePendingMarker("work-tick", "started_at=old\nclear_context=true\n")
+	old := time.Now().Add(-48 * time.Hour)
+	if err := os.Chtimes(marker, old, old); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, code := h.run([]string{"--exclusive", "work-tick"}); code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+
+	log := h.logContents()
+	if !strings.Contains(log, "event=stale_pending_marker_cleared") {
+		t.Errorf("want stale marker cleared in log, got: %s", log)
+	}
+	if !strings.Contains(log, "event=success") {
+		t.Errorf("dispatch must proceed after clearing a stale marker, log: %s", log)
+	}
+}
+
+// TestKyberJobDispatch_NoSentinelWritesNoPendingMarker — without a registered
+// Stop hook nothing would ever clear a marker, so writing one would make every
+// subsequent --exclusive fire skip until the TTL. The feature must stay inert.
+func TestKyberJobDispatch_NoSentinelWritesNoPendingMarker(t *testing.T) {
+	h := setupDispatchHarness(t)
+	// deliberately no h.enablePostrun()
+	h.writePrompt("work-tick", "run your work tick\n")
+
+	if _, code := h.run([]string{"--exclusive", "--clear-context-after", "work-tick"}); code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(h.pendDir, "work-tick")); !os.IsNotExist(err) {
+		t.Errorf("no sentinel means no pending marker (err=%v)", err)
+	}
+	if !strings.Contains(h.logContents(), "event=success") {
+		t.Errorf("dispatch must still succeed without the hook, log: %s", h.logContents())
+	}
+}
+
+// TestKyberJobDispatch_InboundWritesNoPendingMarker — inbound traffic is not an
+// operator cron; it must not participate in the busy guard or trigger clears.
+func TestKyberJobDispatch_InboundWritesNoPendingMarker(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+
+	if _, code := h.runStdin([]string{"--stdin", "--clear-context-after", "inbound-req9"}, "envelope\n"); code != 0 {
+		t.Fatalf("exit code: got %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(h.pendDir, "inbound-req9")); !os.IsNotExist(err) {
+		t.Errorf("inbound dispatch must not write a pending marker (err=%v)", err)
 	}
 }
