@@ -70,6 +70,17 @@ const (
 	UnregisterOnly DeletionMode = "UnregisterOnly"
 )
 
+// ReliableFallbackMode describes whether a provider can replace unavailable
+// cost-optimized capacity with reliable capacity. The terms are deliberately
+// provider-neutral; native purchasing models stay behind the adapter.
+type ReliableFallbackMode string
+
+const (
+	ReliableFallbackUnsupported ReliableFallbackMode = "Unsupported"
+	ReliableFallbackManual      ReliableFallbackMode = "Manual"
+	ReliableFallbackAutomatic   ReliableFallbackMode = "Automatic"
+)
+
 // ProviderRef is an opaque provider-owned identifier. Code outside the
 // provider that produced it may persist and return it but must not parse it.
 type ProviderRef string
@@ -85,6 +96,7 @@ type Capabilities struct {
 	SupportsInterruptible   bool
 	SupportsLocations       bool
 	RequiresSchedulerDemand bool
+	ReliableFallbackMode    ReliableFallbackMode
 }
 
 // Profile is an installer-curated capacity promise exposed to operators. The
@@ -121,10 +133,16 @@ type DesiredMachine struct {
 	Profile       string
 	DiskSizeGb    int
 	Interruptible bool
-	Location      string
-	Labels        map[string]string
-	NodeBootstrap NodeBootstrap
-	Managed       bool
+	// AvailabilityClass is the provider-neutral requested class. Interruptible
+	// remains populated during the compatibility period for existing providers.
+	AvailabilityClass string
+	// CostOptimizedRetryRequest is an opaque, durable one-shot request token.
+	// Providers observe and acknowledge it without interpreting its contents.
+	CostOptimizedRetryRequest string
+	Location                  string
+	Labels                    map[string]string
+	NodeBootstrap             NodeBootstrap
+	Managed                   bool
 	// AttachmentObserved distinguishes an authoritative zero Nodes from an
 	// unavailable Kubernetes observation.
 	AttachmentObserved bool
@@ -144,6 +162,13 @@ type CapacityObservation struct {
 	ExternalIP   string
 	InternalIP   string
 	CreatedAt    time.Time
+	// EffectiveAvailabilityClass reports the class currently serving the
+	// Machine when it differs from, or confirms, requested intent.
+	EffectiveAvailabilityClass    string
+	FallbackReason                string
+	FallbackSince                 time.Time
+	CostOptimizedUnavailableSince time.Time
+	CostOptimizedRetryObserved    string
 }
 
 // CapacityProvider reconciles one logical unit of Machine capacity. The

@@ -64,6 +64,9 @@ func TestHandleConfig_ReturnsSchedulerDemandCapability(t *testing.T) {
 	if !got.Compute.Managed.Capabilities.RequiresSchedulerDemand {
 		t.Fatal("requiresSchedulerDemand = false, want true")
 	}
+	if got.Compute.Managed.Capabilities.ReliableFallbackMode != adapters.ReliableFallbackUnsupported {
+		t.Fatalf("reliableFallbackMode = %q, want Unsupported", got.Compute.Managed.Capabilities.ReliableFallbackMode)
+	}
 }
 
 func TestHandleConfig_RejectsNonGet(t *testing.T) {

@@ -77,6 +77,16 @@ const (
 	MachineAvailabilityCostOptimized MachineAvailabilityClass = "costOptimized"
 )
 
+// ReliableFallbackMode describes the provider's portable fallback behavior.
+// +kubebuilder:validation:Enum=Unsupported;Manual;Automatic
+type ReliableFallbackMode string
+
+const (
+	ReliableFallbackUnsupported ReliableFallbackMode = "Unsupported"
+	ReliableFallbackManual      ReliableFallbackMode = "Manual"
+	ReliableFallbackAutomatic   ReliableFallbackMode = "Automatic"
+)
+
 // MachineManagementMode distinguishes Kyber-managed capacity from capacity
 // registered by an installer and managed outside Kyber.
 // +kubebuilder:validation:Enum=Managed;External
@@ -164,6 +174,12 @@ type MachineSpec struct {
 	// +kubebuilder:validation:Enum=Running;Stopped
 	// +optional
 	DesiredPhase MachinePhase `json:"desiredPhase,omitempty"`
+
+	// CostOptimizedRetryRequest is an opaque idempotency token written by the
+	// retry-cost-optimized API action. Providers acknowledge it in status.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	CostOptimizedRetryRequest string `json:"costOptimizedRetryRequest,omitempty"`
 }
 
 // MachineStatus defines the observed state of a Machine.
@@ -183,6 +199,30 @@ type MachineStatus struct {
 	// Availability is the provider-neutral observed capacity state.
 	// +optional
 	Availability MachineAvailability `json:"availability,omitempty"`
+
+	// EffectiveAvailabilityClass is the class currently serving the Machine.
+	// It may differ from spec.availabilityClass during reliable fallback.
+	// +optional
+	EffectiveAvailabilityClass MachineAvailabilityClass `json:"effectiveAvailabilityClass,omitempty"`
+
+	// FallbackReason is a provider-neutral explanation of the active or most
+	// recent fallback transition.
+	// +optional
+	FallbackReason string `json:"fallbackReason,omitempty"`
+
+	// FallbackSince is when reliable fallback began.
+	// +optional
+	FallbackSince *metav1.Time `json:"fallbackSince,omitempty"`
+
+	// CostOptimizedUnavailableSince is when requested cost-optimized capacity
+	// first became unavailable. It persists across controller restarts.
+	// +optional
+	CostOptimizedUnavailableSince *metav1.Time `json:"costOptimizedUnavailableSince,omitempty"`
+
+	// CostOptimizedRetryObserved acknowledges the latest retry request token
+	// processed by the provider/controller state machine.
+	// +optional
+	CostOptimizedRetryObserved string `json:"costOptimizedRetryObserved,omitempty"`
 
 	// ResolvedProfile snapshots the operator-facing profile used at creation.
 	// +optional

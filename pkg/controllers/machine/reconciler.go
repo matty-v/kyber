@@ -861,12 +861,14 @@ func (r *MachineReconciler) reconcileCapacity(
 		return adapters.CapacityObservation{}, fmt.Errorf("capacity provider is not configured")
 	}
 	desired := adapters.DesiredMachine{
-		Availability:  availability,
-		Profile:       machineProfile(machine),
-		DiskSizeGb:    int(machine.Spec.DiskSizeGb),
-		Interruptible: machineInterruptible(machine),
-		Location:      machineLocation(machine),
-		Labels:        map[string]string{MachineLabelKey: machine.Name},
+		Availability:              availability,
+		Profile:                   machineProfile(machine),
+		DiskSizeGb:                int(machine.Spec.DiskSizeGb),
+		Interruptible:             machineInterruptible(machine),
+		AvailabilityClass:         string(machineAvailabilityClass(machine)),
+		CostOptimizedRetryRequest: machine.Spec.CostOptimizedRetryRequest,
+		Location:                  machineLocation(machine),
+		Labels:                    map[string]string{MachineLabelKey: machine.Name},
 		NodeBootstrap: adapters.NodeBootstrap{
 			JoinToken: r.K3sJoinToken,
 			ServerURL: r.K3sServerURL,
@@ -896,14 +898,25 @@ func (r *MachineReconciler) reconcileCapacity(
 
 	ref := string(observation.ProviderRef)
 	observedAvailability := kyberv1.MachineAvailability(observation.State)
+	effectiveClass := kyberv1.MachineAvailabilityClass(observation.EffectiveAvailabilityClass)
+	if effectiveClass == "" {
+		effectiveClass = machineAvailabilityClass(machine)
+	}
+	fallbackSince := optionalMetaTime(observation.FallbackSince)
+	unavailableSince := optionalMetaTime(observation.CostOptimizedUnavailableSince)
 	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
-	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.EffectiveAvailabilityClass != effectiveClass || machine.Status.FallbackReason != observation.FallbackReason || !metaTimeEqual(machine.Status.FallbackSince, fallbackSince) || !metaTimeEqual(machine.Status.CostOptimizedUnavailableSince, unavailableSince) || machine.Status.CostOptimizedRetryObserved != observation.CostOptimizedRetryObserved || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
 		// Dual-write during the compatibility window. Legacy readers continue
 		// using instanceId until every provider and client has migrated.
 		machine.Status.InstanceId = ref
 		machine.Status.Availability = observedAvailability
+		machine.Status.EffectiveAvailabilityClass = effectiveClass
+		machine.Status.FallbackReason = observation.FallbackReason
+		machine.Status.FallbackSince = fallbackSince
+		machine.Status.CostOptimizedUnavailableSince = unavailableSince
+		machine.Status.CostOptimizedRetryObserved = observation.CostOptimizedRetryObserved
 		machine.Status.InternalIP = observation.InternalIP
 		machine.Status.ExternalIP = observation.ExternalIP
 		machine.Status.Message = observation.Message
@@ -938,6 +951,31 @@ func machineInterruptible(machine *kyberv1.Machine) bool {
 		return machine.Spec.AvailabilityClass == kyberv1.MachineAvailabilityCostOptimized
 	}
 	return machine.Spec.Spot
+}
+
+func machineAvailabilityClass(machine *kyberv1.Machine) kyberv1.MachineAvailabilityClass {
+	if machine.Spec.AvailabilityClass != "" {
+		return machine.Spec.AvailabilityClass
+	}
+	if machine.Spec.Spot {
+		return kyberv1.MachineAvailabilityCostOptimized
+	}
+	return kyberv1.MachineAvailabilityReliable
+}
+
+func optionalMetaTime(value time.Time) *metav1.Time {
+	if value.IsZero() {
+		return nil
+	}
+	result := metav1.NewTime(value)
+	return &result
+}
+
+func metaTimeEqual(left, right *metav1.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(right)
 }
 
 func providerReference(machine *kyberv1.Machine) string {

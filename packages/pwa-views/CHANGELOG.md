@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.33.3 — 2026-08-25
+
+### Added
+- Machine and compute-provider wire types now include the additive,
+  provider-neutral reliable-fallback capability, effective availability,
+  fallback timing/reason, and cost-optimized retry fields. Existing providers
+  may omit them and retain their current behavior.
+
 ## 0.33.2 — 2026-08-24
 
 ### Added
