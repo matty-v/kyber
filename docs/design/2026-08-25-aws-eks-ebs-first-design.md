@@ -1,6 +1,6 @@
 # AWS EKS with EBS-first storage
 
-**Status:** Proposed for operator review — revised for bounded Spot recovery
+**Status:** Approved in principle with explicit fallback/GKE conditions
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 **Evidence:** [AWS EFS Phase 1 qualification](../specs/2026-08-25-aws-efs-phase1-qualification-plan.md)
@@ -26,6 +26,11 @@ the live GKE installation's regional Persistent Disks.
 EFS is not the default or an install-time toggle in the first implementation.
 It remains a separate future design because it lacks xattrs and capacity
 enforcement and was materially slower in live qualification.
+
+Matt's approval conditions are normative: fallback threshold crossing is
+clear to operators, operators can manually return a Machine to cost-optimized
+capacity, and the shared implementation neither regresses GKE nor prevents a
+GKE manual reliable-to-cost-optimized path from being designed.
 
 ## Goals
 
@@ -166,12 +171,53 @@ against an active Agent. Providers that cannot supply reliable fallback report
 that through capabilities and installer preflight; they do not render a
 different Machine workflow.
 
+Crossing the fallback threshold is an explicit lifecycle event, not a silent
+implementation detail. Kyber surfaces the threshold, when cost-optimized
+capacity became unavailable, the start and completion of reliable fallback,
+requested and effective classes, and the fact that reliable-rate billing now
+applies. The same provider-neutral event is sent through the operator's normal
+notification channel.
+
+`Retry cost-optimized capacity` performs a controlled replacement: park the
+Agent, stop reliable capacity, wait for its node to disappear and the durable
+volume to detach, start cost-optimized capacity, then attach the same volume
+and resume the Agent. A failed retry returns to the known-good reliable path;
+it never leaves both capacity classes active or creates a new Agent disk.
+
 Fallback timeout and permission to incur reliable-capacity cost are
 installation policy, not per-Machine AWS settings. The installer presents the
 same policy for every managed cloud provider. The first EKS implementation
 realizes it with paired node groups; GKE may later realize the same contract
 with replacement capacity. Until then, GKE reports fallback unsupported rather
 than pretending its current two-zone Spot retry is bounded.
+
+GKE non-regression is a release gate. Shared API/controller changes remain
+behind provider capabilities and preserve existing GKE reconcile,
+regional-pool, suspend/resume, and preemption behavior. The implementation
+plan includes a focused GKE design spike for the same manual reliable-to-cost-
+optimized transition. It must determine whether GKE can safely change a
+pool's provisioning model or needs paired/replacement pools while retaining
+the regional Persistent Disk and Machine identity. AWS support cannot silently
+alter a running GKE Machine's availability class.
+
+### Regional cluster versus zonal Agent storage
+
+EKS itself is regional: AWS runs the managed control plane across three
+Availability Zones, and worker capacity may span multiple zones in the region.
+Stateless Spot workloads can use that regional pool of zones.
+
+There is no regional EBS volume equivalent to GKE regional Persistent Disk.
+An EBS volume and the instance attaching it must be in the same Availability
+Zone. Kyber can therefore install a regional, multi-AZ EKS cluster and spread
+different Agents across zones, but one Agent that must retain its exact EBS
+volume remains pinned to that volume's zone. A multi-AZ Spot group cannot make
+that Agent region-mobile. AWS recommends separate single-AZ node groups for
+multi-AZ stateful EBS workloads.
+
+Snapshots allow cold restoration into another zone but produce a new volume;
+EFS is regional storage but failed Kyber's qualified filesystem and performance
+contract. AWS has regional cluster availability, but not regional same-disk
+mobility for this design.
 
 ### Storage
 
@@ -394,6 +440,10 @@ Terraform must refuse to hide unmanaged volumes or snapshots during teardown.
 - land this reviewed design and a detailed execution plan;
 - add EBS StorageClass values/template/schema and Helm tests;
 - add EKS values wiring and fail-closed configuration validation;
+- define provider-neutral fallback events, status, notification, and manual
+  retry behavior before enabling the AWS realization;
+- complete the GKE reliable-to-cost-optimized transition design spike and add
+  GKE non-regression coverage without changing current behavior;
 - publish IAM policy documents and installer preflight requirements.
 
 Gate: rendered manifests prove every durable PVC uses encrypted gp3 with
@@ -451,6 +501,12 @@ and sees every AWS-specific behavior before approving the plan.
   identity-repo writes survive pod restart and in-zone Spot replacement.
 - Cost-optimized fallback never creates a second active writer and reattaches
   the exact same Agent EBS volume ID to On-Demand capacity.
+- Threshold crossing, reliable-rate fallback, and manual retry are explicit in
+  provider-neutral Machine status, events, and operator notifications.
+- Manual reliable-to-cost-optimized retry is rollback-safe and preserves the
+  same Agent volume.
+- Existing GKE adapter, regional storage, Machine lifecycle, and preemption
+  behavior passes unchanged under the shared API/controller changes.
 - Requested PVC capacity is enforced and expansion is tested.
 - Agent deletion removes its PVC, PV, and EBS volume without deleting a
   snapshot retained by policy.
