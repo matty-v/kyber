@@ -141,6 +141,39 @@ checkpoint. In particular:
 Matt approves the public status/action contract and exact fallback policy. The
 baseline tests prove subsequent shared changes cannot silently alter GKE.
 
+### Baseline evidence — 2026-08-25
+
+Build approval was recorded in Telegram message 349. No AWS resources were
+created during this checkpoint.
+
+- Toolchains matched repository requirements with session-local Go 1.26.0 and
+  Node 26.7.0. Downloaded artifacts were checksum-verified against the official
+  Go and Node release manifests.
+- `go test -p 2 ./pkg/adapters/... ./pkg/controllers/machine/... ./pkg/api/...`
+  passed after installing the CI-pinned Kubernetes 1.31.0 envtest binaries.
+  The first attempt's only controller failures were the absent envtest binary;
+  adapters and API passed on that attempt, and the controller package then
+  passed with `KUBEBUILDER_ASSETS` set.
+- `npm test` in `packages/pwa-views` passed under Node 26: 81 files and 728
+  tests. A concurrent first attempt produced timeout failures while the Go
+  dependency graph was compiling on the constrained workspace disk; the
+  authoritative sequential run was clean.
+- Existing GKE coverage already pins provider capabilities, regional
+  scheduler-demand behavior, total-size-one autoscaling across two zones,
+  interrupted-capacity recovery without repeated resize, ownership-gated
+  create/resize/delete, supported availability classes, and live-test safety
+  guards.
+- Existing Machine controller coverage pins provider capacity loss,
+  preemption/replacement, capacity-request parking, lifecycle convergence, and
+  node-derived capacity status. Phase 0 will add only gaps directly required
+  by the additive fallback contract before changing production behavior.
+
+The approved portable contract uses a dedicated API action whose idempotency
+token is persisted in owned Machine spec/status fields. It does not use a
+hidden annotation. Existing lifecycle phases remain unchanged, and providers
+advertise fallback support through capabilities so GKE stays inert until its
+separate implementation is approved.
+
 ## Phase 1 — provider-neutral fallback status and action
 
 ### Adapter and controller contract
