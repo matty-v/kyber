@@ -18,8 +18,14 @@ func init() {
 }
 
 type fakeInstance struct {
-	spec        MachineSpec
-	observation InstanceObservation
+	spec                          MachineSpec
+	observation                   InstanceObservation
+	effectiveAvailabilityClass    string
+	fallbackReason                string
+	fallbackSince                 time.Time
+	costOptimizedUnavailableSince time.Time
+	costOptimizedRetryObserved    string
+	failNextCostOptimizedRetry    bool
 }
 
 // FakeComputeAdapter is a deterministic managed-provider simulator. Unlike
@@ -50,6 +56,7 @@ func (f *FakeComputeAdapter) Capabilities(_ context.Context) (Capabilities, erro
 		SupportsReliable:      true,
 		SupportsInterruptible: true,
 		SupportsLocations:     true,
+		ReliableFallbackMode:  ReliableFallbackAutomatic,
 	}, nil
 }
 
@@ -140,7 +147,7 @@ func (f *FakeComputeAdapter) Reconcile(
 				return CapacityObservation{}, fmt.Errorf("observing started fake capacity: %w", err)
 			}
 		}
-		return CapacityObservationFromInstance(ref, selector, observation), nil
+		return f.capacityObservation(ref, selector, desired.CostOptimizedRetryRequest, observation)
 	}
 
 	return CapacityObservation{}, fmt.Errorf("reconciling fake capacity: unsupported desired availability %q", desired.Availability)
@@ -169,7 +176,51 @@ func (f *FakeComputeAdapter) createCapacity(
 	if err != nil {
 		return CapacityObservation{}, fmt.Errorf("observing created fake capacity: %w", err)
 	}
-	return CapacityObservationFromInstance(ProviderRef(id), selector, observation), nil
+	f.mu.Lock()
+	instance, instanceErr := f.instance(id)
+	if instanceErr == nil {
+		instance.effectiveAvailabilityClass = desired.AvailabilityClass
+		if instance.effectiveAvailabilityClass == "" {
+			if desired.Interruptible {
+				instance.effectiveAvailabilityClass = "costOptimized"
+			} else {
+				instance.effectiveAvailabilityClass = "reliable"
+			}
+		}
+	}
+	f.mu.Unlock()
+	if instanceErr != nil {
+		return CapacityObservation{}, instanceErr
+	}
+	return f.capacityObservation(ProviderRef(id), selector, desired.CostOptimizedRetryRequest, observation)
+}
+
+func (f *FakeComputeAdapter) capacityObservation(ref ProviderRef, selector map[string]string, retryRequest string, observation InstanceObservation) (CapacityObservation, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	instance, err := f.instance(string(ref))
+	if err != nil {
+		return CapacityObservation{}, err
+	}
+	if retryRequest != "" && retryRequest != instance.costOptimizedRetryObserved && instance.effectiveAvailabilityClass == "reliable" {
+		instance.costOptimizedRetryObserved = retryRequest
+		if instance.failNextCostOptimizedRetry {
+			instance.failNextCostOptimizedRetry = false
+			instance.fallbackReason = "Cost-optimized retry unavailable; reliable fallback retained"
+		} else {
+			instance.effectiveAvailabilityClass = "costOptimized"
+			instance.fallbackReason = ""
+			instance.fallbackSince = time.Time{}
+			instance.costOptimizedUnavailableSince = time.Time{}
+		}
+	}
+	result := CapacityObservationFromInstance(ref, selector, observation)
+	result.EffectiveAvailabilityClass = instance.effectiveAvailabilityClass
+	result.FallbackReason = instance.fallbackReason
+	result.FallbackSince = instance.fallbackSince
+	result.CostOptimizedUnavailableSince = instance.costOptimizedUnavailableSince
+	result.CostOptimizedRetryObserved = instance.costOptimizedRetryObserved
+	return result, nil
 }
 
 func (f *FakeComputeAdapter) CreateInstance(_ context.Context, spec MachineSpec) (string, error) {
@@ -312,6 +363,15 @@ func (f *FakeComputeAdapter) ApplySimulationScenario(machineName string, scenari
 			instance.observation.Interruption = InterruptionPreempted
 		case SimulationFailed:
 			instance.observation.State = InstanceStateFailed
+		case SimulationCostOptimizedUnavailable:
+			now := time.Now().UTC()
+			instance.observation.State = InstanceStateRunning
+			instance.effectiveAvailabilityClass = "reliable"
+			instance.fallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			instance.costOptimizedUnavailableSince = now.Add(-5 * time.Minute)
+			instance.fallbackSince = now
+		case SimulationFailNextCostOptimizedRetry:
+			instance.failNextCostOptimizedRetry = true
 		default:
 			return fmt.Errorf("unknown simulation scenario %q", scenario)
 		}

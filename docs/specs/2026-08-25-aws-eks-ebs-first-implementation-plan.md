@@ -241,6 +241,23 @@ separate implementation is approved.
 Gate: portable fallback works against fake capacity and is inert for GKE when
 the GKE provider reports `Unsupported`.
 
+### Build checkpoint — 2026-08-25
+
+Completed and pushed:
+
+- portable requested/effective availability, fallback timestamps/reason, and
+  one-shot retry status through adapter, CRD, controller, and config API;
+- authorized, validated, idempotent `retry-cost-optimized` API action;
+- provider-neutral Machine detail fallback banner and guarded retry UX;
+- deterministic fake-provider fallback, successful retry, and failed-retry
+  rollback while retaining the same provider reference.
+
+Verification: adapter tests, targeted API tests, Machine controller envtest,
+PWA component tests, and TypeScript lint pass. GKE still advertises fallback
+as `Unsupported`; no production GKE behavior has changed. Next: complete the
+remaining controller transition/event coverage needed to close the Phase 1
+gate.
+
 ## Phase 2 — GKE transition design spike and non-regression
 
 This phase designs and tests; it does not change production GKE behavior.

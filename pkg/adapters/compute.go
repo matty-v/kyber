@@ -233,16 +233,23 @@ type SimulationController interface {
 type SimulationScenario string
 
 const (
-	SimulationPending         SimulationScenario = "pending"
-	SimulationRunning         SimulationScenario = "running"
-	SimulationStopped         SimulationScenario = "stopped"
-	SimulationPreempted       SimulationScenario = "preempted"
-	SimulationFailed          SimulationScenario = "failed"
-	SimulationFailNextCreate  SimulationScenario = "fail-next-create"
-	SimulationFailNextStart   SimulationScenario = "fail-next-start"
-	SimulationFailNextStop    SimulationScenario = "fail-next-stop"
-	SimulationFailNextDelete  SimulationScenario = "fail-next-delete"
-	SimulationFailNextObserve SimulationScenario = "fail-next-observe"
+	SimulationPending   SimulationScenario = "pending"
+	SimulationRunning   SimulationScenario = "running"
+	SimulationStopped   SimulationScenario = "stopped"
+	SimulationPreempted SimulationScenario = "preempted"
+	SimulationFailed    SimulationScenario = "failed"
+	// SimulationCostOptimizedUnavailable models a completed same-location
+	// fallback to reliable capacity while retaining the provider reference.
+	SimulationCostOptimizedUnavailable SimulationScenario = "cost-optimized-unavailable"
+	// SimulationFailNextCostOptimizedRetry keeps reliable fallback active while
+	// acknowledging the next retry request, modelling rollback after Spot stays
+	// unavailable.
+	SimulationFailNextCostOptimizedRetry SimulationScenario = "fail-next-cost-optimized-retry"
+	SimulationFailNextCreate             SimulationScenario = "fail-next-create"
+	SimulationFailNextStart              SimulationScenario = "fail-next-start"
+	SimulationFailNextStop               SimulationScenario = "fail-next-stop"
+	SimulationFailNextDelete             SimulationScenario = "fail-next-delete"
+	SimulationFailNextObserve            SimulationScenario = "fail-next-observe"
 )
 
 type SimulatedInstance struct {
