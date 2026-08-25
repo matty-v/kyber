@@ -155,10 +155,10 @@ mitigates the measured metadata latency. Those changes are outside Phase 1.
   volume IDs return `InvalidVolume.NotFound`. The tag API temporarily retained
   stale entries for the terminated instance and deleted volumes. Existing
   `redis-efs` remained untouched.
-- Exact next action: Matt reviews the operator-visible gaps and chooses between
-  gp3 EBS as the AWS default (with explicit zonal recovery semantics) or a
-  separately approved EFS/runtime redesign. Do not proceed to EKS on EFS as
-  if it were equivalent to GKE regional Persistent Disk.
+- Matt selected gp3 EBS as the AWS default. The next design is
+  [AWS EKS with EBS-first storage](../design/2026-08-25-aws-eks-ebs-first-design.md),
+  with explicit zonal recovery semantics. Do not proceed to EKS on EFS as if
+  it were equivalent to GKE regional Persistent Disk.
 
 ### 0. Durable plan and authorization
 
