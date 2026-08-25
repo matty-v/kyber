@@ -310,11 +310,36 @@ spec:
                     agent's tmux session on a cron schedule. Rendered by the controller into a
                     per-agent ConfigMap that the pod mounts and the in-pod dispatcher reads.
                   properties:
+                    clearContextAfter:
+                      description: |-
+                        ClearContextAfter, when true, clears the agent's context once it finishes
+                        the turn this job started, so each fire begins from a clean conversation
+                        instead of accumulating every previous run.
+
+                        The clear is performed by the platform's post-run hook rather than by the
+                        agent itself, so it cannot be skipped by an agent that ends its turn early
+                        or dies mid-run. At most one clear happens per turn however many jobs
+                        requested it, since the context is shared.
+
+                        Runtime support: Claude Code only. Codex has no Stop-hook equivalent, so
+                        the field is accepted and reported back but has no effect there.
+                      type: boolean
                     exclusive:
                       description: |-
-                        Exclusive, when true, causes the dispatcher to skip a fire if a previous
-                        run of the same job is still holding the per-job flock. Default false
-                        lets concurrent fires overlap.
+                        Exclusive, when true, causes the dispatcher to skip a fire while the
+                        previous fire of the same job is still being worked — the run is recorded
+                        as outcome=skipped, reason=agent_busy. Default false lets fires overlap.
+
+                        "Still being worked" means the agent has not yet finished the turn the
+                        previous fire started, which the dispatcher learns from that job's pending
+                        marker. Note this covers the WORK, not just the prompt delivery: the
+                        per-job flock returns in milliseconds while the turn it kicks off can run
+                        for minutes, so the flock alone never protected a single-threaded agent
+                        from having a second prompt stacked on top of a live one.
+
+                        Requires the runtime to register the platform post-run hook (see
+                        ClearContextAfter for which runtimes do). Without it the dispatcher cannot
+                        tell when a turn ended, and falls back to the delivery-only flock.
                       type: boolean
                     name:
                       description: |-

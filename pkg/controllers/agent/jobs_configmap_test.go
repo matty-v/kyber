@@ -295,3 +295,31 @@ func keys(m map[string]string) []string {
 	}
 	return out
 }
+
+// TestRenderJobsConfigMapData_ClearContextAfterFlag covers the crontab
+// rendering of clearContextAfter, on its own and combined with exclusive.
+// Flags must precede the job name — the dispatcher stops parsing flags at the
+// first non-flag argument, so a trailing flag would be read as the job name.
+func TestRenderJobsConfigMapData_ClearContextAfterFlag(t *testing.T) {
+	jobs := []kyberv1.AgentJob{
+		{Name: "clear-only", Schedule: "*/10 * * * *", Prompt: "p", ClearContextAfter: true},
+		{Name: "both", Schedule: "*/15 * * * *", Prompt: "p", Exclusive: true, ClearContextAfter: true},
+		{Name: "neither", Schedule: "0 * * * *", Prompt: "p"},
+	}
+	agent := newJobsTestAgent("han", jobs)
+
+	crontab := RenderJobsConfigMapData(agent)["crontab"]
+
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{"clear-only", "*/10 * * * * kyber /usr/local/bin/kyber-job-dispatch --clear-context-after clear-only\n"},
+		{"both", "*/15 * * * * kyber /usr/local/bin/kyber-job-dispatch --exclusive --clear-context-after both\n"},
+		{"neither", "0 * * * * kyber /usr/local/bin/kyber-job-dispatch neither\n"},
+	} {
+		if !strings.Contains(crontab, tc.want) {
+			t.Errorf("%s: expected line %q in crontab, got:\n%s", tc.name, tc.want, crontab)
+		}
+	}
+}

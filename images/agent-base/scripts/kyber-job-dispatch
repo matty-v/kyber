@@ -2,7 +2,7 @@
 # kyber-job-dispatch — invoked from /etc/cron.d/kyber-jobs to deliver a
 # scheduled prompt into the agent's tmux session. One invocation per fire.
 #
-# Usage:  kyber-job-dispatch [--exclusive] [--stdin] <job-name>
+# Usage:  kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin] <job-name>
 #
 # Contract:
 #   - Reads the prompt from /kyber/jobs-src/prompt-<name> (a file projected
@@ -13,8 +13,13 @@
 #     where <job-name> is something like inbound-<requestID>). The prompt-
 #     file existence check is skipped. An empty stdin records
 #     outcome=skipped reason=empty_prompt and does not touch tmux.
-#   - If --exclusive and the per-job flock is held by another run of the
-#     same job, records outcome=skipped and exits 0.
+#   - If --exclusive and a previous fire of the same job has not finished
+#     its turn yet, records outcome=skipped reason=agent_busy and exits 0.
+#     "Not finished" is the presence of this job's pending marker (below);
+#     the per-job flock alone only ever covered the paste, not the work.
+#   - If --clear-context-after, records in the pending marker that the
+#     agent's context should be cleared once the turn this fire started
+#     has ended. kyber-cron-postrun (the Stop hook) does the clearing.
 #   - If the session lock (/persist/var/lock/session.lock) is flocked by the
 #     session-restart handler, records outcome=skipped and exits 0 — job
 #     fires during a restart must not race the relaunch (#128).
@@ -46,6 +51,27 @@ TMUX_SESSION="${KYBER_JOBS_TMUX_SESSION:-agent}"
 # crons and would spam. Lives on /persist so it survives nothing-in-particular;
 # markers are short-lived (created here, cleared by the hook on the next Stop).
 CRON_COMPLETE_DIR="${KYBER_CRON_COMPLETE_DIR:-/persist/var/run/kyber-cron-complete}"
+# Dir holding the PENDING marker for each named job whose turn is still in
+# flight. Distinct from CRON_COMPLETE_DIR on purpose: that directory is a
+# notify queue whose entries are consumed and deleted by whatever Stop hook an
+# operator has installed (falcon-dev-common ships one), so it cannot also carry
+# platform state. This one is Kyber's alone — written here, cleared by
+# kyber-cron-postrun.
+#
+# It answers two questions the flock cannot: "is the previous fire of this job
+# still working?" (--exclusive) and "should this agent's context be cleared when
+# the turn ends?" (--clear-context-after).
+CRON_PENDING_DIR="${KYBER_CRON_PENDING_DIR:-/persist/var/run/kyber-cron-pending}"
+# Written by the runtime's start script when it registers kyber-cron-postrun.
+# Absent means nothing will ever clear a pending marker — so we must not write
+# one, or an --exclusive job would skip forever. This is what keeps the feature
+# inert on runtimes with no Stop-hook equivalent (Codex today) instead of
+# wedging their schedules.
+POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
+# A pending marker older than this is treated as abandoned — the agent died
+# mid-turn and no Stop hook ever ran. Matches the stale-session-lock window
+# below so the script has one notion of "too old to believe".
+CRON_PENDING_TTL_SECONDS="${KYBER_CRON_PENDING_TTL_SECONDS:-86400}"
 
 # Shared tmux delivery helper, resolved next to this script (same directory in
 # the image and in the repo). Sourced, not executed. Loaded further down —
@@ -77,9 +103,11 @@ fi
 # ---- Argument parsing ----
 EXCLUSIVE=false
 STDIN_MODE=false
+CLEAR_CONTEXT_AFTER=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --exclusive) EXCLUSIVE=true; shift ;;
+        --clear-context-after) CLEAR_CONTEXT_AFTER=true; shift ;;
         --stdin) STDIN_MODE=true; shift ;;
         --) shift; break ;;
         -*)
@@ -90,7 +118,7 @@ while [ $# -gt 0 ]; do
     esac
 done
 if [ $# -ne 1 ]; then
-    echo "usage: kyber-job-dispatch [--exclusive] [--stdin] <job-name>" >&2
+    echo "usage: kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin] <job-name>" >&2
     exit 2
 fi
 JOB_NAME="$1"
@@ -106,7 +134,32 @@ fi
 
 PROMPT_FILE="$JOBS_SRC/prompt-$JOB_NAME"
 JOB_LOCK="$LOCK_DIR/job-$JOB_NAME.lock"
+PENDING_MARKER="$CRON_PENDING_DIR/$JOB_NAME"
 STARTED_AT="$(date -Iseconds)"
+
+# Pending markers are only meaningful when something will clear them. Inbound
+# (--stdin) dispatches are excluded for the same reason they leave no completion
+# marker: they are event-driven traffic, not operator crons.
+pending_tracking_enabled() {
+    [ "$STDIN_MODE" = false ] || return 1
+    [ -e "$POSTRUN_SENTINEL" ] || return 1
+    [ "$EXCLUSIVE" = true ] || [ "$CLEAR_CONTEXT_AFTER" = true ]
+}
+
+# True when this job's previous fire is still mid-turn. A marker past the TTL is
+# treated as abandoned and removed, so one crashed turn cannot mute a schedule
+# forever.
+pending_marker_is_live() {
+    [ -f "$PENDING_MARKER" ] || return 1
+    local age
+    age=$(( $(date +%s) - $(stat -c %Y "$PENDING_MARKER" 2>/dev/null || echo 0) ))
+    if [ "$age" -gt "$CRON_PENDING_TTL_SECONDS" ]; then
+        rm -f "$PENDING_MARKER" 2>/dev/null || true
+        echo "ts=$(date -Iseconds) job=$JOB_NAME event=stale_pending_marker_cleared age_seconds=$age" >> "$LOG_FILE"
+        return 1
+    fi
+    return 0
+}
 
 # AGENT_NAME is set on every agent pod via pod_builder.go. Missing it means
 # something's wrong with the pod spec; record and bail before doing work.
@@ -169,6 +222,17 @@ if [ -f "$SESSION_LOCK" ] && ! flock -n "$SESSION_LOCK" true 2>/dev/null; then
     exit 0
 fi
 
+# ---- Agent-busy guard (--exclusive) ----
+# The per-job flock below only spans the paste, so on its own it cannot tell
+# whether the AGENT is still working — it returns in milliseconds while the turn
+# it started runs for minutes. Without this guard an --exclusive job firing
+# faster than its own work completes stacks prompts into a single-threaded
+# session, which is how a busy agent silently drops dispatches.
+if [ "$EXCLUSIVE" = true ] && pending_tracking_enabled && pending_marker_is_live; then
+    emit_event "skipped" "agent_busy"
+    exit 0
+fi
+
 # ---- Prompt source ----
 # In stdin mode the prompt body is piped in by the caller (the inbound-
 # prompts receiver). We slurp the whole thing into PROMPT_BODY up front so
@@ -227,6 +291,19 @@ dispatch() {
     if [ "$STDIN_MODE" = false ]; then
         if mkdir -p "$CRON_COMPLETE_DIR" 2>/dev/null; then
             printf '%s\n' "$STARTED_AT" > "$CRON_COMPLETE_DIR/$JOB_NAME" 2>/dev/null || true
+        fi
+    fi
+    # Pending marker: records that this job's turn is in flight, and whether the
+    # agent's context should be cleared once it ends. kyber-cron-postrun reads
+    # and removes it. Best-effort like the completion marker — a write failure
+    # must not flip an otherwise-good dispatch — but note the consequence: no
+    # marker means no clear, and an --exclusive job stays unguarded until the
+    # next fire writes one.
+    if pending_tracking_enabled; then
+        if mkdir -p "$CRON_PENDING_DIR" 2>/dev/null; then
+            printf 'started_at=%s\nclear_context=%s\n' \
+                "$STARTED_AT" "$CLEAR_CONTEXT_AFTER" \
+                > "$PENDING_MARKER" 2>/dev/null || true
         fi
     fi
     emit_event "success"

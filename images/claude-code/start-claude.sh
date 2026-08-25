@@ -35,6 +35,48 @@ EOF
     echo "[kyber] settings.json written"
 fi
 
+# ---- Scheduled-job post-run hook ----
+# kyber-cron-postrun is the platform's Stop hook for scheduled jobs: it clears
+# the agent's context when a job declared clearContextAfter, and removes the
+# job's pending marker, which is what releases the --exclusive agent-busy guard
+# in kyber-job-dispatch.
+#
+# Registered in the USER settings (~/.claude/settings.json) rather than in the
+# identity repo's project settings, so it merges with whatever hooks the agent
+# owns instead of two writers competing for one file.
+#
+# The sentinel is the contract with the dispatcher: no sentinel means nothing
+# will ever clear a pending marker, so the dispatcher must not write one — an
+# --exclusive job would otherwise skip every fire until the staleness TTL. That
+# is what keeps this feature inert rather than harmful on a runtime with no
+# Stop-hook equivalent.
+KYBER_POSTRUN_CMD="/usr/local/bin/kyber-cron-postrun"
+KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
+if [ -x "$KYBER_POSTRUN_CMD" ] && command -v jq >/dev/null 2>&1; then
+    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null; then
+        echo "[kyber] cron post-run hook already registered"
+    elif jq --arg cmd "$KYBER_POSTRUN_CMD" \
+        '.hooks //= {} | .hooks.Stop //= []
+         | .hooks.Stop += [{"hooks":[{"type":"command","command":$cmd,"timeout":20}]}]' \
+        ~/.claude/settings.json > ~/.claude/settings.json.tmp 2>/dev/null \
+        && [ -s ~/.claude/settings.json.tmp ]; then
+        mv ~/.claude/settings.json.tmp ~/.claude/settings.json
+        echo "[kyber] cron post-run hook registered"
+    else
+        # A truncated settings.json would break the runtime entirely, not just
+        # this feature — same guard as the legacy-plugin strip below.
+        rm -f ~/.claude/settings.json.tmp
+        echo "[kyber] WARNING: could not register cron post-run hook" >&2
+    fi
+    # Only claim the capability once the hook is actually in the settings.
+    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null; then
+        mkdir -p "$(dirname "$KYBER_POSTRUN_SENTINEL")" 2>/dev/null || true
+        : > "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+    else
+        rm -f "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+    fi
+fi
+
 # ---- Telegram: MCP sidecar (kyber#684) ----
 # The native channel plugin is GONE from this path. Telegram is served by the
 # kyber-mcp-telegram sidecar for every runtime now, and the controller no longer
