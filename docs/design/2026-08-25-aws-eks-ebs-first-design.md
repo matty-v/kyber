@@ -1,6 +1,6 @@
 # AWS EKS with EBS-first storage
 
-**Status:** Proposed for operator review
+**Status:** Proposed for operator review — revised for bounded Spot recovery
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 **Evidence:** [AWS EFS Phase 1 qualification](../specs/2026-08-25-aws-efs-phase1-qualification-plan.md)
@@ -9,15 +9,19 @@
 
 The first native AWS installation should use Amazon EKS Standard, EKS managed
 node groups, and encrypted gp3 EBS volumes. One Kyber-managed Machine maps to
-one size-zero-or-one, single-Availability-Zone managed node group. This is the
+single-Availability-Zone, size-zero-or-one capacity. Reliable Machines use one
+On-Demand managed node group. Cost-optimized Machines use a Spot group plus a
+pre-created, size-zero On-Demand fallback group in the same zone. This is the
 closest AWS realization of the existing GKE adapter while preserving Kyber's
-one-Machine/one-node isolation and its Linux filesystem contract.
+one-Machine/one-node isolation, Linux filesystem contract, and bounded
+recovery when zonal Spot capacity is unavailable.
 
 The EKS control plane and VPC span at least two Availability Zones, but each
 EBS-backed workload remains bound to the Availability Zone in which its volume
-was created. Spot replacement is automatic only inside that zone. A zone
-outage requires restore into another zone; it is not equivalent to the live
-GKE installation's regional Persistent Disks.
+was created. Spot replacement and On-Demand fallback happen only inside that
+zone and reattach the exact same Agent EBS volume. A zone outage requires
+restore into another zone and creates a new volume; it is not equivalent to
+the live GKE installation's regional Persistent Disks.
 
 EFS is not the default or an install-time toggle in the first implementation.
 It remains a separate future design because it lacks xattrs and capacity
@@ -29,6 +33,8 @@ enforcement and was materially slower in live qualification.
 - Register an `eks` compute provider beside `gke`, `gce`, and local providers.
 - Fulfill Online, Offline, Deleted, reliable, and Spot Machine intent through
   EKS managed node groups.
+- Bound cost-optimized recovery with same-zone On-Demand fallback rather than
+  waiting indefinitely for Spot capacity.
 - Preserve the current Kyber API and primary operator workflow.
 - Use gp3 EBS for agent roots and all other durable single-writer consumers.
 - Make every loss of GKE regional-PD behavior explicit before installation.
@@ -82,15 +88,17 @@ multi-AZ services in a later design.
 
 ### Machine capacity
 
-The `eks` provider maps one managed Machine to one EKS managed node group:
+The `eks` provider maps one reliable Machine to one EKS managed node group and
+one cost-optimized Machine to a same-zone pair:
 
-- `Online` ensures the node group exists with minimum 0, maximum 1, and desired
-  1.
-- `Offline` sets desired size 0 but retains the group and its immutable launch
-  configuration.
-- `Deleted` removes only a node group carrying the expected Kyber ownership
-  tags and labels.
-- reliable profiles use `ON_DEMAND`; cost-optimized profiles use `SPOT`.
+- `Online` ensures exactly one backing group desires one node.
+- `Offline` sets every backing group to desired size 0 but retains its
+  immutable launch configuration.
+- `Deleted` removes only backing groups carrying the expected Kyber ownership
+  tags and labels. It never deletes an Agent PVC or EBS data volume.
+- reliable profiles use one `ON_DEMAND` group.
+- cost-optimized profiles create one `SPOT` group and one `ON_DEMAND` fallback
+  group. Both are minimum 0, maximum 1; only one may desire capacity at a time.
 - each node group contains multiple same-shape compatible instance types where
   AWS permits it, improving Spot capacity without changing the advertised CPU
   and memory promise.
@@ -109,6 +117,11 @@ Managed node groups are the first backing resource because EKS owns node
 bootstrap, health repair, updates, drains, and Spot Capacity Rebalancing. The
 adapter must not mutate the backing Auto Scaling group directly.
 
+An EKS managed node group cannot mix Spot and On-Demand capacity. Pre-creating
+the fallback group at size zero avoids waiting for node-group creation during
+an outage, at the cost of one additional node-group quota slot per
+cost-optimized Machine. It incurs no EC2 instance charge while at zero.
+
 ### Location contract
 
 `eks` exposes installer-approved Availability Zones as Machine locations, not
@@ -122,6 +135,17 @@ the configured list using a stable least-Machine-count rule. This balances new
 Machines but does not move an existing Machine or volume after creation.
 
 ### Storage
+
+The same-disk invariant is non-negotiable: node interruption, Spot fallback,
+Machine suspend/resume, and in-zone node replacement retain the existing Agent
+PVC, PV, and EBS volume ID. The old EC2 node's boot volume is disposable; the
+separate EBS volume mounted as the Agent durable root is the disk that must
+survive. Kubernetes/EBS CSI detaches it from the terminated node and attaches
+that same volume to the replacement node in the same Availability Zone.
+
+Only deleting the Agent is allowed to invoke the StorageClass `Delete` reclaim
+policy. Deleting, replacing, suspending, or changing the availability class of
+a Machine must not delete or recreate an Agent volume.
 
 The Helm chart gains `storage.awsEBS`, parallel to `storage.gcePD`:
 
@@ -156,6 +180,13 @@ The chart fails rendering when:
 Postgres, Redis, MinIO, transcript offsets, and Agent roots explicitly select
 `kyber-ebs`; relying on whichever default StorageClass happens to exist is not
 accepted for the EKS preset.
+
+Operators may select another EBS block type through an installer-curated
+StorageClass—most plausibly `io2` for a higher-cost performance/durability
+profile—without changing the attachment model. `gp3` remains the default
+because capacity, IOPS, and throughput can be tuned independently and expanded
+online. Instance store cannot satisfy persistence; EFS does not satisfy the
+qualified filesystem contract; and every EBS type remains single-zone.
 
 ### Identity and permissions
 
@@ -193,6 +224,35 @@ the selected source runs.
 Correctness cannot depend on receiving the warning: forced termination must
 still transition the Agent to waiting/recovery based on lost node capacity.
 The notice improves graceful state capture but is not a guarantee.
+
+AWS makes no bounded-time promise that replacement Spot capacity exists in one
+zone. A strict Spot-only Machine can therefore remain without a node for an
+unbounded period. Kyber must not present that as the default cost-optimized
+behavior.
+
+The proposed recovery state machine is:
+
+1. EKS Capacity Rebalancing attempts another compatible Spot instance in the
+   Machine's zone before or after interruption.
+2. Kyber parks the Agent while the volume detaches; the PVC and volume are not
+   modified.
+3. If no Spot node becomes Ready before `spotFallbackAfter` (proposed default:
+   five minutes), the adapter sets the Spot group to zero, waits until its Node
+   is absent and the volume is detached, then sets the pre-created On-Demand
+   group to one.
+4. The On-Demand node joins with the same Machine label; the Pod schedules and
+   EBS CSI attaches the same Agent volume.
+5. Kyber does not automatically churn a running Agent back to Spot. It returns
+   to Spot at the next explicit suspend/resume or operator-requested rebalance.
+
+On-Demand capacity and EBS detach/attach are also not absolute latency
+guarantees. Production acceptance therefore requires a measured recovery SLO,
+proposed as 95 percent of forced Spot replacements Ready with the same volume
+within ten minutes. The live test must measure both proactive rebalance and
+hard interruption paths, including a deliberately unavailable Spot response.
+
+An advanced `spotOnly` policy may be exposed later with an explicit unbounded
+wait warning. It is not the `costOptimized` default.
 
 ### Backup and cross-zone recovery
 
@@ -278,11 +338,11 @@ Terraform must refuse to hide unmanaged volumes or snapshots during teardown.
 |---|---|---|---|
 | Agent storage | Regional PD replicated across two zones | gp3 EBS in one zone | Zone outage requires snapshot restore and Machine relocation |
 | Spot placement | One pool may choose either eligible zone | Each Machine is pinned to one zone | Less Spot capacity diversity for an existing Machine |
-| Spot replacement | Same disk follows replacement in either replica zone | Replacement must be available in the volume's zone | Recovery can wait on zonal Spot capacity; operator may switch Machine to reliable capacity in-zone |
+| Spot replacement | Same disk follows replacement in either replica zone | Spot first, then pre-created On-Demand fallback in the volume's zone | Same EBS volume is retained; recovery is not blocked indefinitely on Spot, but still depends on node launch and detach/attach |
 | Filesystem | Block filesystem with xattrs and enforced size | Block filesystem with xattrs and enforced size | Closest semantic parity; Phase 1 rootfs and Git tests passed on gp3 |
 | Control-plane state | Regional PD for stateful chart dependencies | Zonal EBS for stateful chart dependencies | EKS API is multi-AZ but a platform-zone outage still interrupts Kyber services |
 | Workload identity | GKE Workload Identity | EKS Pod Identity plus agent add-on | Different bootstrap and IAM audit surface; no static keys in either case |
-| Machine backing | Size-one GKE node pool | Size-one EKS managed node group | Similar UI; EKS create/delete may take longer and consumes node-group quotas |
+| Machine backing | Size-one GKE node pool | Reliable: one group; cost optimized: Spot plus zero-size fallback group | Similar UI; EKS create/delete may take longer and cost-optimized Machines consume two node-group quota slots |
 | Preemption | Kyber polls GCE metadata | EKS drains plus Kyber polls EC2 metadata | Warning remains best effort and may provide less than two minutes |
 | Ingress | Cloudflare tunnel in the representative install | Same by default | AWS Load Balancer Controller is optional, not a hidden dependency |
 | Backup | Regional replication is immediate availability, not backup | Scheduled EBS snapshots/AWS Backup | Explicit RPO, retention cost, and restore drill are required |
@@ -304,9 +364,10 @@ Gate: rendered manifests prove every durable PVC uses encrypted gp3 with
 - implement profile parsing, registry wiring, Pod Identity credential use,
   provider refs, observation, and ownership checks;
 - implement managed node-group create, desired-size update, suspend, repair,
-  deletion, and external discovery;
+  deletion, paired-group fallback, and external discovery;
 - add deterministic unit tests for throttling, conflicts, partial creation,
-  Spot replacement, wrong-zone capacity, and refusal to mutate unowned groups.
+  Spot replacement, fallback timeout, dual-active prevention, wrong-zone
+  capacity, PVC non-interference, and refusal to mutate unowned groups.
 
 Gate: no AWS test account mutation is needed to prove controller convergence
 and destructive ownership guards.
@@ -319,6 +380,8 @@ and destructive ownership guards.
 - prove suspend/resume preserves data and Agent deletion removes its EBS
   volume;
 - force Spot replacement and prove recovery on a new node in the same zone;
+- force Spot capacity failure and prove the pre-created On-Demand group becomes
+  Ready with the exact same EBS volume ID inside the reviewed SLO;
 - restore a snapshot into a second zone and measure RPO/RTO;
 - destroy everything and independently inventory leftovers.
 
@@ -343,6 +406,8 @@ and sees every AWS-specific behavior before approving the plan.
 - Every managed mutation is cluster-scoped and ownership-tag gated.
 - Agent root seed, second boot, Git, credentials, tmux, cron, transcripts, and
   identity-repo writes survive pod restart and in-zone Spot replacement.
+- Cost-optimized fallback never creates a second active writer and reattaches
+  the exact same Agent EBS volume ID to On-Demand capacity.
 - Requested PVC capacity is enforced and expansion is tested.
 - Agent deletion removes its PVC, PV, and EBS volume without deleting a
   snapshot retained by policy.
@@ -361,17 +426,23 @@ and sees every AWS-specific behavior before approving the plan.
 2. **Platform-zone recovery:** accept cold snapshot restore for Postgres,
    Redis, and MinIO in v1, or separately scope provider-native multi-AZ
    replacements before production.
-3. **Machine creation latency/quota:** accept one managed node group per
-   Machine for GKE-like semantics, or authorize a later Karpenter evaluation
-   after the first live timings.
-4. **AWS-native ingress:** keep Cloudflare tunnel parity, or add the AWS Load
+3. **Spot recovery policy:** approve Spot-preferred with a proposed five-minute
+   fallback threshold and ten-minute p95 same-volume recovery SLO. Strict
+   Spot-only remains an explicitly risky later option.
+4. **Machine creation latency/quota:** accept two managed node groups for each
+   cost-optimized Machine to keep fallback warm at size zero, or authorize a
+   later Karpenter/self-managed capacity evaluation after the first live
+   timings.
+5. **AWS-native ingress:** keep Cloudflare tunnel parity, or add the AWS Load
    Balancer Controller and its IAM/subnet requirements as a separate option.
 
 ## Primary AWS references
 
 - [EKS managed node groups](https://docs.aws.amazon.com/eks/latest/userguide/managed-node-groups.html)
+- [EC2 Auto Scaling Capacity Rebalancing](https://docs.aws.amazon.com/autoscaling/ec2/userguide/ec2-auto-scaling-capacity-rebalancing.html)
 - [EKS Cluster Autoscaler guidance for EBS volumes](https://docs.aws.amazon.com/eks/latest/best-practices/cas.html#ebs-volumes)
 - [EKS Pod Identity](https://docs.aws.amazon.com/eks/latest/userguide/pod-identities.html)
 - [EKS EBS CSI driver](https://docs.aws.amazon.com/eks/latest/userguide/ebs-csi.html)
 - [EKS subnet and Availability Zone guidance](https://docs.aws.amazon.com/eks/latest/best-practices/subnets.html)
+- [Attach an EBS volume in the same Availability Zone](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-attaching-volume.html)
 - [Amazon EBS snapshots](https://docs.aws.amazon.com/ebs/latest/userguide/ebs-snapshots.html)
