@@ -906,6 +906,7 @@ func (r *MachineReconciler) reconcileCapacity(
 	unavailableSince := optionalMetaTime(observation.CostOptimizedUnavailableSince)
 	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
 	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.EffectiveAvailabilityClass != effectiveClass || machine.Status.FallbackReason != observation.FallbackReason || !metaTimeEqual(machine.Status.FallbackSince, fallbackSince) || !metaTimeEqual(machine.Status.CostOptimizedUnavailableSince, unavailableSince) || machine.Status.CostOptimizedRetryObserved != observation.CostOptimizedRetryObserved || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
+		previousStatus := machine.Status
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
 		// Dual-write during the compatibility window. Legacy readers continue
@@ -928,8 +929,37 @@ func (r *MachineReconciler) reconcileCapacity(
 		if err := r.Status().Patch(ctx, machine, patch); err != nil {
 			return adapters.CapacityObservation{}, fmt.Errorf("patching provider reference: %w", err)
 		}
+		r.recordFallbackEvents(machine, previousStatus, observation)
 	}
 	return observation, nil
+}
+
+// recordFallbackEvents emits only on durable status transitions. Provider
+// retries and controller restarts therefore do not create duplicate logical
+// events, while an adapter may complete a short transition in one reconcile.
+func (r *MachineReconciler) recordFallbackEvents(machine *kyberv1.Machine, previous kyberv1.MachineStatus, observation adapters.CapacityObservation) {
+	if r.Recorder == nil {
+		return
+	}
+	if previous.CostOptimizedUnavailableSince == nil && !observation.CostOptimizedUnavailableSince.IsZero() {
+		r.Recorder.Event(machine, corev1.EventTypeWarning, "CostOptimizedUnavailable", "Cost-optimized capacity is unavailable; the provider is evaluating reliable fallback")
+	}
+	if previous.FallbackSince == nil && !observation.FallbackSince.IsZero() {
+		r.Recorder.Event(machine, corev1.EventTypeNormal, "ReliableFallbackStarted", "Reliable fallback started in the Machine's current location with its existing storage")
+		if observation.State == adapters.CapacityAvailable && observation.EffectiveAvailabilityClass == string(kyberv1.MachineAvailabilityReliable) {
+			r.Recorder.Event(machine, corev1.EventTypeNormal, "ReliableFallbackReady", "Reliable fallback is Ready with the Machine's existing storage")
+		}
+	}
+	if observation.CostOptimizedRetryObserved == "" || observation.CostOptimizedRetryObserved == previous.CostOptimizedRetryObserved {
+		return
+	}
+	r.Recorder.Event(machine, corev1.EventTypeNormal, "CostOptimizedRetryStarted", "The provider accepted the request to retry cost-optimized capacity")
+	switch observation.EffectiveAvailabilityClass {
+	case string(kyberv1.MachineAvailabilityCostOptimized):
+		r.Recorder.Event(machine, corev1.EventTypeNormal, "CostOptimizedRetryReady", "Cost-optimized capacity is Ready with the Machine's existing storage")
+	case string(kyberv1.MachineAvailabilityReliable):
+		r.Recorder.Event(machine, corev1.EventTypeWarning, "CostOptimizedRetryRolledBack", "Cost-optimized capacity remained unavailable; reliable fallback was restored")
+	}
 }
 
 func machineProfile(machine *kyberv1.Machine) string {

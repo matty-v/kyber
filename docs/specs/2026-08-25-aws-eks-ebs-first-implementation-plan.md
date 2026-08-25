@@ -250,13 +250,15 @@ Completed and pushed:
 - authorized, validated, idempotent `retry-cost-optimized` API action;
 - provider-neutral Machine detail fallback banner and guarded retry UX;
 - deterministic fake-provider fallback, successful retry, and failed-retry
-  rollback while retaining the same provider reference.
+  rollback while retaining the same provider reference;
+- deduplicated Kubernetes events for unavailability, fallback start/Ready,
+  retry start/Ready, and retry rollback.
 
 Verification: adapter tests, targeted API tests, Machine controller envtest,
 PWA component tests, and TypeScript lint pass. GKE still advertises fallback
-as `Unsupported`; no production GKE behavior has changed. Next: complete the
-remaining controller transition/event coverage needed to close the Phase 1
-gate.
+as `Unsupported`; no production GKE behavior has changed. Next: add the
+controller-level fake-provider fallback/retry envtest needed to close the
+Phase 1 gate.
 
 ## Phase 2 — GKE transition design spike and non-regression
 
