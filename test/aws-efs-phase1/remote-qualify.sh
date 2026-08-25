@@ -3,6 +3,7 @@ set -euo pipefail
 
 : "${EFS_FILE_SYSTEM_ID:?required}"
 : "${EFS_ACCESS_POINT_ID:?required}"
+: "${EFS_MOUNT_TARGET_IP:?required}"
 : "${EBS_VOLUME_ID:?required}"
 : "${RUNTIME_IMAGE:?required}"
 
@@ -47,7 +48,7 @@ mount_filesystems() {
     fi
     mountpoint -q /mnt/phase1-ebs || mount "$device" /mnt/phase1-ebs
     mountpoint -q /mnt/phase1-efs || mount -t efs \
-        -o "tls,accesspoint=${EFS_ACCESS_POINT_ID}" \
+        -o "tls,accesspoint=${EFS_ACCESS_POINT_ID},mounttargetip=${EFS_MOUNT_TARGET_IP}" \
         "${EFS_FILE_SYSTEM_ID}:/" /mnt/phase1-efs
 }
 
@@ -129,4 +130,3 @@ done
 
 log "qualification_complete=true"
 cat "$result"
-

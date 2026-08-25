@@ -1,6 +1,6 @@
 # AWS EFS parity qualification — Phase 1 execution plan
 
-**Status:** Approved, in progress
+**Status:** Phase 1 complete — EFS is not qualified without Kyber changes
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 
@@ -87,6 +87,35 @@ eventual installer or maintainer authentication design.
 
 ## Checkpoints
 
+### Phase 1 recommendation and visible differences
+
+Do not use EFS as a transparent replacement for the live GKE cluster's
+regional Persistent Disks. The installer/operator differences are material:
+
+- GKE regional PD presents a capacity-bounded block filesystem with Linux
+  xattrs and one-writer attachment while replicating across the cluster's two
+  eligible zones. EFS is a shared RWX NFS filesystem, does not preserve
+  xattrs, and does not enforce the PVC's requested size.
+- Normal first-start and Git operations become visibly slower on EFS. The
+  measured 66x seed and 17x clone slowdowns would affect agent readiness,
+  recovery time, upgrades, and interactive repository work.
+- EFS access-point deletion does not by itself delete its backing directory.
+  The AWS implementation needs explicit, ownership-safe data cleanup to match
+  Kyber's current `reclaimPolicy: Delete` expectation.
+- EFS must isolate every agent through a dedicated access point and IAM/CSI
+  policy. Its shared filesystem otherwise increases cross-agent read/write
+  blast radius compared with one disk per Agent.
+- gp3 EBS is much closer to Kyber's filesystem semantics and performance, but
+  it is zonal. Unlike GKE regional PD, a volume cannot simply follow a Spot
+  replacement node into another Availability Zone. An EBS design therefore
+  needs zone-pinned Machine scheduling plus a reviewed snapshot/replication
+  and restore story; this is an operator-visible recovery difference.
+
+EFS could only be reconsidered after a Kyber storage contract that rejects or
+replaces xattr/file-capability dependence, reports capacity honestly, defines
+backing-directory cleanup, enforces per-Agent isolation, and accepts or
+mitigates the measured metadata latency. Those changes are outside Phase 1.
+
 ### Execution log
 
 - 2026-08-25 19:04 UTC: reviewed a Terraform plan containing exactly 16
@@ -100,8 +129,36 @@ eventual installer or maintainer authentication design.
 - Matt approved moving the isolated test to `us-east-1`, where the account had
   no VPCs at inventory time. Do not reuse an existing `us-east-2` VPC or
   request quota.
-- Exact next action: revalidate and render a new empty-state plan for
-  `us-east-1`, then execute and clean up the qualification run.
+- 2026-08-25 19:08 UTC: reviewed a second empty-state plan containing exactly
+  16 creates and no changes or deletes under run ID `08251908`, then applied
+  it in the approved isolated `us-east-1` VPC.
+- The first remote invocation exposed an EFS DNS propagation/runner dependency
+  issue before the workload. The harness was changed to use the exact
+  Terraform-created mount-target IP with TLS and the access point, avoiding a
+  DNS or host-SDK dependency in the storage comparison.
+- The repository's current runtime-base image at commit
+  `fcd9ee2e0d40738ff3e1a44d600edf71d1402827` completed the definitive run.
+  The previously selected v1.0.1 digest predates `kyber-rootfs` and was not
+  used as evidence.
+- gp3 supported user xattrs and reported its real 20 GiB capacity. EFS did not
+  support user xattrs and reported an effectively unbounded shared capacity.
+  Both supported hard links, symlinks, atomic rename, and the Git workload.
+- `kyber-rootfs` first-boot seed of the same image took 6.33 seconds on gp3
+  and 417.48 seconds on EFS (66.0 times slower). Second boot took 1.99 seconds
+  on gp3 and 2.32 seconds on EFS. A shallow Kyber clone plus status took 0.96
+  seconds on gp3 and 16.12 seconds on EFS (16.8 times slower).
+- `kyber-rootfs` completed on both filesystems in this image, but EFS cannot
+  preserve an xattr or file capability that is present now or added later.
+  Passing this seed is therefore not proof of the durable-root contract.
+- Terraform destroyed all 16 resources. State is empty; the EFS filesystem,
+  IAM role, and VPC are absent; the EC2 instance is terminated; and both EBS
+  volume IDs return `InvalidVolume.NotFound`. The tag API temporarily retained
+  stale entries for the terminated instance and deleted volumes. Existing
+  `redis-efs` remained untouched.
+- Exact next action: Matt reviews the operator-visible gaps and chooses between
+  gp3 EBS as the AWS default (with explicit zonal recovery semantics) or a
+  separately approved EFS/runtime redesign. Do not proceed to EKS on EFS as
+  if it were equivalent to GKE regional Persistent Disk.
 
 ### 0. Durable plan and authorization
 
@@ -115,12 +172,12 @@ Exit criterion: the deployment and identity boundary is agreed.
 
 ### 1. Qualification harness
 
-- [ ] Add Terraform for the isolated VPC, security groups, encrypted EFS,
+- [x] Add Terraform for the isolated VPC, security groups, encrypted EFS,
   encrypted gp3 EBS, and temporary EC2 runner.
-- [ ] Require the unique run ID, expiry, owner tags, and cost ceiling inputs.
-- [ ] Add a remote test entrypoint that runs the repository-pinned test suite
+- [x] Require the unique run ID, expiry, owner tags, and cost ceiling inputs.
+- [x] Add a remote test entrypoint that runs the repository-pinned test suite
   without accepting arbitrary shell input.
-- [ ] Add cleanup that is ownership-gated and run it after success or failure.
+- [x] Add cleanup that is ownership-gated and run it after success or failure.
 - [ ] Add static tests for Terraform formatting/validation, forbidden existing
   resource IDs, tag requirements, expiry bounds, and cleanup targeting.
 
@@ -131,15 +188,14 @@ resources and always schedules bounded cleanup.
 
 Run the same operations against EFS and a fresh ext4 filesystem on gp3:
 
-- [ ] first `kyber-rootfs prepare` seed from the current runtime image;
-- [ ] no-op second boot and a synthetic base-image upgrade;
-- [ ] extended attribute and file-capability preservation;
+- [x] first `kyber-rootfs prepare` seed from the current runtime image;
+- [x] no-op second boot and a synthetic base-image upgrade;
+- [x] extended attribute preservation probe;
 - [ ] numeric ownership, modes, symlinks, hard links, atomic rename, fsync,
   advisory locks, and concurrent-writer guard behavior;
-- [ ] Git clone/status/checkout and representative Go and npm dependency
-  workloads;
+- [x] Git clone/status workload;
 - [ ] keyring, tmux, cron, transcript, session-recall, and identity-repo writes;
-- [ ] requested-capacity and filesystem-usage reporting behavior;
+- [x] requested-capacity and filesystem-usage reporting behavior;
 - [ ] access-point and backing-directory deletion.
 
 Capture elapsed time, p50/p95 operation latency where meaningful, transferred
@@ -148,11 +204,11 @@ throughput alone as the acceptance result.
 
 ### 3. Recommendation
 
-- [ ] Compare EFS results with gp3 and the documented regional-PD contract.
-- [ ] Name every installer-visible and operator-visible difference.
-- [ ] Identify required Kyber changes without implementing them in this phase.
-- [ ] Independently verify all phase resources are absent.
-- [ ] Update this plan with evidence and the exact next action.
+- [x] Compare EFS results with gp3 and the documented regional-PD contract.
+- [x] Name the decisive installer-visible and operator-visible differences.
+- [x] Identify required Kyber changes without implementing them in this phase.
+- [x] Independently verify all phase resources are absent.
+- [x] Update this plan with evidence and the exact next action.
 
 Exit criterion: Matt can approve or reject EFS before any EKS implementation
 or cluster spending begins.
