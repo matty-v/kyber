@@ -54,19 +54,26 @@ checkpoint. In particular:
   size-zero On-Demand fallback group; never two desired writers.
 - Fallback is explicit in status, events, notification, and cost language.
 - `Retry cost-optimized capacity` is provider-neutral and rollback-safe.
+- `spotFallbackAfter` is five minutes. The acceptance target is p95 Agent Ready
+  within ten minutes after forced Spot loss, including fallback; do not claim
+  p95 before at least 20 forced-loss samples and publication of the raw data.
+- The live-test envelope is an isolated `us-east-1` installation across two
+  AZs, with one explicit platform-data AZ and a hard $75 spend ceiling. A
+  reviewed Terraform plan and hourly estimate are still required before apply.
+- EBS backup scheduling is operator-owned and documentation-only. Kyber v1
+  does not provision or control AWS Backup or Data Lifecycle Manager. The live
+  recovery test may create an explicit test snapshot and must clean it up.
+- EKS v1 accepts the documented single-AZ availability boundary for Postgres,
+  Redis, and MinIO. Provider-native multi-AZ replacements are a separate
+  follow-up.
 - Cloudflare tunnel remains the default ingress path.
 - EFS is excluded from v1.
 
-## Decisions required before their phase
+## Decisions required before live apply
 
-1. `spotFallbackAfter`: design recommendation is five minutes.
-2. Recovery SLO: design recommendation is p95 same-volume Ready within ten
-   minutes after forced Spot loss, including fallback.
-3. Snapshot frequency, retention, KMS policy, and accepted RPO/RTO.
-4. Whether v1 accepts cold platform-zone recovery for Postgres, Redis, and
-   MinIO or first replaces them with provider-native multi-AZ services.
-5. AWS region, two or three installation zones, dedicated platform zone,
-   network egress model, and live-test cost ceiling.
+1. Exact two AZs, which one is the platform-data AZ, and network egress model.
+2. Terraform plan, estimated hourly cost, and proof the run stays below $75.
+3. Explicit resource-creation approval for the reviewed plan.
 
 ## Delivery rules
 

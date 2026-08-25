@@ -534,23 +534,23 @@ and sees every AWS-specific behavior before approving the plan.
   roles, volumes, snapshots not intentionally retained, and load balancers are
   absent.
 
-## Open decisions for Matt
+## Reviewed operator decisions
 
-1. **Backup objective and cost:** choose snapshot frequency and retention. A
-   recommendation should be costed from observed live Agent volume churn before
-   production approval.
-2. **Platform-zone recovery:** accept cold snapshot restore for Postgres,
-   Redis, and MinIO in v1, or separately scope provider-native multi-AZ
-   replacements before production.
-3. **Spot recovery policy:** approve Spot-preferred with a proposed five-minute
-   fallback threshold and ten-minute p95 same-volume recovery SLO. Strict
-   Spot-only remains an explicitly risky later option.
-4. **Machine creation latency/quota:** accept two managed node groups for each
-   cost-optimized Machine to keep fallback warm at size zero, or authorize a
-   later Karpenter/self-managed capacity evaluation after the first live
-   timings.
-5. **AWS-native ingress:** keep Cloudflare tunnel parity, or add the AWS Load
-   Balancer Controller and its IAM/subnet requirements as a separate option.
+1. **Spot recovery:** fall back after five minutes. Target p95 Agent Ready
+   within ten minutes of forced Spot loss, including fallback, based on at
+   least 20 samples with the raw distribution reported.
+2. **Live envelope:** isolated `us-east-1`, two AZs, one explicit platform-data
+   AZ, and a hard $75 ceiling. Terraform plan and hourly cost still require
+   approval before apply.
+3. **Backups:** documentation-only and operator-owned; Kyber does not provision
+   an AWS backup policy in v1. An explicit live-test snapshot is allowed for
+   the recovery drill and is cleaned up afterward.
+4. **Platform-zone recovery:** accept the clearly documented single-AZ
+   Postgres, Redis, and MinIO boundary in v1. Provider-native multi-AZ services
+   are a separate follow-up.
+5. **Capacity and ingress:** retain paired managed node groups for bounded
+   fallback and Cloudflare tunnel parity. Karpenter and AWS-native ingress are
+   later, separately reviewed options.
 
 ## Primary AWS references
 
