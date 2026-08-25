@@ -1,6 +1,6 @@
 # AWS EFS parity qualification — Phase 1 execution plan
 
-**Status:** Approved, in progress
+**Status:** Approved, awaiting region change review
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 
@@ -86,6 +86,20 @@ This exception is limited to the approved research resources; it is not the
 eventual installer or maintainer authentication design.
 
 ## Checkpoints
+
+### Execution log
+
+- 2026-08-25 19:04 UTC: reviewed a Terraform plan containing exactly 16
+  creates and no changes or deletes, all under run ID `08251904`.
+- The apply stopped when AWS returned `VpcLimitExceeded` for `us-east-2`.
+  Before that failure Terraform created only the tagged test EFS filesystem,
+  access point, IAM role, instance profile, and SSM policy attachment.
+- Terraform destroyed all five partial resources. Independent AWS queries
+  found no remaining resource with the run tag or test EFS name, and confirmed
+  the temporary IAM role is absent. Existing `redis-efs` was untouched.
+- Exact next action: obtain approval to move the isolated test to `us-east-1`,
+  where the account currently has no VPCs. Do not reuse an existing
+  `us-east-2` VPC or request quota until that decision is made.
 
 ### 0. Durable plan and authorization
 
