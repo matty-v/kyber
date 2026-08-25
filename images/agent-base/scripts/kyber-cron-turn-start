@@ -1,0 +1,95 @@
+#!/bin/bash
+# kyber-cron-turn-start — UserPromptSubmit hook: arm the pending marker whose
+# prompt is the one being submitted.
+#
+# kyber-job-dispatch writes each scheduled job's marker as state=queued, because
+# pasting a prompt is not the same as running it: if the agent is mid-turn the
+# prompt sits in the input queue until that turn ends. This hook is what tells
+# the difference. When a prompt is submitted it hashes it and flips the matching
+# queued marker to state=armed, and kyber-cron-postrun only ever acts on armed
+# markers.
+#
+# Without this correlation the Stop event of an UNRELATED turn (a user question,
+# an inbound, a different job) would consume a freshly-queued marker — clearing
+# context before the scheduled prompt ever ran, and releasing the --exclusive
+# guard while the job was still waiting its turn.
+#
+# Matching is by exact prompt hash and nothing else. A "there is only one queued
+# marker, it must be that one" fallback would re-introduce the very bug this
+# exists to prevent, by arming a cron's marker on a prompt the operator typed.
+#
+# Best-effort: a hook must never block the turn, so every failure logs and the
+# script always exits 0. If the runtime does not supply the prompt, markers stay
+# queued and expire via the dispatcher's staleness TTL rather than firing at the
+# wrong moment.
+
+set -uo pipefail
+
+PENDING_DIR="${KYBER_CRON_PENDING_DIR:-/persist/var/run/kyber-cron-pending}"
+LOG_FILE="${KYBER_CRON_POSTRUN_LOG:-/persist/var/log/kyber-cron-postrun.log}"
+
+log() {
+    mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+    echo "ts=$(date -Iseconds) $*" >> "$LOG_FILE" 2>/dev/null || true
+}
+
+main() {
+    [ -d "$PENDING_DIR" ] || return 0
+    shopt -s nullglob
+    local markers=("$PENDING_DIR"/*)
+    shopt -u nullglob
+    [ ${#markers[@]} -gt 0 ] || return 0
+
+    # Cheap pre-check: if nothing is queued there is nothing this hook can do,
+    # so don't spend a jq + hash on every prompt the operator types.
+    local any_queued=""
+    local marker
+    for marker in "${markers[@]}"; do
+        [ -f "$marker" ] && grep -qx 'state=queued' "$marker" 2>/dev/null && any_queued=1 && break
+    done
+    [ -n "$any_queued" ] || return 0
+
+    local payload prompt
+    payload="$(cat)"
+    [ -n "$payload" ] || return 0
+    if ! command -v jq >/dev/null 2>&1; then
+        log "event=arm_skipped reason=jq_missing"
+        return 0
+    fi
+    # -e so a null/absent .prompt is a failure rather than the string "null",
+    # which would hash to something that matches nothing and look like a
+    # mismatch instead of a runtime that doesn't send the prompt.
+    if ! prompt="$(printf '%s' "$payload" | jq -er '.prompt' 2>/dev/null)"; then
+        log "event=arm_skipped reason=no_prompt_in_payload"
+        return 0
+    fi
+
+    # The dispatcher hashes the text it pasted, which command substitution had
+    # already stripped of trailing newlines. Strip here too so both sides agree.
+    prompt="${prompt%$'\n'}"
+    while [ "${prompt: -1}" = $'\n' ]; do prompt="${prompt%$'\n'}"; done
+    local got
+    got="$(printf '%s' "$prompt" | sha256sum 2>/dev/null | cut -d' ' -f1)"
+    [ -n "$got" ] || return 0
+
+    for marker in "${markers[@]}"; do
+        [ -f "$marker" ] || continue
+        grep -qx 'state=queued' "$marker" 2>/dev/null || continue
+        grep -qx "prompt_sha256=$got" "$marker" 2>/dev/null || continue
+        # Rewrite via a temp file so a crash mid-write cannot leave a marker
+        # that is neither queued nor armed.
+        local tmp="$marker.tmp.$$"
+        if sed 's/^state=queued$/state=armed/' "$marker" > "$tmp" 2>/dev/null && mv "$tmp" "$marker" 2>/dev/null; then
+            log "event=armed job=$(basename "$marker")"
+        else
+            rm -f "$tmp" 2>/dev/null || true
+            log "event=arm_failed job=$(basename "$marker")"
+        fi
+        # One prompt starts one turn; stop at the first match so two jobs that
+        # happen to share a prompt don't both arm off a single submission.
+        break
+    done
+}
+
+{ main 2>&1; } || log "event=error detail=unexpected_failure_in_turn_start"
+exit 0

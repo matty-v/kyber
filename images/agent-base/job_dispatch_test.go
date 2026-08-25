@@ -2,6 +2,8 @@ package agent_base_test
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -521,6 +523,16 @@ func TestKyberJobDispatch_ClearContextAfterWritesPendingMarker(t *testing.T) {
 	}
 	if !strings.Contains(string(b), "started_at=") {
 		t.Errorf("marker must record started_at, got %q", b)
+	}
+	// queued, not armed: the prompt was pasted, not necessarily run. Arming is
+	// kyber-cron-turn-start's job once the prompt is actually submitted.
+	if !strings.Contains(string(b), "state=queued") {
+		t.Errorf("a freshly dispatched marker must be queued, got %q", b)
+	}
+	// The hash is how the turn-start hook recognises this job's prompt.
+	want := sha256.Sum256([]byte("run your work tick"))
+	if !strings.Contains(string(b), "prompt_sha256="+hex.EncodeToString(want[:])) {
+		t.Errorf("marker must carry the pasted prompt's hash, got %q", b)
 	}
 }
 

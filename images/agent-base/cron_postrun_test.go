@@ -1,7 +1,11 @@
 package agent_base_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -93,7 +97,7 @@ func (h *postrunHarness) logContents() string {
 
 func TestCronPostrun_ClearsWhenRequested(t *testing.T) {
 	h := setupPostrunHarness(t)
-	h.marker("work-tick", "started_at=2026-08-24T10:00:00Z\nclear_context=true\n")
+	h.marker("work-tick", "started_at=2026-08-24T10:00:00Z\nclear_context=true\nstate=armed\n")
 
 	if _, code := h.run(); code != 0 {
 		t.Fatalf("hook must always exit 0, got %d", code)
@@ -111,7 +115,7 @@ func TestCronPostrun_ClearsWhenRequested(t *testing.T) {
 // that removal is what un-blocks the next --exclusive fire.
 func TestCronPostrun_RemovesMarkerWithoutClearing(t *testing.T) {
 	h := setupPostrunHarness(t)
-	h.marker("digest", "started_at=2026-08-24T10:00:00Z\nclear_context=false\n")
+	h.marker("digest", "started_at=2026-08-24T10:00:00Z\nclear_context=false\nstate=armed\n")
 
 	if _, code := h.run(); code != 0 {
 		t.Fatalf("hook must always exit 0, got %d", code)
@@ -130,8 +134,8 @@ func TestCronPostrun_RemovesMarkerWithoutClearing(t *testing.T) {
 // read as a stray prompt.
 func TestCronPostrun_ClearsAtMostOncePerTurn(t *testing.T) {
 	h := setupPostrunHarness(t)
-	h.marker("job-a", "clear_context=true\n")
-	h.marker("job-b", "clear_context=true\n")
+	h.marker("job-a", "clear_context=true\nstate=armed\n")
+	h.marker("job-b", "clear_context=true\nstate=armed\n")
 
 	if _, code := h.run(); code != 0 {
 		t.Fatalf("hook must always exit 0, got %d", code)
@@ -151,7 +155,7 @@ func TestCronPostrun_ClearsAtMostOncePerTurn(t *testing.T) {
 // schedule until the staleness TTL, which is worse than a missed clear.
 func TestCronPostrun_RemovesMarkerWhenClearFails(t *testing.T) {
 	h := setupPostrunHarness(t)
-	h.marker("work-tick", "clear_context=true\n")
+	h.marker("work-tick", "clear_context=true\nstate=armed\n")
 
 	if _, code := h.run("CLEAR_STUB_RC=4"); code != 0 {
 		t.Fatalf("hook must always exit 0 even when the clear fails, got %d", code)
@@ -179,7 +183,7 @@ func TestCronPostrun_NoMarkersIsANoOp(t *testing.T) {
 // A runtime with no clear command must be reported, not guessed at.
 func TestCronPostrun_SkipsWhenRuntimeHasNoClearCommand(t *testing.T) {
 	h := setupPostrunHarness(t)
-	h.marker("work-tick", "clear_context=true\n")
+	h.marker("work-tick", "clear_context=true\nstate=armed\n")
 
 	if _, code := h.run("KYBER_CLEAR_SESSION_TEXT="); code != 0 {
 		t.Fatalf("hook must always exit 0, got %d", code)
@@ -190,5 +194,153 @@ func TestCronPostrun_SkipsWhenRuntimeHasNoClearCommand(t *testing.T) {
 	}
 	if log := h.logContents(); !strings.Contains(log, "runtime_has_no_clear_command") {
 		t.Errorf("want the skip reason logged, got: %s", log)
+	}
+}
+
+// --- Turn correlation (the busy-at-fire ordering) ---
+
+func turnStartScriptPath(t *testing.T) string {
+	t.Helper()
+	return filepath.Join(dispatchRepoRoot(t), "images/agent-base/scripts/kyber-cron-turn-start")
+}
+
+// runTurnStart feeds a UserPromptSubmit payload to the arming hook.
+func (h *postrunHarness) runTurnStart(prompt string) (string, int) {
+	h.t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "bash", turnStartScriptPath(h.t))
+	cmd.Env = append(os.Environ(),
+		"KYBER_CRON_PENDING_DIR="+h.pendDir,
+		"KYBER_CRON_POSTRUN_LOG="+h.logFile,
+	)
+	payload, err := json.Marshal(map[string]string{
+		"hook_event_name": "UserPromptSubmit",
+		"prompt":          prompt,
+	})
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	cmd.Stdin = bytes.NewReader(payload)
+	out, e := cmd.CombinedOutput()
+	code := 0
+	if e != nil {
+		if ee, ok := e.(*exec.ExitError); ok {
+			code = ee.ExitCode()
+		} else {
+			h.t.Fatalf("runTurnStart: %v (output: %s)", e, out)
+		}
+	}
+	return string(out), code
+}
+
+func sha256Hex(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(sum[:])
+}
+
+func (h *postrunHarness) markerBody(job string) string {
+	h.t.Helper()
+	b, err := os.ReadFile(filepath.Join(h.pendDir, job))
+	if err != nil {
+		h.t.Fatalf("read marker %s: %v", job, err)
+	}
+	return string(b)
+}
+
+// THE REGRESSION Luna caught. Cron fires while the agent is already mid-turn,
+// so the scheduled prompt sits queued behind that work. When the unrelated turn
+// ends, its Stop event must not consume the queued marker: doing so would clear
+// context before the scheduled prompt ever ran, and release --exclusive while
+// the job was still waiting.
+func TestCronTurnCorrelation_UnrelatedTurnDoesNotConsumeQueuedMarker(t *testing.T) {
+	h := setupPostrunHarness(t)
+	jobPrompt := "run your work tick"
+	h.marker("work-tick", "started_at=t0\nclear_context=true\nstate=queued\nprompt_sha256="+sha256Hex(jobPrompt)+"\n")
+
+	// The agent was answering something else; that turn ends now.
+	if _, code := h.run(); code != 0 {
+		t.Fatalf("hook must always exit 0, got %d", code)
+	}
+
+	if inv := h.clearInvocations(); inv != "" {
+		t.Errorf("must not clear on an unrelated turn's Stop, got %q", inv)
+	}
+	if _, err := os.Stat(filepath.Join(h.pendDir, "work-tick")); err != nil {
+		t.Fatalf("queued marker must survive an unrelated turn: %v", err)
+	}
+	if !strings.Contains(h.markerBody("work-tick"), "state=queued") {
+		t.Errorf("marker must still be queued, got %q", h.markerBody("work-tick"))
+	}
+}
+
+// The full ordering: queued behind other work, armed when its own prompt is
+// finally submitted, then consumed by THAT turn's Stop.
+func TestCronTurnCorrelation_ArmsThenClearsOnItsOwnTurn(t *testing.T) {
+	h := setupPostrunHarness(t)
+	jobPrompt := "run your work tick"
+	h.marker("work-tick", "started_at=t0\nclear_context=true\nstate=queued\nprompt_sha256="+sha256Hex(jobPrompt)+"\n")
+
+	// An unrelated turn ends first — marker survives.
+	h.run()
+	if _, err := os.Stat(filepath.Join(h.pendDir, "work-tick")); err != nil {
+		t.Fatalf("queued marker must survive: %v", err)
+	}
+
+	// Now the scheduled prompt actually runs.
+	if _, code := h.runTurnStart(jobPrompt); code != 0 {
+		t.Fatalf("turn-start hook must exit 0, got %d", code)
+	}
+	if !strings.Contains(h.markerBody("work-tick"), "state=armed") {
+		t.Fatalf("marker must be armed by its own prompt, got %q", h.markerBody("work-tick"))
+	}
+
+	// And that turn's Stop consumes it.
+	if _, code := h.run(); code != 0 {
+		t.Fatalf("hook must always exit 0, got %d", code)
+	}
+	if inv := h.clearInvocations(); !strings.Contains(inv, "/clear") {
+		t.Errorf("want the clear on the scheduled prompt's own turn, got %q", inv)
+	}
+	if _, err := os.Stat(filepath.Join(h.pendDir, "work-tick")); !os.IsNotExist(err) {
+		t.Errorf("marker must be removed after its own turn (err=%v)", err)
+	}
+}
+
+// A prompt the operator typed must not arm a queued cron marker — that is the
+// same mis-correlation wearing a different hat.
+func TestCronTurnCorrelation_UnrelatedPromptDoesNotArm(t *testing.T) {
+	h := setupPostrunHarness(t)
+	h.marker("work-tick", "started_at=t0\nclear_context=true\nstate=queued\nprompt_sha256="+sha256Hex("run your work tick")+"\n")
+
+	if _, code := h.runTurnStart("hey what's the status of the deploy?"); code != 0 {
+		t.Fatalf("turn-start hook must exit 0, got %d", code)
+	}
+
+	if !strings.Contains(h.markerBody("work-tick"), "state=queued") {
+		t.Errorf("an unrelated prompt must not arm the marker, got %q", h.markerBody("work-tick"))
+	}
+}
+
+// Two jobs sharing a prompt must not both arm off one submission — one prompt
+// starts one turn.
+func TestCronTurnCorrelation_ArmsOnlyOneMarkerPerSubmission(t *testing.T) {
+	h := setupPostrunHarness(t)
+	p := "do the thing"
+	h.marker("job-a", "state=queued\nclear_context=true\nprompt_sha256="+sha256Hex(p)+"\n")
+	h.marker("job-b", "state=queued\nclear_context=true\nprompt_sha256="+sha256Hex(p)+"\n")
+
+	if _, code := h.runTurnStart(p); code != 0 {
+		t.Fatalf("turn-start hook must exit 0, got %d", code)
+	}
+
+	armed := 0
+	for _, j := range []string{"job-a", "job-b"} {
+		if strings.Contains(h.markerBody(j), "state=armed") {
+			armed++
+		}
+	}
+	if armed != 1 {
+		t.Errorf("want exactly 1 armed marker, got %d", armed)
 	}
 }

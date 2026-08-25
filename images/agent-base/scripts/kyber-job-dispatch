@@ -20,6 +20,15 @@
 #   - If --clear-context-after, records in the pending marker that the
 #     agent's context should be cleared once the turn this fire started
 #     has ended. kyber-cron-postrun (the Stop hook) does the clearing.
+#
+# Pending markers are written state=queued, NOT state=armed. A pasted prompt
+# does not run immediately — if the agent is mid-turn it sits in the input
+# queue until that turn ends. kyber-cron-turn-start (the UserPromptSubmit hook)
+# arms the marker when the prompt it carries is actually submitted, matching on
+# the prompt hash recorded here. Without that correlation the Stop event of an
+# UNRELATED turn would consume the marker: clearing context before the
+# scheduled prompt ever ran, and releasing --exclusive while it was still
+# queued.
 #   - If the session lock (/persist/var/lock/session.lock) is flocked by the
 #     session-restart handler, records outcome=skipped and exits 0 — job
 #     fires during a restart must not race the relaunch (#128).
@@ -228,6 +237,10 @@ fi
 # it started runs for minutes. Without this guard an --exclusive job firing
 # faster than its own work completes stacks prompts into a single-threaded
 # session, which is how a busy agent silently drops dispatches.
+#
+# A marker in EITHER state blocks: queued means the previous fire's prompt is
+# still sitting in the input queue, which is just as much a reason not to send
+# another as one that is actively running.
 if [ "$EXCLUSIVE" = true ] && pending_tracking_enabled && pending_marker_is_live; then
     emit_event "skipped" "agent_busy"
     exit 0
@@ -301,8 +314,14 @@ dispatch() {
     # next fire writes one.
     if pending_tracking_enabled; then
         if mkdir -p "$CRON_PENDING_DIR" 2>/dev/null; then
-            printf 'started_at=%s\nclear_context=%s\n' \
-                "$STARTED_AT" "$CLEAR_CONTEXT_AFTER" \
+            # state=queued until the prompt is actually submitted. The hash is
+            # how kyber-cron-turn-start recognises THIS job's prompt among any
+            # others the operator may type in the meantime; it is taken over
+            # the same trailing-newline-stripped text that was pasted, so both
+            # sides hash identically.
+            prompt_sha="$(printf '%s' "$prompt" | sha256sum 2>/dev/null | cut -d' ' -f1)"
+            printf 'started_at=%s\nclear_context=%s\nstate=queued\nprompt_sha256=%s\n' \
+                "$STARTED_AT" "$CLEAR_CONTEXT_AFTER" "$prompt_sha" \
                 > "$PENDING_MARKER" 2>/dev/null || true
         fi
     fi

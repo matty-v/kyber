@@ -51,29 +51,49 @@ fi
 # is what keeps this feature inert rather than harmful on a runtime with no
 # Stop-hook equivalent.
 KYBER_POSTRUN_CMD="/usr/local/bin/kyber-cron-postrun"
+KYBER_TURNSTART_CMD="/usr/local/bin/kyber-cron-turn-start"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
-if [ -x "$KYBER_POSTRUN_CMD" ] && command -v jq >/dev/null 2>&1; then
-    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null; then
-        echo "[kyber] cron post-run hook already registered"
-    elif jq --arg cmd "$KYBER_POSTRUN_CMD" \
-        '.hooks //= {} | .hooks.Stop //= []
-         | .hooks.Stop += [{"hooks":[{"type":"command","command":$cmd,"timeout":20}]}]' \
+
+# register_kyber_hook <event> <command> — idempotent jq merge into the user
+# settings. Returns non-zero if the hook is not present afterwards.
+register_kyber_hook() {
+    local event="$1" cmd="$2"
+    if grep -qF "$cmd" ~/.claude/settings.json 2>/dev/null; then
+        return 0
+    fi
+    if jq --arg ev "$event" --arg cmd "$cmd" \
+        '.hooks //= {} | .hooks[$ev] //= []
+         | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd,"timeout":20}]}]' \
         ~/.claude/settings.json > ~/.claude/settings.json.tmp 2>/dev/null \
         && [ -s ~/.claude/settings.json.tmp ]; then
         mv ~/.claude/settings.json.tmp ~/.claude/settings.json
-        echo "[kyber] cron post-run hook registered"
-    else
-        # A truncated settings.json would break the runtime entirely, not just
-        # this feature — same guard as the legacy-plugin strip below.
-        rm -f ~/.claude/settings.json.tmp
-        echo "[kyber] WARNING: could not register cron post-run hook" >&2
+        return 0
     fi
-    # Only claim the capability once the hook is actually in the settings.
-    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null; then
+    # A truncated settings.json would break the runtime entirely, not just this
+    # feature — same guard as the legacy-plugin strip below.
+    rm -f ~/.claude/settings.json.tmp
+    return 1
+}
+
+if [ -x "$KYBER_POSTRUN_CMD" ] && [ -x "$KYBER_TURNSTART_CMD" ] && command -v jq >/dev/null 2>&1; then
+    register_kyber_hook Stop "$KYBER_POSTRUN_CMD" \
+        || echo "[kyber] WARNING: could not register cron post-run hook" >&2
+    register_kyber_hook UserPromptSubmit "$KYBER_TURNSTART_CMD" \
+        || echo "[kyber] WARNING: could not register cron turn-start hook" >&2
+
+    # Both or neither. The pair is the mechanism: arming without consuming
+    # leaks markers and mutes --exclusive; consuming without arming is the
+    # mis-correlation bug (clearing on an unrelated turn). Claiming the
+    # capability with only half of it registered would be worse than not
+    # claiming it at all.
+    if grep -qF "$KYBER_POSTRUN_CMD" ~/.claude/settings.json 2>/dev/null \
+        && grep -qF "$KYBER_TURNSTART_CMD" ~/.claude/settings.json 2>/dev/null; then
         mkdir -p "$(dirname "$KYBER_POSTRUN_SENTINEL")" 2>/dev/null || true
         : > "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+        echo "[kyber] cron context hooks registered"
     else
         rm -f "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+        echo "[kyber] WARNING: cron context hooks incomplete; feature disabled" >&2
     fi
 fi
 

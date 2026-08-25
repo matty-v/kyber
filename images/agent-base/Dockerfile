@@ -68,6 +68,11 @@ COPY --chmod=0755 scripts/kyber-compact-session /usr/local/bin/kyber-compact-ses
 # settings by its start script; see scripts/kyber-cron-postrun.
 COPY --chmod=0755 scripts/kyber-cron-postrun /usr/local/bin/kyber-cron-postrun
 
+# Companion UserPromptSubmit hook — arms a scheduled job's pending marker when
+# the prompt it pasted is actually submitted, so the Stop event of an unrelated
+# turn cannot consume it. See scripts/kyber-cron-turn-start.
+COPY --chmod=0755 scripts/kyber-cron-turn-start /usr/local/bin/kyber-cron-turn-start
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Agent controller overrides CMD with args: [/usr/local/bin/start-claude.sh] on
 # every claude-code pod — this placeholder is used only for bare-container dev/test.

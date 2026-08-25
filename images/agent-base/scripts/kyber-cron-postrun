@@ -3,18 +3,24 @@
 # scheduled job whose turn just ended.
 #
 # kyber-job-dispatch writes a pending marker per named job when it injects the
-# prompt (see CRON_PENDING_DIR there). This hook fires when the agent finishes a
-# turn, which is the only signal the platform has that the work a cron started
-# is done. For each marker it:
+# prompt (see CRON_PENDING_DIR there), and kyber-cron-turn-start arms that
+# marker when the prompt is actually submitted. This hook fires when the agent
+# finishes a turn. For each ARMED marker it:
 #
 #   - clears the agent's context, if that job asked for it
 #     (spec.jobs[].clearContextAfter → --clear-context-after → clear_context=true)
 #   - removes the marker, which is also what releases the --exclusive
 #     agent-busy guard for that job
 #
-# Removing the marker is unconditional and happens even when the clear fails.
-# A marker that outlives its turn is worse than a missed clear: it mutes the
-# job's schedule until the staleness TTL expires.
+# Removing the marker is unconditional for armed markers and happens even when
+# the clear fails. A marker that outlives its turn is worse than a missed clear:
+# it mutes the job's schedule until the staleness TTL expires.
+#
+# QUEUED markers are left strictly alone. A queued prompt is one the agent has
+# not run yet — it is sitting in the input queue behind whatever turn is ending
+# right now. Consuming it here would clear context before the scheduled work
+# ever happened and release --exclusive while the job was still pending, which
+# is exactly the mis-correlation the two-state marker exists to prevent.
 #
 # Why a separate directory from the kyber-cron-complete markers: that one is a
 # notify queue, and an operator-installed Stop hook (falcon-dev-common ships
@@ -60,6 +66,9 @@ main() {
     local marker job
     for marker in "${markers[@]}"; do
         [ -f "$marker" ] || continue
+        # Only this turn's work. A marker still queued belongs to a prompt that
+        # has not run; leave it for the Stop event of the turn that runs it.
+        grep -qx 'state=armed' "$marker" 2>/dev/null || continue
         job="$(basename "$marker")"
         if grep -qx 'clear_context=true' "$marker" 2>/dev/null; then
             want_clear=1
