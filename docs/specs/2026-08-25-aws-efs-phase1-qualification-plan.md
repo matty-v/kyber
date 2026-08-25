@@ -1,6 +1,6 @@
 # AWS EFS parity qualification — Phase 1 execution plan
 
-**Status:** Approved, awaiting region change review
+**Status:** Approved, in progress
 **Date:** 2026-08-25
 **Issue:** [#103](https://github.com/matty-v/kyber/issues/103)
 
@@ -53,7 +53,7 @@ strictly out of scope: the qualification must not mount, alter, or reuse it.
 
 ## Safety and cost boundaries
 
-- Region: `us-east-2`.
+- Region: `us-east-1`.
 - All created resources use a unique `kyber-efs-phase1-*` name and the tags
   `kyber.io/managed-by=phase1-qualification`, `kyber.io/issue=103`, and an
   expiry timestamp no more than eight hours after creation.
@@ -97,9 +97,11 @@ eventual installer or maintainer authentication design.
 - Terraform destroyed all five partial resources. Independent AWS queries
   found no remaining resource with the run tag or test EFS name, and confirmed
   the temporary IAM role is absent. Existing `redis-efs` was untouched.
-- Exact next action: obtain approval to move the isolated test to `us-east-1`,
-  where the account currently has no VPCs. Do not reuse an existing
-  `us-east-2` VPC or request quota until that decision is made.
+- Matt approved moving the isolated test to `us-east-1`, where the account had
+  no VPCs at inventory time. Do not reuse an existing `us-east-2` VPC or
+  request quota.
+- Exact next action: revalidate and render a new empty-state plan for
+  `us-east-1`, then execute and clean up the qualification run.
 
 ### 0. Durable plan and authorization
 

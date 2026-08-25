@@ -3,7 +3,7 @@
 This directory implements the disposable EFS-versus-gp3 test described in
 [`docs/specs/2026-08-25-aws-efs-phase1-qualification-plan.md`](../../docs/specs/2026-08-25-aws-efs-phase1-qualification-plan.md).
 
-It creates only uniquely tagged resources in a new `us-east-2` VPC: one
+It creates only uniquely tagged resources in a new `us-east-1` VPC: one
 no-ingress SSM-managed EC2 runner, one encrypted Regional EFS filesystem and
 access point, and one encrypted gp3 control volume. It does not use any
 existing VPC, EFS filesystem, or EKS cluster.

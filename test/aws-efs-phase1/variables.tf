@@ -1,11 +1,11 @@
 variable "region" {
   type        = string
   description = "AWS region for the disposable qualification."
-  default     = "us-east-2"
+  default     = "us-east-1"
 
   validation {
-    condition     = var.region == "us-east-2"
-    error_message = "Phase 1 is approved only for us-east-2."
+    condition     = var.region == "us-east-1"
+    error_message = "Phase 1 is approved only for us-east-1."
   }
 }
 
@@ -43,4 +43,3 @@ variable "instance_type" {
     error_message = "Only t3.medium and t3.large are approved for Phase 1."
   }
 }
-
