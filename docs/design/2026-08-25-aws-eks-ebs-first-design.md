@@ -134,6 +134,45 @@ If the operator omits a zone during Machine creation, Kyber selects one from
 the configured list using a stable least-Machine-count rule. This balances new
 Machines but does not move an existing Machine or volume after creation.
 
+### Provider-neutral operator contract
+
+Bounded fallback does not introduce an AWS-specific Machine form, lifecycle
+action, or primary status. Operators continue to choose the existing portable
+availability class:
+
+- `reliable`: prioritize continuity and stable pricing;
+- `costOptimized`: prefer interruptible capacity and permit a provider-managed
+  reliable fallback when the installation policy enables it.
+
+The provider-neutral Machine status distinguishes requested intent from the
+current realization:
+
+- `requestedAvailabilityClass`
+- `effectiveAvailabilityClass`
+- `fallbackReason`
+- `fallbackSince`
+
+Normally requested and effective classes match. During fallback, every cloud
+uses the same operator language: “Cost-optimized capacity is unavailable;
+running temporarily on reliable capacity.” The Machine remains Available after
+the replacement attaches; while replacement is underway it uses the existing
+Recovering/Interrupted states. Provider-native terms such as Spot, On-Demand,
+managed node group, Availability Set, or pool ARN stay in provider detail and
+diagnostic logs.
+
+The optional operator action is likewise portable: `Retry cost-optimized
+capacity`. It is not required for recovery and does not run automatically
+against an active Agent. Providers that cannot supply reliable fallback report
+that through capabilities and installer preflight; they do not render a
+different Machine workflow.
+
+Fallback timeout and permission to incur reliable-capacity cost are
+installation policy, not per-Machine AWS settings. The installer presents the
+same policy for every managed cloud provider. The first EKS implementation
+realizes it with paired node groups; GKE may later realize the same contract
+with replacement capacity. Until then, GKE reports fallback unsupported rather
+than pretending its current two-zone Spot retry is bounded.
+
 ### Storage
 
 The same-disk invariant is non-negotiable: node interruption, Spot fallback,
@@ -243,7 +282,8 @@ The proposed recovery state machine is:
 4. The On-Demand node joins with the same Machine label; the Pod schedules and
    EBS CSI attaches the same Agent volume.
 5. Kyber does not automatically churn a running Agent back to Spot. It returns
-   to Spot at the next explicit suspend/resume or operator-requested rebalance.
+   to Spot at the next explicit suspend/resume or provider-neutral
+   `Retry cost-optimized capacity` action.
 
 On-Demand capacity and EBS detach/attach are also not absolute latency
 guarantees. Production acceptance therefore requires a measured recovery SLO,
@@ -402,6 +442,9 @@ and sees every AWS-specific behavior before approving the plan.
 ## Acceptance criteria
 
 - The Kyber UI/API remains provider-neutral and exposes no raw node-group ARN.
+- Machine create/detail uses the same reliable/cost-optimized language across
+  providers and exposes requested versus effective availability class without
+  AWS resource terminology.
 - No long-lived AWS credential is created or stored by Kyber.
 - Every managed mutation is cluster-scoped and ownership-tag gated.
 - Agent root seed, second boot, Git, credentials, tmux, cron, transcripts, and
