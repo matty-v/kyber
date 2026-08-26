@@ -563,6 +563,24 @@ snapshot policy and restore remain operator-owned disaster-recovery procedure,
 not Kyber fallback behavior; documentation must clearly distinguish a restored
 new volume from same-volume in-zone recovery.
 
+### Live qualification record
+
+The approved account-backed run `issue103-20260826T164549Z` targets AWS account
+`914373874199`, `us-east-1`, zones `us-east-1a` and `us-east-1b`, with the
+platform node fixed to `us-east-1a`. The EKS public API is bounded to the
+installer's reviewed `/32`; the private endpoint is also enabled. The saved
+plan SHA-256 was
+`7c64f9a80650b83395de718b79ab880a32b4d851bdde38fe08524b4c1132ab37` and
+contained 28 creates, zero changes, and zero deletes.
+
+Matt approved that exact saved plan. Terraform applied it without deviation:
+28 resources added, zero changed, zero destroyed. EKS 1.36 became active, the
+single `m7i.large` On-Demand platform node joined in `us-east-1a`, and all five
+managed add-ons plus both Pod Identity associations became healthy. The live
+Kyber behavior samples and mandatory destroy/audit evidence follow in the final
+qualification checkpoint; until then the run remains active and its Terraform
+state must be retained.
+
 ### Evidence
 
 - timestamps for every provider, node, Pod, VolumeAttachment, and Agent phase;
