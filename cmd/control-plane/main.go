@@ -748,6 +748,7 @@ func main() {
 	eksProfiles := os.Getenv("KYBER_EKS_PROFILES")
 	eksAllowedZones := os.Getenv("KYBER_EKS_ALLOWED_ZONES")
 	eksNodeRoleARN := os.Getenv("KYBER_EKS_NODE_ROLE_ARN")
+	eksSubnetsByZone := os.Getenv("KYBER_EKS_SUBNETS_BY_ZONE")
 	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
 		adapters.GCEConfigProject:       gceProject,
@@ -761,7 +762,8 @@ func main() {
 		adapters.GKEConfigNodeLocations: gkeNodeLocations,
 		adapters.EKSConfigRegion:        eksRegion, adapters.EKSConfigCluster: eksCluster,
 		adapters.EKSConfigProfiles: eksProfiles, adapters.EKSConfigAllowedZones: eksAllowedZones,
-		adapters.EKSConfigNodeRoleARN: eksNodeRoleARN,
+		adapters.EKSConfigNodeRoleARN:   eksNodeRoleARN,
+		adapters.EKSConfigSubnetsByZone: eksSubnetsByZone,
 	})
 	cancel()
 	if err != nil {

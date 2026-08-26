@@ -424,6 +424,8 @@ spec:
               value: {{ required "compute.eks.nodeRoleArn is required when compute.provider=eks" .Values.compute.eks.nodeRoleArn | quote }}
             - name: KYBER_EKS_ALLOWED_ZONES
               value: {{ required "compute.eks.allowedZones is required when compute.provider=eks" .Values.compute.eks.allowedZones | toJson | quote }}
+            - name: KYBER_EKS_SUBNETS_BY_ZONE
+              value: {{ required "compute.eks.subnetsByZone is required when compute.provider=eks" .Values.compute.eks.subnetsByZone | toJson | quote }}
             - name: KYBER_EKS_PROFILES
               value: {{ required "compute.eks.profiles is required when compute.provider=eks" .Values.compute.eks.profiles | toJson | quote }}
             {{- end }}

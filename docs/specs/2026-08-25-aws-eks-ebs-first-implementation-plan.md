@@ -388,6 +388,17 @@ renders plus negative validation cases pass with verified Helm v4.0.0.
 
 Gate: reliable EKS behavior converges entirely against fake clients.
 
+### Build checkpoint — 2026-08-26
+
+The reliable EKS base is implemented behind the narrow AWS SDK client:
+fail-closed region/cluster/role/profile/AZ/subnet configuration, default
+credential chain only, opaque cluster-scoped refs, deterministic On-Demand
+create, scale one/zero, observation, and ownership-gated delete. Existing
+groups must have Kyber Machine labels/tags, exactly the configured zone subnet,
+and reliable capacity type before any mutation. Fake-client lifecycle and
+ownership-refusal tests plus the full adapter suite and EKS Helm render pass.
+Phase 4 is complete; paired Spot fallback is next.
+
 ## Phase 5 — EKS paired Spot fallback
 
 ### Native realization

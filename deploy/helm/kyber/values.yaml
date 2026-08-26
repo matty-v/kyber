@@ -747,6 +747,7 @@ compute:
     cluster: ""
     nodeRoleArn: ""
     allowedZones: []
+    subnetsByZone: {}
     profiles: []
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.
