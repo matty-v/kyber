@@ -308,11 +308,6 @@ data "aws_iam_policy_document" "kyber_control_plane" {
       variable = "ec2:LaunchTemplate"
       values   = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:launch-template/${aws_launch_template.machine.id}"]
     }
-    condition {
-      test     = "Bool"
-      variable = "ec2:IsLaunchTemplateResource"
-      values   = ["true"]
-    }
   }
 }
 
