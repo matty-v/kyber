@@ -371,6 +371,17 @@ func TestGKEFallbackOptInPreservesLegacySinglePool(t *testing.T) {
 	}
 }
 
+func TestGKEManagedDeletionRequiresAuthoritativeNodeAbsence(t *testing.T) {
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable"}}
+	pool := &container.NodePool{Status: "RUNNING", InitialNodeCount: 0, Config: &container.NodeConfig{Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}}}
+	client := &fakeGKENodePoolsClient{pool: pool}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, profiles: map[string]GKEProfile{"standard": profile}}
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{Availability: DesiredDeleted, Profile: "standard", Managed: true}, provider.providerRef("agents"))
+	if err != nil || got.State != CapacityRecovering || client.deletes != 0 {
+		t.Fatalf("unobserved deletion = %+v err=%v deletes=%d", got, err, client.deletes)
+	}
+}
+
 func TestParseGKEProfiles(t *testing.T) {
 	profiles, err := ParseGKEProfiles(`[{"id":"standard","displayName":"Standard","cpu":"4","memory":"16Gi","availabilityClasses":["reliable","costOptimized"],"machineType":"e2-standard-4","diskSizeGb":200,"diskType":"pd-balanced","imageType":"UBUNTU_CONTAINERD"}]`)
 	if err != nil {

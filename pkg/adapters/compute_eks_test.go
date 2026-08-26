@@ -204,6 +204,16 @@ func TestEKSRefusesMutationWithoutOwnership(t *testing.T) {
 	}
 }
 
+func TestEKSDeletionRequiresAuthoritativeNodeAbsence(t *testing.T) {
+	a, _ := parseEKSConfig(validEKSConfig())
+	client := &fakeEKSClient{nodegroup: pairGroup("worker", "subnet-a", ekstypes.CapacityTypesOnDemand, 0)}
+	a.client = client
+	got, err := a.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, DesiredMachine{Availability: DesiredDeleted, Profile: "small", Location: "us-east-1a"}, a.providerRef("kyber-worker"))
+	if err != nil || got.State != CapacityRecovering || client.deleted {
+		t.Fatalf("unobserved deletion = %+v err=%v deleted=%v", got, err, client.deleted)
+	}
+}
+
 func TestEKSCostOptimizedFallbackAndRetry(t *testing.T) {
 	ctx := context.Background()
 	a, _ := parseEKSConfig(validEKSConfig())

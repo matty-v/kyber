@@ -300,6 +300,19 @@ func (g *GKEAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 	if desired.Managed {
 		switch desired.Availability {
 		case DesiredDeleted:
+			if !desired.AttachmentObserved {
+				return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+			}
+			if desired.AttachedNodes > 0 {
+				if g.regional() && autoscalingEnabled(nodePool.Autoscaling) {
+					if _, err := g.client.SetAutoscaling(ctx, g.resourceName(pool), &container.NodePoolAutoscaling{Enabled: false}); err != nil && !isGKEConflict(err) {
+						return CapacityObservation{}, fmt.Errorf("disabling GKE node pool autoscaling %s for deletion: %w", pool, err)
+					}
+				} else if _, err := g.client.SetSize(ctx, g.resourceName(pool), 0); err != nil && !isGKEConflict(err) {
+					return CapacityObservation{}, fmt.Errorf("resizing GKE node pool %s to zero for deletion: %w", pool, err)
+				}
+				return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: g.Location, NodeSelector: selector}, nil
+			}
 			if nodePool.Status != "STOPPING" {
 				if _, err := g.client.Delete(ctx, g.resourceName(pool)); err != nil && !isGKENotFound(err) && !isGKEConflict(err) {
 					return CapacityObservation{}, fmt.Errorf("deleting GKE node pool %s: %w", pool, err)
@@ -612,15 +625,31 @@ func (g *GKEAdapter) failedPairObservation(ref ProviderRef, selector map[string]
 }
 
 func (g *GKEAdapter) deletePair(ctx context.Context, identity MachineIdentity, desired DesiredMachine, ref ProviderRef, selector map[string]string, spotName, reliableName string, spot, reliable *container.NodePool) (CapacityObservation, error) {
+	if !desired.AttachmentObserved {
+		return g.gkePairObservation(ref, selector, desired, CapacityRecovering, ReasonStopping, desired.EffectiveAvailabilityClass), nil
+	}
+	if desired.AttachedNodes > 0 {
+		name, pool := spotName, spot
+		if desired.EffectiveAvailabilityClass == "reliable" {
+			name, pool = reliableName, reliable
+		}
+		if pool == nil && reliable != nil {
+			name, pool = reliableName, reliable
+		}
+		if pool == nil && spot != nil {
+			name, pool = spotName, spot
+		}
+		if pool != nil {
+			return g.mutatePairSize(ctx, name, pool, false, ref, selector, desired, desired.EffectiveAvailabilityClass)
+		}
+		return g.gkePairObservation(ref, selector, desired, CapacityRecovering, ReasonStopping, desired.EffectiveAvailabilityClass), nil
+	}
 	for i, pool := range []*container.NodePool{spot, reliable} {
 		if pool == nil {
 			continue
 		}
 		if err := g.validatePairPool(pool, identity.Name, i == 0); err != nil {
 			return g.failedPairObservation(ref, selector, desired, err), nil
-		}
-		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
-			return g.gkePairObservation(ref, selector, desired, CapacityRecovering, ReasonStopping, desired.EffectiveAvailabilityClass), nil
 		}
 		name := []string{spotName, reliableName}[i]
 		if _, err := g.client.Delete(ctx, g.resourceName(name)); err != nil && !isGKENotFound(err) && !isGKEConflict(err) {

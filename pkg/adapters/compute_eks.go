@@ -237,6 +237,16 @@ func (e *EKSAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 		return CapacityObservation{State: CapacityFailed, Reason: ReasonProviderError, Message: err.Error(), ProviderRef: stableRef, Location: desired.Location, NodeSelector: selector}, nil
 	}
 	if desired.Availability == DesiredDeleted {
+		if ng.ScalingConfig == nil || ng.ScalingConfig.DesiredSize == nil || *ng.ScalingConfig.DesiredSize != 0 {
+			_, err := e.client.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(group), ScalingConfig: &ekstypes.NodegroupScalingConfig{MinSize: aws.Int32(0), MaxSize: aws.Int32(1), DesiredSize: aws.Int32(0)}, ClientRequestToken: aws.String(fmt.Sprintf("size-%s-0", group))})
+			if err != nil && !isEKSConflict(err) {
+				return CapacityObservation{}, fmt.Errorf("scaling EKS node group down for deletion: %w", err)
+			}
+			return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: desired.Location, NodeSelector: selector}, nil
+		}
+		if !desired.AttachmentObserved || desired.AttachedNodes > 0 {
+			return CapacityObservation{State: CapacityRecovering, Reason: ReasonStopping, ProviderRef: stableRef, Location: desired.Location, NodeSelector: selector}, nil
+		}
 		if _, err := e.client.DeleteNodegroup(ctx, &eks.DeleteNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(group)}); err != nil && !isEKSNotFound(err) && !isEKSConflict(err) {
 			return CapacityObservation{}, fmt.Errorf("deleting EKS node group: %w", err)
 		}
@@ -535,7 +545,7 @@ func (e *EKSAdapter) deletePair(ctx context.Context, id MachineIdentity, d Desir
 		if groupSize(g) != 0 {
 			return e.resizePair(ctx, names[i], 0, ref, sel, d, "")
 		}
-		if d.AttachmentObserved && d.AttachedNodes > 0 {
+		if !d.AttachmentObserved || d.AttachedNodes > 0 {
 			return pairObservation(ref, sel, d, CapacityRecovering, ReasonStopping, ""), nil
 		}
 		if _, err := e.client.DeleteNodegroup(ctx, &eks.DeleteNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(names[i])}); err != nil && !isEKSNotFound(err) && !isEKSConflict(err) {
