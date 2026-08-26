@@ -297,6 +297,17 @@ GKE's larger Spot capacity pool reduces risk but does not guarantee capacity.
 AWS work may continue when existing GKE behavior is demonstrably unchanged and
 the shared contract does not block the reviewed future GKE path.
 
+### Build checkpoint — 2026-08-26
+
+The focused transition design is recorded in
+[`2026-08-26-gke-cost-optimized-fallback-spike.md`](../design/2026-08-26-gke-cost-optimized-fallback-spike.md).
+It confirms paired Spot/standard pools are required, regional PD mobility is
+limited to its two replica zones, and zonal PD fallback remains same-zone.
+The shared status/action contract supports this future path without provider-
+specific UX. GKE continues to advertise fallback as `Unsupported`; no GKE
+runtime behavior changed. Phase 2 is complete and AWS implementation may
+proceed.
+
 ## Phase 3 — EBS Helm contract
 
 ### Values and templates
