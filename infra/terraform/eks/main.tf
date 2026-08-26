@@ -269,7 +269,18 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     resources = [
       aws_iam_role.cluster.arn,
       aws_iam_role.node.arn,
+      "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup",
     ]
+  }
+  statement {
+    sid       = "CreateEKSNodegroupServiceRole"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/aws-service-role/eks-nodegroup.amazonaws.com/AWSServiceRoleForAmazonEKSNodegroup"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["eks-nodegroup.amazonaws.com"]
+    }
   }
   statement {
     sid = "ReadEKSManagedPolicies"
