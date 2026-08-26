@@ -472,7 +472,14 @@ func (g *GKEAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 		}
 		if g.clockNow().Sub(desired.CostOptimizedRetrySince) >= g.threshold() {
 			if effective == "costOptimized" {
-				return g.mutatePairSize(ctx, spotName, spot, false, stable, selector, desired, "reliable")
+				// Preserve the effective class until the Spot Node is
+				// authoritatively detached. Both paired pools share the Machine
+				// selector, so changing this to reliable while a Spot Node still
+				// exists could make that Node look like completed rollback.
+				if !desired.AttachmentObserved || desired.AttachedNodes > 0 {
+					return g.mutatePairSize(ctx, spotName, spot, false, stable, selector, desired, "costOptimized")
+				}
+				return g.mutatePairSize(ctx, reliableName, reliable, true, stable, selector, desired, "reliable")
 			}
 			if desired.AttachmentObserved && desired.AttachedNodes > 0 {
 				o := g.gkePairObservation(stable, selector, desired, CapacityAvailable, ReasonReady, "reliable")

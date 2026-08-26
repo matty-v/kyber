@@ -320,17 +320,26 @@ func TestGKECostOptimizedRetryTimeoutRestoresReliable(t *testing.T) {
 	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, reliableFallback: true, now: func() time.Time { return now }, fallbackThreshold: 5 * time.Minute, profiles: map[string]GKEProfile{"standard": profile}}
 	client.pools["agents-spot"] = provider.managedPairPool("agents-spot", "agents", profile, true, true)
 	client.pools["agents-reliable"] = provider.managedPairPool("agents-reliable", "agents", profile, false, false)
-	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, EffectiveAvailabilityClass: "costOptimized", FallbackSince: now.Add(-time.Hour), CostOptimizedUnavailableSince: now.Add(-time.Hour), CostOptimizedRetryRequest: "retry-1", CostOptimizedRetrySince: now.Add(-5 * time.Minute)}
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, EffectiveAvailabilityClass: "costOptimized", FallbackSince: now.Add(-time.Hour), CostOptimizedUnavailableSince: now.Add(-time.Hour), CostOptimizedRetryRequest: "retry-1", CostOptimizedRetrySince: now.Add(-5 * time.Minute)}
 	ref := provider.providerRef("agents")
 	removed, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
-	if client.sizes[len(client.sizes)-1] != 0 || removed.EffectiveAvailabilityClass != "reliable" {
+	if client.sizes[len(client.sizes)-1] != 0 || removed.EffectiveAvailabilityClass != "costOptimized" || removed.CostOptimizedRetryObserved != "" {
 		t.Fatalf("rollback remove Spot = %+v sizes=%v", removed, client.sizes)
 	}
-	d.EffectiveAvailabilityClass = "reliable"
+	// The shared Machine selector still observes the draining Spot Node. It
+	// must not be interpreted as a Ready reliable Node or acknowledge rollback.
+	d.EffectiveAvailabilityClass = removed.EffectiveAvailabilityClass
+	stillDraining, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
+	if stillDraining.State == CapacityAvailable || stillDraining.CostOptimizedRetryObserved != "" || client.sizes[len(client.sizes)-1] != 0 {
+		t.Fatalf("rollback draining Spot = %+v sizes=%v", stillDraining, client.sizes)
+	}
+	d.AttachedNodes = 0
+	d.EffectiveAvailabilityClass = stillDraining.EffectiveAvailabilityClass
 	restored, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
-	if client.sizes[len(client.sizes)-1] != 1 || restored.EffectiveAvailabilityClass != "reliable" {
+	if client.sizes[len(client.sizes)-1] != 1 || restored.EffectiveAvailabilityClass != "reliable" || restored.CostOptimizedRetryObserved != "" {
 		t.Fatalf("rollback restore reliable = %+v sizes=%v", restored, client.sizes)
 	}
+	d.EffectiveAvailabilityClass = "reliable"
 	d.AttachedNodes = 1
 	ready, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
 	if ready.State != CapacityAvailable || ready.CostOptimizedRetryObserved != "retry-1" || !ready.CostOptimizedRetrySince.IsZero() {

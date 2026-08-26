@@ -56,7 +56,7 @@ export function MachineRecoveryBanner({ machine, reliableFallbackMode, retrying,
             {reliableFallback
               ? retryInProgress
                 ? 'Kyber is briefly transitioning this Machine back toward cost-optimized capacity while preserving its exact Agent disk. If capacity is unavailable, it will return to reliable capacity.'
-                : 'Cost-optimized capacity exceeded the five-minute availability threshold. Kyber preserved the exact Agent disk and switched this Machine to reliable-rate capacity in the same zone.'
+                : 'Cost-optimized capacity exceeded the configured availability threshold. Kyber preserved the exact Agent disk and switched this Machine to reliable-rate capacity within its eligible storage topology.'
               : replacing && interruptible
               ? 'The provider reclaimed this cost-optimized node. Kyber is waiting for replacement capacity and will resume its agents automatically.'
               : replacing

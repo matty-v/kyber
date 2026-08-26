@@ -50,7 +50,8 @@ use paired pools.
    both native pool names private to the adapter.
 
 This matches the EKS operator experience: requested/effective availability,
-five-minute automatic fallback, explicit cost visibility, and manual retry.
+a configurable automatic-fallback threshold (five minutes by default),
+explicit cost visibility, and manual retry.
 Provider and topology details remain installer documentation, not separate
 Machine actions.
 

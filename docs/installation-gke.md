@@ -67,10 +67,11 @@ choices remain installer-owned.
 ### Regional versus zonal and fallback
 
 Set `compute.gke.reliableFallbackEnabled: true` to enable the provider-neutral
-five-minute Spot-to-standard fallback and manual retry workflow for new managed
-Machines. It is off by default so an upgrade cannot silently change existing
-capacity. Even after enabling it, Kyber detects a legacy single pool and keeps
-that Machine on its original lifecycle.
+Spot-to-standard fallback and manual retry workflow for new managed Machines.
+The default threshold is five minutes and can be changed with
+`compute.fallbackThreshold`. It is off by default so an upgrade cannot silently
+change existing capacity. Even after enabling it, Kyber detects a legacy single
+pool and keeps that Machine on its original lifecycle.
 
 A zonal cluster keeps both pools and its PD in one zone. A whole-zone outage
 parks the Machine until that zone recovers. A regional cluster should configure
