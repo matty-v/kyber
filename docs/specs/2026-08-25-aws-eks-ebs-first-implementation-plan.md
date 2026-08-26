@@ -554,7 +554,9 @@ to close the issue promptly. The required live gate therefore runs one
 deterministic sample each for reliable lifecycle, fallback, successful retry,
 and failed-retry rollback, plus the volume-identity and no-dual-node assertions.
 It uses a reviewed short test threshold rather than waiting for natural Spot
-denial. Individual timings are reported and **no p95 claim is made**. The
+denial. To honor the later request to close promptly, failed-retry rollback
+remains covered by deterministic adapter/controller tests rather than a second
+live capacity cycle. Individual timings are reported and **no p95 claim is made**. The
 original 20-sample distribution remains a post-merge reliability
 qualification if a measured p95 claim is later desired.
 
@@ -577,9 +579,38 @@ Matt approved that exact saved plan. Terraform applied it without deviation:
 28 resources added, zero changed, zero destroyed. EKS 1.36 became active, the
 single `m7i.large` On-Demand platform node joined in `us-east-1a`, and all five
 managed add-ons plus both Pod Identity associations became healthy. The live
-Kyber behavior samples and mandatory destroy/audit evidence follow in the final
-qualification checkpoint; until then the run remains active and its Terraform
-state must be retained.
+Kyber behavior samples and mandatory destroy/audit evidence are recorded below.
+
+Final qualification checkpoint (2026-08-26):
+
+- A reliable managed Machine reached `Ready`, stopped to node-group size zero,
+  returned to `Stopped`, then started and returned to `Ready` at size one.
+- A cost-optimized Machine ran on EKS Spot, switched to the paired On-Demand
+  group after deterministic Spot removal, and returned to Spot through the
+  operator retry action. The paired groups never had desired size one at the
+  same time.
+- Agent `issue103-agent` returned to `Running` after both capacity changes.
+  Its root PVC retained PV `pvc-e49fb59f-7e9d-4a19-aeff-05a7b307e760` and EBS
+  volume `vol-00d95f82ec127c356` in `us-east-1a` across Spot -> On-Demand ->
+  Spot. The offsets PVC also bound explicitly to `kyber-ebs`.
+- The run exposed two integration gaps that were fixed before completion: the
+  EKS preset did not assign the transcript-offsets claim to EBS, and accepted
+  manual cost retries were not driven from stable Machine phases.
+- Production fallback/retry timeout remains the approved five minutes. The
+  short threshold was used only to enter fallback without waiting for natural
+  Spot denial; the successful manual retry used five minutes because EKS
+  managed-node draining itself can exceed a 30-second qualification timeout.
+- Agent deletion removed both PVCs/PVs and EBS volume
+  `vol-00d95f82ec127c356`. Both Machines and all three dynamic node groups were
+  deleted before the Helm release and namespace.
+- Terraform destroyed all 30 resources present in final state. Independent
+  native-service queries found zero EKS clusters, active EC2 instances, VPCs,
+  subnets, volumes, snapshots, ENIs, launch templates, security groups, IAM
+  roles/policies, load balancers/target groups, or Terraform state resources.
+  The EKS-created zero-byte CloudWatch log group was deleted explicitly and a
+  follow-up query returned zero. The Resource Groups Tagging API still listed
+  eight terminated EC2 instance ARNs, which is documented deletion-history
+  lag; EC2's active-state query returned zero.
 
 ### Evidence
 
