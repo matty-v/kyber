@@ -327,6 +327,16 @@ data "aws_iam_policy_document" "kyber_managed_node_launch" {
     actions   = ["ec2:RunInstances"]
     resources = ["*"]
   }
+  statement {
+    sid       = "TagManagedNodesAtLaunch"
+    actions   = ["ec2:CreateTags"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "ec2:CreateAction"
+      values   = ["RunInstances"]
+    }
+  }
 }
 
 resource "aws_iam_policy" "kyber_managed_node_launch" {
