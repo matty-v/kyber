@@ -226,16 +226,19 @@ func TestEKSCostOptimizedFallbackAndRetry(t *testing.T) {
 	c.groups[base+"-reliable"] = pairGroup(id.Name, "subnet-a", ekstypes.CapacityTypesOnDemand, 0)
 	d.CostOptimizedUnavailableSince = now.Add(-5 * time.Minute)
 	d.AttachedNodes = 0
-	a.Reconcile(ctx, id, d, first.ProviderRef)
+	fallbackStarted, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
 	if groupSize(c.groups[base+"-spot"]) != 0 {
 		t.Fatal("spot not scaled to zero")
 	}
+	if fallbackStarted.FallbackSince.IsZero() {
+		t.Fatal("fallback start was not persisted with Spot scale-down")
+	}
+	d.FallbackSince = fallbackStarted.FallbackSince
 	fallback, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
 	if groupSize(c.groups[base+"-reliable"]) != 1 || fallback.EffectiveAvailabilityClass != "reliable" {
 		t.Fatalf("fallback = %+v", fallback)
 	}
 	d.AttachedNodes = 1
-	d.FallbackSince = now
 	ready, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
 	if ready.State != CapacityAvailable || ready.ProviderRef != first.ProviderRef {
 		t.Fatalf("ready fallback = %+v", ready)
@@ -262,6 +265,31 @@ func TestEKSCostOptimizedFallbackAndRetry(t *testing.T) {
 	}
 	if !retried.CostOptimizedRetrySince.IsZero() || !retried.FallbackSince.IsZero() || !retried.CostOptimizedUnavailableSince.IsZero() {
 		t.Fatalf("successful retry retained stale fallback state: %+v", retried)
+	}
+}
+
+func TestEKSLateSpotNodeCannotResetFallbackOrStartDualCapacity(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	a, _ := parseEKSConfig(validEKSConfig())
+	a.now = func() time.Time { return now }
+	base := eksNodeGroupName("spot-worker")
+	c := &fakeEKSClient{groups: map[string]*ekstypes.Nodegroup{
+		base + "-spot":     pairGroup("spot-worker", "subnet-a", ekstypes.CapacityTypesSpot, 0),
+		base + "-reliable": pairGroup("spot-worker", "subnet-a", ekstypes.CapacityTypesOnDemand, 0),
+	}}
+	a.client = c
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "small", Location: "us-east-1a", Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, CostOptimizedUnavailableSince: now.Add(-5 * time.Minute), FallbackSince: now}
+	waiting, err := a.Reconcile(context.Background(), MachineIdentity{Name: "spot-worker"}, d, a.providerRef(base))
+	if err != nil || waiting.State != CapacityRecovering || waiting.EffectiveAvailabilityClass != "costOptimized" || waiting.FallbackSince != now {
+		t.Fatalf("late-node observation = %+v err=%v", waiting, err)
+	}
+	if groupSize(c.groups[base+"-reliable"]) != 0 {
+		t.Fatal("reliable capacity started while a late Spot Node was attached")
+	}
+	d.AttachedNodes = 0
+	_, _ = a.Reconcile(context.Background(), MachineIdentity{Name: "spot-worker"}, d, a.providerRef(base))
+	if groupSize(c.groups[base+"-reliable"]) != 1 || groupSize(c.groups[base+"-spot"]) != 0 {
+		t.Fatal("reliable capacity did not start in isolation after detach")
 	}
 }
 

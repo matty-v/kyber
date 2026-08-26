@@ -376,13 +376,26 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 	// A live reliable group means fallback is active.
 	if groupSize(reliable) == 1 {
 		o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
-		o.FallbackSince = desired.FallbackSince
+		if o.FallbackSince.IsZero() {
+			o.FallbackSince = e.now()
+		}
 		o.CostOptimizedUnavailableSince = desired.CostOptimizedUnavailableSince
 		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 && reliable.Status == ekstypes.NodegroupStatusActive {
 			o.State, o.Reason = CapacityAvailable, ReasonReady
 		}
 		return o, nil
+	}
+	// Once fallback drain has started, a late Spot Node must be allowed to
+	// detach; it must not reset the timer or be reported Ready. Reliable is
+	// requested only after authoritative attachment count reaches zero.
+	if !desired.FallbackSince.IsZero() {
+		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
+			o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
+			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			return o, nil
+		}
+		return e.resizePair(ctx, reliableName, 1, stable, selector, desired, "reliable")
 	}
 	if desired.AttachmentObserved && desired.AttachedNodes > 0 && spot.Status == ekstypes.NodegroupStatusActive {
 		o := pairObservation(stable, selector, desired, CapacityAvailable, ReasonReady, "costOptimized")
@@ -402,7 +415,13 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 		return o, nil
 	}
 	if groupSize(spot) != 0 {
-		return e.resizePair(ctx, spotName, 0, stable, selector, desired, "costOptimized")
+		o, err := e.resizePair(ctx, spotName, 0, stable, selector, desired, "costOptimized")
+		if err == nil {
+			o.CostOptimizedUnavailableSince = unavailable
+			o.FallbackSince = e.now()
+			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		}
+		return o, err
 	}
 	if desired.AttachmentObserved && desired.AttachedNodes > 0 {
 		o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
