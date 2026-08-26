@@ -1,4 +1,7 @@
 locals {
+  # IAM appends a unique suffix to name_prefix and therefore limits it to 38
+  # characters. Keep role names valid even when the EKS cluster name is long.
+  iam_name_stem = substr(var.cluster_name, 0, 20)
   tags = {
     "kyber.io/managed-by" = "terraform", "kyber.io/owner" = var.owner, "kyber.io/run-id" = var.run_id, "kyber.io/issue" = "103", "kyber.io/expires-at" = var.expires_at
   }
@@ -45,7 +48,7 @@ data "aws_iam_policy_document" "cluster_assume" {
   }
 }
 resource "aws_iam_role" "cluster" {
-  name_prefix        = "${var.cluster_name}-cluster-"
+  name_prefix        = "${local.iam_name_stem}-cluster-"
   assume_role_policy = data.aws_iam_policy_document.cluster_assume.json
 }
 resource "aws_iam_role_policy_attachment" "cluster" {
@@ -80,7 +83,7 @@ data "aws_iam_policy_document" "node_assume" {
   }
 }
 resource "aws_iam_role" "node" {
-  name_prefix        = "${var.cluster_name}-node-"
+  name_prefix        = "${local.iam_name_stem}-node-"
   assume_role_policy = data.aws_iam_policy_document.node_assume.json
 }
 resource "aws_iam_role_policy_attachment" "node_worker" {
@@ -186,7 +189,7 @@ data "aws_iam_policy_document" "pod_assume" {
   }
 }
 resource "aws_iam_role" "ebs_csi" {
-  name_prefix        = "${var.cluster_name}-ebs-csi-"
+  name_prefix        = "${local.iam_name_stem}-ebs-csi-"
   assume_role_policy = data.aws_iam_policy_document.pod_assume.json
 }
 resource "aws_iam_role_policy_attachment" "ebs_csi" {
@@ -207,7 +210,7 @@ resource "aws_eks_pod_identity_association" "ebs_csi" {
 }
 
 resource "aws_iam_role" "kyber_control_plane" {
-  name_prefix        = "${var.cluster_name}-kyber-control-plane-"
+  name_prefix        = "${local.iam_name_stem}-kyber-cp-"
   assume_role_policy = data.aws_iam_policy_document.pod_assume.json
 }
 
