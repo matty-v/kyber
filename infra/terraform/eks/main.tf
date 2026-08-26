@@ -259,9 +259,12 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     }
   }
   statement {
-    sid       = "ReadMachineNodeRole"
-    actions   = ["iam:GetRole"]
-    resources = [aws_iam_role.node.arn]
+    sid     = "ReadEKSServiceRoles"
+    actions = ["iam:GetRole"]
+    resources = [
+      aws_iam_role.cluster.arn,
+      aws_iam_role.node.arn,
+    ]
   }
   statement {
     sid       = "ReadApprovedLaunchTemplate"
