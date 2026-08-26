@@ -351,3 +351,19 @@ func TestEKSCostOptimizedRetryRollsBackWithoutDualCapacity(t *testing.T) {
 		t.Fatalf("rollback = %+v", rolledBack)
 	}
 }
+
+func TestEKSNodeGroupNameKeepsLongMachineNamesDistinct(t *testing.T) {
+	left := eksNodeGroupName("machine-with-a-very-long-shared-prefix-that-only-differs-at-the-end-left")
+	right := eksNodeGroupName("machine-with-a-very-long-shared-prefix-that-only-differs-at-the-end-right")
+	if left == right {
+		t.Fatalf("long machine names collided: %q", left)
+	}
+	for _, name := range []string{left, right} {
+		if len(name) != 54 {
+			t.Fatalf("node group name %q has length %d, want 54", name, len(name))
+		}
+		if !strings.HasPrefix(name, "kyber-") {
+			t.Fatalf("node group name %q lost its ownership prefix", name)
+		}
+	}
+}

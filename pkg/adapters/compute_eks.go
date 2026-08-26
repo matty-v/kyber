@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -562,7 +563,8 @@ func (e *EKSAdapter) deletePair(ctx context.Context, id MachineIdentity, d Desir
 func eksNodeGroupName(machine string) string {
 	name := "kyber-" + strings.ToLower(machine)
 	if len(name) > 54 {
-		name = name[:54]
+		digest := sha256.Sum256([]byte(name))
+		name = fmt.Sprintf("%s-%x", name[:45], digest[:4])
 	}
 	return name
 }
