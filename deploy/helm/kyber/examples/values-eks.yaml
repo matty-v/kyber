@@ -1,4 +1,20 @@
 # Overlay release-pinned image tags and secrets separately.
+controlPlane:
+  nodeSelector:
+    kyber.io/role: platform
+
+postgresql:
+  persistence:
+    storageClassName: kyber-ebs
+  nodeSelector:
+    kyber.io/role: platform
+
+redis:
+  persistence:
+    storageClassName: kyber-ebs
+  nodeSelector:
+    kyber.io/role: platform
+
 compute:
   provider: eks
   eks:

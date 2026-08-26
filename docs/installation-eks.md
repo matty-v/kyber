@@ -88,6 +88,12 @@ binds each new PVC in the selected Machine's zone. Kyber never deletes or
 recreates a PVC during fallback, so the same volume is reattached to the
 replacement node.
 
+The supplied EKS values preset also pins the control plane, Postgres, and Redis
+to the dedicated `kyber.io/role=platform` node and explicitly puts the two
+stateful platform PVCs on `kyber-ebs`. This overrides the standalone chart's
+k3s control-plane selector and avoids accidentally scheduling platform state on
+a disposable Machine node.
+
 When a profile supplies `launchTemplateId`, EKS requires the worker root-disk
 mapping to live in that launch template. Keep the profile's displayed
 `diskSizeGb` aligned with Terraform's `machine_root_disk_size`; Kyber omits the
