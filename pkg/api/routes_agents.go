@@ -654,6 +654,15 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Codex device login is the one action with both a read and a write on the
+	// same path: GET reports what the in-pod flow is showing (link, code,
+	// expiry) so the PWA can render it natively; POST starts a fresh flow.
+	// Intercepted ahead of the POST-only guard below.
+	if action == "codex-device-auth" && r.Method == http.MethodGet {
+		s.handleCodexDeviceAuthStatus(w, r, name)
+		return
+	}
+
 	// All other sub-actions require POST.
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")

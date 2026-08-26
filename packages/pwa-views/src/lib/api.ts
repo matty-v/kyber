@@ -8,6 +8,7 @@ import type {
   AgentJob,
   AgentListResponse,
   AgentSecret,
+  CodexDeviceAuthStatus,
   AgentSecretListResponse,
   CommsChannel,
   CommsChannelId,
@@ -342,6 +343,12 @@ export function createApiClient(cluster: Cluster) {
 
     startCodexDeviceAuth: (name: string): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${encodeURIComponent(name)}/codex-device-auth`),
+
+    getCodexDeviceAuthStatus: (name: string): Promise<CodexDeviceAuthStatus> =>
+      request<CodexDeviceAuthStatus>(
+        'GET',
+        `/api/v1/agents/${encodeURIComponent(name)}/codex-device-auth`,
+      ),
 
     getTokenUsage: async (name: string): Promise<TokenUsage | null> => {
       const headers: Record<string, string> = {}

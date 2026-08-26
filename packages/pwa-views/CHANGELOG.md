@@ -1,5 +1,25 @@
 # @matty-v/kyber-pwa-views
 
+## 0.34.0 — 2026-08-26
+
+### Changed
+- **Codex device login is now shown in the app instead of in a terminal.** The
+  agent-detail panel used to embed a read-only terminal and leave the operator
+  to read a link and a one-time code out of it — and select them by hand, on a
+  phone. It now renders them directly: the verification link is an ordinary
+  anchor that opens in a new tab, the code sits in a monospace block with a
+  one-tap **Copy code** button, and a countdown shows how long it is good for.
+  Clicking **Start device login** shows a spinner until the code is ready
+  rather than nothing at all.
+- An expired code says so and offers **Start again**, deliberately without
+  restarting the flow on a timer — silently burning one-time codes in the
+  background is worse than one click.
+- New `CodexDeviceAuthPanel` component and `useCodexDeviceAuthStatus` hook,
+  backed by a read-only `GET /api/v1/agents/{name}/codex-device-auth`. The
+  poll runs only while a login could be in progress, and pauses while a live
+  code is on screen rather than stopping outright — an expired code has to be
+  able to see its replacement arrive.
+
 ## 0.33.4 — 2026-08-25
 
 ### Added

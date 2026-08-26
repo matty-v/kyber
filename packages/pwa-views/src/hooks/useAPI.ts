@@ -422,6 +422,47 @@ export function useStartCodexDeviceAuth() {
   })
 }
 
+/**
+ * Poll what the in-pod Codex device login is showing.
+ *
+ * 2s, not the 15-30s the rest of this file uses: the operator is sitting in
+ * front of the panel waiting for a code that is only good for 15 minutes, so
+ * seconds of staleness are seconds of their time. Each poll is one exec into
+ * the pod, so this must stay OFF for every agent that is not mid-login — the
+ * caller gates it on runtime, auth type and phase.
+ *
+ * Pauses on its own while a code is showing and still good: the code does not
+ * change while it is valid, and the panel's countdown runs client-side, so
+ * continuing to poll would exec into the pod every 2s for fifteen minutes to be
+ * told the same thing.
+ *
+ * `ready` is NOT terminal, though. Once that deadline passes, the panel offers
+ * "Start again", and the restart it triggers is invisible unless polling
+ * resumes — the mutation's invalidate fires one refetch milliseconds after the
+ * POST, while the old pod is still showing the old expired prompt, so a query
+ * that treated `ready` as final would answer `ready` once more and then never
+ * poll again. The panel would sit on "that code expired" forever. Same reason a
+ * `ready` we could not date keeps polling: without a deadline nothing else
+ * would ever re-arm it.
+ */
+export function useCodexDeviceAuthStatus(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'codex-device-auth'],
+    queryFn: () => api.getCodexDeviceAuthStatus(name),
+    enabled: Boolean(name) && enabled,
+    refetchInterval: (query) => {
+      const d = query.state.data
+      const live = d?.state === 'ready' && d.expiresAt && Date.parse(d.expiresAt) > Date.now()
+      return live ? false : 2000
+    },
+    // A pod restarting mid-poll answers `starting`; showing the last code we
+    // saw would be a lie, so the panel follows the server.
+    staleTime: 0,
+  })
+}
+
 // ---- Agent jobs (#135) ----
 
 export function usePatchAgentJobs() {

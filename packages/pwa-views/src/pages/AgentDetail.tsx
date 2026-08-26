@@ -17,7 +17,6 @@ import {
   useDeleteAgent,
   useTokenUsage,
   useReauthorizeAgent,
-  useStartCodexDeviceAuth,
   useComputeConfig,
   usePatchAgent,
   useSetSessionResume,
@@ -39,7 +38,7 @@ import { CommsTab } from '../components/CommsTab'
 import { SkillsTab } from '../components/SkillsTab'
 import { SecretsTab } from '../components/SecretsTab'
 import { ShellTab } from '../components/ShellTab'
-import { ExecTerminal } from '../components/ExecTerminal'
+import { CodexDeviceAuthPanel } from '../components/CodexDeviceAuthPanel'
 import { AgentTerminalPeek } from '../components/TerminalPeek'
 import { WebhooksTab } from '../components/WebhooksTab'
 import {
@@ -529,7 +528,6 @@ export function AgentDetail() {
   const setSessionResume = useSetSessionResume()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent()
-  const startCodexDeviceAuth = useStartCodexDeviceAuth()
 
   useEffect(() => {
     setStartupPrompt(agent?.startupPrompt ?? '')
@@ -752,28 +750,7 @@ export function AgentDetail() {
           <SchedulingFailureBanner agent={agent} />
           {agent.runtime === 'codex' && agent.authType === 'oauth' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
-            <Card className="border-accent/40 bg-accent/10">
-              <h2 className="mb-1 text-sm font-semibold text-text-primary">
-                {agent.phase === 'NeedsAuth' ? 'Codex login required' : 'Finish Codex device login'}
-              </h2>
-              <p className="mb-3 text-xs text-text-muted">
-                Kyber runs <code>codex login --device-auth</code> inside the agent. Follow the URL
-                and code below; no local auth file needs to be copied into Kyber.
-              </p>
-              {agent.phase === 'NeedsAuth' ? (
-                <Button
-                  type="button"
-                  variant="primary"
-                  size="sm"
-                  loading={startCodexDeviceAuth.isPending}
-                  onClick={() => startCodexDeviceAuth.mutate(name)}
-                >
-                  Start device login
-                </Button>
-              ) : (
-                <ExecTerminal kind="agent" name={name} mode="device-auth" heightClassName="h-64" />
-              )}
-            </Card>
+            <CodexDeviceAuthPanel name={name} phase={agent.phase} />
           )}
           {agent.phase === 'NeedsAuth' && !(agent.runtime === 'codex' && agent.authType === 'oauth') && (
             <Card className="border-warn/40 bg-warn-muted">
