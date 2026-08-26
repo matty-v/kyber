@@ -142,6 +142,9 @@ type DesiredMachine struct {
 	// CostOptimizedUnavailableSince is durable controller-owned transition
 	// state returned to providers so timeout decisions survive restarts.
 	CostOptimizedUnavailableSince time.Time
+	FallbackSince                 time.Time
+	CostOptimizedRetryObserved    string
+	CostOptimizedRetrySince       time.Time
 	Location                      string
 	Labels                        map[string]string
 	NodeBootstrap                 NodeBootstrap
@@ -172,6 +175,7 @@ type CapacityObservation struct {
 	FallbackSince                 time.Time
 	CostOptimizedUnavailableSince time.Time
 	CostOptimizedRetryObserved    string
+	CostOptimizedRetrySince       time.Time
 }
 
 // CapacityProvider reconciles one logical unit of Machine capacity. The

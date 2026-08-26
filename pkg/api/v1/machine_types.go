@@ -224,6 +224,11 @@ type MachineStatus struct {
 	// +optional
 	CostOptimizedRetryObserved string `json:"costOptimizedRetryObserved,omitempty"`
 
+	// CostOptimizedRetrySince is when the current manual retry attempt began.
+	// It persists across control-plane restarts and clears on success/rollback.
+	// +optional
+	CostOptimizedRetrySince *metav1.Time `json:"costOptimizedRetrySince,omitempty"`
+
 	// ResolvedProfile snapshots the operator-facing profile used at creation.
 	// +optional
 	ResolvedProfile *ResolvedMachineProfile `json:"resolvedProfile,omitempty"`

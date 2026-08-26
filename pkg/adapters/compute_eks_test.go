@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/eks"
@@ -12,12 +13,20 @@ import (
 
 type fakeEKSClient struct {
 	nodegroup *ekstypes.Nodegroup
+	groups    map[string]*ekstypes.Nodegroup
 	create    *eks.CreateNodegroupInput
+	creates   []*eks.CreateNodegroupInput
 	update    *eks.UpdateNodegroupConfigInput
 	deleted   bool
 }
 
-func (f *fakeEKSClient) DescribeNodegroup(context.Context, *eks.DescribeNodegroupInput, ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+func (f *fakeEKSClient) DescribeNodegroup(_ context.Context, in *eks.DescribeNodegroupInput, _ ...func(*eks.Options)) (*eks.DescribeNodegroupOutput, error) {
+	if f.groups != nil {
+		if ng := f.groups[aws.ToString(in.NodegroupName)]; ng != nil {
+			return &eks.DescribeNodegroupOutput{Nodegroup: ng}, nil
+		}
+		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("missing")}
+	}
 	if f.nodegroup == nil {
 		return nil, &ekstypes.ResourceNotFoundException{Message: aws.String("missing")}
 	}
@@ -25,15 +34,28 @@ func (f *fakeEKSClient) DescribeNodegroup(context.Context, *eks.DescribeNodegrou
 }
 func (f *fakeEKSClient) CreateNodegroup(_ context.Context, in *eks.CreateNodegroupInput, _ ...func(*eks.Options)) (*eks.CreateNodegroupOutput, error) {
 	f.create = in
+	f.creates = append(f.creates, in)
 	return &eks.CreateNodegroupOutput{}, nil
 }
 func (f *fakeEKSClient) UpdateNodegroupConfig(_ context.Context, in *eks.UpdateNodegroupConfigInput, _ ...func(*eks.Options)) (*eks.UpdateNodegroupConfigOutput, error) {
 	f.update = in
+	if f.groups != nil {
+		if ng := f.groups[aws.ToString(in.NodegroupName)]; ng != nil {
+			ng.ScalingConfig = in.ScalingConfig
+		}
+	}
 	return &eks.UpdateNodegroupConfigOutput{}, nil
 }
-func (f *fakeEKSClient) DeleteNodegroup(context.Context, *eks.DeleteNodegroupInput, ...func(*eks.Options)) (*eks.DeleteNodegroupOutput, error) {
+func (f *fakeEKSClient) DeleteNodegroup(_ context.Context, in *eks.DeleteNodegroupInput, _ ...func(*eks.Options)) (*eks.DeleteNodegroupOutput, error) {
 	f.deleted = true
+	if f.groups != nil {
+		delete(f.groups, aws.ToString(in.NodegroupName))
+	}
 	return &eks.DeleteNodegroupOutput{}, nil
+}
+
+func pairGroup(machine, subnet string, capacity ekstypes.CapacityTypes, size int32) *ekstypes.Nodegroup {
+	return &ekstypes.Nodegroup{Status: ekstypes.NodegroupStatusActive, CapacityType: capacity, Subnets: []string{subnet}, ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(size)}, Labels: map[string]string{MachineLabelKey: machine}, Tags: map[string]string{"kyber.io/managed-by": "kyber", "kyber.io/machine": machine}}
 }
 
 func validEKSConfig() ProviderConfig {
@@ -42,7 +64,7 @@ func validEKSConfig() ProviderConfig {
 		EKSConfigNodeRoleARN:   "arn:aws:iam::123456789012:role/kyber-node",
 		EKSConfigAllowedZones:  `["us-east-1a","us-east-1b"]`,
 		EKSConfigSubnetsByZone: `{"us-east-1a":"subnet-a","us-east-1b":"subnet-b"}`,
-		EKSConfigProfiles:      `[{"id":"small","cpu":"2","memory":"8Gi","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable"]}]`,
+		EKSConfigProfiles:      `[{"id":"small","cpu":"2","memory":"8Gi","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable","costOptimized"]}]`,
 	}
 }
 
@@ -74,13 +96,23 @@ func TestParseEKSConfigFailsClosed(t *testing.T) {
 	}
 }
 
-func TestEKSValidateRejectsUnknownZoneAndCostOptimized(t *testing.T) {
+func TestEKSValidateRejectsUnknownZoneAndAcceptsCostOptimized(t *testing.T) {
 	a, _ := parseEKSConfig(validEKSConfig())
 	if err := a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-west-2a"}); err == nil || !strings.Contains(err.Error(), "not allowed") {
 		t.Fatalf("zone error = %v", err)
 	}
-	if err := a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-east-1a", Interruptible: true}); err == nil || !strings.Contains(err.Error(), "not enabled") {
-		t.Fatalf("cost error = %v", err)
+	if err := a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-east-1a", Interruptible: true}); err != nil {
+		t.Fatalf("cost optimized validation = %v", err)
+	}
+}
+
+func TestEKSValidateRejectsUnsupportedAvailabilityClass(t *testing.T) {
+	cfg := validEKSConfig()
+	cfg[EKSConfigProfiles] = `[{"id":"small","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable"]}]`
+	a, _ := parseEKSConfig(cfg)
+	err := a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-east-1a", Interruptible: true})
+	if err == nil || !strings.Contains(err.Error(), "does not support") {
+		t.Fatalf("validation error = %v", err)
 	}
 }
 
@@ -141,5 +173,115 @@ func TestEKSRefusesMutationWithoutOwnership(t *testing.T) {
 	got, err := a.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, DesiredMachine{Availability: DesiredDeleted, Profile: "small", Location: "us-east-1a"}, a.providerRef("kyber-worker"))
 	if err != nil || got.State != CapacityFailed || !strings.Contains(got.Message, "ownership") {
 		t.Fatalf("observation = %+v, %v", got, err)
+	}
+}
+
+func TestEKSCostOptimizedFallbackAndRetry(t *testing.T) {
+	ctx := context.Background()
+	a, _ := parseEKSConfig(validEKSConfig())
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	c := &fakeEKSClient{groups: map[string]*ekstypes.Nodegroup{}}
+	a.client = c
+	id := MachineIdentity{Name: "spot-worker"}
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "small", Location: "us-east-1a", Interruptible: true, AttachmentObserved: true}
+	first, _ := a.Reconcile(ctx, id, d, "")
+	if first.State != CapacityPending || len(c.creates) != 1 || c.creates[0].CapacityType != ekstypes.CapacityTypesSpot {
+		t.Fatalf("spot create = %+v", first)
+	}
+	base := eksNodeGroupName(id.Name)
+	c.groups[base+"-spot"] = pairGroup(id.Name, "subnet-a", ekstypes.CapacityTypesSpot, 1)
+	a.Reconcile(ctx, id, d, first.ProviderRef)
+	if len(c.creates) != 2 || c.creates[1].CapacityType != ekstypes.CapacityTypesOnDemand || aws.ToInt32(c.creates[1].ScalingConfig.DesiredSize) != 0 {
+		t.Fatal("reliable fallback was not pre-created at zero")
+	}
+	c.groups[base+"-reliable"] = pairGroup(id.Name, "subnet-a", ekstypes.CapacityTypesOnDemand, 0)
+	d.CostOptimizedUnavailableSince = now.Add(-5 * time.Minute)
+	d.AttachedNodes = 0
+	a.Reconcile(ctx, id, d, first.ProviderRef)
+	if groupSize(c.groups[base+"-spot"]) != 0 {
+		t.Fatal("spot not scaled to zero")
+	}
+	fallback, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
+	if groupSize(c.groups[base+"-reliable"]) != 1 || fallback.EffectiveAvailabilityClass != "reliable" {
+		t.Fatalf("fallback = %+v", fallback)
+	}
+	d.AttachedNodes = 1
+	d.FallbackSince = now
+	ready, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
+	if ready.State != CapacityAvailable || ready.ProviderRef != first.ProviderRef {
+		t.Fatalf("ready fallback = %+v", ready)
+	}
+	d.CostOptimizedRetryRequest = "retry-1"
+	retryStarted, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
+	if retryStarted.CostOptimizedRetrySince.IsZero() {
+		t.Fatal("retry start was not persisted before moving capacity")
+	}
+	d.CostOptimizedRetrySince = retryStarted.CostOptimizedRetrySince
+	a.Reconcile(ctx, id, d, first.ProviderRef)
+	if groupSize(c.groups[base+"-reliable"]) != 0 {
+		t.Fatal("reliable not scaled down for retry")
+	}
+	d.AttachedNodes = 0
+	a.Reconcile(ctx, id, d, first.ProviderRef)
+	if groupSize(c.groups[base+"-spot"]) != 1 {
+		t.Fatal("spot not scaled up for retry")
+	}
+	d.AttachedNodes = 1
+	retried, _ := a.Reconcile(ctx, id, d, first.ProviderRef)
+	if retried.EffectiveAvailabilityClass != "costOptimized" || retried.CostOptimizedRetryObserved != "retry-1" || retried.ProviderRef != first.ProviderRef {
+		t.Fatalf("retry = %+v", retried)
+	}
+	if !retried.CostOptimizedRetrySince.IsZero() || !retried.FallbackSince.IsZero() || !retried.CostOptimizedUnavailableSince.IsZero() {
+		t.Fatalf("successful retry retained stale fallback state: %+v", retried)
+	}
+}
+
+func TestEKSCostOptimizedRetryRollsBackWithoutDualCapacity(t *testing.T) {
+	ctx := context.Background()
+	a, _ := parseEKSConfig(validEKSConfig())
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return now }
+	base := eksNodeGroupName("spot-worker")
+	c := &fakeEKSClient{groups: map[string]*ekstypes.Nodegroup{
+		base + "-spot":     pairGroup("spot-worker", "subnet-a", ekstypes.CapacityTypesSpot, 0),
+		base + "-reliable": pairGroup("spot-worker", "subnet-a", ekstypes.CapacityTypesOnDemand, 1),
+	}}
+	a.client = c
+	ref := a.providerRef(base)
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "small", Location: "us-east-1a", Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, FallbackSince: now.Add(-time.Hour), CostOptimizedUnavailableSince: now.Add(-time.Hour), CostOptimizedRetryRequest: "retry-1"}
+	started, _ := a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	d.CostOptimizedRetrySince = started.CostOptimizedRetrySince
+	if d.CostOptimizedRetrySince.IsZero() || groupSize(c.groups[base+"-reliable"]) != 1 {
+		t.Fatalf("retry was not durably initialized before mutation: %+v", started)
+	}
+
+	// Remove reliable, wait for its Node, and request Spot. At no point may
+	// both native groups have desired capacity.
+	a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	if groupSize(c.groups[base+"-reliable"]) != 0 || groupSize(c.groups[base+"-spot"]) != 0 {
+		t.Fatal("reliable shutdown produced dual capacity")
+	}
+	d.AttachedNodes = 0
+	a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	if groupSize(c.groups[base+"-spot"]) != 1 || groupSize(c.groups[base+"-reliable"]) != 0 {
+		t.Fatal("spot retry produced dual capacity")
+	}
+
+	// Spot never attaches. After the bounded window, remove it first, then
+	// restore reliable and acknowledge the one-shot request.
+	now = now.Add(5 * time.Minute)
+	a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	if groupSize(c.groups[base+"-spot"]) != 0 || groupSize(c.groups[base+"-reliable"]) != 0 {
+		t.Fatal("rollback did not remove Spot before restoring reliable")
+	}
+	a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	if groupSize(c.groups[base+"-reliable"]) != 1 || groupSize(c.groups[base+"-spot"]) != 0 {
+		t.Fatal("rollback did not restore reliable in isolation")
+	}
+	d.AttachedNodes = 1
+	rolledBack, _ := a.Reconcile(ctx, MachineIdentity{Name: "spot-worker"}, d, ref)
+	if rolledBack.State != CapacityAvailable || rolledBack.EffectiveAvailabilityClass != "reliable" || rolledBack.CostOptimizedRetryObserved != "retry-1" || !rolledBack.CostOptimizedRetrySince.IsZero() || rolledBack.ProviderRef != ref {
+		t.Fatalf("rollback = %+v", rolledBack)
 	}
 }

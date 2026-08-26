@@ -477,6 +477,7 @@ export interface MachineStatus {
   fallbackSince?: string
   costOptimizedUnavailableSince?: string
   costOptimizedRetryObserved?: string
+  costOptimizedRetrySince?: string
   resolvedProfile?: ResolvedMachineProfile
   externalIP?: string
   internalIP?: string

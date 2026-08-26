@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -50,6 +51,8 @@ type EKSAdapter struct {
 	profiles                     map[string]EKSProfile
 	subnetsByZone                map[string]string
 	client                       eksClient
+	now                          func() time.Time
+	fallbackThreshold            time.Duration
 }
 
 func (e *EKSAdapter) providerRef(nodeGroup string) ProviderRef {
@@ -113,7 +116,7 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 	if err := json.Unmarshal([]byte(cfg[EKSConfigSubnetsByZone]), &subnets); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", EKSConfigSubnetsByZone, err)
 	}
-	a := &EKSAdapter{region: cfg[EKSConfigRegion], cluster: cfg[EKSConfigCluster], nodeRoleARN: cfg[EKSConfigNodeRoleARN], profiles: map[string]EKSProfile{}, allowedZones: map[string]struct{}{}, subnetsByZone: subnets}
+	a := &EKSAdapter{region: cfg[EKSConfigRegion], cluster: cfg[EKSConfigCluster], nodeRoleARN: cfg[EKSConfigNodeRoleARN], profiles: map[string]EKSProfile{}, allowedZones: map[string]struct{}{}, subnetsByZone: subnets, now: func() time.Time { return time.Now().UTC() }, fallbackThreshold: 5 * time.Minute}
 	for _, zone := range zones {
 		if strings.TrimSpace(zone) == "" {
 			return nil, fmt.Errorf("EKS allowed zone must not be empty")
@@ -138,7 +141,7 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 func (e *EKSAdapter) Type() string                       { return "eks" }
 func (e *EKSAdapter) NodeAttachment() NodeAttachmentMode { return NodeAttachmentManaged }
 func (e *EKSAdapter) Capabilities(context.Context) (Capabilities, error) {
-	return Capabilities{CanProvision: true, SuspendMode: SuspendCapacity, DeletionMode: DeleteCapacity, SupportsReliable: true, SupportsInterruptible: false, SupportsLocations: true, ReliableFallbackMode: ReliableFallbackUnsupported}, nil
+	return Capabilities{CanProvision: true, SuspendMode: SuspendCapacity, DeletionMode: DeleteCapacity, SupportsReliable: true, SupportsInterruptible: true, SupportsLocations: true, ReliableFallbackMode: ReliableFallbackAutomatic}, nil
 }
 func (e *EKSAdapter) Profiles(context.Context) ([]Profile, error) {
 	out := make([]Profile, 0, len(e.profiles))
@@ -149,20 +152,41 @@ func (e *EKSAdapter) Profiles(context.Context) ([]Profile, error) {
 	return out, nil
 }
 func (e *EKSAdapter) Validate(_ context.Context, d DesiredMachine) error {
-	if _, ok := e.profiles[d.Profile]; !ok {
+	profile, ok := e.profiles[d.Profile]
+	if !ok {
 		return fmt.Errorf("validating EKS capacity: unknown profile %q", d.Profile)
 	}
 	if _, ok := e.allowedZones[d.Location]; !ok {
 		return fmt.Errorf("validating EKS capacity: location %q is not allowed", d.Location)
 	}
-	if d.Interruptible {
-		return fmt.Errorf("validating EKS capacity: cost-optimized lifecycle is not enabled yet")
+	class := d.AvailabilityClass
+	if class == "" {
+		if d.Interruptible {
+			class = "costOptimized"
+		} else {
+			class = "reliable"
+		}
+	}
+	if !containsString(profile.AvailabilityClasses, class) {
+		return fmt.Errorf("validating EKS capacity: profile %q does not support availability class %q", d.Profile, class)
 	}
 	return nil
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 func (e *EKSAdapter) Reconcile(ctx context.Context, identity MachineIdentity, desired DesiredMachine, ref ProviderRef) (CapacityObservation, error) {
 	if err := e.Validate(ctx, desired); err != nil {
 		return CapacityObservation{}, err
+	}
+	if desired.Interruptible {
+		return e.reconcileCostOptimized(ctx, identity, desired, ref)
 	}
 	group := eksNodeGroupName(identity.Name)
 	if ref != "" {
@@ -238,24 +262,286 @@ func (e *EKSAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 	return obs, nil
 }
 
+func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity MachineIdentity, desired DesiredMachine, ref ProviderRef) (CapacityObservation, error) {
+	base := eksNodeGroupName(identity.Name)
+	if ref != "" {
+		parsed, err := e.parseProviderRef(ref)
+		if err != nil {
+			return CapacityObservation{}, err
+		}
+		base = parsed
+	}
+	stable := e.providerRef(base)
+	selector := map[string]string{MachineLabelKey: identity.Name}
+	spotName, reliableName := base+"-spot", base+"-reliable"
+	spot, err := e.describeNodeGroup(ctx, spotName)
+	if err != nil {
+		return CapacityObservation{}, err
+	}
+	reliable, err := e.describeNodeGroup(ctx, reliableName)
+	if err != nil {
+		return CapacityObservation{}, err
+	}
+	if desired.Availability == DesiredDeleted {
+		return e.deletePair(ctx, identity, desired, stable, selector, spot, reliable)
+	}
+	profile := e.profiles[desired.Profile]
+	if spot == nil {
+		if err := e.createNodeGroup(ctx, identity, desired, profile, spotName, ekstypes.CapacityTypesSpot, 1); err != nil {
+			return CapacityObservation{}, err
+		}
+		return pairObservation(stable, selector, desired, CapacityPending, ReasonProvisioning, "costOptimized"), nil
+	}
+	if reliable == nil {
+		if err := e.createNodeGroup(ctx, identity, desired, profile, reliableName, ekstypes.CapacityTypesOnDemand, 0); err != nil {
+			return CapacityObservation{}, err
+		}
+		return pairObservation(stable, selector, desired, CapacityPending, ReasonProvisioning, "costOptimized"), nil
+	}
+	if err := e.validateOwnedPairGroup(spot, identity, desired, ekstypes.CapacityTypesSpot); err != nil {
+		return failedPair(stable, selector, desired, err), nil
+	}
+	if err := e.validateOwnedPairGroup(reliable, identity, desired, ekstypes.CapacityTypesOnDemand); err != nil {
+		return failedPair(stable, selector, desired, err), nil
+	}
+	if desired.Availability == DesiredOffline {
+		if groupSize(spot) != 0 {
+			return e.resizePair(ctx, spotName, 0, stable, selector, desired, "costOptimized")
+		}
+		if groupSize(reliable) != 0 {
+			return e.resizePair(ctx, reliableName, 0, stable, selector, desired, "reliable")
+		}
+		if desired.AttachmentObserved && desired.AttachedNodes == 0 {
+			return pairObservation(stable, selector, desired, CapacityOffline, ReasonStopped, "costOptimized"), nil
+		}
+		return pairObservation(stable, selector, desired, CapacityRecovering, ReasonStopping, "costOptimized"), nil
+	}
+	// Manual retry always removes reliable capacity before asking for Spot.
+	if desired.CostOptimizedRetryRequest != "" && desired.CostOptimizedRetryRequest != desired.CostOptimizedRetryObserved {
+		// Persist a retry-specific clock before moving capacity. FallbackSince is
+		// the age of the reliable fallback, not the age of this retry attempt.
+		if desired.CostOptimizedRetrySince.IsZero() {
+			o := pairObservation(stable, selector, desired, CapacityAvailable, ReasonReady, "reliable")
+			o.CostOptimizedRetrySince = e.now()
+			return o, nil
+		}
+		if e.now().Sub(desired.CostOptimizedRetrySince) >= e.fallbackThreshold {
+			// A bounded retry rolls back in the same safe order: remove Spot,
+			// wait for its Node to detach, then restore reliable capacity.
+			if groupSize(spot) != 0 {
+				return e.resizePair(ctx, spotName, 0, stable, selector, desired, "reliable")
+			}
+			if groupSize(reliable) == 1 {
+				o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
+				o.FallbackReason = "Cost-optimized retry unavailable; reliable fallback retained"
+				o.CostOptimizedRetryObserved = desired.CostOptimizedRetryRequest
+				o.CostOptimizedRetrySince = time.Time{}
+				if desired.AttachmentObserved && desired.AttachedNodes > 0 && reliable.Status == ekstypes.NodegroupStatusActive {
+					o.State, o.Reason = CapacityAvailable, ReasonReady
+				}
+				return o, nil
+			}
+			if desired.AttachmentObserved && desired.AttachedNodes > 0 {
+				return pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable"), nil
+			}
+			return e.resizePair(ctx, reliableName, 1, stable, selector, desired, "reliable")
+		}
+		if groupSize(reliable) != 0 {
+			return e.resizePair(ctx, reliableName, 0, stable, selector, desired, "reliable")
+		}
+		if groupSize(spot) == 1 && desired.AttachmentObserved && desired.AttachedNodes > 0 && spot.Status == ekstypes.NodegroupStatusActive {
+			o := pairObservation(stable, selector, desired, CapacityAvailable, ReasonReady, "costOptimized")
+			o.CostOptimizedRetryObserved = desired.CostOptimizedRetryRequest
+			o.CostOptimizedRetrySince = time.Time{}
+			o.FallbackSince = time.Time{}
+			o.FallbackReason = ""
+			o.CostOptimizedUnavailableSince = time.Time{}
+			return o, nil
+		}
+		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
+			return pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable"), nil
+		}
+		if groupSize(spot) != 1 {
+			return e.resizePair(ctx, spotName, 1, stable, selector, desired, "reliable")
+		}
+		return pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable"), nil
+	}
+	// A live reliable group means fallback is active.
+	if groupSize(reliable) == 1 {
+		o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
+		o.FallbackSince = desired.FallbackSince
+		o.CostOptimizedUnavailableSince = desired.CostOptimizedUnavailableSince
+		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		if desired.AttachmentObserved && desired.AttachedNodes > 0 && reliable.Status == ekstypes.NodegroupStatusActive {
+			o.State, o.Reason = CapacityAvailable, ReasonReady
+		}
+		return o, nil
+	}
+	if desired.AttachmentObserved && desired.AttachedNodes > 0 && spot.Status == ekstypes.NodegroupStatusActive {
+		o := pairObservation(stable, selector, desired, CapacityAvailable, ReasonReady, "costOptimized")
+		o.FallbackSince = time.Time{}
+		o.FallbackReason = ""
+		o.CostOptimizedUnavailableSince = time.Time{}
+		o.CostOptimizedRetrySince = time.Time{}
+		return o, nil
+	}
+	unavailable := desired.CostOptimizedUnavailableSince
+	if unavailable.IsZero() {
+		unavailable = e.now()
+	}
+	if e.now().Sub(unavailable) < e.fallbackThreshold {
+		o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonInterrupted, "costOptimized")
+		o.CostOptimizedUnavailableSince = unavailable
+		return o, nil
+	}
+	if groupSize(spot) != 0 {
+		return e.resizePair(ctx, spotName, 0, stable, selector, desired, "costOptimized")
+	}
+	if desired.AttachmentObserved && desired.AttachedNodes > 0 {
+		o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
+		o.CostOptimizedUnavailableSince = unavailable
+		return o, nil
+	}
+	if groupSize(reliable) != 1 {
+		return e.resizePair(ctx, reliableName, 1, stable, selector, desired, "reliable")
+	}
+	o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
+	o.CostOptimizedUnavailableSince = unavailable
+	o.FallbackSince = e.now()
+	o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+	return o, nil
+}
+
+func (e *EKSAdapter) describeNodeGroup(ctx context.Context, name string) (*ekstypes.Nodegroup, error) {
+	out, err := e.client.DescribeNodegroup(ctx, &eks.DescribeNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(name)})
+	if isEKSNotFound(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("describing EKS node group %s: %w", name, err)
+	}
+	if out.Nodegroup == nil {
+		return nil, fmt.Errorf("describing EKS node group %s: empty response", name)
+	}
+	return out.Nodegroup, nil
+}
+func (e *EKSAdapter) createNodeGroup(ctx context.Context, id MachineIdentity, d DesiredMachine, p EKSProfile, name string, capacity ekstypes.CapacityTypes, size int32) error {
+	in := &eks.CreateNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(name), NodeRole: aws.String(e.nodeRoleARN), Subnets: []string{e.subnetsByZone[d.Location]}, CapacityType: capacity, InstanceTypes: append([]string(nil), p.InstanceTypes...), DiskSize: aws.Int32(p.DiskSizeGB), ScalingConfig: &ekstypes.NodegroupScalingConfig{MinSize: aws.Int32(0), MaxSize: aws.Int32(1), DesiredSize: aws.Int32(size)}, Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: id.Name}, Tags: map[string]string{"kyber.io/managed-by": "kyber", "kyber.io/machine": id.Name, "kyber.io/location": d.Location, "kyber.io/profile": d.Profile, "kyber.io/role": strings.ToLower(string(capacity))}, ClientRequestToken: aws.String("create-" + name)}
+	if p.LaunchTemplateID != "" {
+		in.LaunchTemplate = &ekstypes.LaunchTemplateSpecification{Id: aws.String(p.LaunchTemplateID), Version: aws.String(p.LaunchTemplateVersion)}
+		in.InstanceTypes = nil
+		in.DiskSize = nil
+	}
+	_, err := e.client.CreateNodegroup(ctx, in)
+	if err != nil && !isEKSConflict(err) {
+		return fmt.Errorf("creating EKS node group %s: %w", name, err)
+	}
+	return nil
+}
+func (e *EKSAdapter) validateOwnedPairGroup(ng *ekstypes.Nodegroup, id MachineIdentity, d DesiredMachine, capacity ekstypes.CapacityTypes) error {
+	if err := e.validateOwnedNodeGroupCommon(ng, id, d); err != nil {
+		return err
+	}
+	if ng.CapacityType != capacity {
+		return fmt.Errorf("EKS node group has incompatible capacity type")
+	}
+	return nil
+}
+func (e *EKSAdapter) validateOwnedNodeGroupCommon(ng *ekstypes.Nodegroup, id MachineIdentity, d DesiredMachine) error {
+	if ng.Tags["kyber.io/managed-by"] != "kyber" || ng.Tags["kyber.io/machine"] != id.Name || ng.Labels[MachineLabelKey] != id.Name {
+		return fmt.Errorf("refusing to mutate EKS node group without Kyber ownership")
+	}
+	if len(ng.Subnets) != 1 || ng.Subnets[0] != e.subnetsByZone[d.Location] {
+		return fmt.Errorf("refusing cross-zone or multi-subnet EKS node group")
+	}
+	return nil
+}
+func groupSize(ng *ekstypes.Nodegroup) int32 {
+	if ng == nil || ng.ScalingConfig == nil || ng.ScalingConfig.DesiredSize == nil {
+		return -1
+	}
+	return *ng.ScalingConfig.DesiredSize
+}
+func (e *EKSAdapter) resizePair(ctx context.Context, name string, size int32, ref ProviderRef, sel map[string]string, d DesiredMachine, effective string) (CapacityObservation, error) {
+	_, err := e.client.UpdateNodegroupConfig(ctx, &eks.UpdateNodegroupConfigInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(name), ScalingConfig: &ekstypes.NodegroupScalingConfig{MinSize: aws.Int32(0), MaxSize: aws.Int32(1), DesiredSize: aws.Int32(size)}, ClientRequestToken: aws.String(fmt.Sprintf("size-%s-%d", name, size))})
+	if err != nil && !isEKSConflict(err) {
+		return CapacityObservation{}, err
+	}
+	return pairObservation(ref, sel, d, CapacityRecovering, ReasonRepairing, effective), nil
+}
+func pairObservation(ref ProviderRef, sel map[string]string, d DesiredMachine, state AvailabilityState, reason AvailabilityReason, effective string) CapacityObservation {
+	o := CapacityObservation{
+		ProviderRef: ref, NodeSelector: sel, Location: d.Location, State: state, Reason: reason,
+		EffectiveAvailabilityClass:    effective,
+		FallbackSince:                 d.FallbackSince,
+		CostOptimizedUnavailableSince: d.CostOptimizedUnavailableSince,
+		CostOptimizedRetryObserved:    d.CostOptimizedRetryObserved,
+		CostOptimizedRetrySince:       d.CostOptimizedRetrySince,
+	}
+	if !d.FallbackSince.IsZero() {
+		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+	}
+	return o
+}
+func failedPair(ref ProviderRef, sel map[string]string, d DesiredMachine, err error) CapacityObservation {
+	o := pairObservation(ref, sel, d, CapacityFailed, ReasonProviderError, "")
+	o.Message = err.Error()
+	return o
+}
+func (e *EKSAdapter) deletePair(ctx context.Context, id MachineIdentity, d DesiredMachine, ref ProviderRef, sel map[string]string, groups ...*ekstypes.Nodegroup) (CapacityObservation, error) {
+	base := eksNodeGroupName(id.Name)
+	if ref != "" {
+		parsed, err := e.parseProviderRef(ref)
+		if err != nil {
+			return CapacityObservation{}, err
+		}
+		base = parsed
+	}
+	names := []string{base + "-spot", base + "-reliable"}
+	allAbsent := true
+	for i, g := range groups {
+		if g == nil {
+			continue
+		}
+		allAbsent = false
+		if err := e.validateOwnedNodeGroupCommon(g, id, d); err != nil {
+			return failedPair(ref, sel, d, err), nil
+		}
+		if groupSize(g) != 0 {
+			return e.resizePair(ctx, names[i], 0, ref, sel, d, "")
+		}
+		if d.AttachmentObserved && d.AttachedNodes > 0 {
+			return pairObservation(ref, sel, d, CapacityRecovering, ReasonStopping, ""), nil
+		}
+		if _, err := e.client.DeleteNodegroup(ctx, &eks.DeleteNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(names[i])}); err != nil && !isEKSNotFound(err) && !isEKSConflict(err) {
+			return CapacityObservation{}, err
+		}
+		return pairObservation(ref, sel, d, CapacityRecovering, ReasonStopping, ""), nil
+	}
+	if allAbsent {
+		return CapacityObservation{State: CapacityAbsent, Reason: ReasonDeleted}, nil
+	}
+	return pairObservation(ref, sel, d, CapacityRecovering, ReasonStopping, ""), nil
+}
+
 func eksNodeGroupName(machine string) string {
 	name := "kyber-" + strings.ToLower(machine)
-	if len(name) > 63 {
-		name = name[:63]
+	if len(name) > 54 {
+		name = name[:54]
 	}
 	return name
 }
 func (e *EKSAdapter) validateOwnedNodeGroup(ng *ekstypes.Nodegroup, identity MachineIdentity, desired DesiredMachine) error {
-	if ng.Tags["kyber.io/managed-by"] != "kyber" || ng.Tags["kyber.io/machine"] != identity.Name || ng.Labels[MachineLabelKey] != identity.Name {
-		return fmt.Errorf("refusing to mutate EKS node group without Kyber ownership")
-	}
-	if len(ng.Subnets) != 1 || ng.Subnets[0] != e.subnetsByZone[desired.Location] {
-		return fmt.Errorf("refusing cross-zone or multi-subnet EKS node group")
+	if err := e.validateOwnedNodeGroupCommon(ng, identity, desired); err != nil {
+		return err
 	}
 	if ng.CapacityType != ekstypes.CapacityTypesOnDemand {
 		return fmt.Errorf("reliable EKS node group has incompatible capacity type")
 	}
 	return nil
+}
+func (e *EKSAdapter) NodeSelector(identity MachineIdentity, _ ProviderRef) map[string]string {
+	return map[string]string{MachineLabelKey: identity.Name}
 }
 func isEKSNotFound(err error) bool {
 	var api smithy.APIError
@@ -283,3 +569,4 @@ func (e *EKSAdapter) Observe(context.Context, string) (InstanceObservation, erro
 
 var _ ComputeAdapter = (*EKSAdapter)(nil)
 var _ CapacityProvider = (*EKSAdapter)(nil)
+var _ CapacityNodeSelector = (*EKSAdapter)(nil)

@@ -868,6 +868,9 @@ func (r *MachineReconciler) reconcileCapacity(
 		AvailabilityClass:             string(machineAvailabilityClass(machine)),
 		CostOptimizedRetryRequest:     machine.Spec.CostOptimizedRetryRequest,
 		CostOptimizedUnavailableSince: metaTimeValue(machine.Status.CostOptimizedUnavailableSince),
+		FallbackSince:                 metaTimeValue(machine.Status.FallbackSince),
+		CostOptimizedRetryObserved:    machine.Status.CostOptimizedRetryObserved,
+		CostOptimizedRetrySince:       metaTimeValue(machine.Status.CostOptimizedRetrySince),
 		Location:                      machineLocation(machine),
 		Labels:                        map[string]string{MachineLabelKey: machine.Name},
 		NodeBootstrap: adapters.NodeBootstrap{
@@ -905,8 +908,9 @@ func (r *MachineReconciler) reconcileCapacity(
 	}
 	fallbackSince := optionalMetaTime(observation.FallbackSince)
 	unavailableSince := optionalMetaTime(observation.CostOptimizedUnavailableSince)
+	retrySince := optionalMetaTime(observation.CostOptimizedRetrySince)
 	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
-	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.EffectiveAvailabilityClass != effectiveClass || machine.Status.FallbackReason != observation.FallbackReason || !metaTimeEqual(machine.Status.FallbackSince, fallbackSince) || !metaTimeEqual(machine.Status.CostOptimizedUnavailableSince, unavailableSince) || machine.Status.CostOptimizedRetryObserved != observation.CostOptimizedRetryObserved || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.EffectiveAvailabilityClass != effectiveClass || machine.Status.FallbackReason != observation.FallbackReason || !metaTimeEqual(machine.Status.FallbackSince, fallbackSince) || !metaTimeEqual(machine.Status.CostOptimizedUnavailableSince, unavailableSince) || machine.Status.CostOptimizedRetryObserved != observation.CostOptimizedRetryObserved || !metaTimeEqual(machine.Status.CostOptimizedRetrySince, retrySince) || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
 		previousStatus := machine.Status
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
@@ -919,6 +923,7 @@ func (r *MachineReconciler) reconcileCapacity(
 		machine.Status.FallbackSince = fallbackSince
 		machine.Status.CostOptimizedUnavailableSince = unavailableSince
 		machine.Status.CostOptimizedRetryObserved = observation.CostOptimizedRetryObserved
+		machine.Status.CostOptimizedRetrySince = retrySince
 		machine.Status.InternalIP = observation.InternalIP
 		machine.Status.ExternalIP = observation.ExternalIP
 		machine.Status.Message = observation.Message

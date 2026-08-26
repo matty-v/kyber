@@ -347,6 +347,12 @@ spec:
                   CostOptimizedRetryObserved acknowledges the latest retry request token
                   processed by the provider/controller state machine.
                 type: string
+              costOptimizedRetrySince:
+                description: |-
+                  CostOptimizedRetrySince is when the current manual retry attempt began.
+                  It persists across control-plane restarts and clears on success/rollback.
+                format: date-time
+                type: string
               costOptimizedUnavailableSince:
                 description: |-
                   CostOptimizedUnavailableSince is when requested cost-optimized capacity

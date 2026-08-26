@@ -608,6 +608,10 @@ func (in *MachineStatus) DeepCopyInto(out *MachineStatus) {
 		in, out := &in.CostOptimizedUnavailableSince, &out.CostOptimizedUnavailableSince
 		*out = (*in).DeepCopy()
 	}
+	if in.CostOptimizedRetrySince != nil {
+		in, out := &in.CostOptimizedRetrySince, &out.CostOptimizedRetrySince
+		*out = (*in).DeepCopy()
+	}
 	if in.ResolvedProfile != nil {
 		in, out := &in.ResolvedProfile, &out.ResolvedProfile
 		*out = new(ResolvedMachineProfile)
