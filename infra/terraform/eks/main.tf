@@ -299,20 +299,33 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     ]
     resources = ["*"]
   }
+}
+
+resource "aws_iam_role_policy" "kyber_control_plane" {
+  role   = aws_iam_role.kyber_control_plane.id
+  policy = data.aws_iam_policy_document.kyber_control_plane.json
+}
+
+# EKS evaluates ec2:RunInstances while validating a managed node group's
+# launch template. Keep this in a dedicated managed policy so newly issued pod
+# identity sessions reliably receive it; the adapter pins the approved launch
+# template, node role, subnet, and installer-defined profiles.
+data "aws_iam_policy_document" "kyber_managed_node_launch" {
   statement {
-    # EKS validates ec2:RunInstances for every resource referenced by a managed
-    # node group's launch template. EC2 condition keys are not preserved by the
-    # EKS authorization check, so this action cannot be narrowed further here;
-    # the adapter pins the approved template, node role, subnet, and profiles.
     sid       = "LaunchManagedNodes"
     actions   = ["ec2:RunInstances"]
     resources = ["*"]
   }
 }
 
-resource "aws_iam_role_policy" "kyber_control_plane" {
-  role   = aws_iam_role.kyber_control_plane.id
-  policy = data.aws_iam_policy_document.kyber_control_plane.json
+resource "aws_iam_policy" "kyber_managed_node_launch" {
+  name_prefix = "${local.iam_name_stem}-managed-node-launch-"
+  policy      = data.aws_iam_policy_document.kyber_managed_node_launch.json
+}
+
+resource "aws_iam_role_policy_attachment" "kyber_managed_node_launch" {
+  role       = aws_iam_role.kyber_control_plane.name
+  policy_arn = aws_iam_policy.kyber_managed_node_launch.arn
 }
 
 resource "aws_eks_pod_identity_association" "kyber_control_plane" {
