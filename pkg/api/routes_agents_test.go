@@ -1299,6 +1299,19 @@ func TestAgents_SetResources_ClearsRecoveryInputOnMemoryExhausted(t *testing.T) 
 		t.Errorf("set-resources left recoveryInput=%q — a CPU-only change would be silently ignored",
 			got.Status.RecoveryInput)
 	}
+	// And the request the operator actually made must still land. Clearing the
+	// gate runs a Status().Patch mid-handler, and controller-runtime decodes the
+	// response back into the object it is handed — so patching `agent` itself
+	// reverted spec.resources and spec.desiredPhase to their stored values, and
+	// the resources patch that follows wrote nothing while still answering 200.
+	if got.Spec.Resources.CPU.String() != "2" {
+		t.Errorf("cpu=%s, want 2 — the resource change was swallowed by the status patch",
+			got.Spec.Resources.CPU.String())
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		t.Errorf("desiredPhase=%q, want Running — MemoryExhausted recovery never fires without it",
+			got.Spec.DesiredPhase)
+	}
 }
 
 // Failed carries the same defect and gets the same treatment. The controller
