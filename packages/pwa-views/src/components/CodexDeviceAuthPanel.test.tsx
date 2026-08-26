@@ -135,6 +135,32 @@ describe('CodexDeviceAuthPanel', () => {
     expect(screen.queryByRole('button', { name: /start device login/i })).not.toBeInTheDocument()
   })
 
+  // A probe that cannot run must never look like one still starting. The
+  // panel's own broken probe hid behind a spinner for a whole release.
+  it('says so and stops spinning when Kyber cannot read the login', () => {
+    status = {
+      isLoading: false,
+      data: {
+        state: 'failed',
+        detail: "bash: -c: line 2: syntax error: unexpected end of file from `{' command on line 1",
+      },
+    }
+    render(<CodexDeviceAuthPanel name="codextest" phase="Starting" />)
+    expect(screen.getByText(/couldn't read the login/i)).toBeInTheDocument()
+    expect(screen.getByText(/syntax error/)).toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /start again/i })).toBeInTheDocument()
+  })
+
+  // `failed` has to win over the mid-boot spinner, or the message never shows:
+  // a failing probe during phase Starting is exactly when it matters most.
+  it('reports a failure even mid-boot, when it would otherwise be spinning', () => {
+    status = { isLoading: false, data: { state: 'failed' } }
+    render(<CodexDeviceAuthPanel name="codextest" phase="Starting" />)
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByText(/couldn't read the login/i)).toBeInTheDocument()
+  })
+
   // Each poll is an exec into the pod. Polling an agent that is not mid-login
   // would be a steady stream of them across the fleet.
   it('only polls while a login could be running', () => {

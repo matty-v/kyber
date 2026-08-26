@@ -35,6 +35,10 @@ const (
 	StateReady State = "ready"
 	// StateExpired means a code was printed but its window has passed.
 	StateExpired State = "expired"
+	// StateFailed means Kyber could not read the flow at all — the probe
+	// itself did not run. Distinct from StateStarting on purpose: starting is
+	// "ask again in a moment", failed is "this will not fix itself".
+	StateFailed State = "failed"
 )
 
 // Result is the parsed state of one device-login attempt.
@@ -45,6 +49,9 @@ type Result struct {
 	VerificationURL string `json:"verificationUrl,omitempty"`
 	// UserCode is the one-time code typed into that page.
 	UserCode string `json:"userCode,omitempty"`
+	// Detail carries a short operator-facing reason when State is StateFailed.
+	// Empty otherwise.
+	Detail string `json:"detail,omitempty"`
 	// ExpiresAt is when the code stops working, derived from the flow's own
 	// "expires in N minutes" anchored to startedAt. Zero when unknown.
 	//

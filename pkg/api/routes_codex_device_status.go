@@ -37,8 +37,8 @@ import (
 // or the platform being unable to answer at all.
 
 const (
-	// Markers keep the parse independent of the pod's login-shell banner,
-	// which sudo -iu prints ahead of anything we run.
+	// Markers separate our own output from the pane, and keep the parse
+	// independent of anything the shell might print ahead of it.
 	deviceAuthNoSession   = "KYBER_DEVICE_AUTH_NO_SESSION"
 	deviceAuthStartPrefix = "KYBER_DEVICE_AUTH_START="
 	deviceAuthPaneMarker  = "KYBER_DEVICE_AUTH_PANE"
@@ -105,14 +105,28 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), deviceAuthExecTimeout)
 	defer cancel()
 
-	argv := append(deviceAuthNsenterPrefix(), "sudo", "-iu", "kyber", "bash", "-lc", deviceAuthProbeScript)
+	argv := append(deviceAuthNsenterPrefix(), deviceAuthProbeArgv()...)
 	stdout, stderr, err := s.execRestartSession(ctx, podName, argv)
 	if err != nil {
-		// The pod can disappear between the Get above and the exec (a restart
-		// mid-poll is exactly what the operator just asked for). Report the
-		// same `starting` the panel is already showing rather than a failure
-		// it would have to recover from. The cause is logged, never shown —
-		// the pane can contain the code.
+		// Two very different failures used to land here identically, and
+		// collapsing them is what hid a broken probe for a whole release: the
+		// argv was malformed, every poll came back with a shell syntax error,
+		// and the panel spun over a code that was sitting in the pane.
+		//
+		// A probe that COULD NOT RUN will not fix itself, so say so. A probe
+		// that ran and failed for a transient reason — the pod disappearing
+		// between the Get above and the exec, which is exactly what the
+		// operator just asked for — stays `starting` so the panel holds its
+		// spinner instead of flashing a failure on the happy path.
+		if probeCouldNotRun(stderr) {
+			slog.Error("codex device auth probe could not run",
+				"agent", name, "error", err, "stderr", firstLine(stderr))
+			writeJSON(w, http.StatusOK, codexauth.Result{
+				State:  codexauth.StateFailed,
+				Detail: truncateForOperator(stderr),
+			})
+			return
+		}
 		slog.Warn("codex device auth probe failed",
 			"agent", name, "error", err, "stderr", firstLine(stderr))
 		writeJSON(w, http.StatusOK, codexauth.Result{State: codexauth.StateStarting})
@@ -151,6 +165,31 @@ func parseDeviceAuthProbe(stdout string, now time.Time) codexauth.Result {
 	return codexauth.Parse(pane, startedAt, now)
 }
 
+// deviceAuthProbeArgv becomes the agent user and runs the probe script.
+//
+// runuser, NOT `sudo -iu kyber`. `sudo -i` starts a LOGIN shell and re-parses
+// the command it is handed, which mangles any real shell syntax in it: on
+// kyber-canary this script came back as
+//
+//	bash: -c: line 2: syntax error: unexpected end of file from `{' command on line 1
+//
+// every single time, so the handler logged a warning and answered `starting`
+// forever while a perfectly good code sat in the pane. Every other place the
+// platform runs something as the agent user already uses runuser
+// (pkg/runtimes/claudecode/adapter.go, pkg/runtimes/codex/adapter.go); the
+// `sudo -iu` form belongs to the exec route's interactive modes, which pass
+// plain argv with no shell syntax to mangle.
+//
+// Without -l there is no login profile, so the pod's debug banner does not
+// appear either. The markers stay regardless — they are what makes the parse
+// independent of whatever the shell decides to print.
+//
+// tmux resolves its socket per-uid, so this must land as `kyber` and not root,
+// or it reports no session against a healthy pod.
+func deviceAuthProbeArgv() []string {
+	return []string{"/usr/sbin/runuser", "-u", "kyber", "--", "bash", "-c", deviceAuthProbeScript}
+}
+
 // deviceAuthNsenterPrefix mirrors the exec route's prefix: the tmux socket
 // lives inside PID 1's remounted root, so a bare exec looks at the wrong
 // filesystem and reports no session on a perfectly healthy pod.
@@ -161,6 +200,64 @@ func deviceAuthNsenterPrefix() []string {
 		"--root", "--wd",
 		"--",
 	}
+}
+
+// probeCouldNotRun reports whether the failure was the probe never running, as
+// opposed to running and failing.
+//
+// Two shapes matter, and both are permanent until somebody ships a fix:
+//
+//   - A launcher saying it could not start what we handed it —
+//     `runuser: failed to execute …`, `nsenter: …: No such file or directory`.
+//     The agent image is missing something the control plane assumes.
+//   - The shell rejecting our own script — `bash: -c: line 2: syntax error: …`.
+//     This is the exact stderr kyber-canary returned on every poll before the
+//     runuser fix, and the case this classifier exists to stop hiding.
+//
+// Everything else is treated as transient. Deliberately conservative: a
+// mis-classified transient failure turns a spinner into a scary message on the
+// happy path, which is worse than one extra poll.
+//
+// Kept local rather than reusing isMissingInPodScript, which is anchored to the
+// compact-session script's own name and would need widening to a second caller
+// to be useful here.
+func probeCouldNotRun(stderr string) bool {
+	for _, line := range strings.Split(stderr, "\n") {
+		l := strings.ToLower(strings.TrimSpace(strings.Trim(line, `"`)))
+		if l == "" {
+			continue
+		}
+		if !hasAnyPrefix(l, "runuser:", "nsenter:", "bash:", "sh:", "su:", "sudo:") {
+			continue
+		}
+		// Our own script being rejected by the shell that was handed it.
+		if strings.Contains(l, "syntax error") || strings.Contains(l, "unexpected end of file") {
+			return true
+		}
+		// A launcher that could not start the next thing in the chain.
+		if strings.Contains(l, "failed to execute") ||
+			strings.Contains(l, "no such file or directory") ||
+			strings.Contains(l, "command not found") ||
+			strings.Contains(l, "permission denied") {
+			return true
+		}
+	}
+	return false
+}
+
+// truncateForOperator bounds the stderr echoed into the API response. This is
+// stderr, never stdout — the pane, and therefore the code, only ever arrives on
+// stdout, so nothing secret rides along here.
+func truncateForOperator(stderr string) string {
+	s := strings.TrimSpace(strings.Trim(strings.TrimSpace(stderr), `"`))
+	if s == "" {
+		return "Kyber could not read the login session from the agent."
+	}
+	const max = 300
+	if len(s) > max {
+		s = s[:max] + "…"
+	}
+	return s
 }
 
 // firstLine keeps a stderr sample out of the multi-kilobyte range in logs.

@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.34.1 — 2026-08-26
+
+### Fixed
+- The Codex device-login panel no longer spins forever when Kyber cannot read
+  the login out of the agent at all. That case now says so, shows the reason,
+  and offers **Start again** — a spinner over it is how the panel's own broken
+  probe went unnoticed. A flow that is merely still starting is unchanged.
+
 ## 0.34.0 — 2026-08-26
 
 ### Changed

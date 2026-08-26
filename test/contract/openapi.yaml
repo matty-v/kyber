@@ -835,14 +835,20 @@ components:
           description: >
             absent - no login flow is running; starting - flow is coming up or
             has not printed its prompt yet; ready - a usable code is showing;
-            expired - a code was printed but its window has passed.
-          enum: [absent, starting, ready, expired]
+            expired - a code was printed but its window has passed; failed -
+            Kyber could not read the flow at all and this will not fix itself.
+          enum: [absent, starting, ready, expired, failed]
         verificationUrl:
           type: string
           description: Page the operator opens. Absent unless state is ready or expired.
         userCode:
           type: string
           description: One-time code typed into that page. Short-lived and single-use.
+        detail:
+          type: string
+          description: >
+            Short operator-facing reason, present only when state is failed.
+            Carries the in-pod stderr, bounded; never the pane.
         expiresAt:
           type: string
           format: date-time
