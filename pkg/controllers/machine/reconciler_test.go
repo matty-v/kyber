@@ -38,6 +38,21 @@ func TestCapacityProviderForKeepsDirectGCEOnLegacyPath(t *testing.T) {
 	}
 }
 
+func TestHasPendingCostOptimizedRetry(t *testing.T) {
+	machine := &kyberv1.Machine{}
+	if hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("empty retry request reported pending")
+	}
+	machine.Spec.CostOptimizedRetryRequest = "retry-1"
+	if !hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("unacknowledged retry request was not reported pending")
+	}
+	machine.Status.CostOptimizedRetryObserved = "retry-1"
+	if hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("acknowledged retry request reported pending")
+	}
+}
+
 func TestClassifyNodeDisappeared_InterruptibleCapacityProviderStartsReplacement(t *testing.T) {
 	ctx := context.Background()
 	provider := adapters.NewFakeComputeAdapter()

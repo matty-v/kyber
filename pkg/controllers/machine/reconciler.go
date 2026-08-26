@@ -185,6 +185,23 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	// A manual reliable -> cost-optimized retry is provider reconciliation,
+	// not a Machine phase transition. Stable Ready/Running Machines otherwise
+	// only refresh node-derived status and never call the capacity provider, so
+	// an accepted retry request would remain pending indefinitely. Keep driving
+	// the provider until it acknowledges the one-shot request; its paired-capacity
+	// contract removes reliable capacity before creating cost-optimized capacity.
+	if hasPendingCostOptimizedRetry(machine) {
+		if _, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOnline); err != nil {
+			logger.Error(err, "cost-optimized retry failed — will requeue", "machine", machine.Name)
+			if updateErr := r.updateMessage(ctx, machine, fmt.Sprintf("cost-optimized retry failed: %v", err)); updateErr != nil {
+				logger.Error(updateErr, "failed to write retry error to status")
+			}
+			return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
+		}
+		return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
+	}
+
 	// 4. Classify the event to drive the state machine.
 	event, requeueAfter, err := r.classifyEvent(ctx, machine)
 	if err != nil {
@@ -298,6 +315,11 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 	return ctrl.Result{RequeueAfter: requeueAfterForPhase(result.NextPhase)}, nil
+}
+
+func hasPendingCostOptimizedRetry(machine *kyberv1.Machine) bool {
+	return machine.Spec.CostOptimizedRetryRequest != "" &&
+		machine.Spec.CostOptimizedRetryRequest != machine.Status.CostOptimizedRetryObserved
 }
 
 // classifyEvent inspects the machine's current state to determine the next event.
