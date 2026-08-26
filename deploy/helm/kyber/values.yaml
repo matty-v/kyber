@@ -645,7 +645,7 @@ metrics:
 # or equivalent (we set this up in Terraform). On a GCE VM, ADC auto-discovers the
 # instance's service account via the metadata server — no key file is needed.
 compute:
-  provider: mock          # "mock", "static", "fake", "gce", or "gke"
+  provider: mock          # "mock", "static", "fake", "gce", "gke", or "eks"
   simulation:
     # Development-only, API-key-protected scenario controls. Production
     # installations must leave this disabled.
@@ -741,6 +741,12 @@ compute:
     # single-location behavior. Two or more zones use total-size-one
     # autoscaling with locationPolicy=ANY.
     nodeLocations: []
+    profiles: []
+  eks:
+    region: ""
+    cluster: ""
+    nodeRoleArn: ""
+    allowedZones: []
     profiles: []
 
 # k3s join config — required for the Machine Controller to provision k3s worker nodes.

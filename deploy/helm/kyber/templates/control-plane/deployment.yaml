@@ -415,6 +415,18 @@ spec:
             - name: KYBER_GKE_NODE_LOCATIONS
               value: {{ .Values.compute.gke.nodeLocations | toJson | quote }}
             {{- end }}
+            {{- if eq (.Values.compute.provider | default "mock") "eks" }}
+            - name: KYBER_EKS_REGION
+              value: {{ required "compute.eks.region is required when compute.provider=eks" .Values.compute.eks.region | quote }}
+            - name: KYBER_EKS_CLUSTER
+              value: {{ required "compute.eks.cluster is required when compute.provider=eks" .Values.compute.eks.cluster | quote }}
+            - name: KYBER_EKS_NODE_ROLE_ARN
+              value: {{ required "compute.eks.nodeRoleArn is required when compute.provider=eks" .Values.compute.eks.nodeRoleArn | quote }}
+            - name: KYBER_EKS_ALLOWED_ZONES
+              value: {{ required "compute.eks.allowedZones is required when compute.provider=eks" .Values.compute.eks.allowedZones | toJson | quote }}
+            - name: KYBER_EKS_PROFILES
+              value: {{ required "compute.eks.profiles is required when compute.provider=eks" .Values.compute.eks.profiles | toJson | quote }}
+            {{- end }}
             # Telemetry — OTEL exporter config.
             - name: KYBER_TELEMETRY_ENABLED
               valueFrom:
