@@ -300,13 +300,16 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     resources = ["*"]
   }
   statement {
-    sid       = "LaunchFromApprovedTemplate"
+    # EKS validates ec2:RunInstances for every resource referenced by a managed
+    # node group's launch template. Limit that validation to this deployment's
+    # region; the adapter separately pins the approved template and subnets.
+    sid       = "LaunchManagedNodesInRegion"
     actions   = ["ec2:RunInstances"]
     resources = ["*"]
     condition {
-      test     = "ArnLike"
-      variable = "ec2:LaunchTemplate"
-      values   = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:launch-template/${aws_launch_template.machine.id}"]
+      test     = "StringEquals"
+      variable = "ec2:Region"
+      values   = [var.region]
     }
   }
 }
