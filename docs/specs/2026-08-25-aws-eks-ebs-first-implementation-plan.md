@@ -494,6 +494,18 @@ Send Matt the rendered plan summary, IAM boundary, hourly/max cost, region/AZs,
 public/private exposure, existing-resource inventory, and cleanup query. Do not
 apply without a new explicit approval.
 
+### Static checkpoint — 2026-08-26
+
+The isolated Terraform root is implemented under `infra/terraform/eks`: two
+tagged AZ subnets in a new VPC, bounded public/private EKS API access, control-
+plane logs, a single-AZ On-Demand platform group, encrypted gp3/IMDSv2 launch
+template, core add-ons, EBS CSI, and Pod Identity with no static credentials,
+EFS, load balancer, backup policy, or shared-resource IDs. Required owner,
+run, expiry, and bounded CIDR inputs fail closed. `terraform fmt`, provider
+lock generation, and `terraform validate` pass. Account-backed inventory,
+quota, plan, and cost review await a fresh interactive AWS CLI session; no
+apply is authorized or attempted.
+
 ## Phase 8 — guarded live EKS acceptance
 
 ### Provision and install
