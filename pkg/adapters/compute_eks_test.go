@@ -177,7 +177,7 @@ func TestEKSLaunchTemplateRetainsInstallerInstanceChoicesAndDisk(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Reconcile: %v", err)
 	}
-	if client.create.LaunchTemplate == nil || aws.ToString(client.create.LaunchTemplate.Id) != "lt-123" || aws.ToString(client.create.LaunchTemplate.Version) != "7" || len(client.create.InstanceTypes) != 2 || aws.ToInt32(client.create.DiskSize) != 100 {
+	if client.create.LaunchTemplate == nil || aws.ToString(client.create.LaunchTemplate.Id) != "lt-123" || aws.ToString(client.create.LaunchTemplate.Version) != "7" || len(client.create.InstanceTypes) != 2 || client.create.DiskSize != nil {
 		t.Fatalf("create input = %+v", client.create)
 	}
 }

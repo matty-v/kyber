@@ -84,6 +84,12 @@ binds each new PVC in the selected Machine's zone. Kyber never deletes or
 recreates a PVC during fallback, so the same volume is reattached to the
 replacement node.
 
+When a profile supplies `launchTemplateId`, EKS requires the worker root-disk
+mapping to live in that launch template. Keep the profile's displayed
+`diskSizeGb` aligned with Terraform's `machine_root_disk_size`; Kyber omits the
+conflicting EKS `diskSize` request while retaining the profile's multiple
+same-shape `instanceTypes` for Spot capacity diversity.
+
 ## Day-two behavior
 
 For a cost-optimized Machine, Kyber pre-creates a Spot group at size one and

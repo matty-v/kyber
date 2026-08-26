@@ -39,6 +39,10 @@ variable "platform_instance_type" {
   type    = string
   default = "m7i.large"
 }
+variable "machine_root_disk_size" {
+  type    = number
+  default = 100
+}
 variable "public_access_cidrs" {
   type        = list(string)
   description = "Reviewed CIDRs allowed to reach the public EKS API."

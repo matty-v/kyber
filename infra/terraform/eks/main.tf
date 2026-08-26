@@ -119,6 +119,15 @@ resource "aws_launch_template" "platform" {
 
 resource "aws_launch_template" "machine" {
   name_prefix = "${var.cluster_name}-machine-"
+  block_device_mappings {
+    device_name = "/dev/xvda"
+    ebs {
+      encrypted             = true
+      volume_type           = "gp3"
+      volume_size           = var.machine_root_disk_size
+      delete_on_termination = true
+    }
+  }
   metadata_options {
     http_endpoint               = "enabled"
     http_tokens                 = "required"
