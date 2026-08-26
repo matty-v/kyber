@@ -41,6 +41,10 @@ compute:
 
 storage:
   agentStorageClass: kyber-ebs
+  # EKS has no default StorageClass in this installation path. Use the same
+  # zonal EBS class for the small transcript-offsets claim as the agent disk.
+  transcriptOffsets:
+    storageClassName: kyber-ebs
   awsEBS:
     enabled: true
     storageClassName: kyber-ebs
