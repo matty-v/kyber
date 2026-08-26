@@ -38,6 +38,10 @@ The disposable reference root is in [`infra/terraform/eks`](../infra/terraform/e
 It creates tagged, expiring qualification infrastructure in two AZs while the
 v1 platform node group remains single-AZ. Review a saved Terraform plan before
 apply; destroy from the same state and independently audit tagged resources.
+If the Helm release name or namespace is not `kyber`, set Terraform's
+`kyber_control_plane_service_account` and `kyber_namespace` variables to the
+rendered ServiceAccount identity before apply so the Pod Identity association
+matches exactly.
 
 ## Helm configuration
 

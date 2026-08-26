@@ -213,12 +213,24 @@ resource "aws_iam_role" "kyber_control_plane" {
 
 data "aws_iam_policy_document" "kyber_control_plane" {
   statement {
-    sid = "ClusterReadAndCreate"
-    actions = [
-      "eks:DescribeCluster",
-      "eks:CreateNodegroup",
-    ]
+    sid       = "ClusterRead"
+    actions   = ["eks:DescribeCluster"]
     resources = [aws_eks_cluster.this.arn]
+  }
+  statement {
+    sid       = "CreateOwnedNodegroups"
+    actions   = ["eks:CreateNodegroup"]
+    resources = [aws_eks_cluster.this.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "aws:RequestTag/kyber.io/managed-by"
+      values   = ["kyber"]
+    }
+    condition {
+      test     = "Null"
+      variable = "aws:RequestTag/kyber.io/machine"
+      values   = ["false"]
+    }
   }
   statement {
     sid = "OwnedNodegroupLifecycle"
