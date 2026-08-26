@@ -9,9 +9,12 @@ import (
 	"github.com/matty-v/kyber/pkg/codexauth"
 )
 
-// The probe runs under `sudo -iu kyber`, which prints the pod's debug banner
-// before anything we asked for. Every case here carries that banner, because
-// stripping it in the test would test a stdout the handler never receives.
+// An arbitrary preamble ahead of our own output. The probe no longer runs under
+// a login shell, so the pod's debug banner (printed from /etc/profile.d by
+// profile-kyber.sh) is NOT in the real stdout any more — see
+// deviceAuthProbeArgv. It is kept here on purpose: the parse is anchored to the
+// markers precisely so it does not care what precedes them, and every case
+// carrying a preamble is what pins that.
 const probeBanner = `[Kyber agent shell — debug helpers]
 
   agent          attach to the agent runtime's tmux session (read/write)
@@ -155,5 +158,66 @@ func TestDeviceAuthProbeScript_IsValidShell(t *testing.T) {
 	cmd.Stdin = strings.NewReader(deviceAuthProbeScript)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("probe script is not valid bash: %v\n%s", err, out)
+	}
+}
+
+// A probe that cannot run must not look like a probe that is still starting.
+//
+// Collapsing the two is what hid the login panel's broken argv for a whole
+// release: the shell rejected the script on every poll, the handler answered
+// `starting`, and the operator got a spinner over a code that was already
+// printed. The first case below is the verbatim stderr kyber-canary returned.
+func TestProbeCouldNotRun_PermanentFailures(t *testing.T) {
+	permanent := []struct {
+		name, stderr string
+	}{
+		{
+			"the shell rejects our own script (kyber-canary, 2026-08-26)",
+			"\"bash: -c: line 2: syntax error: unexpected end of file from `{' command on line 1\"",
+		},
+		{"launcher cannot start the next link", "runuser: failed to execute /usr/sbin/runuser: No such file or directory"},
+		{"nsenter cannot start it", "nsenter: failed to execute bash: No such file or directory"},
+		{"binary absent from the image", "bash: runuser: command not found"},
+		{"not executable", "runuser: /bin/bash: Permission denied"},
+	}
+	for _, tc := range permanent {
+		if !probeCouldNotRun(tc.stderr) {
+			t.Errorf("%s: want permanent, got transient — this failure will not fix itself", tc.name)
+		}
+	}
+}
+
+// The other half matters just as much: mis-reading a transient failure puts a
+// scary message in front of the operator on the happy path. A pod disappearing
+// mid-poll is precisely what they just asked for by clicking the button.
+func TestProbeCouldNotRun_TransientFailuresStayTransient(t *testing.T) {
+	transient := []string{
+		"",
+		"error dialing backend: remote error: tls: internal error",
+		"unable to upgrade connection: container not found (\"agent\")",
+		"command terminated with exit code 137",
+		"Error from server: error dialing backend: EOF",
+		// Names a launcher but is the SCRIPT talking, from inside a run that
+		// plainly happened.
+		"tmux: no server running on /tmp/tmux-1001/default",
+	}
+	for _, stderr := range transient {
+		if probeCouldNotRun(stderr) {
+			t.Errorf("stderr %q: want transient, got permanent — the panel would flash a failure mid-boot", stderr)
+		}
+	}
+}
+
+func TestTruncateForOperator(t *testing.T) {
+	if got := truncateForOperator("   \"\"  "); got == "" {
+		t.Error("an empty stderr still needs something an operator can read")
+	}
+	long := strings.Repeat("x", 900)
+	got := truncateForOperator(long)
+	if len(got) > 320 {
+		t.Errorf("len=%d — a runaway stderr does not belong in a JSON response", len(got))
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Error("a truncated message should say it was truncated")
 	}
 }

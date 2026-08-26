@@ -97,11 +97,17 @@ export function CodexDeviceAuthPanel({ name, phase }: Props) {
   // All three of those are "wait", not "ask again".
   const startRequested = startLogin.isPending || startLogin.isSuccess
   const bootingTowardLogin = data?.state === 'absent' && phase === 'Starting'
+  // `failed` means Kyber could not read the flow at all. It outranks every
+  // "wait" below, because waiting is exactly the wrong advice — this one does
+  // not fix itself, and a spinner over it is how the panel's own broken probe
+  // went unnoticed for a release.
+  const failed = data?.state === 'failed'
   const waiting =
     !ready &&
     !expired &&
+    !failed &&
     (isLoading || data?.state === 'starting' || bootingTowardLogin || startRequested)
-  const idle = !waiting && !ready && !expired
+  const idle = !waiting && !ready && !expired && !failed
 
   return (
     <Card className="border-accent/40 bg-accent/10">
@@ -174,6 +180,32 @@ export function CodexDeviceAuthPanel({ name, phase }: Props) {
               : `Waiting for you to approve it in your browser — this code expires in ${formatCountdown(remaining)}.`}
           </p>
         </div>
+      )}
+
+      {failed && (
+        <>
+          <p className="mb-1 text-xs text-text-primary">
+            Kyber couldn&apos;t read the login from this agent.
+          </p>
+          {data?.detail && (
+            <pre className="mb-3 overflow-x-auto whitespace-pre-wrap break-words rounded-lg bg-surface-overlay px-3 py-2 font-mono text-[11px] text-text-muted">
+              {data.detail}
+            </pre>
+          )}
+          <p className="mb-3 text-xs text-text-muted">
+            The login may still be running inside the agent — the Terminal tab&apos;s device-login
+            view shows it directly.
+          </p>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            loading={startLogin.isPending}
+            onClick={() => startLogin.mutate(name)}
+          >
+            Start again
+          </Button>
+        </>
       )}
 
       {expired && (

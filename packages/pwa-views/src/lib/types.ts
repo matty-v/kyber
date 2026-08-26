@@ -391,15 +391,18 @@ export interface CreateAgentRequest {
  * `starting` pod is booting, or the flow has not printed its prompt yet - spin.
  * `ready`    a usable code is showing.
  * `expired`  a code was printed but its window has passed - offer to start again.
+ * `failed`   Kyber could not read the flow at all. Distinct from `starting`
+ *            because it will not fix itself - show `detail` and stop spinning.
  *
  * `expiresAt` is omitted when the countdown's origin could not be read; show no
  * timer rather than a wrong one.
  */
 export interface CodexDeviceAuthStatus {
-  state: 'absent' | 'starting' | 'ready' | 'expired'
+  state: 'absent' | 'starting' | 'ready' | 'expired' | 'failed'
   verificationUrl?: string
   userCode?: string
   expiresAt?: string
+  detail?: string
 }
 
 export interface PatchAgentRequest {
