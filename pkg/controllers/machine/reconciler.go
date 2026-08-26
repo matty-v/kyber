@@ -861,14 +861,15 @@ func (r *MachineReconciler) reconcileCapacity(
 		return adapters.CapacityObservation{}, fmt.Errorf("capacity provider is not configured")
 	}
 	desired := adapters.DesiredMachine{
-		Availability:              availability,
-		Profile:                   machineProfile(machine),
-		DiskSizeGb:                int(machine.Spec.DiskSizeGb),
-		Interruptible:             machineInterruptible(machine),
-		AvailabilityClass:         string(machineAvailabilityClass(machine)),
-		CostOptimizedRetryRequest: machine.Spec.CostOptimizedRetryRequest,
-		Location:                  machineLocation(machine),
-		Labels:                    map[string]string{MachineLabelKey: machine.Name},
+		Availability:                  availability,
+		Profile:                       machineProfile(machine),
+		DiskSizeGb:                    int(machine.Spec.DiskSizeGb),
+		Interruptible:                 machineInterruptible(machine),
+		AvailabilityClass:             string(machineAvailabilityClass(machine)),
+		CostOptimizedRetryRequest:     machine.Spec.CostOptimizedRetryRequest,
+		CostOptimizedUnavailableSince: metaTimeValue(machine.Status.CostOptimizedUnavailableSince),
+		Location:                      machineLocation(machine),
+		Labels:                        map[string]string{MachineLabelKey: machine.Name},
 		NodeBootstrap: adapters.NodeBootstrap{
 			JoinToken: r.K3sJoinToken,
 			ServerURL: r.K3sServerURL,
@@ -932,6 +933,13 @@ func (r *MachineReconciler) reconcileCapacity(
 		r.recordFallbackEvents(machine, previousStatus, observation)
 	}
 	return observation, nil
+}
+
+func metaTimeValue(value *metav1.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return value.Time
 }
 
 // recordFallbackEvents emits only on durable status transitions. Provider

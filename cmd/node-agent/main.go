@@ -94,7 +94,12 @@ func main() {
 	machineName := os.Getenv("KYBER_MACHINE_NAME")
 	controlPlaneURL := os.Getenv("KYBER_CONTROL_PLANE_URL")
 	if machineName != "" && controlPlaneURL != "" {
+		var interruptionSource nodeagent.InterruptionSource = nodeagent.GCEInterruptionSource{}
+		if os.Getenv("KYBER_CLOUD_PROVIDER") == "eks" {
+			interruptionSource = nodeagent.EC2InterruptionSource{}
+		}
 		pw := &nodeagent.PreemptionWatcher{
+			Source: interruptionSource,
 			OnPreemption: func() {
 				logger.Info("preemption detected; notifying control plane", "machine", machineName)
 				notifyControlPlane(controlPlaneURL, machineName)

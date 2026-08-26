@@ -454,6 +454,15 @@ Gate: deterministic tests prove bounded orchestration and no double writer.
 Gate: GCE node-agent tests remain unchanged and AWS fixtures add no network
 dependency.
 
+### Build checkpoint — 2026-08-26
+
+The watcher now selects one explicit interruption source. GCE retains its
+existing metadata request and behavior; EKS uses IMDSv2 token acquisition and
+checks both Spot instance-action and rebalance recommendation endpoints with
+bounded HTTP timeouts and one-shot notification. Tests cover notice, no notice,
+token failure, and unavailable IMDS without network dependencies. The node
+agent receives the configured provider from Helm. Phase 6 is complete.
+
 ## Phase 7 — disposable EKS Terraform root
 
 ### Static implementation

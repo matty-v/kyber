@@ -139,10 +139,13 @@ type DesiredMachine struct {
 	// CostOptimizedRetryRequest is an opaque, durable one-shot request token.
 	// Providers observe and acknowledge it without interpreting its contents.
 	CostOptimizedRetryRequest string
-	Location                  string
-	Labels                    map[string]string
-	NodeBootstrap             NodeBootstrap
-	Managed                   bool
+	// CostOptimizedUnavailableSince is durable controller-owned transition
+	// state returned to providers so timeout decisions survive restarts.
+	CostOptimizedUnavailableSince time.Time
+	Location                      string
+	Labels                        map[string]string
+	NodeBootstrap                 NodeBootstrap
+	Managed                       bool
 	// AttachmentObserved distinguishes an authoritative zero Nodes from an
 	// unavailable Kubernetes observation.
 	AttachmentObserved bool
