@@ -285,8 +285,18 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     ]
   }
   statement {
-    sid       = "ReadApprovedLaunchTemplate"
-    actions   = ["ec2:DescribeLaunchTemplateVersions"]
+    sid = "ReadApprovedInfrastructure"
+    actions = [
+      "ec2:DescribeAvailabilityZones",
+      "ec2:DescribeImages",
+      "ec2:DescribeInstanceTypes",
+      "ec2:DescribeLaunchTemplates",
+      "ec2:DescribeLaunchTemplateVersions",
+      "ec2:DescribeRouteTables",
+      "ec2:DescribeSecurityGroups",
+      "ec2:DescribeSubnets",
+      "ec2:DescribeVpcs",
+    ]
     resources = ["*"]
   }
 }
