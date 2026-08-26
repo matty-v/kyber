@@ -5,8 +5,22 @@ package adapters
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
+
+const ComputeConfigFallbackThreshold = "fallback-threshold"
+
+func parseFallbackThreshold(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 5 * time.Minute, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("fallback threshold must be a positive duration")
+	}
+	return d, nil
+}
 
 // DesiredAvailability is Kyber's provider-neutral intent for one logical unit
 // of Machine capacity. Providers decide how that intent maps to their native

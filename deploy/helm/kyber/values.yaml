@@ -646,6 +646,10 @@ metrics:
 # instance's service account via the metadata server — no key file is needed.
 compute:
   provider: mock          # "mock", "static", "fake", "gce", "gke", or "eks"
+  # Time cost-optimized capacity may remain unavailable before Kyber switches
+  # the Machine to reliable capacity. Keep 5m in production; shorter values
+  # are useful for bounded qualification tests.
+  fallbackThreshold: 5m
   simulation:
     # Development-only, API-key-protected scenario controls. Production
     # installations must leave this disabled.

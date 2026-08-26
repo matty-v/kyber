@@ -744,6 +744,7 @@ func main() {
 	gkeProfiles := os.Getenv("KYBER_GKE_PROFILES")
 	gkeNodeLocations := os.Getenv("KYBER_GKE_NODE_LOCATIONS")
 	gkeReliableFallback := os.Getenv("KYBER_GKE_RELIABLE_FALLBACK_ENABLED")
+	fallbackThreshold := os.Getenv("KYBER_COMPUTE_FALLBACK_THRESHOLD")
 	eksRegion := os.Getenv("KYBER_EKS_REGION")
 	eksCluster := os.Getenv("KYBER_EKS_CLUSTER")
 	eksProfiles := os.Getenv("KYBER_EKS_PROFILES")
@@ -752,17 +753,18 @@ func main() {
 	eksSubnetsByZone := os.Getenv("KYBER_EKS_SUBNETS_BY_ZONE")
 	providerCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	computeAdapter, err := adapters.NewComputeAdapter(providerCtx, provider, adapters.ProviderConfig{
-		adapters.GCEConfigProject:          gceProject,
-		adapters.GCEConfigNetwork:          gceNetwork,
-		adapters.GCEConfigSubnet:           gceSubnet,
-		adapters.GCEConfigEndpoint:         gceEndpoint,
-		adapters.GKEConfigProject:          gkeProject,
-		adapters.GKEConfigLocation:         gkeLocation,
-		adapters.GKEConfigCluster:          gkeCluster,
-		adapters.GKEConfigProfiles:         gkeProfiles,
-		adapters.GKEConfigNodeLocations:    gkeNodeLocations,
-		adapters.GKEConfigReliableFallback: gkeReliableFallback,
-		adapters.EKSConfigRegion:           eksRegion, adapters.EKSConfigCluster: eksCluster,
+		adapters.GCEConfigProject:               gceProject,
+		adapters.GCEConfigNetwork:               gceNetwork,
+		adapters.GCEConfigSubnet:                gceSubnet,
+		adapters.GCEConfigEndpoint:              gceEndpoint,
+		adapters.GKEConfigProject:               gkeProject,
+		adapters.GKEConfigLocation:              gkeLocation,
+		adapters.GKEConfigCluster:               gkeCluster,
+		adapters.GKEConfigProfiles:              gkeProfiles,
+		adapters.GKEConfigNodeLocations:         gkeNodeLocations,
+		adapters.GKEConfigReliableFallback:      gkeReliableFallback,
+		adapters.ComputeConfigFallbackThreshold: fallbackThreshold,
+		adapters.EKSConfigRegion:                eksRegion, adapters.EKSConfigCluster: eksCluster,
 		adapters.EKSConfigProfiles: eksProfiles, adapters.EKSConfigAllowedZones: eksAllowedZones,
 		adapters.EKSConfigNodeRoleARN:   eksNodeRoleARN,
 		adapters.EKSConfigSubnetsByZone: eksSubnetsByZone,

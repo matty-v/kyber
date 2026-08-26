@@ -53,6 +53,11 @@ func init() {
 			}
 			adapter.reliableFallback = enabled
 		}
+		fallbackThreshold, err := parseFallbackThreshold(config[ComputeConfigFallbackThreshold])
+		if err != nil {
+			return nil, err
+		}
+		adapter.fallbackThreshold = fallbackThreshold
 		return adapter, nil
 	})
 }

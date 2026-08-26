@@ -377,6 +377,8 @@ spec:
             # Compute adapter selection.
             - name: KYBER_COMPUTE_PROVIDER
               value: {{ .Values.compute.provider | default "mock" | quote }}
+            - name: KYBER_COMPUTE_FALLBACK_THRESHOLD
+              value: {{ .Values.compute.fallbackThreshold | default "5m" | quote }}
             {{- if .Values.compute.simulation.controlEnabled }}
             - name: KYBER_DEV_COMPUTE_CONTROL
               value: "true"

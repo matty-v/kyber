@@ -11,6 +11,27 @@ import (
 	ekstypes "github.com/aws/aws-sdk-go-v2/service/eks/types"
 )
 
+func TestParseFallbackThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		raw  string
+		want time.Duration
+		err  bool
+	}{
+		{name: "default", want: 5 * time.Minute},
+		{name: "qualification override", raw: "30s", want: 30 * time.Second},
+		{name: "invalid", raw: "soon", err: true},
+		{name: "non-positive", raw: "0s", err: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseFallbackThreshold(tc.raw)
+			if (err != nil) != tc.err || got != tc.want {
+				t.Fatalf("parseFallbackThreshold(%q) = %s, %v; want %s, err=%v", tc.raw, got, err, tc.want, tc.err)
+			}
+		})
+	}
+}
+
 type fakeEKSClient struct {
 	nodegroup *ekstypes.Nodegroup
 	groups    map[string]*ekstypes.Nodegroup

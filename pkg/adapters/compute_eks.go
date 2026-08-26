@@ -117,7 +117,11 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 	if err := json.Unmarshal([]byte(cfg[EKSConfigSubnetsByZone]), &subnets); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", EKSConfigSubnetsByZone, err)
 	}
-	a := &EKSAdapter{region: cfg[EKSConfigRegion], cluster: cfg[EKSConfigCluster], nodeRoleARN: cfg[EKSConfigNodeRoleARN], profiles: map[string]EKSProfile{}, allowedZones: map[string]struct{}{}, subnetsByZone: subnets, now: func() time.Time { return time.Now().UTC() }, fallbackThreshold: 5 * time.Minute}
+	fallbackThreshold, err := parseFallbackThreshold(cfg[ComputeConfigFallbackThreshold])
+	if err != nil {
+		return nil, err
+	}
+	a := &EKSAdapter{region: cfg[EKSConfigRegion], cluster: cfg[EKSConfigCluster], nodeRoleARN: cfg[EKSConfigNodeRoleARN], profiles: map[string]EKSProfile{}, allowedZones: map[string]struct{}{}, subnetsByZone: subnets, now: func() time.Time { return time.Now().UTC() }, fallbackThreshold: fallbackThreshold}
 	for _, zone := range zones {
 		if strings.TrimSpace(zone) == "" {
 			return nil, fmt.Errorf("EKS allowed zone must not be empty")
