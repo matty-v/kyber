@@ -1231,9 +1231,22 @@ func (s *Server) rearmRecoveryGate(ctx context.Context, agent *kyberv1.Agent) er
 	default:
 		return nil
 	}
-	patch := client.MergeFrom(agent.DeepCopy())
+	// Patch a COPY, never the caller's object. Status().Patch decodes the
+	// server's response back into whatever object it is handed
+	// (controller-runtime PatchSubResource -> Into(obj)), and that response
+	// carries the stored spec — so patching `agent` in place silently reverts
+	// any spec edits a caller has already staged on it, and the spec patch that
+	// follows computes an empty diff and writes nothing. Callers whose merge
+	// base is captured after this call are unaffected either way; this keeps the
+	// helper safe to call from anywhere in a handler.
+	statusOnly := agent.DeepCopy()
+	patch := client.MergeFrom(statusOnly.DeepCopy())
+	statusOnly.Status.RecoveryInput = ""
+	if err := s.K8sClient.Status().Patch(ctx, statusOnly, patch); err != nil {
+		return err
+	}
 	agent.Status.RecoveryInput = ""
-	return s.K8sClient.Status().Patch(ctx, agent, patch)
+	return nil
 }
 
 func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, name string, phase kyberv1.AgentPhase) {
@@ -1543,10 +1556,11 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	// MemoryExhausted agent does not — and that is still an explicit operator
 	// action that must not be swallowed. Clearing here buys exactly one attempt.
 	// Harmless on Failed, which is not gated.
-	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted && agent.Status.RecoveryInput != "" {
-		statusPatch := client.MergeFrom(agent.DeepCopy())
-		agent.Status.RecoveryInput = ""
-		if err := s.K8sClient.Status().Patch(r.Context(), agent, statusPatch); err != nil {
+	// The MemoryExhausted guard is this handler's own: rearmRecoveryGate also
+	// covers NeedsAuth, and a NeedsAuth agent leaves here on desiredPhase
+	// Restarting, which the gate deliberately does not honour.
+	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
+		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 			return

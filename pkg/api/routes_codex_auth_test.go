@@ -69,17 +69,17 @@ func TestCodexDeviceAuthResetsCredentialAndStartsAgent(t *testing.T) {
 // Note the sibling test above deliberately seeds a DIFFERENT credential
 // (`{"expired":true}`), so it never exercised this path.
 func TestCodexDeviceAuthReopensGateWhenCredentialIsAlreadyPlaceholder(t *testing.T) {
-	// testAPIKey + "Bearer "+key rather than an inline literal: the package
-	// already standardises on that (routes_machines_test.go, and every
-	// routes_compact_session_test.go case), and a bare
-	// `Authorization: Bearer <literal>` added in a diff trips the repo's
-	// secret scan.
 	s := newTestPublicServer(t, testAPIKey)
 	const claim = "rv:needy-codex-auth:672"
 	agent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "needy", Namespace: s.Namespace},
 		Spec: kyberv1.AgentSpec{
-			Runtime: "codex", DesiredPhase: kyberv1.AgentPhaseNeedsAuth,
+			// Running, not NeedsAuth: the previous click already set it, so on
+			// the retry the spec patch below is byte-identical too. The status
+			// clear is then the ONLY write that changes the Agent — which
+			// matters because the controller watches Agents and Pods, not
+			// Secrets (SetupWithManager), so nothing else would wake it.
+			Runtime: "codex", DesiredPhase: kyberv1.AgentPhaseRunning,
 			Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeOAuth},
 		},
 		Status: kyberv1.AgentStatus{
