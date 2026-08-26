@@ -301,16 +301,12 @@ data "aws_iam_policy_document" "kyber_control_plane" {
   }
   statement {
     # EKS validates ec2:RunInstances for every resource referenced by a managed
-    # node group's launch template. Limit that validation to this deployment's
-    # region; the adapter separately pins the approved template and subnets.
-    sid       = "LaunchManagedNodesInRegion"
+    # node group's launch template. EC2 condition keys are not preserved by the
+    # EKS authorization check, so this action cannot be narrowed further here;
+    # the adapter pins the approved template, node role, subnet, and profiles.
+    sid       = "LaunchManagedNodes"
     actions   = ["ec2:RunInstances"]
     resources = ["*"]
-    condition {
-      test     = "StringEquals"
-      variable = "ec2:Region"
-      values   = [var.region]
-    }
   }
 }
 
