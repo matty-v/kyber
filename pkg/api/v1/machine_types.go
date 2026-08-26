@@ -48,7 +48,7 @@ const (
 )
 
 // MachineProvider identifies the cloud provider for this machine.
-// +kubebuilder:validation:Enum=gce;gke;static;fake;mock
+// +kubebuilder:validation:Enum=gce;gke;eks;static;fake;mock
 type MachineProvider string
 
 const (
@@ -56,6 +56,8 @@ const (
 	MachineProviderGCE MachineProvider = "gce"
 	// MachineProviderGKE manages or observes capacity through GKE node pools.
 	MachineProviderGKE MachineProvider = "gke"
+	// MachineProviderEKS manages capacity through EKS managed node groups.
+	MachineProviderEKS MachineProvider = "eks"
 	// MachineProviderStatic attaches to a Kubernetes node provisioned outside
 	// Kyber and does not manage an external VM lifecycle.
 	MachineProviderStatic MachineProvider = "static"
@@ -75,6 +77,16 @@ type MachineAvailabilityClass string
 const (
 	MachineAvailabilityReliable      MachineAvailabilityClass = "reliable"
 	MachineAvailabilityCostOptimized MachineAvailabilityClass = "costOptimized"
+)
+
+// ReliableFallbackMode describes the provider's portable fallback behavior.
+// +kubebuilder:validation:Enum=Unsupported;Manual;Automatic
+type ReliableFallbackMode string
+
+const (
+	ReliableFallbackUnsupported ReliableFallbackMode = "Unsupported"
+	ReliableFallbackManual      ReliableFallbackMode = "Manual"
+	ReliableFallbackAutomatic   ReliableFallbackMode = "Automatic"
 )
 
 // MachineManagementMode distinguishes Kyber-managed capacity from capacity
@@ -104,8 +116,9 @@ type ResolvedMachineProfile struct {
 // MachineSpec defines the desired state of a Machine.
 type MachineSpec struct {
 	// Provider is the compute provider for this machine. "gce" provisions real
-	// cloud VMs; "fake" simulates that lifecycle locally; "static" attaches to
-	// an existing Kubernetes node; "mock" is a deprecated alias for "static".
+	// cloud VMs; "gke" and "eks" manage cloud Kubernetes capacity; "fake"
+	// simulates that lifecycle locally; "static" attaches to an existing
+	// Kubernetes node; "mock" is a deprecated compatibility alias.
 	Provider MachineProvider `json:"provider"`
 
 	// Capacity is the declared resource budget for this Machine. Optional at
@@ -164,6 +177,12 @@ type MachineSpec struct {
 	// +kubebuilder:validation:Enum=Running;Stopped
 	// +optional
 	DesiredPhase MachinePhase `json:"desiredPhase,omitempty"`
+
+	// CostOptimizedRetryRequest is an opaque idempotency token written by the
+	// retry-cost-optimized API action. Providers acknowledge it in status.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	CostOptimizedRetryRequest string `json:"costOptimizedRetryRequest,omitempty"`
 }
 
 // MachineStatus defines the observed state of a Machine.
@@ -183,6 +202,35 @@ type MachineStatus struct {
 	// Availability is the provider-neutral observed capacity state.
 	// +optional
 	Availability MachineAvailability `json:"availability,omitempty"`
+
+	// EffectiveAvailabilityClass is the class currently serving the Machine.
+	// It may differ from spec.availabilityClass during reliable fallback.
+	// +optional
+	EffectiveAvailabilityClass MachineAvailabilityClass `json:"effectiveAvailabilityClass,omitempty"`
+
+	// FallbackReason is a provider-neutral explanation of the active or most
+	// recent fallback transition.
+	// +optional
+	FallbackReason string `json:"fallbackReason,omitempty"`
+
+	// FallbackSince is when reliable fallback began.
+	// +optional
+	FallbackSince *metav1.Time `json:"fallbackSince,omitempty"`
+
+	// CostOptimizedUnavailableSince is when requested cost-optimized capacity
+	// first became unavailable. It persists across controller restarts.
+	// +optional
+	CostOptimizedUnavailableSince *metav1.Time `json:"costOptimizedUnavailableSince,omitempty"`
+
+	// CostOptimizedRetryObserved acknowledges the latest retry request token
+	// processed by the provider/controller state machine.
+	// +optional
+	CostOptimizedRetryObserved string `json:"costOptimizedRetryObserved,omitempty"`
+
+	// CostOptimizedRetrySince is when the current manual retry attempt began.
+	// It persists across control-plane restarts and clears on success/rollback.
+	// +optional
+	CostOptimizedRetrySince *metav1.Time `json:"costOptimizedRetrySince,omitempty"`
 
 	// ResolvedProfile snapshots the operator-facing profile used at creation.
 	// +optional

@@ -20,6 +20,8 @@ import {
   useRebootMachine,
   useDeleteMachine,
   useRestartMachineAgents,
+  useRetryCostOptimizedMachine,
+  useComputeConfig,
 } from '../hooks/useAPI'
 import { MachineCapacityCard } from '../components/MachineCapacityCard'
 import { MachineRecoveryBanner } from '../components/MachineRecoveryBanner'
@@ -39,7 +41,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { lifecycleItemsInMore } from '../lib/design/machine-actions'
 
-type ActionKind = 'start' | 'stop' | 'reboot' | 'delete' | 'restart-agents'
+type ActionKind = 'start' | 'stop' | 'reboot' | 'delete' | 'restart-agents' | 'retry-cost-optimized'
 
 export function MachineDetail() {
   const { name = '' } = useParams<{ name: string }>()
@@ -47,6 +49,7 @@ export function MachineDetail() {
   const prefixed = usePrefixedPath()
   const { data: machine, isLoading, error } = useMachine(name)
   const { data: allAgents } = useAgents()
+  const { data: computeConfig } = useComputeConfig()
   const [pending, setPending] = useState<ActionKind | null>(null)
 
   const startMachine = useStartMachine()
@@ -54,6 +57,7 @@ export function MachineDetail() {
   const rebootMachine = useRebootMachine()
   const deleteMachine = useDeleteMachine()
   const restartAgents = useRestartMachineAgents()
+  const retryCostOptimized = useRetryCostOptimizedMachine()
 
   const hostedAgents = (allAgents ?? []).filter((a) => a.machine === name)
   // Count of agents eligible for a machine-wide restart. Mirrors the backend
@@ -70,6 +74,7 @@ export function MachineDetail() {
     rebootMachine.isPending ||
     deleteMachine.isPending ||
     restartAgents.isPending
+    || retryCostOptimized.isPending
 
   async function executeAction() {
     if (!pending) return
@@ -78,6 +83,9 @@ export function MachineDetail() {
       if (pending === 'stop') await stopMachine.mutateAsync(name)
       if (pending === 'reboot') await rebootMachine.mutateAsync(name)
       if (pending === 'restart-agents') await restartAgents.mutateAsync(name)
+      if (pending === 'retry-cost-optimized') {
+        await retryCostOptimized.mutateAsync({ name, requestId: crypto.randomUUID() })
+      }
       if (pending === 'delete') {
         await deleteMachine.mutateAsync(name)
         navigate(prefixed('/machines'))
@@ -187,7 +195,12 @@ export function MachineDetail() {
         </div>
       </div>
 
-      <MachineRecoveryBanner machine={machine} />
+      <MachineRecoveryBanner
+        machine={machine}
+        reliableFallbackMode={computeConfig?.compute.managed?.capabilities?.reliableFallbackMode}
+        retrying={retryCostOptimized.isPending}
+        onRetryCostOptimized={() => setPending('retry-cost-optimized')}
+      />
 
       <div className="grid gap-4 sm:grid-cols-2">
         {/* Spec */}
@@ -218,6 +231,12 @@ export function MachineDetail() {
                 <dd className="text-text-primary">{machine.spec.spot ? 'Yes' : 'No'}</dd>
               </div>
             )}
+            {machine.spec.availabilityClass && (
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Requested availability</dt>
+                <dd className="text-text-primary">{machine.spec.availabilityClass === 'costOptimized' ? 'Cost optimized' : 'Reliable'}</dd>
+              </div>
+            )}
             <div className="flex justify-between">
               <dt className="text-text-muted">Provider</dt>
               <dd className="text-text-primary">{machine.spec.provider}</dd>
@@ -245,6 +264,12 @@ export function MachineDetail() {
               <div className="flex justify-between">
                 <dt className="text-text-muted">Internal IP</dt>
                 <dd className="text-text-primary font-mono text-xs">{machine.status.internalIP}</dd>
+              </div>
+            )}
+            {machine.status.effectiveAvailabilityClass && (
+              <div className="flex justify-between">
+                <dt className="text-text-muted">Effective availability</dt>
+                <dd className="text-text-primary">{machine.status.effectiveAvailabilityClass === 'costOptimized' ? 'Cost optimized' : 'Reliable'}</dd>
               </div>
             )}
             {machine.status.message && (
@@ -295,6 +320,8 @@ export function MachineDetail() {
         title={
           pending === 'delete'
             ? 'Delete machine?'
+            : pending === 'retry-cost-optimized'
+              ? 'Retry cost-optimized capacity?'
             : pending === 'restart-agents'
               ? `Restart ${restartEligibleCount} agent${restartEligibleCount !== 1 ? 's' : ''} on machine?`
               : `${pending === 'start' ? 'Start' : pending === 'stop' ? 'Stop' : 'Reboot'} machine?`
@@ -302,6 +329,8 @@ export function MachineDetail() {
         message={
           pending === 'restart-agents'
             ? `Each will be brought down and back up in parallel with its session brief preserved. Expect ~30s of unavailability per agent. Skipped: Stopped, Draining.`
+            : pending === 'retry-cost-optimized'
+              ? 'This briefly interrupts the Machine while Kyber tries cost-optimized capacity with the exact same Agent disk. If capacity remains unavailable, Kyber returns it to reliable capacity.'
             : `This will ${pending === 'delete' ? 'permanently delete' : pending} machine "${name}".`
         }
         confirmLabel={pending === 'delete' ? 'Delete' : 'Confirm'}

@@ -1,0 +1,56 @@
+# Overlay release-pinned image tags and secrets separately.
+controlPlane:
+  nodeSelector:
+    # Remove the standalone/k3s default before selecting the EKS platform pool.
+    node-role.kubernetes.io/control-plane: null
+    kyber.io/role: platform
+
+postgresql:
+  persistence:
+    storageClassName: kyber-ebs
+  nodeSelector:
+    kyber.io/role: platform
+
+redis:
+  persistence:
+    storageClassName: kyber-ebs
+  nodeSelector:
+    kyber.io/role: platform
+
+compute:
+  provider: eks
+  eks:
+    region: us-east-1
+    cluster: REPLACE_ME
+    nodeRoleArn: REPLACE_ME
+    allowedZones: [us-east-1a, us-east-1b]
+    subnetsByZone:
+      us-east-1a: REPLACE_ME
+      us-east-1b: REPLACE_ME
+    profiles:
+      - id: standard
+        displayName: Standard
+        description: General-purpose Kyber Machine
+        cpu: "2"
+        memory: 8Gi
+        instanceTypes: [m7i.large, m7a.large, m6i.large]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: REPLACE_ME
+        launchTemplateVersion: REPLACE_ME
+
+storage:
+  agentStorageClass: kyber-ebs
+  # EKS has no default StorageClass in this installation path. Use the same
+  # zonal EBS class for the small transcript-offsets claim as the agent disk.
+  transcriptOffsets:
+    storageClassName: kyber-ebs
+  awsEBS:
+    enabled: true
+    storageClassName: kyber-ebs
+    type: gp3
+    encrypted: true
+    kmsKeyArn: ""
+    allowedZones: [us-east-1a, us-east-1b]
+    allowVolumeExpansion: true
+    fsType: ext4

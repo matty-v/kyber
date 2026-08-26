@@ -272,4 +272,75 @@ func TestFakeCapacityProviderCapabilities(t *testing.T) {
 	if !got.SupportsReliable || !got.SupportsInterruptible || !got.SupportsLocations {
 		t.Errorf("Capabilities() = %+v, want all fake offering capabilities", got)
 	}
+	if got.ReliableFallbackMode != ReliableFallbackAutomatic {
+		t.Errorf("ReliableFallbackMode = %q, want %q", got.ReliableFallbackMode, ReliableFallbackAutomatic)
+	}
+}
+
+func TestFakeCapacityProviderFallbackRetainsProviderRefAndRetriesCostOptimized(t *testing.T) {
+	ctx := context.Background()
+	provider := NewFakeComputeAdapter()
+	identity := MachineIdentity{Name: "fallback-worker"}
+	desired := DesiredMachine{Availability: DesiredOnline, AvailabilityClass: "costOptimized", Interruptible: true, Location: "local-a"}
+
+	created, err := provider.Reconcile(ctx, identity, desired, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := provider.ApplySimulationScenario(identity.Name, SimulationCostOptimizedUnavailable); err != nil {
+		t.Fatalf("fallback scenario: %v", err)
+	}
+	fallback, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("fallback reconcile: %v", err)
+	}
+	if fallback.ProviderRef != created.ProviderRef {
+		t.Fatalf("fallback ProviderRef = %q, want retained %q", fallback.ProviderRef, created.ProviderRef)
+	}
+	if fallback.State != CapacityAvailable || fallback.EffectiveAvailabilityClass != "reliable" {
+		t.Fatalf("fallback observation = %+v, want Available/reliable", fallback)
+	}
+	if fallback.FallbackSince.IsZero() || fallback.CostOptimizedUnavailableSince.IsZero() {
+		t.Fatalf("fallback timestamps not populated: %+v", fallback)
+	}
+
+	desired.CostOptimizedRetryRequest = "retry-1"
+	retried, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("retry reconcile: %v", err)
+	}
+	if retried.ProviderRef != created.ProviderRef || retried.EffectiveAvailabilityClass != "costOptimized" {
+		t.Fatalf("retry observation = %+v, want same ref and costOptimized", retried)
+	}
+	if retried.CostOptimizedRetryObserved != "retry-1" || !retried.FallbackSince.IsZero() {
+		t.Fatalf("retry acknowledgement = %+v", retried)
+	}
+}
+
+func TestFakeCapacityProviderFailedRetryRollsBackToReliable(t *testing.T) {
+	ctx := context.Background()
+	provider := NewFakeComputeAdapter()
+	identity := MachineIdentity{Name: "rollback-worker"}
+	desired := DesiredMachine{Availability: DesiredOnline, AvailabilityClass: "costOptimized", Interruptible: true, Location: "local-a"}
+	created, err := provider.Reconcile(ctx, identity, desired, "")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := provider.ApplySimulationScenario(identity.Name, SimulationCostOptimizedUnavailable); err != nil {
+		t.Fatalf("fallback scenario: %v", err)
+	}
+	if err := provider.ApplySimulationScenario(identity.Name, SimulationFailNextCostOptimizedRetry); err != nil {
+		t.Fatalf("fail retry scenario: %v", err)
+	}
+	desired.CostOptimizedRetryRequest = "retry-rollback"
+	got, err := provider.Reconcile(ctx, identity, desired, created.ProviderRef)
+	if err != nil {
+		t.Fatalf("retry reconcile: %v", err)
+	}
+	if got.ProviderRef != created.ProviderRef || got.EffectiveAvailabilityClass != "reliable" {
+		t.Fatalf("rollback observation = %+v, want same ref and reliable", got)
+	}
+	if got.CostOptimizedRetryObserved != "retry-rollback" || !strings.Contains(got.FallbackReason, "retained") {
+		t.Fatalf("rollback acknowledgement = %+v", got)
+	}
 }

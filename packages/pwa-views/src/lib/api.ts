@@ -602,6 +602,13 @@ export function createApiClient(cluster: Cluster) {
         `/api/v1/machines/${encodeURIComponent(name)}/restart-agents`,
       ),
 
+    retryCostOptimizedMachine: (name: string, requestId: string): Promise<Machine> =>
+      request<Machine>(
+        'POST',
+        `/api/v1/machines/${encodeURIComponent(name)}/retry-cost-optimized`,
+        { requestId },
+      ),
+
     // ---- Fleet ----
 
     getFleetSummary: (): Promise<FleetSummary> =>

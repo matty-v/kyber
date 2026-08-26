@@ -112,6 +112,12 @@ spec:
                 - cpu
                 - memory
                 type: object
+              costOptimizedRetryRequest:
+                description: |-
+                  CostOptimizedRetryRequest is an opaque idempotency token written by the
+                  retry-cost-optimized API action. Providers acknowledge it in status.
+                maxLength: 128
+                type: string
               desiredPhase:
                 description: |-
                   DesiredPhase is written by the API module to signal a lifecycle intent.
@@ -154,11 +160,13 @@ spec:
               provider:
                 description: |-
                   Provider is the compute provider for this machine. "gce" provisions real
-                  cloud VMs; "fake" simulates that lifecycle locally; "static" attaches to
-                  an existing Kubernetes node; "mock" is a deprecated alias for "static".
+                  cloud VMs; "gke" and "eks" manage cloud Kubernetes capacity; "fake"
+                  simulates that lifecycle locally; "static" attaches to an existing
+                  Kubernetes node; "mock" is a deprecated compatibility alias.
                 enum:
                 - gce
                 - gke
+                - eks
                 - static
                 - fake
                 - mock
@@ -336,8 +344,42 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              costOptimizedRetryObserved:
+                description: |-
+                  CostOptimizedRetryObserved acknowledges the latest retry request token
+                  processed by the provider/controller state machine.
+                type: string
+              costOptimizedRetrySince:
+                description: |-
+                  CostOptimizedRetrySince is when the current manual retry attempt began.
+                  It persists across control-plane restarts and clears on success/rollback.
+                format: date-time
+                type: string
+              costOptimizedUnavailableSince:
+                description: |-
+                  CostOptimizedUnavailableSince is when requested cost-optimized capacity
+                  first became unavailable. It persists across controller restarts.
+                format: date-time
+                type: string
+              effectiveAvailabilityClass:
+                description: |-
+                  EffectiveAvailabilityClass is the class currently serving the Machine.
+                  It may differ from spec.availabilityClass during reliable fallback.
+                enum:
+                - reliable
+                - costOptimized
+                type: string
               externalIP:
                 description: ExternalIP is the external IP address of the VM, if assigned.
+                type: string
+              fallbackReason:
+                description: |-
+                  FallbackReason is a provider-neutral explanation of the active or most
+                  recent fallback transition.
+                type: string
+              fallbackSince:
+                description: FallbackSince is when reliable fallback began.
+                format: date-time
                 type: string
               instanceId:
                 description: InstanceId is the cloud provider instance ID (e.g., GCE

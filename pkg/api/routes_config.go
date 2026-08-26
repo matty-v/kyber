@@ -66,14 +66,15 @@ type ConfigManagedCompute struct {
 }
 
 type ConfigComputeCapabilities struct {
-	CanProvision            bool                  `json:"canProvision"`
-	CanDiscoverExisting     bool                  `json:"canDiscoverExisting"`
-	SuspendMode             adapters.SuspendMode  `json:"suspendMode"`
-	DeletionMode            adapters.DeletionMode `json:"deletionMode"`
-	SupportsReliable        bool                  `json:"supportsReliable"`
-	SupportsInterruptible   bool                  `json:"supportsInterruptible"`
-	SupportsLocations       bool                  `json:"supportsLocations"`
-	RequiresSchedulerDemand bool                  `json:"requiresSchedulerDemand"`
+	CanProvision            bool                          `json:"canProvision"`
+	CanDiscoverExisting     bool                          `json:"canDiscoverExisting"`
+	SuspendMode             adapters.SuspendMode          `json:"suspendMode"`
+	DeletionMode            adapters.DeletionMode         `json:"deletionMode"`
+	SupportsReliable        bool                          `json:"supportsReliable"`
+	SupportsInterruptible   bool                          `json:"supportsInterruptible"`
+	SupportsLocations       bool                          `json:"supportsLocations"`
+	RequiresSchedulerDemand bool                          `json:"requiresSchedulerDemand"`
+	ReliableFallbackMode    adapters.ReliableFallbackMode `json:"reliableFallbackMode"`
 }
 
 // ConfigVMType is one entry in the GCE machine-type catalog as exposed to
@@ -139,12 +140,17 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		resp.Compute.Managed.SupportsInterruptible = capabilities.SupportsInterruptible
+		fallbackMode := capabilities.ReliableFallbackMode
+		if fallbackMode == "" {
+			fallbackMode = adapters.ReliableFallbackUnsupported
+		}
 		resp.Compute.Managed.Capabilities = &ConfigComputeCapabilities{
 			CanProvision: capabilities.CanProvision, CanDiscoverExisting: capabilities.CanDiscoverExisting,
 			SuspendMode: capabilities.SuspendMode, DeletionMode: capabilities.DeletionMode,
 			SupportsReliable: capabilities.SupportsReliable, SupportsInterruptible: capabilities.SupportsInterruptible,
 			SupportsLocations:       capabilities.SupportsLocations,
 			RequiresSchedulerDemand: capabilities.RequiresSchedulerDemand,
+			ReliableFallbackMode:    fallbackMode,
 		}
 		providerProfiles, err := s.CapacityProvider.Profiles(r.Context())
 		if err != nil {

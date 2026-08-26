@@ -15,35 +15,66 @@ import (
 
 type fakeGKENodePoolsClient struct {
 	pool        *container.NodePool
+	pools       map[string]*container.NodePool
 	err         error
 	mutationErr error
 	names       []string
 	creates     []*container.NodePool
 	sizes       []int64
+	sizeNames   []string
 	autoscaling []*container.NodePoolAutoscaling
 	deletes     int
 }
 
 func (f *fakeGKENodePoolsClient) Create(_ context.Context, _ string, pool *container.NodePool) (*container.Operation, error) {
 	f.creates = append(f.creates, pool)
+	if f.pools != nil && f.mutationErr == nil {
+		pool.Status = "RUNNING"
+		f.pools[pool.Name] = pool
+	}
 	return &container.Operation{}, f.mutationErr
 }
-func (f *fakeGKENodePoolsClient) SetSize(_ context.Context, _ string, size int64) (*container.Operation, error) {
+func (f *fakeGKENodePoolsClient) SetSize(_ context.Context, name string, size int64) (*container.Operation, error) {
 	f.sizes = append(f.sizes, size)
+	f.sizeNames = append(f.sizeNames, name)
+	if f.pools != nil && f.mutationErr == nil {
+		if pool := f.pools[gkeResourceLeaf(name)]; pool != nil {
+			pool.InitialNodeCount = size
+		}
+	}
 	return &container.Operation{}, f.mutationErr
 }
-func (f *fakeGKENodePoolsClient) SetAutoscaling(_ context.Context, _ string, autoscaling *container.NodePoolAutoscaling) (*container.Operation, error) {
+func (f *fakeGKENodePoolsClient) SetAutoscaling(_ context.Context, name string, autoscaling *container.NodePoolAutoscaling) (*container.Operation, error) {
 	f.autoscaling = append(f.autoscaling, autoscaling)
+	if f.pools != nil && f.mutationErr == nil {
+		if pool := f.pools[gkeResourceLeaf(name)]; pool != nil {
+			pool.Autoscaling = autoscaling
+		}
+	}
 	return &container.Operation{}, f.mutationErr
 }
-func (f *fakeGKENodePoolsClient) Delete(_ context.Context, _ string) (*container.Operation, error) {
+func (f *fakeGKENodePoolsClient) Delete(_ context.Context, name string) (*container.Operation, error) {
 	f.deletes++
+	if f.pools != nil && f.mutationErr == nil {
+		delete(f.pools, gkeResourceLeaf(name))
+	}
 	return &container.Operation{}, f.mutationErr
 }
 
 func (f *fakeGKENodePoolsClient) Get(_ context.Context, name string) (*container.NodePool, error) {
 	f.names = append(f.names, name)
+	if f.pools != nil {
+		if pool := f.pools[gkeResourceLeaf(name)]; pool != nil {
+			return pool, nil
+		}
+		return nil, &googleapi.Error{Code: 404}
+	}
 	return f.pool, f.err
+}
+
+func gkeResourceLeaf(name string) string {
+	parts := strings.Split(name, "/")
+	return parts[len(parts)-1]
 }
 
 func TestGKEObservationOnlyProvider(t *testing.T) {
@@ -185,6 +216,19 @@ func TestGKEObservationOnlyCapabilities(t *testing.T) {
 	}
 }
 
+func TestGKEReliableFallbackCapabilityRequiresExplicitOptIn(t *testing.T) {
+	provider := &GKEAdapter{profiles: map[string]GKEProfile{"standard": {ID: "standard"}}}
+	got, _ := provider.Capabilities(context.Background())
+	if got.ReliableFallbackMode != ReliableFallbackUnsupported {
+		t.Fatalf("default fallback mode = %q", got.ReliableFallbackMode)
+	}
+	provider.reliableFallback = true
+	got, _ = provider.Capabilities(context.Background())
+	if got.ReliableFallbackMode != ReliableFallbackAutomatic {
+		t.Fatalf("enabled fallback mode = %q", got.ReliableFallbackMode)
+	}
+}
+
 func TestGKEValidateRejectsUnsupportedAvailabilityClass(t *testing.T) {
 	provider := &GKEAdapter{profiles: map[string]GKEProfile{"reliable-only": {
 		ID: "reliable-only", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2",
@@ -196,6 +240,154 @@ func TestGKEValidateRejectsUnsupportedAvailabilityClass(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "costOptimized") {
 		t.Fatalf("Validate error = %v, want unsupported costOptimized class", err)
+	}
+}
+
+func TestGKEZonalCostOptimizedFallbackAndManualRetry(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	client := &fakeGKENodePoolsClient{pools: map[string]*container.NodePool{}}
+	provider := &GKEAdapter{
+		ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client,
+		reliableFallback: true, now: func() time.Time { return now }, fallbackThreshold: 5 * time.Minute,
+		profiles: map[string]GKEProfile{"standard": {
+			ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2",
+			DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD",
+			AvailabilityClasses: []string{"reliable", "costOptimized"},
+		}},
+	}
+	id := MachineIdentity{Name: "agents"}
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1}
+	created, err := provider.Reconcile(ctx, id, d, "")
+	if err != nil || len(client.creates) != 1 || !client.creates[0].Config.Spot {
+		t.Fatalf("Spot create = %+v, err=%v, creates=%d", created, err, len(client.creates))
+	}
+	if _, err := provider.Reconcile(ctx, id, d, created.ProviderRef); err != nil || len(client.creates) != 2 || client.creates[1].Config.Spot || client.creates[1].InitialNodeCount != 0 {
+		t.Fatalf("reliable precreate: err=%v creates=%+v", err, client.creates)
+	}
+	ready, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if ready.State != CapacityAvailable || ready.EffectiveAvailabilityClass != "costOptimized" {
+		t.Fatalf("initial ready = %+v", ready)
+	}
+
+	// After five minutes without a node, Spot is removed first. Only after the
+	// attachment count reaches zero is standard capacity requested.
+	d.AttachedNodes = 0
+	d.CostOptimizedUnavailableSince = now.Add(-5 * time.Minute)
+	fallbackStarted, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if client.sizes[len(client.sizes)-1] != 0 || !strings.HasSuffix(client.sizeNames[len(client.sizeNames)-1], "agents-spot") || fallbackStarted.FallbackSince.IsZero() {
+		t.Fatalf("fallback start = %+v sizes=%v names=%v", fallbackStarted, client.sizes, client.sizeNames)
+	}
+	d.FallbackSince = fallbackStarted.FallbackSince
+	d.EffectiveAvailabilityClass = fallbackStarted.EffectiveAvailabilityClass
+	fallbackScaling, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if client.sizes[len(client.sizes)-1] != 1 || !strings.HasSuffix(client.sizeNames[len(client.sizeNames)-1], "agents-reliable") || fallbackScaling.EffectiveAvailabilityClass != "reliable" {
+		t.Fatalf("fallback scale = %+v sizes=%v names=%v", fallbackScaling, client.sizes, client.sizeNames)
+	}
+	d.EffectiveAvailabilityClass = "reliable"
+	d.AttachedNodes = 1
+	fallbackReady, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if fallbackReady.State != CapacityAvailable || fallbackReady.ProviderRef != created.ProviderRef {
+		t.Fatalf("fallback ready = %+v", fallbackReady)
+	}
+
+	// The provider-neutral retry uses the same stable reference and reverses
+	// ordering: standard zero, attachment zero, then Spot one.
+	d.CostOptimizedRetryRequest = "retry-1"
+	retryStarted, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	d.CostOptimizedRetrySince = retryStarted.CostOptimizedRetrySince
+	provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if client.sizes[len(client.sizes)-1] != 0 || !strings.HasSuffix(client.sizeNames[len(client.sizeNames)-1], "agents-reliable") {
+		t.Fatal("manual retry did not remove reliable first")
+	}
+	d.AttachedNodes = 0
+	toSpot, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if client.sizes[len(client.sizes)-1] != 1 || !strings.HasSuffix(client.sizeNames[len(client.sizeNames)-1], "agents-spot") || toSpot.EffectiveAvailabilityClass != "costOptimized" {
+		t.Fatalf("manual retry Spot scale = %+v", toSpot)
+	}
+	d.EffectiveAvailabilityClass = "costOptimized"
+	d.AttachedNodes = 1
+	retried, _ := provider.Reconcile(ctx, id, d, created.ProviderRef)
+	if retried.State != CapacityAvailable || retried.CostOptimizedRetryObserved != "retry-1" || retried.ProviderRef != created.ProviderRef || !retried.FallbackSince.IsZero() {
+		t.Fatalf("manual retry ready = %+v", retried)
+	}
+}
+
+func TestGKECostOptimizedRetryTimeoutRestoresReliable(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 10, 0, 0, time.UTC)
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable", "costOptimized"}}
+	client := &fakeGKENodePoolsClient{pools: map[string]*container.NodePool{}}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, reliableFallback: true, now: func() time.Time { return now }, fallbackThreshold: 5 * time.Minute, profiles: map[string]GKEProfile{"standard": profile}}
+	client.pools["agents-spot"] = provider.managedPairPool("agents-spot", "agents", profile, true, true)
+	client.pools["agents-reliable"] = provider.managedPairPool("agents-reliable", "agents", profile, false, false)
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, EffectiveAvailabilityClass: "costOptimized", FallbackSince: now.Add(-time.Hour), CostOptimizedUnavailableSince: now.Add(-time.Hour), CostOptimizedRetryRequest: "retry-1", CostOptimizedRetrySince: now.Add(-5 * time.Minute)}
+	ref := provider.providerRef("agents")
+	removed, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
+	if client.sizes[len(client.sizes)-1] != 0 || removed.EffectiveAvailabilityClass != "costOptimized" || removed.CostOptimizedRetryObserved != "" {
+		t.Fatalf("rollback remove Spot = %+v sizes=%v", removed, client.sizes)
+	}
+	// The shared Machine selector still observes the draining Spot Node. It
+	// must not be interpreted as a Ready reliable Node or acknowledge rollback.
+	d.EffectiveAvailabilityClass = removed.EffectiveAvailabilityClass
+	stillDraining, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
+	if stillDraining.State == CapacityAvailable || stillDraining.CostOptimizedRetryObserved != "" || client.sizes[len(client.sizes)-1] != 0 {
+		t.Fatalf("rollback draining Spot = %+v sizes=%v", stillDraining, client.sizes)
+	}
+	d.AttachedNodes = 0
+	d.EffectiveAvailabilityClass = stillDraining.EffectiveAvailabilityClass
+	restored, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
+	if client.sizes[len(client.sizes)-1] != 1 || restored.EffectiveAvailabilityClass != "reliable" || restored.CostOptimizedRetryObserved != "" {
+		t.Fatalf("rollback restore reliable = %+v sizes=%v", restored, client.sizes)
+	}
+	d.EffectiveAvailabilityClass = "reliable"
+	d.AttachedNodes = 1
+	ready, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, ref)
+	if ready.State != CapacityAvailable || ready.CostOptimizedRetryObserved != "retry-1" || !ready.CostOptimizedRetrySince.IsZero() {
+		t.Fatalf("rollback ready = %+v", ready)
+	}
+}
+
+func TestGKELateSpotNodeCannotCompleteFallbackAsReliable(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable", "costOptimized"}}
+	client := &fakeGKENodePoolsClient{pools: map[string]*container.NodePool{}}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, reliableFallback: true, now: func() time.Time { return now }, profiles: map[string]GKEProfile{"standard": profile}}
+	client.pools["agents-spot"] = provider.managedPairPool("agents-spot", "agents", profile, true, false)
+	client.pools["agents-reliable"] = provider.managedPairPool("agents-reliable", "agents", profile, false, false)
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, EffectiveAvailabilityClass: "costOptimized", FallbackSince: now, CostOptimizedUnavailableSince: now.Add(-5 * time.Minute)}
+	waiting, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, provider.providerRef("agents"))
+	if err != nil || waiting.State != CapacityRecovering || waiting.EffectiveAvailabilityClass != "costOptimized" || waiting.FallbackSince != now {
+		t.Fatalf("late-node observation = %+v err=%v", waiting, err)
+	}
+	if client.pools["agents-reliable"].InitialNodeCount != 0 {
+		t.Fatal("reliable pool started before the late Spot Node detached")
+	}
+	d.AttachedNodes = 0
+	started, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, provider.providerRef("agents"))
+	if started.EffectiveAvailabilityClass != "reliable" || client.pools["agents-reliable"].InitialNodeCount != 1 {
+		t.Fatalf("reliable start = %+v", started)
+	}
+}
+
+func TestGKEFallbackOptInPreservesLegacySinglePool(t *testing.T) {
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"costOptimized"}}
+	legacy := &container.NodePool{Status: "RUNNING", Config: &container.NodeConfig{Spot: true, Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}}}
+	client := &fakeGKENodePoolsClient{pools: map[string]*container.NodePool{"agents": legacy}}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, reliableFallback: true, profiles: map[string]GKEProfile{"standard": profile}}
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1}, provider.providerRef("agents"))
+	if err != nil || got.State != CapacityAvailable || len(client.creates) != 0 {
+		t.Fatalf("legacy reconcile = %+v err=%v creates=%d", got, err, len(client.creates))
+	}
+}
+
+func TestGKEManagedDeletionRequiresAuthoritativeNodeAbsence(t *testing.T) {
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable"}}
+	pool := &container.NodePool{Status: "RUNNING", InitialNodeCount: 0, Config: &container.NodeConfig{Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}}}
+	client := &fakeGKENodePoolsClient{pool: pool}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, profiles: map[string]GKEProfile{"standard": profile}}
+	got, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, DesiredMachine{Availability: DesiredDeleted, Profile: "standard", Managed: true}, provider.providerRef("agents"))
+	if err != nil || got.State != CapacityRecovering || client.deletes != 0 {
+		t.Fatalf("unobserved deletion = %+v err=%v deletes=%d", got, err, client.deletes)
 	}
 }
 

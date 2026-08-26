@@ -991,7 +991,7 @@ components:
       properties:
         provider:
           type: string
-          enum: [gce, gke, static, fake, mock]
+          enum: [gce, gke, eks, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'
@@ -1041,7 +1041,7 @@ components:
           properties:
             provider:
               type: string
-              enum: [gce, gke, static, fake, mock, ""]
+              enum: [gce, gke, eks, static, fake, mock, ""]
             managed:
               $ref: '#/components/schemas/ManagedComputeCapabilities'
             gceVMTypes:
@@ -1300,7 +1300,7 @@ components:
           example: worker-1
         provider:
           type: string
-          enum: [gce, gke, static, fake, mock]
+          enum: [gce, gke, eks, static, fake, mock]
           example: gce
         capacity:
           $ref: '#/components/schemas/MachineCapacity'

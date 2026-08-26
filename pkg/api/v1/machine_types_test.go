@@ -2,8 +2,10 @@ package v1
 
 import (
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/api/resource"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestMachineSpec_CapacityRoundTrip(t *testing.T) {
@@ -29,6 +31,25 @@ func TestMachineSpec_CapacityRoundTrip(t *testing.T) {
 	}
 	if clone.Provider != MachineProviderMock {
 		t.Errorf("provider after mutate-orig = %q, want %q (alias leak)", clone.Provider, MachineProviderMock)
+	}
+}
+
+func TestMachineStatus_FallbackTimesDeepCopy(t *testing.T) {
+	fallback := metav1.NewTime(time.Unix(100, 0))
+	unavailable := metav1.NewTime(time.Unix(200, 0))
+	orig := MachineStatus{
+		FallbackSince:                 &fallback,
+		CostOptimizedUnavailableSince: &unavailable,
+	}
+	clone := orig.DeepCopy()
+	orig.FallbackSince.Time = time.Unix(300, 0)
+	orig.CostOptimizedUnavailableSince.Time = time.Unix(400, 0)
+
+	if clone.FallbackSince == nil || clone.FallbackSince.Unix() != 100 {
+		t.Fatalf("fallbackSince clone = %v, want unix 100", clone.FallbackSince)
+	}
+	if clone.CostOptimizedUnavailableSince == nil || clone.CostOptimizedUnavailableSince.Unix() != 200 {
+		t.Fatalf("unavailableSince clone = %v, want unix 200", clone.CostOptimizedUnavailableSince)
 	}
 }
 
