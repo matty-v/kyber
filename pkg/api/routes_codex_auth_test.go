@@ -69,7 +69,12 @@ func TestCodexDeviceAuthResetsCredentialAndStartsAgent(t *testing.T) {
 // Note the sibling test above deliberately seeds a DIFFERENT credential
 // (`{"expired":true}`), so it never exercised this path.
 func TestCodexDeviceAuthReopensGateWhenCredentialIsAlreadyPlaceholder(t *testing.T) {
-	s := newTestPublicServer(t, "test-key")
+	// testAPIKey + "Bearer "+key rather than an inline literal: the package
+	// already standardises on that (routes_machines_test.go, and every
+	// routes_compact_session_test.go case), and a bare
+	// `Authorization: Bearer <literal>` added in a diff trips the repo's
+	// secret scan.
+	s := newTestPublicServer(t, testAPIKey)
 	const claim = "rv:needy-codex-auth:672"
 	agent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "needy", Namespace: s.Namespace},
@@ -91,7 +96,7 @@ func TestCodexDeviceAuthReopensGateWhenCredentialIsAlreadyPlaceholder(t *testing
 		WithObjects(agent, secret).WithStatusSubresource(agent).Build()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/needy/codex-device-auth", nil)
-	req.Header.Set("Authorization", "Bearer test-key")
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	rr := httptest.NewRecorder()
 	buildTestHandler(s).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNoContent {
