@@ -384,6 +384,24 @@ export interface CreateAgentRequest {
   }
 }
 
+/**
+ * What the in-pod `codex login --device-auth` flow is currently showing.
+ *
+ * `absent`   nothing is running - offer the button.
+ * `starting` pod is booting, or the flow has not printed its prompt yet - spin.
+ * `ready`    a usable code is showing.
+ * `expired`  a code was printed but its window has passed - offer to start again.
+ *
+ * `expiresAt` is omitted when the countdown's origin could not be read; show no
+ * timer rather than a wrong one.
+ */
+export interface CodexDeviceAuthStatus {
+  state: 'absent' | 'starting' | 'ready' | 'expired'
+  verificationUrl?: string
+  userCode?: string
+  expiresAt?: string
+}
+
 export interface PatchAgentRequest {
   startupPrompt?: string
   sessionResume?: boolean

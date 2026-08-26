@@ -646,6 +646,31 @@ paths:
   /api/v1/agents/{name}/codex-device-auth:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getCodexDeviceAuthStatus
+      summary: Report what the in-pod Codex device-login flow is showing
+      description: >
+        Read-only. Returns the verification link, one-time code and expiry
+        parsed from the running flow so a client can render them natively.
+        "Not ready yet" is a 200 with state=starting, not an error: a pod that
+        is still booting and a prompt that has not drawn yet both report
+        starting.
+      tags: [agents]
+      responses:
+        '200':
+          description: Current state of the device-login flow
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CodexDeviceAuthStatus'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          description: Control plane cannot exec into agent pods
     post:
       operationId: startCodexDeviceAuth
       summary: Start or restart an in-pod Codex device-login flow
@@ -801,6 +826,31 @@ components:
         example: dave
 
   schemas:
+    CodexDeviceAuthStatus:
+      type: object
+      required: [state]
+      properties:
+        state:
+          type: string
+          description: >
+            absent - no login flow is running; starting - flow is coming up or
+            has not printed its prompt yet; ready - a usable code is showing;
+            expired - a code was printed but its window has passed.
+          enum: [absent, starting, ready, expired]
+        verificationUrl:
+          type: string
+          description: Page the operator opens. Absent unless state is ready or expired.
+        userCode:
+          type: string
+          description: One-time code typed into that page. Short-lived and single-use.
+        expiresAt:
+          type: string
+          format: date-time
+          description: >
+            When the code stops working, derived from the flow's own relative
+            window anchored to the login session's start. Absent when that
+            anchor could not be read - a countdown from an unknown origin is
+            worse than none.
     ComputeScenarioRequest:
       type: object
       required: [scenario]
