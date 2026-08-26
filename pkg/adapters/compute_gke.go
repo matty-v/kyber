@@ -481,7 +481,15 @@ func (g *GKEAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 		return g.gkePairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized"), nil
 	}
 
-	if effective == "reliable" || !desired.FallbackSince.IsZero() {
+	if !desired.FallbackSince.IsZero() && effective != "reliable" {
+		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
+			o := g.gkePairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
+			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			return o, nil
+		}
+		return g.mutatePairSize(ctx, reliableName, reliable, true, stable, selector, desired, "reliable")
+	}
+	if effective == "reliable" {
 		o := g.gkePairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
 		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 {

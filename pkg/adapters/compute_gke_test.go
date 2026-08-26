@@ -338,6 +338,28 @@ func TestGKECostOptimizedRetryTimeoutRestoresReliable(t *testing.T) {
 	}
 }
 
+func TestGKELateSpotNodeCannotCompleteFallbackAsReliable(t *testing.T) {
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"reliable", "costOptimized"}}
+	client := &fakeGKENodePoolsClient{pools: map[string]*container.NodePool{}}
+	provider := &GKEAdapter{ProjectID: "project", Location: "us-central1-a", Cluster: "cluster", client: client, reliableFallback: true, now: func() time.Time { return now }, profiles: map[string]GKEProfile{"standard": profile}}
+	client.pools["agents-spot"] = provider.managedPairPool("agents-spot", "agents", profile, true, false)
+	client.pools["agents-reliable"] = provider.managedPairPool("agents-reliable", "agents", profile, false, false)
+	d := DesiredMachine{Availability: DesiredOnline, Profile: "standard", Managed: true, Interruptible: true, AttachmentObserved: true, AttachedNodes: 1, EffectiveAvailabilityClass: "costOptimized", FallbackSince: now, CostOptimizedUnavailableSince: now.Add(-5 * time.Minute)}
+	waiting, err := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, provider.providerRef("agents"))
+	if err != nil || waiting.State != CapacityRecovering || waiting.EffectiveAvailabilityClass != "costOptimized" || waiting.FallbackSince != now {
+		t.Fatalf("late-node observation = %+v err=%v", waiting, err)
+	}
+	if client.pools["agents-reliable"].InitialNodeCount != 0 {
+		t.Fatal("reliable pool started before the late Spot Node detached")
+	}
+	d.AttachedNodes = 0
+	started, _ := provider.Reconcile(context.Background(), MachineIdentity{Name: "agents"}, d, provider.providerRef("agents"))
+	if started.EffectiveAvailabilityClass != "reliable" || client.pools["agents-reliable"].InitialNodeCount != 1 {
+		t.Fatalf("reliable start = %+v", started)
+	}
+}
+
 func TestGKEFallbackOptInPreservesLegacySinglePool(t *testing.T) {
 	profile := GKEProfile{ID: "standard", CPU: "2", Memory: "8Gi", MachineType: "e2-standard-2", DiskSizeGB: 20, DiskType: "pd-balanced", ImageType: "UBUNTU_CONTAINERD", AvailabilityClasses: []string{"costOptimized"}}
 	legacy := &container.NodePool{Status: "RUNNING", Config: &container.NodeConfig{Spot: true, Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: "agents"}}}
