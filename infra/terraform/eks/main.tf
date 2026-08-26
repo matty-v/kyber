@@ -304,7 +304,7 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     actions   = ["ec2:RunInstances"]
     resources = ["*"]
     condition {
-      test     = "ArnEquals"
+      test     = "ArnLike"
       variable = "ec2:LaunchTemplate"
       values   = ["arn:aws:ec2:${var.region}:${data.aws_caller_identity.current.account_id}:launch-template/${aws_launch_template.machine.id}"]
     }
