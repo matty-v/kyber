@@ -414,6 +414,8 @@ spec:
               value: {{ .Values.compute.gke.profiles | toJson | quote }}
             - name: KYBER_GKE_NODE_LOCATIONS
               value: {{ .Values.compute.gke.nodeLocations | toJson | quote }}
+            - name: KYBER_GKE_RELIABLE_FALLBACK_ENABLED
+              value: {{ .Values.compute.gke.reliableFallbackEnabled | quote }}
             {{- end }}
             {{- if eq (.Values.compute.provider | default "mock") "eks" }}
             - name: KYBER_EKS_REGION

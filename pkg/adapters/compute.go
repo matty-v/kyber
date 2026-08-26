@@ -145,6 +145,7 @@ type DesiredMachine struct {
 	FallbackSince                 time.Time
 	CostOptimizedRetryObserved    string
 	CostOptimizedRetrySince       time.Time
+	EffectiveAvailabilityClass    string
 	Location                      string
 	Labels                        map[string]string
 	NodeBootstrap                 NodeBootstrap

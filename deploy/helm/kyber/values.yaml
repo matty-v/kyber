@@ -741,6 +741,10 @@ compute:
     # single-location behavior. Two or more zones use total-size-one
     # autoscaling with locationPolicy=ANY.
     nodeLocations: []
+    # Opt-in migration-safe paired Spot/standard pools for managed
+    # cost-optimized Machines. Existing installations remain on their current
+    # single-pool behavior until an operator explicitly enables this.
+    reliableFallbackEnabled: false
     profiles: []
   eks:
     region: ""

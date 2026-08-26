@@ -871,6 +871,7 @@ func (r *MachineReconciler) reconcileCapacity(
 		FallbackSince:                 metaTimeValue(machine.Status.FallbackSince),
 		CostOptimizedRetryObserved:    machine.Status.CostOptimizedRetryObserved,
 		CostOptimizedRetrySince:       metaTimeValue(machine.Status.CostOptimizedRetrySince),
+		EffectiveAvailabilityClass:    string(machine.Status.EffectiveAvailabilityClass),
 		Location:                      machineLocation(machine),
 		Labels:                        map[string]string{MachineLabelKey: machine.Name},
 		NodeBootstrap: adapters.NodeBootstrap{

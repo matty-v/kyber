@@ -1,7 +1,7 @@
 # GKE cost-optimized fallback spike
 
-Status: design complete; implementation deferred. Existing GKE capability
-remains `Unsupported`.
+Status: implemented as an explicit installer opt-in. Existing GKE installs
+remain `Unsupported` until `compute.gke.reliableFallbackEnabled=true`.
 
 ## Decision
 
@@ -11,9 +11,12 @@ Spot setting cannot be enabled or disabled after creation, so in-place
 conversion is not available. One pool is Spot and one is standard; only one
 may have desired capacity for a Machine at a time.
 
-This is a future additive GKE feature. The current adapter continues to
-advertise `ReliableFallbackUnsupported`, preserving all regional and zonal GKE
-behavior while AWS work proceeds.
+This is an additive GKE feature. The adapter advertises automatic fallback
+only when managed profiles exist and the installer enables it. With the flag
+off, all regional and zonal behavior remains unchanged. When the flag is
+enabled after an upgrade, any existing legacy single pool is detected by its
+stable base name and continues through the old lifecycle; only new Machines
+use paired pools.
 
 ## Topology behavior
 
@@ -74,8 +77,9 @@ The current Kyber GKE adapter creates one pool whose immutable `Config.Spot`
 comes from requested availability. Its capability remains unsupported, and
 the existing GKE characterization tests must remain unchanged and green.
 
-Before enabling this capability later, add fake-client tests for ownership,
-one-active-pool ordering, regional two-zone selection, zonal same-zone
-selection, successful retry, and rollback. Live qualification should run one
+Fake-client coverage now verifies opt-in capability advertisement, legacy-pool
+non-regression, one-active-pool ordering, zonal fallback, successful retry,
+and bounded rollback. Existing regional placement and recovery tests remain
+unchanged and green. Live qualification should run one
 regional-PD and one zonal-PD Machine and assert the same volume handle across
 both transitions.

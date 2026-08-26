@@ -436,6 +436,16 @@ Phase 4 is complete; paired Spot fallback is next.
 
 Gate: deterministic tests prove bounded orchestration and no double writer.
 
+Checkpoint (2026-08-26): EKS paired groups and the shared five-minute state
+machine are implemented. The retry clock is persisted independently from the
+fallback age, failed retries roll back to On-Demand, and fake-client tests
+assert stable provider identity plus no dual desired capacity. The same
+operator contract is now implemented for managed GKE as an explicit
+`compute.gke.reliableFallbackEnabled` opt-in. Legacy single-pool GKE Machines
+are detected and retain their prior behavior; new opted-in Machines use paired
+Spot/standard pools. Zonal fallback, retry, rollback, and legacy non-regression
+tests pass alongside the unchanged regional suite.
+
 ## Phase 6 — AWS interruption source
 
 - Refactor `pkg/nodeagent` preemption polling behind a source interface.
