@@ -119,6 +119,32 @@ func TestMachinesCreateUnknownGKEProfileListsOnlyProviderProfiles(t *testing.T) 
 	}
 }
 
+func TestMachinesCreateManagedEKS(t *testing.T) {
+	s := &api.Server{
+		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(),
+		APIKey:    testAPIKey, Namespace: "kyber-system", ComputeProvider: "eks",
+		CapacityProvider: adapters.NewFakeComputeAdapter(),
+		GCEVMTypeCatalog: api.DefaultGCEVMTypeCatalog(),
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/machines", map[string]interface{}{
+		"name": "worker", "provider": "eks", "managementMode": "Managed",
+		"profile": "e2-small", "location": "us-east-1a", "diskSizeGb": 100,
+		"availabilityClass": "costOptimized",
+	})
+	rr := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("want 201, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got api.MachineResponse
+	if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+		t.Fatalf("decoding response: %v", err)
+	}
+	if got.Spec.Provider != "eks" || got.Spec.Profile != "e2-small" || got.Spec.Location != "us-east-1a" || got.Spec.AvailabilityClass != "costOptimized" || got.Spec.ManagementMode != "Managed" {
+		t.Fatalf("spec = %+v", got.Spec)
+	}
+}
+
 // TestMachines_Create_ValidationError verifies 400 for missing required fields.
 func TestMachines_Create_ValidationError(t *testing.T) {
 	h := buildMachineHandler(t, mustNewScheme(t))

@@ -42,9 +42,9 @@ type RestartMachineAgentsSkipped struct {
 // CreateMachineRequest is the JSON body for POST /api/v1/machines.
 type CreateMachineRequest struct {
 	Name     string `json:"name"`
-	Provider string `json:"provider"` // "gce", "fake", "static", or compatibility "mock"
+	Provider string `json:"provider"` // "gce", "gke", "eks", "fake", "static", or compatibility "mock"
 
-	// Managed-provider fields (required for gce/fake; rejected for static/mock).
+	// Managed-provider fields (required for gce/gke/eks/fake; rejected for static/mock).
 	Profile           string `json:"profile,omitempty"`
 	Location          string `json:"location,omitempty"`
 	Interruptible     *bool  `json:"interruptible,omitempty"`
@@ -422,7 +422,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 	}
 
 	switch kyberv1.MachineProvider(req.Provider) {
-	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderGKE, kyberv1.MachineProviderFake:
+	case kyberv1.MachineProviderGCE, kyberv1.MachineProviderGKE, kyberv1.MachineProviderEKS, kyberv1.MachineProviderFake:
 		provider := req.Provider
 		externalGKE := provider == string(kyberv1.MachineProviderGKE) && req.ManagementMode == string(kyberv1.MachineManagementExternal)
 		profile := req.Profile
@@ -502,7 +502,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		for candidate := range catalog {
 			validProfiles = append(validProfiles, candidate)
 		}
-		if provider == string(kyberv1.MachineProviderGKE) && s.CapacityProvider != nil {
+		if (provider == string(kyberv1.MachineProviderGKE) || provider == string(kyberv1.MachineProviderEKS)) && s.CapacityProvider != nil {
 			providerProfiles, profileErr := s.CapacityProvider.Profiles(r.Context())
 			if profileErr != nil {
 				writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute profiles unavailable")
@@ -649,7 +649,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			fmt.Sprintf("unknown provider %q (must be gce, static, fake, or mock)", req.Provider), "provider")
+			fmt.Sprintf("unknown provider %q (must be gce, gke, eks, static, fake, or mock)", req.Provider), "provider")
 		return
 	}
 	if spec.Provider == kyberv1.MachineProviderFake {

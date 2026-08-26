@@ -48,7 +48,7 @@ const (
 )
 
 // MachineProvider identifies the cloud provider for this machine.
-// +kubebuilder:validation:Enum=gce;gke;static;fake;mock
+// +kubebuilder:validation:Enum=gce;gke;eks;static;fake;mock
 type MachineProvider string
 
 const (
@@ -56,6 +56,8 @@ const (
 	MachineProviderGCE MachineProvider = "gce"
 	// MachineProviderGKE manages or observes capacity through GKE node pools.
 	MachineProviderGKE MachineProvider = "gke"
+	// MachineProviderEKS manages capacity through EKS managed node groups.
+	MachineProviderEKS MachineProvider = "eks"
 	// MachineProviderStatic attaches to a Kubernetes node provisioned outside
 	// Kyber and does not manage an external VM lifecycle.
 	MachineProviderStatic MachineProvider = "static"
@@ -114,8 +116,9 @@ type ResolvedMachineProfile struct {
 // MachineSpec defines the desired state of a Machine.
 type MachineSpec struct {
 	// Provider is the compute provider for this machine. "gce" provisions real
-	// cloud VMs; "fake" simulates that lifecycle locally; "static" attaches to
-	// an existing Kubernetes node; "mock" is a deprecated alias for "static".
+	// cloud VMs; "gke" and "eks" manage cloud Kubernetes capacity; "fake"
+	// simulates that lifecycle locally; "static" attaches to an existing
+	// Kubernetes node; "mock" is a deprecated compatibility alias.
 	Provider MachineProvider `json:"provider"`
 
 	// Capacity is the declared resource budget for this Machine. Optional at

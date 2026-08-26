@@ -160,11 +160,13 @@ spec:
               provider:
                 description: |-
                   Provider is the compute provider for this machine. "gce" provisions real
-                  cloud VMs; "fake" simulates that lifecycle locally; "static" attaches to
-                  an existing Kubernetes node; "mock" is a deprecated alias for "static".
+                  cloud VMs; "gke" and "eks" manage cloud Kubernetes capacity; "fake"
+                  simulates that lifecycle locally; "static" attaches to an existing
+                  Kubernetes node; "mock" is a deprecated compatibility alias.
                 enum:
                 - gce
                 - gke
+                - eks
                 - static
                 - fake
                 - mock

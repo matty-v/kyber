@@ -1,6 +1,8 @@
 # Overlay release-pinned image tags and secrets separately.
 controlPlane:
   nodeSelector:
+    # Remove the standalone/k3s default before selecting the EKS platform pool.
+    node-role.kubernetes.io/control-plane: null
     kyber.io/role: platform
 
 postgresql:
