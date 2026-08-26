@@ -38,6 +38,21 @@ func TestCapacityProviderForKeepsDirectGCEOnLegacyPath(t *testing.T) {
 	}
 }
 
+func TestHasPendingCostOptimizedRetry(t *testing.T) {
+	machine := &kyberv1.Machine{}
+	if hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("empty retry request reported pending")
+	}
+	machine.Spec.CostOptimizedRetryRequest = "retry-1"
+	if !hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("unacknowledged retry request was not reported pending")
+	}
+	machine.Status.CostOptimizedRetryObserved = "retry-1"
+	if hasPendingCostOptimizedRetry(machine) {
+		t.Fatal("acknowledged retry request reported pending")
+	}
+}
+
 func TestClassifyNodeDisappeared_InterruptibleCapacityProviderStartsReplacement(t *testing.T) {
 	ctx := context.Background()
 	provider := adapters.NewFakeComputeAdapter()
@@ -327,6 +342,9 @@ func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
 	if got.Status.Phase != kyberv1.MachinePhaseProvisioning {
 		t.Fatalf("create phase = %q, want %q", got.Status.Phase, kyberv1.MachinePhaseProvisioning)
 	}
+	if want := machineAvailabilityClass(machine); got.Status.EffectiveAvailabilityClass != want {
+		t.Fatalf("effective availability = %q, want %q", got.Status.EffectiveAvailabilityClass, want)
+	}
 	if adapter.InstanceCount() != 1 {
 		t.Fatalf("instance count = %d, want 1", adapter.InstanceCount())
 	}
@@ -402,6 +420,25 @@ func TestReconciler_FakeProviderManagedLifecycleOnExistingNode(t *testing.T) {
 	borrowedNode := &corev1.Node{}
 	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "node-unassigned"}, borrowedNode); err != nil {
 		t.Fatalf("borrowed node was removed during fake Machine finalization: %v", err)
+	}
+}
+
+func TestMachineAvailabilityClassCompatibility(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		spec     kyberv1.MachineSpec
+		expected kyberv1.MachineAvailabilityClass
+	}{
+		{name: "explicit cost optimized", spec: kyberv1.MachineSpec{AvailabilityClass: kyberv1.MachineAvailabilityCostOptimized}, expected: kyberv1.MachineAvailabilityCostOptimized},
+		{name: "legacy spot", spec: kyberv1.MachineSpec{Spot: true}, expected: kyberv1.MachineAvailabilityCostOptimized},
+		{name: "default reliable", spec: kyberv1.MachineSpec{}, expected: kyberv1.MachineAvailabilityReliable},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			machine := &kyberv1.Machine{Spec: test.spec}
+			if got := machineAvailabilityClass(machine); got != test.expected {
+				t.Fatalf("machineAvailabilityClass() = %q, want %q", got, test.expected)
+			}
+		})
 	}
 }
 

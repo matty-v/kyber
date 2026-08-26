@@ -20,6 +20,22 @@
   code is on screen rather than stopping outright — an expired code has to be
   able to see its replacement arrive.
 
+## 0.33.4 — 2026-08-25
+
+### Added
+- Machine details explicitly distinguish requested and effective availability.
+  When a cost-optimized Machine is using reliable fallback capacity, the UI
+  warns that reliable-rate cost is active and offers a provider-neutral,
+  confirmed retry action when the provider supports it.
+
+## 0.33.3 — 2026-08-25
+
+### Added
+- Machine and compute-provider wire types now include the additive,
+  provider-neutral reliable-fallback capability, effective availability,
+  fallback timing/reason, and cost-optimized retry fields. Existing providers
+  may omit them and retain their current behavior.
+
 ## 0.33.2 — 2026-08-24
 
 ### Added

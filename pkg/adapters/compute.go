@@ -5,8 +5,22 @@ package adapters
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
+
+const ComputeConfigFallbackThreshold = "fallback-threshold"
+
+func parseFallbackThreshold(raw string) (time.Duration, error) {
+	if raw == "" {
+		return 5 * time.Minute, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("fallback threshold must be a positive duration")
+	}
+	return d, nil
+}
 
 // DesiredAvailability is Kyber's provider-neutral intent for one logical unit
 // of Machine capacity. Providers decide how that intent maps to their native
@@ -70,6 +84,17 @@ const (
 	UnregisterOnly DeletionMode = "UnregisterOnly"
 )
 
+// ReliableFallbackMode describes whether a provider can replace unavailable
+// cost-optimized capacity with reliable capacity. The terms are deliberately
+// provider-neutral; native purchasing models stay behind the adapter.
+type ReliableFallbackMode string
+
+const (
+	ReliableFallbackUnsupported ReliableFallbackMode = "Unsupported"
+	ReliableFallbackManual      ReliableFallbackMode = "Manual"
+	ReliableFallbackAutomatic   ReliableFallbackMode = "Automatic"
+)
+
 // ProviderRef is an opaque provider-owned identifier. Code outside the
 // provider that produced it may persist and return it but must not parse it.
 type ProviderRef string
@@ -85,6 +110,7 @@ type Capabilities struct {
 	SupportsInterruptible   bool
 	SupportsLocations       bool
 	RequiresSchedulerDemand bool
+	ReliableFallbackMode    ReliableFallbackMode
 }
 
 // Profile is an installer-curated capacity promise exposed to operators. The
@@ -121,10 +147,23 @@ type DesiredMachine struct {
 	Profile       string
 	DiskSizeGb    int
 	Interruptible bool
-	Location      string
-	Labels        map[string]string
-	NodeBootstrap NodeBootstrap
-	Managed       bool
+	// AvailabilityClass is the provider-neutral requested class. Interruptible
+	// remains populated during the compatibility period for existing providers.
+	AvailabilityClass string
+	// CostOptimizedRetryRequest is an opaque, durable one-shot request token.
+	// Providers observe and acknowledge it without interpreting its contents.
+	CostOptimizedRetryRequest string
+	// CostOptimizedUnavailableSince is durable controller-owned transition
+	// state returned to providers so timeout decisions survive restarts.
+	CostOptimizedUnavailableSince time.Time
+	FallbackSince                 time.Time
+	CostOptimizedRetryObserved    string
+	CostOptimizedRetrySince       time.Time
+	EffectiveAvailabilityClass    string
+	Location                      string
+	Labels                        map[string]string
+	NodeBootstrap                 NodeBootstrap
+	Managed                       bool
 	// AttachmentObserved distinguishes an authoritative zero Nodes from an
 	// unavailable Kubernetes observation.
 	AttachmentObserved bool
@@ -144,6 +183,14 @@ type CapacityObservation struct {
 	ExternalIP   string
 	InternalIP   string
 	CreatedAt    time.Time
+	// EffectiveAvailabilityClass reports the class currently serving the
+	// Machine when it differs from, or confirms, requested intent.
+	EffectiveAvailabilityClass    string
+	FallbackReason                string
+	FallbackSince                 time.Time
+	CostOptimizedUnavailableSince time.Time
+	CostOptimizedRetryObserved    string
+	CostOptimizedRetrySince       time.Time
 }
 
 // CapacityProvider reconciles one logical unit of Machine capacity. The
@@ -208,16 +255,23 @@ type SimulationController interface {
 type SimulationScenario string
 
 const (
-	SimulationPending         SimulationScenario = "pending"
-	SimulationRunning         SimulationScenario = "running"
-	SimulationStopped         SimulationScenario = "stopped"
-	SimulationPreempted       SimulationScenario = "preempted"
-	SimulationFailed          SimulationScenario = "failed"
-	SimulationFailNextCreate  SimulationScenario = "fail-next-create"
-	SimulationFailNextStart   SimulationScenario = "fail-next-start"
-	SimulationFailNextStop    SimulationScenario = "fail-next-stop"
-	SimulationFailNextDelete  SimulationScenario = "fail-next-delete"
-	SimulationFailNextObserve SimulationScenario = "fail-next-observe"
+	SimulationPending   SimulationScenario = "pending"
+	SimulationRunning   SimulationScenario = "running"
+	SimulationStopped   SimulationScenario = "stopped"
+	SimulationPreempted SimulationScenario = "preempted"
+	SimulationFailed    SimulationScenario = "failed"
+	// SimulationCostOptimizedUnavailable models a completed same-location
+	// fallback to reliable capacity while retaining the provider reference.
+	SimulationCostOptimizedUnavailable SimulationScenario = "cost-optimized-unavailable"
+	// SimulationFailNextCostOptimizedRetry keeps reliable fallback active while
+	// acknowledging the next retry request, modelling rollback after Spot stays
+	// unavailable.
+	SimulationFailNextCostOptimizedRetry SimulationScenario = "fail-next-cost-optimized-retry"
+	SimulationFailNextCreate             SimulationScenario = "fail-next-create"
+	SimulationFailNextStart              SimulationScenario = "fail-next-start"
+	SimulationFailNextStop               SimulationScenario = "fail-next-stop"
+	SimulationFailNextDelete             SimulationScenario = "fail-next-delete"
+	SimulationFailNextObserve            SimulationScenario = "fail-next-observe"
 )
 
 type SimulatedInstance struct {

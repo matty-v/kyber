@@ -455,6 +455,7 @@ export interface MachineSpec {
   zone?: string
   profile?: string
   availabilityClass?: MachineAvailabilityClass
+  costOptimizedRetryRequest?: string
   location?: string
   managementMode?: MachineManagementMode
 }
@@ -489,6 +490,12 @@ export interface MachineStatus {
   instanceId?: string
   providerRef?: string
   availability?: MachineAvailability
+  effectiveAvailabilityClass?: MachineAvailabilityClass
+  fallbackReason?: string
+  fallbackSince?: string
+  costOptimizedUnavailableSince?: string
+  costOptimizedRetryObserved?: string
+  costOptimizedRetrySince?: string
   resolvedProfile?: ResolvedMachineProfile
   externalIP?: string
   internalIP?: string
@@ -544,6 +551,7 @@ export interface ComputeCapabilities {
   supportsInterruptible: boolean
   supportsLocations: boolean
   requiresSchedulerDemand: boolean
+  reliableFallbackMode?: 'Unsupported' | 'Manual' | 'Automatic'
 }
 
 export interface MachinePreflightResponse {

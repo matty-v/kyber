@@ -46,6 +46,8 @@ spec:
           securityContext:
             privileged: true
           env:
+            - name: KYBER_CLOUD_PROVIDER
+              value: {{ .Values.compute.provider | default "mock" | quote }}
             - name: KYBER_LOG_LEVEL
               value: {{ include "kyber.loggingLevel" (dict "root" . "component" "node-agent") | quote }}
             - name: KYBER_LOG_POD

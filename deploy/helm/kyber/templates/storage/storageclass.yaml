@@ -4,11 +4,13 @@
 {{- if ne (len .Values.storage.gcePD.allowedZones) 2 }}
 {{- fail "storage.gcePD.allowedZones must contain exactly two zones when replicationType=regional-pd" }}
 {{- end }}
+
 {{- range .Values.compute.gke.nodeLocations }}
 {{- if not (has . $.Values.storage.gcePD.allowedZones) }}
 {{- fail (printf "compute.gke.nodeLocations zone %s is not present in storage.gcePD.allowedZones" .) }}
 {{- end }}
 {{- end }}
+
 {{- end }}
 {{- end }}
 apiVersion: storage.k8s.io/v1
@@ -43,5 +45,37 @@ allowedTopologies:
 {{- range .Values.storage.gcePD.allowedZones }}
           - {{ . | quote }}
 {{- end }}
+{{- end }}
+{{- end }}
+
+{{- if .Values.storage.awsEBS.enabled }}
+{{- if .Values.storage.gcePD.enabled }}{{ fail "storage.gcePD and storage.awsEBS cannot both be enabled" }}{{- end }}
+{{- if not .Values.storage.awsEBS.encrypted }}{{ fail "storage.awsEBS.encrypted must be true" }}{{- end }}
+{{- if ne .Values.storage.awsEBS.type "gp3" }}{{ fail "storage.awsEBS.type must be gp3" }}{{- end }}
+{{- if not .Values.storage.awsEBS.allowedZones }}{{ fail "storage.awsEBS.allowedZones must contain at least one availability zone" }}{{- end }}
+{{- if not (has .Values.storage.awsEBS.fsType (list "ext4" "xfs")) }}{{ fail "storage.awsEBS.fsType must be ext4 or xfs" }}{{- end }}
+{{- if and .Values.storage.agentStorageClass (ne .Values.storage.agentStorageClass .Values.storage.awsEBS.storageClassName) }}{{ fail "storage.agentStorageClass must match storage.awsEBS.storageClassName when AWS EBS is enabled" }}{{- end }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.storage.awsEBS.storageClassName }}
+provisioner: ebs.csi.aws.com
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: {{ .Values.storage.awsEBS.allowVolumeExpansion }}
+parameters:
+  type: {{ .Values.storage.awsEBS.type | quote }}
+  encrypted: "true"
+  csi.storage.k8s.io/fstype: {{ .Values.storage.awsEBS.fsType | quote }}
+{{- if .Values.storage.awsEBS.kmsKeyArn }}
+  kmsKeyId: {{ .Values.storage.awsEBS.kmsKeyArn | quote }}
+{{- end }}
+allowedTopologies:
+  - matchLabelExpressions:
+      - key: topology.ebs.csi.aws.com/zone
+        values:
+{{- range .Values.storage.awsEBS.allowedZones }}
+          - {{ . | quote }}
 {{- end }}
 {{- end }}

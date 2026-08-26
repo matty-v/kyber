@@ -69,6 +69,18 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 		}
 	}
 
+	// Re-arm the recovery gate BEFORE the spec patch, exactly as an explicit
+	// Start does. Writing {} above is not enough on its own: on every retry the
+	// Secret already holds {}, Kubernetes does not bump resourceVersion for a
+	// byte-identical update, and the controller's claim still matches — so the
+	// gate stays shut and this endpoint becomes a silent no-op that still
+	// answers 204. See rearmRecoveryGate for the full reasoning.
+	if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
+		slog.Error("failed to clear recovery input", "name", name, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start Codex device auth")
+		return
+	}
+
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {

@@ -80,6 +80,7 @@ vi.mock('./hooks/useAPI', () => {
     useRebootMachine: () => mutation,
     useDeleteMachine: () => mutation,
     useRestartMachineAgents: () => mutation,
+    useRetryCostOptimizedMachine: () => mutation,
   }
 })
 

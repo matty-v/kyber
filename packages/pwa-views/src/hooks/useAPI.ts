@@ -982,6 +982,24 @@ export function useRestartMachineAgents() {
   })
 }
 
+export function useRetryCostOptimizedMachine() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, requestId }: { name: string; requestId: string }) =>
+      api.retryCostOptimizedMachine(name, requestId),
+    onSuccess: (_data, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'machines', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'machines'] })
+    },
+    meta: {
+      successMessage: 'Cost-optimized capacity retry started',
+      errorPrefix: 'Failed to retry cost-optimized capacity',
+    },
+  })
+}
+
 // ---- Config ----
 
 export function useComputeConfig() {

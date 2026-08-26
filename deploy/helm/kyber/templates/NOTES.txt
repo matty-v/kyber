@@ -36,9 +36,11 @@ Agent and Machine CRDs are installed at the cluster level:
 
 == Notes ==
 
-- The Machine Controller requires KYBER_K3S_JOIN_TOKEN and KYBER_K3S_SERVER_URL to
+{{- if eq (.Values.compute.provider | default "mock") "gce" }}
+- The direct GCE Machine Controller requires KYBER_K3S_JOIN_TOKEN and KYBER_K3S_SERVER_URL to
   provision k3s worker nodes. Set these via k3s.joinToken and k3s.serverUrl values
   (or reference a pre-created secret via k3s.existingSecret).
+{{- end }}
 
 - The /api/v1/backups endpoint is deferred and NOT implemented in V1.
 

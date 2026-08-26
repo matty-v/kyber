@@ -115,10 +115,13 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 	joinToken := os.Getenv("KYBER_K3S_JOIN_TOKEN")
 	serverURL := os.Getenv("KYBER_K3S_SERVER_URL")
 
-	if joinToken == "" {
+	// Direct GCE provisions standalone k3s workers and therefore needs the join
+	// credentials. Managed Kubernetes providers (GKE/EKS) attach managed node
+	// pools directly; warning about k3s credentials there is misleading.
+	if adapter.Type() == string(kyberv1.MachineProviderGCE) && joinToken == "" {
 		setupLog.Info("warning: KYBER_K3S_JOIN_TOKEN not set — provisioned nodes will not join the cluster")
 	}
-	if serverURL == "" {
+	if adapter.Type() == string(kyberv1.MachineProviderGCE) && serverURL == "" {
 		setupLog.Info("warning: KYBER_K3S_SERVER_URL not set — provisioned nodes will not join the cluster")
 	}
 
@@ -183,6 +186,23 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// signal until provider capacity attaches.
 	if err := r.reconcileCapacityRequestPod(ctx, machine); err != nil {
 		return ctrl.Result{}, err
+	}
+
+	// A manual reliable -> cost-optimized retry is provider reconciliation,
+	// not a Machine phase transition. Stable Ready/Running Machines otherwise
+	// only refresh node-derived status and never call the capacity provider, so
+	// an accepted retry request would remain pending indefinitely. Keep driving
+	// the provider until it acknowledges the one-shot request; its paired-capacity
+	// contract removes reliable capacity before creating cost-optimized capacity.
+	if hasPendingCostOptimizedRetry(machine) {
+		if _, err := r.reconcileCapacity(ctx, machine, adapters.DesiredOnline); err != nil {
+			logger.Error(err, "cost-optimized retry failed — will requeue", "machine", machine.Name)
+			if updateErr := r.updateMessage(ctx, machine, fmt.Sprintf("cost-optimized retry failed: %v", err)); updateErr != nil {
+				logger.Error(updateErr, "failed to write retry error to status")
+			}
+			return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
+		}
+		return ctrl.Result{RequeueAfter: requeueProvisioning}, nil
 	}
 
 	// 4. Classify the event to drive the state machine.
@@ -298,6 +318,11 @@ func (r *MachineReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{RequeueAfter: requeueAfter}, nil
 	}
 	return ctrl.Result{RequeueAfter: requeueAfterForPhase(result.NextPhase)}, nil
+}
+
+func hasPendingCostOptimizedRetry(machine *kyberv1.Machine) bool {
+	return machine.Spec.CostOptimizedRetryRequest != "" &&
+		machine.Spec.CostOptimizedRetryRequest != machine.Status.CostOptimizedRetryObserved
 }
 
 // classifyEvent inspects the machine's current state to determine the next event.
@@ -861,12 +886,19 @@ func (r *MachineReconciler) reconcileCapacity(
 		return adapters.CapacityObservation{}, fmt.Errorf("capacity provider is not configured")
 	}
 	desired := adapters.DesiredMachine{
-		Availability:  availability,
-		Profile:       machineProfile(machine),
-		DiskSizeGb:    int(machine.Spec.DiskSizeGb),
-		Interruptible: machineInterruptible(machine),
-		Location:      machineLocation(machine),
-		Labels:        map[string]string{MachineLabelKey: machine.Name},
+		Availability:                  availability,
+		Profile:                       machineProfile(machine),
+		DiskSizeGb:                    int(machine.Spec.DiskSizeGb),
+		Interruptible:                 machineInterruptible(machine),
+		AvailabilityClass:             string(machineAvailabilityClass(machine)),
+		CostOptimizedRetryRequest:     machine.Spec.CostOptimizedRetryRequest,
+		CostOptimizedUnavailableSince: metaTimeValue(machine.Status.CostOptimizedUnavailableSince),
+		FallbackSince:                 metaTimeValue(machine.Status.FallbackSince),
+		CostOptimizedRetryObserved:    machine.Status.CostOptimizedRetryObserved,
+		CostOptimizedRetrySince:       metaTimeValue(machine.Status.CostOptimizedRetrySince),
+		EffectiveAvailabilityClass:    string(machine.Status.EffectiveAvailabilityClass),
+		Location:                      machineLocation(machine),
+		Labels:                        map[string]string{MachineLabelKey: machine.Name},
 		NodeBootstrap: adapters.NodeBootstrap{
 			JoinToken: r.K3sJoinToken,
 			ServerURL: r.K3sServerURL,
@@ -896,14 +928,28 @@ func (r *MachineReconciler) reconcileCapacity(
 
 	ref := string(observation.ProviderRef)
 	observedAvailability := kyberv1.MachineAvailability(observation.State)
+	effectiveClass := kyberv1.MachineAvailabilityClass(observation.EffectiveAvailabilityClass)
+	if effectiveClass == "" {
+		effectiveClass = machineAvailabilityClass(machine)
+	}
+	fallbackSince := optionalMetaTime(observation.FallbackSince)
+	unavailableSince := optionalMetaTime(observation.CostOptimizedUnavailableSince)
+	retrySince := optionalMetaTime(observation.CostOptimizedRetrySince)
 	resolvedProfileMissing := desired.Profile != "" && machine.Status.ResolvedProfile == nil
-	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
+	if machine.Status.ProviderRef != ref || machine.Status.InstanceId != ref || machine.Status.Availability != observedAvailability || machine.Status.EffectiveAvailabilityClass != effectiveClass || machine.Status.FallbackReason != observation.FallbackReason || !metaTimeEqual(machine.Status.FallbackSince, fallbackSince) || !metaTimeEqual(machine.Status.CostOptimizedUnavailableSince, unavailableSince) || machine.Status.CostOptimizedRetryObserved != observation.CostOptimizedRetryObserved || !metaTimeEqual(machine.Status.CostOptimizedRetrySince, retrySince) || resolvedProfileMissing || machine.Status.InternalIP != observation.InternalIP || machine.Status.ExternalIP != observation.ExternalIP || machine.Status.Message != observation.Message {
+		previousStatus := machine.Status
 		patch := client.MergeFrom(machine.DeepCopy())
 		machine.Status.ProviderRef = ref
 		// Dual-write during the compatibility window. Legacy readers continue
 		// using instanceId until every provider and client has migrated.
 		machine.Status.InstanceId = ref
 		machine.Status.Availability = observedAvailability
+		machine.Status.EffectiveAvailabilityClass = effectiveClass
+		machine.Status.FallbackReason = observation.FallbackReason
+		machine.Status.FallbackSince = fallbackSince
+		machine.Status.CostOptimizedUnavailableSince = unavailableSince
+		machine.Status.CostOptimizedRetryObserved = observation.CostOptimizedRetryObserved
+		machine.Status.CostOptimizedRetrySince = retrySince
 		machine.Status.InternalIP = observation.InternalIP
 		machine.Status.ExternalIP = observation.ExternalIP
 		machine.Status.Message = observation.Message
@@ -915,8 +961,44 @@ func (r *MachineReconciler) reconcileCapacity(
 		if err := r.Status().Patch(ctx, machine, patch); err != nil {
 			return adapters.CapacityObservation{}, fmt.Errorf("patching provider reference: %w", err)
 		}
+		r.recordFallbackEvents(machine, previousStatus, observation)
 	}
 	return observation, nil
+}
+
+func metaTimeValue(value *metav1.Time) time.Time {
+	if value == nil {
+		return time.Time{}
+	}
+	return value.Time
+}
+
+// recordFallbackEvents emits only on durable status transitions. Provider
+// retries and controller restarts therefore do not create duplicate logical
+// events, while an adapter may complete a short transition in one reconcile.
+func (r *MachineReconciler) recordFallbackEvents(machine *kyberv1.Machine, previous kyberv1.MachineStatus, observation adapters.CapacityObservation) {
+	if r.Recorder == nil {
+		return
+	}
+	if previous.CostOptimizedUnavailableSince == nil && !observation.CostOptimizedUnavailableSince.IsZero() {
+		r.Recorder.Event(machine, corev1.EventTypeWarning, "CostOptimizedUnavailable", "Cost-optimized capacity is unavailable; the provider is evaluating reliable fallback")
+	}
+	if previous.FallbackSince == nil && !observation.FallbackSince.IsZero() {
+		r.Recorder.Event(machine, corev1.EventTypeNormal, "ReliableFallbackStarted", "Reliable fallback started in the Machine's current location with its existing storage")
+		if observation.State == adapters.CapacityAvailable && observation.EffectiveAvailabilityClass == string(kyberv1.MachineAvailabilityReliable) {
+			r.Recorder.Event(machine, corev1.EventTypeNormal, "ReliableFallbackReady", "Reliable fallback is Ready with the Machine's existing storage")
+		}
+	}
+	if observation.CostOptimizedRetryObserved == "" || observation.CostOptimizedRetryObserved == previous.CostOptimizedRetryObserved {
+		return
+	}
+	r.Recorder.Event(machine, corev1.EventTypeNormal, "CostOptimizedRetryStarted", "The provider accepted the request to retry cost-optimized capacity")
+	switch observation.EffectiveAvailabilityClass {
+	case string(kyberv1.MachineAvailabilityCostOptimized):
+		r.Recorder.Event(machine, corev1.EventTypeNormal, "CostOptimizedRetryReady", "Cost-optimized capacity is Ready with the Machine's existing storage")
+	case string(kyberv1.MachineAvailabilityReliable):
+		r.Recorder.Event(machine, corev1.EventTypeWarning, "CostOptimizedRetryRolledBack", "Cost-optimized capacity remained unavailable; reliable fallback was restored")
+	}
 }
 
 func machineProfile(machine *kyberv1.Machine) string {
@@ -938,6 +1020,31 @@ func machineInterruptible(machine *kyberv1.Machine) bool {
 		return machine.Spec.AvailabilityClass == kyberv1.MachineAvailabilityCostOptimized
 	}
 	return machine.Spec.Spot
+}
+
+func machineAvailabilityClass(machine *kyberv1.Machine) kyberv1.MachineAvailabilityClass {
+	if machine.Spec.AvailabilityClass != "" {
+		return machine.Spec.AvailabilityClass
+	}
+	if machine.Spec.Spot {
+		return kyberv1.MachineAvailabilityCostOptimized
+	}
+	return kyberv1.MachineAvailabilityReliable
+}
+
+func optionalMetaTime(value time.Time) *metav1.Time {
+	if value.IsZero() {
+		return nil
+	}
+	result := metav1.NewTime(value)
+	return &result
+}
+
+func metaTimeEqual(left, right *metav1.Time) bool {
+	if left == nil || right == nil {
+		return left == nil && right == nil
+	}
+	return left.Equal(right)
 }
 
 func providerReference(machine *kyberv1.Machine) string {

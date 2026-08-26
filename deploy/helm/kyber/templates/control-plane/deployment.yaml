@@ -151,7 +151,7 @@ spec:
             # An explicit agentStorageClass always wins, so this only fills in
             # the value the operator would otherwise have to repeat.
             - name: KYBER_AGENT_STORAGE_CLASS
-              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName "" .Values.storage.gcePD.enabled) | quote }}
+              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName (ternary .Values.storage.awsEBS.storageClassName "" .Values.storage.awsEBS.enabled) .Values.storage.gcePD.enabled) | quote }}
             # Durable transcript-offsets PVC (kyber#467). StorageClass defaults to
             # empty (cluster default = local-path) on ALL targets — never kyber-pd,
             # whose 1Gi PD minimum wastes space for sub-1KB line-count checkpoints.
@@ -377,6 +377,8 @@ spec:
             # Compute adapter selection.
             - name: KYBER_COMPUTE_PROVIDER
               value: {{ .Values.compute.provider | default "mock" | quote }}
+            - name: KYBER_COMPUTE_FALLBACK_THRESHOLD
+              value: {{ .Values.compute.fallbackThreshold | default "5m" | quote }}
             {{- if .Values.compute.simulation.controlEnabled }}
             - name: KYBER_DEV_COMPUTE_CONTROL
               value: "true"
@@ -414,6 +416,22 @@ spec:
               value: {{ .Values.compute.gke.profiles | toJson | quote }}
             - name: KYBER_GKE_NODE_LOCATIONS
               value: {{ .Values.compute.gke.nodeLocations | toJson | quote }}
+            - name: KYBER_GKE_RELIABLE_FALLBACK_ENABLED
+              value: {{ .Values.compute.gke.reliableFallbackEnabled | quote }}
+            {{- end }}
+            {{- if eq (.Values.compute.provider | default "mock") "eks" }}
+            - name: KYBER_EKS_REGION
+              value: {{ required "compute.eks.region is required when compute.provider=eks" .Values.compute.eks.region | quote }}
+            - name: KYBER_EKS_CLUSTER
+              value: {{ required "compute.eks.cluster is required when compute.provider=eks" .Values.compute.eks.cluster | quote }}
+            - name: KYBER_EKS_NODE_ROLE_ARN
+              value: {{ required "compute.eks.nodeRoleArn is required when compute.provider=eks" .Values.compute.eks.nodeRoleArn | quote }}
+            - name: KYBER_EKS_ALLOWED_ZONES
+              value: {{ required "compute.eks.allowedZones is required when compute.provider=eks" .Values.compute.eks.allowedZones | toJson | quote }}
+            - name: KYBER_EKS_SUBNETS_BY_ZONE
+              value: {{ required "compute.eks.subnetsByZone is required when compute.provider=eks" .Values.compute.eks.subnetsByZone | toJson | quote }}
+            - name: KYBER_EKS_PROFILES
+              value: {{ required "compute.eks.profiles is required when compute.provider=eks" .Values.compute.eks.profiles | toJson | quote }}
             {{- end }}
             # Telemetry — OTEL exporter config.
             - name: KYBER_TELEMETRY_ENABLED
