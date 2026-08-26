@@ -544,16 +544,24 @@ apply is authorized or attempted.
 10. Machine deletion while Agent data exists: operation refused or Agent data
     preserved according to the reviewed lifecycle rule.
 11. PVC expansion and filesystem growth.
-12. Snapshot restore into a second zone: new volume ID, measured RPO/RTO, clear
-    distinction from same-disk recovery.
-13. Existing GKE unit/chart suite and, if authorized, read-only live
+12. Existing GKE unit/chart suite and, if authorized, read-only live
     `kyber-datawire` observations after the shared changes.
 
-The recovery-SLO run needs at least 20 controlled hard-loss/fallback samples to
-make a p95 claim. Use a reviewed zero/short threshold test configuration to
-exercise fallback deterministically rather than waiting for AWS to deny Spot
-capacity naturally. If the approved time/cost budget cannot support the sample
-count, report individual timings and do not claim p95.
+### Shortened issue-closure acceptance
+
+Matt subsequently requested that the integration run be dramatically shortened
+to close the issue promptly. The required live gate therefore runs one
+deterministic sample each for reliable lifecycle, fallback, successful retry,
+and failed-retry rollback, plus the volume-identity and no-dual-node assertions.
+It uses a reviewed short test threshold rather than waiting for natural Spot
+denial. Individual timings are reported and **no p95 claim is made**. The
+original 20-sample distribution remains a post-merge reliability
+qualification if a measured p95 claim is later desired.
+
+The cross-AZ snapshot restore drill is also removed from issue closure. EBS
+snapshot policy and restore remain operator-owned disaster-recovery procedure,
+not Kyber fallback behavior; documentation must clearly distinguish a restored
+new volume from same-volume in-zone recovery.
 
 ### Evidence
 
