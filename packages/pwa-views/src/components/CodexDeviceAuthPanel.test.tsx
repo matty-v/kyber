@@ -124,6 +124,17 @@ describe('CodexDeviceAuthPanel', () => {
     expect(screen.queryByText(/expires in/i)).not.toBeInTheDocument()
   })
 
+  // The POST behind this button wipes the Codex auth Secret back to {} and
+  // restarts the agent. `absent` during a boot means "the pod has not reached
+  // the login step yet", not "nothing is coming" — offering the button there
+  // invites a restart of the boot that is about to print the code.
+  it('waits rather than offering a restart while a Starting pod has no session yet', () => {
+    status = { isLoading: false, data: { state: 'absent' } }
+    render(<CodexDeviceAuthPanel name="codextest" phase="Starting" />)
+    expect(screen.getByRole('status')).toHaveTextContent(/starting login/i)
+    expect(screen.queryByRole('button', { name: /start device login/i })).not.toBeInTheDocument()
+  })
+
   // Each poll is an exec into the pod. Polling an agent that is not mid-login
   // would be a steady stream of them across the fleet.
   it('only polls while a login could be running', () => {

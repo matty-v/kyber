@@ -1,6 +1,8 @@
 package codexauth
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -114,5 +116,27 @@ func TestParse_DoesNotMistakeOtherTextForACode(t *testing.T) {
 	`
 	if got := Parse(noisy, time.Now(), time.Now()); got.UserCode != "" {
 		t.Fatalf("userCode=%q, want none — nothing here is a device code", got.UserCode)
+	}
+}
+
+// encoding/json's omitempty does not apply to structs, so the zero ExpiresAt
+// this package deliberately leaves behind used to go out as a year-1 deadline
+// and read as "already expired" to any client doing the obvious thing.
+func TestResultJSONOmitsUnknownExpiry(t *testing.T) {
+	b, err := json.Marshal(Result{State: StateReady, VerificationURL: "https://auth.openai.com/codex/device", UserCode: "E7OV-KG840"})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if strings.Contains(string(b), "expiresAt") {
+		t.Fatalf("expiresAt must be absent when unknown; got %s", b)
+	}
+
+	at := time.Date(2026, 8, 26, 20, 15, 0, 0, time.UTC)
+	b, err = json.Marshal(Result{State: StateReady, ExpiresAt: at})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if !strings.Contains(string(b), `"expiresAt":"2026-08-26T20:15:00Z"`) {
+		t.Fatalf("a known expiry must still be serialised; got %s", b)
 	}
 }

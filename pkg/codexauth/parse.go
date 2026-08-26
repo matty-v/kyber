@@ -47,7 +47,14 @@ type Result struct {
 	UserCode string `json:"userCode,omitempty"`
 	// ExpiresAt is when the code stops working, derived from the flow's own
 	// "expires in N minutes" anchored to startedAt. Zero when unknown.
-	ExpiresAt time.Time `json:"expiresAt,omitempty"`
+	//
+	// omitZERO, not omitempty: omitempty has no effect on a struct field, so
+	// the obvious tag would ship "0001-01-01T00:00:00Z" for the case Parse
+	// deliberately leaves zero. A client reading that as an absolute deadline
+	// sees a code that expired two millennia ago and reports a perfectly good
+	// code as expired. The API contract says the field is absent here, and
+	// omitzero (Go 1.24+) is what actually makes it absent.
+	ExpiresAt time.Time `json:"expiresAt,omitzero"`
 }
 
 var (

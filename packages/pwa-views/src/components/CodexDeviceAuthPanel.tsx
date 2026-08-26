@@ -53,7 +53,16 @@ export function CodexDeviceAuthPanel({ name, phase }: Props) {
   const [now, setNow] = useState(() => Date.now())
   useEffect(() => {
     if (data?.state !== 'ready' || !data.expiresAt) return
-    const t = setInterval(() => setNow(Date.now()), 1000)
+    const deadline = Date.parse(data.expiresAt)
+    if (Number.isNaN(deadline)) return
+    const t = setInterval(() => {
+      const tick = Date.now()
+      setNow(tick)
+      // Past the deadline the clock has nothing left to say, and the panel has
+      // already flipped to `expired`. Stop rather than re-render once a second
+      // for as long as the page stays open.
+      if (tick >= deadline) clearInterval(t)
+    }, 1000)
     return () => clearInterval(t)
   }, [data?.state, data?.expiresAt])
 
@@ -72,9 +81,26 @@ export function CodexDeviceAuthPanel({ name, phase }: Props) {
     }
   }
 
-  const waiting = !ready && !expired && (isLoading || data?.state === 'starting' || startLogin.isPending)
-  // `absent` in NeedsAuth is the resting state: nothing running, nothing
-  // coming, until the operator asks for it.
+  // `absent` only means "no login session in the pod right now", and what that
+  // implies depends on why we are looking:
+  //
+  //   NeedsAuth, nothing asked for — the resting state. Offer the button.
+  //   Starting — the pod is booting toward a login and has not reached the
+  //     `codex login` step yet, which is the first several seconds of every
+  //     boot. Offering the button here hands the operator a destructive
+  //     restart in the middle of the boot that is about to print their code.
+  //   Just after a start was accepted — the flow is on its way whatever this
+  //     one poll caught, and the pod is very likely still the old one. The
+  //     button reappearing here invites a second click that wipes the auth
+  //     Secret and restarts the agent all over again.
+  //
+  // All three of those are "wait", not "ask again".
+  const startRequested = startLogin.isPending || startLogin.isSuccess
+  const bootingTowardLogin = data?.state === 'absent' && phase === 'Starting'
+  const waiting =
+    !ready &&
+    !expired &&
+    (isLoading || data?.state === 'starting' || bootingTowardLogin || startRequested)
   const idle = !waiting && !ready && !expired
 
   return (

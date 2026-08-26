@@ -16,8 +16,9 @@
   background is worse than one click.
 - New `CodexDeviceAuthPanel` component and `useCodexDeviceAuthStatus` hook,
   backed by a read-only `GET /api/v1/agents/{name}/codex-device-auth`. The
-  poll runs only while a login could be in progress and stops once a code is
-  showing.
+  poll runs only while a login could be in progress, and pauses while a live
+  code is on screen rather than stopping outright — an expired code has to be
+  able to see its replacement arrive.
 
 ## 0.33.2 — 2026-08-24
 
