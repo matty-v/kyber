@@ -116,6 +116,19 @@ resource "aws_launch_template" "platform" {
     tags          = local.tags
   }
 }
+
+resource "aws_launch_template" "machine" {
+  name_prefix = "${var.cluster_name}-machine-"
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
+  tag_specifications {
+    resource_type = "instance"
+    tags          = local.tags
+  }
+}
 resource "aws_eks_node_group" "platform" {
   cluster_name    = aws_eks_cluster.this.name
   node_group_name = "kyber-platform"
@@ -182,4 +195,58 @@ resource "aws_eks_pod_identity_association" "ebs_csi" {
   service_account = "ebs-csi-controller-sa"
   role_arn        = aws_iam_role.ebs_csi.arn
   depends_on      = [aws_eks_addon.pod_identity, aws_iam_role_policy_attachment.ebs_csi]
+}
+
+resource "aws_iam_role" "kyber_control_plane" {
+  name_prefix        = "${var.cluster_name}-kyber-control-plane-"
+  assume_role_policy = data.aws_iam_policy_document.pod_assume.json
+}
+
+data "aws_iam_policy_document" "kyber_control_plane" {
+  statement {
+    sid = "ClusterReadAndCreate"
+    actions = [
+      "eks:DescribeCluster",
+      "eks:CreateNodegroup",
+    ]
+    resources = [aws_eks_cluster.this.arn]
+  }
+  statement {
+    sid = "OwnedNodegroupLifecycle"
+    actions = [
+      "eks:DescribeNodegroup",
+      "eks:UpdateNodegroupConfig",
+      "eks:DeleteNodegroup",
+      "eks:TagResource",
+    ]
+    resources = ["arn:aws:eks:${var.region}:${data.aws_caller_identity.current.account_id}:nodegroup/${aws_eks_cluster.this.name}/kyber-*/*"]
+  }
+  statement {
+    sid       = "PassMachineNodeRole"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.node.arn]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["eks.amazonaws.com"]
+    }
+  }
+  statement {
+    sid       = "ReadApprovedLaunchTemplate"
+    actions   = ["ec2:DescribeLaunchTemplateVersions"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "kyber_control_plane" {
+  role   = aws_iam_role.kyber_control_plane.id
+  policy = data.aws_iam_policy_document.kyber_control_plane.json
+}
+
+resource "aws_eks_pod_identity_association" "kyber_control_plane" {
+  cluster_name    = aws_eks_cluster.this.name
+  namespace       = var.kyber_namespace
+  service_account = var.kyber_control_plane_service_account
+  role_arn        = aws_iam_role.kyber_control_plane.arn
+  depends_on      = [aws_eks_addon.pod_identity, aws_iam_role_policy.kyber_control_plane]
 }

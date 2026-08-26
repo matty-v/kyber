@@ -27,3 +27,12 @@ output "platform_launch_template_id" {
 output "platform_launch_template_version" {
   value = aws_launch_template.platform.latest_version
 }
+output "machine_launch_template_id" {
+  value = aws_launch_template.machine.id
+}
+output "machine_launch_template_version" {
+  value = aws_launch_template.machine.latest_version
+}
+output "kyber_control_plane_role_arn" {
+  value = aws_iam_role.kyber_control_plane.arn
+}

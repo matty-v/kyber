@@ -15,7 +15,9 @@ acceptance still includes the Agent and PVC checks in that runbook.
 - The platform pool has the taint
   `kyber.io/platform=true:NoSchedule`; Kyber never offers or mutates it as
   Machine capacity.
-- Each Kyber Machine maps to one dedicated GKE Standard node pool.
+- Each reliable or legacy Kyber Machine maps to one dedicated GKE Standard
+  node pool. With reliable fallback enabled, a new cost-optimized Machine owns
+  paired Spot and size-zero standard pools.
 - Machine pools use one zone, autoscaling disabled, and zero or one desired
   node. Spot is selected through the neutral `costOptimized` availability
   class.
@@ -61,6 +63,33 @@ rendering when `compute.provider=gke`. Profile mappings are serialized into
 `KYBER_GKE_PROFILES`; the operator API exposes only the neutral ID, display
 metadata, capacity, and availability classes. GKE machine type, disk, and image
 choices remain installer-owned.
+
+### Regional versus zonal and fallback
+
+Set `compute.gke.reliableFallbackEnabled: true` to enable the provider-neutral
+five-minute Spot-to-standard fallback and manual retry workflow for new managed
+Machines. It is off by default so an upgrade cannot silently change existing
+capacity. Even after enabling it, Kyber detects a legacy single pool and keeps
+that Machine on its original lifecycle.
+
+A zonal cluster keeps both pools and its PD in one zone. A whole-zone outage
+parks the Machine until that zone recovers. A regional cluster should configure
+exactly the two `nodeLocations` used by its regional PD. GKE may place Spot or
+standard capacity in either replica zone; the disk cannot move to a third
+cluster zone. The operator action and status are identical to EKS even though
+the provider topology differs.
+
+```yaml
+compute:
+  gke:
+    reliableFallbackEnabled: true
+    nodeLocations: [us-central1-a, us-central1-c] # regional only
+storage:
+  gcePD:
+    enabled: true
+    replicationType: regional-pd
+    allowedZones: [us-central1-a, us-central1-c]
+```
 
 ## Observation-only migration
 

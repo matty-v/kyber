@@ -167,6 +167,21 @@ func TestEKSReliableLifecycleAndOwnership(t *testing.T) {
 	}
 }
 
+func TestEKSLaunchTemplateRetainsInstallerInstanceChoicesAndDisk(t *testing.T) {
+	cfg := validEKSConfig()
+	cfg[EKSConfigProfiles] = `[{"id":"small","cpu":"2","memory":"8Gi","instanceTypes":["m7i.large","m7a.large"],"diskSizeGb":100,"availabilityClasses":["reliable","costOptimized"],"launchTemplateId":"lt-123","launchTemplateVersion":"7"}]`
+	a, _ := parseEKSConfig(cfg)
+	client := &fakeEKSClient{}
+	a.client = client
+	_, err := a.Reconcile(context.Background(), MachineIdentity{Name: "worker"}, DesiredMachine{Availability: DesiredOnline, Profile: "small", Location: "us-east-1a"}, "")
+	if err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if client.create.LaunchTemplate == nil || aws.ToString(client.create.LaunchTemplate.Id) != "lt-123" || aws.ToString(client.create.LaunchTemplate.Version) != "7" || len(client.create.InstanceTypes) != 2 || aws.ToInt32(client.create.DiskSize) != 100 {
+		t.Fatalf("create input = %+v", client.create)
+	}
+}
+
 func TestEKSRefusesMutationWithoutOwnership(t *testing.T) {
 	a, _ := parseEKSConfig(validEKSConfig())
 	a.client = &fakeEKSClient{nodegroup: &ekstypes.Nodegroup{Status: ekstypes.NodegroupStatusActive, CapacityType: ekstypes.CapacityTypesOnDemand, Subnets: []string{"subnet-a"}, ScalingConfig: &ekstypes.NodegroupScalingConfig{DesiredSize: aws.Int32(1)}}}

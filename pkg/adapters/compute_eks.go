@@ -213,8 +213,6 @@ func (e *EKSAdapter) Reconcile(ctx context.Context, identity MachineIdentity, de
 			input := &eks.CreateNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(group), NodeRole: aws.String(e.nodeRoleARN), Subnets: []string{e.subnetsByZone[desired.Location]}, CapacityType: ekstypes.CapacityTypesOnDemand, InstanceTypes: append([]string(nil), profile.InstanceTypes...), DiskSize: aws.Int32(profile.DiskSizeGB), ScalingConfig: &ekstypes.NodegroupScalingConfig{MinSize: aws.Int32(0), MaxSize: aws.Int32(1), DesiredSize: aws.Int32(1)}, Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: identity.Name}, Tags: map[string]string{"kyber.io/managed-by": "kyber", "kyber.io/machine": identity.Name, "kyber.io/location": desired.Location, "kyber.io/profile": desired.Profile}, ClientRequestToken: aws.String("create-" + group)}
 			if profile.LaunchTemplateID != "" {
 				input.LaunchTemplate = &ekstypes.LaunchTemplateSpecification{Id: aws.String(profile.LaunchTemplateID), Version: aws.String(profile.LaunchTemplateVersion)}
-				input.InstanceTypes = nil
-				input.DiskSize = nil
 			}
 			if _, err := e.client.CreateNodegroup(ctx, input); err != nil && !isEKSConflict(err) {
 				return CapacityObservation{}, fmt.Errorf("creating EKS node group: %w", err)
@@ -429,8 +427,6 @@ func (e *EKSAdapter) createNodeGroup(ctx context.Context, id MachineIdentity, d 
 	in := &eks.CreateNodegroupInput{ClusterName: aws.String(e.cluster), NodegroupName: aws.String(name), NodeRole: aws.String(e.nodeRoleARN), Subnets: []string{e.subnetsByZone[d.Location]}, CapacityType: capacity, InstanceTypes: append([]string(nil), p.InstanceTypes...), DiskSize: aws.Int32(p.DiskSizeGB), ScalingConfig: &ekstypes.NodegroupScalingConfig{MinSize: aws.Int32(0), MaxSize: aws.Int32(1), DesiredSize: aws.Int32(size)}, Labels: map[string]string{"kyber.io/managed-by": "kyber", MachineLabelKey: id.Name}, Tags: map[string]string{"kyber.io/managed-by": "kyber", "kyber.io/machine": id.Name, "kyber.io/location": d.Location, "kyber.io/profile": d.Profile, "kyber.io/role": strings.ToLower(string(capacity))}, ClientRequestToken: aws.String("create-" + name)}
 	if p.LaunchTemplateID != "" {
 		in.LaunchTemplate = &ekstypes.LaunchTemplateSpecification{Id: aws.String(p.LaunchTemplateID), Version: aws.String(p.LaunchTemplateVersion)}
-		in.InstanceTypes = nil
-		in.DiskSize = nil
 	}
 	_, err := e.client.CreateNodegroup(ctx, in)
 	if err != nil && !isEKSConflict(err) {

@@ -47,3 +47,13 @@ variable "public_access_cidrs" {
     error_message = "Provide at least one bounded CIDR; 0.0.0.0/0 is forbidden."
   }
 }
+
+variable "kyber_namespace" {
+  type    = string
+  default = "kyber"
+}
+
+variable "kyber_control_plane_service_account" {
+  type    = string
+  default = "kyber-control-plane"
+}
