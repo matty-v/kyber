@@ -1194,6 +1194,48 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// rearmRecoveryGate clears status.recoveryInput so the controller grants a
+// NeedsAuth or MemoryExhausted agent exactly one more recovery attempt
+// (kyber#684). No-op in any other phase, and when no claim is recorded.
+//
+// Those two phases mean "a human must supply something", so the controller
+// refuses to leave them on the standing desiredPhase==Running — that value is
+// permanently true, and acting on it rebuilt a dead agent's pod every ~20s
+// forever. It requires the operator-supplied input to have CHANGED, which it
+// tracks as the credential Secret's resourceVersion in status.recoveryInput
+// (pkg/controllers/agent/reconciler.go, currentRecoveryInput).
+//
+// Some operator actions satisfy that naturally — /set-resources patches
+// spec.resources.memory, the Claude Code re-auth flow writes a genuinely new
+// <name>-oauth Secret. Others do not, and MUST call this or they are silent
+// no-ops:
+//
+//   - A bare Start writes no operator input at all.
+//   - Codex device auth writes {} into <name>-codex-auth, which is already what
+//     the Secret holds on every retry after the first. Kubernetes does not bump
+//     resourceVersion for a byte-identical update, so the claim still matches
+//     and the gate stays shut. That was the whole of the MAT-8 defect: the API
+//     answered 204, the UI showed a success toast, and nothing happened —
+//     permanently, for any agent that had failed a device login once.
+//
+// This buys exactly one attempt, not a loop: the controller re-claims the
+// current input on the very next reconcile, so an agent that fails again holds
+// in NeedsAuth until a human acts again. The automatic path is untouched —
+// see TestRecoveryGate_NeedsAuth_HoldsWhenCredentialUnchanged.
+func (s *Server) rearmRecoveryGate(ctx context.Context, agent *kyberv1.Agent) error {
+	if agent.Status.RecoveryInput == "" {
+		return nil
+	}
+	switch agent.Status.Phase {
+	case kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted:
+	default:
+		return nil
+	}
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.RecoveryInput = ""
+	return s.K8sClient.Status().Patch(ctx, agent, patch)
+}
+
 func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, name string, phase kyberv1.AgentPhase) {
 	// Caller-level authorization chokepoint (kyber#474): every lifecycle verb
 	// (start/stop/restart/force-needs-auth) funnels through here, so
@@ -1216,20 +1258,8 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	// Re-arm the recovery gate on an explicit Start (kyber#684). NeedsAuth and
-	// MemoryExhausted no longer leave on the standing desiredPhase==Running —
-	// that value is permanently true and made the agent rebuild its pod every
-	// ~20s forever. The controller now requires the operator-supplied input to
-	// have changed, which the re-auth flow (patches the <name>-oauth Secret) and
-	// /set-resources (patches spec.resources.memory) both satisfy naturally.
-	// A bare Start does not, so clearing the recorded input here is what keeps
-	// the button working — it buys exactly one attempt, not a loop.
-	if phase == kyberv1.AgentPhaseRunning &&
-		(agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth || agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted) &&
-		agent.Status.RecoveryInput != "" {
-		statusPatch := client.MergeFrom(agent.DeepCopy())
-		agent.Status.RecoveryInput = ""
-		if err := s.K8sClient.Status().Patch(r.Context(), agent, statusPatch); err != nil {
+	if phase == kyberv1.AgentPhaseRunning {
+		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 			return
