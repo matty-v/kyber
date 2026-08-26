@@ -256,9 +256,10 @@ Completed and pushed:
 
 Verification: adapter tests, targeted API tests, Machine controller envtest,
 PWA component tests, and TypeScript lint pass. GKE still advertises fallback
-as `Unsupported`; no production GKE behavior has changed. Next: add the
-controller-level fake-provider fallback/retry envtest needed to close the
-Phase 1 gate.
+as `Unsupported`; no production GKE behavior has changed. A focused in-memory
+controller/provider contract test now covers fallback, stable provider/storage
+identity, retry success, and retry rollback without paying the envtest startup
+cost. Phase 1 is complete; next is the Phase 2 GKE transition spike.
 
 ## Phase 2 — GKE transition design spike and non-regression
 
