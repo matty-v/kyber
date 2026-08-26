@@ -115,10 +115,13 @@ func NewMachineReconciler(c client.Client, scheme *runtime.Scheme, recorder reco
 	joinToken := os.Getenv("KYBER_K3S_JOIN_TOKEN")
 	serverURL := os.Getenv("KYBER_K3S_SERVER_URL")
 
-	if joinToken == "" {
+	// Direct GCE provisions standalone k3s workers and therefore needs the join
+	// credentials. Managed Kubernetes providers (GKE/EKS) attach managed node
+	// pools directly; warning about k3s credentials there is misleading.
+	if adapter.Type() == string(kyberv1.MachineProviderGCE) && joinToken == "" {
 		setupLog.Info("warning: KYBER_K3S_JOIN_TOKEN not set — provisioned nodes will not join the cluster")
 	}
-	if serverURL == "" {
+	if adapter.Type() == string(kyberv1.MachineProviderGCE) && serverURL == "" {
 		setupLog.Info("warning: KYBER_K3S_SERVER_URL not set — provisioned nodes will not join the cluster")
 	}
 

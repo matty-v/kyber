@@ -45,6 +45,23 @@ matches exactly.
 
 ## Helm configuration
 
+Create the namespace and both runtime secrets before installing. The EKS
+preset deliberately uses `namespace.create: false` and `api.existingSecret`,
+so Helm will not manufacture credentials or rely on resource ordering:
+
+```sh
+kubectl create namespace kyber
+kubectl -n kyber create secret generic kyber-api-key \
+  --from-literal=api-key="$KYBER_API_KEY"
+kubectl -n kyber create secret generic kyber-internal-signing-key \
+  --from-literal=signing-key="$(openssl rand -hex 32)"
+```
+
+Keep the API key outside values files and shell history. For a production
+installation, deliver both Secrets through the operator's normal secret
+management path. The internal signing key is required for Agent-to-control-
+plane calls; a missing key fails that internal API closed.
+
 Start from
 [`deploy/helm/kyber/examples/values-eks.yaml`](../deploy/helm/kyber/examples/values-eks.yaml)
 and replace every placeholder with Terraform output or an installer-reviewed
@@ -74,6 +91,8 @@ compute:
 
 storage:
   agentStorageClass: kyber-ebs
+  transcriptOffsets:
+    storageClassName: kyber-ebs
   awsEBS:
     enabled: true
     storageClassName: kyber-ebs
@@ -93,6 +112,17 @@ to the dedicated `kyber.io/role=platform` node and explicitly puts the two
 stateful platform PVCs on `kyber-ebs`. This overrides the standalone chart's
 k3s control-plane selector and avoids accidentally scheduling platform state on
 a disposable Machine node.
+
+Install with the preset plus a separate, release-pinned values file containing
+the Terraform outputs and image tags:
+
+```sh
+helm upgrade --install kyber deploy/helm/kyber \
+  --namespace kyber \
+  -f deploy/helm/kyber/examples/values-eks.yaml \
+  -f values-eks-live.yaml \
+  --wait --timeout 15m
+```
 
 When a profile supplies `launchTemplateId`, EKS requires the worker root-disk
 mapping to live in that launch template. Keep the profile's displayed

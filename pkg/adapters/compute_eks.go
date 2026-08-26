@@ -395,7 +395,7 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 			o.FallbackSince = e.now()
 		}
 		o.CostOptimizedUnavailableSince = desired.CostOptimizedUnavailableSince
-		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", e.fallbackThreshold)
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 && reliable.Status == ekstypes.NodegroupStatusActive {
 			o.State, o.Reason = CapacityAvailable, ReasonReady
 		}
@@ -407,7 +407,7 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 	if !desired.FallbackSince.IsZero() {
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
 			o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
-			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", e.fallbackThreshold)
 			return o, nil
 		}
 		return e.resizePair(ctx, reliableName, 1, stable, selector, desired, "reliable")
@@ -434,7 +434,7 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 		if err == nil {
 			o.CostOptimizedUnavailableSince = unavailable
 			o.FallbackSince = e.now()
-			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", e.fallbackThreshold)
 		}
 		return o, err
 	}
@@ -449,7 +449,7 @@ func (e *EKSAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 	o := pairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
 	o.CostOptimizedUnavailableSince = unavailable
 	o.FallbackSince = e.now()
-	o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+	o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", e.fallbackThreshold)
 	return o, nil
 }
 
@@ -519,7 +519,7 @@ func pairObservation(ref ProviderRef, sel map[string]string, d DesiredMachine, s
 		CostOptimizedRetrySince:       d.CostOptimizedRetrySince,
 	}
 	if !d.FallbackSince.IsZero() {
-		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		o.FallbackReason = "Cost-optimized capacity unavailable; reliable fallback active"
 	}
 	return o
 }

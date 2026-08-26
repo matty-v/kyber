@@ -502,14 +502,14 @@ func (g *GKEAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 	if !desired.FallbackSince.IsZero() && effective != "reliable" {
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
 			o := g.gkePairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "costOptimized")
-			o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+			o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", g.threshold())
 			return o, nil
 		}
 		return g.mutatePairSize(ctx, reliableName, reliable, true, stable, selector, desired, "reliable")
 	}
 	if effective == "reliable" {
 		o := g.gkePairObservation(stable, selector, desired, CapacityRecovering, ReasonRepairing, "reliable")
-		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", g.threshold())
 		if desired.AttachmentObserved && desired.AttachedNodes > 0 {
 			o.State, o.Reason = CapacityAvailable, ReasonReady
 			return o, nil
@@ -534,7 +534,7 @@ func (g *GKEAdapter) reconcileCostOptimized(ctx context.Context, identity Machin
 	if err == nil {
 		o.CostOptimizedUnavailableSince = unavailable
 		o.FallbackSince = g.clockNow()
-		o.FallbackReason = "Cost-optimized capacity unavailable for 5 minutes"
+		o.FallbackReason = fmt.Sprintf("Cost-optimized capacity unavailable for %s", g.threshold())
 	}
 	return o, err
 }
