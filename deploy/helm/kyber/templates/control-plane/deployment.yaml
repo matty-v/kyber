@@ -151,7 +151,7 @@ spec:
             # An explicit agentStorageClass always wins, so this only fills in
             # the value the operator would otherwise have to repeat.
             - name: KYBER_AGENT_STORAGE_CLASS
-              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName "" .Values.storage.gcePD.enabled) | quote }}
+              value: {{ .Values.storage.agentStorageClass | default (ternary .Values.storage.gcePD.storageClassName (ternary .Values.storage.awsEBS.storageClassName "" .Values.storage.awsEBS.enabled) .Values.storage.gcePD.enabled) | quote }}
             # Durable transcript-offsets PVC (kyber#467). StorageClass defaults to
             # empty (cluster default = local-path) on ALL targets — never kyber-pd,
             # whose 1Gi PD minimum wastes space for sub-1KB line-count checkpoints.

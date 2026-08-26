@@ -338,6 +338,16 @@ proceed.
 Static manifests prove correct zonal delayed binding and no non-EKS chart
 regression. No AWS resource is needed.
 
+### Build checkpoint — 2026-08-26
+
+Phase 3 is implemented: the chart renders an encrypted gp3 EBS CSI
+StorageClass with `WaitForFirstConsumer`, `Delete`, expansion, optional KMS,
+filesystem selection, and explicit allowed AZ topology. Enabling it
+automatically selects the class for Agent PVCs. Rendering fails closed for
+GCE/EBS dual enablement, missing zones, disabled encryption, unsupported disk
+type/filesystem, or a mismatched explicit Agent class. Default and valid EBS
+renders plus negative validation cases pass with verified Helm v4.0.0.
+
 ## Phase 4 — EKS adapter: read model and reliable lifecycle
 
 ### Dependency and configuration

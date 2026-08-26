@@ -841,6 +841,17 @@ storage:
     # Empty preserves existing unconstrained regional-pd installations.
     # Managed GKE nodeLocations require this and must be a subset.
     allowedZones: []
+  # awsEBS provisions the zone-bound Agent work disk used by EKS Machines.
+  # Kyber v1 requires encrypted gp3 and at least one explicitly approved AZ.
+  awsEBS:
+    enabled: false
+    storageClassName: kyber-ebs
+    type: gp3
+    encrypted: true
+    kmsKeyArn: ""
+    allowedZones: []
+    allowVolumeExpansion: true
+    fsType: ext4
 
 # Identity repo configuration.
 #
