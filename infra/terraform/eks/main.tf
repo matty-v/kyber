@@ -259,11 +259,29 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     }
   }
   statement {
-    sid     = "ReadEKSServiceRoles"
-    actions = ["iam:GetRole"]
+    sid = "ReadEKSServiceRoles"
+    actions = [
+      "iam:GetRole",
+      "iam:ListAttachedRolePolicies",
+      "iam:ListRolePolicies",
+      "iam:GetRolePolicy",
+    ]
     resources = [
       aws_iam_role.cluster.arn,
       aws_iam_role.node.arn,
+    ]
+  }
+  statement {
+    sid = "ReadEKSManagedPolicies"
+    actions = [
+      "iam:GetPolicy",
+      "iam:GetPolicyVersion",
+    ]
+    resources = [
+      "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
+      "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
+      "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryPullOnly",
+      "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
     ]
   }
   statement {
