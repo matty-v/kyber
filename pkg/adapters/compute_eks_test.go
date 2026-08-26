@@ -96,6 +96,19 @@ func TestParseEKSConfigFailsClosed(t *testing.T) {
 	}
 }
 
+func TestParseEKSConfigRejectsIncompleteLaunchTemplateAndUnknownClass(t *testing.T) {
+	for _, profiles := range []string{
+		`[{"id":"small","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable"],"launchTemplateId":"lt-123"}]`,
+		`[{"id":"small","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["cheap"]}]`,
+	} {
+		cfg := validEKSConfig()
+		cfg[EKSConfigProfiles] = profiles
+		if _, err := parseEKSConfig(cfg); err == nil {
+			t.Fatalf("invalid profile accepted: %s", profiles)
+		}
+	}
+}
+
 func TestEKSValidateRejectsUnknownZoneAndAcceptsCostOptimized(t *testing.T) {
 	a, _ := parseEKSConfig(validEKSConfig())
 	if err := a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-west-2a"}); err == nil || !strings.Contains(err.Error(), "not allowed") {

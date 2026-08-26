@@ -127,8 +127,16 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 		}
 	}
 	for _, profile := range profiles {
-		if profile.ID == "" || len(profile.InstanceTypes) == 0 || profile.DiskSizeGB < 1 {
+		if profile.ID == "" || len(profile.InstanceTypes) == 0 || profile.DiskSizeGB < 1 || len(profile.AvailabilityClasses) == 0 {
 			return nil, fmt.Errorf("invalid EKS profile %q", profile.ID)
+		}
+		if (profile.LaunchTemplateID == "") != (profile.LaunchTemplateVersion == "") {
+			return nil, fmt.Errorf("EKS profile %q must set launch template ID and version together", profile.ID)
+		}
+		for _, class := range profile.AvailabilityClasses {
+			if class != "reliable" && class != "costOptimized" {
+				return nil, fmt.Errorf("EKS profile %q has unsupported availability class %q", profile.ID, class)
+			}
 		}
 		if _, exists := a.profiles[profile.ID]; exists {
 			return nil, fmt.Errorf("duplicate EKS profile %q", profile.ID)
