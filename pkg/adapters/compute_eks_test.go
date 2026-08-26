@@ -52,3 +52,16 @@ func TestEKSValidateRejectsUnknownZoneAndCostOptimized(t *testing.T) {
 		t.Fatalf("cost error = %v", err)
 	}
 }
+
+func TestEKSProviderRefRoundTripAndHostileRefs(t *testing.T) {
+	a, _ := parseEKSConfig(validEKSConfig())
+	ref := a.providerRef("kyber-worker-1")
+	if got, err := a.parseProviderRef(ref); err != nil || got != "kyber-worker-1" {
+		t.Fatalf("round trip = %q, %v", got, err)
+	}
+	for _, ref := range []ProviderRef{"", "gke://kyber/pool", "eks://other/pool", "eks://kyber/a/b", "eks://kyber/pool?x=1", "eks://kyber/%2F"} {
+		if _, err := a.parseProviderRef(ref); err == nil {
+			t.Errorf("parseProviderRef(%q) unexpectedly succeeded", ref)
+		}
+	}
+}

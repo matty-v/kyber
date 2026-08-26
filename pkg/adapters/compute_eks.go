@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"strings"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
@@ -35,6 +36,30 @@ type EKSAdapter struct {
 	allowedZones                 map[string]struct{}
 	profiles                     map[string]EKSProfile
 	client                       eksClient
+}
+
+func (e *EKSAdapter) providerRef(nodeGroup string) ProviderRef {
+	return ProviderRef("eks://" + url.PathEscape(e.cluster) + "/" + url.PathEscape(nodeGroup))
+}
+
+func (e *EKSAdapter) parseProviderRef(ref ProviderRef) (string, error) {
+	u, err := url.Parse(string(ref))
+	if err != nil || u.Scheme != "eks" || u.Host == "" || u.RawQuery != "" || u.Fragment != "" {
+		return "", fmt.Errorf("invalid EKS provider ref")
+	}
+	cluster, err := url.PathUnescape(u.Host)
+	if err != nil || cluster != e.cluster {
+		return "", fmt.Errorf("EKS provider ref belongs to another cluster")
+	}
+	parts := strings.Split(strings.TrimPrefix(u.EscapedPath(), "/"), "/")
+	if len(parts) != 1 || parts[0] == "" {
+		return "", fmt.Errorf("invalid EKS provider ref path")
+	}
+	name, err := url.PathUnescape(parts[0])
+	if err != nil || name == "" || strings.Contains(name, "/") {
+		return "", fmt.Errorf("invalid EKS node group name")
+	}
+	return name, nil
 }
 
 func init() {
