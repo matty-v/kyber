@@ -1,6 +1,8 @@
 package api
 
 import (
+	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -90,5 +92,68 @@ func TestParseDeviceAuthProbe_OnlyLooksAfterThePaneMarker(t *testing.T) {
 		deviceAuthPaneMarker + "\nnothing useful here\n"
 	if got := parseDeviceAuthProbe(stdout, time.Now()); got.State != codexauth.StateStarting {
 		t.Fatalf("state=%q, want starting — text before the marker is not the pane", got.State)
+	}
+}
+
+// The bug this file's mocks could not catch (kyber-canary, 2026-08-26).
+//
+// Every test above feeds parseDeviceAuthProbe a hand-written stdout, so the
+// probe could be — and was — a command that never ran. `sudo -iu kyber` starts
+// a LOGIN shell and re-parses the string it is handed, which mangled the
+// script's `{ … }` group into
+//
+//	bash: -c: line 2: syntax error: unexpected end of file from `{' command on line 1
+//
+// on every single poll. The handler logged a warning, answered `starting`, and
+// the panel spun forever over a code that was sitting in the pane the whole
+// time.
+//
+// A mocked-stdout test cannot see that, and neither can `bash -n` on the script
+// — the script is valid bash; sudo broke it in transit. What distinguishes the
+// broken form from the working one is the argv, so that is what this pins.
+func TestDeviceAuthProbeArgv_RunsAsAgentWithoutALoginShell(t *testing.T) {
+	argv := deviceAuthProbeArgv()
+
+	if argv[0] != "/usr/sbin/runuser" {
+		t.Fatalf("argv[0]=%q, want /usr/sbin/runuser", argv[0])
+	}
+	for i, a := range argv {
+		// -i / -l anywhere here means a login shell re-parsing the script.
+		if a == "-i" || a == "-l" || a == "-iu" || a == "-lc" {
+			t.Fatalf("argv[%d]=%q — a login shell re-parses the script and breaks its shell syntax", i, a)
+		}
+		if a == "sudo" {
+			t.Fatalf("argv[%d]=sudo — use runuser, as every other run-as-the-agent path does", i)
+		}
+	}
+
+	// tmux resolves its socket per-uid: as root it reports no session against a
+	// perfectly healthy pod.
+	joinedUser := false
+	for i := 0; i+1 < len(argv); i++ {
+		if argv[i] == "-u" && argv[i+1] == "kyber" {
+			joinedUser = true
+		}
+	}
+	if !joinedUser {
+		t.Errorf("argv must become the kyber user; got %v", argv)
+	}
+
+	if argv[len(argv)-1] != deviceAuthProbeScript {
+		t.Errorf("the script must be the final argument, passed whole; got %v", argv)
+	}
+}
+
+// Cheap insurance for future edits to the script itself. It would not have
+// caught the bug above, and says so, but a genuine syntax error introduced
+// later is worth catching before a cluster does.
+func TestDeviceAuthProbeScript_IsValidShell(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skip("bash not available")
+	}
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader(deviceAuthProbeScript)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("probe script is not valid bash: %v\n%s", err, out)
 	}
 }

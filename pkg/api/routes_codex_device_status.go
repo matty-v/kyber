@@ -37,8 +37,8 @@ import (
 // or the platform being unable to answer at all.
 
 const (
-	// Markers keep the parse independent of the pod's login-shell banner,
-	// which sudo -iu prints ahead of anything we run.
+	// Markers separate our own output from the pane, and keep the parse
+	// independent of anything the shell might print ahead of it.
 	deviceAuthNoSession   = "KYBER_DEVICE_AUTH_NO_SESSION"
 	deviceAuthStartPrefix = "KYBER_DEVICE_AUTH_START="
 	deviceAuthPaneMarker  = "KYBER_DEVICE_AUTH_PANE"
@@ -105,7 +105,7 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 	ctx, cancel := context.WithTimeout(r.Context(), deviceAuthExecTimeout)
 	defer cancel()
 
-	argv := append(deviceAuthNsenterPrefix(), "sudo", "-iu", "kyber", "bash", "-lc", deviceAuthProbeScript)
+	argv := append(deviceAuthNsenterPrefix(), deviceAuthProbeArgv()...)
 	stdout, stderr, err := s.execRestartSession(ctx, podName, argv)
 	if err != nil {
 		// The pod can disappear between the Get above and the exec (a restart
@@ -149,6 +149,31 @@ func parseDeviceAuthProbe(stdout string, now time.Time) codexauth.Result {
 		pane = after
 	}
 	return codexauth.Parse(pane, startedAt, now)
+}
+
+// deviceAuthProbeArgv becomes the agent user and runs the probe script.
+//
+// runuser, NOT `sudo -iu kyber`. `sudo -i` starts a LOGIN shell and re-parses
+// the command it is handed, which mangles any real shell syntax in it: on
+// kyber-canary this script came back as
+//
+//	bash: -c: line 2: syntax error: unexpected end of file from `{' command on line 1
+//
+// every single time, so the handler logged a warning and answered `starting`
+// forever while a perfectly good code sat in the pane. Every other place the
+// platform runs something as the agent user already uses runuser
+// (pkg/runtimes/claudecode/adapter.go, pkg/runtimes/codex/adapter.go); the
+// `sudo -iu` form belongs to the exec route's interactive modes, which pass
+// plain argv with no shell syntax to mangle.
+//
+// Without -l there is no login profile, so the pod's debug banner does not
+// appear either. The markers stay regardless — they are what makes the parse
+// independent of whatever the shell decides to print.
+//
+// tmux resolves its socket per-uid, so this must land as `kyber` and not root,
+// or it reports no session against a healthy pod.
+func deviceAuthProbeArgv() []string {
+	return []string{"/usr/sbin/runuser", "-u", "kyber", "--", "bash", "-c", deviceAuthProbeScript}
 }
 
 // deviceAuthNsenterPrefix mirrors the exec route's prefix: the tmux socket
