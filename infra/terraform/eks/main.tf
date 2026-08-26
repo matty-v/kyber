@@ -221,8 +221,11 @@ data "aws_iam_policy_document" "kyber_control_plane" {
     resources = [aws_eks_cluster.this.arn]
   }
   statement {
-    sid       = "CreateOwnedNodegroups"
-    actions   = ["eks:CreateNodegroup"]
+    sid = "CreateOwnedNodegroups"
+    # CreateNodegroup evaluates eks:TagResource against the parent cluster ARN
+    # when tags are supplied with the request. Keep both actions behind the
+    # Kyber ownership-tag conditions so the controller cannot tag arbitrarily.
+    actions   = ["eks:CreateNodegroup", "eks:TagResource"]
     resources = [aws_eks_cluster.this.arn]
     condition {
       test     = "StringEquals"
