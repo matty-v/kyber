@@ -79,7 +79,7 @@ describe('CreateMachine (mock provider)', () => {
 })
 
 describe('CreateMachine (EKS provider)', () => {
-  it('renders installer-approved zones and no separate disk picker', () => {
+  it('renders installer-approved zones and disk size', () => {
     setup()
     vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
       data: {
@@ -88,7 +88,7 @@ describe('CreateMachine (EKS provider)', () => {
           managed: {
             profiles: [{ type: 'small', cpu: '2', memory: '8Gi' }],
             locations: ['us-east-1a', 'us-east-1b'],
-            diskSizesGb: [],
+            diskSizesGb: [100],
             supportsInterruptible: true,
           },
         },
@@ -104,8 +104,8 @@ describe('CreateMachine (EKS provider)', () => {
     )
 
     expect(screen.getByText('Zone')).toBeInTheDocument()
-    expect(screen.queryByText('Disk Size')).not.toBeInTheDocument()
-    expect(screen.getByText(/disk capacity is set by the selected profile/i)).toBeInTheDocument()
+    expect(screen.getByText('Disk Size')).toBeInTheDocument()
+    expect(screen.getAllByText('100 GB')).not.toHaveLength(0)
     const zoneSelect = screen.getAllByRole('combobox')[1]
     expect(zoneSelect).toHaveTextContent('us-east-1a')
     const nativeZoneSelect = document.querySelectorAll('select')[1] as HTMLSelectElement

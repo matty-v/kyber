@@ -92,9 +92,9 @@ testable without a cluster. Authoritative transition table:
   `provider=eks` is managed-only: installer-curated profiles map one logical
   Machine to zonal EKS managed node-group capacity, and `allowedZones` is the
   exact operator-facing location catalog. Profile instance alternatives must
-  have an equivalent CPU/memory shape. Disk capacity is profile-owned (and,
-  when configured, fixed by the profile's launch template), so the PWA does
-  not offer a separate EKS disk selector.
+  have an equivalent CPU/memory shape. Disk capacity is installer-owned and,
+  when configured, fixed by the profile's encrypted launch template; the PWA
+  exposes that approved size and sends it with the Machine request.
   Regional GKE installations separate the cluster resource location from
   `compute.gke.nodeLocations`. Two or more eligible zones use GKE total-count
   autoscaling (`totalMinNodeCount=totalMaxNodeCount=1`, location policy `ANY`)

@@ -87,7 +87,7 @@ function CreateManagedMachine({
   const profiles = capabilities?.profiles ?? []
   const locations = capabilities?.locations ?? []
   const diskSizes = capabilities?.diskSizesGb ?? []
-  const profileOwnsDisk = provider === 'gke' || provider === 'eks'
+  const profileOwnsDisk = provider === 'gke'
   const [form, setForm] = useState<ManagedMachineFormState>({
     name: '',
     machineType: profiles[0]?.type ?? '',
@@ -174,11 +174,6 @@ function CreateManagedMachine({
             {profiles.length === 0 && (
               <p className="mt-1.5 text-xs text-danger">
                 No machine profiles are available from this compute provider.
-              </p>
-            )}
-            {provider === 'eks' && profiles.length > 0 && (
-              <p className="mt-1.5 text-xs text-text-muted">
-                Disk capacity is set by the selected profile and its EKS launch template.
               </p>
             )}
           </div>
