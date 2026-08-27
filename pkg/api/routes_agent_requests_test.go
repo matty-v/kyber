@@ -8,12 +8,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/matty-v/kyber/pkg/api"
+	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
@@ -26,10 +29,17 @@ const (
 type requestHarness struct {
 	handler http.Handler
 	store   requeststore.Store
+	queue   *inbound.Queue
 }
 
 func buildRequestHarness(t *testing.T, store requeststore.Store, agents ...string) *requestHarness {
+	return buildRequestHarnessWithHandler(t, store, func(context.Context, inbound.Job) {}, agents...)
+}
+
+func buildRequestHarnessWithHandler(t *testing.T, store requeststore.Store, handler inbound.Handler, agents ...string) *requestHarness {
 	t.Helper()
+	queue := inbound.NewQueue(handler)
+	t.Cleanup(queue.Stop)
 	scheme := mustNewScheme(t)
 	objects := make([]clientObject, 0, len(agents))
 	for _, name := range agents {
@@ -44,13 +54,14 @@ func buildRequestHarness(t *testing.T, store requeststore.Store, agents ...strin
 		APIKey:       testAPIKey,
 		Namespace:    "kyber-system",
 		RequestStore: store,
+		InboundQueue: queue,
 		Callers: []api.ScopedCaller{
 			{Name: "writer", Key: requestWriteKey, Scopes: []string{"requests:write"}},
 			{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}},
 			{Name: "pwa", Key: lifecycleKey, Scopes: []string{"lifecycle:write"}},
 		},
 	}
-	return &requestHarness{handler: server.BuildHandler(), store: store}
+	return &requestHarness{handler: server.BuildHandler(), store: store, queue: queue}
 }
 
 // clientObject is the subset accepted by fake.ClientBuilder.WithObjects.
@@ -156,6 +167,59 @@ func TestAgentRequests_SubmitAndReadCompletedResponse(t *testing.T) {
 	}
 }
 
+func TestAgentRequests_EnqueuesInternalEnvelopeAndRecordsDelivery(t *testing.T) {
+	tests := []struct {
+		name        string
+		outcome     inbound.DeliveryOutcome
+		wantStatus  requeststore.Status
+		wantFailure requeststore.FailureCode
+	}{
+		{"dispatched", inbound.DeliveryDispatched, requeststore.StatusDispatched, ""},
+		{"agent unavailable", inbound.DeliveryAgentUnavailable, requeststore.StatusFailed, requeststore.FailureAgentUnavailable},
+		{"delivery failed", inbound.DeliveryFailed, requeststore.StatusFailed, requeststore.FailureDelivery},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			store := newRequestMemoryStore(t, requeststore.DefaultLimits())
+			done := make(chan inbound.Job, 1)
+			h := buildRequestHarnessWithHandler(t, store, func(ctx context.Context, job inbound.Job) {
+				job.OnDelivery(ctx, tc.outcome)
+				done <- job
+			}, "kiosk")
+
+			response := h.do(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey,
+				map[string]string{"prompt": "line one\nline two", "correlation": "gateway-secret"})
+			if response.Code != http.StatusAccepted {
+				t.Fatalf("POST = %d: %s", response.Code, response.Body.String())
+			}
+			var created struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+				t.Fatal(err)
+			}
+			var job inbound.Job
+			select {
+			case job = <-done:
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for request delivery outcome")
+			}
+			if job.Kind != inbound.JobKindRequest || job.DeliverBefore.IsZero() ||
+				!strings.Contains(job.Envelope, `prompt_json: "line one\nline two"`) ||
+				strings.Contains(job.Envelope, "correlation") || strings.Contains(job.Envelope, "gateway-secret") {
+				t.Fatalf("request job not safely structured: %+v", job)
+			}
+			stored, err := store.Get(context.Background(), "kiosk", created.ID)
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			if stored.Status != tc.wantStatus || stored.FailureCode != tc.wantFailure {
+				t.Fatalf("stored = status %q failure %q", stored.Status, stored.FailureCode)
+			}
+		})
+	}
+}
+
 func TestAgentRequests_RequestScopesAreStrictAndIndependent(t *testing.T) {
 	store := newRequestMemoryStore(t, requeststore.DefaultLimits())
 	h := buildRequestHarness(t, store, "kiosk")
@@ -240,6 +304,37 @@ func TestAgentRequests_WireLimitAllowsWorstCaseValidEscaping(t *testing.T) {
 	response := h.doRaw(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey, body)
 	if response.Code != http.StatusAccepted {
 		t.Fatalf("escaped maximum-size POST = %d: %s", response.Code, response.Body.String())
+	}
+}
+
+func TestAgentRequests_QueueFullRejectsSubmission(t *testing.T) {
+	started := make(chan struct{})
+	gate := make(chan struct{})
+	var once sync.Once
+	h := buildRequestHarnessWithHandler(t, newRequestMemoryStore(t, requeststore.DefaultLimits()),
+		func(context.Context, inbound.Job) {
+			once.Do(func() { close(started) })
+			<-gate
+		}, "kiosk")
+	t.Cleanup(func() { close(gate) })
+
+	if err := h.queue.Enqueue(inbound.Job{Agent: "kiosk"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for blocked queue worker")
+	}
+	for i := 0; i < inbound.QueueDepth; i++ {
+		if err := h.queue.Enqueue(inbound.Job{Agent: "kiosk"}); err != nil {
+			t.Fatalf("fill queue %d: %v", i, err)
+		}
+	}
+	response := h.do(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey,
+		map[string]string{"prompt": "hello"})
+	if response.Code != http.StatusTooManyRequests || response.Header().Get("Retry-After") != "1" {
+		t.Fatalf("POST = %d Retry-After=%q: %s", response.Code, response.Header().Get("Retry-After"), response.Body.String())
 	}
 }
 

@@ -197,6 +197,13 @@ dying session mid-roll) → deliver into the agent pod's tmux.
 - HTTP wiring + outcome recording on `Agent.status.inboundRuns[]`:
   `pkg/api/routes_inbound*.go`.
 
+The same per-agent queue also carries authenticated internal request/reply
+jobs. Those jobs are explicitly typed, carry an immutable delivery deadline,
+and report `dispatched`, `agent_unavailable`, or `delivery_failed` through an
+in-memory outcome callback. They do not loop through the public webhook route,
+binding matcher, HMAC verifier, or deduper. Unlike legacy webhook jobs, they do
+not attempt delivery after the Running-phase wait reaches their expiry.
+
 WHY the trust boundary matters: `verifier.go` does constant-time compare and
 collapses ALL failures to a single `ErrSignatureMismatch` — never differentiate
 causes externally. The queue is bounded so a flooded agent sheds load

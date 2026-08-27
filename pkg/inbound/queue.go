@@ -24,7 +24,34 @@ type Job struct {
 	RequestID  string
 	Envelope   string // rendered prompt body delivered to tmux
 	EnqueuedAt time.Time
+
+	// KindRequest marks a platform request/reply job. The zero value preserves
+	// the existing webhook behavior for all current producers.
+	Kind JobKind
+	// DeliverBefore is the request's immutable expiry. Request jobs are never
+	// delivered after it; webhook jobs leave it zero.
+	DeliverBefore time.Time
+	// OnDelivery receives the terminal delivery outcome for request jobs. It
+	// must be fast and concurrency-safe because it runs on the agent worker.
+	OnDelivery func(context.Context, DeliveryOutcome)
 }
+
+// JobKind distinguishes internal request envelopes from existing webhook jobs.
+type JobKind string
+
+const (
+	JobKindWebhook JobKind = ""
+	JobKindRequest JobKind = "request"
+)
+
+// DeliveryOutcome is the transport-level result reported to request state.
+type DeliveryOutcome string
+
+const (
+	DeliveryDispatched       DeliveryOutcome = "dispatched"
+	DeliveryAgentUnavailable DeliveryOutcome = "agent_unavailable"
+	DeliveryFailed           DeliveryOutcome = "delivery_failed"
+)
 
 // Handler is invoked synchronously by the per-agent worker for each job. The
 // context is the queue's lifetime context; handlers should respect
