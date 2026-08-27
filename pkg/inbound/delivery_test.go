@@ -102,7 +102,7 @@ func TestDeliveryHandler_RequestWaitIsBoundedByExpiry(t *testing.T) {
 		30*time.Second,
 	)
 	handler(context.Background(), Job{Kind: JobKindRequest, DeliverBefore: deadline})
-	if gotTimeout <= 0 || gotTimeout > 10*time.Second {
-		t.Fatalf("request wait = %s, want bounded by expiry", gotTimeout)
+	if gotTimeout <= 0 || gotTimeout > 5*time.Second {
+		t.Fatalf("request wait = %s, want expiry minus persistence reserve", gotTimeout)
 	}
 }

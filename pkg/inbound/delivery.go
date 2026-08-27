@@ -5,6 +5,8 @@ import (
 	"time"
 )
 
+const maxOutcomePersistenceReserve = 5 * time.Second
+
 // WaitAgentFunc waits for the job's target agent to become Running.
 type WaitAgentFunc func(ctx context.Context, job Job, timeout time.Duration) error
 
@@ -18,8 +20,24 @@ type DeliverJobFunc func(ctx context.Context, job Job) error
 func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhookWait, deliveryTimeout time.Duration) Handler {
 	return func(ctx context.Context, job Job) {
 		waitFor := webhookWait
+		processingDeadline := job.DeliverBefore
 		if job.Kind == JobKindRequest {
 			waitFor = time.Until(job.DeliverBefore)
+			if waitFor <= 0 {
+				notifyDelivery(ctx, job, DeliveryAgentUnavailable)
+				return
+			}
+			// Reserve the final five seconds—or half of a shorter remaining
+			// lifetime—for persisting the delivery outcome before the store's
+			// immutable TTL. Waiting or execing through DeliverBefore would make
+			// the callback race physical expiry and turn a stable failure into a
+			// 404 for the polling caller.
+			reserve := waitFor / 2
+			if reserve > maxOutcomePersistenceReserve {
+				reserve = maxOutcomePersistenceReserve
+			}
+			processingDeadline = job.DeliverBefore.Add(-reserve)
+			waitFor = time.Until(processingDeadline)
 			if waitFor <= 0 {
 				notifyDelivery(ctx, job, DeliveryAgentUnavailable)
 				return
@@ -36,7 +54,7 @@ func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhook
 
 		deliverFor := deliveryTimeout
 		if job.Kind == JobKindRequest {
-			remaining := time.Until(job.DeliverBefore)
+			remaining := time.Until(processingDeadline)
 			if remaining <= 0 {
 				notifyDelivery(ctx, job, DeliveryAgentUnavailable)
 				return
