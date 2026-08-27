@@ -121,6 +121,22 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 	}
 }
 
+func TestStartClaudeRegistersRequestReplyMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`claude mcp remove kyber-request-reply --scope user`,
+		`claude mcp add kyber-request-reply "$KYBER_REQUEST_MCP_URL"`,
+		`--transport http --scope user`,
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-claude.sh missing request MCP registration %q", want)
+		}
+	}
+}
+
 func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
 	if err != nil {

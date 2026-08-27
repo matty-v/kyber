@@ -347,6 +347,18 @@ func TestStartCodexRegistersDiscordMCP(t *testing.T) {
 	}
 }
 
+func TestStartCodexRegistersRequestReplyMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"kyber_converge_mcp kyber_request_reply", `"${KYBER_REQUEST_MCP_URL:-}"`} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-codex.sh missing request MCP registration %q", want)
+		}
+	}
+}
+
 func TestStartCodexRendersSessionRecall(t *testing.T) {
 	home := t.TempDir()
 	repo := filepath.Join(home, "dev", "echo-agent")

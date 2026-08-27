@@ -246,7 +246,7 @@ if ! kyber_probe_codex_config "$CODEX_HOME"; then
     rm -rf "$_probe_home"
 fi
 
-# Converge the two Kyber-managed MCP entries through `codex mcp`, which edits
+# Converge Kyber-managed MCP entries through `codex mcp`, which edits
 # config.toml as TOML and leaves every other entry byte-identical. `add` is an
 # upsert (re-running it with a new URL updates in place) and `remove` exits 0
 # when the entry is already absent, so both directions are idempotent — a
@@ -274,6 +274,7 @@ kyber_converge_mcp() {
 if [ "$KYBER_CODEX_CONFIG_USABLE" = "true" ]; then
     kyber_converge_mcp kyber_telegram "${KYBER_TELEGRAM_MCP_URL:-}" "Telegram"
     kyber_converge_mcp kyber_discord "${KYBER_DISCORD_MCP_URL:-}" "Discord"
+    kyber_converge_mcp kyber_request_reply "${KYBER_REQUEST_MCP_URL:-}" "Request/reply"
 fi
 
 # Report the version actually running through the localhost status sidecar.

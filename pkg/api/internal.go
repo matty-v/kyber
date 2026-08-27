@@ -30,6 +30,7 @@ import (
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/modelprobe"
+	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
@@ -121,6 +122,7 @@ type InternalServer struct {
 	stateChangeAccum       statechangestore.Accumulator
 	runtimeDetectCache     runtimedetect.Cache
 	skillStore             skillstore.Store
+	requestStore           requeststore.Store
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
 	// per (agent, state) so handleStatusSnapshot can store incremental delta seconds
@@ -199,6 +201,14 @@ func WithStateChangeAccumulator(acc statechangestore.Accumulator) InternalServer
 func WithSkillStore(st skillstore.Store) InternalServerOption {
 	return func(s *InternalServer) {
 		s.skillStore = st
+	}
+}
+
+// WithRequestStore wires the bounded request/reply store so an authenticated
+// agent pod can complete only its own dispatched requests.
+func WithRequestStore(st requeststore.Store) InternalServerOption {
+	return func(s *InternalServer) {
+		s.requestStore = st
 	}
 }
 
@@ -360,6 +370,8 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleRuntimeCatalog(w, r, agentName)
 	case "skills":
 		s.handleSkillsReport(w, r, agentName)
+	case "request-reply":
+		s.handleRequestReply(w, r, agentName)
 	case "status-event":
 		s.handleStatusEvent(w, r, agentName)
 	case "status":
