@@ -50,6 +50,7 @@ type EKSAdapter struct {
 	region, cluster, nodeRoleARN string
 	allowedZones                 map[string]struct{}
 	profiles                     map[string]EKSProfile
+	diskSizeGB                   int32
 	subnetsByZone                map[string]string
 	client                       eksClient
 	now                          func() time.Time
@@ -146,6 +147,11 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 		if _, exists := a.profiles[profile.ID]; exists {
 			return nil, fmt.Errorf("duplicate EKS profile %q", profile.ID)
 		}
+		if a.diskSizeGB == 0 {
+			a.diskSizeGB = profile.DiskSizeGB
+		} else if profile.DiskSizeGB != a.diskSizeGB {
+			return nil, fmt.Errorf("EKS profiles must use one common diskSizeGb")
+		}
 		a.profiles[profile.ID] = profile
 	}
 	return a, nil
@@ -180,20 +186,10 @@ func (e *EKSAdapter) Locations(context.Context) ([]string, error) {
 // one common size across profiles because an encrypted launch template fixes
 // the root volume size and the create form exposes one provider-wide catalog.
 func (e *EKSAdapter) DiskSizes(context.Context) ([]int32, error) {
-	var size int32
-	for _, profile := range e.profiles {
-		if size == 0 {
-			size = profile.DiskSizeGB
-			continue
-		}
-		if profile.DiskSizeGB != size {
-			return nil, fmt.Errorf("EKS profiles must use one common diskSizeGb")
-		}
-	}
-	if size == 0 {
+	if e.diskSizeGB == 0 {
 		return []int32{}, nil
 	}
-	return []int32{size}, nil
+	return []int32{e.diskSizeGB}, nil
 }
 
 func (e *EKSAdapter) Validate(_ context.Context, d DesiredMachine) error {

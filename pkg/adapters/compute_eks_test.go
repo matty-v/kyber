@@ -136,6 +136,18 @@ func TestEKSDiskSizesReturnsInstallerProfileSize(t *testing.T) {
 	}
 }
 
+func TestParseEKSConfigRejectsMismatchedProfileDiskSizes(t *testing.T) {
+	cfg := validEKSConfig()
+	cfg[EKSConfigProfiles] = `[
+		{"id":"small","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable"]},
+		{"id":"large","instanceTypes":["m7i.2xlarge"],"diskSizeGb":200,"availabilityClasses":["reliable"]}
+	]`
+	_, err := parseEKSConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "one common diskSizeGb") {
+		t.Fatalf("parseEKSConfig error = %v, want common disk-size rejection", err)
+	}
+}
+
 func TestEKSValidateRejectsDiskOutsideProfile(t *testing.T) {
 	a, err := parseEKSConfig(validEKSConfig())
 	if err != nil {
