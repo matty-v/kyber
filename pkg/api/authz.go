@@ -91,3 +91,29 @@ func (s *Server) authorizeAction(w http.ResponseWriter, r *http.Request, agentNa
 	writeJSONError(w, http.StatusForbidden, "forbidden", "insufficient scope for this action")
 	return false
 }
+
+// requireScope strictly enforces a scope for new least-privilege API surfaces.
+// Unlike the lifecycle migration gate above, request scopes have no permissive
+// compatibility period: a scoped key must never inherit request access merely
+// because KYBER_AUTHZ_ENFORCE is false. The legacy key remains compatible
+// because its full ScopeSet satisfies every requirement.
+func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, agentName, action string, required Scope) bool {
+	caller := callerFrom(r.Context())
+	if caller != nil && caller.Scopes.Has(required) {
+		slog.Info("authz allow",
+			"caller", caller.Name, "agent", agentName,
+			"action", action, "required_scope", string(required),
+			"decision", "allow", "enforce", true)
+		return true
+	}
+	callerName := "unknown"
+	if caller != nil {
+		callerName = caller.Name
+	}
+	slog.Warn("authz deny",
+		"caller", callerName, "agent", agentName,
+		"action", action, "required_scope", string(required),
+		"decision", "deny", "enforce", true)
+	writeJSONError(w, http.StatusForbidden, "forbidden", "insufficient scope for this action")
+	return false
+}

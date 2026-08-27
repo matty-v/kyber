@@ -151,3 +151,25 @@ func TestAuthorizePhase_PermissiveModeNeverBlocks(t *testing.T) {
 		t.Errorf("permissive mode must not write an error response, got code %d", w.Code)
 	}
 }
+
+func TestRequireScopeAlwaysEnforces(t *testing.T) {
+	s := &Server{AuthzEnforce: false}
+	writeCaller := &Caller{Name: "gateway", Scopes: newScopeSet(ScopeRequestsWrite)}
+	lifecycleCaller := &Caller{Name: "pwa", Scopes: newScopeSet(ScopeLifecycleWrite)}
+
+	allowed := httptest.NewRecorder()
+	if !s.requireScope(allowed, reqWithCaller(writeCaller), "x", "request-submit", ScopeRequestsWrite) {
+		t.Error("matching request scope must be allowed")
+	}
+
+	denied := httptest.NewRecorder()
+	if s.requireScope(denied, reqWithCaller(lifecycleCaller), "x", "request-submit", ScopeRequestsWrite) {
+		t.Error("lifecycle scope must not inherit request access")
+	}
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("denied code = %d, want 403", denied.Code)
+	}
+	if strings.Contains(denied.Body.String(), "requests:") {
+		t.Errorf("403 body leaks scope detail: %q", denied.Body.String())
+	}
+}

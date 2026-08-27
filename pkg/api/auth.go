@@ -31,6 +31,10 @@ const (
 	// write requirement — this nesting is what guarantees the impactful verbs are
 	// never less-protected than fail-safe Stop (the #474 privilege-ordering AC).
 	ScopeLifecycleAdmin Scope = "lifecycle:admin"
+	// ScopeRequestsWrite permits submitting bounded agent requests.
+	ScopeRequestsWrite Scope = "requests:write"
+	// ScopeRequestsRead permits reading bounded agent request status/results.
+	ScopeRequestsRead Scope = "requests:read"
 )
 
 // ScopeSet is the set of scopes a Caller holds. A full-scope set (the legacy
@@ -127,7 +131,8 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 			return nil, fmt.Errorf("caller %q: keyFrom requires both secret and key names", c.Name)
 		}
 		for _, sc := range c.Scopes {
-			if sc != string(ScopeLifecycleWrite) && sc != string(ScopeLifecycleAdmin) {
+			if sc != string(ScopeLifecycleWrite) && sc != string(ScopeLifecycleAdmin) &&
+				sc != string(ScopeRequestsWrite) && sc != string(ScopeRequestsRead) {
 				return nil, fmt.Errorf("caller %q: unknown scope %q", c.Name, sc)
 			}
 		}

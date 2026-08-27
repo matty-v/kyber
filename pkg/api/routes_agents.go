@@ -627,6 +627,14 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Bounded request/reply API. The handler owns only the authenticated text
+	// wire adapter; storage and lifecycle remain in pkg/requeststore so a future
+	// protocol adapter (for example A2A) does not inherit this kiosk contract.
+	if action == "requests" || strings.HasPrefix(action, "requests/") {
+		s.handleAgentRequests(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "requests"), "/"))
+		return
+	}
+
 	// User-defined per-agent secrets (#75): dispatch anything under "secrets".
 	if action == "secrets" || strings.HasPrefix(action, "secrets/") {
 		s.handleUserSecrets(w, r, name, action)

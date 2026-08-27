@@ -35,6 +35,7 @@ import (
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/oauth"
+	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
@@ -66,6 +67,11 @@ type Server struct {
 	// SkillStore serves the read-only Skills tab: the most recent report each
 	// agent scanned from its own filesystem. Nil disables the endpoint (503).
 	SkillStore skillstore.Store
+
+	// RequestStore is the transport-neutral bounded request/reply state used by
+	// the authenticated request API. Nil keeps the new surface dark until the
+	// rollout wires a configured backend and feature gate.
+	RequestStore requeststore.Store
 
 	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
 	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)

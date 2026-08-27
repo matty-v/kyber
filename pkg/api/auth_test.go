@@ -113,13 +113,13 @@ func TestAPIKeyAuthenticator_RotationKeepsScopedCallers(t *testing.T) {
 }
 
 func TestParseScopedCallers(t *testing.T) {
-	good := `[{"name":"pwa","key":"k1","scopes":["lifecycle:write"]},{"name":"ops","key":"k2","scopes":["lifecycle:admin"]}]`
+	good := `[{"name":"pwa","key":"k1","scopes":["lifecycle:write"]},{"name":"ops","key":"k2","scopes":["lifecycle:admin"]},{"name":"gateway","key":"k3","scopes":["requests:write","requests:read"]}]`
 	cs, err := ParseScopedCallers(good)
 	if err != nil {
 		t.Fatalf("valid callers JSON should parse: %v", err)
 	}
-	if len(cs) != 2 {
-		t.Fatalf("expected 2 callers, got %d", len(cs))
+	if len(cs) != 3 {
+		t.Fatalf("expected 3 callers, got %d", len(cs))
 	}
 
 	if _, err := ParseScopedCallers(""); err != nil {
@@ -148,6 +148,17 @@ func TestScopeSet_AdminImpliesWrite(t *testing.T) {
 	}
 	if !newFullScopeSet().Has(ScopeLifecycleAdmin) {
 		t.Error("full scope must satisfy admin")
+	}
+}
+
+func TestScopeSet_RequestScopesAreIndependent(t *testing.T) {
+	write := newScopeSet(ScopeRequestsWrite)
+	if !write.Has(ScopeRequestsWrite) || write.Has(ScopeRequestsRead) || write.Has(ScopeLifecycleWrite) {
+		t.Error("requests:write must grant only request submission")
+	}
+	read := newScopeSet(ScopeRequestsRead)
+	if !read.Has(ScopeRequestsRead) || read.Has(ScopeRequestsWrite) || read.Has(ScopeLifecycleWrite) {
+		t.Error("requests:read must grant only request reads")
 	}
 }
 

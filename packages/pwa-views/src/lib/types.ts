@@ -384,6 +384,28 @@ export interface CreateAgentRequest {
   }
 }
 
+export type AgentRequestStatus =
+  | 'queued'
+  | 'dispatched'
+  | 'completed'
+  | 'failed'
+  | 'expired'
+
+export interface SubmitAgentRequest {
+  prompt: string
+  correlation?: string
+}
+
+export interface AgentRequest {
+  id: string
+  status: AgentRequestStatus
+  createdAt: string
+  expiresAt: string
+  updatedAt?: string
+  response?: string
+  error?: string
+}
+
 /**
  * What the in-pod `codex login --device-auth` flow is currently showing.
  *
