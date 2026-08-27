@@ -19,7 +19,11 @@ import (
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
-const maxAgentRequestBodyBytes = requeststore.HardMaxPromptBytes + requeststore.HardMaxCorrelationBytes + 1024
+// A JSON string can encode one decoded byte as a six-byte \uXXXX escape. Keep
+// the wire bounded while allowing worst-case escaping of fields that satisfy
+// the store's decoded-byte hard limits; the fixed allowance covers keys,
+// delimiters, and reasonable insignificant whitespace.
+const maxAgentRequestBodyBytes = 6*(requeststore.HardMaxPromptBytes+requeststore.HardMaxCorrelationBytes) + 1024
 
 var agentRequestIDPattern = regexp.MustCompile(`^req_[a-f0-9]{32}$`)
 

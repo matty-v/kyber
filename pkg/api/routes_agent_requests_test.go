@@ -87,6 +87,18 @@ func (h *requestHarness) do(t *testing.T, method, target, key string, body any) 
 	return recorder
 }
 
+func (h *requestHarness) doRaw(t *testing.T, method, target, key, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.handler.ServeHTTP(recorder, req)
+	return recorder
+}
+
 func TestAgentRequests_SubmitAndReadCompletedResponse(t *testing.T) {
 	store := newRequestMemoryStore(t, requeststore.DefaultLimits())
 	h := buildRequestHarness(t, store, "kiosk")
@@ -213,6 +225,21 @@ func TestAgentRequests_ValidationAndLimits(t *testing.T) {
 	second := h.do(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey, map[string]string{"prompt": "two"})
 	if second.Code != http.StatusTooManyRequests || second.Header().Get("Retry-After") != "1" {
 		t.Fatalf("second POST = %d, Retry-After=%q: %s", second.Code, second.Header().Get("Retry-After"), second.Body.String())
+	}
+}
+
+func TestAgentRequests_WireLimitAllowsWorstCaseValidEscaping(t *testing.T) {
+	limits := requeststore.DefaultLimits()
+	limits.MaxPromptBytes = requeststore.HardMaxPromptBytes
+	limits.MaxCorrelationBytes = requeststore.HardMaxCorrelationBytes
+	h := buildRequestHarness(t, newRequestMemoryStore(t, limits), "kiosk")
+
+	prompt := strings.Repeat(`\u0061`, requeststore.HardMaxPromptBytes)
+	correlation := strings.Repeat(`\u0062`, requeststore.HardMaxCorrelationBytes)
+	body := `{"prompt":"` + prompt + `","correlation":"` + correlation + `"}`
+	response := h.doRaw(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey, body)
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("escaped maximum-size POST = %d: %s", response.Code, response.Body.String())
 	}
 }
 
