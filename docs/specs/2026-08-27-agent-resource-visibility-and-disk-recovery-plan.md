@@ -113,5 +113,8 @@ give operators a tested recovery path for a full or nearly-full volume.
   sample. Confirmed kyber#575 superseded the historical non-terminal pod shape.
 - 2026-08-27: Slice 1 implementation checkpoint complete through generated
   contracts and PWA surfaces. Focused Go tests, OpenAPI contract tests,
-  TypeScript compile, and all 744 PWA tests pass. The full controller suite is
-  pending envtest asset installation; focused pod-injection tests pass.
+  TypeScript compile, and all 744 PWA tests pass. After installing the required
+  envtest assets, the full controller package progressed through its envtests
+  but hit the repository's 10-minute package timeout in the unrelated
+  `TestTranscriptTailerScript_BoundedOverManyFiles`; focused pod-injection tests
+  pass.
