@@ -34,9 +34,9 @@ describe('buildManagedMachineRequest', () => {
     if (got.provider === 'gce') expect(got.interruptible).toBe(true)
   })
 
-  it('omits diskSizeGb for EKS because the selected profile owns the disk', () => {
+  it('includes the installer-approved EKS disk size', () => {
     const got = buildManagedMachineRequest({
-      name: 'worker-eks', machineType: 'small', diskSizeGb: '0',
+      name: 'worker-eks', machineType: 'small', diskSizeGb: '100',
       zone: 'us-east-1a', spot: true,
     }, 'eks')
     expect(got).toEqual({
@@ -45,6 +45,7 @@ describe('buildManagedMachineRequest', () => {
       profile: 'small',
       location: 'us-east-1a',
       interruptible: true,
+      diskSizeGb: 100,
     })
   })
 })

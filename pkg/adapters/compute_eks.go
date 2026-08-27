@@ -50,6 +50,7 @@ type EKSAdapter struct {
 	region, cluster, nodeRoleARN string
 	allowedZones                 map[string]struct{}
 	profiles                     map[string]EKSProfile
+	diskSizeGB                   int32
 	subnetsByZone                map[string]string
 	client                       eksClient
 	now                          func() time.Time
@@ -146,6 +147,11 @@ func parseEKSConfig(cfg ProviderConfig) (*EKSAdapter, error) {
 		if _, exists := a.profiles[profile.ID]; exists {
 			return nil, fmt.Errorf("duplicate EKS profile %q", profile.ID)
 		}
+		if a.diskSizeGB == 0 {
+			a.diskSizeGB = profile.DiskSizeGB
+		} else if profile.DiskSizeGB != a.diskSizeGB {
+			return nil, fmt.Errorf("EKS profiles must use one common diskSizeGb")
+		}
 		a.profiles[profile.ID] = profile
 	}
 	return a, nil
@@ -176,6 +182,16 @@ func (e *EKSAdapter) Locations(context.Context) ([]string, error) {
 	return out, nil
 }
 
+// DiskSizes returns the installer-approved EKS root-disk catalog. V1 requires
+// one common size across profiles because an encrypted launch template fixes
+// the root volume size and the create form exposes one provider-wide catalog.
+func (e *EKSAdapter) DiskSizes(context.Context) ([]int32, error) {
+	if e.diskSizeGB == 0 {
+		return []int32{}, nil
+	}
+	return []int32{e.diskSizeGB}, nil
+}
+
 func (e *EKSAdapter) Validate(_ context.Context, d DesiredMachine) error {
 	profile, ok := e.profiles[d.Profile]
 	if !ok {
@@ -183,6 +199,9 @@ func (e *EKSAdapter) Validate(_ context.Context, d DesiredMachine) error {
 	}
 	if _, ok := e.allowedZones[d.Location]; !ok {
 		return fmt.Errorf("validating EKS capacity: location %q is not allowed", d.Location)
+	}
+	if d.DiskSizeGb != 0 && d.DiskSizeGb != int(profile.DiskSizeGB) {
+		return fmt.Errorf("validating EKS capacity: disk size %d does not match profile %q disk size %d", d.DiskSizeGb, d.Profile, profile.DiskSizeGB)
 	}
 	class := d.AvailabilityClass
 	if class == "" {
@@ -624,3 +643,4 @@ var _ ComputeAdapter = (*EKSAdapter)(nil)
 var _ CapacityProvider = (*EKSAdapter)(nil)
 var _ CapacityNodeSelector = (*EKSAdapter)(nil)
 var _ CapacityLocations = (*EKSAdapter)(nil)
+var _ CapacityDiskSizes = (*EKSAdapter)(nil)

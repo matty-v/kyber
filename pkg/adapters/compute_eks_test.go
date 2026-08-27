@@ -122,6 +122,43 @@ func TestEKSLocationsReturnsAllowedZonesSorted(t *testing.T) {
 	}
 }
 
+func TestEKSDiskSizesReturnsInstallerProfileSize(t *testing.T) {
+	a, err := parseEKSConfig(validEKSConfig())
+	if err != nil {
+		t.Fatalf("parseEKSConfig: %v", err)
+	}
+	diskSizes, err := a.DiskSizes(context.Background())
+	if err != nil {
+		t.Fatalf("DiskSizes: %v", err)
+	}
+	if len(diskSizes) != 1 || diskSizes[0] != 100 {
+		t.Fatalf("DiskSizes = %v, want [100]", diskSizes)
+	}
+}
+
+func TestParseEKSConfigRejectsMismatchedProfileDiskSizes(t *testing.T) {
+	cfg := validEKSConfig()
+	cfg[EKSConfigProfiles] = `[
+		{"id":"small","instanceTypes":["m7i.large"],"diskSizeGb":100,"availabilityClasses":["reliable"]},
+		{"id":"large","instanceTypes":["m7i.2xlarge"],"diskSizeGb":200,"availabilityClasses":["reliable"]}
+	]`
+	_, err := parseEKSConfig(cfg)
+	if err == nil || !strings.Contains(err.Error(), "one common diskSizeGb") {
+		t.Fatalf("parseEKSConfig error = %v, want common disk-size rejection", err)
+	}
+}
+
+func TestEKSValidateRejectsDiskOutsideProfile(t *testing.T) {
+	a, err := parseEKSConfig(validEKSConfig())
+	if err != nil {
+		t.Fatalf("parseEKSConfig: %v", err)
+	}
+	err = a.Validate(context.Background(), DesiredMachine{Profile: "small", Location: "us-east-1a", DiskSizeGb: 50})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("Validate error = %v, want disk mismatch", err)
+	}
+}
+
 func TestParseEKSConfigFailsClosed(t *testing.T) {
 	for _, mutate := range []func(ProviderConfig){
 		func(c ProviderConfig) { delete(c, EKSConfigRegion) },

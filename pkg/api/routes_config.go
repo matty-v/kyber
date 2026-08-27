@@ -168,6 +168,14 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 			}
 			resp.Compute.Managed.Locations = locations
 		}
+		if diskSizesProvider, ok := s.CapacityProvider.(adapters.CapacityDiskSizes); ok {
+			diskSizes, err := diskSizesProvider.DiskSizes(r.Context())
+			if err != nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "COMPUTE_UNAVAILABLE", "compute disk sizes unavailable")
+				return
+			}
+			resp.Compute.Managed.DiskSizesGB = diskSizes
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

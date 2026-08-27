@@ -223,6 +223,10 @@ type CapacityLocations interface {
 	Locations(context.Context) ([]string, error)
 }
 
+type CapacityDiskSizes interface {
+	DiskSizes(context.Context) ([]int32, error)
+}
+
 // ComputeAdapter abstracts cloud VM operations.
 // V1 implements GCE. Future: AWS EC2, Azure VMs.
 type ComputeAdapter interface {

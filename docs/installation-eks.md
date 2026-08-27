@@ -139,12 +139,13 @@ within one profile must have the same CPU and memory shape because EKS may
 choose any of them for Spot capacity. Confirm every configured type is offered
 in every allowed zone and fits the account's EC2 quotas before installation.
 
-For EKS, `diskSizeGb` belongs to the profile and is not a separate Machine
-choice in the PWA. When a profile uses `launchTemplateId`, its root-volume
-mapping is authoritative and the adapter deliberately omits EKS `diskSize`.
-Keep the displayed `diskSizeGb` aligned with that launch template. Supporting
-different disk sizes requires separate profiles backed by launch templates
-with the corresponding root-volume mappings.
+For EKS, the PWA disk selector is populated from the installer-owned profile
+`diskSizeGb`. V1 requires every EKS profile to use the same size, so the
+operator sees one approved value and the API can validate it. When a profile
+uses `launchTemplateId`, its encrypted root-volume mapping is authoritative;
+keep `diskSizeGb` aligned with that launch template. Multiple independently
+selectable EKS disk sizes require a future mapping from each size to a matching
+encrypted launch template.
 
 The chart fails closed if AWS EBS is not encrypted gp3, has no approved AZ,
 or conflicts with the selected Agent StorageClass. `WaitForFirstConsumer`

@@ -20,7 +20,7 @@ export function buildManagedMachineRequest(form: ManagedMachineFormState, provid
     interruptible: form.spot,
     location: form.zone,
   }
-  if (provider !== 'gke' && provider !== 'eks') request.diskSizeGb = parseInt(form.diskSizeGb, 10)
+  if (provider !== 'gke') request.diskSizeGb = parseInt(form.diskSizeGb, 10)
   return request
 }
 
