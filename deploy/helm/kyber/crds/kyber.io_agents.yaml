@@ -521,6 +521,42 @@ spec:
                       itself may still be running, but the observability surface is dark.
                     format: date-time
                     type: string
+                  resources:
+                    description: |-
+                      Resources is the latest best-effort in-pod resource sample from the
+                      status sidecar. It is absent when the volume or pod cgroup cannot be read.
+                    properties:
+                      cpuLimitMillicores:
+                        format: int64
+                        type: integer
+                      cpuUsageMillicores:
+                        format: int64
+                        type: integer
+                      diskReserveReached:
+                        type: boolean
+                      diskTotalBytes:
+                        format: int64
+                        type: integer
+                      diskUsedBytes:
+                        format: int64
+                        type: integer
+                      memoryLimitBytes:
+                        format: int64
+                        type: integer
+                      memoryUsedBytes:
+                        format: int64
+                        type: integer
+                      sampledAt:
+                        format: date-time
+                        type: string
+                    required:
+                    - cpuUsageMillicores
+                    - diskReserveReached
+                    - diskTotalBytes
+                    - diskUsedBytes
+                    - memoryUsedBytes
+                    - sampledAt
+                    type: object
                   state:
                     description: |-
                       State is the runtime-derived activity state. Populated in Phase B.

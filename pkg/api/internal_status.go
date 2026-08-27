@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -43,7 +44,8 @@ type statusEvent struct {
 	// activity events will use it for LastActivityAt.
 	At string `json:"at"`
 	// State applies to "activity" events only (kyber#249).
-	State string `json:"state,omitempty"`
+	State     string                      `json:"state,omitempty"`
+	Resources *kyberv1.AgentResourceUsage `json:"resources,omitempty"`
 }
 
 // handleStatusEvent handles POST /internal/agents/{name}/status-event.
@@ -120,6 +122,41 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		// attribute the kill to the current life and routes to
 		// MemoryExhausted.
 		agent.Status.LastKernelOOMKillAt = &atMeta
+	case "resource_usage":
+		if ev.Resources == nil {
+			return nil
+		}
+		ev.Resources.SampledAt = atMeta
+		cpuLimit := agent.Spec.Resources.CPU.MilliValue()
+		memoryLimit := agent.Spec.Resources.Memory.Value()
+		ev.Resources.CPULimitMillicores = &cpuLimit
+		ev.Resources.MemoryLimitBytes = &memoryLimit
+		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
+		// agent container or pod. Replace those misleading values with the
+		// metrics API's agent-container usage and the Agent's requested limits.
+		// Disk remains the sidecar's statfs sample of the shared PVC.
+		if s.agentMetrics != nil {
+			metrics, metricsErr := s.agentMetrics.AgentContainer(ctx, s.namespace, "agent-"+agentName)
+			if metricsErr != nil {
+				slog.Warn("agent container metrics unavailable", "agent", agentName, "error", metricsErr)
+				// metrics-server removes a terminated agent container before the
+				// native sidecar stops reporting disk. Preserve the last valid
+				// agent usage across MemoryExhausted/terminal states instead of
+				// falling back to the sidecar's own cgroup values.
+				if previous := agent.Status.Activity.Resources; previous != nil {
+					ev.Resources.CPUUsageMillicores = previous.CPUUsageMillicores
+					ev.Resources.MemoryUsedBytes = previous.MemoryUsedBytes
+				} else {
+					ev.Resources.CPUUsageMillicores = 0
+					ev.Resources.MemoryUsedBytes = 0
+				}
+			} else {
+				ev.Resources.CPUUsageMillicores = metrics.CPUUsageMillicores
+				ev.Resources.MemoryUsedBytes = metrics.MemoryUsedBytes
+			}
+		}
+		agent.Status.Activity.LastHeartbeatAt = &atMeta
+		agent.Status.Activity.Resources = ev.Resources
 	default:
 		// Unknown event types are ignored. Forward-compat: a newer
 		// sidecar pushing a new event kind shouldn't break an older CP.

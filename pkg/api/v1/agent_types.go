@@ -858,6 +858,24 @@ type ActivityStatus struct {
 	// in Phase B. Used by the PWA to render "active 2m ago".
 	// +optional
 	LastActivityAt *metav1.Time `json:"lastActivityAt,omitempty"`
+
+	// Resources is the latest best-effort in-pod resource sample from the
+	// status sidecar. It is absent when the volume or pod cgroup cannot be read.
+	// +optional
+	Resources *AgentResourceUsage `json:"resources,omitempty"`
+}
+
+// AgentResourceUsage is a point-in-time measurement of the agent pod and its
+// persistent volume. Nil limits mean the cgroup is configured as unlimited.
+type AgentResourceUsage struct {
+	SampledAt          metav1.Time `json:"sampledAt"`
+	CPUUsageMillicores int64       `json:"cpuUsageMillicores"`
+	CPULimitMillicores *int64      `json:"cpuLimitMillicores,omitempty"`
+	MemoryUsedBytes    int64       `json:"memoryUsedBytes"`
+	MemoryLimitBytes   *int64      `json:"memoryLimitBytes,omitempty"`
+	DiskUsedBytes      int64       `json:"diskUsedBytes"`
+	DiskTotalBytes     int64       `json:"diskTotalBytes"`
+	DiskReserveReached bool        `json:"diskReserveReached"`
 }
 
 // +kubebuilder:object:root=true

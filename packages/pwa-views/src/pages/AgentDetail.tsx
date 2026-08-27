@@ -26,6 +26,7 @@ import { StatusBadge } from '../components/StatusBadge'
 import { SchedulingFailureBanner } from '../components/SchedulingFailureBanner'
 import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
 import { AgentActivityBadge } from '../components/AgentActivityBadge'
+import { AgentResourceUsage } from '../components/AgentResourceUsage'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -906,19 +907,18 @@ export function AgentDetail() {
                   )}
                 </dd>
               </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">CPU</dt>
-                <dd className="text-text-primary font-mono text-xs">{agent.resources.cpu}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Memory</dt>
-                <dd className="text-text-primary font-mono text-xs">{agent.resources.memory}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Disk</dt>
-                <dd className="text-text-primary font-mono text-xs">{agent.resources.disk}</dd>
-              </div>
             </dl>
+            <h3 className="mb-2 mt-4 border-t border-border-subtle pt-3 text-xs font-medium text-text-muted">Resources</h3>
+            {agent.activity?.resources ? (
+              <AgentResourceUsage usage={agent.activity.resources} />
+            ) : (
+              <div className="space-y-1 text-xs text-text-muted">
+                <div>CPU {agent.resources.cpu}</div>
+                <div>Memory {agent.resources.memory}</div>
+                <div>Disk {agent.resources.disk}</div>
+                <div className="text-text-disabled">Current usage not yet reported</div>
+              </div>
+            )}
           </Card>
           <Card>
             <h2 className="text-sm font-medium text-text-muted mb-3">Status</h2>

@@ -142,7 +142,19 @@ export interface AgentActivityStatus {
   // RFC3339 timestamps.
   lastHeartbeatAt?: string
   state?: AgentActivityState
-  lastActivityAt?: string
+	lastActivityAt?: string
+	resources?: AgentResourceUsage
+}
+
+export interface AgentResourceUsage {
+	sampledAt: string
+	cpuUsageCores: number
+	cpuLimitCores?: number
+	memoryUsedBytes: number
+	memoryLimitBytes?: number
+	diskUsedBytes: number
+	diskTotalBytes: number
+	diskReserveReached: boolean
 }
 
 // Mirrors agentSchedulingStatusResponse from pkg/api/routes_agents.go.

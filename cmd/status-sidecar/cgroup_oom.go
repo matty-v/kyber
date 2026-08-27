@@ -110,9 +110,9 @@ func readOOMKillCount(path string) (uint64, error) {
 //	0::/kubepods/pod<UID>/<container-id>      (cgroupfs driver)
 //	→ /kubepods/pod<UID>
 //
-// Returns an error when the input doesn't look like a kubelet-managed
-// cgroup path — caller treats that as "OOM detection unavailable" and
-// leaves the detector dormant.
+// With cgroup namespaces, "/" is already the pod-level cgroup exposed at
+// cgroupRoot, so it is returned directly. Other inputs that do not look like
+// kubelet-managed cgroup-v2 paths return an error.
 func parsePodCgroupPath(procCgroupBody string) (string, error) {
 	// /proc/self/cgroup may have multiple lines for cgroup-v1; the v2
 	// line is the one starting with "0::". Single-line v2 systems also
@@ -122,10 +122,14 @@ func parsePodCgroupPath(procCgroupBody string) (string, error) {
 			continue
 		}
 		full := strings.TrimPrefix(line, "0::")
-		if full == "" || full == "/" {
-			// Cgroup namespacing enabled OR running outside a cgroup-managed
-			// process. Either way, we can't derive a pod path from this.
-			return "", fmt.Errorf("self cgroup is the namespace root (%q) — pod path cannot be derived; set KYBER_CGROUP_MEMORY_EVENTS_PATH to override", full)
+		if full == "/" {
+			// Kubernetes commonly enables cgroup namespaces for pods. In that
+			// shape /sys/fs/cgroup is already rooted at the pod cgroup and its
+			// memory.events/cpu.stat files aggregate the container children.
+			return full, nil
+		}
+		if full == "" {
+			return "", fmt.Errorf("self cgroup path is empty")
 		}
 		// The kubelet's per-pod cgroup is the parent of the container scope.
 		// Strip exactly one path segment.

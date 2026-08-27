@@ -251,6 +251,38 @@ func TestAgents_Get_ExposesIdentityRepoStatus(t *testing.T) {
 	}
 }
 
+func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
+	sampled := metav1.NewTime(time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC))
+	cpuLimit := int64(2000)
+	memoryLimit := int64(2 * 1024 * 1024 * 1024)
+	agent := sampleAgentCRD("dave")
+	agent.Status.Activity = &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
+		SampledAt: sampled, CPUUsageMillicores: 750, CPULimitMillicores: &cpuLimit,
+		MemoryUsedBytes: 1024 * 1024 * 1024, MemoryLimitBytes: &memoryLimit,
+		DiskUsedBytes: 18 * 1024 * 1024 * 1024, DiskTotalBytes: 20 * 1024 * 1024 * 1024,
+		DiskReserveReached: true,
+	}}
+
+	h, _ := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var wire map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	activity := wire["activity"].(map[string]any)
+	usage := activity["resources"].(map[string]any)
+	if usage["cpuUsageCores"] != 0.75 || usage["cpuLimitCores"] != 2.0 || usage["diskReserveReached"] != true {
+		t.Errorf("unexpected resource usage wire shape: %v", usage)
+	}
+	if usage["sampledAt"] != "2026-08-27T12:00:00Z" {
+		t.Errorf("sampledAt = %v", usage["sampledAt"])
+	}
+}
+
 // TestAgents_Get_ExposesRuntimeVersion verifies the response surfaces
 // status.runtime.installedVersion when populated by the in-pod reporter.
 // The PWA reads this to show what Claude Code version each agent is running.

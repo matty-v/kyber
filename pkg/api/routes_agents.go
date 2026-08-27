@@ -264,9 +264,21 @@ type AgentResponse struct {
 // All timestamps RFC3339 strings, consistent with the other status sub-
 // responses.
 type agentActivityStatusResponse struct {
-	LastHeartbeatAt string `json:"lastHeartbeatAt,omitempty"`
-	State           string `json:"state,omitempty"`
-	LastActivityAt  string `json:"lastActivityAt,omitempty"`
+	LastHeartbeatAt string                      `json:"lastHeartbeatAt,omitempty"`
+	State           string                      `json:"state,omitempty"`
+	LastActivityAt  string                      `json:"lastActivityAt,omitempty"`
+	Resources       *agentResourceUsageResponse `json:"resources,omitempty"`
+}
+
+type agentResourceUsageResponse struct {
+	SampledAt          string   `json:"sampledAt"`
+	CPUUsageCores      float64  `json:"cpuUsageCores"`
+	CPULimitCores      *float64 `json:"cpuLimitCores,omitempty"`
+	MemoryUsedBytes    int64    `json:"memoryUsedBytes"`
+	MemoryLimitBytes   *int64   `json:"memoryLimitBytes,omitempty"`
+	DiskUsedBytes      int64    `json:"diskUsedBytes"`
+	DiskTotalBytes     int64    `json:"diskTotalBytes"`
+	DiskReserveReached bool     `json:"diskReserveReached"`
 }
 
 // agentSchedulingStatusResponse mirrors AgentSchedulingStatus on the wire.
@@ -563,6 +575,21 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		}
 		if a.Status.Activity.LastActivityAt != nil {
 			act.LastActivityAt = a.Status.Activity.LastActivityAt.UTC().Format(time.RFC3339)
+		}
+		if usage := a.Status.Activity.Resources; usage != nil {
+			act.Resources = &agentResourceUsageResponse{
+				SampledAt:          usage.SampledAt.UTC().Format(time.RFC3339),
+				CPUUsageCores:      float64(usage.CPUUsageMillicores) / 1000,
+				MemoryUsedBytes:    usage.MemoryUsedBytes,
+				MemoryLimitBytes:   usage.MemoryLimitBytes,
+				DiskUsedBytes:      usage.DiskUsedBytes,
+				DiskTotalBytes:     usage.DiskTotalBytes,
+				DiskReserveReached: usage.DiskReserveReached,
+			}
+			if usage.CPULimitMillicores != nil {
+				limit := float64(*usage.CPULimitMillicores) / 1000
+				act.Resources.CPULimitCores = &limit
+			}
 		}
 		resp.Activity = act
 	}

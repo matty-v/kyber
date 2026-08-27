@@ -53,6 +53,12 @@ type Metrics struct {
 	// Bumped when a forward fails. `reason` classifies the failure into a
 	// small enum so dashboards can split them without alphabet-soup labels.
 	eventForwardErrorsTotal metric.Int64Counter
+	resourceCPUUsage        metric.Float64Gauge
+	resourceCPULimit        metric.Float64Gauge
+	resourceMemoryUsed      metric.Int64Gauge
+	resourceMemoryLimit     metric.Int64Gauge
+	resourceDiskUsed        metric.Int64Gauge
+	resourceDiskTotal       metric.Int64Gauge
 
 	// State machine for the activity counter.
 	mu             sync.Mutex
@@ -116,6 +122,24 @@ func newMetrics(meter metric.Meter) (*Metrics, error) {
 	); err != nil {
 		return nil, fmt.Errorf("registering kyber_agent_event_forward_errors_total: %w", err)
 	}
+	if m.resourceCPUUsage, err = meter.Float64Gauge("kyber_agent_cpu_usage_cores", metric.WithDescription("Agent pod CPU cores used over the latest sampling interval.")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_cpu_usage_cores: %w", err)
+	}
+	if m.resourceCPULimit, err = meter.Float64Gauge("kyber_agent_cpu_limit_cores", metric.WithDescription("Agent pod CPU limit in cores.")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_cpu_limit_cores: %w", err)
+	}
+	if m.resourceMemoryUsed, err = meter.Int64Gauge("kyber_agent_memory_used_bytes", metric.WithDescription("Agent pod memory currently in use."), metric.WithUnit("By")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_memory_used_bytes: %w", err)
+	}
+	if m.resourceMemoryLimit, err = meter.Int64Gauge("kyber_agent_memory_limit_bytes", metric.WithDescription("Agent pod memory limit."), metric.WithUnit("By")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_memory_limit_bytes: %w", err)
+	}
+	if m.resourceDiskUsed, err = meter.Int64Gauge("kyber_agent_disk_used_bytes", metric.WithDescription("Bytes used on the agent persistent volume."), metric.WithUnit("By")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_disk_used_bytes: %w", err)
+	}
+	if m.resourceDiskTotal, err = meter.Int64Gauge("kyber_agent_disk_total_bytes", metric.WithDescription("Total bytes on the agent persistent volume."), metric.WithUnit("By")); err != nil {
+		return nil, fmt.Errorf("registering kyber_agent_disk_total_bytes: %w", err)
+	}
 
 	if _, err = meter.Float64ObservableGauge(
 		"kyber_agent_heartbeat_seconds_since_last",
@@ -136,6 +160,23 @@ func newMetrics(meter metric.Meter) (*Metrics, error) {
 	}
 
 	return m, nil
+}
+
+func (m *Metrics) RecordResourceUsage(ctx context.Context, usage resourceUsage) {
+	if m == nil {
+		return
+	}
+	attrs := m.commonAttrs()
+	m.resourceCPUUsage.Record(ctx, float64(usage.CPUUsageMillicores)/1000, attrs)
+	if usage.CPULimitMillicores != nil {
+		m.resourceCPULimit.Record(ctx, float64(*usage.CPULimitMillicores)/1000, attrs)
+	}
+	m.resourceMemoryUsed.Record(ctx, usage.MemoryUsedBytes, attrs)
+	if usage.MemoryLimitBytes != nil {
+		m.resourceMemoryLimit.Record(ctx, *usage.MemoryLimitBytes, attrs)
+	}
+	m.resourceDiskUsed.Record(ctx, usage.DiskUsedBytes, attrs)
+	m.resourceDiskTotal.Record(ctx, usage.DiskTotalBytes, attrs)
 }
 
 // commonAttrs returns the {agent, runtime} attribute set every metric carries.
@@ -268,4 +309,3 @@ func (m *Metrics) MarkHeartbeat(at time.Time) {
 	}
 	m.lastHeartbeatUnixNanos.Store(at.UnixNano())
 }
-

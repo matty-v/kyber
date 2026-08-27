@@ -31,6 +31,12 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Agent resource telemetry: read the metrics-server sample for the agent
+  # container. The in-pod status sidecar's cgroup namespace exposes only its
+  # own 100m/64Mi cgroup, so CPU/memory must be sourced here.
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods"]
+    verbs: ["get"]
   # Pod exec (debug shell + node agent actions)
   - apiGroups: [""]
     resources: ["pods/exec"]

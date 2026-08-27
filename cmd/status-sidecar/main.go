@@ -60,6 +60,7 @@ const (
 	// the internal :8082 port doesn't currently require auth, but we send
 	// the bearer when it's there for forward-compat.
 	podTokenPath = "/var/run/secrets/kyber/pod-token"
+	persistPath  = "/persist"
 )
 
 // lastPostOK mirrors whether the most recent heartbeat POST succeeded.
@@ -342,8 +343,8 @@ type config struct {
 	// (kyber#285). Auto-derived at startup from /proc/self/cgroup — see
 	// resolvePodCgroupEventsPath for the derivation logic + cgroup-v2
 	// caveats. Override via KYBER_CGROUP_MEMORY_EVENTS_PATH for tests /
-	// clusters where path derivation doesn't apply (cgroup namespacing
-	// enabled, exotic CRI). Empty disables OOM detection (sidecar logs
+	// clusters where path derivation doesn't apply (cgroup-v1 or an
+	// exotic CRI). Empty disables OOM detection (sidecar logs
 	// once and continues).
 	CgroupMemoryEventsPath string
 	// cgroupResolutionErr captures any error from auto-deriving the path
@@ -374,7 +375,7 @@ func loadConfig() (config, error) {
 	if c.CgroupMemoryEventsPath == "" {
 		// Derive the pod-level cgroup memory.events path from
 		// /proc/self/cgroup. On clusters where derivation fails (cgroup
-		// ns enabled, cgroup-v1, exotic CRI), the path stays empty and
+		// is unavailable (cgroup-v1, exotic CRI), the path stays empty and
 		// the OOM detector runs in disabled mode — the sidecar logs the
 		// reason once and continues. Operators can set
 		// KYBER_CGROUP_MEMORY_EVENTS_PATH to override.
@@ -404,6 +405,9 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 	}
 
 	oom := newOOMDetector(cfg.CgroupMemoryEventsPath)
+	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath)
+	resourceReadErrLogged := false
+	resourcePostErrLogged := false
 	logfn := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }
 	warnfn := func(format string, args ...any) { logger.Warn(fmt.Sprintf(format, args...)) }
 
@@ -442,6 +446,26 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 		if oom.tick(ctx, client, cfg, now, logfn, warnfn) {
 			metrics.RecordEventForwarded(ctx, "memory_oom")
 		}
+
+		usage, err := resources.sample(now)
+		if err != nil {
+			if !resourceReadErrLogged {
+				logger.Warn("resource usage sampling unavailable", "err", err)
+				resourceReadErrLogged = true
+			}
+		} else {
+			resourceReadErrLogged = false
+			metrics.RecordResourceUsage(ctx, usage)
+			if err := postResourceUsage(ctx, client, cfg, now, usage); err != nil {
+				if !resourcePostErrLogged {
+					logger.Warn("resource usage post failed", "err", err)
+					resourcePostErrLogged = true
+				}
+			} else {
+				resourcePostErrLogged = false
+				metrics.RecordEventForwarded(ctx, "resource_usage")
+			}
+		}
 	}
 
 	// Fire immediately so the control plane gets the first snapshot quickly.
@@ -458,6 +482,21 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 			tickOnce()
 		}
 	}
+}
+
+func postResourceUsage(ctx context.Context, client *http.Client, cfg config, now time.Time, usage resourceUsage) error {
+	body, err := json.Marshal(map[string]any{
+		"type":      "resource_usage",
+		"at":        now.UTC().Format(time.RFC3339),
+		"resources": usage,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal resource usage: %w", err)
+	}
+	if _, err := postToCP(ctx, client, cfg, "status-event", body); err != nil {
+		return err
+	}
+	return nil
 }
 
 // postMetricsSnapshot POSTs accumulated activity-state seconds and pending
