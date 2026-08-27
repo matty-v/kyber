@@ -215,6 +215,11 @@ always), `kyber-status-sidecar`, `transcript-tailer`, `transcript-pruner`, and
 a session-brief boot container. The sidecar/tailer/pruner are appended AFTER
 `BuildPodSpec` (`pod_builder.go` → `status_sidecar.go`, `transcript_tailer.go`,
 `transcript_pruner.go`) so runtime stays index 0.
+The status sidecar also owns the loopback-only `kyber-request-reply` MCP
+surface on its existing `127.0.0.1:8091` listener. Both runtimes register the
+same `respond(request_id, response)` tool; the sidecar adds the pod token and
+agent identity when forwarding to the internal API, so the runtime receives no
+control-plane credential or callback destination.
 Persistence: the agent's root filesystem is a real directory on its PVC
 (`/persist/agentroot`), seeded from the base image by
 `images/agent-base/scripts/kyber-rootfs` and entered with chroot. There is no

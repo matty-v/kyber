@@ -159,6 +159,17 @@ if [ -n "${KYBER_DISCORD_MCP_URL:-}" ]; then
     fi
 fi
 
+# ---- Platform request/reply MCP tool ----
+if [ -n "${KYBER_REQUEST_MCP_URL:-}" ]; then
+    claude mcp remove kyber-request-reply --scope user >/dev/null 2>&1 || true
+    if claude mcp add kyber-request-reply "$KYBER_REQUEST_MCP_URL" \
+            --transport http --scope user >/dev/null 2>&1; then
+        echo "[kyber] Request/reply MCP tool registered at $KYBER_REQUEST_MCP_URL"
+    else
+        echo "[kyber] WARNING: could not register the request/reply MCP tool" >&2
+    fi
+fi
+
 # ---- Identity repo ----
 # Clone-or-sync the identity repo and install the git credential helper. The
 # implementation is SHARED with every other runtime (kyber#676) — it used to

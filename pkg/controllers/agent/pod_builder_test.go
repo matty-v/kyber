@@ -347,6 +347,9 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 	} else if v != wantRefreshURL {
 		t.Errorf("KYBER_REFRESH_TOKEN_URL: got %q, want %q", v, wantRefreshURL)
 	}
+	if got := envMap["KYBER_REQUEST_MCP_URL"]; got != pkgruntimes.RequestMCPURL() {
+		t.Errorf("KYBER_REQUEST_MCP_URL: got %q, want %q", got, pkgruntimes.RequestMCPURL())
+	}
 
 	// TZ should be omitted when KYBER_AGENT_TIMEZONE is unset — the test
 	// helper does not set the env var, so the pod env should not contain TZ.

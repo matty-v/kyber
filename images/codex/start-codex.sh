@@ -180,6 +180,14 @@ url = "${KYBER_DISCORD_MCP_URL}"
 EOF
     echo "[kyber] Discord MCP sidecar registered at ${KYBER_DISCORD_MCP_URL}"
 fi
+if [ -n "${KYBER_REQUEST_MCP_URL:-}" ]; then
+    cat >> "$CODEX_HOME/config.toml" <<EOF
+
+[mcp_servers.kyber_request_reply]
+url = "${KYBER_REQUEST_MCP_URL}"
+EOF
+    echo "[kyber] Request/reply MCP tool registered at ${KYBER_REQUEST_MCP_URL}"
+fi
 chmod 0600 "$CODEX_HOME/config.toml"
 
 # Report the version actually running through the localhost status sidecar.
