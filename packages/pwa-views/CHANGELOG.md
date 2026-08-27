@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.35.0 — 2026-08-27
+
+### Added
+- Added the text agent-request submission and status/result wire types for
+  clients of the new scoped request API.
+
 ## 0.34.3 — 2026-08-27
 
 ### Fixed

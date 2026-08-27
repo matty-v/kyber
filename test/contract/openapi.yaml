@@ -568,6 +568,71 @@ paths:
         '404':
           description: Agent not found
 
+  /api/v1/agents/{name}/requests:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: submitAgentRequest
+      summary: Submit a text request to an agent
+      description: Requires the requests:write scope.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAgentRequest'
+      responses:
+        '202':
+          description: Request accepted
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRequest'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
+  /api/v1/agents/{name}/requests/{requestId}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - $ref: '#/components/parameters/RequestId'
+    get:
+      operationId: getAgentRequest
+      summary: Read an agent request's status and result
+      description: Requires the requests:read scope.
+      tags: [agents]
+      responses:
+        '200':
+          description: Request found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
+
   /api/v1/agents/{name}/comms:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -810,6 +875,15 @@ components:
         type: string
         pattern: '^[a-z0-9][a-z0-9\-]{0,61}[a-z0-9]$'
         example: dave
+
+    RequestId:
+      name: requestId
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^req_[a-f0-9]{32}$'
+        example: req_0123456789abcdef0123456789abcdef
 
     ConfirmName:
       name: confirm
@@ -1604,6 +1678,44 @@ components:
               enum: [oauth, api-key]
               default: oauth
 
+    SubmitAgentRequest:
+      type: object
+      required: [prompt]
+      additionalProperties: false
+      properties:
+        prompt:
+          type: string
+          description: UTF-8 text prompt, limited by the configured byte limit.
+        correlation:
+          type: string
+          description: Optional caller correlation value, limited by the configured byte limit.
+
+    AgentRequest:
+      type: object
+      required: [id, status, createdAt, expiresAt]
+      properties:
+        id:
+          type: string
+          pattern: '^req_[a-f0-9]{32}$'
+        status:
+          type: string
+          enum: [queued, dispatched, completed, failed, expired]
+        createdAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        response:
+          type: string
+          description: Present only for completed requests.
+        error:
+          type: string
+          description: Stable failure code, present only for failed requests.
+
     ErrorDetail:
       type: object
       required: [code, message]
@@ -1672,7 +1784,7 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
     TooManyRequests:
-      description: Concurrent read limit reached
+      description: Per-caller concurrency or per-agent outstanding-request limit reached
       content:
         application/json:
           schema:
@@ -1686,7 +1798,14 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
 
     ServiceUnavailable:
-      description: Log streaming is not configured
+      description: Required backend service is unavailable or not configured
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    PayloadTooLarge:
+      description: Request body or one of its fields exceeds the configured byte limit
       content:
         application/json:
           schema:

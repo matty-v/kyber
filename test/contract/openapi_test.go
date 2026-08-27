@@ -33,11 +33,12 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
 const (
-	contractAPIKey   = "contract-test-key"
-	contractNS       = "kyber-system"
+	contractAPIKey    = "contract-test-key"
+	contractNS        = "kyber-system"
 	openapiSchemaFile = "openapi.yaml"
 )
 
@@ -87,10 +88,15 @@ func newContractServer(t *testing.T, objs ...runtime.Object) http.Handler {
 	t.Helper()
 	scheme := newContractScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
+	requests, err := requeststore.NewMemoryStore(requeststore.DefaultLimits())
+	if err != nil {
+		t.Fatalf("creating request store: %v", err)
+	}
 	srv := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        contractAPIKey,
-		Namespace:     contractNS,
+		K8sClient:    fakeClient,
+		APIKey:       contractAPIKey,
+		Namespace:    contractNS,
+		RequestStore: requests,
 	}
 	return srv.BuildHandler()
 }
@@ -205,11 +211,11 @@ func sampleMachineObj(name string) *kyberv1.Machine {
 	return &kyberv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: contractNS},
 		Spec: kyberv1.MachineSpec{
-			Provider:     kyberv1.MachineProviderGCE,
-			MachineType:  "n2-standard-4",
-			DiskSizeGb:   100,
-			Spot:         false,
-			Zone:         "us-central1-a",
+			Provider:    kyberv1.MachineProviderGCE,
+			MachineType: "n2-standard-4",
+			DiskSizeGb:  100,
+			Spot:        false,
+			Zone:        "us-central1-a",
 			Capacity: kyberv1.MachineCapacity{
 				CPU:    resource.MustParse("4"),
 				Memory: resource.MustParse("16Gi"),
@@ -395,6 +401,30 @@ func TestContract_GetAgent_NotFound(t *testing.T) {
 	rr := validateContract(t, h, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("want 404, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestContract_SubmitAndGetAgentRequest(t *testing.T) {
+	h := newContractServer(t, sampleAgentObj("kiosk"))
+	created := validateContract(t, h, authedReq(t, http.MethodPost,
+		"/api/v1/agents/kiosk/requests", map[string]string{
+			"prompt":      "Describe Kyber",
+			"correlation": "contract-test",
+		}))
+	if created.Code != http.StatusAccepted {
+		t.Fatalf("POST request status = %d, body = %s", created.Code, created.Body.String())
+	}
+	var response struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &response); err != nil || response.ID == "" {
+		t.Fatalf("decoding POST response: id=%q err=%v", response.ID, err)
+	}
+
+	read := validateContract(t, h, authedReq(t, http.MethodGet,
+		"/api/v1/agents/kiosk/requests/"+response.ID, nil))
+	if read.Code != http.StatusOK {
+		t.Fatalf("GET request status = %d, body = %s", read.Code, read.Body.String())
 	}
 }
 
