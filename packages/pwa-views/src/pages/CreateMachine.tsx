@@ -176,6 +176,11 @@ function CreateManagedMachine({
                 No machine profiles are available from this compute provider.
               </p>
             )}
+            {provider === 'eks' && profiles.length > 0 && (
+              <p className="mt-1.5 text-xs text-text-muted">
+                Disk capacity is set by the selected profile and its EKS launch template.
+              </p>
+            )}
           </div>
 
           <div>

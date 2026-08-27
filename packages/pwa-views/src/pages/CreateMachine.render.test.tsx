@@ -105,6 +105,7 @@ describe('CreateMachine (EKS provider)', () => {
 
     expect(screen.getByText('Zone')).toBeInTheDocument()
     expect(screen.queryByText('Disk Size')).not.toBeInTheDocument()
+    expect(screen.getByText(/disk capacity is set by the selected profile/i)).toBeInTheDocument()
     const zoneSelect = screen.getAllByRole('combobox')[1]
     expect(zoneSelect).toHaveTextContent('us-east-1a')
     const nativeZoneSelect = document.querySelectorAll('select')[1] as HTMLSelectElement

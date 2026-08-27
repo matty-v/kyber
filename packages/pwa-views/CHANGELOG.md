@@ -4,7 +4,8 @@
 
 ### Fixed
 - EKS Machine creation now treats disk capacity as part of the installer-owned
-  profile instead of showing an empty, ineffective disk-size selector.
+  profile instead of showing an empty, ineffective disk-size selector, and
+  explains that behavior in the form.
 - EKS is represented explicitly in the compute-provider wire type, so its
   managed Machine form no longer relies on the fallback provider branch.
 
