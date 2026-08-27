@@ -125,3 +125,8 @@ give operators a tested recovery path for a full or nearly-full volume.
   `/sys/fs/cgroup/{memory.current,memory.max,cpu.stat,cpu.max,memory.events}` in
   that environment. Focused sidecar tests and vet pass; live redeployment is in
   progress.
+- 2026-08-27: Redeployed commit `1b922f8` to GKE dev as immutable worktree tag
+  `worktree-20260827205401-1b922f8`. Normal reconciliation rolled the existing
+  test agent to the new status-sidecar. Its CR status and public API now carry a
+  fresh sample with CPU usage/limit, memory used/limit, disk used/total, sample
+  time, and `diskReserveReached=false`; heartbeat/readiness remained healthy.
