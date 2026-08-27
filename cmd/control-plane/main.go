@@ -654,6 +654,11 @@ func main() {
 	if agentRequestStore != nil {
 		internalOpts = append(internalOpts, internalapi.WithRequestStore(agentRequestStore))
 	}
+	if agentMetrics, err := internalapi.NewKubernetesAgentMetrics(restCfg); err != nil {
+		setupLog.Error(err, "unable to configure Kubernetes agent metrics")
+	} else {
+		internalOpts = append(internalOpts, internalapi.WithAgentMetricsProvider(agentMetrics))
+	}
 	// kyber#508 Stage 3/4: when a GitHub App is configured, let each agent mint a
 	// short-lived token scoped to its OWN identity repo via
 	// GET /internal/agents/{name}/identity-repo-token. Absent (no Kyber App wired)

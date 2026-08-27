@@ -14,6 +14,7 @@ import { Card } from '../components/Card'
 import { StatusBadge } from '../components/StatusBadge'
 import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
 import { AgentActivityBadge } from '../components/AgentActivityBadge'
+import { AgentDiskPressureBadge } from '../components/AgentResourceUsage'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { agentActionConfirmMessage } from '../lib/agentMessages'
@@ -76,6 +77,7 @@ export function AgentList() {
             <StatusBadge phase={row.original.phase} />
             <SchedulingFailureBadge agent={row.original} />
             <AgentActivityBadge agent={row.original} showDot={false} />
+            <AgentDiskPressureBadge usage={row.original.activity?.resources} />
           </div>
         ),
       },
@@ -230,6 +232,7 @@ export function AgentList() {
                       <span className="font-medium text-text-primary truncate">{a.id}</span>
                       <StatusBadge phase={a.phase} />
                       <SchedulingFailureBadge agent={a} />
+                      <AgentDiskPressureBadge usage={a.activity?.resources} />
                     </div>
                     {/* Activity badge on its own line — keeps the truncating
                         id + badges in the header row from overflowing on

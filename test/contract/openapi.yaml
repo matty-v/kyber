@@ -1559,6 +1559,49 @@ components:
         message:
           type: string
 
+    AgentResourceUsage:
+      type: object
+      required: [sampledAt, cpuUsageCores, memoryUsedBytes, diskUsedBytes, diskTotalBytes, diskReserveReached]
+      properties:
+        sampledAt:
+          type: string
+          format: date-time
+        cpuUsageCores:
+          type: number
+          format: double
+        cpuLimitCores:
+          type: number
+          format: double
+        memoryUsedBytes:
+          type: integer
+          format: int64
+        memoryLimitBytes:
+          type: integer
+          format: int64
+        diskUsedBytes:
+          type: integer
+          format: int64
+        diskTotalBytes:
+          type: integer
+          format: int64
+        diskReserveReached:
+          type: boolean
+
+    AgentActivityStatus:
+      type: object
+      properties:
+        lastHeartbeatAt:
+          type: string
+          format: date-time
+        state:
+          type: string
+          enum: [working, idle, unknown]
+        lastActivityAt:
+          type: string
+          format: date-time
+        resources:
+          $ref: '#/components/schemas/AgentResourceUsage'
+
     Agent:
       type: object
       required: [id, phase, machine, runtime, authType, model, resources, createdAt]
@@ -1594,6 +1637,8 @@ components:
           $ref: '#/components/schemas/AgentResources'
         status:
           $ref: '#/components/schemas/AgentStatus'
+        activity:
+          $ref: '#/components/schemas/AgentActivityStatus'
         createdAt:
           type: string
           format: date-time

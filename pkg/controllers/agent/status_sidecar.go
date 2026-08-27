@@ -119,6 +119,11 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 		// BuildPodSpec; here we just mount it read-only into the sidecar.
 		VolumeMounts: []corev1.VolumeMount{
 			{
+				Name:      "persist",
+				MountPath: "/persist",
+				ReadOnly:  true,
+			},
+			{
 				Name:      PodTokenVolumeName,
 				MountPath: PodTokenMountDir,
 				ReadOnly:  true,

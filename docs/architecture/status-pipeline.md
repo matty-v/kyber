@@ -37,6 +37,7 @@ Code activity): kyber#249.
 │  ┌─ kyber-status-sidecar (platform) ────────────┐    │
 │  │                                              │    │
 │  │  - runs heartbeat loop (15s)                 │    │
+│  │  - samples pod CPU/memory + /persist usage   │    │
 │  │  - listens on :8091 for in-pod events:       │    │
 │  │      POST /event          → status-event     │    │
 │  │      POST /token-usage    → token-usage      │    │
@@ -54,7 +55,8 @@ Code activity): kyber#249.
         │  - patches Agent.status.     │
         │    activity.{state,          │
         │    lastActivityAt,           │
-        │    lastHeartbeatAt}          │
+        │    lastHeartbeatAt,          │
+        │    resources}                │
         │                              │
         │  - serializes to wire on     │
         │    GET /api/v1/agents/{name} │
@@ -121,6 +123,7 @@ The control plane patches `Agent.status.activity` based on type:
 
 - `heartbeat` → `lastHeartbeatAt`
 - `activity` → `lastHeartbeatAt` + `lastActivityAt` + `state`
+- `resource_usage` → `lastHeartbeatAt` + latest CPU/memory/disk sample
 - unknown type → silently dropped (forward-compat: newer runtimes can
   emit new event kinds without breaking older control planes)
 
@@ -129,6 +132,12 @@ transcript. The control plane persists that observation as
 `Agent.status.currentModel`. This is especially important when `spec.model` is
 empty: the spec continues to mean “use the harness default,” while status and
 the PWA can still show which model the harness actually selected.
+
+Resource usage is best-effort and sampled on the sidecar heartbeat tick. The
+pod-level cgroup provides CPU and memory usage/limits; a read-only `/persist`
+mount provides volume-level `statfs`. The control plane keeps only the latest
+sample in `status.activity.resources`, while the sidecar emits the same values
+as OTel gauges. Sampling failures do not affect heartbeat or readiness.
 
 See `pkg/api/internal_status.go` for the handler; `pkg/api/v1/agent_types.go`
 for the CRD shape.
@@ -177,10 +186,11 @@ PWA renders `Agent.status.activity` directly via `AgentActivityDot` and
 Earlier designs in #247/#249 had the sidecar's `Probe` directly tail
 the runtime's JSONL transcript. That fell apart on contact with reality:
 
-- Containers in the same pod have independent filesystems by default
+- Containers in the same pod have independent image filesystems by default
 - The agent runtime runs in a chroot/overlay (whole-disk-persistence,
-  kyber#135). Even mounting the PVC into the sidecar wouldn't expose
-  files inside PID 1's mount namespace without `nsenter` + privileged
+  kyber#135). Mounting the PVC in the sidecar permits volume-level `statfs`,
+  but does not reproduce PID 1's chroot/bind namespace or expose transcript
+  paths as the harness sees them without `nsenter` + privileged
 
 Pivoting to "runtime-specific binary in the runtime image, pushing to a
 runtime-agnostic sidecar over localhost" (Matt 2026-05-03) gave us:
