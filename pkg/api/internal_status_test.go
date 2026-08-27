@@ -90,6 +90,39 @@ func TestStatusEvent_HeartbeatUpdatesLastHeartbeatAt(t *testing.T) {
 	}
 }
 
+func TestStatusEvent_ResourceUsageUpdatesActivity(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"}}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
+		WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"type":"resource_usage","at":"2026-08-27T12:00:00Z","resources":{"cpuUsageMillicores":750,"cpuLimitMillicores":2000,"memoryUsedBytes":1048576,"memoryLimitBytes":2097152,"diskUsedBytes":90,"diskTotalBytes":100,"diskReserveReached":true}}`
+	resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", resp.StatusCode)
+	}
+
+	got := &kyberv1.Agent{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "alice"}, got); err != nil {
+		t.Fatal(err)
+	}
+	usage := got.Status.Activity.Resources
+	if usage == nil || usage.CPUUsageMillicores != 750 || usage.DiskUsedBytes != 90 || !usage.DiskReserveReached {
+		t.Fatalf("resource usage not patched: %+v", usage)
+	}
+	if got.Status.Activity.LastHeartbeatAt == nil || usage.SampledAt.Time != got.Status.Activity.LastHeartbeatAt.Time {
+		t.Errorf("sample and heartbeat timestamps differ: %+v", got.Status.Activity)
+	}
+}
+
 // TestStatusEvent_AgentNotFound returns 404 cleanly when the agent does
 // not exist. The sidecar uses 404 as a signal to back off rather than
 // hammering retries.

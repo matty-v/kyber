@@ -44,18 +44,18 @@ give operators a tested recovery path for a full or nearly-full volume.
 
 **Branch:** `sol/mat-10-resource-telemetry`
 
-- [ ] Characterize the status-sidecar cgroup and volume mount contract.
-- [ ] Mount the agent persistence volume read-only in the status sidecar.
-- [ ] Sample `/persist` with `statfs`, pod-cgroup memory usage/limit, and CPU
+- [x] Characterize the status-sidecar cgroup and volume mount contract.
+- [x] Mount the agent persistence volume read-only in the status sidecar.
+- [x] Sample `/persist` with `statfs`, pod-cgroup memory usage/limit, and CPU
   usage/quota on the heartbeat cadence using small testable readers.
-- [ ] Forward the latest sample through the internal status API and emit the
+- [x] Forward the latest sample through the internal status API and emit the
   corresponding OTel metrics.
-- [ ] Store the latest sample and timestamp on `Agent.status.activity`.
-- [ ] Update generated CRDs, OpenAPI, API tests, and PWA wire types.
-- [ ] Replace static resource rows on Agent Detail with used-of-allocated bars;
+- [x] Store the latest sample and timestamp on `Agent.status.activity`.
+- [x] Update generated CRDs, OpenAPI, API tests, and PWA wire types.
+- [x] Replace static resource rows on Agent Detail with used-of-allocated bars;
   warn at 80% and show danger at 90%.
-- [ ] Add a compact Agent List warning when disk usage is at least 80%.
-- [ ] Publish a reserve observation at 90% for slice 2 to consume, without
+- [x] Add a compact Agent List warning when disk usage is at least 80%.
+- [x] Publish a reserve observation at 90% for slice 2 to consume, without
   changing lifecycle or stopping the harness in this slice.
 - [ ] Run focused Go and PWA tests, then the repository-required gates.
 
@@ -111,3 +111,7 @@ give operators a tested recovery path for a full or nearly-full volume.
 - 2026-08-27: Matt approved the three-slice plan. Reordered telemetry ahead of
   lifecycle because the reserve transition depends on a trustworthy in-pod
   sample. Confirmed kyber#575 superseded the historical non-terminal pod shape.
+- 2026-08-27: Slice 1 implementation checkpoint complete through generated
+  contracts and PWA surfaces. Focused Go tests, OpenAPI contract tests,
+  TypeScript compile, and all 744 PWA tests pass. The full controller suite is
+  pending envtest asset installation; focused pod-injection tests pass.

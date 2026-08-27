@@ -78,6 +78,21 @@ func TestAppendStatusSidecar_ResourceLimits(t *testing.T) {
 	}
 }
 
+func TestAppendStatusSidecar_MountsPersistReadOnly(t *testing.T) {
+	spec := &corev1.PodSpec{}
+	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
+	side := mustStatusSidecar(t, spec)
+	for _, mount := range side.VolumeMounts {
+		if mount.Name == "persist" {
+			if mount.MountPath != "/persist" || !mount.ReadOnly {
+				t.Errorf("persist mount = %+v, want read-only /persist", mount)
+			}
+			return
+		}
+	}
+	t.Fatal("status sidecar has no persist mount")
+}
+
 // TestBuildPodSpec_PlusInjection verifies that the full assembly path
 // (BuildPodSpec → AppendStatusSidecar) yields a pod with both the
 // runtime container and the status sidecar, in the right order. This

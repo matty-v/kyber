@@ -220,6 +220,11 @@ surface on its existing `127.0.0.1:8091` listener. Both runtimes register the
 same `respond(request_id, response)` tool; the sidecar adds the pod token and
 agent identity when forwarding to the internal API, so the runtime receives no
 control-plane credential or callback destination.
+The status sidecar mounts the persist PVC read-only for filesystem-level
+`statfs` telemetry. The control plane combines that disk sample with the
+metrics-server's agent-container CPU/memory sample and requested Agent limits;
+the sidecar does not enter the runtime container's chroot or inspect agent
+files.
 Persistence: the agent's root filesystem is a real directory on its PVC
 (`/persist/agentroot`), seeded from the base image by
 `images/agent-base/scripts/kyber-rootfs` and entered with chroot. There is no

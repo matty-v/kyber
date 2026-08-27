@@ -60,6 +60,7 @@ const (
 	// the internal :8082 port doesn't currently require auth, but we send
 	// the bearer when it's there for forward-compat.
 	podTokenPath = "/var/run/secrets/kyber/pod-token"
+	persistPath  = "/persist"
 )
 
 // lastPostOK mirrors whether the most recent heartbeat POST succeeded.
@@ -404,6 +405,9 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 	}
 
 	oom := newOOMDetector(cfg.CgroupMemoryEventsPath)
+	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath)
+	resourceReadErrLogged := false
+	resourcePostErrLogged := false
 	logfn := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }
 	warnfn := func(format string, args ...any) { logger.Warn(fmt.Sprintf(format, args...)) }
 
@@ -442,6 +446,26 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 		if oom.tick(ctx, client, cfg, now, logfn, warnfn) {
 			metrics.RecordEventForwarded(ctx, "memory_oom")
 		}
+
+		usage, err := resources.sample(now)
+		if err != nil {
+			if !resourceReadErrLogged {
+				logger.Warn("resource usage sampling unavailable", "err", err)
+				resourceReadErrLogged = true
+			}
+		} else {
+			resourceReadErrLogged = false
+			metrics.RecordResourceUsage(ctx, usage)
+			if err := postResourceUsage(ctx, client, cfg, now, usage); err != nil {
+				if !resourcePostErrLogged {
+					logger.Warn("resource usage post failed", "err", err)
+					resourcePostErrLogged = true
+				}
+			} else {
+				resourcePostErrLogged = false
+				metrics.RecordEventForwarded(ctx, "resource_usage")
+			}
+		}
 	}
 
 	// Fire immediately so the control plane gets the first snapshot quickly.
@@ -458,6 +482,21 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 			tickOnce()
 		}
 	}
+}
+
+func postResourceUsage(ctx context.Context, client *http.Client, cfg config, now time.Time, usage resourceUsage) error {
+	body, err := json.Marshal(map[string]any{
+		"type":      "resource_usage",
+		"at":        now.UTC().Format(time.RFC3339),
+		"resources": usage,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal resource usage: %w", err)
+	}
+	if _, err := postToCP(ctx, client, cfg, "status-event", body); err != nil {
+		return err
+	}
+	return nil
 }
 
 // postMetricsSnapshot POSTs accumulated activity-state seconds and pending

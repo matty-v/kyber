@@ -43,7 +43,8 @@ type statusEvent struct {
 	// activity events will use it for LastActivityAt.
 	At string `json:"at"`
 	// State applies to "activity" events only (kyber#249).
-	State string `json:"state,omitempty"`
+	State     string                      `json:"state,omitempty"`
+	Resources *kyberv1.AgentResourceUsage `json:"resources,omitempty"`
 }
 
 // handleStatusEvent handles POST /internal/agents/{name}/status-event.
@@ -120,6 +121,13 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		// attribute the kill to the current life and routes to
 		// MemoryExhausted.
 		agent.Status.LastKernelOOMKillAt = &atMeta
+	case "resource_usage":
+		if ev.Resources == nil {
+			return nil
+		}
+		ev.Resources.SampledAt = atMeta
+		agent.Status.Activity.LastHeartbeatAt = &atMeta
+		agent.Status.Activity.Resources = ev.Resources
 	default:
 		// Unknown event types are ignored. Forward-compat: a newer
 		// sidecar pushing a new event kind shouldn't break an older CP.
