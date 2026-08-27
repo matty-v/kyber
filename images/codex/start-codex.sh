@@ -149,38 +149,105 @@ if [ -z "${OPENAI_API_KEY:-}" ]; then
 fi
 unset _device_auth_pending
 
-cat > "$CODEX_HOME/config.toml" <<EOF
+# Kyber's own Codex settings live in the SYSTEM managed config, NOT in the
+# agent's ~/.codex/config.toml.
+#
+# Until kyber#MCPFIX this block rewrote the agent's config.toml from scratch on
+# every boot. That truncation silently deleted any MCP server the agent had
+# registered itself with `codex mcp add` — the entry was gone from the very
+# next session, and re-adding it only survived until the next restart, so a
+# durable integration could never be established. Observed on `atlas` with an
+# Atlassian MCP, repeatedly, across restarts.
+#
+# /etc/codex/managed_config.toml is read by Codex underneath the user config,
+# is owned by Kyber rather than the agent, and can be rewritten freely because
+# nothing else writes it. Settings placed here also apply to a bare `codex`
+# the agent runs itself, which command-line flags would not cover.
+#
+# Claude Code has always done the equivalent — see start-claude.sh's
+# "Merge instead of replacing" jq path for ~/.claude.json.
+KYBER_MANAGED_CODEX_CONFIG="${KYBER_MANAGED_CODEX_CONFIG:-/etc/codex/managed_config.toml}"
+
+# Write via sudo only when a direct write is not possible: the tests run this
+# script unprivileged against a temp path, and the image grants kyber
+# passwordless sudo for exactly this kind of boot-time maintenance.
+kyber_write_managed_config() {
+    _target="$1"
+    _dir="$(dirname "$_target")"
+    mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
+    if : >> "$_target" 2>/dev/null; then
+        cat > "$_target"
+    else
+        sudo tee "$_target" >/dev/null
+    fi
+}
+
+if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
+# Managed by Kyber. Rewritten on every agent boot — do not edit.
+# Agent-owned Codex settings belong in ~/.codex/config.toml, which Kyber
+# never rewrites.
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false
 tui.resume_cwd = "current"
 EOF
-if [ -n "${CODEX_MODEL:-}" ]; then
-    printf 'model = "%s"\n' "$CODEX_MODEL" >> "$CODEX_HOME/config.toml"
+then
+    if [ -n "${CODEX_MODEL:-}" ]; then
+        printf 'model = "%s"\n' "$CODEX_MODEL" | \
+            { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; }
+    fi
+    echo "[kyber] Codex managed settings written to $KYBER_MANAGED_CODEX_CONFIG"
+else
+    # Non-fatal: the launch command below still passes --ask-for-approval and
+    # --sandbox explicitly, so a Kyber-started session is unaffected. Only a
+    # bare `codex` the agent runs itself would fall back to defaults.
+    echo "[kyber] WARNING: could not write $KYBER_MANAGED_CODEX_CONFIG; Codex settings apply to Kyber-launched sessions only" >&2
 fi
+
+# The agent's own config is created if absent and otherwise left alone.
+if [ ! -f "$CODEX_HOME/config.toml" ]; then
+    : > "$CODEX_HOME/config.toml"
+fi
+chmod 0600 "$CODEX_HOME/config.toml"
+
+# A config.toml that does not parse would make every `codex mcp` call below
+# fail and could crash-loop the runtime. Preserve the bad bytes for diagnosis
+# and start from an empty file, mirroring how start-claude.sh recovers an
+# invalid ~/.claude.json.
+if ! codex mcp list >/dev/null 2>&1; then
+    cp "$CODEX_HOME/config.toml" "$CODEX_HOME/config.toml.corrupt" 2>/dev/null || true
+    : > "$CODEX_HOME/config.toml"
+    chmod 0600 "$CODEX_HOME/config.toml"
+    echo "[kyber] WARNING: recovered unparseable $CODEX_HOME/config.toml (saved as config.toml.corrupt)" >&2
+fi
+
+# Converge the two Kyber-managed MCP entries through `codex mcp`, which edits
+# config.toml as TOML and leaves every other entry byte-identical. `add` is an
+# upsert (re-running it with a new URL updates in place) and `remove` exits 0
+# when the entry is already absent, so both directions are idempotent — a
+# channel that gets disabled does not leave a stale managed entry behind.
+kyber_converge_mcp() {
+    _name="$1"
+    _url="$2"
+    _label="$3"
+    if [ -n "$_url" ]; then
+        if codex mcp add "$_name" --url "$_url" >/dev/null 2>&1; then
+            echo "[kyber] $_label MCP sidecar registered at $_url"
+        else
+            echo "[kyber] WARNING: could not register $_label MCP server '$_name'" >&2
+        fi
+    else
+        codex mcp remove "$_name" >/dev/null 2>&1 || true
+    fi
+}
 
 # Telegram MCP sidecar (kyber#684). Same server the Claude Code runtime
 # registers, so both runtimes get the same tool surface instead of Codex
 # curl-ing a bare HTTP endpoint. The /send endpoint stays available for the
 # inbound-binding action text, so this is additive — nothing breaks if an
 # older binding is still telling the agent to curl.
-if [ -n "${KYBER_TELEGRAM_MCP_URL:-}" ]; then
-    cat >> "$CODEX_HOME/config.toml" <<EOF
-
-[mcp_servers.kyber_telegram]
-url = "${KYBER_TELEGRAM_MCP_URL}"
-EOF
-    echo "[kyber] Telegram MCP sidecar registered at ${KYBER_TELEGRAM_MCP_URL}"
-fi
-if [ -n "${KYBER_DISCORD_MCP_URL:-}" ]; then
-    cat >> "$CODEX_HOME/config.toml" <<EOF
-
-[mcp_servers.kyber_discord]
-url = "${KYBER_DISCORD_MCP_URL}"
-EOF
-    echo "[kyber] Discord MCP sidecar registered at ${KYBER_DISCORD_MCP_URL}"
-fi
-chmod 0600 "$CODEX_HOME/config.toml"
+kyber_converge_mcp kyber_telegram "${KYBER_TELEGRAM_MCP_URL:-}" "Telegram"
+kyber_converge_mcp kyber_discord "${KYBER_DISCORD_MCP_URL:-}" "Discord"
 
 # Report the version actually running through the localhost status sidecar.
 # Keep this best-effort: telemetry must never prevent the runtime from booting.
@@ -339,11 +406,16 @@ if command -v kyber-skills >/dev/null 2>&1; then
     echo "[kyber] skill reporter started (pid=$!, log=$KYBER_SKILLS_LOG)"
 fi
 
-cat >> "$CODEX_HOME/config.toml" <<EOF
-
-[projects."$LAUNCH_DIR"]
-trust_level = "trusted"
-EOF
+# Trust the launch directory. This goes in Kyber's managed config, not the
+# agent's config.toml — Kyber decides which directory it launches the agent in,
+# so the trust that follows from it is Kyber's to assert, and asserting it here
+# keeps Kyber out of a file the agent owns.
+{
+    echo ""
+    echo "[projects.\"$LAUNCH_DIR\"]"
+    echo 'trust_level = "trusted"'
+} | { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; } || \
+    echo "[kyber] WARNING: could not trust Codex launch directory $LAUNCH_DIR" >&2
 
 CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
 if [ -n "${CODEX_MODEL:-}" ]; then

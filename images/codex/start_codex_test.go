@@ -312,16 +312,20 @@ func readAuth(t *testing.T, home string) string {
 
 func TestStartCodexDisablesRuntimeSelfUpdatePrompt(t *testing.T) {
 	home := t.TempDir()
-	out, err := runBoot(t, home, secretCred, stubBin(t))
+	managed := filepath.Join(t.TempDir(), "managed_config.toml")
+	out, err := runBoot(t, home, secretCred, stubBin(t), "KYBER_MANAGED_CODEX_CONFIG="+managed)
 	if err != nil {
 		t.Fatalf("boot failed: %v\n%s", err, out)
 	}
-	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	// Kyber's settings moved out of the agent-owned config.toml and into the
+	// system managed config, so that rewriting them cannot clobber MCP
+	// servers the agent registered itself.
+	config, err := os.ReadFile(managed)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(string(config), "check_for_update_on_startup = false") {
-		t.Fatalf("config.toml does not disable Codex's self-update prompt:\n%s", config)
+		t.Fatalf("managed config does not disable Codex's self-update prompt:\n%s", config)
 	}
 }
 
@@ -330,10 +334,16 @@ func TestStartCodexRegistersDiscordMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[mcp_servers.kyber_discord]", `url = "${KYBER_DISCORD_MCP_URL}"`} {
+	// Registration goes through `codex mcp add`, which edits config.toml as
+	// TOML. The old heredoc append is deliberately gone: it only worked
+	// because the boot path truncated the file first.
+	for _, want := range []string{"kyber_converge_mcp kyber_discord", `"${KYBER_DISCORD_MCP_URL:-}"`} {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("start-codex.sh missing Discord MCP registration %q", want)
 		}
+	}
+	if strings.Contains(string(script), `cat > "$CODEX_HOME/config.toml"`) {
+		t.Fatal("start-codex.sh still truncates the agent's config.toml")
 	}
 }
 
@@ -702,5 +712,206 @@ func TestStartCodex_StartupPromptIsSingleQuotedArgument(t *testing.T) {
 	}
 	if !strings.Contains(s, `CODEX_LAUNCH_CMD="codex $(printf '%q ' "${CODEX_ARGS[@]}")"`) {
 		t.Fatal("Codex launch command no longer shell-quotes its argument array")
+	}
+}
+
+// stubMCPBin writes a `codex` stub that actually implements the `mcp`
+// subcommands against $CODEX_HOME/config.toml, so a test can assert what the
+// boot path does to a real file rather than only that it shelled out.
+// Mirrors the parts of `codex mcp` the boot path relies on: `add` upserts,
+// `remove` is a no-op when the entry is absent, and `list` fails when the
+// file does not parse.
+func stubMCPBin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatalf("write stub %s: %v", name, err)
+		}
+	}
+	write("codex", `
+cfg="$CODEX_HOME/config.toml"
+strip_block() { # $1 = server name
+  [ -f "$cfg" ] || return 0
+  awk -v name="[mcp_servers.$1]" '
+    $0 == name { skip = 1; next }
+    /^\[/      { skip = 0 }
+    !skip      { print }
+  ' "$cfg" > "$cfg.tmp" && mv "$cfg.tmp" "$cfg"
+}
+case "${1:-}" in
+  --version) echo "codex-cli 0.150.1" ;;
+  login)     exit 0 ;;
+  mcp)
+    case "${2:-}" in
+      list)   grep -q UNPARSEABLE "$cfg" 2>/dev/null && exit 1; exit 0 ;;
+      add)    name="$3"; url=""
+              shift 3
+              while [ $# -gt 0 ]; do
+                if [ "$1" = "--url" ]; then url="$2"; fi
+                shift
+              done
+              strip_block "$name"
+              printf '\n[mcp_servers.%s]\nurl = "%s"\n' "$name" "$url" >> "$cfg" ;;
+      remove) strip_block "$3" ;;
+      *)      exit 0 ;;
+    esac ;;
+  *) exit 0 ;;
+esac`)
+	write("curl", `exit 0`)
+	write("npm", `exit 0`)
+	write("tmux", `exit 0`)
+	write("sudo", `exec "$@"`)
+	return dir + ":" + os.Getenv("PATH")
+}
+
+// seedCodexConfig writes a config.toml containing an agent-registered MCP
+// server plus an unrelated top-level key, and returns the managed-config path
+// the boot run should use.
+func seedCodexConfig(t *testing.T, home, body string) string {
+	t.Helper()
+	codexHome := filepath.Join(home, ".codex")
+	if err := os.MkdirAll(codexHome, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(codexHome, "config.toml"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return filepath.Join(t.TempDir(), "managed_config.toml")
+}
+
+const agentOwnedConfig = `some_agent_setting = 42
+
+[mcp_servers.atlassian_rovo]
+command = "npx"
+args = ["-y", "mcp-remote", "https://example.atlassian.net/mcp"]
+`
+
+// A custom MCP server registered by the agent must survive a boot. Before
+// kyber#MCPFIX the boot path truncated config.toml with `cat >`, so the entry
+// was deleted on every restart and no durable integration was possible.
+func TestStartCodexPreservesAgentAddedMCPServers(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, agentOwnedConfig)
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp",
+		"KYBER_DISCORD_MCP_URL=http://127.0.0.1:14005/mcp")
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(config)
+	for _, want := range []string{
+		"[mcp_servers.atlassian_rovo]", // the agent's own entry
+		`args = ["-y", "mcp-remote", "https://example.atlassian.net/mcp"]`,
+		"some_agent_setting = 42",      // unrelated key
+		"[mcp_servers.kyber_telegram]", // managed entries still converge
+		"[mcp_servers.kyber_discord]",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("config.toml lost %q after boot:\n%s", want, got)
+		}
+	}
+}
+
+// Kyber's own settings must not land in the agent's file at all.
+func TestStartCodexKeepsItsOwnSettingsOutOfAgentConfig(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, agentOwnedConfig)
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, unwanted := range []string{"approval_policy", "sandbox_mode", "check_for_update_on_startup", "trust_level"} {
+		if strings.Contains(string(config), unwanted) {
+			t.Fatalf("Kyber setting %q written into the agent's config.toml:\n%s", unwanted, config)
+		}
+	}
+
+	managedBody, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatalf("managed config not written: %v", err)
+	}
+	for _, want := range []string{
+		`approval_policy = "never"`,
+		`sandbox_mode = "danger-full-access"`,
+		"check_for_update_on_startup = false",
+		`tui.resume_cwd = "current"`,
+		`trust_level = "trusted"`,
+	} {
+		if !strings.Contains(string(managedBody), want) {
+			t.Fatalf("managed config missing %q:\n%s", want, managedBody)
+		}
+	}
+}
+
+// A managed channel that gets disabled must not leave a stale entry behind.
+func TestStartCodexRemovesDisabledManagedMCP(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, agentOwnedConfig+`
+[mcp_servers.kyber_discord]
+url = "http://127.0.0.1:14005/mcp"
+`)
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp")
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(config)
+	if strings.Contains(got, "[mcp_servers.kyber_discord]") {
+		t.Fatalf("disabled Discord MCP left a stale entry:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.kyber_telegram]") {
+		t.Fatalf("enabled Telegram MCP not registered:\n%s", got)
+	}
+	if !strings.Contains(got, "[mcp_servers.atlassian_rovo]") {
+		t.Fatalf("agent's own MCP entry lost:\n%s", got)
+	}
+}
+
+// An unparseable config.toml must be recovered, not fatal — the same
+// treatment start-claude.sh gives a corrupt ~/.claude.json.
+func TestStartCodexRecoversUnparseableConfig(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, "UNPARSEABLE ((( not toml\n")
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp")
+	if err != nil {
+		t.Fatalf("boot failed on a corrupt config: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml.corrupt")); err != nil {
+		t.Fatalf("corrupt config was not preserved for diagnosis: %v", err)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "UNPARSEABLE") {
+		t.Fatalf("corrupt config.toml was not reset:\n%s", config)
+	}
+	if !strings.Contains(string(config), "[mcp_servers.kyber_telegram]") {
+		t.Fatalf("managed MCP not registered after recovery:\n%s", config)
 	}
 }
