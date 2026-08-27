@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -1150,40 +1151,36 @@ func main() {
 	transcriptReader, transcriptDisabledReason := buildArchiveReader("transcripts/", "transcript")
 
 	inboundRateLimiter := inbound.NewRateLimiter()
-	inboundQueue := inbound.NewQueue(func(ctx context.Context, job inbound.Job) {
-		if publicAPI == nil {
-			setupLog.Info("inbound queue: publicAPI not yet initialised; dropping job",
-				"agent", job.Agent, "binding", job.Binding, "request_id", job.RequestID)
-			return
-		}
-		podName := "agent-" + job.Agent
-		jobName := "inbound-" + job.RequestID
-		// Hold the job while the agent is mid-restart (set-model, secret
-		// roll, operator restart) instead of delivering into the
-		// terminating pod — the dying session would answer the prompt and
-		// the reply dies with the pod. Per-agent worker goroutines mean
-		// this waits only this agent's queue. On timeout, fall through
-		// and attempt delivery anyway (the exec fails cleanly when
-		// there's no pod, matching pre-gate behavior).
-		waitCtx, cancelWait := context.WithTimeout(ctx, 3*time.Minute)
-		if err := publicAPI.WaitAgentRunning(waitCtx, job.Agent, 3*time.Minute); err != nil {
-			setupLog.Info("inbound dispatch: agent not Running after wait; attempting delivery anyway",
-				"agent", job.Agent, "binding", job.Binding,
-				"request_id", job.RequestID, "reason", err.Error())
-		}
-		cancelWait()
-		// Bound the exec; the in-pod dispatcher is fast (send-keys + a POST)
-		// but a stuck SPDY connection would otherwise hold a queue slot
-		// indefinitely.
-		execCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		_, stderr, err := publicAPI.ExecRunJobStdin(execCtx, podName, jobName, strings.NewReader(job.Envelope))
-		if err != nil {
-			setupLog.Error(err, "inbound dispatch exec failed",
-				"agent", job.Agent, "binding", job.Binding,
-				"request_id", job.RequestID, "stderr", stderr)
-		}
-	})
+	inboundQueue := inbound.NewQueue(inbound.NewDeliveryHandler(
+		func(ctx context.Context, job inbound.Job, timeout time.Duration) error {
+			if publicAPI == nil {
+				return errors.New("public API not yet initialized")
+			}
+			err := publicAPI.WaitAgentRunning(ctx, job.Agent, timeout)
+			if err != nil {
+				setupLog.Info("inbound dispatch: agent not Running after wait",
+					"agent", job.Agent, "binding", job.Binding,
+					"request_id", job.RequestID, "kind", job.Kind, "reason", err.Error())
+			}
+			return err
+		},
+		func(ctx context.Context, job inbound.Job) error {
+			if publicAPI == nil {
+				return errors.New("public API not yet initialized")
+			}
+			podName := "agent-" + job.Agent
+			jobName := "inbound-" + job.RequestID
+			_, stderr, err := publicAPI.ExecRunJobStdin(ctx, podName, jobName, strings.NewReader(job.Envelope))
+			if err != nil {
+				setupLog.Error(err, "inbound dispatch exec failed",
+					"agent", job.Agent, "binding", job.Binding,
+					"request_id", job.RequestID, "kind", job.Kind, "stderr", stderr)
+			}
+			return err
+		},
+		3*time.Minute,
+		30*time.Second,
+	))
 
 	// KYBER_MAX_CONCURRENT_READS bounds simultaneous in-flight windowed log reads
 	// (source=archive|transcript) so concurrent large reads can't collectively

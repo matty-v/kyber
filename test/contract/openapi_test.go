@@ -33,6 +33,7 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
@@ -92,11 +93,14 @@ func newContractServer(t *testing.T, objs ...runtime.Object) http.Handler {
 	if err != nil {
 		t.Fatalf("creating request store: %v", err)
 	}
+	queue := inbound.NewQueue(func(context.Context, inbound.Job) {})
+	t.Cleanup(queue.Stop)
 	srv := &api.Server{
 		K8sClient:    fakeClient,
 		APIKey:       contractAPIKey,
 		Namespace:    contractNS,
 		RequestStore: requests,
+		InboundQueue: queue,
 	}
 	return srv.BuildHandler()
 }

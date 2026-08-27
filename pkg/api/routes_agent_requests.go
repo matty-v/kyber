@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -16,6 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
@@ -74,7 +77,7 @@ func (s *Server) handleAgentRequests(w http.ResponseWriter, r *http.Request, age
 }
 
 func (s *Server) submitAgentRequest(w http.ResponseWriter, r *http.Request, agentName string) {
-	if s.RequestStore == nil {
+	if s.RequestStore == nil || s.InboundQueue == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "request_service_unavailable", "agent requests are unavailable")
 		return
 	}
@@ -132,8 +135,58 @@ func (s *Server) submitAgentRequest(w http.ResponseWriter, r *http.Request, agen
 		return
 	}
 
+	job := inbound.Job{
+		Agent:         agentName,
+		Binding:       "platform-request",
+		RequestID:     request.ID,
+		Envelope:      requestEnvelope(request),
+		EnqueuedAt:    time.Now().UTC(),
+		Kind:          inbound.JobKindRequest,
+		DeliverBefore: request.ExpiresAt,
+		OnDelivery: func(ctx context.Context, outcome inbound.DeliveryOutcome) {
+			s.recordRequestDelivery(ctx, agentName, request.ID, outcome)
+		},
+	}
+	if err := s.InboundQueue.Enqueue(job); err != nil {
+		// The request was created atomically before enqueue. Make it terminal so
+		// it does not consume an outstanding slot after a rejected submission.
+		if failErr := s.RequestStore.Fail(r.Context(), agentName, request.ID, requeststore.FailureDelivery); failErr != nil {
+			slog.Warn("requests: failed to close rejected request", "agent", agentName, "request_id", request.ID, "error", failErr)
+		}
+		if errors.Is(err, inbound.ErrQueueFull) {
+			w.Header().Set("Retry-After", "1")
+			writeJSONError(w, http.StatusTooManyRequests, "queue_full", "agent request queue is full")
+			return
+		}
+		writeJSONError(w, http.StatusServiceUnavailable, "request_dispatch_unavailable", "failed to enqueue request")
+		return
+	}
+
 	w.Header().Set("Location", "/api/v1/agents/"+agentName+"/requests/"+request.ID)
 	writeJSON(w, http.StatusAccepted, requestResponse(request, false))
+}
+
+func requestEnvelope(request *requeststore.Request) string {
+	prompt, _ := json.Marshal(request.Prompt)
+	return fmt.Sprintf("[kyber-request:%s] agent=%s\nrequest:\n  id: %s\n  expires_at: %s\n  prompt_json: %s\naction:\n  Handle only this request. Finish it by calling kyber-request-reply.respond with this request id and your bounded response.\n",
+		request.ID, request.Agent, request.ID, request.ExpiresAt.UTC().Format(time.RFC3339Nano), prompt)
+}
+
+func (s *Server) recordRequestDelivery(ctx context.Context, agent, requestID string, outcome inbound.DeliveryOutcome) {
+	var err error
+	switch outcome {
+	case inbound.DeliveryDispatched:
+		err = s.RequestStore.MarkDispatched(ctx, agent, requestID)
+	case inbound.DeliveryAgentUnavailable:
+		err = s.RequestStore.Fail(ctx, agent, requestID, requeststore.FailureAgentUnavailable)
+	case inbound.DeliveryFailed:
+		err = s.RequestStore.Fail(ctx, agent, requestID, requeststore.FailureDelivery)
+	default:
+		err = fmt.Errorf("unknown delivery outcome %q", outcome)
+	}
+	if err != nil && !errors.Is(err, requeststore.ErrNotFound) && !errors.Is(err, requeststore.ErrConflict) {
+		slog.Error("requests: failed to record delivery outcome", "agent", agent, "request_id", requestID, "outcome", outcome, "error", err)
+	}
 }
 
 func (s *Server) getAgentRequest(w http.ResponseWriter, r *http.Request, agentName, requestID string) {
