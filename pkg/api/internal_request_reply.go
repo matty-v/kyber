@@ -65,6 +65,11 @@ func (s *InternalServer) handleRequestReply(w http.ResponseWriter, r *http.Reque
 	if request != nil {
 		createdAt = request.CreatedAt
 	}
-	recordAgentRequestTerminal(r.Context(), "reply", "completed", agentName, body.RequestID, createdAt)
+	// Complete deliberately treats an identical retry as success. Keep that
+	// idempotency at the observability layer too: only the dispatched ->
+	// completed transition is a new terminal event.
+	if request != nil && request.Status == requeststore.StatusDispatched {
+		recordAgentRequestTerminal(r.Context(), "reply", "completed", agentName, body.RequestID, createdAt)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
