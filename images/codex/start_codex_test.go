@@ -984,3 +984,152 @@ func TestStartCodexKeepsUserConfigWhenFailureIsNotTheUserFile(t *testing.T) {
 		t.Fatalf("boot output does not report that convergence was skipped:\n%s", out)
 	}
 }
+
+// ---- Scheduled-job turn-boundary hooks (FAL-8) -------------------------------
+//
+// Codex 0.146.0 exposes the same two hook events Claude Code uses
+// (UserPromptSubmit, Stop), but hooks declared in the user's own config.toml sit
+// behind an interactive trust prompt, so the platform registers them in the
+// system-managed layer instead. These cover the three cases the feature's
+// contract turns on: both signals registered, only one registered, and the
+// commands missing entirely.
+
+// cronHookEnv wires the boot path at temp paths the test can inspect, and
+// returns (sentinelPath, managedConfigPath, turnStartCmd, env).
+func cronHookEnv(t *testing.T, commandsExist bool) (string, string, string, []string) {
+	t.Helper()
+	dir := t.TempDir()
+	sentinel := filepath.Join(dir, "run", "kyber-cron-postrun-enabled")
+	managed := filepath.Join(dir, "etc", "managed_config.toml")
+
+	postrun := filepath.Join(dir, "kyber-cron-postrun")
+	turnstart := filepath.Join(dir, "kyber-cron-turn-start")
+	if commandsExist {
+		for _, p := range []string{postrun, turnstart} {
+			if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+				t.Fatalf("write %s: %v", p, err)
+			}
+		}
+	}
+
+	return sentinel, managed, turnstart, []string{
+		"KYBER_CRON_POSTRUN_SENTINEL=" + sentinel,
+		"KYBER_CODEX_MANAGED_CONFIG=" + managed,
+		"KYBER_CRON_POSTRUN_CMD=" + postrun,
+		"KYBER_CRON_TURNSTART_CMD=" + turnstart,
+	}
+}
+
+// Happy path: both signals land in the managed layer and the sentinel — the
+// contract kyber-job-dispatch reads — is armed.
+func TestStartCodex_CronHooks_RegistersBothSignalsAndArmsSentinel(t *testing.T) {
+	home := t.TempDir()
+	sentinel, managed, _, env := cronHookEnv(t, true)
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	body, readErr := os.ReadFile(managed)
+	if readErr != nil {
+		t.Fatalf("managed hooks config not written: %v\n%s", readErr, out)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"[[hooks.UserPromptSubmit]]",
+		"[[hooks.Stop]]",
+		"kyber-cron-turn-start",
+		"kyber-cron-postrun",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("managed hooks config missing %q:\n%s", want, got)
+		}
+	}
+	// The clear command must ride inside the Stop hook's command string: that
+	// is what makes clearContextAfter actually clear on Codex rather than
+	// pasting Claude Code's /clear at a runtime that does not understand it.
+	if !strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/compact") {
+		t.Errorf("Stop hook does not carry the Codex clear command:\n%s", got)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Errorf("sentinel not armed after a complete registration: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "cron context hooks registered") {
+		t.Errorf("boot did not report registration:\n%s", out)
+	}
+}
+
+// Both-or-neither: a managed layer carrying only ONE of the two signals must
+// leave the sentinel absent. Half-wired is worse than not claiming the
+// capability — arming without consuming leaks markers and mutes exclusive;
+// consuming without arming clears context on an unrelated turn.
+//
+// The failure is staged the way it would really happen: this boot cannot
+// re-render the managed layer (TMPDIR is gone, so the atomic write bails before
+// touching the destination) and a partial file from an earlier platform version
+// is still on disk.
+func TestStartCodex_CronHooks_PartialRegistrationLeavesSentinelAbsent(t *testing.T) {
+	home := t.TempDir()
+	sentinel, managed, turnstart, env := cronHookEnv(t, true)
+
+	if err := os.MkdirAll(filepath.Dir(managed), 0o755); err != nil {
+		t.Fatalf("mkdir managed dir: %v", err)
+	}
+	// Only the turn-start half is registered.
+	partial := "[[hooks.UserPromptSubmit]]\n[[hooks.UserPromptSubmit.hooks]]\n" +
+		"type = \"command\"\ncommand = \"" + turnstart + "\"\ntimeout = 20\n"
+	if err := os.WriteFile(managed, []byte(partial), 0o644); err != nil {
+		t.Fatalf("seed partial managed config: %v", err)
+	}
+	// A stale sentinel from a boot that DID have both signals must be cleared,
+	// not merely left uncreated.
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
+		t.Fatalf("mkdir sentinel dir: %v", err)
+	}
+	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+		t.Fatalf("seed stale sentinel: %v", err)
+	}
+
+	env = append(env, "TMPDIR="+filepath.Join(t.TempDir(), "does-not-exist"))
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
+		t.Errorf("sentinel survived a half-registered managed layer (err=%v)\n%s", statErr, out)
+	}
+	if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
+		t.Errorf("boot did not warn about the incomplete registration:\n%s", out)
+	}
+}
+
+// Signal unavailable: without the platform hook commands there is nothing to
+// register, so no managed layer is written and the sentinel stays absent.
+func TestStartCodex_CronHooks_CommandsMissingLeavesSentinelAbsent(t *testing.T) {
+	home := t.TempDir()
+	sentinel, managed, _, env := cronHookEnv(t, false)
+
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
+		t.Fatalf("mkdir sentinel dir: %v", err)
+	}
+	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+		t.Fatalf("seed stale sentinel: %v", err)
+	}
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
+		t.Errorf("sentinel survived with no hook commands installed (err=%v)\n%s", statErr, out)
+	}
+	if _, statErr := os.Stat(managed); !os.IsNotExist(statErr) {
+		t.Errorf("managed hooks config written with no hook commands installed\n%s", out)
+	}
+	if !strings.Contains(string(out), "cron context hooks unavailable; feature disabled") {
+		t.Errorf("boot did not warn that the hook commands are missing:\n%s", out)
+	}
+}
