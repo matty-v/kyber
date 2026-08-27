@@ -915,3 +915,60 @@ func TestStartCodexRecoversUnparseableConfig(t *testing.T) {
 		t.Fatalf("managed MCP not registered after recovery:\n%s", config)
 	}
 }
+
+// stubBrokenMCPBin writes a `codex` whose `mcp list` always fails, standing in
+// for a fault that is NOT the agent's config.toml — a malformed managed
+// setting, an I/O error, or a broken codex binary. The boot path must not read
+// that as "the user's file is corrupt".
+func stubBrokenMCPBin(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatalf("write stub %s: %v", name, err)
+		}
+	}
+	write("codex", `
+case "${1:-}" in
+  --version) echo "codex-cli 0.150.1" ;;
+  login)     exit 0 ;;
+  mcp)       exit 1 ;;
+  *)         exit 0 ;;
+esac`)
+	write("curl", `exit 0`)
+	write("npm", `exit 0`)
+	write("tmux", `exit 0`)
+	write("sudo", `exec "$@"`)
+	return dir + ":" + os.Getenv("PATH")
+}
+
+// A `codex mcp` failure that is not attributable to the agent's config.toml
+// must leave that file completely alone. Resetting it here would destroy every
+// custom MCP server and unrelated setting — the data loss this change exists
+// to prevent — so the boot path probes an empty config first and only treats
+// the file as corrupt when the empty one parses and this one does not.
+func TestStartCodexKeepsUserConfigWhenFailureIsNotTheUserFile(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, agentOwnedConfig)
+
+	out, err := runBoot(t, home, secretCred, stubBrokenMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp")
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(config) != agentOwnedConfig {
+		t.Fatalf("agent config.toml was modified despite the failure not being its fault:\ngot:\n%s\nwant:\n%s", config, agentOwnedConfig)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".codex", "config.toml.corrupt")); err == nil {
+		t.Fatal("a valid config.toml was backed up and reset as if it were corrupt")
+	}
+	if !strings.Contains(string(out), "skipping MCP convergence") {
+		t.Fatalf("boot output does not report that convergence was skipped:\n%s", out)
+	}
+}
