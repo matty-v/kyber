@@ -28,6 +28,12 @@ func (f fixedAgentMetrics) AgentContainer(context.Context, string, string) (api.
 	return f.sample, nil
 }
 
+type failingAgentMetrics struct{}
+
+func (failingAgentMetrics) AgentContainer(context.Context, string, string) (api.AgentContainerMetrics, error) {
+	return api.AgentContainerMetrics{}, fmt.Errorf("metrics unavailable")
+}
+
 // statusEventTestScheme builds a scheme with corev1 + Kyber CRD types
 // so the fake client can Get/Patch Agent objects in status-event tests.
 func statusEventTestScheme(t *testing.T) *runtime.Scheme {
@@ -169,6 +175,40 @@ func TestStatusEvent_ResourceUsageUsesAgentMetricsAndRequestedLimits(t *testing.
 	}
 	if usage.DiskUsedBytes != 90 || usage.DiskTotalBytes != 100 {
 		t.Errorf("disk sample changed: %+v", usage)
+	}
+}
+
+func TestStatusEvent_ResourceUsagePreservesAgentUsageWhenMetricsDisappear(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	cpuLimit, memoryLimit := int64(1000), int64(1024*1024*1024)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Spec:       kyberv1.AgentSpec{Resources: kyberv1.AgentResources{CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi")}},
+		Status: kyberv1.AgentStatus{Activity: &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
+			CPUUsageMillicores: 83, CPULimitMillicores: &cpuLimit,
+			MemoryUsedBytes: 682 * 1024 * 1024, MemoryLimitBytes: &memoryLimit,
+		}}},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"), api.WithAgentMetricsProvider(failingAgentMetrics{}))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	body := `{"type":"resource_usage","at":"2026-08-27T12:01:00Z","resources":{"cpuUsageMillicores":0,"cpuLimitMillicores":100,"memoryUsedBytes":5242880,"memoryLimitBytes":67108864,"diskUsedBytes":91,"diskTotalBytes":100}}`
+	resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	got := &kyberv1.Agent{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "alice"}, got); err != nil {
+		t.Fatal(err)
+	}
+	usage := got.Status.Activity.Resources
+	if usage.CPUUsageMillicores != 83 || usage.MemoryUsedBytes != 682*1024*1024 || usage.DiskUsedBytes != 91 {
+		t.Fatalf("terminal sample = %+v", usage)
+	}
+	if *usage.CPULimitMillicores != 1000 || *usage.MemoryLimitBytes != 1024*1024*1024 {
+		t.Fatalf("requested limits changed: %+v", usage)
 	}
 }
 

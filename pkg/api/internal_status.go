@@ -127,6 +127,10 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 			return nil
 		}
 		ev.Resources.SampledAt = atMeta
+		cpuLimit := agent.Spec.Resources.CPU.MilliValue()
+		memoryLimit := agent.Spec.Resources.Memory.Value()
+		ev.Resources.CPULimitMillicores = &cpuLimit
+		ev.Resources.MemoryLimitBytes = &memoryLimit
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
 		// agent container or pod. Replace those misleading values with the
 		// metrics API's agent-container usage and the Agent's requested limits.
@@ -135,13 +139,20 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 			metrics, metricsErr := s.agentMetrics.AgentContainer(ctx, s.namespace, "agent-"+agentName)
 			if metricsErr != nil {
 				slog.Warn("agent container metrics unavailable", "agent", agentName, "error", metricsErr)
+				// metrics-server removes a terminated agent container before the
+				// native sidecar stops reporting disk. Preserve the last valid
+				// agent usage across MemoryExhausted/terminal states instead of
+				// falling back to the sidecar's own cgroup values.
+				if previous := agent.Status.Activity.Resources; previous != nil {
+					ev.Resources.CPUUsageMillicores = previous.CPUUsageMillicores
+					ev.Resources.MemoryUsedBytes = previous.MemoryUsedBytes
+				} else {
+					ev.Resources.CPUUsageMillicores = 0
+					ev.Resources.MemoryUsedBytes = 0
+				}
 			} else {
 				ev.Resources.CPUUsageMillicores = metrics.CPUUsageMillicores
 				ev.Resources.MemoryUsedBytes = metrics.MemoryUsedBytes
-				cpuLimit := agent.Spec.Resources.CPU.MilliValue()
-				memoryLimit := agent.Spec.Resources.Memory.Value()
-				ev.Resources.CPULimitMillicores = &cpuLimit
-				ev.Resources.MemoryLimitBytes = &memoryLimit
 			}
 		}
 		agent.Status.Activity.LastHeartbeatAt = &atMeta
