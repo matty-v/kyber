@@ -137,3 +137,9 @@ give operators a tested recovery path for a full or nearly-full volume.
   requested limits, and sidecar statfs remains authoritative for the shared
   PVC. Added the chart's read-only `pods.metrics.k8s.io` permission and focused
   override/limit regression coverage.
+- 2026-08-27: Live OOM testing exposed a terminal-sample race: metrics-server
+  removes the terminated agent container before the native sidecar stops, so a
+  later disk sample could replace CPU/memory with sidecar values. Deployed
+  `c31403e`, which preserves the last valid agent usage and requested limits
+  while continuing disk updates. Matt confirmed the recovered agent and a
+  subsequent MemoryExhausted path display the correct resources in GKE dev.
