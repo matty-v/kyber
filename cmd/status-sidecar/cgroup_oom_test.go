@@ -349,20 +349,15 @@ func TestParsePodCgroupPath_StripsContainerScope(t *testing.T) {
 	}
 }
 
-// TestParsePodCgroupPath_NamespacedRootIsError pins the failure mode
-// for clusters where cgroup namespacing is enabled — /proc/self/cgroup
-// reports just "/" or empty, and we can't derive a pod path. Caller
-// treats this as "OOM detection unavailable" not as a crash.
-func TestParsePodCgroupPath_NamespacedRootIsError(t *testing.T) {
-	cases := []string{
-		"0::/",
-		"0::",
+// TestParsePodCgroupPath_NamespacedRoot pins the GKE cgroup namespace shape:
+// the mounted cgroup root is already the pod cgroup.
+func TestParsePodCgroupPath_NamespacedRoot(t *testing.T) {
+	got, err := parsePodCgroupPath("0::/")
+	if err != nil || got != "/" {
+		t.Fatalf("namespaced root = %q, %v; want /, nil", got, err)
 	}
-	for _, in := range cases {
-		_, err := parsePodCgroupPath(in)
-		if err == nil {
-			t.Errorf("input %q should error (namespaced root)", in)
-		}
+	if _, err := parsePodCgroupPath("0::"); err == nil {
+		t.Fatal("empty cgroup path should error")
 	}
 }
 
@@ -392,6 +387,21 @@ func TestResolvePodCgroupEventsPath_HappyPath(t *testing.T) {
 	}
 	want := "/sys/fs/cgroup/kubepods.slice/pod-uid.slice/memory.events"
 	if got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestResolvePodCgroupEventsPath_NamespacedRoot(t *testing.T) {
+	dir := t.TempDir()
+	procPath := filepath.Join(dir, "self_cgroup")
+	if err := os.WriteFile(procPath, []byte("0::/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := resolvePodCgroupEventsPath(procPath, "/sys/fs/cgroup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "/sys/fs/cgroup/memory.events"; got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }

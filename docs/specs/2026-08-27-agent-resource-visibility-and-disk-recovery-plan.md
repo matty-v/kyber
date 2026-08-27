@@ -57,7 +57,7 @@ give operators a tested recovery path for a full or nearly-full volume.
 - [x] Add a compact Agent List warning when disk usage is at least 80%.
 - [x] Publish a reserve observation at 90% for slice 2 to consume, without
   changing lifecycle or stopping the harness in this slice.
-- [ ] Run focused Go and PWA tests, then the repository-required gates.
+- [x] Run focused Go and PWA tests, then the repository-required gates.
 
 ### Slice 1 acceptance evidence
 
@@ -118,3 +118,10 @@ give operators a tested recovery path for a full or nearly-full volume.
   but hit the repository's 10-minute package timeout in the unrelated
   `TestTranscriptTailerScript_BoundedOverManyFiles`; focused pod-injection tests
   pass.
+- 2026-08-27: PR CI is green. The first GKE dev deployment proved image
+  convergence but exposed the cluster's cgroup-namespace shape (`0::/`): the
+  mounted cgroup root is already the pod cgroup. Updated path resolution and
+  regression coverage so resource and OOM sampling use
+  `/sys/fs/cgroup/{memory.current,memory.max,cpu.stat,cpu.max,memory.events}` in
+  that environment. Focused sidecar tests and vet pass; live redeployment is in
+  progress.

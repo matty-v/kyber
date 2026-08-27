@@ -343,8 +343,8 @@ type config struct {
 	// (kyber#285). Auto-derived at startup from /proc/self/cgroup — see
 	// resolvePodCgroupEventsPath for the derivation logic + cgroup-v2
 	// caveats. Override via KYBER_CGROUP_MEMORY_EVENTS_PATH for tests /
-	// clusters where path derivation doesn't apply (cgroup namespacing
-	// enabled, exotic CRI). Empty disables OOM detection (sidecar logs
+	// clusters where path derivation doesn't apply (cgroup-v1 or an
+	// exotic CRI). Empty disables OOM detection (sidecar logs
 	// once and continues).
 	CgroupMemoryEventsPath string
 	// cgroupResolutionErr captures any error from auto-deriving the path
@@ -375,7 +375,7 @@ func loadConfig() (config, error) {
 	if c.CgroupMemoryEventsPath == "" {
 		// Derive the pod-level cgroup memory.events path from
 		// /proc/self/cgroup. On clusters where derivation fails (cgroup
-		// ns enabled, cgroup-v1, exotic CRI), the path stays empty and
+		// is unavailable (cgroup-v1, exotic CRI), the path stays empty and
 		// the OOM detector runs in disabled mode — the sidecar logs the
 		// reason once and continues. Operators can set
 		// KYBER_CGROUP_MEMORY_EVENTS_PATH to override.
