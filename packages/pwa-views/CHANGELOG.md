@@ -1,13 +1,17 @@
 # @matty-v/kyber-pwa-views
 
+## 0.35.1 — 2026-08-27
+
+### Added
+- Agent detail now shows live CPU, memory, and persistent-disk usage reported
+  from inside the pod. Agent lists flag disks at 80% usage and escalate the
+  indicator at the 90% maintenance reserve.
+
 ## 0.35.0 — 2026-08-27
 
 ### Added
 - Added the text agent-request submission and status/result wire types for
   clients of the new scoped request API.
-- Agent detail now shows live CPU, memory, and persistent-disk usage reported
-  from inside the pod. Agent lists flag disks at 80% usage and escalate the
-  indicator at the 90% maintenance reserve.
 
 ## 0.34.3 — 2026-08-27
 
