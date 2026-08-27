@@ -15,6 +15,17 @@ profiles — licensed under Apache 2.0.
 Notable changes made on top of the final internal release (v2.7.1) while
 preparing the code for open source:
 
+- Feature (agents, runtimes): `spec.jobs[].exclusive` and
+  `spec.jobs[].clearContextAfter` now work on Codex agents, not just Claude
+  Code. The Codex runtime registers the same two turn-boundary signals the
+  Claude Code runtime does — a turn-start hook that arms the job's pending
+  marker and a turn-end hook that clears the context and releases it — through
+  Codex's system-managed hooks layer, which loads without the interactive trust
+  prompt that makes user-level hooks unusable on a headless pod. Registration
+  stays all-or-nothing: a runtime that can register only one of the two signals
+  leaves the dispatcher's sentinel absent, so both flags remain accepted and
+  reported but inert rather than half-working.
+
 - Feature (api): Added a narrowly scoped text request surface for external
   gateways: callers with `requests:write` can submit work to an agent, and
   callers with `requests:read` can poll its status and eventual result. Requests

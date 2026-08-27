@@ -301,9 +301,9 @@ type AgentJob struct {
 	// for minutes, so the flock alone never protected a single-threaded agent
 	// from having a second prompt stacked on top of a live one.
 	//
-	// Requires the runtime to register the platform post-run hook (see
-	// ClearContextAfter for which runtimes do). Without it the dispatcher cannot
-	// tell when a turn ended, and falls back to the delivery-only flock.
+	// Requires the runtime to register the platform turn-boundary hooks (see
+	// ClearContextAfter for which runtimes do). Without them the dispatcher
+	// cannot tell when a turn ended, and falls back to the delivery-only flock.
 	// +optional
 	Exclusive bool `json:"exclusive,omitempty"`
 
@@ -316,8 +316,11 @@ type AgentJob struct {
 	// or dies mid-run. At most one clear happens per turn however many jobs
 	// requested it, since the context is shared.
 	//
-	// Runtime support: Claude Code only. Codex has no Stop-hook equivalent, so
-	// the field is accepted and reported back but has no effect there.
+	// Runtime support: Claude Code and Codex. Each runtime's start script
+	// registers a turn-start and a turn-end hook and only then writes the
+	// dispatcher's sentinel — both or neither, so a runtime that can register
+	// only one half leaves the field accepted and reported back but inert
+	// rather than half-working.
 	// +optional
 	ClearContextAfter bool `json:"clearContextAfter,omitempty"`
 }
