@@ -22,6 +22,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -126,6 +127,23 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 			return nil
 		}
 		ev.Resources.SampledAt = atMeta
+		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
+		// agent container or pod. Replace those misleading values with the
+		// metrics API's agent-container usage and the Agent's requested limits.
+		// Disk remains the sidecar's statfs sample of the shared PVC.
+		if s.agentMetrics != nil {
+			metrics, metricsErr := s.agentMetrics.AgentContainer(ctx, s.namespace, "agent-"+agentName)
+			if metricsErr != nil {
+				slog.Warn("agent container metrics unavailable", "agent", agentName, "error", metricsErr)
+			} else {
+				ev.Resources.CPUUsageMillicores = metrics.CPUUsageMillicores
+				ev.Resources.MemoryUsedBytes = metrics.MemoryUsedBytes
+				cpuLimit := agent.Spec.Resources.CPU.MilliValue()
+				memoryLimit := agent.Spec.Resources.Memory.Value()
+				ev.Resources.CPULimitMillicores = &cpuLimit
+				ev.Resources.MemoryLimitBytes = &memoryLimit
+			}
+		}
 		agent.Status.Activity.LastHeartbeatAt = &atMeta
 		agent.Status.Activity.Resources = ev.Resources
 	default:

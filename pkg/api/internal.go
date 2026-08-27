@@ -123,6 +123,7 @@ type InternalServer struct {
 	runtimeDetectCache     runtimedetect.Cache
 	skillStore             skillstore.Store
 	requestStore           requeststore.Store
+	agentMetrics           AgentMetricsProvider
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
 	// per (agent, state) so handleStatusSnapshot can store incremental delta seconds
@@ -219,6 +220,12 @@ func WithKubeClient(c client.Client, namespace string) InternalServerOption {
 		s.k8sClient = c
 		s.namespace = namespace
 	}
+}
+
+// WithAgentMetricsProvider wires live Kubernetes container metrics into
+// resource status events. The sidecar still owns persistent-volume sampling.
+func WithAgentMetricsProvider(provider AgentMetricsProvider) InternalServerOption {
+	return func(s *InternalServer) { s.agentMetrics = provider }
 }
 
 // IdentityRepoTokenMinter mints a short-lived GitHub App installation token

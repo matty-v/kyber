@@ -130,3 +130,10 @@ give operators a tested recovery path for a full or nearly-full volume.
   test agent to the new status-sidecar. Its CR status and public API now carry a
   fresh sample with CPU usage/limit, memory used/limit, disk used/total, sample
   time, and `diskReserveReached=false`; heartbeat/readiness remained healthy.
+- 2026-08-27: Follow-up testing with a 1 CPU / 1 GiB agent showed that the
+  cgroup-namespace root is container-scoped on GKE: the displayed 100m / 64Mi
+  limits belonged to status-sidecar. Corrected the source boundary so
+  metrics-server supplies live agent-container CPU/memory, Agent spec supplies
+  requested limits, and sidecar statfs remains authoritative for the shared
+  PVC. Added the chart's read-only `pods.metrics.k8s.io` permission and focused
+  override/limit regression coverage.
