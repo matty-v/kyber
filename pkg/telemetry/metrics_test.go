@@ -41,6 +41,12 @@ func TestInitMetrics_AllCountersNonNil(t *testing.T) {
 	if AgentRestarts == nil {
 		t.Error("AgentRestarts should be non-nil after InitMetrics")
 	}
+	if AgentRequestsTotal == nil {
+		t.Error("AgentRequestsTotal should be non-nil after InitMetrics")
+	}
+	if AgentRequestDuration == nil {
+		t.Error("AgentRequestDuration should be non-nil after InitMetrics")
+	}
 	if MachineStateTransitions == nil {
 		t.Error("MachineStateTransitions should be non-nil after InitMetrics")
 	}

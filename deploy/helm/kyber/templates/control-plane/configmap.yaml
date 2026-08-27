@@ -25,3 +25,11 @@ data:
   KYBER_METRICS_RETENTION_SECONDS: {{ .Values.metrics.redisRetentionSeconds | quote }}
   KYBER_METRICS_PROMETHEUS_URL: {{ .Values.metrics.prometheusURL | quote }}
   KYBER_METRICS_PROMETHEUS_INSECURE: {{ .Values.metrics.prometheusInsecureSkipVerify | quote }}
+  # Bounded agent request/reply feature gate and defensive limits.
+  KYBER_AGENT_REQUESTS_ENABLED: {{ .Values.api.agentRequests.enabled | quote }}
+  KYBER_AGENT_REQUESTS_LIFETIME_SECONDS: {{ .Values.api.agentRequests.lifetimeSeconds | quote }}
+  KYBER_AGENT_REQUESTS_MAX_PROMPT_BYTES: {{ .Values.api.agentRequests.maxPromptBytes | quote }}
+  KYBER_AGENT_REQUESTS_MAX_CORRELATION_BYTES: {{ .Values.api.agentRequests.maxCorrelationBytes | quote }}
+  KYBER_AGENT_REQUESTS_MAX_RESPONSE_BYTES: {{ .Values.api.agentRequests.maxResponseBytes | quote }}
+  KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ .Values.api.agentRequests.maxOutstanding | quote }}
+  KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ .Values.api.agentRequests.maxTerminal | quote }}

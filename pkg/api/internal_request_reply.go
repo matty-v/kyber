@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
@@ -46,6 +47,7 @@ func (s *InternalServer) handleRequestReply(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "invalid request reply", http.StatusBadRequest)
 		return
 	}
+	request, _ := s.requestStore.Get(r.Context(), agentName, body.RequestID)
 	if err := s.requestStore.Complete(r.Context(), agentName, body.RequestID, body.Response); err != nil {
 		switch {
 		case errors.Is(err, requeststore.ErrResponseTooLarge):
@@ -59,5 +61,10 @@ func (s *InternalServer) handleRequestReply(w http.ResponseWriter, r *http.Reque
 		}
 		return
 	}
+	createdAt := time.Time{}
+	if request != nil {
+		createdAt = request.CreatedAt
+	}
+	recordAgentRequestTerminal(r.Context(), "reply", "completed", agentName, body.RequestID, createdAt)
 	w.WriteHeader(http.StatusNoContent)
 }
