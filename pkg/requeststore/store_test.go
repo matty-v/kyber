@@ -17,6 +17,8 @@ func TestLimitsValidate(t *testing.T) {
 		{"lifetime above cap", func(l *Limits) { l.Lifetime = HardMaxLifetime + time.Second }},
 		{"zero prompt bytes", func(l *Limits) { l.MaxPromptBytes = 0 }},
 		{"prompt bytes above cap", func(l *Limits) { l.MaxPromptBytes = HardMaxPromptBytes + 1 }},
+		{"zero correlation bytes", func(l *Limits) { l.MaxCorrelationBytes = 0 }},
+		{"correlation bytes above cap", func(l *Limits) { l.MaxCorrelationBytes = HardMaxCorrelationBytes + 1 }},
 		{"zero response bytes", func(l *Limits) { l.MaxResponseBytes = 0 }},
 		{"response bytes above cap", func(l *Limits) { l.MaxResponseBytes = HardMaxResponseBytes + 1 }},
 		{"zero outstanding", func(l *Limits) { l.MaxOutstanding = 0 }},
@@ -107,11 +109,30 @@ func TestMemoryStoreTransitionGuards(t *testing.T) {
 func TestMemoryStoreBoundsPayloadsByBytes(t *testing.T) {
 	limits := DefaultLimits()
 	limits.MaxPromptBytes = 4
+	limits.MaxCorrelationBytes = 4
 	limits.MaxResponseBytes = 4
 	store := newTestMemoryStore(t, limits)
 	ctx := context.Background()
 	if _, err := store.Create(ctx, "kiosk", "too-big", "ééé", ""); !errors.Is(err, ErrPromptTooLarge) {
 		t.Fatalf("Create(oversize) error = %v, want %v", err, ErrPromptTooLarge)
+	}
+	if _, err := store.Create(ctx, "kiosk", "correlation-ascii", "four", "1234"); err != nil {
+		t.Fatalf("Create(correlation ASCII boundary) error = %v", err)
+	}
+	if err := store.Fail(ctx, "kiosk", "correlation-ascii", FailureDelivery); err != nil {
+		t.Fatalf("Fail(correlation ASCII boundary) error = %v", err)
+	}
+	if _, err := store.Create(ctx, "kiosk", "correlation-utf8", "four", "éé"); err != nil {
+		t.Fatalf("Create(correlation UTF-8 boundary) error = %v", err)
+	}
+	if err := store.Fail(ctx, "kiosk", "correlation-utf8", FailureDelivery); err != nil {
+		t.Fatalf("Fail(correlation UTF-8 boundary) error = %v", err)
+	}
+	if _, err := store.Create(ctx, "kiosk", "correlation-too-big-ascii", "four", "12345"); !errors.Is(err, ErrCorrelationTooLarge) {
+		t.Fatalf("Create(oversize ASCII correlation) error = %v, want %v", err, ErrCorrelationTooLarge)
+	}
+	if _, err := store.Create(ctx, "kiosk", "correlation-too-big-utf8", "four", "ééé"); !errors.Is(err, ErrCorrelationTooLarge) {
+		t.Fatalf("Create(oversize UTF-8 correlation) error = %v, want %v", err, ErrCorrelationTooLarge)
 	}
 	if _, err := store.Create(ctx, "kiosk", "req_1", "four", ""); err != nil {
 		t.Fatalf("Create() error = %v", err)

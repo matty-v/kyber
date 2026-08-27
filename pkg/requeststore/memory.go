@@ -28,7 +28,7 @@ func NewMemoryStore(limits Limits) (*MemoryStore, error) {
 
 // Create atomically enforces the per-agent outstanding limit and stores a new request.
 func (m *MemoryStore) Create(_ context.Context, agent, id, prompt, correlation string) (*Request, error) {
-	if err := validateCreate(agent, id, prompt, m.limits); err != nil {
+	if err := validateCreate(agent, id, prompt, correlation, m.limits); err != nil {
 		return nil, err
 	}
 	m.mu.Lock()

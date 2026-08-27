@@ -27,49 +27,54 @@ const (
 )
 
 const (
-	DefaultLifetime         = 60 * time.Second
-	DefaultMaxPromptBytes   = 2 * 1024
-	DefaultMaxResponseBytes = 8 * 1024
-	DefaultMaxOutstanding   = 2
-	DefaultMaxTerminal      = 20
+	DefaultLifetime            = 60 * time.Second
+	DefaultMaxPromptBytes      = 2 * 1024
+	DefaultMaxCorrelationBytes = 256
+	DefaultMaxResponseBytes    = 8 * 1024
+	DefaultMaxOutstanding      = 2
+	DefaultMaxTerminal         = 20
 
 	// Hard caps bound future operator configuration. They are intentionally
 	// compiled into the control plane rather than trusted to chart values.
-	HardMaxLifetime      = 5 * time.Minute
-	HardMaxPromptBytes   = 8 * 1024
-	HardMaxResponseBytes = 32 * 1024
-	HardMaxOutstanding   = 8
-	HardMaxTerminal      = 100
+	HardMaxLifetime         = 5 * time.Minute
+	HardMaxPromptBytes      = 8 * 1024
+	HardMaxCorrelationBytes = 1024
+	HardMaxResponseBytes    = 32 * 1024
+	HardMaxOutstanding      = 8
+	HardMaxTerminal         = 100
 )
 
 var (
-	ErrNotFound         = errors.New("requeststore: request not found")
-	ErrInvalidLimits    = errors.New("requeststore: invalid limits")
-	ErrInvalidRequest   = errors.New("requeststore: invalid request")
-	ErrPromptTooLarge   = errors.New("requeststore: prompt too large")
-	ErrResponseTooLarge = errors.New("requeststore: response too large")
-	ErrOutstandingLimit = errors.New("requeststore: outstanding request limit reached")
-	ErrConflict         = errors.New("requeststore: transition conflict")
+	ErrNotFound            = errors.New("requeststore: request not found")
+	ErrInvalidLimits       = errors.New("requeststore: invalid limits")
+	ErrInvalidRequest      = errors.New("requeststore: invalid request")
+	ErrPromptTooLarge      = errors.New("requeststore: prompt too large")
+	ErrCorrelationTooLarge = errors.New("requeststore: correlation too large")
+	ErrResponseTooLarge    = errors.New("requeststore: response too large")
+	ErrOutstandingLimit    = errors.New("requeststore: outstanding request limit reached")
+	ErrConflict            = errors.New("requeststore: transition conflict")
 )
 
 // Limits controls request lifetime, payload sizes, concurrency, and retained
 // terminal records. Values are validated against the compiled hard caps.
 type Limits struct {
-	Lifetime         time.Duration
-	MaxPromptBytes   int
-	MaxResponseBytes int
-	MaxOutstanding   int
-	MaxTerminal      int
+	Lifetime            time.Duration
+	MaxPromptBytes      int
+	MaxCorrelationBytes int
+	MaxResponseBytes    int
+	MaxOutstanding      int
+	MaxTerminal         int
 }
 
 // DefaultLimits returns the production defaults from the request/reply design.
 func DefaultLimits() Limits {
 	return Limits{
-		Lifetime:         DefaultLifetime,
-		MaxPromptBytes:   DefaultMaxPromptBytes,
-		MaxResponseBytes: DefaultMaxResponseBytes,
-		MaxOutstanding:   DefaultMaxOutstanding,
-		MaxTerminal:      DefaultMaxTerminal,
+		Lifetime:            DefaultLifetime,
+		MaxPromptBytes:      DefaultMaxPromptBytes,
+		MaxCorrelationBytes: DefaultMaxCorrelationBytes,
+		MaxResponseBytes:    DefaultMaxResponseBytes,
+		MaxOutstanding:      DefaultMaxOutstanding,
+		MaxTerminal:         DefaultMaxTerminal,
 	}
 }
 
@@ -77,6 +82,7 @@ func DefaultLimits() Limits {
 func (l Limits) Validate() error {
 	if l.Lifetime <= 0 || l.Lifetime > HardMaxLifetime ||
 		l.MaxPromptBytes <= 0 || l.MaxPromptBytes > HardMaxPromptBytes ||
+		l.MaxCorrelationBytes <= 0 || l.MaxCorrelationBytes > HardMaxCorrelationBytes ||
 		l.MaxResponseBytes <= 0 || l.MaxResponseBytes > HardMaxResponseBytes ||
 		l.MaxOutstanding <= 0 || l.MaxOutstanding > HardMaxOutstanding ||
 		l.MaxTerminal <= 0 || l.MaxTerminal > HardMaxTerminal {
@@ -109,12 +115,15 @@ type Store interface {
 	Complete(ctx context.Context, agent, id, response string) error
 }
 
-func validateCreate(agent, id, prompt string, limits Limits) error {
+func validateCreate(agent, id, prompt, correlation string, limits Limits) error {
 	if agent == "" || id == "" || prompt == "" {
 		return ErrInvalidRequest
 	}
 	if len([]byte(prompt)) > limits.MaxPromptBytes {
 		return ErrPromptTooLarge
+	}
+	if len([]byte(correlation)) > limits.MaxCorrelationBytes {
+		return ErrCorrelationTooLarge
 	}
 	return nil
 }

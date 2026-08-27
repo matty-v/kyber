@@ -100,7 +100,7 @@ func NewRedisStore(client *redis.Client, limits Limits) (*RedisStore, error) {
 
 // Create atomically enforces the outstanding limit and writes a queued request.
 func (r *RedisStore) Create(ctx context.Context, agent, id, prompt, correlation string) (*Request, error) {
-	if err := validateCreate(agent, id, prompt, r.limits); err != nil {
+	if err := validateCreate(agent, id, prompt, correlation, r.limits); err != nil {
 		return nil, err
 	}
 	requestKey, outstandingKey, _, prefix := redisKeys(agent, id)
