@@ -33,6 +33,20 @@ describe('buildManagedMachineRequest', () => {
     expect(got.provider).toBe('gce')
     if (got.provider === 'gce') expect(got.interruptible).toBe(true)
   })
+
+  it('omits diskSizeGb for EKS because the selected profile owns the disk', () => {
+    const got = buildManagedMachineRequest({
+      name: 'worker-eks', machineType: 'small', diskSizeGb: '0',
+      zone: 'us-east-1a', spot: true,
+    }, 'eks')
+    expect(got).toEqual({
+      name: 'worker-eks',
+      provider: 'eks',
+      profile: 'small',
+      location: 'us-east-1a',
+      interruptible: true,
+    })
+  })
 })
 
 describe('buildMockRequest', () => {

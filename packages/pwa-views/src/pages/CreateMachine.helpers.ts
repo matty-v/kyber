@@ -12,7 +12,7 @@ export type MockFormState = {
   name: string
 }
 
-export function buildManagedMachineRequest(form: ManagedMachineFormState, provider: 'gce' | 'gke' | 'fake'): CreateMachineRequest {
+export function buildManagedMachineRequest(form: ManagedMachineFormState, provider: 'gce' | 'gke' | 'eks' | 'fake'): CreateMachineRequest {
   const request: CreateMachineRequest = {
     name: form.name,
     provider,
@@ -20,7 +20,7 @@ export function buildManagedMachineRequest(form: ManagedMachineFormState, provid
     interruptible: form.spot,
     location: form.zone,
   }
-  if (provider !== 'gke') request.diskSizeGb = parseInt(form.diskSizeGb, 10)
+  if (provider !== 'gke' && provider !== 'eks') request.diskSizeGb = parseInt(form.diskSizeGb, 10)
   return request
 }
 

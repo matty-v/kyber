@@ -79,11 +79,38 @@ compute:
       us-east-1a: subnet-aaaa
       us-east-1b: subnet-bbbb
     profiles:
-      - id: standard
-        displayName: Standard
+      - id: small
+        displayName: Small
         cpu: "2"
         memory: 8Gi
         instanceTypes: [m7i.large, m7a.large, m6i.large]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: lt-0123456789abcdef0
+        launchTemplateVersion: "1"
+      - id: medium
+        displayName: Medium
+        cpu: "4"
+        memory: 16Gi
+        instanceTypes: [m7i.xlarge, m7a.xlarge, m6i.xlarge]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: lt-0123456789abcdef0
+        launchTemplateVersion: "1"
+      - id: large
+        displayName: Large
+        cpu: "8"
+        memory: 32Gi
+        instanceTypes: [m7i.2xlarge, m7a.2xlarge, m6i.2xlarge]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: lt-0123456789abcdef0
+        launchTemplateVersion: "1"
+      - id: xlarge
+        displayName: XLarge
+        cpu: "16"
+        memory: 64Gi
+        instanceTypes: [m7i.4xlarge, m7a.4xlarge, m6i.4xlarge]
         diskSizeGb: 100
         availabilityClasses: [reliable, costOptimized]
         launchTemplateId: lt-0123456789abcdef0
@@ -100,6 +127,24 @@ storage:
     encrypted: true
     allowedZones: [us-east-1a, us-east-1b]
 ```
+
+`allowedZones` is the exact Zone catalog shown to the operator. Every listed
+zone must have a matching worker subnet and must also appear in
+`storage.awsEBS.allowedZones`; Kyber does not discover or add zones outside
+this installer-approved set.
+
+`profiles` is likewise an installer-curated catalog rather than a fixed Kyber
+size list. The example provides four general-purpose sizes. Instance types
+within one profile must have the same CPU and memory shape because EKS may
+choose any of them for Spot capacity. Confirm every configured type is offered
+in every allowed zone and fits the account's EC2 quotas before installation.
+
+For EKS, `diskSizeGb` belongs to the profile and is not a separate Machine
+choice in the PWA. When a profile uses `launchTemplateId`, its root-volume
+mapping is authoritative and the adapter deliberately omits EKS `diskSize`.
+Keep the displayed `diskSizeGb` aligned with that launch template. Supporting
+different disk sizes requires separate profiles backed by launch templates
+with the corresponding root-volume mappings.
 
 The chart fails closed if AWS EBS is not encrypted gp3, has no approved AZ,
 or conflicts with the selected Agent StorageClass. `WaitForFirstConsumer`
