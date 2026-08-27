@@ -164,6 +164,18 @@ func (e *EKSAdapter) Profiles(context.Context) ([]Profile, error) {
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
 }
+
+// Locations returns the installer-approved zones exposed to operators. Keep
+// the order stable even though the validated configuration is stored as a map.
+func (e *EKSAdapter) Locations(context.Context) ([]string, error) {
+	out := make([]string, 0, len(e.allowedZones))
+	for zone := range e.allowedZones {
+		out = append(out, zone)
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
 func (e *EKSAdapter) Validate(_ context.Context, d DesiredMachine) error {
 	profile, ok := e.profiles[d.Profile]
 	if !ok {
@@ -611,3 +623,4 @@ func (e *EKSAdapter) Observe(context.Context, string) (InstanceObservation, erro
 var _ ComputeAdapter = (*EKSAdapter)(nil)
 var _ CapacityProvider = (*EKSAdapter)(nil)
 var _ CapacityNodeSelector = (*EKSAdapter)(nil)
+var _ CapacityLocations = (*EKSAdapter)(nil)

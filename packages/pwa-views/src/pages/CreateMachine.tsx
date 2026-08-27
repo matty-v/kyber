@@ -50,6 +50,8 @@ export function CreateMachine() {
       return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
     case 'gke':
       return <CreateManagedMachine navigate={navigate} provider="gke" capabilities={config.compute.managed} />
+    case 'eks':
+      return <CreateManagedMachine navigate={navigate} provider="eks" capabilities={config.compute.managed} />
     case '':
     default:
       return <CreateManagedMachine navigate={navigate} provider="gce" capabilities={config.compute.managed} />
@@ -74,7 +76,7 @@ function CreateManagedMachine({
   capabilities,
 }: {
   navigate: ReturnType<typeof useNavigate>
-  provider: 'gce' | 'gke' | 'fake'
+  provider: 'gce' | 'gke' | 'eks' | 'fake'
   capabilities?: { profiles: VMType[]; locations: string[]; diskSizesGb: number[]; supportsInterruptible: boolean }
 }) {
   const createMachine = useCreateMachine()
@@ -85,10 +87,11 @@ function CreateManagedMachine({
   const profiles = capabilities?.profiles ?? []
   const locations = capabilities?.locations ?? []
   const diskSizes = capabilities?.diskSizesGb ?? []
+  const profileOwnsDisk = provider === 'gke' || provider === 'eks'
   const [form, setForm] = useState<ManagedMachineFormState>({
     name: '',
     machineType: profiles[0]?.type ?? '',
-    diskSizeGb: provider === 'gke' ? '0' : String(diskSizes.includes(50) ? 50 : (diskSizes[0] ?? '')),
+    diskSizeGb: profileOwnsDisk ? '0' : String(diskSizes.includes(50) ? 50 : (diskSizes[0] ?? '')),
     zone: locations[0] ?? '',
     spot: false,
   })
@@ -108,7 +111,7 @@ function CreateManagedMachine({
 
   async function submit(e: React.FormEvent) {
     e.preventDefault()
-    const err = provider === 'gke'
+    const err = profileOwnsDisk
       ? (!form.name ? 'Name is required' : !form.machineType ? 'Machine profile is required' : !form.zone ? 'Location is required' : null)
       : validateManagedMachineForm(form)
     if (err) {
@@ -191,7 +194,7 @@ function CreateManagedMachine({
             </Select>
           </div>
 
-          {provider !== 'gke' && <div>
+          {!profileOwnsDisk && <div>
             <label className={labelClass}>Disk Size</label>
             <Select value={form.diskSizeGb} onValueChange={(v) => set('diskSizeGb', v)}>
               <SelectTrigger>

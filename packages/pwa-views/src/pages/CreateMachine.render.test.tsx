@@ -77,3 +77,40 @@ describe('CreateMachine (mock provider)', () => {
     expect(body).not.toHaveProperty('capacity')
   })
 })
+
+describe('CreateMachine (EKS provider)', () => {
+  it('renders installer-approved zones and no separate disk picker', () => {
+    setup()
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: {
+        compute: {
+          provider: 'eks',
+          managed: {
+            profiles: [{ type: 'small', cpu: '2', memory: '8Gi' }],
+            locations: ['us-east-1a', 'us-east-1b'],
+            diskSizesGb: [],
+            supportsInterruptible: true,
+          },
+        },
+      } as ComputeConfig,
+      isLoading: false,
+      error: null,
+    } as unknown as UseQueryResult<ComputeConfig, Error>)
+
+    render(
+      <MemoryRouter>
+        <CreateMachine />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Zone')).toBeInTheDocument()
+    expect(screen.queryByText('Disk Size')).not.toBeInTheDocument()
+    const zoneSelect = screen.getAllByRole('combobox')[1]
+    expect(zoneSelect).toHaveTextContent('us-east-1a')
+    const nativeZoneSelect = document.querySelectorAll('select')[1] as HTMLSelectElement
+    expect(Array.from(nativeZoneSelect.options, (option) => option.value)).toEqual([
+      'us-east-1a',
+      'us-east-1b',
+    ])
+  })
+})

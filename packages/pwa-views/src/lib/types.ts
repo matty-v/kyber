@@ -542,7 +542,7 @@ export interface RestartMachineAgentsResponse {
 // `capacity` object is optional too since #240 — when omitted, the server
 // auto-fills from node.status.allocatable.
 export type CreateMachineRequest =
-  | { name: string; provider: 'gce' | 'gke' | 'fake'; profile: string; diskSizeGb?: number; interruptible?: boolean; availabilityClass?: MachineAvailabilityClass; location: string; managementMode?: 'Managed' }
+  | { name: string; provider: 'gce' | 'gke' | 'eks' | 'fake'; profile: string; diskSizeGb?: number; interruptible?: boolean; availabilityClass?: MachineAvailabilityClass; location: string; managementMode?: 'Managed' }
   | { name: string; provider: 'static' | 'mock'; capacity?: { cpu: string; memory: string; ephemeralStorage?: string }; managementMode?: 'External' }
 
 export interface ComputeCapabilities {
@@ -711,7 +711,7 @@ export interface LoggingExportResult {
 // Used by the PWA to render provider-conditional forms (e.g., Create Machine
 // shows different fields on mock vs gce) and to drive the Create-Agent model
 // dropdown from the server's known-models list.
-export type ComputeProvider = 'gce' | 'gke' | 'static' | 'fake' | 'mock' | ''
+export type ComputeProvider = 'gce' | 'gke' | 'eks' | 'static' | 'fake' | 'mock' | ''
 
 export type ModelInfo = {
   id: string

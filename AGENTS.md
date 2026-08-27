@@ -89,6 +89,12 @@ testable without a cluster. Authoritative transition table:
   Managed pools are created at size one with Kyber ownership labels, resized
   to zero for Offline, and deleted only when both ownership labels match; an
   unowned pool is a hard failure, never an adoption opportunity.
+  `provider=eks` is managed-only: installer-curated profiles map one logical
+  Machine to zonal EKS managed node-group capacity, and `allowedZones` is the
+  exact operator-facing location catalog. Profile instance alternatives must
+  have an equivalent CPU/memory shape. Disk capacity is profile-owned (and,
+  when configured, fixed by the profile's launch template), so the PWA does
+  not offer a separate EKS disk selector.
   Regional GKE installations separate the cluster resource location from
   `compute.gke.nodeLocations`. Two or more eligible zones use GKE total-count
   autoscaling (`totalMinNodeCount=totalMaxNodeCount=1`, location policy `ANY`)

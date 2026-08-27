@@ -102,6 +102,26 @@ func TestParseEKSConfig(t *testing.T) {
 	}
 }
 
+func TestEKSLocationsReturnsAllowedZonesSorted(t *testing.T) {
+	a, err := parseEKSConfig(validEKSConfig())
+	if err != nil {
+		t.Fatalf("parseEKSConfig: %v", err)
+	}
+	locations, err := a.Locations(context.Background())
+	if err != nil {
+		t.Fatalf("Locations: %v", err)
+	}
+	want := []string{"us-east-1a", "us-east-1b"}
+	if len(locations) != len(want) {
+		t.Fatalf("Locations = %v, want %v", locations, want)
+	}
+	for i := range want {
+		if locations[i] != want[i] {
+			t.Errorf("Locations[%d] = %q, want %q", i, locations[i], want[i])
+		}
+	}
+}
+
 func TestParseEKSConfigFailsClosed(t *testing.T) {
 	for _, mutate := range []func(ProviderConfig){
 		func(c ProviderConfig) { delete(c, EKSConfigRegion) },

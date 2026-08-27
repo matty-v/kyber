@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.34.2 — 2026-08-27
+
+### Fixed
+- EKS Machine creation now treats disk capacity as part of the installer-owned
+  profile instead of showing an empty, ineffective disk-size selector.
+- EKS is represented explicitly in the compute-provider wire type, so its
+  managed Machine form no longer relies on the fallback provider branch.
+
 ## 0.34.1 — 2026-08-26
 
 ### Fixed

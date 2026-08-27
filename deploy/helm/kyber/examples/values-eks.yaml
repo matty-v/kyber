@@ -28,12 +28,45 @@ compute:
       us-east-1a: REPLACE_ME
       us-east-1b: REPLACE_ME
     profiles:
-      - id: standard
-        displayName: Standard
-        description: General-purpose Kyber Machine
+      # Profiles are operator-facing capacity promises. Each instanceTypes
+      # list must contain equivalent shapes so Spot can choose available
+      # capacity without changing what Kyber reports to the operator.
+      - id: small
+        displayName: Small
+        description: General-purpose 2 vCPU Kyber Machine
         cpu: "2"
         memory: 8Gi
         instanceTypes: [m7i.large, m7a.large, m6i.large]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: REPLACE_ME
+        launchTemplateVersion: REPLACE_ME
+      - id: medium
+        displayName: Medium
+        description: General-purpose 4 vCPU Kyber Machine
+        cpu: "4"
+        memory: 16Gi
+        instanceTypes: [m7i.xlarge, m7a.xlarge, m6i.xlarge]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: REPLACE_ME
+        launchTemplateVersion: REPLACE_ME
+      - id: large
+        displayName: Large
+        description: General-purpose 8 vCPU Kyber Machine
+        cpu: "8"
+        memory: 32Gi
+        instanceTypes: [m7i.2xlarge, m7a.2xlarge, m6i.2xlarge]
+        diskSizeGb: 100
+        availabilityClasses: [reliable, costOptimized]
+        launchTemplateId: REPLACE_ME
+        launchTemplateVersion: REPLACE_ME
+      - id: xlarge
+        displayName: XLarge
+        description: General-purpose 16 vCPU Kyber Machine
+        cpu: "16"
+        memory: 64Gi
+        instanceTypes: [m7i.4xlarge, m7a.4xlarge, m6i.4xlarge]
         diskSizeGb: 100
         availabilityClasses: [reliable, costOptimized]
         launchTemplateId: REPLACE_ME
