@@ -1445,3 +1445,67 @@ func TestStartCodexAppendsToManagedConfigAreNonFatal(t *testing.T) {
 		t.Fatal("no managed-config append sites found — has the helper been renamed?")
 	}
 }
+
+// An agent already poisoned by the 0700 /etc/codex from #160 must repair
+// itself on the next boot — even though it still exits 42.
+//
+// That combination is the whole point. A 0700 managed-config directory stops
+// codex loading ANY configuration, so `codex login status` fails, the
+// device-auth branch runs, it cannot complete either, and the script exits 42.
+// The full managed-settings write (which fixes the mode) lives far below that
+// exit, so #165 repaired new agents and could never reach an already-broken
+// one: every boot died before the chmod. /etc is on /persist under rootfs
+// persistence, so the bad directory survives image updates and the agent stays
+// broken forever.
+//
+// The repair therefore has to run before the first codex invocation, and this
+// test pins that ordering by asserting the mode is fixed on a boot that fails.
+func TestStartCodexRepairsAPoisonedManagedConfigBeforeGivingUp(t *testing.T) {
+	managedDir := filepath.Join(t.TempDir(), "codex")
+	if err := os.MkdirAll(managedDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	managed := filepath.Join(managedDir, "managed_config.toml")
+	if err := os.WriteFile(managed, []byte("approval_policy = \"never\"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Ends the auth session immediately with Kyber's marker still in place, so
+	// the boot takes the exit-42 path — exactly what a poisoned agent does.
+	path, _, donePath := stubDeviceAuthBin(t)
+	if err := os.WriteFile(donePath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	stubDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(stubDir, "tmux"), []byte(`#!/usr/bin/env bash
+case "${1:-}" in
+  new-session) exit 0 ;;
+  has-session) exit 1 ;;
+  *) exit 0 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runBoot(t, t.TempDir(), `{}`, stubDir+":"+path,
+		"KYBER_MANAGED_CODEX_CONFIG="+managed)
+	if err == nil {
+		t.Fatalf("expected the exit-42 path for this fixture:\n%s", out)
+	}
+
+	di, statErr := os.Stat(managedDir)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if perm := di.Mode().Perm(); perm&0o005 != 0o005 {
+		t.Fatalf("a boot that exits 42 left the managed config dir at %o — "+
+			"a poisoned agent can never repair itself:\n%s", perm, out)
+	}
+	fi, statErr := os.Stat(managed)
+	if statErr != nil {
+		t.Fatal(statErr)
+	}
+	if perm := fi.Mode().Perm(); perm&0o044 == 0 {
+		t.Fatalf("managed config left at %o, unreadable by the agent user", perm)
+	}
+}

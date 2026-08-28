@@ -46,6 +46,104 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
     fi
 fi
 
+KYBER_MANAGED_CODEX_CONFIG="${KYBER_MANAGED_CODEX_CONFIG:-/etc/codex/managed_config.toml}"
+
+# Set $1 to mode $2, but only when it is not already that mode. A chmod on a
+# path this user does not own fails even when the mode is already correct, so
+# checking first stops an already-fine directory from failing the whole write.
+kyber_ensure_mode() {
+    _path="$1"
+    _want="$2"
+    _have="$(stat -c '%a' "$_path" 2>/dev/null || echo '')"
+    [ "$_have" = "${_want#0}" ] && return 0
+    chmod "$_want" "$_path" 2>/dev/null || sudo chmod "$_want" "$_path" 2>/dev/null || return 1
+}
+
+# True when this shell can write $1 directly — the file exists and is writable,
+# or it does not exist and its directory is. Never attempts the write itself.
+kyber_managed_config_writable() {
+    if [ -e "$1" ]; then
+        [ -w "$1" ]
+    else
+        [ -w "$(dirname "$1")" ]
+    fi
+}
+
+# Write via sudo only when a direct write is not possible: the tests run this
+# script unprivileged against a temp path, and the image grants kyber
+# passwordless sudo for exactly this kind of boot-time maintenance.
+#
+# Both the directory and the file must be readable BY THE AGENT USER, not just
+# by root. `sudo mkdir` and `sudo tee` create 0700/0600 under root's umask, and
+# codex then cannot traverse /etc/codex: its probe for requirements.toml comes
+# back EACCES instead of ENOENT, and it refuses to load ANY configuration. Every
+# codex command fails, which reads as "credentials missing or invalid" and
+# crash-loops the agent. Found on kyber-canary 2026-08-28, reproduced as:
+#
+#   /etc/codex mode 700 -> "failed to load bootstrap configuration: Failed to
+#                           read requirements file ...: Permission denied"
+#   /etc/codex mode 755 -> codex works normally
+#
+# The mode is therefore part of the contract, not a detail: creating this
+# directory at all changes how codex boots, so creating it wrong is worse than
+# not creating it.
+#
+# Writability is probed with `[ -w ]` rather than `: >> "$file"`. A failed
+# REDIRECTION is reported by the shell itself, before the command's own
+# `2>/dev/null` applies, so the probe leaked "Permission denied" into every
+# boot log even when the sudo fallback then succeeded. start-codex.sh already
+# documents that trap in the token-reporter block below; this is the same one.
+kyber_write_managed_config() {
+    _target="$1"
+    _dir="$(dirname "$_target")"
+    if [ ! -d "$_dir" ]; then
+        mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
+    fi
+    kyber_ensure_mode "$_dir" 0755 || return 1
+    if kyber_managed_config_writable "$_target"; then
+        cat > "$_target"
+    else
+        sudo tee "$_target" >/dev/null || return 1
+    fi
+    kyber_ensure_mode "$_target" 0644 || return 1
+}
+
+# Append to the managed config, keeping it readable by the agent user and
+# keeping failed redirections out of the boot log.
+kyber_append_managed_config() {
+    _target="$1"
+    if kyber_managed_config_writable "$_target"; then
+        cat >> "$_target"
+    else
+        sudo tee -a "$_target" >/dev/null || return 1
+    fi
+    kyber_ensure_mode "$_target" 0644 || return 1
+}
+
+# Repair an already-poisoned managed config BEFORE anything asks codex to run.
+#
+# The full managed-settings write lives further down, after the credential and
+# device-auth blocks. That ordering is fine on a healthy agent and useless on a
+# broken one: an agent whose /etc/codex was created 0700 by the version of this
+# script shipped in #160 cannot run ANY codex command, so `codex login status`
+# fails, the device-auth branch runs, it cannot complete either, and the script
+# exits 42 at that point — 170 lines before the chmod that would have fixed it.
+# Every subsequent boot repeats it. #165 therefore fixed new agents and could
+# not reach the ones already broken.
+#
+# /etc lives on /persist under rootfs persistence, so a directory created wrong
+# once survives every image update. Repairing it here, before the first codex
+# invocation, is what makes the fix self-healing rather than forward-only.
+# Silent and best-effort by design: on a healthy agent there is nothing to do.
+if [ -d "$(dirname "$KYBER_MANAGED_CODEX_CONFIG")" ]; then
+    kyber_ensure_mode "$(dirname "$KYBER_MANAGED_CODEX_CONFIG")" 0755 || \
+        echo "[kyber] WARNING: could not make $(dirname "$KYBER_MANAGED_CODEX_CONFIG") readable; codex may fail to load its configuration" >&2
+    if [ -f "$KYBER_MANAGED_CODEX_CONFIG" ]; then
+        kyber_ensure_mode "$KYBER_MANAGED_CODEX_CONFIG" 0644 || \
+            echo "[kyber] WARNING: could not make $KYBER_MANAGED_CODEX_CONFIG readable" >&2
+    fi
+fi
+
 # The API transports the opaque Codex credential document through a Kubernetes
 # Secret. Never print it.
 #
@@ -166,7 +264,6 @@ unset _device_auth_pending
 #
 # Claude Code has always done the equivalent — see start-claude.sh's
 # "Merge instead of replacing" jq path for ~/.claude.json.
-KYBER_MANAGED_CODEX_CONFIG="${KYBER_MANAGED_CODEX_CONFIG:-/etc/codex/managed_config.toml}"
 
 # ---- Scheduled-job turn-boundary hooks (FAL-8) ----
 # Codex gets the SAME two platform signals Claude Code registers in
@@ -239,78 +336,6 @@ command = \"env KYBER_CLEAR_SESSION_TEXT=${KYBER_CODEX_CLEAR_TEXT} ${KYBER_POSTR
 timeout = 20
 "
 fi
-
-# Set $1 to mode $2, but only when it is not already that mode. A chmod on a
-# path this user does not own fails even when the mode is already correct, so
-# checking first stops an already-fine directory from failing the whole write.
-kyber_ensure_mode() {
-    _path="$1"
-    _want="$2"
-    _have="$(stat -c '%a' "$_path" 2>/dev/null || echo '')"
-    [ "$_have" = "${_want#0}" ] && return 0
-    chmod "$_want" "$_path" 2>/dev/null || sudo chmod "$_want" "$_path" 2>/dev/null || return 1
-}
-
-# True when this shell can write $1 directly — the file exists and is writable,
-# or it does not exist and its directory is. Never attempts the write itself.
-kyber_managed_config_writable() {
-    if [ -e "$1" ]; then
-        [ -w "$1" ]
-    else
-        [ -w "$(dirname "$1")" ]
-    fi
-}
-
-# Write via sudo only when a direct write is not possible: the tests run this
-# script unprivileged against a temp path, and the image grants kyber
-# passwordless sudo for exactly this kind of boot-time maintenance.
-#
-# Both the directory and the file must be readable BY THE AGENT USER, not just
-# by root. `sudo mkdir` and `sudo tee` create 0700/0600 under root's umask, and
-# codex then cannot traverse /etc/codex: its probe for requirements.toml comes
-# back EACCES instead of ENOENT, and it refuses to load ANY configuration. Every
-# codex command fails, which reads as "credentials missing or invalid" and
-# crash-loops the agent. Found on kyber-canary 2026-08-28, reproduced as:
-#
-#   /etc/codex mode 700 -> "failed to load bootstrap configuration: Failed to
-#                           read requirements file ...: Permission denied"
-#   /etc/codex mode 755 -> codex works normally
-#
-# The mode is therefore part of the contract, not a detail: creating this
-# directory at all changes how codex boots, so creating it wrong is worse than
-# not creating it.
-#
-# Writability is probed with `[ -w ]` rather than `: >> "$file"`. A failed
-# REDIRECTION is reported by the shell itself, before the command's own
-# `2>/dev/null` applies, so the probe leaked "Permission denied" into every
-# boot log even when the sudo fallback then succeeded. start-codex.sh already
-# documents that trap in the token-reporter block below; this is the same one.
-kyber_write_managed_config() {
-    _target="$1"
-    _dir="$(dirname "$_target")"
-    if [ ! -d "$_dir" ]; then
-        mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
-    fi
-    kyber_ensure_mode "$_dir" 0755 || return 1
-    if kyber_managed_config_writable "$_target"; then
-        cat > "$_target"
-    else
-        sudo tee "$_target" >/dev/null || return 1
-    fi
-    kyber_ensure_mode "$_target" 0644 || return 1
-}
-
-# Append to the managed config, keeping it readable by the agent user and
-# keeping failed redirections out of the boot log.
-kyber_append_managed_config() {
-    _target="$1"
-    if kyber_managed_config_writable "$_target"; then
-        cat >> "$_target"
-    else
-        sudo tee -a "$_target" >/dev/null || return 1
-    fi
-    kyber_ensure_mode "$_target" 0644 || return 1
-}
 
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
 # Managed by Kyber. Rewritten on every agent boot — do not edit.
