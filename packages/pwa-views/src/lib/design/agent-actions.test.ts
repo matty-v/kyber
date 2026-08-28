@@ -50,6 +50,11 @@ describe('lifecycleItemsInMore', () => {
     expect(lifecycleItemsInMore('DiskExhausted')).toEqual(['stop', 'force-needs-auth'])
   })
 
+  it('BrokenRuntime: Repair runtime + Stop, without authentication actions', () => {
+    expect(lifecycleItemsInMore('BrokenRuntime')).toEqual(['repair-runtime', 'stop'])
+    expect(lifecycleItemsInMore('BrokenRuntime')).not.toContain('force-needs-auth')
+  })
+
   it('Starting: Require re-auth only — a wedged Starting agent is a re-auth target (#395)', () => {
     expect(lifecycleItemsInMore('Starting')).toEqual(['force-needs-auth'])
   })
@@ -121,7 +126,7 @@ describe('lifecycleActionEndpoint', () => {
     expect(lifecycleActionEndpoint('retry-startup')).not.toBe('restart')
   })
 
-  it.each(['start', 'stop', 'restart', 'force-needs-auth'] as const)(
+  it.each(['start', 'stop', 'restart', 'force-needs-auth', 'repair-runtime'] as const)(
     '%s fires its own like-named endpoint',
     (kind) => {
       expect(lifecycleActionEndpoint(kind)).toBe(kind)
@@ -151,7 +156,7 @@ describe('lifecycleActionEndpoint', () => {
 
 describe('isLifecycleKind', () => {
   it('accepts every lifecycle kind and rejects the session/setter kinds', () => {
-    for (const kind of ['start', 'stop', 'restart', 'force-needs-auth', 'retry-startup']) {
+    for (const kind of ['start', 'stop', 'restart', 'force-needs-auth', 'repair-runtime', 'retry-startup']) {
       expect(isLifecycleKind(kind), kind).toBe(true)
     }
     // These must fall through the guard untouched — routing them through

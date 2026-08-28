@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+usage() {
+    echo "usage: kyber-runtime-repair <root> <package> <binary> <version> <package-path> <executable-path>" >&2
+    exit 2
+}
+[ "$#" -eq 6 ] || usage
+
+root="$1"
+package="$2"
+binary="$3"
+version="$4"
+package_path="$5"
+executable_path="$6"
+expected_root="${KYBER_REPAIR_TEST_ROOT:-/persist/agentroot}"
+
+if [ "$root" != "$expected_root" ] || [ ! -d "$root" ] ||
+   ! [[ "$package" =~ ^@[0-9A-Za-z._-]+/[0-9A-Za-z._-]+$ ]] ||
+   ! [[ "$binary" =~ ^[0-9A-Za-z._-]+$ ]] ||
+   ! [[ "$version" =~ ^[0-9A-Za-z.-]*$ ]] || [ "${#version}" -gt 64 ] ||
+   ! [[ "$package_path" =~ ^/usr/lib/node_modules/@[0-9A-Za-z._-]+/[0-9A-Za-z._-]+$ ]] ||
+   ! [[ "$executable_path" =~ ^/usr/bin/[0-9A-Za-z._-]+$ ]]; then
+    echo "[kyber] runtime repair: invalid repair contract" >&2
+    exit 2
+fi
+
+if [ -z "$version" ]; then
+    version="${KYBER_RUNTIME_DEFAULT_VERSION:-}"
+fi
+if [ "$version" = latest ]; then
+    version="$(npm view "${package}@latest" version 2>/dev/null | tail -1)"
+fi
+if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?$ ]]; then
+    echo "[kyber] runtime repair: no concrete repair version is available" >&2
+    exit 1
+fi
+
+installer="$root/usr/local/bin/kyber-harness-install"
+# The maintenance image is authoritative for repair tooling. Copy its atomic
+# installer into the durable root so an old or damaged root cannot strand the
+# operator before package repair even starts.
+installer_source="${KYBER_REPAIR_INSTALLER_SOURCE:-/usr/local/bin/kyber-harness-install}"
+[ -x "$installer_source" ] || {
+    echo "[kyber] runtime repair: maintenance image has no atomic installer" >&2
+    exit 1
+}
+install -D -m 0755 "$installer_source" "$installer"
+
+echo "[kyber] runtime repair: repairing ${package}@${version}"
+chroot "$root" /usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest \
+    /usr/local/bin/kyber-harness-install "$package" "$version" "$binary"
+
+[ -d "$root$package_path" ] || {
+    echo "[kyber] runtime repair: repaired package path is absent" >&2
+    exit 1
+}
+binary_rel="$(node - "$root$package_path/package.json" "$binary" <<'NODE'
+const fs = require('fs');
+const path = require('path');
+const manifest = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+let entry = manifest.bin;
+if (typeof entry === 'string') entry = { [process.argv[3]]: entry };
+entry = entry && entry[process.argv[3]];
+if (typeof entry !== 'string' || path.isAbsolute(entry)) process.exit(1);
+const normalized = path.normalize(entry);
+if (normalized === '..' || normalized.startsWith('../')) process.exit(1);
+process.stdout.write(normalized);
+NODE
+)" || {
+    echo "[kyber] runtime repair: repaired package has no safe executable" >&2
+    exit 1
+}
+[ -x "$root$package_path/$binary_rel" ] && [ -L "$root$executable_path" ] &&
+    [ "$(readlink -f "$root$executable_path")" = "$(readlink -f "$root$package_path/$binary_rel")" ] || {
+    echo "[kyber] runtime repair: repaired executable or command link is absent" >&2
+    exit 1
+}
+# Execute the repaired package file with the maintenance pod's /proc and /dev.
+# The durable root intentionally has neither mounted while offline; executing a
+# Bun-based Claude binary inside that bare chroot would crash despite a healthy
+# package. The image and durable root share the same runtime base.
+output="$("$root$package_path/$binary_rel" --version 2>&1)" || {
+    echo "[kyber] runtime repair: repaired executable failed: ${output:0:300}" >&2
+    exit 1
+}
+observed="$(printf '%s\n' "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1 || true)"
+[ "$observed" = "$version" ] || {
+    echo "[kyber] runtime repair: executable reports ${observed:-no version}, expected $version" >&2
+    exit 1
+}
+echo "[kyber] runtime repair: verified ${binary} ${observed}"

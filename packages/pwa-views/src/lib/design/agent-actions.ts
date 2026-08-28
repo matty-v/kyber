@@ -34,6 +34,7 @@ export type AgentLifecycleKind =
   | 'start'
   | 'stop'
   | 'restart'
+  | 'repair-runtime'
   // Operator-forced re-auth for a wedged agent (#395): drops it to NeedsAuth
   // (deleting any live pod) so it can be re-authorized from scratch.
   | 'force-needs-auth'
@@ -56,6 +57,7 @@ const LIFECYCLE_KINDS: readonly AgentLifecycleKind[] = [
   'start',
   'stop',
   'restart',
+  'repair-runtime',
   'force-needs-auth',
   'retry-startup',
 ]
@@ -79,6 +81,7 @@ export function lifecycleActionEndpoint(kind: AgentLifecycleKind): AgentLifecycl
     case 'stop':
     case 'restart':
     case 'force-needs-auth':
+    case 'repair-runtime':
       return kind
   }
 }
@@ -132,9 +135,7 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
       // explicit escape hatches available without offering a redundant Start.
       return ['stop', 'force-needs-auth']
     case 'BrokenRuntime':
-      // Authentication cannot repair the harness. PR C adds the dedicated
-      // repair action; until then only allow an explicit stop.
-      return ['stop']
+      return ['repair-runtime', 'stop']
     case 'Starting':
       return ['force-needs-auth']
     case 'NeedsAuth':

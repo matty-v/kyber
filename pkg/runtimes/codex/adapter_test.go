@@ -40,6 +40,21 @@ func TestAdapter(t *testing.T) {
 	}
 }
 
+func TestRuntimeRepair(t *testing.T) {
+	a := NewAdapter()
+	agent := &kyberv1.Agent{Spec: kyberv1.AgentSpec{RuntimeVersion: "0.150.1"}}
+	got := a.RuntimeRepair(agent)
+	if got == nil {
+		t.Fatal("RuntimeRepair() = nil")
+	}
+	if got.PackageName != "@openai/codex" || got.BinaryName != "codex" || got.Version != "0.150.1" {
+		t.Fatalf("RuntimeRepair() = %+v", got)
+	}
+	if got.PackagePath != "/usr/lib/node_modules/@openai/codex" || got.ExecutablePath != "/usr/bin/codex" {
+		t.Fatalf("RuntimeRepair() paths = %+v", got)
+	}
+}
+
 func TestAdapterDiscordMCP(t *testing.T) {
 	a := NewAdapter()
 	agent := &kyberv1.Agent{Spec: kyberv1.AgentSpec{

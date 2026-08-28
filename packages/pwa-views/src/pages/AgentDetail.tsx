@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -10,6 +10,7 @@ import {
   useRestartAgentSession,
   useCompactAgentSession,
   useForceNeedsAuthAgent,
+  useRepairAgentRuntime,
   useSetAgentModel,
   useAgentModels,
   useSetAgentRuntimeVersion,
@@ -92,6 +93,7 @@ type ActionKind =
   | 'restart-session' // in-pod tmux kill + relaunch (#128)
   | 'compact-session' // in-session context compaction, pod and session both stay up
   | 'force-needs-auth' // operator-forced re-auth for a wedged agent (#395)
+  | 'repair-runtime'
   | 'retry-startup' // NeedsAuth "try again with what you have" (kyber#26); POSTs /start
   | 'delete'
   | 'set-model'
@@ -493,6 +495,12 @@ export function LifecycleMenuItems({
           Require re-auth
         </DropdownMenuItem>
       )}
+      {items.includes('repair-runtime') && (
+        <DropdownMenuItem onSelect={() => onSelect('repair-runtime')}>
+          <Wrench className="h-3.5 w-3.5" />
+          Repair runtime
+        </DropdownMenuItem>
+      )}
       {/* kyber#26: the only lifecycle control a NeedsAuth agent gets. Labelled
           for what the operator sees happen (the pod is rebuilt) rather than for
           the endpoint it calls (/start) — see agent-actions.ts for why it is
@@ -547,6 +555,7 @@ export function AgentDetail() {
   const restartAgentSession = useRestartAgentSession()
   const compactAgentSession = useCompactAgentSession()
   const forceNeedsAuthAgent = useForceNeedsAuthAgent()
+  const repairAgentRuntime = useRepairAgentRuntime()
   const setAgentModel = useSetAgentModel()
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
   const setAgentResources = useSetAgentResources()
@@ -566,6 +575,7 @@ export function AgentDetail() {
     restartAgentSession.isPending ||
     compactAgentSession.isPending ||
     forceNeedsAuthAgent.isPending ||
+    repairAgentRuntime.isPending ||
     setAgentModel.isPending ||
     setAgentRuntimeVersion.isPending ||
     setAgentResources.isPending ||
@@ -587,6 +597,7 @@ export function AgentDetail() {
       if (action === 'restart-session') await restartAgentSession.mutateAsync(name)
       if (action === 'compact-session') await compactAgentSession.mutateAsync(name)
       if (action === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(name)
+      if (action === 'repair-runtime') await repairAgentRuntime.mutateAsync(name)
       if (pending === 'set-model' && newModel) {
         await setAgentModel.mutateAsync({ name, model: newModel })
         setNewModel('')
@@ -1191,6 +1202,8 @@ function confirmTitle(kind: ActionKind): string {
       return 'Restart pod?'
     case 'force-needs-auth':
       return 'Require re-auth?'
+    case 'repair-runtime':
+      return 'Repair runtime?'
     case 'delete':
       return 'Delete agent?'
     default:

@@ -539,6 +539,34 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/agents/{name}/repair-runtime:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: repairAgentRuntime
+      summary: Reinstall and verify a broken agent runtime harness
+      description: Requires lifecycle:write and an agent in BrokenRuntime.
+      tags: [agents]
+      responses:
+        '202':
+          description: Runtime repaired and agent restart requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeRepairResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
+
   /api/v1/agents/{name}/models:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1654,6 +1682,19 @@ components:
           format: date-time
           example: "2026-04-10T00:00:00Z"
 
+    RuntimeRepairResponse:
+      type: object
+      required: [agent, runtime, message, output]
+      properties:
+        agent:
+          type: string
+        runtime:
+          type: string
+        message:
+          type: string
+        output:
+          type: string
+
     AgentList:
       type: object
       required: [items]
@@ -1793,6 +1834,13 @@ components:
           $ref: '#/components/schemas/ErrorDetail'
 
   responses:
+    InternalError:
+      description: Internal operation failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
     ValidationError:
       description: Bad request — validation failed
       content:
@@ -1854,6 +1902,13 @@ components:
 
     ServiceUnavailable:
       description: Required backend service is unavailable or not configured
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+
+    NotImplemented:
+      description: This operation is not supported for the selected runtime
       content:
         application/json:
           schema:

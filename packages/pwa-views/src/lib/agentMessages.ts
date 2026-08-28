@@ -59,5 +59,14 @@ export function agentActionConfirmMessage(action: string, agentName: string): st
       `identity files on disk are not affected.`
     )
   }
+  if (action === 'repair-runtime') {
+    return (
+      `Repair the runtime harness for "${agentName}"? Kyber will mount its ` +
+      `persistent disk in a short-lived maintenance pod, reinstall and verify ` +
+      `the configured harness version, then restart the agent. Credentials, ` +
+      `memory, identity files, and conversation state are preserved. If repair ` +
+      `fails, the agent remains parked in BrokenRuntime with its diagnostic.`
+    )
+  }
   return `This will ${action} agent "${agentName}".`
 }

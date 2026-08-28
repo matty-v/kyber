@@ -21,6 +21,7 @@ ENV KYBER_RUNTIME_DEFAULT_VERSION=${CODEX_VERSION}
 
 COPY --chmod=0755 images/codex/start-codex.sh /usr/local/bin/start-codex.sh
 COPY --chmod=0755 images/shared/kyber-harness-install /usr/local/bin/kyber-harness-install
+COPY --chmod=0755 images/shared/kyber-runtime-repair /usr/local/bin/kyber-runtime-repair
 # Shared identity-repo setup (kyber#676) — installed BESIDE the start script so
 # the runtime resolves it as a sibling. Same file in every runtime image: this
 # is the code that manages agent identity and git credentials, and two copies

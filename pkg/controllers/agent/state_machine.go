@@ -226,6 +226,13 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionCaptureStateAndDeletePod,
 			NextPhase: kyberv1.AgentPhaseRestarting,
 		},
+		// A successful operator repair is the only path that writes
+		// desiredPhase=Restarting while BrokenRuntime. Delete the terminal
+		// broken pod, then use the normal Restarting -> Starting recreation.
+		{phase: kyberv1.AgentPhaseBrokenRuntime, event: EventDesiredRestarting}: {
+			Action:    ActionCaptureStateAndDeletePod,
+			NextPhase: kyberv1.AgentPhaseRestarting,
+		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventPodDied}: {
 			Action:    ActionEmitEventAutoRestart,
 			NextPhase: kyberv1.AgentPhaseFailed,

@@ -50,6 +50,22 @@ func TestClaudeCodeAdapter_Type(t *testing.T) {
 	}
 }
 
+func TestClaudeCodeAdapter_RuntimeRepair(t *testing.T) {
+	a := &ClaudeCodeAdapter{}
+	agent := claudeCodeAgent(kyberv1.AgentAuthTypeOAuth)
+	agent.Spec.RuntimeVersion = "2.1.250"
+	got := a.RuntimeRepair(agent)
+	if got == nil {
+		t.Fatal("RuntimeRepair() = nil")
+	}
+	if got.PackageName != "@anthropic-ai/claude-code" || got.BinaryName != "claude" || got.Version != "2.1.250" {
+		t.Fatalf("RuntimeRepair() = %+v", got)
+	}
+	if got.PackagePath != "/usr/lib/node_modules/@anthropic-ai/claude-code" || got.ExecutablePath != "/usr/bin/claude" {
+		t.Fatalf("RuntimeRepair() paths = %+v", got)
+	}
+}
+
 // TestNewClaudeCodeAdapter_ReadsEnvVar covers Cause D from kyber#360:
 // the agent runtime image must be sourced from KYBER_AGENT_RUNTIME_IMAGE
 // (Helm chart's image.claudeCode.{repository,tag} composed in

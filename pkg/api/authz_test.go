@@ -99,6 +99,8 @@ func TestAuthorizeAction_Enforcing(t *testing.T) {
 		{"legacy full-scope on delete → allow", legacyCaller, "delete", ScopeLifecycleAdmin, true, 0},
 		{"admin key on machine-delete → allow", adminCaller, "machine-delete", ScopeLifecycleAdmin, true, 0},
 		{"write key on machine-delete (admin) → 403", writeCaller, "machine-delete", ScopeLifecycleAdmin, false, http.StatusForbidden},
+		{"write key on repair-runtime → allow", writeCaller, "repair-runtime", ScopeLifecycleWrite, true, 0},
+		{"nil caller on repair-runtime → 403", nil, "repair-runtime", ScopeLifecycleWrite, false, http.StatusForbidden},
 		{"nil caller on delete → 403", nil, "delete", ScopeLifecycleAdmin, false, http.StatusForbidden},
 	}
 	for _, c := range cases {

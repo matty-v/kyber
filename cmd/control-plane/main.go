@@ -892,6 +892,7 @@ func main() {
 	// compactSessionCommands is the same idea for in-session compaction —
 	// runtimes returning nil are omitted so the API answers 501 for them.
 	compactSessionCommands := make(map[string][]string, len(adapterRegistry))
+	runtimeRepairPlans := make(map[string]internalapi.RuntimeRepairPlan, len(adapterRegistry))
 	// runtimeImages lets the API reject an agent whose runtime is registered
 	// but has no image pinned on this install (kyber#674). Registration alone
 	// is not enough: the codex adapter self-registers unconditionally, so
@@ -913,6 +914,16 @@ func main() {
 		}
 		if cmd := ad.CompactSessionCommand(); len(cmd) > 0 {
 			compactSessionCommands[rt] = cmd
+		}
+		if repair := ad.RuntimeRepair(nil); repair != nil {
+			runtimeRepairPlans[rt] = internalapi.RuntimeRepairPlan{
+				Image:          img,
+				PackageName:    repair.PackageName,
+				BinaryName:     repair.BinaryName,
+				Version:        repair.Version,
+				PackagePath:    repair.PackagePath,
+				ExecutablePath: repair.ExecutablePath,
+			}
 		}
 	}
 
@@ -1335,6 +1346,7 @@ func main() {
 		RuntimeImages:                 runtimeImages,
 		RestartSessionCommands:        restartSessionCommands,
 		CompactSessionCommands:        compactSessionCommands,
+		RuntimeRepairPlans:            runtimeRepairPlans,
 		Clientset:                     clientset,
 		ArchiveReader:                 archiveReader,
 		PlatformArchiveReader:         archiveReader,

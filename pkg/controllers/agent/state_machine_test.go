@@ -168,6 +168,13 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseStopping,
 		},
 		{
+			name:       "BrokenRuntime + DesiredRestarting → Restarting",
+			current:    kyberv1.AgentPhaseBrokenRuntime,
+			event:      EventDesiredRestarting,
+			wantAction: ActionCaptureStateAndDeletePod,
+			wantNext:   kyberv1.AgentPhaseRestarting,
+		},
+		{
 			name:       "NeedsAuth + DesiredRunning → Starting",
 			current:    kyberv1.AgentPhaseNeedsAuth,
 			event:      EventDesiredRunning,

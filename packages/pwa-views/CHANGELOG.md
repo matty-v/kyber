@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.36.4 — 2026-08-28
+
+### Added
+- Agent Detail offers a confirmed **Repair runtime** action for
+  `BrokenRuntime` agents and reports repair progress or failure without
+  suggesting re-authorization.
+
 ## 0.36.1 — 2026-08-27
 
 ### Changed

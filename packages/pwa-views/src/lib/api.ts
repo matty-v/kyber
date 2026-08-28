@@ -294,6 +294,9 @@ export function createApiClient(cluster: Cluster) {
     forceNeedsAuthAgent: (name: string): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${name}/force-needs-auth`),
 
+    repairAgentRuntime: (name: string): Promise<RuntimeRepairResponse> =>
+      request<RuntimeRepairResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/repair-runtime`),
+
     setAgentModel: (name: string, model: string): Promise<Agent> => {
       const req: SetModelRequest = { model }
       return request<Agent>('POST', `/api/v1/agents/${name}/set-model`, req)
@@ -921,6 +924,13 @@ export interface CompactSessionResponse {
   stderr: string
   delivered: boolean
   detail: string
+}
+
+export interface RuntimeRepairResponse {
+  agent: string
+  runtime: string
+  message: string
+  output: string
 }
 
 // runAgentJob response type.

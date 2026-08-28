@@ -188,6 +188,23 @@ describe('forceNeedsAuthAgent (#395)', () => {
   })
 })
 
+describe('repairAgentRuntime', () => {
+  it('POSTs to the encoded repair-runtime sub-action', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 202,
+      json: async () => ({ agent: 'han solo', runtime: 'codex', message: 'ok', output: 'verified' }),
+    }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+
+    await createApiClient(mockCluster).repairAgentRuntime('han solo')
+
+    const [[url, init]] = (fetchMock as unknown as { mock: { calls: [string, RequestInit][][] } }).mock.calls
+    expect(url).toBe('http://localhost:8080/api/v1/agents/han%20solo/repair-runtime')
+    expect(init.method).toBe('POST')
+  })
+})
+
 describe('logStream — source/window query building (kyber#431)', () => {
   beforeEach(() => {
     localStorage.clear()

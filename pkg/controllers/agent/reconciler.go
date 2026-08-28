@@ -892,6 +892,14 @@ func (r *AgentReconciler) classifyEvent(
 		}
 	}
 
+	// Runtime repair is an explicit operator edge, not an automatic retry.
+	// POST /repair-runtime writes Restarting only after the maintenance pod has
+	// verified the repaired executable. No other desired value releases a
+	// BrokenRuntime agent, so a failed or abandoned repair remains stable.
+	if desired == kyberv1.AgentPhaseRestarting && phase == kyberv1.AgentPhaseBrokenRuntime {
+		return EventDesiredRestarting, nil
+	}
+
 	// Infrastructure availability is not an agent crash. Active and retrying
 	// phases park in WaitingForMachine until their assigned Machine is Ready
 	// again, without consuming the agent's restart budget. This check must run
