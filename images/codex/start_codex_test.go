@@ -1296,3 +1296,152 @@ func TestStartCodex_CronHooks_StopHookDeliversAFreshConversationCommand(t *testi
 		t.Errorf("armed marker survived the Stop hook (err=%v): exclusive stays latched", err)
 	}
 }
+
+// runBootUmask is runBoot with a restrictive umask, modelling the real failure:
+// in the pod the managed config is created through `sudo`, so it inherits
+// root's umask rather than the agent user's. A 0077 umask reproduces that
+// without needing root in CI.
+func runBootUmask(t *testing.T, home, authJSON, path, umask string, extraEnv ...string) ([]byte, error) {
+	t.Helper()
+	persistRoot := t.TempDir()
+	cmd := exec.Command("/bin/bash", "-c",
+		"umask "+umask+"; exec /bin/bash "+scriptPath(t))
+	env := []string{
+		"HOME=" + home,
+		"CODEX_HOME=" + filepath.Join(home, ".codex"),
+		"KYBER_PERSIST_ROOT=" + persistRoot,
+		"PATH=" + path,
+		"SKIP_CODEX_LAUNCH=1",
+		"AGENT_NAME=unit-test",
+	}
+	if authJSON != "" {
+		env = append(env, "CODEX_AUTH_JSON="+authJSON)
+	}
+	env = append(env, extraEnv...)
+	cmd.Env = env
+	return cmd.CombinedOutput()
+}
+
+// The managed config and its directory must stay readable by the agent user.
+// Created through sudo they inherit root's umask (0700/0600); codex then cannot
+// traverse /etc/codex, its probe for requirements.toml returns EACCES rather
+// than ENOENT, and it refuses to load ANY configuration — so every codex
+// command fails and the agent crash-loops. Regression for kyber-canary
+// 2026-08-28.
+func TestStartCodexManagedConfigIsReadableByTheAgentUser(t *testing.T) {
+	home := t.TempDir()
+	managed := filepath.Join(t.TempDir(), "codex", "managed_config.toml")
+
+	out, err := runBootUmask(t, home, secretCred, stubMCPBin(t), "077",
+		"KYBER_MANAGED_CODEX_CONFIG="+managed)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	fi, err := os.Stat(managed)
+	if err != nil {
+		t.Fatalf("managed config not written: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm&0o044 == 0 {
+		t.Fatalf("managed config mode %o is not readable by the agent user", perm)
+	}
+
+	di, err := os.Stat(filepath.Dir(managed))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Needs r-x for others: without the x bit codex cannot even stat
+	// requirements.toml, which is the failure that took canary down.
+	if perm := di.Mode().Perm(); perm&0o005 != 0o005 {
+		t.Fatalf("managed config dir mode %o is not traversable by the agent user", perm)
+	}
+}
+
+// A failed redirection is reported by the SHELL, before the command's own
+// 2>/dev/null applies, so probing writability with `: >> "$file"` leaked
+// "Permission denied" into every boot log even when the sudo fallback then
+// succeeded. Asserted against the script source rather than a boot run: the
+// leak only appears when the target is root-owned, which a CI test cannot
+// arrange, and a runtime test that cannot reproduce the bug is worse than
+// none — it would report safety it never checked.
+func TestStartCodexProbesWritabilityWithoutRedirecting(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(script), `: >> "$_target"`) {
+		t.Fatal("start-codex.sh probes writability with a redirection again; " +
+			"a failed redirect is the shell's own error and leaks past 2>/dev/null")
+	}
+	if !strings.Contains(string(script), "kyber_managed_config_writable") {
+		t.Fatal("start-codex.sh no longer probes writability with a test builtin")
+	}
+}
+
+// The managed config is best-effort: the launch command passes
+// --ask-for-approval and --sandbox explicitly, so a settings file Kyber cannot
+// write must degrade to a warning, never abort the boot.
+//
+// This covers the path where the location cannot be created at all. The
+// narrower case — the initial write succeeds but a later append fails — cannot
+// be arranged from outside the script, so the guard for it is asserted against
+// the source in TestStartCodexAppendsToManagedConfigAreNonFatal.
+func TestStartCodexSurvivesAnUnwritableManagedConfig(t *testing.T) {
+	home := t.TempDir()
+	// A path whose parent cannot be created: /proc rejects mkdir even for root.
+	managed := "/proc/kyber-not-a-real-dir/managed_config.toml"
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"CODEX_MODEL=claude-sonnet-5",
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp")
+	if err != nil {
+		t.Fatalf("boot aborted on an unwritable managed config: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "could not write") {
+		t.Fatalf("boot did not warn about the unwritable managed config:\n%s", out)
+	}
+	// The agent's own config must still converge — the two are independent.
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "[mcp_servers.kyber_telegram]") {
+		t.Fatalf("MCP convergence was skipped because the managed config failed:\n%s", config)
+	}
+}
+
+// Every append to the managed config must be `||`-guarded. The script runs
+// under `set -euo pipefail`, so an unguarded failing pipeline exits the whole
+// script — and for an agent that means it never starts. A chmod or sudo
+// failure while recording the model or the cron hooks is worth a warning, not
+// a dead agent.
+//
+// Asserted against the source because the failure needs a target that is
+// writable for the first write and not for a later one, which a test cannot
+// arrange from outside.
+func TestStartCodexAppendsToManagedConfigAreNonFatal(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(script), "\n")
+	found := 0
+	for i, line := range lines {
+		if !strings.Contains(line, "kyber_append_managed_config \"$KYBER_MANAGED_CODEX_CONFIG\"") {
+			continue
+		}
+		found++
+		guarded := strings.Contains(line, "||")
+		if !guarded && i+1 < len(lines) {
+			guarded = strings.HasPrefix(strings.TrimSpace(lines[i+1]), "||")
+		}
+		if !guarded {
+			t.Fatalf("start-codex.sh:%d appends to the managed config without a `||` guard; "+
+				"under set -e a failure here kills the whole boot:\n  %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if found == 0 {
+		t.Fatal("no managed-config append sites found — has the helper been renamed?")
+	}
+}

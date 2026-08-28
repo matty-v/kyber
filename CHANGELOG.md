@@ -15,6 +15,7 @@ profiles — licensed under Apache 2.0.
 Notable changes made on top of the final internal release (v2.7.1) while
 preparing the code for open source:
 
+- Fix (runtime): **a Codex agent no longer crash-loops on a fresh install.** The managed-settings file introduced alongside the MCP-preservation fix was created through `sudo`, so it inherited root's umask: `/etc/codex` came out `0700` and the file `0600`. Codex could not traverse the directory, its probe for `requirements.toml` returned a permission error instead of not-found, and it then refused to load **any** configuration — so every `codex` command failed. That surfaced as "credentials are missing or invalid", an endless device-login prompt, and a runtime that died six times in a row before the pod was recreated. The directory and file are now explicitly `0755`/`0644`. Writability is also probed with a test builtin rather than a redirection, because a failed redirect is reported by the shell before the command's own `2>/dev/null` applies and was leaking "Permission denied" into every boot log even when the fallback succeeded.
 - Feature (agents, runtimes): `spec.jobs[].exclusive` and
   `spec.jobs[].clearContextAfter` now work on Codex agents, not just Claude
   Code. The Codex runtime registers the same two turn-boundary signals the
