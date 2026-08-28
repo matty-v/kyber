@@ -313,6 +313,56 @@ func TestStartClaude_MissingOAuthCredential_ExitsTwo(t *testing.T) {
 	}
 }
 
+func TestStartClaude_FutureAccessWithoutRefreshOrPersistedCredential_ExitsTwo(t *testing.T) {
+	tmpHome := t.TempDir()
+	future := time.Now().Add(time.Hour).UnixMilli()
+	out, err := runScript(t, []string{
+		"HOME=" + tmpHome,
+		"PATH=" + testPATH(),
+		"CLAUDE_ACCESS_TOKEN=access-without-refresh",
+		"CLAUDE_ACCESS_TOKEN_EXPIRES_AT=" + strconv.FormatInt(future, 10),
+		"AGENT_NAME=unit-test",
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/unused",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("incomplete cached env must exit 2, err=%v\noutput:\n%s", err, out)
+	}
+}
+
+func TestStartClaude_ExpiredPersistedCredentialMustRefreshOrExitTwo(t *testing.T) {
+	mock := mockserver.New()
+	mock.SetFailMode("expired_refresh")
+	ts := httptest.NewServer(mock)
+	defer ts.Close()
+
+	tmpHome := t.TempDir()
+	credsDir := filepath.Join(tmpHome, ".claude")
+	if err := os.MkdirAll(credsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	creds := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"expired-access","refreshToken":"expired-refresh","expiresAt":%d}}`, time.Now().Add(-time.Hour).UnixMilli())
+	if err := os.WriteFile(filepath.Join(credsDir, ".credentials.json"), []byte(creds), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runScript(t, []string{
+		"HOME=" + tmpHome,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"ANTHROPIC_TOKEN_URL=" + ts.URL + "/v1/oauth/token",
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/unused",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 2 {
+		t.Fatalf("expired, unrefreshable persisted credential must exit 2, err=%v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "refresh failed") {
+		t.Fatalf("expired persisted credential must enter the refresh path:\n%s", out)
+	}
+}
+
 // --- kyber#509 — git auth via the generic PAT (not the in-platform App token) -
 //
 // Stage 2 of the decouple-#508 cutover migrated the git credential helper off

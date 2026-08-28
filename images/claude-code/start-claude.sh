@@ -353,7 +353,30 @@ NOW_MS=$(($(date +%s) * 1000))
 BUFFER_MS=$((5 * 60 * 1000))
 USE_CACHED=false
 
-if [ -n "${CLAUDE_ACCESS_TOKEN:-}" ] && [ -n "${CLAUDE_ACCESS_TOKEN_EXPIRES_AT:-}" ]; then
+# A complete credential persisted by Claude may be newer than (or the only
+# copy available from) the Secret. Load the whole trio into the same bounded
+# validation/refresh path as injected credentials. Merely finding non-empty
+# JSON fields is not enough: an expired access token must be refreshed here,
+# before the TUI can turn an auth failure into a false Running state.
+if [ -z "${CLAUDE_REFRESH_TOKEN:-}" ] && [ -r "$HOME/.claude/.credentials.json" ]; then
+    if persisted_oauth=$(jq -er '
+        .claudeAiOauth as $o
+        | select(($o.accessToken | type == "string" and length > 0)
+              and ($o.refreshToken | type == "string" and length > 0)
+              and ($o.expiresAt | type == "number" and . > 0))
+        | [$o.accessToken, $o.refreshToken, ($o.expiresAt | tostring)] | @tsv
+    ' "$HOME/.claude/.credentials.json" 2>/dev/null); then
+        IFS=$'\t' read -r CLAUDE_ACCESS_TOKEN CLAUDE_REFRESH_TOKEN CLAUDE_ACCESS_TOKEN_EXPIRES_AT <<< "$persisted_oauth"
+        echo "[kyber] loaded persisted Claude Code OAuth credential for validation"
+    fi
+    unset persisted_oauth
+fi
+
+# Reuse requires the complete trio. In particular, a future-dated access token
+# without its refresh token cannot produce credentials.json and must not bypass
+# the missing-credential guard below.
+if [ -n "${CLAUDE_ACCESS_TOKEN:-}" ] && [ -n "${CLAUDE_REFRESH_TOKEN:-}" ] &&
+   [[ "${CLAUDE_ACCESS_TOKEN_EXPIRES_AT:-}" =~ ^[0-9]+$ ]]; then
     if [ "$CLAUDE_ACCESS_TOKEN_EXPIRES_AT" -gt "$((NOW_MS + BUFFER_MS))" ]; then
         USE_CACHED=true
         echo "[kyber] cached access_token still valid (expires_at=$CLAUDE_ACCESS_TOKEN_EXPIRES_AT) — skipping refresh"
@@ -365,26 +388,8 @@ fi
 
 if [ "$USE_CACHED" = false ]; then
     if [ -z "${CLAUDE_REFRESH_TOKEN:-}" ]; then
-        # A persisted credential may legitimately outlive the Secret/env value
-        # (for example after an in-TUI refresh). Keep using it when it contains
-        # the complete OAuth trio. Otherwise Claude's TUI stays alive but only
-        # answers every prompt with "Not logged in", which makes the pod look
-        # Running while silently discarding work. Exit with the established
-        # Claude auth-failure code so the controller parks the agent in
-        # NeedsAuth and exposes the existing re-authorize path.
-        if ! jq -e '
-            .claudeAiOauth.accessToken | type == "string" and length > 0
-        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1 ||
-           ! jq -e '
-            .claudeAiOauth.refreshToken | type == "string" and length > 0
-        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1 ||
-           ! jq -e '
-            .claudeAiOauth.expiresAt | type == "number" and . > 0
-        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1; then
-            echo "[kyber] FATAL: Claude Code OAuth credential is missing (no refresh token and no usable credentials.json) — exiting 2 so the agent transitions to NeedsAuth" >&2
-            exit 2
-        fi
-        echo "[kyber] no refresh token in env — using persisted Claude Code OAuth credential"
+        echo "[kyber] FATAL: Claude Code OAuth credential is missing (no complete injected or persisted credential) — exiting 2 so the agent transitions to NeedsAuth" >&2
+        exit 2
     else
         echo "[kyber] refreshing access token from stored refresh token"
         refresh_body=$(jq -n --arg rt "$CLAUDE_REFRESH_TOKEN" \
