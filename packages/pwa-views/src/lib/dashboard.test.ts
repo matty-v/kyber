@@ -35,9 +35,10 @@ describe('phaseCounts', () => {
 })
 
 describe('isAttentionPhase', () => {
-  it('flags NeedsAuth/MemoryExhausted/Failed only', () => {
+  it('flags human-attention and failure phases', () => {
     expect(isAttentionPhase('NeedsAuth')).toBe(true)
     expect(isAttentionPhase('MemoryExhausted')).toBe(true)
+    expect(isAttentionPhase('DiskExhausted')).toBe(true)
     expect(isAttentionPhase('Failed')).toBe(true)
     expect(isAttentionPhase('Running')).toBe(false)
   })

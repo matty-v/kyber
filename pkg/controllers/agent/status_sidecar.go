@@ -24,7 +24,9 @@ const (
 	StatusSidecarContainerName = "kyber-status-sidecar"
 	// statusSidecarHealthPort is where the sidecar serves /healthz. Must
 	// match the const in cmd/status-sidecar/main.go.
-	statusSidecarHealthPort int32 = 8090
+	statusSidecarHealthPort  int32 = 8090
+	runtimeControlVolumeName       = "runtime-control"
+	runtimeControlMountPath        = "/var/run/kyber"
 )
 
 // SidecarConfig carries the optional fields the controller threads through
@@ -118,6 +120,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 		// (cmd/status-sidecar/main.go). The volume itself is declared by
 		// BuildPodSpec; here we just mount it read-only into the sidecar.
 		VolumeMounts: []corev1.VolumeMount{
+			{Name: runtimeControlVolumeName, MountPath: runtimeControlMountPath},
 			{
 				Name:      "persist",
 				MountPath: "/persist",
@@ -156,6 +159,15 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 	// look up this container by name must consult Spec.InitContainers /
 	// Status.InitContainerStatuses (see extractSidecarSpecImage / isSidecarReady).
 	spec.InitContainers = append([]corev1.Container{container}, spec.InitContainers...)
+	spec.Volumes = append(spec.Volumes, corev1.Volume{
+		Name:         runtimeControlVolumeName,
+		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
+	})
+	if len(spec.Containers) > 0 {
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name: runtimeControlVolumeName, MountPath: runtimeControlMountPath,
+		})
+	}
 }
 
 // ptrTo returns a pointer to v. Generic helper; Go 1.21+.

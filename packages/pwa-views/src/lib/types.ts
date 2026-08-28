@@ -22,6 +22,7 @@ export type AgentPhase =
   // models it so operator actions like force-needs-auth (#395) can be offered
   // from it.
   | 'MemoryExhausted'
+  | 'DiskExhausted'
 
 export type AgentAuthType = 'oauth' | 'api-key'
 

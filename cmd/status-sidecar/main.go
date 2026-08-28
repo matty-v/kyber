@@ -455,6 +455,9 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 			}
 		} else {
 			resourceReadErrLogged = false
+			if err := syncDiskExhaustedMarker(diskExhaustedMarker, usage.DiskReserveReached); err != nil {
+				logger.Warn("disk maintenance marker update failed", "err", err)
+			}
 			metrics.RecordResourceUsage(ctx, usage)
 			if err := postResourceUsage(ctx, client, cfg, now, usage); err != nil {
 				if !resourcePostErrLogged {

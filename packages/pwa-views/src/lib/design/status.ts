@@ -40,6 +40,7 @@ const phaseMap: Record<string, PhaseStyle> = {
   Deleted:      { tone: 'neutral' },
   NeedsAuth:        { tone: 'warn' },
   MemoryExhausted:  { tone: 'danger' },
+  DiskExhausted:    { tone: 'danger' },
 }
 
 export function phaseStyle(phase: PhaseKey): PhaseStyle {

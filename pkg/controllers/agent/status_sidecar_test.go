@@ -93,6 +93,29 @@ func TestAppendStatusSidecar_MountsPersistReadOnly(t *testing.T) {
 	t.Fatal("status sidecar has no persist mount")
 }
 
+func TestAppendStatusSidecar_SharesRuntimeControlVolume(t *testing.T) {
+	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}}
+	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
+
+	assertMount := func(container corev1.Container) {
+		t.Helper()
+		for _, mount := range container.VolumeMounts {
+			if mount.Name == runtimeControlVolumeName && mount.MountPath == runtimeControlMountPath && !mount.ReadOnly {
+				return
+			}
+		}
+		t.Errorf("container %q lacks writable runtime-control mount", container.Name)
+	}
+	assertMount(spec.Containers[0])
+	assertMount(mustStatusSidecar(t, spec))
+	for _, volume := range spec.Volumes {
+		if volume.Name == runtimeControlVolumeName && volume.EmptyDir != nil {
+			return
+		}
+	}
+	t.Fatal("runtime-control EmptyDir volume missing")
+}
+
 // TestBuildPodSpec_PlusInjection verifies that the full assembly path
 // (BuildPodSpec → AppendStatusSidecar) yields a pod with both the
 // runtime container and the status sidecar, in the right order. This

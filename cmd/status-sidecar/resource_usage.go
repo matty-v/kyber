@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"syscall"
@@ -11,6 +12,7 @@ import (
 )
 
 const diskReserveRatio = 0.90
+const diskExhaustedMarker = "/var/run/kyber/disk-exhausted"
 
 type resourceUsage struct {
 	CPUUsageMillicores int64  `json:"cpuUsageMillicores"`
@@ -20,6 +22,19 @@ type resourceUsage struct {
 	DiskUsedBytes      int64  `json:"diskUsedBytes"`
 	DiskTotalBytes     int64  `json:"diskTotalBytes"`
 	DiskReserveReached bool   `json:"diskReserveReached"`
+}
+
+func syncDiskExhaustedMarker(path string, reached bool) error {
+	if reached {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("disk reserve reached\n"), 0o644)
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
 
 type resourceSampler struct {

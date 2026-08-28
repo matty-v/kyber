@@ -39,6 +39,11 @@ const (
 	// spec.resources.memory, then trigger Restart) returns the agent to
 	// Starting. Pattern mirrors NeedsAuth: human-required, no retry.
 	AgentPhaseMemoryExhausted AgentPhase = "MemoryExhausted"
+	// AgentPhaseDiskExhausted is a live maintenance state entered when the
+	// persistent volume reaches its 90% reserve. The runtime harness is paused
+	// while the pod and Shell remain available for cleanup; falling below the
+	// reserve resumes the harness and returns to Running.
+	AgentPhaseDiskExhausted AgentPhase = "DiskExhausted"
 )
 
 // Condition Type constants for Agent.status.conditions.
@@ -715,7 +720,7 @@ type AgentStatus struct {
 	// RecoveryInput identifies the operator-supplied input that the most
 	// recent recovery attempt out of a human-required phase consumed — the
 	// credential Secret's resourceVersion for NeedsAuth, the memory limit for
-	// MemoryExhausted.
+	// MemoryExhausted, or the disk request for DiskExhausted.
 	//
 	// Human-required phases cannot use spec.desiredPhase=Running as their
 	// retry trigger: it is permanently true for every agent, so there is no

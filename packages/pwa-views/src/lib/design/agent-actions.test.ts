@@ -46,6 +46,10 @@ describe('lifecycleItemsInMore', () => {
     expect(lifecycleItemsInMore('MemoryExhausted')).not.toContain('restart')
   })
 
+  it('DiskExhausted: Shell cleanup recovery keeps Stop and Require re-auth available', () => {
+    expect(lifecycleItemsInMore('DiskExhausted')).toEqual(['stop', 'force-needs-auth'])
+  })
+
   it('Starting: Require re-auth only — a wedged Starting agent is a re-auth target (#395)', () => {
     expect(lifecycleItemsInMore('Starting')).toEqual(['force-needs-auth'])
   })
@@ -68,6 +72,7 @@ describe('lifecycleItemsInMore', () => {
       'Stopped',
       'Failed',
       'MemoryExhausted',
+      'DiskExhausted',
       'Starting',
       'Stopping',
       'Restarting',
@@ -175,6 +180,7 @@ describe('sessionItemsInMore', () => {
     'Stopped',
     'Failed',
     'MemoryExhausted',
+    'DiskExhausted',
     'Starting',
     'Stopping',
     'Restarting',

@@ -127,6 +127,10 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
     case 'Failed':
     case 'MemoryExhausted':
       return ['start', 'force-needs-auth']
+    case 'DiskExhausted':
+      // Recovery is automatic after Shell cleanup or a PVC increase. Keep the
+      // explicit escape hatches available without offering a redundant Start.
+      return ['stop', 'force-needs-auth']
     case 'Starting':
       return ['force-needs-auth']
     case 'NeedsAuth':

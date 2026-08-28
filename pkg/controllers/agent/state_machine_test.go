@@ -175,6 +175,28 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantAction: ActionResetRetryAndCreatePod,
 			wantNext:   kyberv1.AgentPhaseStarting,
 		},
+		// DiskExhausted transitions (MAT-10).
+		{
+			name:       "Running + DiskReserveReached → DiskExhausted",
+			current:    kyberv1.AgentPhaseRunning,
+			event:      EventDiskReserveReached,
+			wantAction: ActionUpdateStatus,
+			wantNext:   kyberv1.AgentPhaseDiskExhausted,
+		},
+		{
+			name:       "DiskExhausted + DiskReserveCleared → Running",
+			current:    kyberv1.AgentPhaseDiskExhausted,
+			event:      EventDiskReserveCleared,
+			wantAction: ActionUpdateStatus,
+			wantNext:   kyberv1.AgentPhaseRunning,
+		},
+		{
+			name:       "DiskExhausted + DesiredRunning → Starting",
+			current:    kyberv1.AgentPhaseDiskExhausted,
+			event:      EventDesiredRunning,
+			wantAction: ActionResetRetryAndCreatePod,
+			wantNext:   kyberv1.AgentPhaseStarting,
+		},
 		// Operator-forced re-auth (#395). Live-pod phases delete the pod;
 		// pod-less phases flip status only. All land in NeedsAuth.
 		{
