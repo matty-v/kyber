@@ -1527,20 +1527,19 @@ esac
 // an agent pod — whose root filesystem is persistent — that survived every
 // restart and locked codex out of its own configuration.
 //
-// Asserted on the helper rather than on the filesystem on purpose: checking
-// that /etc/codex was not created would pass on any machine where a previous
-// run had already created it, which is exactly the machine that most needs
-// the warning.
+// Asserted on the boot's own output rather than on the filesystem: a check
+// that /etc/codex does not exist would pass on any machine where an earlier
+// run had already created it — precisely the machine that most needs the
+// warning. The boot reports the path it wrote, so that report is the evidence.
 func TestRunBootRedirectsTheManagedConfigAwayFromTheSystemPath(t *testing.T) {
 	home := t.TempDir()
 	out, err := runBoot(t, home, secretCred, stubMCPBin(t))
 	if err != nil {
 		t.Fatalf("boot failed: %v\n%s", err, out)
 	}
-	// The boot reports where it wrote. If that is the real system path, the
-	// harness has stopped sandboxing it.
 	// Match the ABSOLUTE system path, not any path ending in it — the
-	// redirected temp path also contains "/etc/codex/managed_config.toml".
+	// redirected temp path also contains "/etc/codex/managed_config.toml",
+	// which is how the first version of this test failed for the wrong reason.
 	if strings.Contains(string(out), "written to /etc/codex/") {
 		t.Fatalf("the suite wrote to the real system config path:\n%s", out)
 	}
@@ -1565,7 +1564,8 @@ func TestStartCodexCredentialWritesLeaveEverythingReadable(t *testing.T) {
 	managed := filepath.Join(managedDir, "managed_config.toml")
 
 	// secretCred is non-empty, so the credential block — and its umask 077 —
-	// runs. Without the restore the managed config lands 0600/0700.
+	// runs. On today's code kyber_ensure_mode would correct the mode even if
+	// the umask leaked; this pins the end state both mechanisms owe.
 	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
 		"KYBER_MANAGED_CODEX_CONFIG="+managed)
 	if err != nil {
