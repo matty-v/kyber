@@ -365,7 +365,26 @@ fi
 
 if [ "$USE_CACHED" = false ]; then
     if [ -z "${CLAUDE_REFRESH_TOKEN:-}" ]; then
-        echo "[kyber] no refresh token in env — Claude Code will prompt for /login" >&2
+        # A persisted credential may legitimately outlive the Secret/env value
+        # (for example after an in-TUI refresh). Keep using it when it contains
+        # the complete OAuth trio. Otherwise Claude's TUI stays alive but only
+        # answers every prompt with "Not logged in", which makes the pod look
+        # Running while silently discarding work. Exit with the established
+        # Claude auth-failure code so the controller parks the agent in
+        # NeedsAuth and exposes the existing re-authorize path.
+        if ! jq -e '
+            .claudeAiOauth.accessToken | type == "string" and length > 0
+        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1 ||
+           ! jq -e '
+            .claudeAiOauth.refreshToken | type == "string" and length > 0
+        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1 ||
+           ! jq -e '
+            .claudeAiOauth.expiresAt | type == "number" and . > 0
+        ' "$HOME/.claude/.credentials.json" >/dev/null 2>&1; then
+            echo "[kyber] FATAL: Claude Code OAuth credential is missing (no refresh token and no usable credentials.json) — exiting 2 so the agent transitions to NeedsAuth" >&2
+            exit 2
+        fi
+        echo "[kyber] no refresh token in env — using persisted Claude Code OAuth credential"
     else
         echo "[kyber] refreshing access token from stored refresh token"
         refresh_body=$(jq -n --arg rt "$CLAUDE_REFRESH_TOKEN" \

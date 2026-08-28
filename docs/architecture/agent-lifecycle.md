@@ -107,7 +107,7 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 | `Deleted` | fully deleted incl. PV + identity cleanup (reached via `handleDeletion`, **not** the state machine) |
 | `Draining` | gracefully draining ahead of a machine preemption |
 | `WaitingForMachine` | waiting for a replacement machine after preemption |
-| `NeedsAuth` | stored OAuth refresh token is invalid; human must re-authorize |
+| `NeedsAuth` | OAuth credential is missing, expired, or invalid; human must re-authorize |
 | `MemoryExhausted` | container was OOM-killed; operator must raise the memory limit before retry |
 | `DiskExhausted` | persistent volume reached its 90% reserve; the harness is paused while the pod and Shell remain available for cleanup |
 | `BrokenRuntime` | the runtime executable is missing, truncated, or cannot return a parseable version; authentication is not attempted and automatic restart is suppressed pending runtime repair |

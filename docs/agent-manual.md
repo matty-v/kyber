@@ -41,7 +41,7 @@ Phases you can be in, and what each means for you:
 | `Running` | normal |
 | `Restarting` / `Stopping` / `Stopped` | operator-driven; disk preserved |
 | `Draining` → `WaitingForMachine` | your spot machine is being preempted; you're waiting for a replacement |
-| `NeedsAuth` | your stored OAuth token is invalid — a **human** must re-authorize |
+| `NeedsAuth` | your OAuth credential is missing, expired, or invalid — a **human** must re-authorize |
 | `MemoryExhausted` | you were OOM-killed. **No auto-restart.** The operator must raise the memory limit first |
 | `Failed` | restart retries exhausted; alerts the operator |
 

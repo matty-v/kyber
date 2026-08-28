@@ -1052,6 +1052,29 @@ func TestAgents_Get_Found(t *testing.T) {
 	}
 }
 
+func TestAgents_Get_NeedsAuthExplainsClaudeOAuthCredential(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Spec.Runtime = "claude-code"
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
+	agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	h, _ := buildAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodGet, "/api/v1/agents/dave", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var got struct {
+		BlockedReason string `json:"blockedReason"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !strings.Contains(got.BlockedReason, "missing, expired, or invalid") {
+		t.Fatalf("NeedsAuth must explain the credential problem, got %q", got.BlockedReason)
+	}
+}
+
 // TestAgents_Get_NotFound verifies 404 for unknown agent.
 func TestAgents_Get_NotFound(t *testing.T) {
 	h, _ := buildAgentHandler(t)

@@ -292,6 +292,27 @@ func TestStartClaude_RefreshFailure_ExitsTwo(t *testing.T) {
 	}
 }
 
+func TestStartClaude_MissingOAuthCredential_ExitsTwo(t *testing.T) {
+	tmpHome := t.TempDir()
+	out, err := runScript(t, []string{
+		"HOME=" + tmpHome,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/unused",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		t.Fatalf("expected exit error, got: %v\noutput:\n%s", err, out)
+	}
+	if exitErr.ExitCode() != 2 {
+		t.Fatalf("expected exit code 2 (NeedsAuth), got %d\noutput:\n%s", exitErr.ExitCode(), out)
+	}
+	if !strings.Contains(string(out), "OAuth credential is missing") {
+		t.Fatalf("missing credential must be explicit in boot output:\n%s", out)
+	}
+}
+
 // --- kyber#509 — git auth via the generic PAT (not the in-platform App token) -
 //
 // Stage 2 of the decouple-#508 cutover migrated the git credential helper off

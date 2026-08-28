@@ -793,7 +793,8 @@ export function AgentDetail() {
             <Card className="border-warn/40 bg-warn-muted">
               <h2 className="text-sm font-semibold text-warn mb-1">Re-authorization required</h2>
               <p className="text-xs text-warn/80 mb-3">
-                This agent&apos;s OAuth credentials have expired. Re-authorize to resume.
+                {agent.blockedReason ??
+                  'This agent\'s OAuth credential is missing, expired, or invalid. Re-authorize to resume.'}
               </p>
               {!reauthSuccess ? (
                 <div className="space-y-3">
