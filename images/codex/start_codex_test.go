@@ -1377,3 +1377,71 @@ func TestStartCodexProbesWritabilityWithoutRedirecting(t *testing.T) {
 		t.Fatal("start-codex.sh no longer probes writability with a test builtin")
 	}
 }
+
+// The managed config is best-effort: the launch command passes
+// --ask-for-approval and --sandbox explicitly, so a settings file Kyber cannot
+// write must degrade to a warning, never abort the boot.
+//
+// This covers the path where the location cannot be created at all. The
+// narrower case — the initial write succeeds but a later append fails — cannot
+// be arranged from outside the script, so the guard for it is asserted against
+// the source in TestStartCodexAppendsToManagedConfigAreNonFatal.
+func TestStartCodexSurvivesAnUnwritableManagedConfig(t *testing.T) {
+	home := t.TempDir()
+	// A path whose parent cannot be created: /proc rejects mkdir even for root.
+	managed := "/proc/kyber-not-a-real-dir/managed_config.toml"
+
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"CODEX_MODEL=claude-sonnet-5",
+		"KYBER_TELEGRAM_MCP_URL=http://127.0.0.1:14004/mcp")
+	if err != nil {
+		t.Fatalf("boot aborted on an unwritable managed config: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "could not write") {
+		t.Fatalf("boot did not warn about the unwritable managed config:\n%s", out)
+	}
+	// The agent's own config must still converge — the two are independent.
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(config), "[mcp_servers.kyber_telegram]") {
+		t.Fatalf("MCP convergence was skipped because the managed config failed:\n%s", config)
+	}
+}
+
+// Every append to the managed config must be `||`-guarded. The script runs
+// under `set -euo pipefail`, so an unguarded failing pipeline exits the whole
+// script — and for an agent that means it never starts. A chmod or sudo
+// failure while recording the model or the cron hooks is worth a warning, not
+// a dead agent.
+//
+// Asserted against the source because the failure needs a target that is
+// writable for the first write and not for a later one, which a test cannot
+// arrange from outside.
+func TestStartCodexAppendsToManagedConfigAreNonFatal(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(string(script), "\n")
+	found := 0
+	for i, line := range lines {
+		if !strings.Contains(line, "kyber_append_managed_config \"$KYBER_MANAGED_CODEX_CONFIG\"") {
+			continue
+		}
+		found++
+		guarded := strings.Contains(line, "||")
+		if !guarded && i+1 < len(lines) {
+			guarded = strings.HasPrefix(strings.TrimSpace(lines[i+1]), "||")
+		}
+		if !guarded {
+			t.Fatalf("start-codex.sh:%d appends to the managed config without a `||` guard; "+
+				"under set -e a failure here kills the whole boot:\n  %s", i+1, strings.TrimSpace(line))
+		}
+	}
+	if found == 0 {
+		t.Fatal("no managed-config append sites found — has the helper been renamed?")
+	}
+}

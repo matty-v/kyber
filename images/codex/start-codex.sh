@@ -240,9 +240,17 @@ timeout = 20
 "
 fi
 
-# Write via sudo only when a direct write is not possible: the tests run this
-# script unprivileged against a temp path, and the image grants kyber
-# passwordless sudo for exactly this kind of boot-time maintenance.
+# Set $1 to mode $2, but only when it is not already that mode. A chmod on a
+# path this user does not own fails even when the mode is already correct, so
+# checking first stops an already-fine directory from failing the whole write.
+kyber_ensure_mode() {
+    _path="$1"
+    _want="$2"
+    _have="$(stat -c '%a' "$_path" 2>/dev/null || echo '')"
+    [ "$_have" = "${_want#0}" ] && return 0
+    chmod "$_want" "$_path" 2>/dev/null || sudo chmod "$_want" "$_path" 2>/dev/null || return 1
+}
+
 # True when this shell can write $1 directly — the file exists and is writable,
 # or it does not exist and its directory is. Never attempts the write itself.
 kyber_managed_config_writable() {
@@ -253,6 +261,10 @@ kyber_managed_config_writable() {
     fi
 }
 
+# Write via sudo only when a direct write is not possible: the tests run this
+# script unprivileged against a temp path, and the image grants kyber
+# passwordless sudo for exactly this kind of boot-time maintenance.
+#
 # Both the directory and the file must be readable BY THE AGENT USER, not just
 # by root. `sudo mkdir` and `sudo tee` create 0700/0600 under root's umask, and
 # codex then cannot traverse /etc/codex: its probe for requirements.toml comes
@@ -279,13 +291,13 @@ kyber_write_managed_config() {
     if [ ! -d "$_dir" ]; then
         mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
     fi
-    chmod 0755 "$_dir" 2>/dev/null || sudo chmod 0755 "$_dir" 2>/dev/null || return 1
+    kyber_ensure_mode "$_dir" 0755 || return 1
     if kyber_managed_config_writable "$_target"; then
         cat > "$_target"
     else
         sudo tee "$_target" >/dev/null || return 1
     fi
-    chmod 0644 "$_target" 2>/dev/null || sudo chmod 0644 "$_target" 2>/dev/null || return 1
+    kyber_ensure_mode "$_target" 0644 || return 1
 }
 
 # Append to the managed config, keeping it readable by the agent user and
@@ -297,7 +309,7 @@ kyber_append_managed_config() {
     else
         sudo tee -a "$_target" >/dev/null || return 1
     fi
-    chmod 0644 "$_target" 2>/dev/null || sudo chmod 0644 "$_target" 2>/dev/null || return 1
+    kyber_ensure_mode "$_target" 0644 || return 1
 }
 
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
@@ -312,14 +324,16 @@ EOF
 then
     if [ -n "${CODEX_MODEL:-}" ]; then
         printf 'model = "%s"\n' "$CODEX_MODEL" | \
-            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; }
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
+            echo "[kyber] WARNING: could not record the model in $KYBER_MANAGED_CODEX_CONFIG" >&2
     fi
     # The hook TABLES go last, after every top-level key above: a bare
     # `model = ...` appended after a [[table]] header would be parsed as a
     # member of that table, not as a top-level setting.
     if [ -n "$KYBER_CODEX_HOOKS_TOML" ]; then
         printf '%s' "$KYBER_CODEX_HOOKS_TOML" | \
-            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; }
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
+            echo "[kyber] WARNING: could not register the cron hooks in $KYBER_MANAGED_CODEX_CONFIG" >&2
     fi
     echo "[kyber] Codex managed settings written to $KYBER_MANAGED_CODEX_CONFIG"
 else
