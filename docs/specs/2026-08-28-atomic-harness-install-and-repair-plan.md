@@ -59,8 +59,8 @@ runtime-neutral repair action that works even when the agent pod is absent.
 - [x] Add shell/integration tests for successful install, failed verification,
   interrupted swap rollback, stale artifacts, and two consecutive `latest`
   boots.
-- [ ] Run focused image tests and repository-required gates.
-- [ ] Deploy to `kyber-dev-gcp`, interrupt an upgrade, and verify the prior
+- [x] Run focused image tests and repository-required gates.
+- [x] Deploy to `kyber-dev-gcp`, interrupt an upgrade, and verify the prior
   harness still boots and runs.
 
 ## PR B — broken-runtime lifecycle and diagnosis
@@ -106,4 +106,13 @@ runtime-neutral repair action that works even when the agent pod is absent.
 - 2026-08-28: Added the shared staged installer, signal/SIGKILL rollback,
   legacy npm-staging cleanup, atomic global-bin repair, and concrete `latest`
   resolution for both runtimes. Focused shared, Codex, and Claude Code
-  integration tests pass; full gates and live interruption testing remain.
+  integration tests passed at the implementation checkpoint.
+- 2026-08-28: Deployed immutable dev images
+  `worktree-20260828153953-c45a55f`. A zero-grace kill immediately after the
+  staging marker left Codex `0.148.0` executable while `0.149.0` was
+  interrupted, and left Claude Code `2.1.250` executable while `2.1.249` was
+  interrupted. Recovery/consecutive boots resolved `latest` and skipped the
+  download at Codex `0.150.1` and Claude Code `2.1.250`. The existing Claude
+  test agent returned to `Running`; disposable `sol-test-mat11-codex` was
+  deleted. PR #168's required test, integration, build, and security checks all
+  pass.
