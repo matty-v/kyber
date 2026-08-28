@@ -221,6 +221,52 @@ func TestStatusEvent_ResourceUsagePreservesAgentUsageWhenMetricsDisappear(t *tes
 	}
 }
 
+func TestStatusEvent_NonReadyDiskSamplePreservesExhaustionUntilReady(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Spec: kyberv1.AgentSpec{Resources: kyberv1.AgentResources{
+			CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("100"),
+		}},
+		Status: kyberv1.AgentStatus{Activity: &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
+			DiskUsedBytes: 95, DiskTotalBytes: 100, DiskReserveReached: true,
+			DiskUsageMethod: "directory", DiskUsageState: "ready",
+		}}},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	post := func(state string, used int) *kyberv1.AgentResourceUsage {
+		t.Helper()
+		body := fmt.Sprintf(`{"type":"resource_usage","at":"2026-08-27T12:01:00Z","resources":{"diskUsedBytes":%d,"diskTotalBytes":100,"diskUsageMethod":"directory","diskUsageState":%q}}`, used, state)
+		resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status for %s sample: got %d", state, resp.StatusCode)
+		}
+		got := &kyberv1.Agent{}
+		if err := fakeClient.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "alice"}, got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Status.Activity.Resources
+	}
+
+	if usage := post("error", 95); !usage.DiskReserveReached {
+		t.Fatalf("error sample cleared exhaustion: %+v", usage)
+	}
+	if usage := post("pending", 0); !usage.DiskReserveReached {
+		t.Fatalf("pending sample cleared exhaustion: %+v", usage)
+	}
+	if usage := post("ready", 80); usage.DiskReserveReached {
+		t.Fatalf("ready sample below reserve did not clear exhaustion: %+v", usage)
+	}
+}
+
 // TestStatusEvent_AgentNotFound returns 404 cleanly when the agent does
 // not exist. The sidecar uses 404 as a signal to back off rather than
 // hammering retries.
