@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -967,6 +968,9 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 		// grep heuristic that failed open (canary regression 2026-08-22).
 		ModelProbeExit   *int   `json:"modelProbeExit,omitempty"`
 		ModelProbeOutput string `json:"modelProbeOutput,omitempty"`
+		Runtime          string `json:"runtime,omitempty"`
+		Usable           *bool  `json:"usable,omitempty"`
+		ProbeMessage     string `json:"probeMessage,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -985,6 +989,10 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 	}
 	if body.RequestedVersion != nil && len(*body.RequestedVersion) > 128 {
 		http.Error(w, "requestedVersion too long", http.StatusBadRequest)
+		return
+	}
+	if len(body.Runtime) > 64 || len(body.ProbeMessage) > 512 {
+		http.Error(w, "runtime probe diagnostic too long", http.StatusBadRequest)
 		return
 	}
 
@@ -1010,6 +1018,29 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 	agent.Status.Runtime.InstalledVersion = body.Version
 	mt := metav1.NewTime(reportedAt)
 	agent.Status.Runtime.InstalledAt = &mt
+	if body.Runtime != "" {
+		agent.Status.Runtime.Runtime = body.Runtime
+	}
+	if body.Usable != nil {
+		usable := *body.Usable
+		agent.Status.Runtime.Usable = &usable
+		agent.Status.Runtime.ProbeMessage = body.ProbeMessage
+		condition := metav1.Condition{
+			Type:               kyberv1.AgentConditionRuntimeUnusable,
+			ObservedGeneration: agent.Generation,
+			LastTransitionTime: metav1.Now(),
+		}
+		if usable {
+			condition.Status = metav1.ConditionFalse
+			condition.Reason = "ProbeSucceeded"
+			condition.Message = "Runtime executable and version probe succeeded."
+		} else {
+			condition.Status = metav1.ConditionTrue
+			condition.Reason = "ProbeFailed"
+			condition.Message = body.ProbeMessage
+		}
+		meta.SetStatusCondition(&agent.Status.Conditions, condition)
+	}
 	// PR-E extensions — only overwrite when the field was present in the
 	// request. An old sidecar that doesn't send these leaves whatever
 	// value was last written by the post-PR-E sidecar in place; if the

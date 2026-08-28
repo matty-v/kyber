@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	k8stypes "k8s.io/apimachinery/pkg/types"
@@ -227,6 +228,36 @@ func TestInternalAPI_RuntimeVersion_AcceptsExtendedBody(t *testing.T) {
 	}
 	if rs.ModelSupported == nil || *rs.ModelSupported {
 		t.Errorf("ModelSupported = %v, want *false", rs.ModelSupported)
+	}
+}
+
+func TestInternalAPI_RuntimeVersion_RecordsBrokenHarnessDiagnostic(t *testing.T) {
+	scheme := newRuntimeVersionScheme(t)
+	agent := newRuntimeVersionAgent("chewie")
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(c, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"version":"unknown","runtime":"codex","usable":false,"probeMessage":"codex: text file busy"}`
+	resp, err := http.Post(ts.URL+"/internal/agents/chewie/runtime-version", "application/json", bytes.NewBufferString(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	got := &kyberv1.Agent{}
+	if err := c.Get(context.Background(), k8stypes.NamespacedName{Name: "chewie", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Runtime.Usable == nil || *got.Status.Runtime.Usable || got.Status.Runtime.Runtime != "codex" {
+		t.Fatalf("runtime status = %#v", got.Status.Runtime)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, kyberv1.AgentConditionRuntimeUnusable)
+	if cond == nil || cond.Status != metav1.ConditionTrue || !strings.Contains(cond.Message, "text file busy") {
+		t.Fatalf("runtime condition = %#v", cond)
 	}
 }
 

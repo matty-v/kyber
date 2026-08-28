@@ -903,6 +903,10 @@ spec:
                       clearly attributable to model rejection reports nil rather than
                       false so a flaky network blip doesn't flip the badge.
                     type: boolean
+                  probeMessage:
+                    description: ProbeMessage is a bounded diagnostic from a failed
+                      executable probe.
+                    type: string
                   requestedSatisfied:
                     description: |-
                       RequestedSatisfied is true when the boot-time `npm install` ran
@@ -921,6 +925,16 @@ spec:
                       Empty when the agent never overrode the baked-in default (existing
                       behavior pre-PR-C). See kyber#379.
                     type: string
+                  runtime:
+                    description: |-
+                      Runtime names the adapter whose executable was probed (for example,
+                      "codex" or "claude-code").
+                    type: string
+                  usable:
+                    description: |-
+                      Usable is the startup executable/version probe result. Nil means an older
+                      runtime image has not reported this signal.
+                    type: boolean
                 type: object
               scheduling:
                 description: |-

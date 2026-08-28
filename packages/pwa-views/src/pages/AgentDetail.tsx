@@ -216,8 +216,12 @@ export function StatusCardBody({ status }: { status: AgentStatus }) {
 // Returns null when neither condition is True, so a healthy agent
 // surfaces nothing.
 export function MismatchBadges({ agent }: { agent: Agent }) {
-  const showMismatch = Boolean(agent.runtimeVersionMismatch)
-  const showUnsupported = Boolean(agent.modelUnsupported)
+  const showBrokenRuntime = agent.phase === 'BrokenRuntime' || agent.runtimeVersion?.usable === false
+  // A failed executable probe is authoritative for this boot. Suppress model
+  // and version signals that may be left over from an earlier successful boot;
+  // they are not actionable until the harness itself works again.
+  const showMismatch = !showBrokenRuntime && Boolean(agent.runtimeVersionMismatch)
+  const showUnsupported = !showBrokenRuntime && Boolean(agent.modelUnsupported)
   // kyber#674 — blocked-before-pod conditions. Unlike the two badges above,
   // these mean NO pod exists at all, so the agent shows a blank status and a
   // restart cannot help. Rendered first: they explain why everything else on
@@ -231,14 +235,35 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   // on this surface. (A definite rejection renders the danger banner
   // above instead.)
   const showProbeInconclusive =
+    !showBrokenRuntime &&
     !showUnsupported &&
     agent.runtimeVersion?.modelSupported !== false &&
     Boolean(agent.runtimeVersion?.modelProbeMessage)
-  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showProbeInconclusive) return null
+  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showBrokenRuntime && !showProbeInconclusive) return null
   const installed = agent.runtimeVersion?.installedVersion
   const requested = agent.runtimeVersion?.requestedVersion
   return (
     <div className="space-y-2">
+      {showBrokenRuntime && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">Runtime harness is unusable</h2>
+              <p className="text-xs text-text-muted">
+                The <code className="font-mono">{agent.runtimeVersion?.runtime ?? agent.runtime}</code> executable
+                failed before authentication was checked. Re-authorizing will not help. Repair the runtime harness,
+                then restart the agent; Kyber will not auto-restart this state.
+              </p>
+              {(agent.runtimeVersion?.probeMessage || agent.status?.message) && (
+                <p className="text-xs text-text-muted font-mono border-l-2 border-danger/40 pl-2">
+                  {agent.runtimeVersion?.probeMessage ?? agent.status?.message}
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
       {showImageMissing && (
         <Card className="border-danger/40 bg-danger/5">
           <div className="flex items-start gap-3">

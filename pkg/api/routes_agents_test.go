@@ -293,8 +293,12 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 // The PWA reads this to show what Claude Code version each agent is running.
 func TestAgents_Get_ExposesRuntimeVersion(t *testing.T) {
 	installed := metav1.NewTime(time.Date(2026, 4, 24, 2, 15, 0, 0, time.UTC))
+	usable := false
 	agent := sampleAgentCRD("dave")
 	agent.Status.Runtime = kyberv1.AgentRuntimeStatus{
+		Runtime:          "claude-code",
+		Usable:           &usable,
+		ProbeMessage:     "claude: text file busy",
 		InstalledVersion: "2.1.119",
 		InstalledAt:      &installed,
 	}
@@ -324,6 +328,15 @@ func TestAgents_Get_ExposesRuntimeVersion(t *testing.T) {
 	}
 	if got := rv["installedAt"]; got != "2026-04-24T02:15:00Z" {
 		t.Errorf("runtimeVersion.installedAt: got %v", got)
+	}
+	if got := rv["runtime"]; got != "claude-code" {
+		t.Errorf("runtimeVersion.runtime: got %v", got)
+	}
+	if got := rv["usable"]; got != false {
+		t.Errorf("runtimeVersion.usable: got %v", got)
+	}
+	if got := rv["probeMessage"]; got != "claude: text file busy" {
+		t.Errorf("runtimeVersion.probeMessage: got %v", got)
 	}
 }
 

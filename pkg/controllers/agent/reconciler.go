@@ -796,7 +796,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	// 9. Update the CRD status with the new phase.
-	if err := r.updatePhase(ctx, agent, result.NextPhase, ""); err != nil {
+	message := ""
+	if result.NextPhase == kyberv1.AgentPhaseBrokenRuntime {
+		message = agent.Status.Runtime.ProbeMessage
+		if message == "" {
+			message = fmt.Sprintf("%s runtime harness failed its executable/version probe. Repair the runtime before retrying authentication.", agent.Spec.Runtime)
+		}
+	}
+	if err := r.updatePhase(ctx, agent, result.NextPhase, message); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -879,6 +886,7 @@ func (r *AgentReconciler) classifyEvent(
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted,
+			kyberv1.AgentPhaseBrokenRuntime,
 			kyberv1.AgentPhaseWaitingForMachine:
 			return EventDesiredStopped, nil
 		}
@@ -1090,6 +1098,9 @@ func (r *AgentReconciler) classifyEvent(
 		// isAgentContainerTerminated catches the multi-container case the
 		// pod-level Phase check misses (#274).
 		if pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || isAgentContainerTerminated(pod) {
+			if isRuntimeProbeFailure(pod) {
+				return EventRuntimeProbeFailed, nil
+			}
 			if isOAuthRefreshFailure(pod) {
 				return EventOAuthRefreshFailed, nil
 			}
@@ -1148,6 +1159,9 @@ func (r *AgentReconciler) classifyEvent(
 			// Pod is gone, stuck Terminating on a dead node, or exited — treat as dead.
 			if r.isMachinePreempted(ctx, agent, pod) {
 				return EventMachinePreempted, nil
+			}
+			if isRuntimeProbeFailure(pod) {
+				return EventRuntimeProbeFailed, nil
 			}
 			// Check for OAuth refresh failure (exit code 2 from start-claude.sh).
 			if isOAuthRefreshFailure(pod) {
@@ -2967,6 +2981,9 @@ func removeString(slice []string, s string) []string {
 // NeedsAuth (which lights up the PWA's Re-authorize button) rather than to a
 // pointless auto-restart loop on the same broken credential.
 const (
+	// runtimeProbeFailureExitCode is emitted before authentication when the
+	// harness executable/version probe fails.
+	runtimeProbeFailureExitCode int32 = 43
 	// claudeCodeAuthFailureExitCode is start-claude.sh's signal that the
 	// Anthropic OAuth refresh failed.
 	claudeCodeAuthFailureExitCode int32 = 2
@@ -2974,6 +2991,18 @@ const (
 	// status` failed — the ChatGPT auth.json is missing or no longer valid.
 	codexAuthFailureExitCode int32 = 42
 )
+
+func isRuntimeProbeFailure(pod *corev1.Pod) bool {
+	if pod == nil {
+		return false
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == AgentContainerName && cs.State.Terminated != nil && cs.State.Terminated.ExitCode == runtimeProbeFailureExitCode {
+			return true
+		}
+	}
+	return false
+}
 
 // isOAuthRefreshFailure checks whether the agent container's CURRENT termination
 // carried one of the runtimes' credential-failure exit codes. Only inspects

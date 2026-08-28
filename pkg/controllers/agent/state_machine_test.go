@@ -147,6 +147,27 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseNeedsAuth,
 		},
 		{
+			name:       "Starting + RuntimeProbeFailed → BrokenRuntime",
+			current:    kyberv1.AgentPhaseStarting,
+			event:      EventRuntimeProbeFailed,
+			wantAction: ActionUpdateStatus,
+			wantNext:   kyberv1.AgentPhaseBrokenRuntime,
+		},
+		{
+			name:       "Running + RuntimeProbeFailed → BrokenRuntime",
+			current:    kyberv1.AgentPhaseRunning,
+			event:      EventRuntimeProbeFailed,
+			wantAction: ActionUpdateStatus,
+			wantNext:   kyberv1.AgentPhaseBrokenRuntime,
+		},
+		{
+			name:       "BrokenRuntime + DesiredStopped → Stopping",
+			current:    kyberv1.AgentPhaseBrokenRuntime,
+			event:      EventDesiredStopped,
+			wantAction: ActionCaptureStateAndDeletePod,
+			wantNext:   kyberv1.AgentPhaseStopping,
+		},
+		{
 			name:       "NeedsAuth + DesiredRunning → Starting",
 			current:    kyberv1.AgentPhaseNeedsAuth,
 			event:      EventDesiredRunning,

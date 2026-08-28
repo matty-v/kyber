@@ -131,6 +131,10 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
       // Recovery is automatic after Shell cleanup or a PVC increase. Keep the
       // explicit escape hatches available without offering a redundant Start.
       return ['stop', 'force-needs-auth']
+    case 'BrokenRuntime':
+      // Authentication cannot repair the harness. PR C adds the dedicated
+      // repair action; until then only allow an explicit stop.
+      return ['stop']
     case 'Starting':
       return ['force-needs-auth']
     case 'NeedsAuth':

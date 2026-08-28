@@ -23,6 +23,7 @@ export type AgentPhase =
   // from it.
   | 'MemoryExhausted'
   | 'DiskExhausted'
+  | 'BrokenRuntime'
 
 export type AgentAuthType = 'oauth' | 'api-key'
 
@@ -183,6 +184,12 @@ export interface AgentSchedulingStatus {
 // what the image was built with (the two can differ once dynamic overrides
 // ship in a later phase).
 export interface AgentRuntimeVersion {
+	/** Runtime adapter whose executable was probed. */
+	runtime?: string
+	/** Whether the startup executable/version probe succeeded. */
+	usable?: boolean
+	/** Bounded startup probe failure diagnostic. */
+	probeMessage?: string
   installedVersion: string
   // RFC3339 timestamp; empty/absent when the controller hasn't recorded a
   // report yet.

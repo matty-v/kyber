@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Distinguish an unusable Codex or Claude Code harness from expired credentials with a stable `BrokenRuntime` lifecycle phase, bounded startup diagnostics, and operator guidance that suppresses irrelevant re-authorization actions.
+
 Initial public release (targeting **v1.0.0**): the full Kyber platform —
 control plane, node agent, Agent/Machine CRDs, Claude Code and Codex runtimes,
 Telegram/Discord channel sidecars, the PWA, Helm chart, and Terraform

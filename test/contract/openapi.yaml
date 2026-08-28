@@ -1387,6 +1387,7 @@ components:
         - Replacing
         - Failed
         - Deleted
+        - BrokenRuntime
         - ""
 
     Machine:

@@ -3,6 +3,54 @@ set -euo pipefail
 
 mkdir -p ~/.claude ~/.claude/channels/telegram ~/.claude/plugins ~/.claude/statsig
 
+# Probe the harness before any MCP or authentication command. If a concrete
+# requested version is available, the shared atomic installer gets one chance
+# to heal a broken live tree first; otherwise report the bounded failure and
+# stop with the runtime-specific lifecycle exit code.
+if [ "${KYBER_SKIP_RUNTIME_PROBE:-}" != "1" ]; then
+    if _runtime_probe_output="$(claude --version 2>&1)"; then
+        _runtime_probe_status=0
+    else
+        _runtime_probe_status=$?
+    fi
+    _runtime_probe_version="$(printf '%s\n' "$_runtime_probe_output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1 || true)"
+    if { [ "$_runtime_probe_status" -ne 0 ] || [ -z "$_runtime_probe_version" ]; } && \
+       [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ] && \
+       [ "${#KYBER_REQUESTED_CC_VERSION}" -le 64 ] && [[ "$KYBER_REQUESTED_CC_VERSION" =~ ^[0-9A-Za-z.-]+$ ]]; then
+        _runtime_repair_version="$KYBER_REQUESTED_CC_VERSION"
+        if [ "$_runtime_repair_version" = latest ]; then
+            _runtime_repair_version="$(npm view @anthropic-ai/claude-code@latest version 2>/dev/null | tail -1 || true)"
+        fi
+        _runtime_installer="/usr/local/bin/kyber-harness-install"
+        if [ "${KYBER_BOOTPREP_DRY_RUN:-}" = "1" ] && [ -n "${KYBER_HARNESS_INSTALLER:-}" ]; then
+            _runtime_installer="$KYBER_HARNESS_INSTALLER"
+        fi
+        if [[ "$_runtime_repair_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?$ ]] && [ -x "$_runtime_installer" ]; then
+            sudo "$_runtime_installer" @anthropic-ai/claude-code "$_runtime_repair_version" claude >/dev/null 2>&1 || true
+            if _runtime_probe_output="$(claude --version 2>&1)"; then
+                _runtime_probe_status=0
+            else
+                _runtime_probe_status=$?
+            fi
+            _runtime_probe_version="$(printf '%s\n' "$_runtime_probe_output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1 || true)"
+        fi
+        unset _runtime_repair_version _runtime_installer
+    fi
+    if [ "$_runtime_probe_status" -ne 0 ] || [ -z "$_runtime_probe_version" ]; then
+        _runtime_probe_message="$(printf '%s' "${_runtime_probe_output:-claude executable produced no version}" | tr '\n\r\t' '   ' | tr -cd '[:print:]' | cut -c1-300)"
+        _runtime_probe_json="$(printf '%s' "$_runtime_probe_message" | sed 's/[\\"]/ /g')"
+        curl -fsS --max-time 5 --retry 5 --retry-connrefused -H 'Content-Type: application/json' -X POST \
+            -d "{\"version\":\"unknown\",\"runtime\":\"claude-code\",\"usable\":false,\"probeMessage\":\"${_runtime_probe_json}\"}" \
+            http://127.0.0.1:8091/runtime-version >/dev/null 2>&1 || true
+        echo "[kyber] FATAL: Claude Code runtime probe failed: $_runtime_probe_message" >&2
+        exit 43
+    fi
+    curl -fsS --max-time 5 --retry 5 --retry-connrefused -H 'Content-Type: application/json' -X POST \
+        -d "{\"version\":\"${_runtime_probe_version}\",\"runtime\":\"claude-code\",\"usable\":true}" \
+        http://127.0.0.1:8091/runtime-version >/dev/null 2>&1 || true
+    unset _runtime_probe_output _runtime_probe_status _runtime_probe_version _runtime_probe_message _runtime_probe_json
+fi
+
 # ---- Onboarding bypass (the CRITICAL piece) ----
 # Claude Code's onboarding is controlled by ~/.claude.json (NOT ~/.claude/settings.json!).
 # Without hasCompletedOnboarding:true, the onboarding flow runs — which includes

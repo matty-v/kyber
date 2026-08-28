@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"context"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // A runtime that cannot authenticate must land in NeedsAuth (which lights up
@@ -54,5 +57,28 @@ func TestIsOAuthRefreshFailure_IgnoresLastTerminationState(t *testing.T) {
 	}}}}
 	if isOAuthRefreshFailure(pod) {
 		t.Fatal("a prior exit-42 must not classify a current exit-1 crash as a credential failure")
+	}
+}
+
+func TestRuntimeProbeFailureIsDistinctFromAuthentication(t *testing.T) {
+	pod := &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+		Name:  "agent",
+		State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 43}},
+	}}}}
+	if !isRuntimeProbeFailure(pod) {
+		t.Fatal("exit 43 must classify as a runtime probe failure")
+	}
+	if isOAuthRefreshFailure(pod) {
+		t.Fatal("exit 43 must not classify as an authentication failure")
+	}
+}
+
+func TestBrokenRuntimeSuppressesForcedAuthenticationTransition(t *testing.T) {
+	agent := &kyberv1.Agent{}
+	agent.Status.Phase = kyberv1.AgentPhaseBrokenRuntime
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	event, err := (&AgentReconciler{}).classifyEvent(context.Background(), agent, nil)
+	if err != nil || event != "" {
+		t.Fatalf("BrokenRuntime force-auth classification = %q, err=%v; want stable", event, err)
 	}
 }

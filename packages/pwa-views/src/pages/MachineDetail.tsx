@@ -64,7 +64,7 @@ export function MachineDetail() {
   // eligibility set (pkg/api/routes_machines.go): include anything that has
   // or should have a pod; skip explicit pauses and in-flight infra states.
   const restartEligibleCount = hostedAgents.filter((a) =>
-    ['Creating', 'Starting', 'Running', 'Restarting', 'Failed', 'NeedsAuth'].includes(a.phase),
+    ['Creating', 'Starting', 'Running', 'Restarting', 'Failed', 'NeedsAuth', 'BrokenRuntime'].includes(a.phase),
   ).length
   const machineActive = machine?.phase === 'Ready' || machine?.phase === 'Running'
 
