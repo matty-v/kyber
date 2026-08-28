@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -347,4 +348,162 @@ func TestClearSchedulingStatus(t *testing.T) {
 			t.Errorf("expected change=false on already-nil")
 		}
 	})
+}
+
+// stalledPod is a Pending pod whose sidecars are up but whose runtime
+// container never started — the shape a Kyber agent pod takes when it hangs
+// in Creating. No scheduler or kubelet failure event is ever emitted for it,
+// so none of the six classified reasons apply.
+func stalledPod(uid string, age time.Duration) *corev1.Pod {
+	pod := newPendingPod(uid, age)
+	pod.Status.InitContainerStatuses = []corev1.ContainerStatus{
+		{Name: "kyber-status-sidecar", State: corev1.ContainerState{
+			Running: &corev1.ContainerStateRunning{}}},
+	}
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+		{Name: "agent", State: corev1.ContainerState{
+			Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"}}},
+	}
+	return pod
+}
+
+// A pod stuck for hours with no classified event must still say something.
+// Before this, an operator got an unchanging phase and an empty reason, and
+// the only ground truth was `kubectl describe pod` on the box. Observed on
+// kyber-canary: an agent sat in Creating for eleven hours reporting nothing.
+func TestPopulateSchedulingStatus_StalledPodWithNoEventsReportsWhatItCanSee(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("a pod stalled for 11h with no events reported nothing")
+	}
+	got := agent.Status.Scheduling
+	if got == nil {
+		t.Fatal("Scheduling still nil")
+	}
+	if got.Category != "Other" {
+		t.Errorf("Category = %q, want Other", got.Category)
+	}
+	// The message has to name the container that never started; "something is
+	// wrong" with no pointer is barely better than the blank it replaces.
+	if !strings.Contains(got.LastError, "agent") ||
+		!strings.Contains(got.LastError, "PodInitializing") {
+		t.Errorf("LastError does not name the stalled container or its state: %q", got.LastError)
+	}
+	if got.FirstObservedAt == nil {
+		t.Error("FirstObservedAt nil")
+	}
+}
+
+// A cold node pulling a large runtime image is Pending with no events for
+// minutes. That is a healthy boot, not a stall, and must not raise a banner.
+func TestPopulateSchedulingStatus_StalledFallbackWaitsOutASlowBoot(t *testing.T) {
+	pod := stalledPod("pod-uid", 5*time.Minute)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	if populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatalf("reported a stall during a normal slow boot: %+v", agent.Status.Scheduling)
+	}
+	if agent.Status.Scheduling != nil {
+		t.Errorf("expected Scheduling unset, got %+v", agent.Status.Scheduling)
+	}
+}
+
+// A real classified reason is always better than the descriptive fallback.
+func TestPopulateSchedulingStatus_ClassifiedEventBeatsTheStalledFallback(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	ev := newSchedulingEvent("pod-uid", "FailedScheduling",
+		"0/1 nodes are available: 1 Insufficient memory.", time.Now())
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).
+		WithObjects(ev).Build()
+
+	populateSchedulingStatus(context.Background(), c, pod, agent)
+	if agent.Status.Scheduling == nil || agent.Status.Scheduling.Category != "Capacity" {
+		t.Fatalf("the fallback displaced a classified reason: %+v", agent.Status.Scheduling)
+	}
+}
+
+// The fallback must never overwrite an entry another call site is managing.
+func TestPopulateSchedulingStatus_StalledFallbackDoesNotOverwrite(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	existing := metav1.NewTime(time.Now().Add(-12 * time.Hour))
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"},
+		Status: kyberv1.AgentStatus{Scheduling: &kyberv1.AgentSchedulingStatus{
+			Category:        "Placement",
+			LastError:       "0/4 nodes are available: 3 node(s) didn't match Pod's node affinity/selector.",
+			FirstObservedAt: &existing,
+		}},
+	}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	if populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("the fallback overwrote an existing scheduling entry")
+	}
+	if agent.Status.Scheduling.Category != "Placement" {
+		t.Errorf("Category = %q, want the original Placement", agent.Status.Scheduling.Category)
+	}
+}
+
+// A description that never refreshes is the stale-banner problem again: sol's
+// banner showed a seven-hour-old scheduling error while the real fault had
+// moved on entirely, and it sent the diagnosis the wrong way for an hour. If
+// what we can observe changes, the operator must see the change.
+func TestPopulateSchedulingStatus_StalledFallbackRefreshesWhenTheStallChanges(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("first observation reported nothing")
+	}
+	first := *agent.Status.Scheduling.FirstObservedAt
+
+	// Same pod, later poll, the kubelet has now recorded a different state.
+	pod.Status.ContainerStatuses[0].State.Waiting.Reason = "CreateContainerError"
+	if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("a changed stall was not reported — the banner would stay stale")
+	}
+	if !strings.Contains(agent.Status.Scheduling.LastError, "CreateContainerError") {
+		t.Errorf("description did not refresh: %q", agent.Status.Scheduling.LastError)
+	}
+	if !agent.Status.Scheduling.FirstObservedAt.Equal(&first) {
+		t.Errorf("FirstObservedAt moved on refresh: %v -> %v",
+			first, agent.Status.Scheduling.FirstObservedAt)
+	}
+}
+
+// ...but an unchanged stall must not churn the resource on every poll, the
+// same guard the classified path has.
+func TestPopulateSchedulingStatus_StalledFallbackIsIdempotent(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	populateSchedulingStatus(context.Background(), c, pod, agent)
+	if populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("an unchanged stall asked for a second patch")
+	}
+}
+
+// "First observed" must mean when the agent got stuck, not when the ten-minute
+// grace elapsed. An operator reading "first observed 10 minutes ago" about an
+// eleven-hour outage is being told something false.
+func TestPopulateSchedulingStatus_StalledFallbackDatesFromPodCreation(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	populateSchedulingStatus(context.Background(), c, pod, agent)
+	got := agent.Status.Scheduling.FirstObservedAt
+	if got == nil {
+		t.Fatal("FirstObservedAt nil")
+	}
+	if drift := got.Time.Sub(pod.CreationTimestamp.Time); drift > time.Second || drift < -time.Second {
+		t.Errorf("FirstObservedAt is %v from pod creation; it should date the stall, not the grace window", drift)
+	}
 }

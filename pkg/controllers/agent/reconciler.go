@@ -682,12 +682,19 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		// arrive.
 		var base time.Duration
 		switch agent.Status.Phase {
-		case kyberv1.AgentPhaseStarting:
+		case kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStarting:
 			base = requeueWaiting
 			// kyber#210: while we wait, surface any scheduler/kubelet
 			// failure that's been hanging on the pod past the grace
 			// window. populateSchedulingStatus is best-effort; a List
 			// failure is logged inside the helper and we just keep going.
+			//
+			// Creating is included because a pod that never starts its
+			// runtime container never leaves it. On kyber-canary a test
+			// agent sat in Creating for eleven hours: the pod existed and
+			// was Pending the whole time, but this ran only for Starting,
+			// so nothing ever looked at it and the operator got an
+			// unchanging phase with no reason attached.
 			if pod != nil && pod.Status.Phase == corev1.PodPending {
 				before := agent.DeepCopy()
 				if populateSchedulingStatus(ctx, r.Client, pod, agent) {
