@@ -129,6 +129,7 @@ func TestCompactSession_409NotRunning(t *testing.T) {
 		// there is no tmux session to paste into. The fix is more memory
 		// plus a restart, not compaction.
 		kyberv1.AgentPhaseMemoryExhausted,
+		kyberv1.AgentPhaseDiskExhausted,
 	}
 	for _, phase := range phases {
 		t.Run(string(phase), func(t *testing.T) {

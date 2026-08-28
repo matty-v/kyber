@@ -838,7 +838,7 @@ func (r *AgentReconciler) classifyEvent(
 	if desired == kyberv1.AgentPhaseNeedsAuth {
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
-			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
+			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted,
 			kyberv1.AgentPhaseStopped:
 			return EventDesiredNeedsAuth, nil
 		}
@@ -867,7 +867,7 @@ func (r *AgentReconciler) classifyEvent(
 	if desired == kyberv1.AgentPhaseStopped {
 		switch phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
-			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
+			kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted,
 			kyberv1.AgentPhaseWaitingForMachine:
 			return EventDesiredStopped, nil
 		}
@@ -889,6 +889,9 @@ func (r *AgentReconciler) classifyEvent(
 	// Operator intent: desired phase signals (only valid in certain current phases).
 	switch phase {
 	case kyberv1.AgentPhaseRunning:
+		if agent.Status.Activity != nil && agent.Status.Activity.Resources != nil && agent.Status.Activity.Resources.DiskReserveReached {
+			return EventDiskReserveReached, nil
+		}
 		// Check for preemption notice annotation (set by machine controller HandlePreemptionNotice).
 		if agent.Annotations["kyber.dev/preemption-notice"] != "" {
 			delete(agent.Annotations, "kyber.dev/preemption-notice")
@@ -951,6 +954,23 @@ func (r *AgentReconciler) classifyEvent(
 	case kyberv1.AgentPhaseStopped:
 		if desired == kyberv1.AgentPhaseRunning {
 			return EventDesiredRunning, nil
+		}
+
+	case kyberv1.AgentPhaseDiskExhausted:
+		if agent.Status.Activity != nil && agent.Status.Activity.Resources != nil && !agent.Status.Activity.Resources.DiskReserveReached {
+			return EventDiskReserveCleared, nil
+		}
+		// A hard-full runtime may have exited before the sidecar could observe
+		// cleanup. A PVC size change is the explicit operator input that permits
+		// one pod recreation; unchanged input holds DiskExhausted steady.
+		if desired == kyberv1.AgentPhaseRunning && (pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || isAgentContainerTerminated(pod)) {
+			changed, err := r.recoveryInputChanged(ctx, agent)
+			if err != nil {
+				return "", err
+			}
+			if changed {
+				return EventDesiredRunning, nil
+			}
 		}
 
 	// Failed is a phase an agent can sit in indefinitely, so — like NeedsAuth
@@ -2552,7 +2572,7 @@ func (r *AgentReconciler) resolveAdapter(agent *kyberv1.Agent) (pkgruntimes.Adap
 // currentRecoveryInput returns an opaque identity for the operator-supplied
 // input that a recovery out of the agent's current human-required phase would
 // consume: the credential Secret's resourceVersion for NeedsAuth, the memory
-// limit for MemoryExhausted (kyber#684).
+// limit for MemoryExhausted, or disk request for DiskExhausted (kyber#684).
 //
 // A missing Secret yields a stable sentinel rather than an error — an agent
 // whose credential Secret has not been created yet must sit in NeedsAuth, not
@@ -2562,6 +2582,8 @@ func (r *AgentReconciler) currentRecoveryInput(ctx context.Context, agent *kyber
 	switch agent.Status.Phase {
 	case kyberv1.AgentPhaseMemoryExhausted:
 		return "mem=" + agent.Spec.Resources.Memory.String(), nil
+	case kyberv1.AgentPhaseDiskExhausted:
+		return "disk=" + agent.Spec.Resources.Disk.String(), nil
 
 	case kyberv1.AgentPhaseNeedsAuth:
 		adapter, err := r.resolveAdapter(agent)

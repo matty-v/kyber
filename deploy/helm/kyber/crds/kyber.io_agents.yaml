@@ -819,7 +819,7 @@ spec:
                   RecoveryInput identifies the operator-supplied input that the most
                   recent recovery attempt out of a human-required phase consumed — the
                   credential Secret's resourceVersion for NeedsAuth, the memory limit for
-                  MemoryExhausted.
+                  MemoryExhausted, or the disk request for DiskExhausted.
 
                   Human-required phases cannot use spec.desiredPhase=Running as their
                   retry trigger: it is permanently true for every agent, so there is no

@@ -3,13 +3,13 @@ import type { Agent } from './types'
 export const DEFAULT_LIST_LIMIT = 6
 export const STALE_THRESHOLD_MS = 180_000 // 180s
 
-const ATTENTION_PHASES = new Set<string>(['NeedsAuth', 'MemoryExhausted', 'Failed'])
+const ATTENTION_PHASES = new Set<string>(['NeedsAuth', 'MemoryExhausted', 'DiskExhausted', 'Failed'])
 
 // Canonical status-bar order: healthy/transitional first, attention last.
 const PHASE_ORDER: string[] = [
   'Running', 'Starting', 'Creating', 'Restarting',
   'WaitingForMachine', 'Draining', 'Stopping', 'Stopped', 'Deleted',
-  'NeedsAuth', 'MemoryExhausted', 'Failed',
+  'NeedsAuth', 'MemoryExhausted', 'DiskExhausted', 'Failed',
 ]
 
 export interface PhaseCount { phase: string; count: number }

@@ -85,7 +85,9 @@ const (
 	// operator can bump spec.resources.memory before retrying — auto-
 	// restarting on the same too-small limit would crash-loop and hide
 	// the underlying problem (kyber#272).
-	EventOOMKilled Event = "OOMKilled"
+	EventOOMKilled          Event = "OOMKilled"
+	EventDiskReserveReached Event = "DiskReserveReached"
+	EventDiskReserveCleared Event = "DiskReserveCleared"
 )
 
 // Action describes what the reconciler must do as a result of a transition.
@@ -237,6 +239,15 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseMemoryExhausted,
 		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventDiskReserveReached}: {
+			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseDiskExhausted,
+		},
+		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDiskReserveCleared}: {
+			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseRunning,
+		},
+		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredRunning}: {
+			Action: ActionResetRetryAndCreatePod, NextPhase: kyberv1.AgentPhaseStarting,
+		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventLivenessFailed}: {
 			Action:    ActionKillPodEmitEventAutoRestart,
 			NextPhase: kyberv1.AgentPhaseFailed,
@@ -310,6 +321,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
+		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredNeedsAuth}: {
+			Action: ActionCaptureStateAndDeletePod, NextPhase: kyberv1.AgentPhaseNeedsAuth,
+		},
 		{phase: kyberv1.AgentPhaseStopped, event: EventDesiredNeedsAuth}: {
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
@@ -337,6 +351,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseMemoryExhausted, event: EventDesiredStopped}: {
 			Action:    ActionCaptureStateAndDeletePod,
 			NextPhase: kyberv1.AgentPhaseStopping,
+		},
+		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredStopped}: {
+			Action: ActionCaptureStateAndDeletePod, NextPhase: kyberv1.AgentPhaseStopping,
 		},
 		{phase: kyberv1.AgentPhaseWaitingForMachine, event: EventDesiredStopped}: {
 			Action:    ActionForceKillPod,

@@ -93,7 +93,7 @@ Codex API-key agents do not use this path.
 
 ## 3. Phases
 
-The 12 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
+The 13 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 
 | Phase | Meaning |
 |---|---|
@@ -109,6 +109,7 @@ The 12 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 | `WaitingForMachine` | waiting for a replacement machine after preemption |
 | `NeedsAuth` | stored OAuth refresh token is invalid; human must re-authorize |
 | `MemoryExhausted` | container was OOM-killed; operator must raise the memory limit before retry |
+| `DiskExhausted` | persistent volume reached its 90% reserve; the harness is paused while the pod and Shell remain available for cleanup |
 
 ## 4. Events & actions
 
@@ -177,6 +178,7 @@ stateDiagram-v2
     Running --> Failed: PodDied / LivenessFailed*
     Running --> NeedsAuth: OAuthRefreshFailed
     Running --> MemoryExhausted: OOMKilled
+    Running --> DiskExhausted: DiskReserveReached
     Running --> Draining: PreemptionNotice
     Running --> WaitingForMachine: MachinePreempted
 
@@ -189,6 +191,8 @@ stateDiagram-v2
 
     NeedsAuth --> Starting: DesiredRunning
     MemoryExhausted --> Starting: DesiredRunning
+    DiskExhausted --> Running: DiskReserveCleared
+    DiskExhausted --> Starting: DesiredRunning (terminal pod + larger PVC)
 
     %% Operator-forced re-auth (#395): drop a wedged agent to NeedsAuth.
     %% Live-pod phases delete the pod; pod-less phases flip status only.
@@ -196,6 +200,7 @@ stateDiagram-v2
     Starting --> NeedsAuth: DesiredNeedsAuth
     Failed --> NeedsAuth: DesiredNeedsAuth
     MemoryExhausted --> NeedsAuth: DesiredNeedsAuth
+    DiskExhausted --> NeedsAuth: DesiredNeedsAuth
     Stopped --> NeedsAuth: DesiredNeedsAuth
 
     %% Authoritative Stop kill switch (#468), structural twin of #395 above:
@@ -205,6 +210,7 @@ stateDiagram-v2
     Starting --> Stopping: DesiredStopped
     Failed --> Stopping: DesiredStopped
     MemoryExhausted --> Stopping: DesiredStopped
+    DiskExhausted --> Stopping: DesiredStopped
 
     Draining --> WaitingForMachine: PodDeleted / MachinePreempted
     WaitingForMachine --> Starting: MachineReady
@@ -246,6 +252,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
 | `Running` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
+| `Running` | `DiskReserveReached` | `UpdateStatus` | `DiskExhausted` |
 | `Running` | `LivenessFailed` *(not yet wired)* | `KillPodEmitEventAutoRestart` | `Failed` |
 | `Running` | `PreemptionNotice` | `DrainAgent` | `Draining` |
 | `Running` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
@@ -258,14 +265,18 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
+| `DiskExhausted` | `DiskReserveCleared` | `UpdateStatus` | `Running` |
+| `DiskExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
 | `Running` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Starting` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Failed` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
 | `MemoryExhausted` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
+| `DiskExhausted` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Stopped` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
 | `Starting` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `Failed` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `MemoryExhausted` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
+| `DiskExhausted` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `Draining` | `PodDeleted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Draining` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `WaitingForMachine` | `MachineReady` | `WriteBriefAndCreatePod` | `Starting` |

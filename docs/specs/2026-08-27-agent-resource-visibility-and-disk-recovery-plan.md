@@ -70,18 +70,20 @@ give operators a tested recovery path for a full or nearly-full volume.
 
 ## Slice 2 — `DiskExhausted` maintenance lifecycle
 
-- [ ] Add and document `DiskExhausted` plus its state-machine events and
+- [x] Add and document `DiskExhausted` plus its state-machine events and
   transitions.
-- [ ] Consume the reserve observation and stop only the harness/session while
+- [x] Consume the reserve observation and stop only the harness/session while
   leaving the container and Shell path alive.
-- [ ] Keep `DiskExhausted` stable while the maintenance pod remains present.
-- [ ] Permit recovery after usage drops below the reserve or the PVC requested
-  size grows; restart the harness cleanly and return through `Starting`.
+- [x] Keep `DiskExhausted` stable while the maintenance pod remains present.
+- [x] Permit recovery after usage drops below the reserve or the PVC requested
+  size grows. Live maintenance resumes the harness in place and returns directly
+  to `Running`; a hard-full terminal pod with a larger PVC is recreated through
+  `Starting`.
 - [ ] Classify a hard-full terminated agent from its last resource observation
   and a bounded, explicit entrypoint failure signal.
 - [ ] Characterize modern native-sidecar pod termination and add a regression
   fixture for the historical terminated-agent/running-sidecar shape.
-- [ ] Update lifecycle documentation, API/PWA phase rendering, and recovery
+- [x] Update lifecycle documentation, API/PWA phase rendering, and recovery
   actions.
 - [ ] Cover transitions with table tests and reconciler behavior with envtest.
 

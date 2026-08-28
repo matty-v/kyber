@@ -2564,6 +2564,7 @@ func TestClassifyEvent_ForceNeedsAuth(t *testing.T) {
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
+		kyberv1.AgentPhaseDiskExhausted,
 		kyberv1.AgentPhaseStopped,
 	}
 	for _, ph := range allowed {
@@ -2621,6 +2622,7 @@ func TestClassifyEvent_AuthoritativeStop(t *testing.T) {
 	allowed := []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting,
 		kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted,
+		kyberv1.AgentPhaseDiskExhausted,
 		kyberv1.AgentPhaseWaitingForMachine,
 	}
 	for _, ph := range allowed {

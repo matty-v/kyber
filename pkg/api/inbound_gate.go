@@ -44,7 +44,8 @@ func (s *Server) WaitAgentRunning(ctx context.Context, name string, timeout time
 		case kyberv1.AgentPhaseRunning:
 			return nil
 		case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed,
-			kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDeleted:
+			kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted,
+			kyberv1.AgentPhaseDiskExhausted, kyberv1.AgentPhaseDeleted:
 			// Terminal-until-a-human-acts phases never flip on their own —
 			// waiting would pin this agent's queue worker for the full
 			// timeout per message (FIFO depth 5 → ~15 min of queue-full for

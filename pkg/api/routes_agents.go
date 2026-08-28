@@ -1239,7 +1239,7 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 }
 
 // rearmRecoveryGate clears status.recoveryInput so the controller grants a
-// NeedsAuth or MemoryExhausted agent exactly one more recovery attempt
+// NeedsAuth, MemoryExhausted, or DiskExhausted agent exactly one more recovery attempt
 // (kyber#684). No-op in any other phase, and when no claim is recorded.
 //
 // Those two phases mean "a human must supply something", so the controller
@@ -1271,7 +1271,7 @@ func (s *Server) rearmRecoveryGate(ctx context.Context, agent *kyberv1.Agent) er
 		return nil
 	}
 	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted:
+	case kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted:
 	default:
 		return nil
 	}
@@ -1584,12 +1584,12 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	}
 
 	// Trigger a pod roll so the new limits land on the next pod.
-	// Failed/MemoryExhausted→Running uses ResetRetry (the human-required
+	// Failed/MemoryExhausted/DiskExhausted→Running uses ResetRetry (the human-required
 	// phases need explicit DesiredPhase=Running to fire their state-machine
 	// recovery transitions, per kyber#272). Running→Restarting uses the
 	// normal roll.
 	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted:
+	case kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	default:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
@@ -1603,7 +1603,7 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	// The MemoryExhausted guard is this handler's own: rearmRecoveryGate also
 	// covers NeedsAuth, and a NeedsAuth agent leaves here on desiredPhase
 	// Restarting, which the gate deliberately does not honour.
-	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
+	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted || agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted {
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")

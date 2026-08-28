@@ -1145,11 +1145,22 @@ echo "[kyber] tmux session 'agent' started — waiting"
 # the script if the session keeps dying within seconds, so a genuinely broken
 # agent falls through to a controller-driven pod recreation rather than spinning.
 relaunch_count=0
+DISK_EXHAUSTED_MARKER=/var/run/kyber/disk-exhausted
 while true; do
     session_started=$(date +%s 2>/dev/null || echo 0)
     while tmux has-session -t agent 2>/dev/null; do
+        if [ -f "$DISK_EXHAUSTED_MARKER" ]; then
+            echo "[kyber] disk reserve reached; pausing Claude Code while Shell remains available"
+            tmux kill-session -t agent 2>/dev/null || true
+            break
+        fi
         sleep 5
     done
+	if [ -f "$DISK_EXHAUSTED_MARKER" ]; then
+		while [ -f "$DISK_EXHAUSTED_MARKER" ]; do sleep 5; done
+		echo "[kyber] disk reserve recovered; relaunching Claude Code"
+		relaunch_count=0
+	fi
     now=$(date +%s 2>/dev/null || echo 0)
     ran_for=$(( now - session_started ))
     # A session that ran healthily (>=60s) before dying is not a crash loop.

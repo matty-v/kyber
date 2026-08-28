@@ -40,7 +40,7 @@ func TestWaitAgentRunning_TerminalPhasesFailFast(t *testing.T) {
 	// queue-full.
 	for _, phase := range []kyberv1.AgentPhase{
 		kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed,
-		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted,
+		kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted,
 	} {
 		t.Run(string(phase), func(t *testing.T) {
 			s := gateServer(t, phase)

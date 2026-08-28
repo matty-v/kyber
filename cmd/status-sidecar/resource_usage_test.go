@@ -76,3 +76,19 @@ func TestResourceSamplerUnavailableCgroup(t *testing.T) {
 		t.Fatal("sample succeeded without a pod cgroup path")
 	}
 }
+
+func TestSyncDiskExhaustedMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if err := syncDiskExhaustedMarker(marker, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("marker not created: %v", err)
+	}
+	if err := syncDiskExhaustedMarker(marker, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker still exists after recovery: %v", err)
+	}
+}
