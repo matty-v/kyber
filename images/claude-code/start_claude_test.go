@@ -129,7 +129,9 @@ func TestStartClaudeBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("claude", `echo 'claude: text file busy' >&2; exit 126`)
+	// A Node syntax failure may include its own semver. A parsed version is not
+	// success unless the harness command itself also exits zero.
+	write("claude", `printf 'SyntaxError: invalid token\nNode.js v26.7.0\n' >&2; exit 1`)
 	write("curl", `printf '%s\n' "$*" > "$REPORT_FILE"`)
 	cmd := exec.Command("/bin/bash", scriptPath(t))
 	cmd.Env = []string{
@@ -144,6 +146,9 @@ func TestStartClaudeBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 	body, readErr := os.ReadFile(report)
 	if readErr != nil || !strings.Contains(string(body), `"usable":false`) || !strings.Contains(string(body), `"runtime":"claude-code"`) {
 		t.Fatalf("runtime failure report = %q, err=%v", body, readErr)
+	}
+	if !strings.Contains(string(body), `Node.js v26.7.0`) {
+		t.Fatalf("runtime failure report lost nonzero semver output: %q", body)
 	}
 	if strings.Contains(string(out), "refreshing access token") {
 		t.Fatalf("authentication ran after failed runtime probe:\n%s", out)

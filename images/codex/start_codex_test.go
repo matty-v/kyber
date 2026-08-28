@@ -163,7 +163,9 @@ func TestStartCodexBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("codex", `echo 'cannot execute codex' >&2; exit 126`)
+	// A Node syntax failure may include its own semver. A parsed version is not
+	// success unless the harness command itself also exits zero.
+	write("codex", `printf 'SyntaxError: invalid token\nNode.js v26.7.0\n' >&2; exit 1`)
 	write("curl", `printf '%s\n' "$*" > "$REPORT_FILE"`)
 	write("npm", `exit 0`)
 	write("tmux", `exit 99`)
@@ -174,6 +176,9 @@ func TestStartCodexBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 	body, readErr := os.ReadFile(report)
 	if readErr != nil || !strings.Contains(string(body), `"usable":false`) || !strings.Contains(string(body), `"runtime":"codex"`) {
 		t.Fatalf("runtime failure report = %q, err=%v", body, readErr)
+	}
+	if !strings.Contains(string(body), `Node.js v26.7.0`) {
+		t.Fatalf("runtime failure report lost nonzero semver output: %q", body)
 	}
 	if strings.Contains(string(out), "device authorization") {
 		t.Fatalf("authentication ran after failed runtime probe:\n%s", out)
