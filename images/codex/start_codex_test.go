@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -982,5 +983,316 @@ func TestStartCodexKeepsUserConfigWhenFailureIsNotTheUserFile(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "skipping MCP convergence") {
 		t.Fatalf("boot output does not report that convergence was skipped:\n%s", out)
+	}
+}
+
+// ---- Scheduled-job turn-boundary hooks (FAL-8) -------------------------------
+//
+// Codex 0.146.0 exposes the same two hook events Claude Code uses
+// (UserPromptSubmit, Stop). They are registered in the Kyber-managed config
+// rather than the agent's own, because hooks in the agent's config sit behind
+// an interactive trust prompt that a headless pod can never answer. These
+// cover the three cases the contract turns on: both signals registered, only
+// one registered, and neither available.
+
+// cronHookEnv points the boot path at temp paths the test can inspect.
+// turnStartExists/postrunExists control which of the two hook commands is
+// actually installed, which is what drives the both-or-neither rule.
+func cronHookEnv(t *testing.T, turnStartExists, postrunExists bool) (sentinel, managed string, env []string) {
+	t.Helper()
+	dir := t.TempDir()
+	sentinel = filepath.Join(dir, "run", "kyber-cron-postrun-enabled")
+	managed = filepath.Join(dir, "etc", "managed_config.toml")
+
+	postrun := filepath.Join(dir, "kyber-cron-postrun")
+	turnstart := filepath.Join(dir, "kyber-cron-turn-start")
+	install := func(p string) {
+		if err := os.WriteFile(p, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+			t.Fatalf("write %s: %v", p, err)
+		}
+	}
+	if turnStartExists {
+		install(turnstart)
+	}
+	if postrunExists {
+		install(postrun)
+	}
+
+	return sentinel, managed, []string{
+		"KYBER_CRON_POSTRUN_SENTINEL=" + sentinel,
+		"KYBER_MANAGED_CODEX_CONFIG=" + managed,
+		"KYBER_CRON_POSTRUN_CMD=" + postrun,
+		"KYBER_CRON_TURNSTART_CMD=" + turnstart,
+	}
+}
+
+// Happy path: both signals land in the managed config and the sentinel — the
+// contract kyber-job-dispatch reads — is armed. Also pins that registering the
+// hooks does not cost the managed settings that share the file (kyber#160):
+// the hook TABLES must come after every top-level key, or `model` would be
+// parsed as a member of the last table instead of a top-level setting.
+func TestStartCodex_CronHooks_RegistersBothSignalsAndArmsSentinel(t *testing.T) {
+	home := t.TempDir()
+	sentinel, managed, env := cronHookEnv(t, true, true)
+	env = append(env, "CODEX_MODEL=gpt-5.6-sol")
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	body, readErr := os.ReadFile(managed)
+	if readErr != nil {
+		t.Fatalf("managed config not written: %v\n%s", readErr, out)
+	}
+	got := string(body)
+	for _, want := range []string{
+		"[[hooks.UserPromptSubmit]]",
+		"[[hooks.Stop]]",
+		"kyber-cron-turn-start",
+		"kyber-cron-postrun",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("managed config missing %q:\n%s", want, got)
+		}
+	}
+	// The clear command must ride inside the Stop hook's command string, and it
+	// must be a FRESH-CONVERSATION command. This is the whole point of the
+	// flag: `/compact` summarizes the thread and carries the summary forward,
+	// so a job firing unattended would still see every earlier run's context —
+	// measured against 0.146.0, a token planted before `/compact` was still in
+	// the next turn's upstream request, and was gone after `/clear`. Asserting
+	// the VALUE rather than "some clear text is present" is what makes this
+	// catch a regression back to compaction.
+	if !strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/clear") {
+		t.Errorf("Stop hook does not carry a fresh-conversation clear command:\n%s", got)
+	}
+	if strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/compact") {
+		t.Errorf("Stop hook uses compaction, which retains prior-job context and breaks "+
+			"the clearContextAfter contract:\n%s", got)
+	}
+	// kyber#160's settings must survive, and `model` must still be top-level.
+	for _, want := range []string{"approval_policy", "sandbox_mode", "tui.resume_cwd"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("registering hooks dropped the managed setting %q:\n%s", want, got)
+		}
+	}
+	modelAt := strings.Index(got, "model = ")
+	if modelAt < 0 {
+		t.Fatalf("managed config lost the model setting:\n%s", got)
+	}
+	if firstTable := strings.Index(got, "[["); firstTable >= 0 && modelAt > firstTable {
+		t.Errorf("model is written after a [[table]] header, so TOML reads it as part of that table:\n%s", got)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Errorf("sentinel not armed after a complete registration: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "cron context hooks registered") {
+		t.Errorf("boot did not report registration:\n%s", out)
+	}
+}
+
+// Both-or-neither: when only ONE of the two hook commands is installed, only
+// that half can be registered, and the sentinel must stay absent. Half-wired is
+// worse than not claiming the capability — arming without consuming leaks
+// markers and mutes exclusive; consuming without arming clears context on an
+// unrelated turn.
+func TestStartCodex_CronHooks_PartialRegistrationLeavesSentinelAbsent(t *testing.T) {
+	home := t.TempDir()
+	// Turn-start present, turn-end missing.
+	sentinel, managed, env := cronHookEnv(t, true, false)
+
+	// A stale sentinel from a boot that DID have both signals must be cleared,
+	// not merely left uncreated.
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
+		t.Fatalf("mkdir sentinel dir: %v", err)
+	}
+	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+		t.Fatalf("seed stale sentinel: %v", err)
+	}
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	body, _ := os.ReadFile(managed)
+	got := string(body)
+	if !strings.Contains(got, "[[hooks.UserPromptSubmit]]") {
+		t.Errorf("the available half was not registered, so this does not exercise the partial case:\n%s", got)
+	}
+	if strings.Contains(got, "[[hooks.Stop]]") {
+		t.Errorf("registered a Stop hook whose command is not installed:\n%s", got)
+	}
+	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
+		t.Errorf("sentinel survived a half-registered managed config (err=%v)\n%s", statErr, out)
+	}
+	if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
+		t.Errorf("boot did not warn about the incomplete registration:\n%s", out)
+	}
+}
+
+// Neither signal available: no hook tables are written at all and the sentinel
+// stays absent, so both flags stay accepted-but-inert rather than half-working.
+func TestStartCodex_CronHooks_CommandsMissingLeavesSentinelAbsent(t *testing.T) {
+	home := t.TempDir()
+	sentinel, managed, env := cronHookEnv(t, false, false)
+
+	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
+		t.Fatalf("mkdir sentinel dir: %v", err)
+	}
+	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+		t.Fatalf("seed stale sentinel: %v", err)
+	}
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	body, _ := os.ReadFile(managed)
+	if strings.Contains(string(body), "[[hooks.") {
+		t.Errorf("hook tables written with no hook commands installed:\n%s", body)
+	}
+	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
+		t.Errorf("sentinel survived with no hook commands installed (err=%v)\n%s", statErr, out)
+	}
+	if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
+		t.Errorf("boot did not warn that registration is incomplete:\n%s", out)
+	}
+}
+
+// stopHookCommand pulls the `command` string out of the [[hooks.Stop]] block of
+// a rendered managed config. Parsing what was WRITTEN — rather than
+// re-deriving the string in the test — is what makes the delivery test below
+// exercise the same bytes Codex will execute.
+func stopHookCommand(t *testing.T, toml string) string {
+	t.Helper()
+	at := strings.Index(toml, "[[hooks.Stop]]")
+	if at < 0 {
+		t.Fatalf("no [[hooks.Stop]] block in managed config:\n%s", toml)
+	}
+	for _, line := range strings.Split(toml[at:], "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "command = ") {
+			continue
+		}
+		cmd, err := strconv.Unquote(strings.TrimPrefix(line, "command = "))
+		if err != nil {
+			t.Fatalf("Stop hook command is not a quoted TOML string (%q): %v", line, err)
+		}
+		return cmd
+	}
+	t.Fatalf("[[hooks.Stop]] block has no command:\n%s", toml)
+	return ""
+}
+
+// End-to-end for the half of clearContextAfter that Kyber owns: what the Stop
+// hook actually DELIVERS to the Codex pane.
+//
+// The narrower assertion in the happy-path test reads a string out of the
+// generated TOML. That is one hop short of the thing the contract is about —
+// the text that reaches the runtime — and it would still pass if
+// kyber-cron-postrun dropped or rewrote the value on the way through. So this
+// test takes the Stop hook's command string VERBATIM out of the file the boot
+// just wrote, runs it through the REAL images/agent-base/scripts/kyber-cron-postrun
+// against an armed marker, and records what the clear command is finally
+// invoked with.
+//
+// The environment deliberately does NOT set KYBER_CLEAR_SESSION_TEXT: the only
+// way `/clear` can reach the recorder is inside the hook command string that
+// start-codex.sh rendered.
+//
+// What this CANNOT prove is Codex's own semantics for that text — that `/clear`
+// starts a fresh conversation while `/compact` carries a summary forward. That
+// needs the real binary and a live turn; it was measured against 0.146.0 and
+// the method and result are recorded in images/codex/INSTALL_NOTES.md.
+func TestStartCodex_CronHooks_StopHookDeliversAFreshConversationCommand(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	realPostrun, err := os.ReadFile(filepath.Join(wd, "..", "agent-base", "scripts", "kyber-cron-postrun"))
+	if err != nil {
+		t.Fatalf("read the real postrun script: %v", err)
+	}
+
+	dir := t.TempDir()
+	postrun := filepath.Join(dir, "kyber-cron-postrun")
+	turnstart := filepath.Join(dir, "kyber-cron-turn-start")
+	if err := os.WriteFile(postrun, realPostrun, 0o755); err != nil {
+		t.Fatalf("install the real postrun: %v", err)
+	}
+	if err := os.WriteFile(turnstart, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("install turn-start stub: %v", err)
+	}
+
+	managed := filepath.Join(dir, "etc", "managed_config.toml")
+	out, err := runBoot(t, t.TempDir(), "", stubBin(t),
+		"KYBER_CRON_POSTRUN_SENTINEL="+filepath.Join(dir, "run", "sentinel"),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_CRON_POSTRUN_CMD="+postrun,
+		"KYBER_CRON_TURNSTART_CMD="+turnstart,
+	)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatalf("managed config not written: %v\n%s", err, out)
+	}
+	hookCmd := stopHookCommand(t, string(body))
+
+	// An armed marker for a job that asked for a clear — exactly what
+	// kyber-job-dispatch writes and kyber-cron-turn-start arms.
+	pending := filepath.Join(dir, "pending")
+	if err := os.MkdirAll(pending, 0o755); err != nil {
+		t.Fatalf("mkdir pending: %v", err)
+	}
+	marker := filepath.Join(pending, "nightly")
+	if err := os.WriteFile(marker, []byte("state=armed\nclear_context=true\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	// The recorder stands in for kyber-compact-session, the last hop before
+	// tmux pastes the text into the Codex pane.
+	record := filepath.Join(dir, "delivered.txt")
+	clearCmd := filepath.Join(dir, "clear-cmd")
+	if err := os.WriteFile(clearCmd,
+		[]byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > "+record+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write recorder: %v", err)
+	}
+
+	logFile := filepath.Join(dir, "postrun.log")
+	hook := exec.Command("/bin/sh", "-c", hookCmd)
+	hook.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + dir,
+		"KYBER_CRON_PENDING_DIR=" + pending,
+		"KYBER_CRON_POSTRUN_LOG=" + logFile,
+		"KYBER_CLEAR_SESSION_CMD=" + clearCmd,
+	}
+	if hookOut, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("Stop hook command failed: %v\n%s", err, hookOut)
+	}
+
+	delivered, err := os.ReadFile(record)
+	if err != nil {
+		logBytes, _ := os.ReadFile(logFile)
+		t.Fatalf("the Stop hook never reached the clear command: %v\nlog:\n%s", err, logBytes)
+	}
+	got := strings.TrimSpace(string(delivered))
+	if got == "/compact" {
+		t.Fatalf("the Stop hook delivers %q: compaction summarizes the thread and carries "+
+			"the summary forward, so every later job still sees earlier runs — the exact "+
+			"cross-contamination clearContextAfter exists to stop", got)
+	}
+	if got != "/clear" {
+		t.Fatalf("the Stop hook delivers %q, want the fresh-conversation command %q", got, "/clear")
+	}
+
+	// The marker must be gone too, or --exclusive stays latched for this job.
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("armed marker survived the Stop hook (err=%v): exclusive stays latched", err)
 	}
 }

@@ -168,6 +168,78 @@ unset _device_auth_pending
 # "Merge instead of replacing" jq path for ~/.claude.json.
 KYBER_MANAGED_CODEX_CONFIG="${KYBER_MANAGED_CODEX_CONFIG:-/etc/codex/managed_config.toml}"
 
+# ---- Scheduled-job turn-boundary hooks (FAL-8) ----
+# Codex gets the SAME two platform signals Claude Code registers in
+# images/claude-code/start-claude.sh:38-98, wired to the same runtime-neutral
+# scripts rather than to a Codex-specific path:
+#
+#   UserPromptSubmit -> kyber-cron-turn-start  (arm the job's pending marker)
+#   Stop             -> kyber-cron-postrun     (clear context, release the marker)
+#
+# Neither approach the issue proposed was needed. Codex 0.146.0 ships real
+# `UserPromptSubmit` and `Stop` hooks whose payloads already match what those
+# two scripts read — UserPromptSubmit carries `prompt`, which is exactly the
+# key kyber-cron-turn-start hashes. Verified against the pinned binary; the
+# spike record is in images/codex/INSTALL_NOTES.md.
+#
+# These ride in the managed layer THIS BLOCK'S NEIGHBOUR already owns, and for
+# a second reason on top of that one: hooks declared in the agent's own
+# config.toml are gated behind an interactive "Hooks need review" prompt and do
+# not run until a human answers it, which on a headless pod is worse than an
+# inert feature. Managed hooks are policy and load with no prompt.
+#
+# Each hook is rendered independently, on its own command's availability. The
+# both-or-neither rule is then enforced by checking the WRITTEN file below, so
+# a runtime that can only register half never claims the capability.
+KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
+KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
+KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
+# MUST be a fresh-conversation command, NOT a compaction one. `/compact`
+# summarizes the thread and carries the summary forward — which is exactly what
+# CompactSessionCommand in pkg/runtimes/codex/adapter.go is for, and exactly
+# what ClearContextAfter promises NOT to do ("begins from a clean conversation
+# instead of accumulating every previous run"). Measured against 0.146.0 by
+# planting a token in one turn and reading what the next turn actually sent
+# upstream: after `/compact` the token was still there, after `/clear` it was
+# gone. Codex's own TUI says the same thing after a compaction — "Long threads
+# and multiple compactions can cause the model to be less accurate. Start a new
+# thread when possible." An unattended job firing hourly is the worst case for
+# that, so compaction would have quietly re-introduced the cross-contamination
+# this flag exists to stop. See images/codex/INSTALL_NOTES.md.
+#
+# `/clear` is also the literal Claude Code uses (kyber-cron-postrun's own
+# default), so the two runtimes are now genuinely equivalent rather than
+# merely both non-inert. Kept explicit anyway: the runtime declaring its own
+# clear command is the contract kyber-cron-postrun documents, and being
+# explicit is what lets a test assert the VALUE.
+#
+# It rides inside the hook command rather than depending on this script's
+# environment reaching the hook process, which is spawned by codex, which is
+# spawned by a tmux server that may have outlived an earlier boot. Exported
+# too, for any other consumer.
+KYBER_CODEX_CLEAR_TEXT="${KYBER_CLEAR_SESSION_TEXT:-/clear}"
+export KYBER_CLEAR_SESSION_TEXT="$KYBER_CODEX_CLEAR_TEXT"
+
+KYBER_CODEX_HOOKS_TOML=""
+if [ -x "$KYBER_TURNSTART_CMD" ]; then
+    KYBER_CODEX_HOOKS_TOML="${KYBER_CODEX_HOOKS_TOML}
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = \"command\"
+command = \"${KYBER_TURNSTART_CMD}\"
+timeout = 20
+"
+fi
+if [ -x "$KYBER_POSTRUN_CMD" ]; then
+    KYBER_CODEX_HOOKS_TOML="${KYBER_CODEX_HOOKS_TOML}
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = \"command\"
+command = \"env KYBER_CLEAR_SESSION_TEXT=${KYBER_CODEX_CLEAR_TEXT} ${KYBER_POSTRUN_CMD}\"
+timeout = 20
+"
+fi
+
 # Write via sudo only when a direct write is not possible: the tests run this
 # script unprivileged against a temp path, and the image grants kyber
 # passwordless sudo for exactly this kind of boot-time maintenance.
@@ -196,12 +268,38 @@ then
         printf 'model = "%s"\n' "$CODEX_MODEL" | \
             { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; }
     fi
+    # The hook TABLES go last, after every top-level key above: a bare
+    # `model = ...` appended after a [[table]] header would be parsed as a
+    # member of that table, not as a top-level setting.
+    if [ -n "$KYBER_CODEX_HOOKS_TOML" ]; then
+        printf '%s' "$KYBER_CODEX_HOOKS_TOML" | \
+            { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; }
+    fi
     echo "[kyber] Codex managed settings written to $KYBER_MANAGED_CODEX_CONFIG"
 else
     # Non-fatal: the launch command below still passes --ask-for-approval and
     # --sandbox explicitly, so a Kyber-started session is unaffected. Only a
     # bare `codex` the agent runs itself would fall back to defaults.
     echo "[kyber] WARNING: could not write $KYBER_MANAGED_CODEX_CONFIG; Codex settings apply to Kyber-launched sessions only" >&2
+fi
+
+# Both or neither, for the reason start-claude.sh:84-97 gives: arming without
+# consuming leaks markers and mutes --exclusive; consuming without arming
+# clears context on an unrelated turn. The sentinel is the contract with
+# kyber-job-dispatch (pending_tracking_enabled), so it is written ONLY when
+# both hooks are really in the file Codex will load, and actively REMOVED when
+# they are not — a sentinel left over from a previous boot would otherwise keep
+# claiming a capability this boot does not have.
+if grep -q '^\[\[hooks\.UserPromptSubmit\]\]' "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null \
+    && grep -q '^\[\[hooks\.Stop\]\]' "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null \
+    && grep -qF "$KYBER_TURNSTART_CMD" "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null \
+    && grep -qF "$KYBER_POSTRUN_CMD" "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null; then
+    mkdir -p "$(dirname "$KYBER_POSTRUN_SENTINEL")" 2>/dev/null || true
+    : > "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+    echo "[kyber] cron context hooks registered"
+else
+    rm -f "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
+    echo "[kyber] WARNING: cron context hooks incomplete; feature disabled" >&2
 fi
 
 # The agent's own config is created if absent and otherwise left alone.
@@ -276,6 +374,7 @@ if [ "$KYBER_CODEX_CONFIG_USABLE" = "true" ]; then
     kyber_converge_mcp kyber_discord "${KYBER_DISCORD_MCP_URL:-}" "Discord"
     kyber_converge_mcp kyber_request_reply "${KYBER_REQUEST_MCP_URL:-}" "Request/reply"
 fi
+
 
 # Report the version actually running through the localhost status sidecar.
 # Keep this best-effort: telemetry must never prevent the runtime from booting.

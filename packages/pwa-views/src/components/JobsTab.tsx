@@ -438,8 +438,7 @@ export function JobsTab({ agentName }: Props) {
               onChange={(e) => setDraft({ ...draft, clearContextAfter: e.target.checked })}
             />
             <span>
-              Clear context after — start each fire from a clean conversation. Claude Code agents
-              only; accepted but inert on other runtimes.
+              Clear context after — start each fire from a clean conversation.
             </span>
           </label>
           {formError ? <div className="text-xs text-danger">{formError}</div> : null}

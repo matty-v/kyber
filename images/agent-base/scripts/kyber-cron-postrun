@@ -38,7 +38,8 @@ LOG_FILE="${KYBER_CRON_POSTRUN_LOG:-/persist/var/log/kyber-cron-postrun.log}"
 # installed alongside this one.
 CLEAR_CMD="${KYBER_CLEAR_SESSION_CMD:-/usr/local/bin/kyber-compact-session}"
 # The runtime's clear command, overridable by the runtime's start script since
-# only it knows the right one (/clear on Claude Code).
+# only it knows the right one (/clear on both Claude Code and Codex; see
+# images/codex/start-codex.sh for why Codex must NOT use its /compact here).
 #
 # ${VAR-default} not ${VAR:-default}: the colon form also substitutes on an
 # EMPTY value, which would turn "this runtime has no clear command" into a real

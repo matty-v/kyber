@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.36.1 — 2026-08-27
+
+### Changed
+- The Jobs tab's "Clear context after" checkbox no longer says the flag is
+  Claude Code only: Codex agents honour it too now that their runtime
+  registers the platform turn-boundary hooks.
+
 ## 0.35.1 — 2026-08-27
 
 ### Added
