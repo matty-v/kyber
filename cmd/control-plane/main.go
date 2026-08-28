@@ -53,6 +53,7 @@ import (
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
+	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
@@ -302,6 +303,30 @@ func main() {
 		metricsStore = metricsstore.NewMemoryMetricsStore()
 		nodeStore = metricsstore.NewMemoryNodeStore()
 		stateChangeAccum = statechangestore.NewMemoryAccumulator()
+	}
+
+	requestCfg, err := loadAgentRequestConfig()
+	if err != nil {
+		setupLog.Error(err, "invalid agent request configuration")
+		os.Exit(1)
+	}
+	var agentRequestStore requeststore.Store
+	if requestCfg.Enabled {
+		if redisClient == nil {
+			setupLog.Error(nil, "agent requests enabled without a reachable Redis backend")
+			os.Exit(1)
+		} else {
+			agentRequestStore, err = requeststore.NewRedisStore(redisClient, requestCfg.Limits)
+			if err != nil {
+				setupLog.Error(err, "initializing agent request store")
+				os.Exit(1)
+			}
+			setupLog.Info("agent requests enabled", "lifetimeSeconds", int(requestCfg.Limits.Lifetime.Seconds()),
+				"maxPromptBytes", requestCfg.Limits.MaxPromptBytes, "maxResponseBytes", requestCfg.Limits.MaxResponseBytes,
+				"maxOutstanding", requestCfg.Limits.MaxOutstanding, "maxTerminal", requestCfg.Limits.MaxTerminal)
+		}
+	} else {
+		setupLog.Info("agent requests disabled by feature gate")
 	}
 
 	// Retention worker: evict time-series points older than the configured horizon.
@@ -625,6 +650,9 @@ func main() {
 		internalapi.WithNodeStore(nodeStore),
 		internalapi.WithStateChangeAccumulator(stateChangeAccum),
 		internalapi.WithSkillStore(skillStore),
+	}
+	if agentRequestStore != nil {
+		internalOpts = append(internalOpts, internalapi.WithRequestStore(agentRequestStore))
 	}
 	if agentMetrics, err := internalapi.NewKubernetesAgentMetrics(restCfg); err != nil {
 		setupLog.Error(err, "unable to configure Kubernetes agent metrics")
@@ -1334,6 +1362,7 @@ func main() {
 		InboundRateLimiter:     inboundRateLimiter,
 		InboundQueue:           inboundQueue,
 		InboundEnvelopeCache:   inboundEnvelopeCache,
+		RequestStore:           agentRequestStore,
 		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
 		RuntimeDetectCache:     runtimeDetectCache,
 		// #500: the serve-time token-budget gauge resolves the context window

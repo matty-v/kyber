@@ -154,13 +154,16 @@ func (s *Server) submitAgentRequest(w http.ResponseWriter, r *http.Request, agen
 			slog.Warn("requests: failed to close rejected request", "agent", agentName, "request_id", request.ID, "error", failErr)
 		}
 		if errors.Is(err, inbound.ErrQueueFull) {
+			recordAgentRequestTerminal(r.Context(), "enqueue", "queue_full", agentName, request.ID, request.CreatedAt)
 			w.Header().Set("Retry-After", "1")
 			writeJSONError(w, http.StatusTooManyRequests, "queue_full", "agent request queue is full")
 			return
 		}
+		recordAgentRequestTerminal(r.Context(), "enqueue", "delivery_failed", agentName, request.ID, request.CreatedAt)
 		writeJSONError(w, http.StatusServiceUnavailable, "request_dispatch_unavailable", "failed to enqueue request")
 		return
 	}
+	recordAgentRequestEvent(r.Context(), "submit", "accepted", agentName, request.ID)
 
 	w.Header().Set("Location", "/api/v1/agents/"+agentName+"/requests/"+request.ID)
 	writeJSON(w, http.StatusAccepted, requestResponse(request, false))
@@ -173,6 +176,7 @@ func requestEnvelope(request *requeststore.Request) string {
 }
 
 func (s *Server) recordRequestDelivery(ctx context.Context, agent, requestID string, outcome inbound.DeliveryOutcome) {
+	request, _ := s.RequestStore.Get(ctx, agent, requestID)
 	var err error
 	switch outcome {
 	case inbound.DeliveryDispatched:
@@ -186,6 +190,17 @@ func (s *Server) recordRequestDelivery(ctx context.Context, agent, requestID str
 	}
 	if err != nil && !errors.Is(err, requeststore.ErrNotFound) && !errors.Is(err, requeststore.ErrConflict) {
 		slog.Error("requests: failed to record delivery outcome", "agent", agent, "request_id", requestID, "outcome", outcome, "error", err)
+	}
+	if err == nil {
+		createdAt := time.Time{}
+		if request != nil {
+			createdAt = request.CreatedAt
+		}
+		if outcome == inbound.DeliveryDispatched {
+			recordAgentRequestEvent(ctx, "delivery", string(outcome), agent, requestID)
+		} else {
+			recordAgentRequestTerminal(ctx, "delivery", string(outcome), agent, requestID, createdAt)
+		}
 	}
 }
 

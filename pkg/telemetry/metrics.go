@@ -41,6 +41,15 @@ var (
 	// Labels: agent, to_state.
 	AgentStateChangesTotal metric.Int64Counter
 
+	// AgentRequestsTotal counts bounded request/reply lifecycle events.
+	// Labels: event, outcome. Agent and request IDs stay out of metrics to avoid
+	// unbounded cardinality; they are present in structured audit logs instead.
+	AgentRequestsTotal metric.Int64Counter
+
+	// AgentRequestDuration records terminal request latency.
+	// Labels: outcome (completed|agent_unavailable|delivery_failed).
+	AgentRequestDuration metric.Float64Histogram
+
 	// Machine controller metrics.
 
 	// MachineStateTransitions counts state machine transitions for Machine CRDs.
@@ -117,6 +126,21 @@ func registerAll(m metric.Meter) error {
 		metric.WithDescription("Total agent CRD transitions into each named state. Labels: agent, to_state."),
 	); err != nil {
 		return fmt.Errorf("registering kyber_agent_state_changes_total: %w", err)
+	}
+
+	if AgentRequestsTotal, err = m.Int64Counter(
+		"kyber_agent_requests_total",
+		metric.WithDescription("Total bounded agent request/reply lifecycle events. Labels: event, outcome."),
+	); err != nil {
+		return fmt.Errorf("registering kyber_agent_requests_total: %w", err)
+	}
+
+	if AgentRequestDuration, err = m.Float64Histogram(
+		"kyber_agent_request_duration_seconds",
+		metric.WithDescription("Duration of bounded agent requests reaching a terminal outcome. Labels: outcome."),
+		metric.WithUnit("s"),
+	); err != nil {
+		return fmt.Errorf("registering kyber_agent_request_duration_seconds: %w", err)
 	}
 
 	if MachineStateTransitions, err = m.Int64Counter(

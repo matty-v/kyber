@@ -109,6 +109,16 @@ api:
   # Used to render inbound-binding webhook URLs shown in the PWA/API.
   # Example: "https://kyber.your-tailnet.ts.net"
   publicURL: ""
+  # Bounded agent-to-agent request/reply API. Disabled by default while MAT-9
+  # rolls out; enabling it requires a reachable Redis backend.
+  agentRequests:
+    enabled: false
+    lifetimeSeconds: 60
+    maxPromptBytes: 2048
+    maxCorrelationBytes: 256
+    maxResponseBytes: 8192
+    maxOutstanding: 2
+    maxTerminal: 20
   # existingSecret: name of a pre-created Secret that provides the api-key
   # key. When set, the chart does NOT create a Secret — the operator is responsible.
   # Overrides apiKey above.
