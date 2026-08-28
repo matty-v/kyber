@@ -305,6 +305,23 @@ export function useForceNeedsAuthAgent() {
   })
 }
 
+export function useRepairAgentRuntime() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.repairAgentRuntime(name),
+    onSuccess: (_data, name) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+    },
+    meta: {
+      successMessage: (_d: unknown, name: unknown) => `Runtime repaired for ${String(name)}; restart requested`,
+      errorPrefix: 'Failed to repair runtime',
+    },
+  })
+}
+
 export function useSetAgentModel() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

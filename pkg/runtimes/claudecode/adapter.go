@@ -451,3 +451,17 @@ func (a *ClaudeCodeAdapter) PreStopCommand() []string {
 		"pkill -TERM -f 'bun .*server\\.ts' || true; sleep 3",
 	}
 }
+
+func (a *ClaudeCodeAdapter) RuntimeRepair(agent *kyberv1.Agent) *runtimes.RuntimeRepair {
+	version := ""
+	if agent != nil {
+		version = agent.Spec.RuntimeVersion
+	}
+	return &runtimes.RuntimeRepair{
+		PackageName:    "@anthropic-ai/claude-code",
+		BinaryName:     "claude",
+		Version:        version,
+		PackagePath:    "/usr/lib/node_modules/@anthropic-ai/claude-code",
+		ExecutablePath: "/usr/bin/claude",
+	}
+}

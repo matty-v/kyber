@@ -7,6 +7,7 @@
 
 ## Unreleased
 
+- Repair `BrokenRuntime` Claude Code and Codex agents from Agent Detail or the lifecycle API with a same-node maintenance pod that atomically reinstalls and verifies the configured harness while preserving the agent PVC, credentials, memory, identity, and session state.
 - Distinguish an unusable Codex or Claude Code harness from expired credentials with a stable `BrokenRuntime` lifecycle phase, bounded startup diagnostics, and operator guidance that suppresses irrelevant re-authorization actions.
 
 Initial public release (targeting **v1.0.0**): the full Kyber platform —

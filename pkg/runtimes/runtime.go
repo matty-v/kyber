@@ -157,6 +157,24 @@ type Adapter interface {
 	//
 	// Runtimes with no detached-child signal-isolation problem return nil.
 	PreStopCommand() []string
+
+	// RuntimeRepair returns the package and executable contract used by the
+	// operator-initiated maintenance pod to repair a BrokenRuntime agent's
+	// durable root. Return nil when this runtime cannot be repaired in place.
+	// Empty Version means use the runtime image's baked-in default version.
+	RuntimeRepair(agent *kyberv1.Agent) *RuntimeRepair
+}
+
+// RuntimeRepair describes the runtime-owned paths and package identity needed
+// to repair a harness without starting or authenticating it. The maintenance
+// runner validates these values again before passing them to the fixed repair
+// script; implementations must use absolute paths inside the durable root.
+type RuntimeRepair struct {
+	PackageName    string
+	BinaryName     string
+	Version        string
+	PackagePath    string
+	ExecutablePath string
 }
 
 // Probe is the sidecar-side interface for cross-runtime signals that

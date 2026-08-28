@@ -109,3 +109,16 @@ func (a *Adapter) CompactSessionCommand() []string {
 	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/usr/sbin/runuser", "-u", "kyber", "--", "/usr/local/bin/kyber-compact-session", "/compact"}
 }
 func (a *Adapter) PreStopCommand() []string { return nil }
+func (a *Adapter) RuntimeRepair(agent *kyberv1.Agent) *runtimes.RuntimeRepair {
+	version := ""
+	if agent != nil {
+		version = agent.Spec.RuntimeVersion
+	}
+	return &runtimes.RuntimeRepair{
+		PackageName:    "@openai/codex",
+		BinaryName:     "codex",
+		Version:        version,
+		PackagePath:    "/usr/lib/node_modules/@openai/codex",
+		ExecutablePath: "/usr/bin/codex",
+	}
+}

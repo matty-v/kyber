@@ -137,7 +137,9 @@ testable without a cluster. Authoritative transition table:
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
 runtime is a subpackage (`pkg/runtimes/claudecode/`, `pkg/runtimes/codex/`) that self-registers via
 `init()`; binaries enable runtimes by blank-importing the subpackage.
-`Adapter` answers pod-spec questions (image, env, secret mounts, probes);
+`Adapter` answers pod-spec questions (image, env, secret mounts, probes) and
+provides the fixed runtime-repair package/binary/path contract used by the
+same-node maintenance pod; request input never supplies repair commands or paths.
 `Probe` is the sidecar-side hook (mostly reserved — see status-pipeline doc).
 Adding a runtime = new subpackage + blank import. See the package doc comment
 in `runtime.go` for the exact file layout.

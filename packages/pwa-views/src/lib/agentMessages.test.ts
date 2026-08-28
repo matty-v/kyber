@@ -58,6 +58,13 @@ describe('agentActionConfirmMessage', () => {
     expect(msg).toContain('Memory and identity files on disk are not affected')
   })
 
+  it('describes runtime repair preservation and failure behavior', () => {
+    const msg = agentActionConfirmMessage('repair-runtime', 'han')
+    expect(msg).toContain('maintenance pod')
+    expect(msg).toContain('Credentials, memory, identity files, and conversation state are preserved')
+    expect(msg).toContain('remains parked in BrokenRuntime')
+  })
+
   it('returns NeedsAuth retry wording for retry-startup, not the generic fallback (kyber#26)', () => {
     const msg = agentActionConfirmMessage('retry-startup', 'lando')
     expect(msg).toContain('Rebuild the pod for "lando"')

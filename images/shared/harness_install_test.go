@@ -49,7 +49,7 @@ done
 package="$stage/lib/node_modules/@example/harness"
 mkdir -p "$package/bin" "$stage/bin"
 printf '%s' "$FAKE_OUTPUT_VERSION" > "$package/VERSION"
-printf '%s\n' '{"bin":{"harness":"bin/harness"}}' > "$package/package.json"
+printf '{"version":"%s","bin":{"harness":"bin/harness"}}\n' "$FAKE_OUTPUT_VERSION" > "$package/package.json"
 cat > "$package/bin/harness" <<'EOF'
 #!/usr/bin/env bash
 count=0
@@ -123,6 +123,17 @@ func TestHarnessInstallerFailedVerificationPreservesLive(t *testing.T) {
 	got, _ := exec.Command(liveBinary(root), "--version").Output()
 	if !strings.Contains(string(got), "1.0.0") {
 		t.Fatalf("failed install replaced live harness: %q", got)
+	}
+}
+
+func TestHarnessInstallerManifestVerificationSupportsOfflineChroot(t *testing.T) {
+	root, prefix, npm := fakeHarnessEnv(t)
+	out, err := runInstaller(t, root, prefix, npm, "2.0.0", "2.0.0", "KYBER_HARNESS_VERIFY_MODE=manifest")
+	if err != nil {
+		t.Fatalf("manifest-verified install: %v\n%s", err, out)
+	}
+	if _, err := os.Lstat(filepath.Join(prefix, "bin", "harness")); err != nil {
+		t.Fatalf("global command link was not activated: %v", err)
 	}
 }
 

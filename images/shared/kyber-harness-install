@@ -29,6 +29,14 @@ version_of() {
     printf '%s\n' "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1
 }
 
+manifest_version_of() {
+    node - "$1/package.json" <<'NODE'
+const manifest = require(process.argv[2]);
+if (typeof manifest.version !== 'string') process.exit(1);
+process.stdout.write(manifest.version);
+NODE
+}
+
 # Read npm's declared bin entry from a package already on disk. This lets us
 # recover a killed activation before touching npm or the registry.
 binary_rel_of() {
@@ -50,6 +58,10 @@ valid_dir_version() {
     local dir="$1" rel
     rel="$(binary_rel_of "$dir" 2>/dev/null)" || return 1
     [ -x "$dir/$rel" ] || return 1
+    if [ "${KYBER_HARNESS_VERIFY_MODE:-execute}" = manifest ]; then
+        manifest_version_of "$dir"
+        return
+    fi
     version_of "$dir/$rel"
 }
 
@@ -124,7 +136,11 @@ echo "[kyber] harness install: staging ${package}@${version}"
 staged_package="$stage/lib/node_modules/$package" staged_binary="$stage/bin/$binary"
 [ -d "$staged_package" ] || { echo "[kyber] harness install: staged package missing" >&2; exit 1; }
 [ -x "$staged_binary" ] || { echo "[kyber] harness install: staged binary missing or not executable" >&2; exit 1; }
-observed="$(version_of "$staged_binary")" || { echo "[kyber] harness install: staged $binary failed its version check" >&2; exit 1; }
+if [ "${KYBER_HARNESS_VERIFY_MODE:-execute}" = manifest ]; then
+    observed="$(manifest_version_of "$staged_package")" || { echo "[kyber] harness install: staged $binary has no package version" >&2; exit 1; }
+else
+    observed="$(version_of "$staged_binary")" || { echo "[kyber] harness install: staged $binary failed its version check" >&2; exit 1; }
+fi
 [ "$observed" = "$version" ] || { echo "[kyber] harness install: staged $binary reports $observed, expected $version" >&2; exit 1; }
 binary_rel="$(binary_rel_of "$staged_package")" || { echo "[kyber] harness install: staged package has no safe $binary bin entry" >&2; exit 1; }
 resolved_binary="$(readlink -f "$staged_binary")"
@@ -133,14 +149,14 @@ resolved_binary="$(readlink -f "$staged_binary")"
 candidate="$parent/.${base}.kyber-new.$$"
 rm -rf -- "$candidate"
 cp -a "$staged_package" "$candidate"
-candidate_version="$(version_of "$candidate/$binary_rel")" || { echo "[kyber] harness install: copied $binary failed its version check" >&2; exit 1; }
+candidate_version="$(valid_dir_version "$candidate")" || { echo "[kyber] harness install: copied $binary failed its version check" >&2; exit 1; }
 [ "$candidate_version" = "$version" ] || { echo "[kyber] harness install: copied $binary reports $candidate_version, expected $version" >&2; exit 1; }
 
 swapping=true
 [ ! -e "$live" ] || mv "$live" "$backup"
 mv "$candidate" "$live"; candidate=""
 [ "${KYBER_HARNESS_TEST_SIGNAL_AFTER_SWAP:-}" != "1" ] || kill -TERM "$$"
-live_version="$(version_of "$live/$binary_rel")" || { echo "[kyber] harness install: live $binary failed after swap; rolling back" >&2; exit 1; }
+live_version="$(valid_dir_version "$live")" || { echo "[kyber] harness install: live $binary failed after swap; rolling back" >&2; exit 1; }
 [ "$live_version" = "$version" ] || { echo "[kyber] harness install: live $binary reports $live_version after swap; rolling back" >&2; exit 1; }
 repair_link "$binary_rel"
 rm -rf -- "$backup"

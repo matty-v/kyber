@@ -255,6 +255,14 @@ type Server struct {
 	// one-line change on both sides.
 	CompactSessionCommands map[string][]string
 
+	// RuntimeRepairPlans maps runtime identifiers to the bounded package/path
+	// contract and maintenance image used by POST /repair-runtime.
+	RuntimeRepairPlans map[string]RuntimeRepairPlan
+
+	// RuntimeRepairRunner executes a repair plan. Nil selects the Kubernetes
+	// maintenance-pod implementation; tests may inject a deterministic runner.
+	RuntimeRepairRunner RuntimeRepairRunner
+
 	// ComputeProvider identifies which ComputeAdapter backs this control plane.
 	// Populated from the KYBER_COMPUTE_PROVIDER env var at startup. Exposed
 	// to the PWA via GET /api/v1/config so the UI can render provider-

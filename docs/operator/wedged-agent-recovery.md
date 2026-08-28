@@ -1,5 +1,32 @@
 # Recovering a Wedged Agent — "Require re-auth"
 
+## Repairing a `BrokenRuntime` agent
+
+`BrokenRuntime` means the Claude Code or Codex executable itself is missing,
+damaged, or cannot report a valid version. Re-authorization cannot fix that
+failure. On the agent detail page, open **More → Repair runtime** and confirm.
+
+Kyber creates a short-lived maintenance pod on the agent's assigned node,
+mounts the existing agent PVC, atomically reinstalls the configured harness
+version, and executes the repaired package binary from the maintenance pod to
+verify its exact version. Only after
+verification succeeds does it request a normal agent restart. Credentials,
+memory, identity files, transcripts, and conversation/session state stay on the
+PVC and are not replaced.
+
+The action requires `lifecycle:write` and is accepted only while the agent is
+in `BrokenRuntime`. A concurrent repair returns `409`. An install or
+verification failure returns an error and deliberately leaves the agent parked
+in `BrokenRuntime` with its original diagnostic; fix registry/node access or
+the requested version and retry. The equivalent API call is:
+
+```text
+POST /api/v1/agents/{name}/repair-runtime
+```
+
+Use **Stop** instead when you need the agent held down for manual PVC
+inspection. Do not use **Require re-auth** for a runtime diagnostic.
+
 When an agent is **wedged** — stuck `Running` but unresponsive, `Failed` past
 its retries, `MemoryExhausted`, or otherwise not making progress — the cleanest
 recovery is often to drop it all the way back to the re-authorization flow and

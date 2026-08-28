@@ -68,3 +68,4 @@ func (s *stubAdapter) ModelEnvVar() string                         { return s.mo
 func (s *stubAdapter) RestartSessionCommand() []string             { return nil }
 func (s *stubAdapter) CompactSessionCommand() []string             { return nil }
 func (s *stubAdapter) PreStopCommand() []string                    { return nil }
+func (s *stubAdapter) RuntimeRepair(*kyberv1.Agent) *RuntimeRepair { return nil }

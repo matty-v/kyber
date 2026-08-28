@@ -277,6 +277,57 @@ func TestReconciler_NewAgent_CreatingPhase(t *testing.T) {
 	}
 }
 
+// TestReconciler_BrokenRuntimeRepairRestart exercises the operator repair edge
+// against envtest, including the real API-server status/spec patch behavior.
+func TestReconciler_BrokenRuntimeRepairRestart(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	ctx := context.Background()
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-runtime-repair"}}
+	if err := k8sClient.Create(ctx, ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+
+	agent := newTestAgent("repair-me", ns.Name)
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	agent = getAgent(t, k8sClient, client.ObjectKeyFromObject(agent))
+	agent.Status.Phase = kyberv1.AgentPhaseBrokenRuntime
+	if err := k8sClient.Status().Update(ctx, agent); err != nil {
+		t.Fatalf("setting BrokenRuntime status: %v", err)
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: AgentPodName(agent.Name), Namespace: ns.Name},
+		Spec: corev1.PodSpec{
+			RestartPolicy: corev1.RestartPolicyNever,
+			Containers:    []corev1.Container{{Name: "agent", Image: "runtime:test"}},
+		},
+	}
+	if err := k8sClient.Create(ctx, pod); err != nil {
+		t.Fatalf("creating terminal agent pod: %v", err)
+	}
+
+	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: agent.Name, Namespace: ns.Name}}
+	if _, err := r.Reconcile(ctx, req); err != nil {
+		t.Fatalf("reconciling repaired agent: %v", err)
+	}
+	updated := getAgent(t, k8sClient, req.NamespacedName)
+	if updated.Status.Phase != kyberv1.AgentPhaseRestarting {
+		t.Fatalf("phase = %q, want Restarting", updated.Status.Phase)
+	}
+	if updated.Spec.DesiredPhase != "" {
+		t.Fatalf("desiredPhase = %q, want cleared after consuming repair intent", updated.Spec.DesiredPhase)
+	}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{}); !errors.IsNotFound(err) {
+		t.Fatalf("terminal agent pod still exists after repaired restart: %v", err)
+	}
+}
+
 // TestEnsureOffsetsPVC_Idempotent verifies the offsets-PVC ensure is safe to call
 // repeatedly (every reconcile hits it) and honors the configured size/class.
 func TestEnsureOffsetsPVC_Idempotent(t *testing.T) {

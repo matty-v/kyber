@@ -30,6 +30,7 @@ vi.mock('../hooks/useAPI', () => ({
   useRestartAgentSession: idleMutation,
   useCompactAgentSession: idleMutation,
   useForceNeedsAuthAgent: idleMutation,
+  useRepairAgentRuntime: idleMutation,
   useSetAgentModel: idleMutation,
   useAgentModels: () => ({ data: undefined, isLoading: false, isError: false }),
   useSetAgentRuntimeVersion: idleMutation,

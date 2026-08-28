@@ -254,6 +254,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
 | `Running` | `RuntimeProbeFailed` | `UpdateStatus` | `BrokenRuntime` |
+| `BrokenRuntime` | `DesiredRestarting` | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
 | `Running` | `DiskReserveReached` | `UpdateStatus` | `DiskExhausted` |
 | `Running` | `LivenessFailed` *(not yet wired)* | `KillPodEmitEventAutoRestart` | `Failed` |

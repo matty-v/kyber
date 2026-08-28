@@ -347,6 +347,18 @@ function renderLifecycleMenu(phase: AgentPhase) {
 }
 
 describe('AgentDetail LifecycleMenuItems (kyber#599)', () => {
+  it('BrokenRuntime: offers Repair runtime and Stop without unrelated actions', async () => {
+    const user = userEvent.setup()
+    const onSelect = renderLifecycleMenu('BrokenRuntime')
+    const repair = screen.getByRole('menuitem', { name: /Repair runtime/ })
+    expect(repair).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /^Stop$/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /^Start$/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /Require re-auth/ })).not.toBeInTheDocument()
+    await user.click(repair)
+    expect(onSelect).toHaveBeenCalledWith('repair-runtime')
+  })
+
   it.each(['MemoryExhausted', 'Failed'] as const)(
     '%s: offers a working Start (not the no-op Restart pod), keeps Require re-auth',
     (phase) => {
