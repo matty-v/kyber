@@ -224,7 +224,9 @@ The status sidecar mounts the persist PVC read-only for disk telemetry. Disk
 total is always the requested Agent allocation. Used bytes come from `statfs`
 only when mountinfo says `/persist` is a whole-filesystem mount; bind-mounted
 directories use a throttled asynchronous tree walk and cached result, with the
-method/state/sample time exposed in Agent status. The control plane combines
+method/state/sample time exposed in Agent status. Permission-denied paths are
+skipped and logged as a `partial` sample; partial used bytes remain a useful
+lower bound and participate in the allocation reserve check. The control plane combines
 that disk sample with the metrics-server's agent-container CPU/memory sample
 and requested Agent limits; the sidecar does not enter the runtime container's
 chroot or inspect agent file contents.

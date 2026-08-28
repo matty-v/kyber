@@ -139,7 +139,7 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		// Older sidecars report node-level statfs on local-path volumes, so
 		// accepting their boolean during a rolling upgrade could exhaust every
 		// agent at once. Recompute from the allocation for completed samples.
-		if ev.Resources.DiskUsageState == "ready" {
+		if ev.Resources.DiskUsageState == "ready" || ev.Resources.DiskUsageState == "partial" {
 			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
 				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
 		} else if previous := agent.Status.Activity.Resources; previous != nil {

@@ -1,8 +1,12 @@
 package main
 
 import (
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -22,7 +26,7 @@ func TestResourceSampler(t *testing.T) {
 	write("cpu.max", "200000 100000\n")
 
 	const allocation = int64(2 * 1024 * 1024 * 1024)
-	s := newResourceSampler(t.TempDir(), filepath.Join(dir, "memory.events"), allocation)
+	s := newResourceSampler(t.TempDir(), filepath.Join(dir, "memory.events"), allocation, nil)
 	s.disk.method = "statfs"
 	start := time.Unix(100, 0)
 	first, err := s.sample(start)
@@ -76,7 +80,7 @@ func TestUnlimitedCgroupValues(t *testing.T) {
 }
 
 func TestResourceSamplerUnavailableCgroup(t *testing.T) {
-	s := newResourceSampler(t.TempDir(), "", 1024)
+	s := newResourceSampler(t.TempDir(), "", 1024, nil)
 	if _, err := s.sample(time.Now()); err == nil {
 		t.Fatal("sample succeeded without a pod cgroup path")
 	}
@@ -107,10 +111,10 @@ func TestDirectoryDiskSampleIsAsyncAndUsesAllocation(t *testing.T) {
 		totalBytes: 2 * 1024 * 1024 * 1024,
 		method:     "directory",
 		state:      "pending",
-		walk: func(string) (int64, error) {
+		walk: func(string) (int64, bool, error) {
 			close(started)
 			<-release
-			return 1900 * 1024 * 1024, nil
+			return 1900 * 1024 * 1024, false, nil
 		},
 	}
 	now := time.Unix(100, 0)
@@ -142,6 +146,53 @@ func TestDirectoryDiskSampleIsAsyncAndUsesAllocation(t *testing.T) {
 	}
 }
 
+func TestDirectoryDiskPartialSampleWarnsAndCanReachReserve(t *testing.T) {
+	var warning string
+	s := &diskSampler{
+		path:       "/persist",
+		totalBytes: 100,
+		method:     "directory",
+		state:      "pending",
+		lastStart:  time.Unix(100, 0),
+		walk:       func(string) (int64, bool, error) { return 95, true, nil },
+		warn: func(message string, _ ...any) {
+			warning = message
+		},
+	}
+	s.scan(time.Unix(100, 0))
+	usage, err := s.sample(time.Unix(101, 0))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usage.DiskUsageState != "partial" || !usage.DiskReserveReached {
+		t.Fatalf("partial sample = %+v, want reserve reached", usage)
+	}
+	if !strings.Contains(warning, "skipped unreadable paths") {
+		t.Fatalf("warning = %q", warning)
+	}
+}
+
+func TestDirectoryDiskFailedSampleWarns(t *testing.T) {
+	var warning string
+	s := &diskSampler{
+		path:       "/persist",
+		totalBytes: 100,
+		method:     "directory",
+		state:      "pending",
+		walk:       func(string) (int64, bool, error) { return 0, false, errors.New("read failed") },
+		warn: func(message string, _ ...any) {
+			warning = message
+		},
+	}
+	s.scan(time.Unix(100, 0))
+	if s.state != "error" {
+		t.Fatalf("state = %q, want error", s.state)
+	}
+	if !strings.Contains(warning, "accounting failed") {
+		t.Fatalf("warning = %q", warning)
+	}
+}
+
 func TestDirectoryUsageExcludesLargerParentFilesystem(t *testing.T) {
 	parent := t.TempDir()
 	persist := filepath.Join(parent, "pvc-agent")
@@ -154,9 +205,12 @@ func TestDirectoryUsageExcludesLargerParentFilesystem(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(persist, "agent-data"), make([]byte, 128*1024), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	used, err := directoryUsage(persist)
+	used, partial, err := directoryUsage(persist)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if partial {
+		t.Fatal("readable tree reported a partial scan")
 	}
 	if used >= 1024*1024 {
 		t.Fatalf("directory usage = %d; parent filesystem data was included", used)
@@ -164,6 +218,60 @@ func TestDirectoryUsageExcludesLargerParentFilesystem(t *testing.T) {
 	usage := diskUsage(2*1024*1024*1024, used, "directory", "ready", time.Unix(100, 0))
 	if usage.DiskTotalBytes != 2*1024*1024*1024 {
 		t.Fatalf("disk total = %d, want 2Gi allocation", usage.DiskTotalBytes)
+	}
+}
+
+func TestDirectoryUsageSkipsRootOwnedUnreadableDirectory(t *testing.T) {
+	if os.Getenv("MAT14_NONROOT_HELPER") == "1" {
+		used, partial, err := directoryUsage(os.Getenv("MAT14_PERSIST_PATH"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !partial {
+			t.Fatal("non-root walk did not report unreadable directory")
+		}
+		if used <= 0 {
+			t.Fatal("non-root walk discarded all reachable usage")
+		}
+		return
+	}
+	if os.Geteuid() != 0 {
+		if _, err := os.ReadDir("/root"); !errors.Is(err, os.ErrPermission) {
+			t.Skip("/root is not an unreadable root-owned directory in this environment")
+		}
+		used, partial, err := directoryUsage("/root")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !partial || used <= 0 {
+			t.Fatalf("non-root walk = used %d partial %v, want usable partial result", used, partial)
+		}
+		return
+	}
+	persist, err := os.MkdirTemp("/tmp", "mat14-disk-walk-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(persist)
+	if err := os.Chmod(persist, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(persist, "reachable"), make([]byte, 128*1024), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	private := filepath.Join(persist, "root-owned")
+	if err := os.Mkdir(private, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(private, "secret"), make([]byte, 128*1024), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=^TestDirectoryUsageSkipsRootOwnedUnreadableDirectory$")
+	cmd.Env = append(os.Environ(), "MAT14_NONROOT_HELPER=1", "MAT14_PERSIST_PATH="+persist)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: 65534, Gid: 65534}}
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("non-root helper failed: %v\n%s", err, output)
 	}
 }
 

@@ -1592,7 +1592,7 @@ components:
           enum: [statfs, directory]
         diskUsageState:
           type: string
-          enum: [pending, ready, error]
+          enum: [pending, ready, partial, error]
         diskUsedSampledAt:
           type: string
           format: date-time

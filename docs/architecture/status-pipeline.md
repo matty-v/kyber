@@ -140,8 +140,10 @@ from the Agent's requested allocation, passed to the sidecar as
 come from `statfs`. For a bind-mounted directory (including k3s `local-path`),
 the sidecar walks only `/persist` every five minutes in a throttled background
 goroutine and reuses the cached result between walks. `diskUsageMethod`,
-`diskUsageState`, and `diskUsedSampledAt` expose that distinction and staleness;
-a pending or failed walk never blocks heartbeat delivery or clears an existing
+`diskUsageState`, and `diskUsedSampledAt` expose that distinction and staleness.
+Unreadable paths are skipped, logged, and reported as a `partial` sample; that
+usable lower bound still participates in the 90% reserve check. A pending or
+failed walk never blocks heartbeat delivery or clears an existing
 disk-exhaustion marker. The control plane keeps only the latest sample in
 `status.activity.resources`, while the sidecar emits the same values as OTel
 gauges. Sampling failures do not affect heartbeat or readiness.

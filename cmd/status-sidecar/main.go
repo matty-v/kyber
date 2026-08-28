@@ -412,7 +412,7 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 	}
 
 	oom := newOOMDetector(cfg.CgroupMemoryEventsPath)
-	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath, cfg.AgentDiskBytes)
+	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath, cfg.AgentDiskBytes, logger.Warn)
 	resourceReadErrLogged := false
 	resourcePostErrLogged := false
 	logfn := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }
@@ -465,7 +465,7 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 			// A pending/failed directory walk must not clear a marker left by a
 			// previously full volume. Only a completed disk sample can safely
 			// change the maintenance signal.
-			if usage.DiskUsageState == "ready" {
+			if usage.DiskUsageState == "ready" || usage.DiskUsageState == "partial" {
 				if err := syncDiskExhaustedMarker(diskExhaustedMarker, usage.DiskReserveReached); err != nil {
 					logger.Warn("disk maintenance marker update failed", "err", err)
 				}

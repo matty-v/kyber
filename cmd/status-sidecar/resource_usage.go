@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -52,14 +53,14 @@ type resourceSampler struct {
 	disk         *diskSampler
 }
 
-func newResourceSampler(persistPath, cgroupEventsPath string, diskTotalBytes int64) *resourceSampler {
+func newResourceSampler(persistPath, cgroupEventsPath string, diskTotalBytes int64, warn func(string, ...any)) *resourceSampler {
 	cgroupPath := ""
 	if cgroupEventsPath != "" {
 		cgroupPath = strings.TrimSuffix(cgroupEventsPath, "/memory.events")
 	}
 	return &resourceSampler{
 		cgroupPath: cgroupPath,
-		disk:       newDiskSampler(persistPath, "/proc/self/mountinfo", diskTotalBytes),
+		disk:       newDiskSampler(persistPath, "/proc/self/mountinfo", diskTotalBytes, warn),
 	}
 }
 
@@ -102,7 +103,8 @@ type diskSampler struct {
 	path       string
 	totalBytes int64
 	method     string
-	walk       func(string) (int64, error)
+	walk       func(string) (int64, bool, error)
+	warn       func(string, ...any)
 
 	mu        sync.Mutex
 	usedBytes int64
@@ -112,7 +114,7 @@ type diskSampler struct {
 	running   atomic.Bool
 }
 
-func newDiskSampler(path, mountInfoPath string, totalBytes int64) *diskSampler {
+func newDiskSampler(path, mountInfoPath string, totalBytes int64, warn func(string, ...any)) *diskSampler {
 	method := "directory"
 	if root, err := mountRoot(mountInfoPath, path); err == nil && root == "/" {
 		method = "statfs"
@@ -122,6 +124,7 @@ func newDiskSampler(path, mountInfoPath string, totalBytes int64) *diskSampler {
 		totalBytes: totalBytes,
 		method:     method,
 		walk:       directoryUsage,
+		warn:       warn,
 		state:      "pending",
 	}
 }
@@ -152,17 +155,26 @@ func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
 }
 
 func (s *diskSampler) scan(startedAt time.Time) {
-	used, err := s.walk(s.path)
+	used, partial, err := s.walk(s.path)
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	defer s.running.Store(false)
 	if err != nil {
 		s.state = "error"
-		return
+	} else {
+		s.usedBytes = used
+		s.sampledAt = startedAt
+		s.state = "ready"
+		if partial {
+			s.state = "partial"
+		}
 	}
-	s.usedBytes = used
-	s.sampledAt = startedAt
-	s.state = "ready"
+	s.mu.Unlock()
+	s.running.Store(false)
+
+	if err != nil && s.warn != nil {
+		s.warn("disk directory accounting failed", "path", s.path, "err", err)
+	} else if partial && s.warn != nil {
+		s.warn("disk directory accounting skipped unreadable paths", "path", s.path, "usedBytes", used)
+	}
 }
 
 func diskUsage(total, used int64, method, state string, sampledAt time.Time) resourceUsage {
@@ -175,7 +187,7 @@ func diskUsage(total, used int64, method, state string, sampledAt time.Time) res
 	if !sampledAt.IsZero() {
 		usage.DiskUsedSampledAt = sampledAt.UTC().Format(time.RFC3339)
 	}
-	if state == "ready" {
+	if state == "ready" || state == "partial" {
 		usage.DiskReserveReached = float64(used)/float64(total) >= diskReserveRatio
 	}
 	return usage
@@ -205,17 +217,32 @@ func unescapeMountInfo(value string) string {
 	return strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(value)
 }
 
-func directoryUsage(root string) (int64, error) {
+func directoryUsage(root string) (int64, bool, error) {
 	seen := make(map[[2]uint64]struct{})
 	var total int64
 	var rootDevice uint64
 	entries := 0
+	partial := false
 	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrPermission) {
+				partial = true
+				if entry != nil && entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			return walkErr
 		}
 		info, err := entry.Info()
 		if err != nil {
+			if errors.Is(err, fs.ErrPermission) {
+				partial = true
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
 			return err
 		}
 		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
@@ -246,9 +273,9 @@ func directoryUsage(root string) (int64, error) {
 		return nil
 	})
 	if err != nil {
-		return 0, fmt.Errorf("walk %s: %w", root, err)
+		return 0, false, fmt.Errorf("walk %s: %w", root, err)
 	}
-	return total, nil
+	return total, partial, nil
 }
 
 func readInt64File(path string) (int64, error) {
