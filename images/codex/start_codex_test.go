@@ -1669,3 +1669,146 @@ func TestStartCodexPairsTheCredentialUmaskWithARestore(t *testing.T) {
 		t.Fatal("the umask restore appears before the tightening")
 	}
 }
+
+// ---- MAT-15: the corrupt-config recovery must precede authentication --------
+
+// stubConfigCoupledBin writes a `codex` that behaves the way the real one does
+// when its configuration will not parse: EVERY subcommand fails, `login status`
+// included. Existing stubs let `login status` succeed regardless of the config,
+// which is why they could not see this bug.
+//
+// That coupling is the whole of MAT-15. A corrupt ~/.codex/config.toml made the
+// credential check fail, which sent the boot into a device-authorization flow
+// nobody could answer, and it exited 42 — before reaching the recovery that
+// would have fixed the file. `--version` still succeeds here because it did on
+// the stranded agent: the boot cleared the runtime probe and died at device
+// auth, not before it.
+//
+// The tmux stub records whether device authorization was started and reports no
+// live session, so the boot's wait loop terminates instead of hanging.
+func stubConfigCoupledBin(t *testing.T) (path, deviceLog string) {
+	t.Helper()
+	dir := t.TempDir()
+	deviceLog = filepath.Join(dir, "device-auth.log")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatalf("write stub %s: %v", name, err)
+		}
+	}
+	write("codex", `
+if [ "${1:-}" = "--version" ]; then echo "codex-cli 0.150.1"; exit 0; fi
+if grep -q UNPARSEABLE "$CODEX_HOME/config.toml" 2>/dev/null; then
+  echo "Error loading configuration: expected '.', '=' or newline" >&2
+  exit 1
+fi
+exit 0`)
+	write("tmux", `
+case "${1:-}" in
+  new-session) printf '%s\n' "$*" >> "$DEVICE_LOG"; exit 0 ;;
+  has-session) exit 1 ;;
+  *)           exit 0 ;;
+esac`)
+	write("curl", `exit 0`)
+	write("npm", `exit 0`)
+	write("sudo", `exec "$@"`)
+	return dir + ":" + os.Getenv("PATH"), deviceLog
+}
+
+// An agent whose own config.toml stops parsing must recover on the next boot
+// and come up Running.
+//
+// Before this fix it did not. The recovery lived ~250 lines below the
+// credential block, so the boot never reached it: `codex login status` failed
+// on the unreadable config, device authorization started, nobody answered it,
+// and the script exited 42 into NeedsAuth. The file is on the agent's
+// persistent volume, so every subsequent boot repeated it, and re-authorising
+// could not help because `codex login` must read the configuration too. There
+// was no way out through any Kyber surface — the Shell is unavailable while the
+// runtime container is down.
+//
+// Verified to fail against origin/main with `exit status 42`.
+func TestStartCodex_CorruptUserConfigRecoversBeforeAuthentication(t *testing.T) {
+	home := t.TempDir()
+	const corrupt = "UNPARSEABLE ((( not toml\n= = =\n"
+	managed := seedCodexConfig(t, home, corrupt)
+	path, deviceLog := stubConfigCoupledBin(t)
+
+	out, err := runBoot(t, home, secretCred, path,
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"DEVICE_LOG="+deviceLog)
+	if err != nil {
+		t.Fatalf("a corrupt config.toml stranded the boot instead of being recovered: %v\n%s", err, out)
+	}
+
+	if _, statErr := os.Stat(deviceLog); statErr == nil {
+		t.Fatalf("device authorization was started for a config problem, not a credential problem:\n%s", out)
+	}
+	if strings.Contains(string(out), "device authorization") {
+		t.Fatalf("boot entered the device-authorization path:\n%s", out)
+	}
+
+	backup, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml.corrupt"))
+	if err != nil {
+		t.Fatalf("corrupt config was not preserved for diagnosis: %v", err)
+	}
+	if string(backup) != corrupt {
+		t.Fatalf("backup does not hold the original file:\ngot:\n%s\nwant:\n%s", backup, corrupt)
+	}
+	config, err := os.ReadFile(filepath.Join(home, ".codex", "config.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(config), "UNPARSEABLE") {
+		t.Fatalf("config.toml was not reset:\n%s", config)
+	}
+	if !strings.Contains(string(out), "recovered unparseable") {
+		t.Fatalf("recovery was not reported in the boot log:\n%s", out)
+	}
+}
+
+// The credential that was valid before the corruption must still be valid
+// after it. Recovery resets config.toml, not auth.json — a repair that cost the
+// agent its login would just be the NeedsAuth outcome by another route.
+func TestStartCodex_CorruptUserConfigRecoveryKeepsCredential(t *testing.T) {
+	home := t.TempDir()
+	managed := seedCodexConfig(t, home, "UNPARSEABLE ((( not toml\n")
+	path, deviceLog := stubConfigCoupledBin(t)
+
+	out, err := runBoot(t, home, secretCred, path,
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"DEVICE_LOG="+deviceLog)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	if got := readAuth(t, home); got != secretCred {
+		t.Fatalf("recovery altered the credential:\ngot:  %s\nwant: %s", got, secretCred)
+	}
+}
+
+// The ordering is the fix, so pin it in the script itself. A future edit that
+// moves the recovery back below the credential block would reintroduce MAT-15
+// while every behavioural test above still passed on stubs that do not couple
+// config parsing to `login status`.
+func TestStartCodex_ConfigRecoveryPrecedesCredentialBlock(t *testing.T) {
+	body, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := string(body)
+
+	recovery := strings.Index(script, "kyber_recover_user_config() {")
+	if recovery < 0 {
+		t.Fatal("kyber_recover_user_config is gone; if it was renamed, update this guard rather than deleting it")
+	}
+	invocation := strings.Index(script, "if ! kyber_recover_user_config; then")
+	if invocation < 0 {
+		t.Fatal("the recovery is defined but never called")
+	}
+	deviceAuth := strings.Index(script, "starting device authorization")
+	if deviceAuth < 0 {
+		t.Fatal("device-authorization block not found")
+	}
+	if invocation > deviceAuth {
+		t.Fatalf("the config recovery runs after device authorization (offsets %d > %d) — this is MAT-15", invocation, deviceAuth)
+	}
+}

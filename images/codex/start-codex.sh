@@ -168,6 +168,69 @@ curl -fsS --max-time 5 --retry 5 --retry-connrefused -H 'Content-Type: applicati
     http://127.0.0.1:8091/runtime-version >/dev/null 2>&1 || true
 unset _runtime_probe_output _runtime_probe_status _runtime_probe_version _runtime_probe_message _runtime_probe_json
 
+# ---- The agent's own config must parse BEFORE anything runs codex (MAT-15) ----
+#
+# This sits ahead of the credential and device-authorization block for the same
+# reason the managed-config permission repair above does. An unparseable
+# ~/.codex/config.toml makes Codex refuse to load ANY configuration, so
+# `codex login status` fails, the device-auth branch runs, nobody can answer it,
+# and the boot exits 42 — 250 lines before the recovery that used to sit further
+# down. The file lives on the agent's persistent volume, so it survives every
+# restart and image update, and re-authorising cannot rescue it either because
+# `codex login` has to read the configuration too. On kyber-canary an agent with
+# two bad lines in that file was stranded in NeedsAuth with no route back
+# through any Kyber surface: the Shell is unavailable while the runtime
+# container is down, so there was nothing left to edit the file with.
+#
+# #166 moved the sibling permission repair ahead of this same block. This is the
+# other half of that fix.
+
+# The agent's own config is created if absent and otherwise left alone.
+if [ ! -f "$CODEX_HOME/config.toml" ]; then
+    : > "$CODEX_HOME/config.toml"
+fi
+chmod 0600 "$CODEX_HOME/config.toml"
+
+# A failing probe is NOT on its own evidence that THIS file is the problem.
+# `codex mcp list` loads the MERGED configuration (the system managed file, this
+# file, CLI state) and fails just as readily on a malformed managed setting, an
+# I/O or permission error, or a broken codex binary. Resetting the agent's file
+# on any of those would destroy every custom MCP server and unrelated setting it
+# holds — precisely the data loss this recovery exists to prevent.
+#
+# So attribute the failure before touching anything: re-probe against a
+# throwaway CODEX_HOME whose config.toml is empty. If the empty one parses, the
+# difference is this file and it is genuinely bad. If the empty one fails too,
+# the fault lies elsewhere and the agent's file is left exactly as it is.
+kyber_probe_codex_config() {
+    CODEX_HOME="$1" codex mcp list >/dev/null 2>&1
+}
+
+# Returns non-zero only when codex cannot read its configuration even with an
+# empty user config — i.e. the fault is not this file.
+kyber_recover_user_config() {
+    if kyber_probe_codex_config "$CODEX_HOME"; then
+        return 0
+    fi
+    _probe_home="$(mktemp -d)"
+    : > "$_probe_home/config.toml"
+    chmod 0600 "$_probe_home/config.toml"
+    if kyber_probe_codex_config "$_probe_home"; then
+        cp "$CODEX_HOME/config.toml" "$CODEX_HOME/config.toml.corrupt" 2>/dev/null || true
+        : > "$CODEX_HOME/config.toml"
+        chmod 0600 "$CODEX_HOME/config.toml"
+        echo "[kyber] WARNING: recovered unparseable $CODEX_HOME/config.toml (saved as config.toml.corrupt)" >&2
+        rm -rf "$_probe_home"
+        return 0
+    fi
+    rm -rf "$_probe_home"
+    return 1
+}
+
+if ! kyber_recover_user_config; then
+    echo "[kyber] WARNING: codex cannot read its configuration even with an empty user config; leaving $CODEX_HOME/config.toml untouched" >&2
+fi
+
 # The API transports the opaque Codex credential document through a Kubernetes
 # Secret. Never print it.
 #
@@ -418,46 +481,14 @@ else
     echo "[kyber] WARNING: cron context hooks incomplete; feature disabled" >&2
 fi
 
-# The agent's own config is created if absent and otherwise left alone.
-if [ ! -f "$CODEX_HOME/config.toml" ]; then
-    : > "$CODEX_HOME/config.toml"
-fi
-chmod 0600 "$CODEX_HOME/config.toml"
-
-# A config.toml that does not parse makes every `codex mcp` call below fail, so
-# it has to be recovered — but a failing probe is NOT on its own evidence that
-# THIS file is the problem. `codex mcp list` loads the MERGED configuration
-# (the managed file written above, this file, CLI state) and fails just as
-# readily on a malformed managed setting, an I/O or permission error, or a
-# broken codex binary. Resetting the agent's file on any of those would destroy
-# every custom MCP server and unrelated setting it holds — precisely the
-# data loss this change exists to prevent.
-#
-# So attribute the failure before touching anything: re-probe against a
-# throwaway CODEX_HOME whose config.toml is empty. If the empty one parses,
-# the difference is this file and it is genuinely bad. If the empty one fails
-# too, the fault lies elsewhere: leave the agent's file exactly as it is, and
-# skip convergence entirely, because `codex mcp` cannot be trusted to edit a
-# file it cannot read.
-kyber_probe_codex_config() {
-    CODEX_HOME="$1" codex mcp list >/dev/null 2>&1
-}
-
+# Whether `codex mcp` can be trusted to edit config.toml is a question about the
+# FINAL merged configuration, so it is settled here rather than at the recovery
+# above: that ran before the managed config was written, and a managed file that
+# was malformed on entry has since been replaced by the block above.
 KYBER_CODEX_CONFIG_USABLE=true
 if ! kyber_probe_codex_config "$CODEX_HOME"; then
-    _probe_home="$(mktemp -d)"
-    : > "$_probe_home/config.toml"
-    chmod 0600 "$_probe_home/config.toml"
-    if kyber_probe_codex_config "$_probe_home"; then
-        cp "$CODEX_HOME/config.toml" "$CODEX_HOME/config.toml.corrupt" 2>/dev/null || true
-        : > "$CODEX_HOME/config.toml"
-        chmod 0600 "$CODEX_HOME/config.toml"
-        echo "[kyber] WARNING: recovered unparseable $CODEX_HOME/config.toml (saved as config.toml.corrupt)" >&2
-    else
-        KYBER_CODEX_CONFIG_USABLE=false
-        echo "[kyber] WARNING: codex cannot read its configuration even with an empty user config; leaving $CODEX_HOME/config.toml untouched and skipping MCP convergence" >&2
-    fi
-    rm -rf "$_probe_home"
+    KYBER_CODEX_CONFIG_USABLE=false
+    echo "[kyber] WARNING: codex cannot read its merged configuration; skipping MCP convergence" >&2
 fi
 
 # Converge Kyber-managed MCP entries through `codex mcp`, which edits
