@@ -67,16 +67,16 @@ runtime-neutral repair action that works even when the agent pod is absent.
 
 **Branch:** `sol/mat-11-broken-runtime` (from merged PR A)
 
-- [ ] Add a stable broken-runtime phase/condition and a bounded diagnostic
+- [x] Add a stable broken-runtime phase/condition and a bounded diagnostic
   payload naming the runtime and failed executable/version probe.
-- [ ] Probe harness usability before any authentication command and report a
+- [x] Probe harness usability before any authentication command and report a
   harness failure through the internal status path.
-- [ ] Add pure state-machine transitions and reconciler handling that cannot
+- [x] Add pure state-machine transitions and reconciler handling that cannot
   fall through to `NeedsAuth` or an unbounded restart loop.
-- [ ] Surface the real cause and recovery guidance in Agent Detail and suppress
+- [x] Surface the real cause and recovery guidance in Agent Detail and suppress
   unusable authentication actions.
-- [ ] Update generated API/CRD contracts, PWA types, lifecycle docs, and tests.
-- [ ] Verify a deliberately truncated disposable harness reaches the new state
+- [x] Update generated API/CRD contracts, PWA types, lifecycle docs, and tests.
+- [x] Verify a deliberately truncated disposable harness reaches the new state
   with its actual failure reason.
 
 Implementation started 2026-08-28 from merged PR A (`a09f166`). The wire
@@ -120,3 +120,9 @@ contract uses phase `BrokenRuntime`, condition `RuntimeUnusable`, and exit code
   test agent returned to `Running`; disposable `sol-test-mat11-codex` was
   deleted. PR #168's required test, integration, build, and security checks all
   pass.
+- 2026-08-28: Deployed PR B as immutable images
+  `worktree-20260828183417-bcce284`. A disposable Codex image with a truncated
+  executable exited 43 and reached `BrokenRuntime` with condition
+  `RuntimeUnusable=True` and diagnostic `codex executable produced no version`.
+  The pod UID and restart count stayed unchanged after the failure; the test
+  agent was deleted and the normal Codex dev image restored.

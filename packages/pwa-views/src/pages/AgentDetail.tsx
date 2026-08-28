@@ -216,15 +216,18 @@ export function StatusCardBody({ status }: { status: AgentStatus }) {
 // Returns null when neither condition is True, so a healthy agent
 // surfaces nothing.
 export function MismatchBadges({ agent }: { agent: Agent }) {
-  const showMismatch = Boolean(agent.runtimeVersionMismatch)
-  const showUnsupported = Boolean(agent.modelUnsupported)
+  const showBrokenRuntime = agent.phase === 'BrokenRuntime' || agent.runtimeVersion?.usable === false
+  // A failed executable probe is authoritative for this boot. Suppress model
+  // and version signals that may be left over from an earlier successful boot;
+  // they are not actionable until the harness itself works again.
+  const showMismatch = !showBrokenRuntime && Boolean(agent.runtimeVersionMismatch)
+  const showUnsupported = !showBrokenRuntime && Boolean(agent.modelUnsupported)
   // kyber#674 — blocked-before-pod conditions. Unlike the two badges above,
   // these mean NO pod exists at all, so the agent shows a blank status and a
   // restart cannot help. Rendered first: they explain why everything else on
   // the page is empty.
   const showImageMissing = Boolean(agent.runtimeImageMissing)
   const showModelUnresolved = Boolean(agent.modelUnresolved)
-  const showBrokenRuntime = agent.phase === 'BrokenRuntime' || agent.runtimeVersion?.usable === false
   // Probe ran and failed for a reason NOT attributable to the model
   // (auth, network, unrecognized error): modelSupported is absent, but
   // the diagnostic is present. "Couldn't verify" must be visible here,
@@ -232,6 +235,7 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   // on this surface. (A definite rejection renders the danger banner
   // above instead.)
   const showProbeInconclusive =
+    !showBrokenRuntime &&
     !showUnsupported &&
     agent.runtimeVersion?.modelSupported !== false &&
     Boolean(agent.runtimeVersion?.modelProbeMessage)

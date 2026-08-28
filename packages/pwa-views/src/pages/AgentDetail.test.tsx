@@ -149,12 +149,18 @@ describe('AgentDetail MismatchBadges', () => {
         runtime: 'claude-code',
         usable: false,
         probeMessage: 'claude: text file busy',
+        modelProbeMessage: 'stale model probe failure',
       },
+      runtimeVersionMismatch: true,
+      modelUnsupported: true,
     })
     render(<MismatchBadges agent={agent} />)
     expect(screen.getByText(/Runtime harness is unusable/i)).toBeInTheDocument()
     expect(screen.getByText(/text file busy/i)).toBeInTheDocument()
     expect(screen.getByText(/Re-authorizing will not help/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Runtime version mismatch/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Model rejected/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Model check inconclusive/i)).not.toBeInTheDocument()
   })
 
   it('renders RuntimeVersionMismatch badge with installed+requested versions', () => {
