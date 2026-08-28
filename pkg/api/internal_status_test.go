@@ -262,6 +262,12 @@ func TestStatusEvent_NonReadyDiskSamplePreservesExhaustionUntilReady(t *testing.
 	if usage := post("pending", 0); !usage.DiskReserveReached {
 		t.Fatalf("pending sample cleared exhaustion: %+v", usage)
 	}
+	if usage := post("partial", 95); !usage.DiskReserveReached {
+		t.Fatalf("partial sample above reserve did not preserve exhaustion: %+v", usage)
+	}
+	if usage := post("partial", 80); !usage.DiskReserveReached {
+		t.Fatalf("partial sample below reserve cleared exhaustion: %+v", usage)
+	}
 	if usage := post("ready", 80); usage.DiskReserveReached {
 		t.Fatalf("ready sample below reserve did not clear exhaustion: %+v", usage)
 	}

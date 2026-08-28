@@ -142,6 +142,14 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		if ev.Resources.DiskUsageState == "ready" {
 			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
 				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
+		} else if ev.Resources.DiskUsageState == "partial" {
+			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
+				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
+			if previous := agent.Status.Activity.Resources; previous != nil && previous.DiskReserveReached {
+				// A partial lower bound may assert exhaustion, but cannot prove
+				// recovery because unreadable paths may hold the missing bytes.
+				ev.Resources.DiskReserveReached = true
+			}
 		} else if previous := agent.Status.Activity.Resources; previous != nil {
 			// A pending or failed asynchronous walk has no authority to clear
 			// an exhausted lifecycle. Keep the last completed decision aligned

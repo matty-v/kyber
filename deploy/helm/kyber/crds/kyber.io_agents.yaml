@@ -551,10 +551,12 @@ spec:
                       diskUsageState:
                         description: |-
                           DiskUsageState makes an asynchronous directory sample observable while
-                          it is pending or after a failed walk; reserve decisions only use ready samples.
+                          it is pending, partial due to unreadable paths, or after a failed walk;
+                          reserve decisions use ready and partial samples.
                         enum:
                         - pending
                         - ready
+                        - partial
                         - error
                         type: string
                       diskUsedBytes:

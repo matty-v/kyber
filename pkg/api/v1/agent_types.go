@@ -910,8 +910,9 @@ type AgentResourceUsage struct {
 	// +optional
 	DiskUsageMethod string `json:"diskUsageMethod,omitempty"`
 	// DiskUsageState makes an asynchronous directory sample observable while
-	// it is pending or after a failed walk; reserve decisions only use ready samples.
-	// +kubebuilder:validation:Enum=pending;ready;error
+	// it is pending, partial due to unreadable paths, or after a failed walk;
+	// reserve decisions use ready and partial samples.
+	// +kubebuilder:validation:Enum=pending;ready;partial;error
 	// +optional
 	DiskUsageState string `json:"diskUsageState,omitempty"`
 	// DiskUsedSampledAt is when diskUsedBytes was measured. It may be older

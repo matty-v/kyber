@@ -158,7 +158,7 @@ export interface AgentResourceUsage {
 	diskTotalBytes: number
 	diskReserveReached: boolean
 	diskUsageMethod?: 'statfs' | 'directory'
-	diskUsageState?: 'pending' | 'ready' | 'error'
+	diskUsageState?: 'pending' | 'ready' | 'partial' | 'error'
 	diskUsedSampledAt?: string
 }
 
