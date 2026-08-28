@@ -385,6 +385,22 @@ unset _device_auth_pending
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
+arm_kyber_cron_postrun() {
+    local sentinel_dir
+    sentinel_dir="$(dirname "$KYBER_POSTRUN_SENTINEL")"
+    if ! mkdir -p "$sentinel_dir"; then
+        echo "[kyber] WARNING: could not create cron context hook state directory: $sentinel_dir" >&2
+        return 1
+    fi
+    if ! : > "$KYBER_POSTRUN_SENTINEL"; then
+        echo "[kyber] WARNING: could not write cron context hook sentinel: $KYBER_POSTRUN_SENTINEL" >&2
+        return 1
+    fi
+    if [ ! -f "$KYBER_POSTRUN_SENTINEL" ]; then
+        echo "[kyber] WARNING: cron context hook sentinel is absent after write: $KYBER_POSTRUN_SENTINEL" >&2
+        return 1
+    fi
+}
 # MUST be a fresh-conversation command, NOT a compaction one. `/compact`
 # summarizes the thread and carries the summary forward — which is exactly what
 # CompactSessionCommand in pkg/runtimes/codex/adapter.go is for, and exactly
@@ -473,9 +489,11 @@ if grep -q '^\[\[hooks\.UserPromptSubmit\]\]' "$KYBER_MANAGED_CODEX_CONFIG" 2>/d
     && grep -q '^\[\[hooks\.Stop\]\]' "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null \
     && grep -qF "$KYBER_TURNSTART_CMD" "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null \
     && grep -qF "$KYBER_POSTRUN_CMD" "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null; then
-    mkdir -p "$(dirname "$KYBER_POSTRUN_SENTINEL")" 2>/dev/null || true
-    : > "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
-    echo "[kyber] cron context hooks registered"
+    if arm_kyber_cron_postrun; then
+        echo "[kyber] cron context hooks registered"
+    else
+        echo "[kyber] WARNING: cron context hooks registered but sentinel unavailable; feature disabled" >&2
+    fi
 else
     rm -f "$KYBER_POSTRUN_SENTINEL" 2>/dev/null || true
     echo "[kyber] WARNING: cron context hooks incomplete; feature disabled" >&2
