@@ -194,12 +194,30 @@ KYBER_MANAGED_CODEX_CONFIG="${KYBER_MANAGED_CODEX_CONFIG:-/etc/codex/managed_con
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
-# /compact is Codex's clear command; pkg/runtimes/codex/adapter.go already
-# reports the same one for the operator-driven path. It rides inside the hook
-# command rather than depending on this script's environment reaching the hook
-# process, which is spawned by codex, which is spawned by a tmux server that
-# may have outlived an earlier boot. Exported too, for any other consumer.
-KYBER_CODEX_CLEAR_TEXT="${KYBER_CLEAR_SESSION_TEXT:-/compact}"
+# MUST be a fresh-conversation command, NOT a compaction one. `/compact`
+# summarizes the thread and carries the summary forward — which is exactly what
+# CompactSessionCommand in pkg/runtimes/codex/adapter.go is for, and exactly
+# what ClearContextAfter promises NOT to do ("begins from a clean conversation
+# instead of accumulating every previous run"). Measured against 0.146.0 by
+# planting a token in one turn and reading what the next turn actually sent
+# upstream: after `/compact` the token was still there, after `/clear` it was
+# gone. Codex's own TUI says the same thing after a compaction — "Long threads
+# and multiple compactions can cause the model to be less accurate. Start a new
+# thread when possible." An unattended job firing hourly is the worst case for
+# that, so compaction would have quietly re-introduced the cross-contamination
+# this flag exists to stop. See images/codex/INSTALL_NOTES.md.
+#
+# `/clear` is also the literal Claude Code uses (kyber-cron-postrun's own
+# default), so the two runtimes are now genuinely equivalent rather than
+# merely both non-inert. Kept explicit anyway: the runtime declaring its own
+# clear command is the contract kyber-cron-postrun documents, and being
+# explicit is what lets a test assert the VALUE.
+#
+# It rides inside the hook command rather than depending on this script's
+# environment reaching the hook process, which is spawned by codex, which is
+# spawned by a tmux server that may have outlived an earlier boot. Exported
+# too, for any other consumer.
+KYBER_CODEX_CLEAR_TEXT="${KYBER_CLEAR_SESSION_TEXT:-/clear}"
 export KYBER_CLEAR_SESSION_TEXT="$KYBER_CODEX_CLEAR_TEXT"
 
 KYBER_CODEX_HOOKS_TOML=""

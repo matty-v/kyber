@@ -1055,11 +1055,20 @@ func TestStartCodex_CronHooks_RegistersBothSignalsAndArmsSentinel(t *testing.T) 
 			t.Errorf("managed config missing %q:\n%s", want, got)
 		}
 	}
-	// The clear command must ride inside the Stop hook's command string: that
-	// is what makes clearContextAfter actually clear on Codex rather than
-	// pasting Claude Code's /clear at a runtime that does not understand it.
-	if !strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/compact") {
-		t.Errorf("Stop hook does not carry the Codex clear command:\n%s", got)
+	// The clear command must ride inside the Stop hook's command string, and it
+	// must be a FRESH-CONVERSATION command. This is the whole point of the
+	// flag: `/compact` summarizes the thread and carries the summary forward,
+	// so a job firing unattended would still see every earlier run's context —
+	// measured against 0.146.0, a token planted before `/compact` was still in
+	// the next turn's upstream request, and was gone after `/clear`. Asserting
+	// the VALUE rather than "some clear text is present" is what makes this
+	// catch a regression back to compaction.
+	if !strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/clear") {
+		t.Errorf("Stop hook does not carry a fresh-conversation clear command:\n%s", got)
+	}
+	if strings.Contains(got, "KYBER_CLEAR_SESSION_TEXT=/compact") {
+		t.Errorf("Stop hook uses compaction, which retains prior-job context and breaks "+
+			"the clearContextAfter contract:\n%s", got)
 	}
 	// kyber#160's settings must survive, and `model` must still be top-level.
 	for _, want := range []string{"approval_policy", "sandbox_mode", "tui.resume_cwd"} {

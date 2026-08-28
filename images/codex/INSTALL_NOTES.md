@@ -59,3 +59,34 @@ complete. Findings, so nobody re-derives them:
   outlived an earlier boot would carry that boot's environment.
 - The hook `command` string is shell-interpreted, so `env VAR=value /path/cmd`
   and trailing arguments both work.
+
+### Which command actually clears a Codex conversation (FAL-8 review, kyber#162)
+
+`clearContextAfter` promises each fire "begins from a clean conversation instead
+of accumulating every previous run". Codex offers three relevant slash commands,
+and only two of them honour that:
+
+| Command | Description in the binary | Prior-turn context afterwards |
+| --- | --- | --- |
+| `/compact` | "summarize conversation to prevent hitting the context limit" | **retained** |
+| `/new` | "start a new chat during a conversation" | dropped |
+| `/clear` | — | dropped |
+
+Measured, not inferred. With a stub Responses API logging every upstream request,
+a token was planted in one turn and the next turn's request was searched for it:
+
+- after `/compact` → token still present (and the TUI prints "Context compacted"),
+- after `/new` → absent,
+- after `/clear` → absent; both print "To continue this session, run codex resume
+  <id>", i.e. the old thread is closed and a new one begins.
+
+Codex itself warns after a compaction: *"Long threads and multiple compactions can
+cause the model to be less accurate. Start a new thread when possible to keep
+threads small and targeted."* A cron job firing unattended for days is precisely
+the case that warning is about.
+
+So the Stop hook sends **`/clear`** — which is also the literal Claude Code uses
+(`kyber-cron-postrun`'s own default), making the two runtimes genuinely
+equivalent. `pkg/runtimes/codex/adapter.go`'s `CompactSessionCommand()` keeps
+sending `/compact`: that is the operator's *manual compaction* control and is a
+different thing from this flag.
