@@ -243,15 +243,61 @@ fi
 # Write via sudo only when a direct write is not possible: the tests run this
 # script unprivileged against a temp path, and the image grants kyber
 # passwordless sudo for exactly this kind of boot-time maintenance.
+# True when this shell can write $1 directly — the file exists and is writable,
+# or it does not exist and its directory is. Never attempts the write itself.
+kyber_managed_config_writable() {
+    if [ -e "$1" ]; then
+        [ -w "$1" ]
+    else
+        [ -w "$(dirname "$1")" ]
+    fi
+}
+
+# Both the directory and the file must be readable BY THE AGENT USER, not just
+# by root. `sudo mkdir` and `sudo tee` create 0700/0600 under root's umask, and
+# codex then cannot traverse /etc/codex: its probe for requirements.toml comes
+# back EACCES instead of ENOENT, and it refuses to load ANY configuration. Every
+# codex command fails, which reads as "credentials missing or invalid" and
+# crash-loops the agent. Found on kyber-canary 2026-08-28, reproduced as:
+#
+#   /etc/codex mode 700 -> "failed to load bootstrap configuration: Failed to
+#                           read requirements file ...: Permission denied"
+#   /etc/codex mode 755 -> codex works normally
+#
+# The mode is therefore part of the contract, not a detail: creating this
+# directory at all changes how codex boots, so creating it wrong is worse than
+# not creating it.
+#
+# Writability is probed with `[ -w ]` rather than `: >> "$file"`. A failed
+# REDIRECTION is reported by the shell itself, before the command's own
+# `2>/dev/null` applies, so the probe leaked "Permission denied" into every
+# boot log even when the sudo fallback then succeeded. start-codex.sh already
+# documents that trap in the token-reporter block below; this is the same one.
 kyber_write_managed_config() {
     _target="$1"
     _dir="$(dirname "$_target")"
-    mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
-    if : >> "$_target" 2>/dev/null; then
+    if [ ! -d "$_dir" ]; then
+        mkdir -p "$_dir" 2>/dev/null || sudo mkdir -p "$_dir" 2>/dev/null || return 1
+    fi
+    chmod 0755 "$_dir" 2>/dev/null || sudo chmod 0755 "$_dir" 2>/dev/null || return 1
+    if kyber_managed_config_writable "$_target"; then
         cat > "$_target"
     else
-        sudo tee "$_target" >/dev/null
+        sudo tee "$_target" >/dev/null || return 1
     fi
+    chmod 0644 "$_target" 2>/dev/null || sudo chmod 0644 "$_target" 2>/dev/null || return 1
+}
+
+# Append to the managed config, keeping it readable by the agent user and
+# keeping failed redirections out of the boot log.
+kyber_append_managed_config() {
+    _target="$1"
+    if kyber_managed_config_writable "$_target"; then
+        cat >> "$_target"
+    else
+        sudo tee -a "$_target" >/dev/null || return 1
+    fi
+    chmod 0644 "$_target" 2>/dev/null || sudo chmod 0644 "$_target" 2>/dev/null || return 1
 }
 
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
@@ -266,14 +312,14 @@ EOF
 then
     if [ -n "${CODEX_MODEL:-}" ]; then
         printf 'model = "%s"\n' "$CODEX_MODEL" | \
-            { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; }
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; }
     fi
     # The hook TABLES go last, after every top-level key above: a bare
     # `model = ...` appended after a [[table]] header would be parsed as a
     # member of that table, not as a top-level setting.
     if [ -n "$KYBER_CODEX_HOOKS_TOML" ]; then
         printf '%s' "$KYBER_CODEX_HOOKS_TOML" | \
-            { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; }
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; }
     fi
     echo "[kyber] Codex managed settings written to $KYBER_MANAGED_CODEX_CONFIG"
 else
@@ -541,7 +587,7 @@ fi
     echo ""
     echo "[projects.\"$LAUNCH_DIR\"]"
     echo 'trust_level = "trusted"'
-} | { cat >> "$KYBER_MANAGED_CODEX_CONFIG" 2>/dev/null || sudo tee -a "$KYBER_MANAGED_CODEX_CONFIG" >/dev/null; } || \
+} | { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
     echo "[kyber] WARNING: could not trust Codex launch directory $LAUNCH_DIR" >&2
 
 CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
