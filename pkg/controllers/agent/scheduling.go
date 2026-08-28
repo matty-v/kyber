@@ -49,6 +49,13 @@ const schedulingGracePeriod = 30 * time.Second
 // agent sat in Creating on kyber-canary with an entirely blank status.
 const stalledFallbackGracePeriod = 10 * time.Minute
 
+// stalledFallbackPrefix opens every message describeStalledPod produces. It is
+// how populateSchedulingStatus recognises its own earlier description on a
+// later poll, so it can refresh a changed one without ever displacing an entry
+// that came from a real event. It also tells the operator plainly that the
+// cluster reported no failure — the absence IS the finding.
+const stalledFallbackPrefix = "No scheduler or kubelet failure was recorded. "
+
 // Event reasons we care about for scheduling-status. Matches the issue's
 // scope (capacity / placement / image / storage). Anything else is left to
 // the existing reconciler logic.
@@ -124,15 +131,35 @@ func populateSchedulingStatus(ctx context.Context, c client.Client, pod *corev1.
 		// Never overwrite a classified entry: a real reason always beats
 		// this one, and clearing still happens only on the Running
 		// transition.
-		if agent.Status.Scheduling != nil ||
-			time.Since(pod.CreationTimestamp.Time) < stalledFallbackGracePeriod {
+		existing := agent.Status.Scheduling
+		// Only ever replace our own description. Anything else came from a
+		// real event and is strictly more useful than what we can infer.
+		mine := existing != nil && strings.HasPrefix(existing.LastError, stalledFallbackPrefix)
+		if existing != nil && !mine {
 			return false
 		}
-		now := metav1.NewTime(time.Now().UTC())
+		if time.Since(pod.CreationTimestamp.Time) < stalledFallbackGracePeriod {
+			return false
+		}
+		description := describeStalledPod(pod)
+		if mine && existing.LastError == description {
+			// Nothing observable changed — don't churn ResourceVersion on
+			// every poll, matching the classified path's idempotency guard.
+			return false
+		}
+		// Anchor to when the pod was created, not to when this fired. The
+		// agent has been stuck since it started, and the banner renders this
+		// as "first observed N ago"; dating it from the ten-minute grace
+		// would tell the operator the outage is newer than it is. Preserve
+		// the original across refreshes for the same reason.
+		firstObserved := metav1.NewTime(pod.CreationTimestamp.UTC())
+		if mine && existing.FirstObservedAt != nil {
+			firstObserved = *existing.FirstObservedAt
+		}
 		agent.Status.Scheduling = &kyberv1.AgentSchedulingStatus{
 			Category:        "Other",
-			LastError:       describeStalledPod(pod),
-			FirstObservedAt: &now,
+			LastError:       description,
+			FirstObservedAt: &firstObserved,
 		}
 		return true
 	}
@@ -195,9 +222,8 @@ func describeStalledPod(pod *corev1.Pod) string {
 		stalled = append(stalled, "container "+cs.Name+" has not started ("+detail+")")
 	}
 
-	msg := "Pod has been " + string(pod.Status.Phase) +
-		" since " + pod.CreationTimestamp.UTC().Format(time.RFC3339) +
-		" with no scheduler or kubelet failure recorded."
+	msg := stalledFallbackPrefix + "Pod has been " + string(pod.Status.Phase) +
+		" since " + pod.CreationTimestamp.UTC().Format(time.RFC3339) + "."
 	if len(stalled) > 0 {
 		msg += " " + strings.Join(stalled, "; ") + "."
 	}

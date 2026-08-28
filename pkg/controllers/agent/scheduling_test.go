@@ -448,3 +448,62 @@ func TestPopulateSchedulingStatus_StalledFallbackDoesNotOverwrite(t *testing.T) 
 		t.Errorf("Category = %q, want the original Placement", agent.Status.Scheduling.Category)
 	}
 }
+
+// A description that never refreshes is the stale-banner problem again: sol's
+// banner showed a seven-hour-old scheduling error while the real fault had
+// moved on entirely, and it sent the diagnosis the wrong way for an hour. If
+// what we can observe changes, the operator must see the change.
+func TestPopulateSchedulingStatus_StalledFallbackRefreshesWhenTheStallChanges(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("first observation reported nothing")
+	}
+	first := *agent.Status.Scheduling.FirstObservedAt
+
+	// Same pod, later poll, the kubelet has now recorded a different state.
+	pod.Status.ContainerStatuses[0].State.Waiting.Reason = "CreateContainerError"
+	if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("a changed stall was not reported — the banner would stay stale")
+	}
+	if !strings.Contains(agent.Status.Scheduling.LastError, "CreateContainerError") {
+		t.Errorf("description did not refresh: %q", agent.Status.Scheduling.LastError)
+	}
+	if !agent.Status.Scheduling.FirstObservedAt.Equal(&first) {
+		t.Errorf("FirstObservedAt moved on refresh: %v -> %v",
+			first, agent.Status.Scheduling.FirstObservedAt)
+	}
+}
+
+// ...but an unchanged stall must not churn the resource on every poll, the
+// same guard the classified path has.
+func TestPopulateSchedulingStatus_StalledFallbackIsIdempotent(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	populateSchedulingStatus(context.Background(), c, pod, agent)
+	if populateSchedulingStatus(context.Background(), c, pod, agent) {
+		t.Fatal("an unchanged stall asked for a second patch")
+	}
+}
+
+// "First observed" must mean when the agent got stuck, not when the ten-minute
+// grace elapsed. An operator reading "first observed 10 minutes ago" about an
+// eleven-hour outage is being told something false.
+func TestPopulateSchedulingStatus_StalledFallbackDatesFromPodCreation(t *testing.T) {
+	pod := stalledPod("pod-uid", 11*time.Hour)
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+	c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+	populateSchedulingStatus(context.Background(), c, pod, agent)
+	got := agent.Status.Scheduling.FirstObservedAt
+	if got == nil {
+		t.Fatal("FirstObservedAt nil")
+	}
+	if drift := got.Time.Sub(pod.CreationTimestamp.Time); drift > time.Second || drift < -time.Second {
+		t.Errorf("FirstObservedAt is %v from pod creation; it should date the stall, not the grace window", drift)
+	}
+}
