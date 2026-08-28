@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -1158,5 +1159,140 @@ func TestStartCodex_CronHooks_CommandsMissingLeavesSentinelAbsent(t *testing.T) 
 	}
 	if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
 		t.Errorf("boot did not warn that registration is incomplete:\n%s", out)
+	}
+}
+
+// stopHookCommand pulls the `command` string out of the [[hooks.Stop]] block of
+// a rendered managed config. Parsing what was WRITTEN — rather than
+// re-deriving the string in the test — is what makes the delivery test below
+// exercise the same bytes Codex will execute.
+func stopHookCommand(t *testing.T, toml string) string {
+	t.Helper()
+	at := strings.Index(toml, "[[hooks.Stop]]")
+	if at < 0 {
+		t.Fatalf("no [[hooks.Stop]] block in managed config:\n%s", toml)
+	}
+	for _, line := range strings.Split(toml[at:], "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "command = ") {
+			continue
+		}
+		cmd, err := strconv.Unquote(strings.TrimPrefix(line, "command = "))
+		if err != nil {
+			t.Fatalf("Stop hook command is not a quoted TOML string (%q): %v", line, err)
+		}
+		return cmd
+	}
+	t.Fatalf("[[hooks.Stop]] block has no command:\n%s", toml)
+	return ""
+}
+
+// End-to-end for the half of clearContextAfter that Kyber owns: what the Stop
+// hook actually DELIVERS to the Codex pane.
+//
+// The narrower assertion in the happy-path test reads a string out of the
+// generated TOML. That is one hop short of the thing the contract is about —
+// the text that reaches the runtime — and it would still pass if
+// kyber-cron-postrun dropped or rewrote the value on the way through. So this
+// test takes the Stop hook's command string VERBATIM out of the file the boot
+// just wrote, runs it through the REAL images/agent-base/scripts/kyber-cron-postrun
+// against an armed marker, and records what the clear command is finally
+// invoked with.
+//
+// The environment deliberately does NOT set KYBER_CLEAR_SESSION_TEXT: the only
+// way `/clear` can reach the recorder is inside the hook command string that
+// start-codex.sh rendered.
+//
+// What this CANNOT prove is Codex's own semantics for that text — that `/clear`
+// starts a fresh conversation while `/compact` carries a summary forward. That
+// needs the real binary and a live turn; it was measured against 0.146.0 and
+// the method and result are recorded in images/codex/INSTALL_NOTES.md.
+func TestStartCodex_CronHooks_StopHookDeliversAFreshConversationCommand(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	realPostrun, err := os.ReadFile(filepath.Join(wd, "..", "agent-base", "scripts", "kyber-cron-postrun"))
+	if err != nil {
+		t.Fatalf("read the real postrun script: %v", err)
+	}
+
+	dir := t.TempDir()
+	postrun := filepath.Join(dir, "kyber-cron-postrun")
+	turnstart := filepath.Join(dir, "kyber-cron-turn-start")
+	if err := os.WriteFile(postrun, realPostrun, 0o755); err != nil {
+		t.Fatalf("install the real postrun: %v", err)
+	}
+	if err := os.WriteFile(turnstart, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("install turn-start stub: %v", err)
+	}
+
+	managed := filepath.Join(dir, "etc", "managed_config.toml")
+	out, err := runBoot(t, t.TempDir(), "", stubBin(t),
+		"KYBER_CRON_POSTRUN_SENTINEL="+filepath.Join(dir, "run", "sentinel"),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_CRON_POSTRUN_CMD="+postrun,
+		"KYBER_CRON_TURNSTART_CMD="+turnstart,
+	)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatalf("managed config not written: %v\n%s", err, out)
+	}
+	hookCmd := stopHookCommand(t, string(body))
+
+	// An armed marker for a job that asked for a clear — exactly what
+	// kyber-job-dispatch writes and kyber-cron-turn-start arms.
+	pending := filepath.Join(dir, "pending")
+	if err := os.MkdirAll(pending, 0o755); err != nil {
+		t.Fatalf("mkdir pending: %v", err)
+	}
+	marker := filepath.Join(pending, "nightly")
+	if err := os.WriteFile(marker, []byte("state=armed\nclear_context=true\n"), 0o644); err != nil {
+		t.Fatalf("write marker: %v", err)
+	}
+
+	// The recorder stands in for kyber-compact-session, the last hop before
+	// tmux pastes the text into the Codex pane.
+	record := filepath.Join(dir, "delivered.txt")
+	clearCmd := filepath.Join(dir, "clear-cmd")
+	if err := os.WriteFile(clearCmd,
+		[]byte("#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > "+record+"\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write recorder: %v", err)
+	}
+
+	logFile := filepath.Join(dir, "postrun.log")
+	hook := exec.Command("/bin/sh", "-c", hookCmd)
+	hook.Env = []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + dir,
+		"KYBER_CRON_PENDING_DIR=" + pending,
+		"KYBER_CRON_POSTRUN_LOG=" + logFile,
+		"KYBER_CLEAR_SESSION_CMD=" + clearCmd,
+	}
+	if hookOut, err := hook.CombinedOutput(); err != nil {
+		t.Fatalf("Stop hook command failed: %v\n%s", err, hookOut)
+	}
+
+	delivered, err := os.ReadFile(record)
+	if err != nil {
+		logBytes, _ := os.ReadFile(logFile)
+		t.Fatalf("the Stop hook never reached the clear command: %v\nlog:\n%s", err, logBytes)
+	}
+	got := strings.TrimSpace(string(delivered))
+	if got == "/compact" {
+		t.Fatalf("the Stop hook delivers %q: compaction summarizes the thread and carries "+
+			"the summary forward, so every later job still sees earlier runs — the exact "+
+			"cross-contamination clearContextAfter exists to stop", got)
+	}
+	if got != "/clear" {
+		t.Fatalf("the Stop hook delivers %q, want the fresh-conversation command %q", got, "/clear")
+	}
+
+	// The marker must be gone too, or --exclusive stays latched for this job.
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Errorf("armed marker survived the Stop hook (err=%v): exclusive stays latched", err)
 	}
 }
