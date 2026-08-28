@@ -1,7 +1,7 @@
 # Atomic harness install and repair — execution plan
 
-**Status:** In progress  
-**Date:** 2026-08-28  
+**Status:** In progress
+**Date:** 2026-08-28
 **Tracker:** MAT-11
 
 ## Goal

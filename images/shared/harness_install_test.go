@@ -49,6 +49,7 @@ done
 package="$stage/lib/node_modules/@example/harness"
 mkdir -p "$package/bin" "$stage/bin"
 printf '%s' "$FAKE_OUTPUT_VERSION" > "$package/VERSION"
+printf '%s\n' '{"bin":{"harness":"bin/harness"}}' > "$package/package.json"
 cat > "$package/bin/harness" <<'EOF'
 #!/usr/bin/env bash
 count=0
@@ -89,6 +90,10 @@ func liveBinary(root string) string {
 func seedHarness(t *testing.T, path, version string) {
 	t.Helper()
 	writeExecutable(t, path, fmt.Sprintf("echo 'harness %s'", version))
+	manifest := filepath.Join(filepath.Dir(filepath.Dir(path)), "package.json")
+	if err := os.WriteFile(manifest, []byte(`{"bin":{"harness":"bin/harness"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestHarnessInstallerActivatesVerifiedStage(t *testing.T) {
@@ -140,6 +145,46 @@ func TestHarnessInstallerRecoversInterruptedSwapAndStaleArtifacts(t *testing.T) 
 		if _, err := os.Stat(filepath.Join(parent, stale)); !os.IsNotExist(err) {
 			t.Errorf("stale artifact %s remains: %v", stale, err)
 		}
+	}
+}
+
+func TestHarnessInstallerRecoversOfflineBeforeNpm(t *testing.T) {
+	root, prefix, npm := fakeHarnessEnv(t)
+	parent := filepath.Join(root, "@example")
+	backup := filepath.Join(parent, ".harness.kyber-backup", "bin", "harness")
+	seedHarness(t, backup, "1.0.0")
+	seedHarness(t, liveBinary(root), "broken")
+	if err := os.Remove(filepath.Join(filepath.Dir(filepath.Dir(liveBinary(root))), "package.json")); err != nil {
+		t.Fatal(err)
+	}
+	failedNPM := filepath.Join(filepath.Dir(npm), "failed-npm")
+	writeExecutable(t, failedNPM, "exit 99")
+	out, err := runInstaller(t, root, prefix, failedNPM, "1.0.0", "unused")
+	if err != nil {
+		t.Fatalf("offline recovery: %v\n%s", err, out)
+	}
+	got, err := exec.Command(filepath.Join(prefix, "bin", "harness"), "--version").Output()
+	if err != nil || !strings.Contains(string(got), "1.0.0") {
+		t.Fatalf("recovered command = %q, err=%v", got, err)
+	}
+}
+
+func TestHarnessInstallerCompletesKilledActivationOffline(t *testing.T) {
+	root, prefix, npm := fakeHarnessEnv(t)
+	parent := filepath.Join(root, "@example")
+	seedHarness(t, filepath.Join(parent, ".harness.kyber-backup", "bin", "harness"), "1.0.0")
+	seedHarness(t, liveBinary(root), "2.0.0")
+	failedNPM := filepath.Join(filepath.Dir(npm), "failed-npm")
+	writeExecutable(t, failedNPM, "exit 99")
+	out, err := runInstaller(t, root, prefix, failedNPM, "2.0.0", "unused")
+	if err != nil {
+		t.Fatalf("offline completion: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(parent, ".harness.kyber-backup")); !os.IsNotExist(err) {
+		t.Fatalf("backup remains after completed activation: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(prefix, "bin", "harness")); err != nil {
+		t.Fatalf("global command link was not repaired: %v", err)
 	}
 }
 

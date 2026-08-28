@@ -571,9 +571,6 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
     elif [ "${#KYBER_REQUESTED_CC_VERSION}" -gt 64 ]; then
         echo "[kyber] WARNING: KYBER_REQUESTED_CC_VERSION exceeds 64 chars; rejected; continuing on baked-in version ${KYBER_RUNTIME_DEFAULT_VERSION:-unset}"
         KYBER_CC_INSTALL_OUTCOME="rejected-length"
-    elif [ "${KYBER_REQUESTED_CC_VERSION}" = "${KYBER_RUNTIME_DEFAULT_VERSION:-}" ]; then
-        echo "[kyber] CC install: requested version matches baked-in (${KYBER_REQUESTED_CC_VERSION}); skipping install"
-        KYBER_CC_INSTALL_OUTCOME="skipped-equal"
     else
         _npm="$(command -v npm || echo /usr/bin/npm)"
         _installed="$(claude --version 2>/dev/null | awk '{print $1; exit}' || true)"
@@ -589,7 +586,10 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
             KYBER_CC_INSTALL_OUTCOME="skipped-equal"
         else
             echo "[kyber] CC install: installing @anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION} (resolved=${_resolved}, baked-in=${KYBER_RUNTIME_DEFAULT_VERSION:-unset})"
-            _installer="${KYBER_HARNESS_INSTALLER:-/usr/local/bin/kyber-harness-install}"
+            _installer="/usr/local/bin/kyber-harness-install"
+            if [ "${KYBER_BOOTPREP_DRY_RUN:-}" = "1" ] && [ -n "${KYBER_HARNESS_INSTALLER:-}" ]; then
+                _installer="${KYBER_HARNESS_INSTALLER}"
+            fi
             if [ -x "${_installer}" ] && sudo "${_installer}" @anthropic-ai/claude-code "${_resolved}" claude 2>&1; then
                 echo "[kyber] CC install: succeeded (${_resolved})"
                 KYBER_CC_INSTALL_OUTCOME="installed"

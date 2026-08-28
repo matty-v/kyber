@@ -28,7 +28,10 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
             KYBER_CODEX_REQUESTED_SATISFIED="true"
         else
             echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION} (resolved=${_resolved})"
-            _installer="${KYBER_HARNESS_INSTALLER:-/usr/local/bin/kyber-harness-install}"
+            _installer="/usr/local/bin/kyber-harness-install"
+            if [ "${SKIP_CODEX_LAUNCH:-}" = "1" ] && [ -n "${KYBER_HARNESS_INSTALLER:-}" ]; then
+                _installer="${KYBER_HARNESS_INSTALLER}"
+            fi
             if [ ! -x "$_installer" ] || ! sudo "$_installer" @openai/codex "$_resolved" codex 2>&1; then
                 echo "[kyber] WARNING: requested Codex harness install failed; previous install preserved"
                 KYBER_CODEX_REQUESTED_SATISFIED="false"

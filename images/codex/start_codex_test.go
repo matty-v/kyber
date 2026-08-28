@@ -109,7 +109,7 @@ printf '%s\n' "$*" >> "$NPM_LOG"
 	write("kyber-harness-install", `
 printf '%s\n' "$*" >> "$INSTALLER_LOG"
 printf '%s' "$2" > "$VERSION_FILE"`)
-	write("sudo", `printf '%s\n' "$*" >> "$SUDO_LOG"; exec "$@"`)
+	write("sudo", `printf '%s\n' "$*" >> "$SUDO_LOG"; if [ "$1" = /usr/local/bin/kyber-harness-install ]; then shift; exec "$(dirname "$0")/kyber-harness-install" "$@"; fi; exec "$@"`)
 	write("curl", `exit 0`)
 	write("tmux", `exit 0`)
 	return dir + ":" + os.Getenv("PATH"), sudoLog, npmLog

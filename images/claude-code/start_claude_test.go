@@ -1291,15 +1291,19 @@ func TestStartClaude_PRC_RequestEmpty_NoInstall(t *testing.T) {
 }
 
 func TestStartClaude_PRC_RequestEqualsDefault_NoInstall(t *testing.T) {
+	npmLog := filepath.Join(t.TempDir(), "npm.log")
+	sudoLog := filepath.Join(t.TempDir(), "sudo.log")
+	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.0.99")
 	out := bootPrepRun(t,
-		"KYBER_REQUESTED_CC_VERSION=2.1.119",
-		"KYBER_RUNTIME_DEFAULT_VERSION=2.1.119",
+		"PATH="+stub+":"+testPATH(),
+		"KYBER_REQUESTED_CC_VERSION=2.0.99",
+		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
 	if strings.Contains(out, "installing @anthropic-ai/claude-code") {
 		t.Errorf("install must not fire when request equals default; got: %s", out)
 	}
-	if !strings.Contains(out, "requested version matches baked-in") {
-		t.Errorf("expected matches-baked-in log line; got: %s", out)
+	if !strings.Contains(out, "requested version already installed") {
+		t.Errorf("expected installed-version skip log line; got: %s", out)
 	}
 	if !strings.Contains(out, "CC_INSTALL_OUTCOME=skipped-equal") {
 		t.Errorf("expected outcome=skipped-equal; got: %s", out)
@@ -1325,7 +1329,7 @@ func stubInstallEnvDir(t *testing.T, npmLog string, npmExit int, sudoLog, claude
 			t.Fatal(err)
 		}
 	}
-	write("sudo", fmt.Sprintf(`echo called > %q; exec "$@"`, sudoLog))
+	write("sudo", fmt.Sprintf(`echo called > %q; if [[ "$1" == /usr/local/bin/kyber-harness-install ]]; then shift; exec "$(dirname "$0")/kyber-harness-install" "$@"; fi; exec "$@"`, sudoLog))
 	// The shared installer owns npm staging and activation; this stub verifies
 	// that the boot script resolves the requested version and delegates to it.
 	write("npm", fmt.Sprintf(`if [[ "$1" == "view" ]]; then echo "2.9.1"; exit 0; fi; echo "$@" > %q; exit %d`, npmLog, npmExit))
