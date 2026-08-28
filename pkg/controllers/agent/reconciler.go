@@ -698,6 +698,10 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 		case kyberv1.AgentPhaseWaitingForMachine:
 			base = 15 * time.Second
+		case kyberv1.AgentPhaseDiskExhausted:
+			// PVC expansion is asynchronous. Poll as a fallback in addition to
+			// the owned-PVC watch so a missed event cannot stall recovery.
+			base = requeueWaiting
 		case kyberv1.AgentPhaseRunning:
 			// The recently-terminating wait guard (classifyEvent) emits no
 			// event while a graceful roll's pod delete is in flight. The
@@ -960,10 +964,24 @@ func (r *AgentReconciler) classifyEvent(
 		if agent.Status.Activity != nil && agent.Status.Activity.Resources != nil && !agent.Status.Activity.Resources.DiskReserveReached {
 			return EventDiskReserveCleared, nil
 		}
+		// Apply an operator-requested increase for both recovery shapes. A live
+		// maintenance pod can grow online and will clear the reserve on its next
+		// sample; a terminal hard-full pod additionally waits on capacity below.
+		if err := r.ensurePVC(ctx, agent); err != nil {
+			return "", err
+		}
 		// A hard-full runtime may have exited before the sidecar could observe
-		// cleanup. A PVC size change is the explicit operator input that permits
-		// one pod recreation; unchanged input holds DiskExhausted steady.
+		// cleanup. Expand the claim and wait for its reported capacity before
+		// consuming the size change as recovery input; otherwise the replacement
+		// pod would mount the same full filesystem and immediately fail again.
 		if desired == kyberv1.AgentPhaseRunning && (pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || isAgentContainerTerminated(pod)) {
+			ready, err := r.ensureDiskRecoveryCapacity(ctx, agent)
+			if err != nil {
+				return "", err
+			}
+			if !ready {
+				return "", nil
+			}
 			changed, err := r.recoveryInputChanged(ctx, agent)
 			if err != nil {
 				return "", err
@@ -1883,12 +1901,23 @@ func (r *AgentReconciler) ensurePodTokenSecret(ctx context.Context, agent *kyber
 	return nil
 }
 
-// ensurePVC creates the agent's PVC if it does not already exist.
+// ensurePVC creates the agent's PVC if it does not already exist and reconciles
+// monotonic storage increases onto an existing claim. Kubernetes forbids PVC
+// shrink, so a lower Agent request deliberately leaves the claim untouched.
 func (r *AgentReconciler) ensurePVC(ctx context.Context, agent *kyberv1.Agent) error {
 	pvc := &corev1.PersistentVolumeClaim{}
 	key := types.NamespacedName{Name: PVCName(agent.Name), Namespace: agent.Namespace}
 	if err := r.Get(ctx, key, pvc); err == nil {
-		// Already exists.
+		requested := agent.Spec.Resources.Disk
+		current := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+		if requested.IsZero() || requested.Cmp(current) <= 0 {
+			return nil
+		}
+		patch := client.MergeFrom(pvc.DeepCopy())
+		pvc.Spec.Resources.Requests[corev1.ResourceStorage] = requested
+		if err := r.Patch(ctx, pvc, patch); err != nil {
+			return fmt.Errorf("expanding PVC from %s to %s: %w", current.String(), requested.String(), err)
+		}
 		return nil
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("checking PVC: %w", err)
@@ -1920,6 +1949,23 @@ func (r *AgentReconciler) ensurePVC(ctx context.Context, agent *kyberv1.Agent) e
 			PVCName(agent.Name))
 	}
 	return nil
+}
+
+// ensureDiskRecoveryCapacity starts any requested expansion and reports true
+// only after Kubernetes exposes at least that much capacity on the claim.
+func (r *AgentReconciler) ensureDiskRecoveryCapacity(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	if err := r.ensurePVC(ctx, agent); err != nil {
+		return false, err
+	}
+	pvc := &corev1.PersistentVolumeClaim{}
+	key := types.NamespacedName{Name: PVCName(agent.Name), Namespace: agent.Namespace}
+	if err := r.Get(ctx, key, pvc); err != nil {
+		return false, fmt.Errorf("reading PVC expansion status: %w", err)
+	}
+	requested := agent.Spec.Resources.Disk
+	claimRequest := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
+	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
+	return !requested.IsZero() && claimRequest.Cmp(requested) >= 0 && capacity.Cmp(requested) >= 0, nil
 }
 
 // ensureOffsetsPVC creates the agent's durable transcript-offsets PVC if it does
@@ -2313,6 +2359,12 @@ func (r *AgentReconciler) updatePhase(
 	}
 	agent.Status.Phase = newPhase
 	agent.Status.LastTransition = &now
+	// Baseline the disk request on entry so a hard-full terminal pod cannot
+	// consume the standing desiredPhase=Running as an immediate retry. Only a
+	// later size change may unlock the bounded recreation path.
+	if newPhase == kyberv1.AgentPhaseDiskExhausted {
+		agent.Status.RecoveryInput = "disk=" + agent.Spec.Resources.Disk.String()
+	}
 	// Record when the agent first enters Running so ShouldResetRetryCount has a reference.
 	if newPhase == kyberv1.AgentPhaseRunning && agent.Status.StartTime == nil {
 		agent.Status.StartTime = &now
