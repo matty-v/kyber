@@ -210,6 +210,15 @@ runtime-agnostic sidecar over localhost" (Matt 2026-05-03) gave us:
 - Wire-shape stability: the sidecar's heartbeat already used
   `statusEvent`; runtime binaries reuse it verbatim
 
+## Runtime harness usability
+
+Runtime startup reports an executable/version probe through the existing
+`/runtime-version` sidecar route before it runs any authentication command. A
+failed probe sends the runtime name, `usable:false`, and a sanitized diagnostic
+capped at 300 bytes, then exits 43. The controller maps that exit to
+`BrokenRuntime` instead of `NeedsAuth` or the generic restart path. A successful
+probe reports `usable:true` and clears `RuntimeUnusable`.
+
 ## Failure modes and what they look like
 
 | Failure | Symptom |

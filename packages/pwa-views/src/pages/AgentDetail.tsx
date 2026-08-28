@@ -224,6 +224,7 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   // the page is empty.
   const showImageMissing = Boolean(agent.runtimeImageMissing)
   const showModelUnresolved = Boolean(agent.modelUnresolved)
+  const showBrokenRuntime = agent.phase === 'BrokenRuntime' || agent.runtimeVersion?.usable === false
   // Probe ran and failed for a reason NOT attributable to the model
   // (auth, network, unrecognized error): modelSupported is absent, but
   // the diagnostic is present. "Couldn't verify" must be visible here,
@@ -234,11 +235,31 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
     !showUnsupported &&
     agent.runtimeVersion?.modelSupported !== false &&
     Boolean(agent.runtimeVersion?.modelProbeMessage)
-  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showProbeInconclusive) return null
+  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showBrokenRuntime && !showProbeInconclusive) return null
   const installed = agent.runtimeVersion?.installedVersion
   const requested = agent.runtimeVersion?.requestedVersion
   return (
     <div className="space-y-2">
+      {showBrokenRuntime && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">Runtime harness is unusable</h2>
+              <p className="text-xs text-text-muted">
+                The <code className="font-mono">{agent.runtimeVersion?.runtime ?? agent.runtime}</code> executable
+                failed before authentication was checked. Re-authorizing will not help. Repair the runtime harness,
+                then restart the agent; Kyber will not auto-restart this state.
+              </p>
+              {(agent.runtimeVersion?.probeMessage || agent.status?.message) && (
+                <p className="text-xs text-text-muted font-mono border-l-2 border-danger/40 pl-2">
+                  {agent.runtimeVersion?.probeMessage ?? agent.status?.message}
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+      )}
       {showImageMissing && (
         <Card className="border-danger/40 bg-danger/5">
           <div className="flex items-start gap-3">

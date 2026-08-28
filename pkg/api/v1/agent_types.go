@@ -44,6 +44,10 @@ const (
 	// while the pod and Shell remain available for cleanup; falling below the
 	// reserve resumes the harness and returns to Running.
 	AgentPhaseDiskExhausted AgentPhase = "DiskExhausted"
+	// AgentPhaseBrokenRuntime means the runtime harness executable could not be
+	// invoked or did not return a parseable version. This is distinct from
+	// NeedsAuth: credential actions cannot repair a missing/truncated harness.
+	AgentPhaseBrokenRuntime AgentPhase = "BrokenRuntime"
 )
 
 // Condition Type constants for Agent.status.conditions.
@@ -117,6 +121,11 @@ const (
 	// install. Cleared (= False) on the next report cycle in which
 	// installed == requested. See kyber#379 / PR-E of #374.
 	AgentConditionRuntimeVersionMismatch = "RuntimeVersionMismatch"
+
+	// AgentConditionRuntimeUnusable is set when the in-pod startup probe cannot
+	// execute the selected runtime harness. Its bounded message is safe to show
+	// directly to operators and is cleared by the next successful probe.
+	AgentConditionRuntimeUnusable = "RuntimeUnusable"
 
 	// AgentConditionModelUnsupported is set True when the agent's
 	// pre-flight model probe (`claude --model <resolved> --print 'ping'`
@@ -196,6 +205,17 @@ const (
 // in the running pod. Populated by the in-pod start script on boot via a
 // POST to /internal/agents/{name}/runtime-version. Resets on pod restart.
 type AgentRuntimeStatus struct {
+	// Runtime names the adapter whose executable was probed (for example,
+	// "codex" or "claude-code").
+	// +optional
+	Runtime string `json:"runtime,omitempty"`
+	// Usable is the startup executable/version probe result. Nil means an older
+	// runtime image has not reported this signal.
+	// +optional
+	Usable *bool `json:"usable,omitempty"`
+	// ProbeMessage is a bounded diagnostic from a failed executable probe.
+	// +optional
+	ProbeMessage string `json:"probeMessage,omitempty"`
 	// InstalledVersion is the version string reported by the runtime's
 	// `--version` command at pod start (e.g. "2.1.119"). Empty when the pod
 	// has not yet reported or the version could not be determined (in which

@@ -297,6 +297,9 @@ type agentSchedulingStatusResponse struct {
 // the response shape extensible — future fields (defaultVersion from image,
 // pendingVersion on upgrade) slot in without reshuffling the parent.
 type agentRuntimeVersionResponse struct {
+	Runtime      string `json:"runtime,omitempty"`
+	Usable       *bool  `json:"usable,omitempty"`
+	ProbeMessage string `json:"probeMessage,omitempty"`
 	// InstalledVersion is the version string the pod reported.
 	InstalledVersion string `json:"installedVersion"`
 	// InstalledAt is RFC3339 when the controller last received a report.
@@ -439,8 +442,14 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	}
 	if a.Status.Runtime.InstalledVersion != "" {
 		rv := &agentRuntimeVersionResponse{
+			Runtime:          a.Status.Runtime.Runtime,
 			InstalledVersion: a.Status.Runtime.InstalledVersion,
 			RequestedVersion: a.Status.Runtime.RequestedVersion,
+			ProbeMessage:     a.Status.Runtime.ProbeMessage,
+		}
+		if a.Status.Runtime.Usable != nil {
+			v := *a.Status.Runtime.Usable
+			rv.Usable = &v
 		}
 		if a.Status.Runtime.InstalledAt != nil {
 			rv.InstalledAt = a.Status.Runtime.InstalledAt.UTC().Format(time.RFC3339)

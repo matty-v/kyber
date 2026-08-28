@@ -79,6 +79,9 @@ const (
 	// refresh returned an error) or start-codex.sh code 42 (`codex login
 	// status` failed). Requires human re-auth.
 	EventOAuthRefreshFailed Event = "OAuthRefreshFailed"
+	// EventRuntimeProbeFailed fires when the startup script proves the harness
+	// itself cannot execute. It must win over credential failure classification.
+	EventRuntimeProbeFailed Event = "RuntimeProbeFailed"
 	// EventOOMKilled fires when the agent container was terminated by the
 	// kernel OOM killer (kubelet tagged Reason=OOMKilled). Routes to
 	// MemoryExhausted phase rather than Failed-with-auto-restart so the
@@ -205,6 +208,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
+		{phase: kyberv1.AgentPhaseStarting, event: EventRuntimeProbeFailed}: {
+			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseBrokenRuntime,
+		},
 		// Starting → MemoryExhausted: agent container was OOM-killed during
 		// startup. No auto-restart — operator must address the limit (#272).
 		{phase: kyberv1.AgentPhaseStarting, event: EventOOMKilled}: {
@@ -230,6 +236,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseRunning, event: EventOAuthRefreshFailed}: {
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventRuntimeProbeFailed}: {
+			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseBrokenRuntime,
 		},
 		// Running → MemoryExhausted: agent container was OOM-killed mid-
 		// session. No auto-restart — bumping spec.resources.memory is the
@@ -353,6 +362,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseStopping,
 		},
 		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredStopped}: {
+			Action: ActionCaptureStateAndDeletePod, NextPhase: kyberv1.AgentPhaseStopping,
+		},
+		{phase: kyberv1.AgentPhaseBrokenRuntime, event: EventDesiredStopped}: {
 			Action: ActionCaptureStateAndDeletePod, NextPhase: kyberv1.AgentPhaseStopping,
 		},
 		{phase: kyberv1.AgentPhaseWaitingForMachine, event: EventDesiredStopped}: {

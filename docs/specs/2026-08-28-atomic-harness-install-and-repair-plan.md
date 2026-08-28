@@ -79,6 +79,10 @@ runtime-neutral repair action that works even when the agent pod is absent.
 - [ ] Verify a deliberately truncated disposable harness reaches the new state
   with its actual failure reason.
 
+Implementation started 2026-08-28 from merged PR A (`a09f166`). The wire
+contract uses phase `BrokenRuntime`, condition `RuntimeUnusable`, and exit code
+43 after a bounded executable/version probe that runs before authentication.
+
 ## PR C — runtime-neutral operator repair
 
 **Branch:** `sol/mat-11-runtime-repair` (from merged PR B)

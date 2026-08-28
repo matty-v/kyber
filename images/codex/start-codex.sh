@@ -144,6 +144,26 @@ if [ -d "$(dirname "$KYBER_MANAGED_CODEX_CONFIG")" ]; then
     fi
 fi
 
+# Prove the harness itself works before asking it about credentials. A broken
+# executable is an operator repair problem, not NeedsAuth. Report a bounded
+# diagnostic through the status sidecar, then use a distinct exit code so the
+# controller cannot fall through to the credential path or restart loop.
+_runtime_probe_output="$(codex --version 2>&1 || true)"
+_runtime_probe_version="$(printf '%s\n' "$_runtime_probe_output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1 || true)"
+if [ -z "$_runtime_probe_version" ]; then
+    _runtime_probe_message="$(printf '%s' "${_runtime_probe_output:-codex executable produced no version}" | tr '\n\r\t' '   ' | tr -cd '[:print:]' | cut -c1-300)"
+    _runtime_probe_json="$(printf '%s' "$_runtime_probe_message" | sed 's/[\\"]/ /g')"
+    curl -fsS --max-time 5 --retry 5 --retry-connrefused -H 'Content-Type: application/json' -X POST \
+        -d "{\"version\":\"unknown\",\"runtime\":\"codex\",\"usable\":false,\"probeMessage\":\"${_runtime_probe_json}\"}" \
+        http://127.0.0.1:8091/runtime-version >/dev/null 2>&1 || true
+    echo "[kyber] FATAL: Codex runtime probe failed: $_runtime_probe_message" >&2
+    exit 43
+fi
+curl -fsS --max-time 5 --retry 5 --retry-connrefused -H 'Content-Type: application/json' -X POST \
+    -d "{\"version\":\"${_runtime_probe_version}\",\"runtime\":\"codex\",\"usable\":true}" \
+    http://127.0.0.1:8091/runtime-version >/dev/null 2>&1 || true
+unset _runtime_probe_output _runtime_probe_version _runtime_probe_message _runtime_probe_json
+
 # The API transports the opaque Codex credential document through a Kubernetes
 # Secret. Never print it.
 #

@@ -101,7 +101,7 @@ func seedRefreshToken(t *testing.T, mock *mockserver.Server, baseURL string) str
 func runScript(t *testing.T, env []string) ([]byte, error) {
 	t.Helper()
 	cmd := exec.Command("/bin/bash", scriptPath(t))
-	cmd.Env = env
+	cmd.Env = append(env, "KYBER_SKIP_RUNTIME_PROBE=1")
 	return cmd.CombinedOutput()
 }
 
@@ -118,6 +118,35 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("start-claude.sh missing Discord MCP registration %q", want)
 		}
+	}
+}
+
+func TestStartClaudeBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
+	dir := t.TempDir()
+	report := filepath.Join(dir, "report")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("claude", `echo 'claude: text file busy' >&2; exit 126`)
+	write("curl", `printf '%s\n' "$*" > "$REPORT_FILE"`)
+	cmd := exec.Command("/bin/bash", scriptPath(t))
+	cmd.Env = []string{
+		"HOME=" + t.TempDir(),
+		"PATH=" + dir + ":" + testPATH(),
+		"REPORT_FILE=" + report,
+	}
+	out, err := cmd.CombinedOutput()
+	if err == nil || !strings.Contains(err.Error(), "exit status 43") {
+		t.Fatalf("broken harness exit = %v\n%s", err, out)
+	}
+	body, readErr := os.ReadFile(report)
+	if readErr != nil || !strings.Contains(string(body), `"usable":false`) || !strings.Contains(string(body), `"runtime":"claude-code"`) {
+		t.Fatalf("runtime failure report = %q, err=%v", body, readErr)
+	}
+	if strings.Contains(string(out), "refreshing access token") {
+		t.Fatalf("authentication ran after failed runtime probe:\n%s", out)
 	}
 }
 
@@ -332,6 +361,7 @@ func bootIdentityHelper(t *testing.T, tmpHome, identityRepo string, extraEnv ...
 		"KYBER_REFRESH_TOKEN_URL=" + cpServer.URL + "/internal/agents/unit-test/refresh-token",
 		"KYBER_IDENTITY_REPO=" + identityRepo,
 		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_SKIP_RUNTIME_PROBE=1",
 	}
 	env = append(env, extraEnv...)
 	out, err := runScript(t, env)
@@ -1013,6 +1043,7 @@ func TestStartClaude_AccessTokenStillValid_SkipsRefresh(t *testing.T) {
 		fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", futureMs),
 		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/should-not-be-called",
 		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_SKIP_RUNTIME_PROBE=1",
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -1086,6 +1117,7 @@ func TestStartClaude_BootAfterRotation_UsesNewToken(t *testing.T) {
 			"CLAUDE_REFRESH_TOKEN=" + current.Refresh,
 			fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", current.ExpiresAt),
 			"SKIP_CLAUDE_LAUNCH=1",
+			"KYBER_SKIP_RUNTIME_PROBE=1",
 		}
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -1147,6 +1179,7 @@ func TestStartClaude_RotationPushFails_ExitsTwo(t *testing.T) {
 		"KYBER_REFRESH_TOKEN_URL=" + cpServer.URL + "/internal/agents/unit-test/refresh-token",
 		"CLAUDE_REFRESH_TOKEN=R0",
 		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_SKIP_RUNTIME_PROBE=1",
 	}
 	out, err := cmd.CombinedOutput()
 	exitErr, ok := err.(*exec.ExitError)

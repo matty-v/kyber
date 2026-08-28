@@ -39,6 +39,7 @@ describe('isAttentionPhase', () => {
     expect(isAttentionPhase('NeedsAuth')).toBe(true)
     expect(isAttentionPhase('MemoryExhausted')).toBe(true)
     expect(isAttentionPhase('DiskExhausted')).toBe(true)
+    expect(isAttentionPhase('BrokenRuntime')).toBe(true)
     expect(isAttentionPhase('Failed')).toBe(true)
     expect(isAttentionPhase('Running')).toBe(false)
   })

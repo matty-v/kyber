@@ -155,6 +155,31 @@ func TestStartCodexLatestInstallsOnceAcrossTwoBoots(t *testing.T) {
 	}
 }
 
+func TestStartCodexBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
+	dir := t.TempDir()
+	report := filepath.Join(dir, "report")
+	write := func(name, body string) {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/usr/bin/env bash\n"+body+"\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("codex", `echo 'cannot execute codex' >&2; exit 126`)
+	write("curl", `printf '%s\n' "$*" > "$REPORT_FILE"`)
+	write("npm", `exit 0`)
+	write("tmux", `exit 99`)
+	out, err := runBoot(t, t.TempDir(), "", dir+":"+os.Getenv("PATH"), "REPORT_FILE="+report)
+	if err == nil || !strings.Contains(err.Error(), "exit status 43") {
+		t.Fatalf("broken harness exit = %v\n%s", err, out)
+	}
+	body, readErr := os.ReadFile(report)
+	if readErr != nil || !strings.Contains(string(body), `"usable":false`) || !strings.Contains(string(body), `"runtime":"codex"`) {
+		t.Fatalf("runtime failure report = %q, err=%v", body, readErr)
+	}
+	if strings.Contains(string(out), "device authorization") {
+		t.Fatalf("authentication ran after failed runtime probe:\n%s", out)
+	}
+}
+
 // runBoot invokes start-codex.sh with SKIP_CODEX_LAUNCH so it stops after the
 // boot path completes.
 func runBoot(t *testing.T, home, authJSON, path string, extraEnv ...string) ([]byte, error) {
