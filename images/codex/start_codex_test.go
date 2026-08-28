@@ -154,6 +154,15 @@ func runBoot(t *testing.T, home, authJSON, path string, extraEnv ...string) ([]b
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
+		// Every path this script writes MUST be redirected into the test's
+		// temp dirs. The managed config was the one that was not: it defaults
+		// to the real /etc/codex/managed_config.toml, so running this suite
+		// wrote a root-owned directory onto whatever machine ran it. On an
+		// agent pod, where the root filesystem is persistent, that outlived
+		// every restart and locked codex out of its own configuration — it is
+		// how k-2so broke. Set centrally so no test can inherit the default
+		// by omission; extraEnv still wins for tests that override it.
+		"KYBER_MANAGED_CODEX_CONFIG=" + filepath.Join(persistRoot, "etc", "codex", "managed_config.toml"),
 	}
 	if authJSON != "" {
 		env = append(env, "CODEX_AUTH_JSON="+authJSON)
@@ -1313,6 +1322,7 @@ func runBootUmask(t *testing.T, home, authJSON, path, umask string, extraEnv ...
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
+		"KYBER_MANAGED_CODEX_CONFIG=" + filepath.Join(persistRoot, "etc", "codex", "managed_config.toml"),
 	}
 	if authJSON != "" {
 		env = append(env, "CODEX_AUTH_JSON="+authJSON)
@@ -1507,5 +1517,111 @@ esac
 	}
 	if perm := fi.Mode().Perm(); perm&0o044 == 0 {
 		t.Fatalf("managed config left at %o, unreadable by the agent user", perm)
+	}
+}
+
+// The suite must never write outside its own temp dirs. This is the defect
+// that broke k-2so: KYBER_MANAGED_CODEX_CONFIG defaults to the real
+// /etc/codex/managed_config.toml, sixteen pre-existing tests never overrode
+// it, and running them wrote a root-owned directory onto the machine. Inside
+// an agent pod — whose root filesystem is persistent — that survived every
+// restart and locked codex out of its own configuration.
+//
+// Asserted on the boot's own output rather than on the filesystem: a check
+// that /etc/codex does not exist would pass on any machine where an earlier
+// run had already created it — precisely the machine that most needs the
+// warning. The boot reports the path it wrote, so that report is the evidence.
+func TestRunBootRedirectsTheManagedConfigAwayFromTheSystemPath(t *testing.T) {
+	home := t.TempDir()
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t))
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	// Match the ABSOLUTE system path, not any path ending in it — the
+	// redirected temp path also contains "/etc/codex/managed_config.toml",
+	// which is how the first version of this test failed for the wrong reason.
+	if strings.Contains(string(out), "written to /etc/codex/") {
+		t.Fatalf("the suite wrote to the real system config path:\n%s", out)
+	}
+	if !strings.Contains(string(out), "Codex managed settings written to") {
+		t.Fatalf("boot did not report writing a managed config at all:\n%s", out)
+	}
+}
+
+// End-state guard for the credential block: the managed config stays readable
+// and auth.json stays owner-only.
+//
+// This does NOT by itself prove the umask is restored — kyber_ensure_mode
+// chmods the managed config explicitly, which masks a leaked umask on today's
+// code. It did not mask it on 2026-08-27, when the managed-config write
+// existed and those chmods did not, and k-2so's /etc/codex came out 0700 and
+// locked its runtime out for eighteen hours. The pairing itself is asserted in
+// TestStartCodexPairsTheCredentialUmaskWithARestore; this test guards the
+// outcome those two mechanisms are jointly responsible for.
+func TestStartCodexCredentialWritesLeaveEverythingReadable(t *testing.T) {
+	home := t.TempDir()
+	managedDir := filepath.Join(t.TempDir(), "codex")
+	managed := filepath.Join(managedDir, "managed_config.toml")
+
+	// secretCred is non-empty, so the credential block — and its umask 077 —
+	// runs. On today's code kyber_ensure_mode would correct the mode even if
+	// the umask leaked; this pins the end state both mechanisms owe.
+	out, err := runBoot(t, home, secretCred, stubMCPBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+
+	fi, err := os.Stat(managed)
+	if err != nil {
+		t.Fatalf("managed config not written: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm&0o044 == 0 {
+		t.Fatalf("managed config is %o — unreadable by the agent user", perm)
+	}
+	di, err := os.Stat(managedDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := di.Mode().Perm(); perm&0o005 != 0o005 {
+		t.Fatalf("managed config dir is %o — not traversable by the agent user", perm)
+	}
+
+	// The credential itself must still be owner-only; the fix must not have
+	// loosened what the umask was there to protect.
+	ai, err := os.Stat(filepath.Join(home, ".codex", "auth.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := ai.Mode().Perm(); perm&0o077 != 0 {
+		t.Fatalf("auth.json is %o — it must stay owner-only", perm)
+	}
+}
+
+// A umask is process-wide. The credential block tightens it to 0077 so
+// auth.json is owner-only, and must put it back: every file and directory
+// created later in the boot inherits it otherwise. That is how k-2so's
+// /etc/codex was created 0700 on 2026-08-27, before the explicit chmods
+// existed to paper over it.
+//
+// Asserted on the source because the effect is currently invisible at
+// runtime — kyber_ensure_mode chmods the managed config regardless, so a
+// filesystem check passes either way. A test that cannot fail on the bug it
+// names is worse than none, so this checks the one thing that is actually
+// load-bearing: that the tightening is paired with a restore.
+func TestStartCodexPairsTheCredentialUmaskWithARestore(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(script)
+	if !strings.Contains(body, "umask 077") {
+		t.Fatal("credential block no longer tightens the umask — auth.json would be world-readable")
+	}
+	if !strings.Contains(body, `umask "$_prev_umask"`) {
+		t.Fatal("umask 077 is set without a restore; every later file in the boot inherits it")
+	}
+	if strings.Index(body, "umask 077") > strings.Index(body, `umask "$_prev_umask"`) {
+		t.Fatal("the umask restore appears before the tightening")
 	}
 }
