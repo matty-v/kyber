@@ -1,6 +1,6 @@
 # @matty-v/kyber-pwa-views
 
-## 0.36.4 — 2026-08-28
+## 0.36.5 — 2026-08-28
 
 ### Added
 - Agent Detail offers a confirmed **Repair runtime** action for

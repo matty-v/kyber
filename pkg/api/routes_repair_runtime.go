@@ -77,6 +77,10 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 	if agent.Spec.RuntimeVersion != "" {
 		plan.Version = agent.Spec.RuntimeVersion
 	}
+	originalUID := agent.UID
+	originalRuntime := agent.Spec.Runtime
+	originalVersion := agent.Spec.RuntimeVersion
+	originalDesired := agent.Spec.DesiredPhase
 
 	runner := s.RuntimeRepairRunner
 	if runner == nil {
@@ -94,9 +98,30 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	before := agent.DeepCopy()
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
-	if err := s.K8sClient.Patch(r.Context(), agent, client.MergeFrom(before)); err != nil {
+	// The repair may run for several minutes. Re-read instead of patching the
+	// pre-repair object so a concurrent Stop, runtime change, or delete/recreate
+	// cannot be overwritten after the maintenance pod succeeds.
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(r.Context(), key, current); err != nil {
+		if k8serrors.IsNotFound(err) {
+			writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during repair; repaired runtime was not restarted")
+			return
+		}
+		slog.Error("failed to re-read agent after runtime repair", "name", name, "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "runtime repaired but agent state could not be verified")
+		return
+	}
+	if current.UID != originalUID || current.Spec.Runtime != originalRuntime ||
+		current.Spec.RuntimeVersion != originalVersion || current.Status.Phase != kyberv1.AgentPhaseBrokenRuntime ||
+		current.Spec.DesiredPhase != originalDesired {
+		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during repair; repaired runtime was not restarted")
+		return
+	}
+
+	before := current.DeepCopy()
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
+	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {
 		if k8serrors.IsConflict(err) {
 			writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during repair; retry the repair action")
 			return
@@ -107,12 +132,12 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	if s.Recorder != nil {
-		s.Recorder.Eventf(agent, corev1.EventTypeNormal, "RuntimeRepaired",
-			"runtime=%s repaired through maintenance pod; restart requested", agent.Spec.Runtime)
+		s.Recorder.Eventf(current, corev1.EventTypeNormal, "RuntimeRepaired",
+			"runtime=%s repaired through maintenance pod; restart requested", current.Spec.Runtime)
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"agent":   name,
-		"runtime": agent.Spec.Runtime,
+		"runtime": current.Spec.Runtime,
 		"message": "runtime repaired; agent restart requested",
 		"output":  boundedRepairOutput(output),
 	})

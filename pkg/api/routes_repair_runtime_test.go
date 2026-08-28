@@ -19,16 +19,21 @@ type fakeRuntimeRepairRunner struct {
 	err    error
 	calls  int
 	plan   api.RuntimeRepairPlan
+	after  func()
 }
 
 func (f *fakeRuntimeRepairRunner) Run(_ context.Context, _ *kyberv1.Agent, plan api.RuntimeRepairPlan) (string, error) {
 	f.calls++
 	f.plan = plan
+	if f.after != nil {
+		f.after()
+	}
 	return f.output, f.err
 }
 
 func brokenRuntimeAgent(name string) *kyberv1.Agent {
 	agent := sampleAgentCRD(name)
+	agent.UID = types.UID(name + "-uid")
 	agent.Spec.Runtime = "claude-code"
 	agent.Spec.RuntimeVersion = "2.1.250"
 	agent.Status.Phase = kyberv1.AgentPhaseBrokenRuntime
@@ -119,5 +124,67 @@ func TestRepairRuntimeConflict(t *testing.T) {
 	rr := postRepair(t, s, agent.Name)
 	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "repair_in_progress") {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestRepairRuntimeDoesNotOverwriteConcurrentStop(t *testing.T) {
+	agent := brokenRuntimeAgent("repair-stopped")
+	runner := &fakeRuntimeRepairRunner{output: "verified claude 2.1.250"}
+	s := repairTestServer(t, agent, runner)
+	runner.after = func() {
+		current := &kyberv1.Agent{}
+		key := types.NamespacedName{Name: agent.Name, Namespace: "kyber-system"}
+		if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+			t.Fatal(err)
+		}
+		current.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
+		if err := s.K8sClient.Update(context.Background(), current); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rr := postRepair(t, s, agent.Name)
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "agent_changed") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	stored := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Name: agent.Name, Namespace: "kyber-system"}, stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
+		t.Fatalf("desiredPhase=%q, want Stopped", stored.Spec.DesiredPhase)
+	}
+}
+
+func TestRepairRuntimeDoesNotRestartRecreatedAgent(t *testing.T) {
+	agent := brokenRuntimeAgent("repair-recreated")
+	runner := &fakeRuntimeRepairRunner{output: "verified claude 2.1.250"}
+	s := repairTestServer(t, agent, runner)
+	runner.after = func() {
+		current := &kyberv1.Agent{}
+		key := types.NamespacedName{Name: agent.Name, Namespace: "kyber-system"}
+		if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.K8sClient.Delete(context.Background(), current); err != nil {
+			t.Fatal(err)
+		}
+		recreated := brokenRuntimeAgent(agent.Name)
+		recreated.UID = types.UID("replacement-uid")
+		if err := s.K8sClient.Create(context.Background(), recreated); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rr := postRepair(t, s, agent.Name)
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "agent_changed") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	stored := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Name: agent.Name, Namespace: "kyber-system"}, stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.UID != types.UID("replacement-uid") || stored.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
+		t.Fatalf("recreated agent was changed: uid=%q desired=%q", stored.UID, stored.Spec.DesiredPhase)
 	}
 }
