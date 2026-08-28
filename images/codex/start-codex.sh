@@ -15,31 +15,28 @@ KYBER_CODEX_REQUESTED_SATISFIED=""
 if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
     if [ "${#KYBER_REQUESTED_CODEX_VERSION}" -le 64 ] && [[ "$KYBER_REQUESTED_CODEX_VERSION" =~ ^[0-9A-Za-z.-]+$ ]]; then
         CURRENT_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
-        if [ "$CURRENT_CODEX_VERSION" != "$KYBER_REQUESTED_CODEX_VERSION" ]; then
-            echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION}"
-            # The baked-in package and /usr/bin/codex are root-owned. Runtime
-            # startup runs as the unprivileged kyber user, so a plain global
-            # npm install fails with EACCES while trying to replace them. The
-            # image grants kyber passwordless sudo for this kind of boot-time
-            # maintenance; resolve npm first because sudo's secure_path may
-            # differ from the runtime PATH.
-            _npm="$(command -v npm || echo /usr/bin/npm)"
-            if ! sudo "$_npm" install -g "@openai/codex@${KYBER_REQUESTED_CODEX_VERSION}" 2>&1; then
-                echo "[kyber] WARNING: requested Codex harness install failed; using baked-in version"
+        _npm="$(command -v npm || echo /usr/bin/npm)"
+        _resolved="$KYBER_REQUESTED_CODEX_VERSION"
+        if [ "$KYBER_REQUESTED_CODEX_VERSION" = "latest" ]; then
+            _resolved="$("$_npm" view @openai/codex@latest version 2>/dev/null | tail -1 || true)"
+        fi
+        if ! [[ "$_resolved" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?$ ]]; then
+            echo "[kyber] WARNING: could not resolve requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION}; keeping current version"
+            KYBER_CODEX_REQUESTED_SATISFIED="false"
+        elif [ "$CURRENT_CODEX_VERSION" = "$_resolved" ]; then
+            echo "[kyber] requested Codex harness already installed (${_resolved}); skipping install"
+            KYBER_CODEX_REQUESTED_SATISFIED="true"
+        else
+            echo "[kyber] installing requested Codex harness version ${KYBER_REQUESTED_CODEX_VERSION} (resolved=${_resolved})"
+            _installer="${KYBER_HARNESS_INSTALLER:-/usr/local/bin/kyber-harness-install}"
+            if [ ! -x "$_installer" ] || ! sudo "$_installer" @openai/codex "$_resolved" codex 2>&1; then
+                echo "[kyber] WARNING: requested Codex harness install failed; previous install preserved"
                 KYBER_CODEX_REQUESTED_SATISFIED="false"
             else
-                INSTALLED_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
-                if [ -n "$INSTALLED_CODEX_VERSION" ] && { [ "$KYBER_REQUESTED_CODEX_VERSION" = "latest" ] || [ "$INSTALLED_CODEX_VERSION" = "$KYBER_REQUESTED_CODEX_VERSION" ]; }; then
-                    KYBER_CODEX_REQUESTED_SATISFIED="true"
-                else
-                    echo "[kyber] WARNING: Codex harness install completed but requested=${KYBER_REQUESTED_CODEX_VERSION} observed=${INSTALLED_CODEX_VERSION:-unknown}"
-                    KYBER_CODEX_REQUESTED_SATISFIED="false"
-                fi
+                KYBER_CODEX_REQUESTED_SATISFIED="true"
             fi
-            unset _npm INSTALLED_CODEX_VERSION
-        else
-            KYBER_CODEX_REQUESTED_SATISFIED="true"
         fi
+        unset _npm _resolved _installer
     else
         echo "[kyber] WARNING: requested Codex harness version is invalid; using baked-in version"
         KYBER_CODEX_REQUESTED_SATISFIED="false"

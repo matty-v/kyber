@@ -46,17 +46,17 @@ runtime-neutral repair action that works even when the agent pod is absent.
 
 **Branch:** `sol/mat-11-atomic-installer`
 
-- [ ] Characterize the global npm layouts and executable/version output for
+- [x] Characterize the global npm layouts and executable/version output for
   both Codex and Claude Code.
-- [ ] Add a shared installer that installs into a unique staging prefix,
+- [x] Add a shared installer that installs into a unique staging prefix,
   verifies the staged executable and parseable version, then swaps it into the
   live global package location with a rollback copy.
-- [ ] Make cleanup and rollback idempotent across signals and stale staging or
+- [x] Make cleanup and rollback idempotent across signals and stale staging or
   backup directories; preserve the previous verified install on every failure.
-- [ ] Replace both runtime-specific in-place install blocks with the helper.
-- [ ] Resolve `latest` to a concrete registry version and skip installation
+- [x] Replace both runtime-specific in-place install blocks with the helper.
+- [x] Resolve `latest` to a concrete registry version and skip installation
   when that version is already live.
-- [ ] Add shell/integration tests for successful install, failed verification,
+- [x] Add shell/integration tests for successful install, failed verification,
   interrupted swap rollback, stale artifacts, and two consecutive `latest`
   boots.
 - [ ] Run focused image tests and repository-required gates.
@@ -103,3 +103,7 @@ runtime-neutral repair action that works even when the agent pod is absent.
 - 2026-08-28: Matt approved the three-PR plan. Updated from `origin/main` after
   MAT-10's `DiskExhausted` lifecycle merged as PR #164; PR A begins from commit
   `4ade768`.
+- 2026-08-28: Added the shared staged installer, signal/SIGKILL rollback,
+  legacy npm-staging cleanup, atomic global-bin repair, and concrete `latest`
+  resolution for both runtimes. Focused shared, Codex, and Claude Code
+  integration tests pass; full gates and live interruption testing remain.

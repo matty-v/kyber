@@ -30,11 +30,17 @@ Container image for Kyber agents that use the Claude Code CLI. Built from
   (see Dockerfile `ENV KYBER_RUNTIME_DEFAULT_VERSION=...`).
 
 The install branch fires iff `KYBER_REQUESTED_CC_VERSION` is non-empty
-AND differs from `KYBER_RUNTIME_DEFAULT_VERSION`. When it fires,
-`start-claude.sh` runs `npm install -g
-@anthropic-ai/claude-code@<requested>`. Install failure is **non-fatal** —
-the pod continues on the baked-in version. PR-E adds the surfacing of
-that mismatch via the runtime report → CRD status condition.
+and the resolved version differs from the installed version. `latest` is
+resolved through the npm registry before comparison, so consecutive boots do
+not reinstall the same release.
+
+Installation delegates to the shared `images/shared/kyber-harness-install`
+helper. It installs under a temporary prefix, verifies the staged binary,
+copies the package beside the live global package, and swaps directories only
+after a second verification. Signals and failed post-swap verification restore
+the prior package; a later boot also repairs a SIGKILL left between the two
+renames. Install failure is **non-fatal** because the previous verified harness
+remains live. The runtime report surfaces the requested-version mismatch.
 
 ### Charset guard (security-critical)
 
@@ -55,7 +61,7 @@ If you legitimately need to broaden the allowed character set, update
 1. `kubebuilder:validation:Pattern` on `Agent.spec.runtimeVersion` in
    `pkg/api/v1/agent_types.go`, then `make generate` to regenerate the
    CRD.
-2. The `grep -Eq '...'` charset check in `start-claude.sh`'s
+2. The bash regex guard in `start-claude.sh`'s
    boot-time-install block (search for `KYBER_REQUESTED_CC_VERSION`).
 
 ## Data-driven `[1m]` opt-in
@@ -78,7 +84,9 @@ identity-repo setup, and (as of PR-C) the boot-time install + charset
 guard + `[1m]` gate. Tests that exercise the new boot-prep block set
 `KYBER_BOOTPREP_DRY_RUN=1` so the script exits right after the boot-
 prep block — no real `claude`, no real `tmux`. The `npm` binary is
-stubbed via `PATH` for install-branch tests.
+stubbed via `PATH` for install-branch tests. The shared helper's activation,
+verification failure, stale-state recovery, and signal rollback tests live in
+`images/shared/harness_install_test.go`.
 
 ```bash
 # From the repo root:

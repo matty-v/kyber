@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Install one npm-distributed runtime harness without letting npm mutate the
+# live global package. The caller must run this as a user that can write the
+# global prefix (the runtime start scripts use sudo).
+
+usage() {
+    echo "usage: kyber-harness-install <package> <version> <binary>" >&2
+    exit 2
+}
+
+[ "$#" -eq 3 ] || usage
+package="$1"
+version="$2"
+binary="$3"
+
+if ! [[ "$package" =~ ^@[0-9A-Za-z._-]+/[0-9A-Za-z._-]+$ ]] ||
+   ! [[ "$version" =~ ^[0-9A-Za-z.-]+$ ]] ||
+   ! [[ "$binary" =~ ^[0-9A-Za-z._-]+$ ]] ||
+   [ "${#version}" -gt 64 ]; then
+    echo "[kyber] harness install: invalid package, version, or binary" >&2
+    exit 2
+fi
+
+npm_bin="${KYBER_HARNESS_NPM:-$(command -v npm || true)}"
+[ -n "$npm_bin" ] || { echo "[kyber] harness install: npm not found" >&2; exit 1; }
+
+global_root="${KYBER_HARNESS_GLOBAL_ROOT:-$($npm_bin root -g)}"
+global_prefix="${KYBER_HARNESS_GLOBAL_PREFIX:-$($npm_bin prefix -g)}"
+live="$global_root/$package"
+parent="$(dirname "$live")"
+base="$(basename "$live")"
+backup="$parent/.${base}.kyber-backup"
+lock="$parent/.${base}.kyber-install.lock"
+stage=""
+candidate=""
+swapping=false
+
+mkdir -p "$parent" "$global_prefix/bin"
+exec 9>"$lock"
+if ! flock -n 9; then
+    echo "[kyber] harness install: another $package install is already active" >&2
+    exit 1
+fi
+
+cleanup() {
+    rc=$?
+    trap - EXIT INT TERM HUP
+    if [ "$swapping" = true ]; then
+        rm -rf -- "$live"
+        [ ! -e "$backup" ] || mv "$backup" "$live" || true
+    fi
+    [ -z "$candidate" ] || rm -rf -- "$candidate"
+    [ -z "$stage" ] || rm -rf -- "$stage"
+    exit "$rc"
+}
+trap cleanup EXIT
+trap 'exit 130' INT TERM HUP
+
+version_of() {
+    output="$($1 --version 2>/dev/null)" || return 1
+    printf '%s\n' "$output" | grep -Eo '[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?' | head -1
+}
+
+# Recover the only non-atomic edge in a directory exchange: interruption after
+# moving live aside but before moving the verified candidate into its place.
+if [ -e "$backup" ]; then
+    if [ ! -e "$live" ]; then
+        echo "[kyber] harness install: restoring interrupted $package swap"
+        mv "$backup" "$live"
+    fi
+fi
+for stale in "$parent/.${base}.kyber-new."*; do
+    [ -e "$stale" ] || continue
+    rm -rf -- "$stale"
+done
+# Clean npm's legacy interrupted-global-install names. They are siblings of the
+# live package and always have a leading dot; the live package never does.
+for stale in "$parent/.${base}-"*; do
+    [ -e "$stale" ] || continue
+    rm -rf -- "$stale"
+done
+
+stage="$(mktemp -d "${TMPDIR:-/tmp}/kyber-harness-stage.XXXXXXXX")"
+echo "[kyber] harness install: staging ${package}@${version}"
+"$npm_bin" install --global --prefix "$stage" --no-audit --no-fund "${package}@${version}"
+
+staged_package="$stage/lib/node_modules/$package"
+staged_binary="$stage/bin/$binary"
+[ -d "$staged_package" ] || { echo "[kyber] harness install: staged package missing" >&2; exit 1; }
+[ -x "$staged_binary" ] || { echo "[kyber] harness install: staged binary missing or not executable" >&2; exit 1; }
+
+observed="$(version_of "$staged_binary")" || {
+    echo "[kyber] harness install: staged $binary failed its version check" >&2
+    exit 1
+}
+if [ "$observed" != "$version" ]; then
+    echo "[kyber] harness install: staged $binary reports $observed, expected $version" >&2
+    exit 1
+fi
+
+resolved_binary="$(readlink -f "$staged_binary")"
+case "$resolved_binary" in
+    "$staged_package"/*) binary_rel="${resolved_binary#"$staged_package"/}" ;;
+    *) echo "[kyber] harness install: staged binary escapes package" >&2; exit 1 ;;
+esac
+
+# A SIGKILL cannot run the trap. If it landed after both renames, choose the
+# verified live copy; otherwise restore the known previous package.
+if [ -e "$backup" ] && [ -e "$live" ]; then
+    recovered_version="$(version_of "$live/$binary_rel" || true)"
+    if [ "$recovered_version" = "$version" ]; then
+        rm -rf -- "$backup"
+    else
+        echo "[kyber] harness install: rolling back incomplete $package activation"
+        rm -rf -- "$live"
+        mv "$backup" "$live"
+    fi
+fi
+
+# Copy beside the live package first. ENOSPC or a killed copy cannot touch the
+# working install, and the final directory renames stay on one filesystem.
+candidate="$parent/.${base}.kyber-new.$$"
+rm -rf -- "$candidate"
+cp -a "$staged_package" "$candidate"
+candidate_version="$(version_of "$candidate/$binary_rel")" || {
+    echo "[kyber] harness install: copied $binary failed its version check" >&2
+    exit 1
+}
+[ "$candidate_version" = "$version" ] || {
+    echo "[kyber] harness install: copied $binary reports $candidate_version, expected $version" >&2
+    exit 1
+}
+
+swapping=true
+if [ -e "$live" ]; then
+    mv "$live" "$backup"
+fi
+mv "$candidate" "$live"
+candidate=""
+if [ "${KYBER_HARNESS_TEST_SIGNAL_AFTER_SWAP:-}" = "1" ]; then
+    kill -TERM "$$"
+fi
+
+live_version="$(version_of "$live/$binary_rel")" || {
+    echo "[kyber] harness install: live $binary failed after swap; rolling back" >&2
+    rm -rf -- "$live"
+    [ ! -e "$backup" ] || mv "$backup" "$live"
+    swapping=false
+    exit 1
+}
+if [ "$live_version" != "$version" ]; then
+    echo "[kyber] harness install: live $binary reports $live_version after swap; rolling back" >&2
+    rm -rf -- "$live"
+    [ ! -e "$backup" ] || mv "$backup" "$live"
+    swapping=false
+    exit 1
+fi
+
+# npm's global bin link normally points at the stable live package path, so it
+# keeps working across the package swap. Recreate it atomically as well to heal
+# installs where an interrupted npm operation removed the link.
+link_target="../${global_root#"$global_prefix"/}/$package/$binary_rel"
+link_tmp="$global_prefix/bin/.${binary}.kyber-new.$$"
+ln -s "$link_target" "$link_tmp"
+mv -Tf "$link_tmp" "$global_prefix/bin/$binary"
+
+rm -rf -- "$backup"
+swapping=false
+echo "[kyber] harness install: activated ${package}@${version}"
