@@ -131,10 +131,30 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		memoryLimit := agent.Spec.Resources.Memory.Value()
 		ev.Resources.CPULimitMillicores = &cpuLimit
 		ev.Resources.MemoryLimitBytes = &memoryLimit
+		diskTotal := agent.Spec.Resources.Disk.Value()
+		if diskTotal > 0 {
+			ev.Resources.DiskTotalBytes = diskTotal
+		}
+		// Only the new topology-aware sidecar may drive the reserve signal.
+		// Older sidecars report node-level statfs on local-path volumes, so
+		// accepting their boolean during a rolling upgrade could exhaust every
+		// agent at once. Recompute from the allocation for completed samples.
+		if ev.Resources.DiskUsageState == "ready" {
+			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
+				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
+		} else if previous := agent.Status.Activity.Resources; previous != nil {
+			// A pending or failed asynchronous walk has no authority to clear
+			// an exhausted lifecycle. Keep the last completed decision aligned
+			// with the sidecar's retained disk-exhausted marker until a ready
+			// sample proves the volume recovered.
+			ev.Resources.DiskReserveReached = previous.DiskReserveReached
+		} else {
+			ev.Resources.DiskReserveReached = false
+		}
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
 		// agent container or pod. Replace those misleading values with the
 		// metrics API's agent-container usage and the Agent's requested limits.
-		// Disk remains the sidecar's statfs sample of the shared PVC.
+		// Disk used bytes remain the sidecar's topology-aware sample.
 		if s.agentMetrics != nil {
 			metrics, metricsErr := s.agentMetrics.AgentContainer(ctx, s.namespace, "agent-"+agentName)
 			if metricsErr != nil {

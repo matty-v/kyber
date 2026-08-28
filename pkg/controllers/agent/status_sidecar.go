@@ -13,6 +13,8 @@
 package agent
 
 import (
+	"strconv"
+
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -40,6 +42,7 @@ const (
 type SidecarConfig struct {
 	AgentName    string
 	Image        string
+	DiskBytes    int64
 	OtelEndpoint string
 	Runtime      string
 	LogLevel     string
@@ -79,6 +82,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 	env := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: cfg.AgentName},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
+		{Name: "KYBER_AGENT_DISK_BYTES", Value: strconv.FormatInt(cfg.DiskBytes, 10)},
 	}
 	env = append(env, loggingContextEnv(StatusSidecarContainerName)...)
 	// Only emit the OTel + runtime envs when a value is set so old tests +

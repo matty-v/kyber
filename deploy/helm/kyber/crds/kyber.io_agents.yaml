@@ -540,9 +540,32 @@ spec:
                       diskTotalBytes:
                         format: int64
                         type: integer
+                      diskUsageMethod:
+                        description: |-
+                          DiskUsageMethod is "statfs" for whole-volume mounts and "directory"
+                          for bind-mounted volumes that require cached tree accounting.
+                        enum:
+                        - statfs
+                        - directory
+                        type: string
+                      diskUsageState:
+                        description: |-
+                          DiskUsageState makes an asynchronous directory sample observable while
+                          it is pending or after a failed walk; reserve decisions only use ready samples.
+                        enum:
+                        - pending
+                        - ready
+                        - error
+                        type: string
                       diskUsedBytes:
                         format: int64
                         type: integer
+                      diskUsedSampledAt:
+                        description: |-
+                          DiskUsedSampledAt is when diskUsedBytes was measured. It may be older
+                          than SampledAt when the directory method reuses its cached result.
+                        format: date-time
+                        type: string
                       memoryLimitBytes:
                         format: int64
                         type: integer

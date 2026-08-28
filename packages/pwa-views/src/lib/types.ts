@@ -156,6 +156,9 @@ export interface AgentResourceUsage {
 	diskUsedBytes: number
 	diskTotalBytes: number
 	diskReserveReached: boolean
+	diskUsageMethod?: 'statfs' | 'directory'
+	diskUsageState?: 'pending' | 'ready' | 'error'
+	diskUsedSampledAt?: string
 }
 
 // Mirrors agentSchedulingStatusResponse from pkg/api/routes_agents.go.

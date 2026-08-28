@@ -134,10 +134,17 @@ empty: the spec continues to mean “use the harness default,” while status an
 the PWA can still show which model the harness actually selected.
 
 Resource usage is best-effort and sampled on the sidecar heartbeat tick. The
-pod-level cgroup provides CPU and memory usage/limits; a read-only `/persist`
-mount provides volume-level `statfs`. The control plane keeps only the latest
-sample in `status.activity.resources`, while the sidecar emits the same values
-as OTel gauges. Sampling failures do not affect heartbeat or readiness.
+pod-level cgroup provides CPU and memory usage/limits. Disk total always comes
+from the Agent's requested allocation, passed to the sidecar as
+`KYBER_AGENT_DISK_BYTES`. For a whole-filesystem `/persist` mount, used bytes
+come from `statfs`. For a bind-mounted directory (including k3s `local-path`),
+the sidecar walks only `/persist` every five minutes in a throttled background
+goroutine and reuses the cached result between walks. `diskUsageMethod`,
+`diskUsageState`, and `diskUsedSampledAt` expose that distinction and staleness;
+a pending or failed walk never blocks heartbeat delivery or clears an existing
+disk-exhaustion marker. The control plane keeps only the latest sample in
+`status.activity.resources`, while the sidecar emits the same values as OTel
+gauges. Sampling failures do not affect heartbeat or readiness.
 
 See `pkg/api/internal_status.go` for the handler; `pkg/api/v1/agent_types.go`
 for the CRD shape.

@@ -105,14 +105,17 @@ func TestStatusEvent_HeartbeatUpdatesLastHeartbeatAt(t *testing.T) {
 
 func TestStatusEvent_ResourceUsageUpdatesActivity(t *testing.T) {
 	scheme := statusEventTestScheme(t)
-	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"}}
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Spec:       kyberv1.AgentSpec{Resources: kyberv1.AgentResources{Disk: resource.MustParse("100")}},
+	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
 		WithStatusSubresource(&kyberv1.Agent{}).Build()
 	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
-	body := `{"type":"resource_usage","at":"2026-08-27T12:00:00Z","resources":{"cpuUsageMillicores":750,"cpuLimitMillicores":2000,"memoryUsedBytes":1048576,"memoryLimitBytes":2097152,"diskUsedBytes":90,"diskTotalBytes":100,"diskReserveReached":true}}`
+	body := `{"type":"resource_usage","at":"2026-08-27T12:00:00Z","resources":{"cpuUsageMillicores":750,"cpuLimitMillicores":2000,"memoryUsedBytes":1048576,"memoryLimitBytes":2097152,"diskUsedBytes":90,"diskTotalBytes":100,"diskReserveReached":true,"diskUsageMethod":"directory","diskUsageState":"ready","diskUsedSampledAt":"2026-08-27T11:58:00Z"}}`
 	resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +134,9 @@ func TestStatusEvent_ResourceUsageUpdatesActivity(t *testing.T) {
 	if usage == nil || usage.CPUUsageMillicores != 750 || usage.DiskUsedBytes != 90 || !usage.DiskReserveReached {
 		t.Fatalf("resource usage not patched: %+v", usage)
 	}
+	if usage.DiskUsageMethod != "directory" || usage.DiskUsageState != "ready" || usage.DiskUsedSampledAt == nil {
+		t.Errorf("disk accounting metadata not patched: %+v", usage)
+	}
 	if got.Status.Activity.LastHeartbeatAt == nil || usage.SampledAt.Time != got.Status.Activity.LastHeartbeatAt.Time {
 		t.Errorf("sample and heartbeat timestamps differ: %+v", got.Status.Activity)
 	}
@@ -141,7 +147,7 @@ func TestStatusEvent_ResourceUsageUsesAgentMetricsAndRequestedLimits(t *testing.
 	agent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
 		Spec: kyberv1.AgentSpec{Resources: kyberv1.AgentResources{
-			CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"),
+			CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("2Gi"),
 		}},
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).
@@ -173,8 +179,11 @@ func TestStatusEvent_ResourceUsageUsesAgentMetricsAndRequestedLimits(t *testing.
 	if usage.MemoryUsedBytes != 682*1024*1024 || usage.MemoryLimitBytes == nil || *usage.MemoryLimitBytes != 1024*1024*1024 {
 		t.Errorf("memory = %+v", usage)
 	}
-	if usage.DiskUsedBytes != 90 || usage.DiskTotalBytes != 100 {
+	if usage.DiskUsedBytes != 90 || usage.DiskTotalBytes != 2*1024*1024*1024 {
 		t.Errorf("disk sample changed: %+v", usage)
+	}
+	if usage.DiskReserveReached {
+		t.Error("legacy sample without accounting state must not trigger reserve")
 	}
 }
 
@@ -183,7 +192,7 @@ func TestStatusEvent_ResourceUsagePreservesAgentUsageWhenMetricsDisappear(t *tes
 	cpuLimit, memoryLimit := int64(1000), int64(1024*1024*1024)
 	agent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
-		Spec:       kyberv1.AgentSpec{Resources: kyberv1.AgentResources{CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi")}},
+		Spec:       kyberv1.AgentSpec{Resources: kyberv1.AgentResources{CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("100")}},
 		Status: kyberv1.AgentStatus{Activity: &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
 			CPUUsageMillicores: 83, CPULimitMillicores: &cpuLimit,
 			MemoryUsedBytes: 682 * 1024 * 1024, MemoryLimitBytes: &memoryLimit,
@@ -209,6 +218,52 @@ func TestStatusEvent_ResourceUsagePreservesAgentUsageWhenMetricsDisappear(t *tes
 	}
 	if *usage.CPULimitMillicores != 1000 || *usage.MemoryLimitBytes != 1024*1024*1024 {
 		t.Fatalf("requested limits changed: %+v", usage)
+	}
+}
+
+func TestStatusEvent_NonReadyDiskSamplePreservesExhaustionUntilReady(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Spec: kyberv1.AgentSpec{Resources: kyberv1.AgentResources{
+			CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("100"),
+		}},
+		Status: kyberv1.AgentStatus{Activity: &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
+			DiskUsedBytes: 95, DiskTotalBytes: 100, DiskReserveReached: true,
+			DiskUsageMethod: "directory", DiskUsageState: "ready",
+		}}},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	post := func(state string, used int) *kyberv1.AgentResourceUsage {
+		t.Helper()
+		body := fmt.Sprintf(`{"type":"resource_usage","at":"2026-08-27T12:01:00Z","resources":{"diskUsedBytes":%d,"diskTotalBytes":100,"diskUsageMethod":"directory","diskUsageState":%q}}`, used, state)
+		resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status for %s sample: got %d", state, resp.StatusCode)
+		}
+		got := &kyberv1.Agent{}
+		if err := fakeClient.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "alice"}, got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Status.Activity.Resources
+	}
+
+	if usage := post("error", 95); !usage.DiskReserveReached {
+		t.Fatalf("error sample cleared exhaustion: %+v", usage)
+	}
+	if usage := post("pending", 0); !usage.DiskReserveReached {
+		t.Fatalf("pending sample cleared exhaustion: %+v", usage)
+	}
+	if usage := post("ready", 80); usage.DiskReserveReached {
+		t.Fatalf("ready sample below reserve did not clear exhaustion: %+v", usage)
 	}
 }
 
