@@ -7,6 +7,7 @@
 
 ## Unreleased
 
+- Fix first-boot ownership of `/persist/var` so Claude Code and Codex agents can arm scheduled-job turn-boundary hooks without requiring a restart. Runtime startup now reports hook registration only after verifying the sentinel write and emits an explicit warning when the feature cannot be armed.
 - Repair `BrokenRuntime` Claude Code and Codex agents from Agent Detail or the lifecycle API with a same-node maintenance pod that atomically reinstalls and verifies the configured harness while preserving the agent PVC, credentials, memory, identity, and session state.
 - Distinguish an unusable Codex or Claude Code harness from expired credentials with a stable `BrokenRuntime` lifecycle phase, bounded startup diagnostics, and operator guidance that suppresses irrelevant re-authorization actions.
 

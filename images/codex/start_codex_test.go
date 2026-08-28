@@ -1145,6 +1145,32 @@ func TestStartCodex_CronHooks_RegistersBothSignalsAndArmsSentinel(t *testing.T) 
 	}
 }
 
+func TestStartCodex_CronHooks_DoesNotClaimRegistrationWhenSentinelWriteFails(t *testing.T) {
+	home := t.TempDir()
+	_, managed, env := cronHookEnv(t, true, true)
+	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockedParent, []byte("blocked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env[0] = "KYBER_CRON_POSTRUN_SENTINEL=" + filepath.Join(blockedParent, "sentinel")
+
+	out, err := runBoot(t, home, "", stubBin(t), env...)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(managed); err != nil {
+		t.Fatalf("managed hooks were not registered: %v\n%s", err, out)
+	}
+	got := string(out)
+	if strings.Contains(got, "[kyber] cron context hooks registered\n") {
+		t.Fatalf("boot claimed cron hooks despite an unwritable sentinel:\n%s", got)
+	}
+	if !strings.Contains(got, "could not create cron context hook state directory") ||
+		!strings.Contains(got, "sentinel unavailable; feature disabled") {
+		t.Fatalf("boot did not report the sentinel failure:\n%s", got)
+	}
+}
+
 // Both-or-neither: when only ONE of the two hook commands is installed, only
 // that half can be registered, and the sentinel must stay absent. Half-wired is
 // worse than not claiming the capability — arming without consuming leaks

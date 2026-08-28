@@ -513,7 +513,14 @@ if [ "$USE_OVERLAY" = true ]; then
                 # and an earlier root-side invocation (or a pre-fix image) may
                 # have left the log root-owned, which silently swallows every
                 # subsequent cron-fire log write.
-                install -d -o kyber -g kyber -m 0755 /persist/var/log /persist/var/lock 2>/dev/null || true
+                # Name /persist/var explicitly. `install -d` gives requested
+                # ownership only to named paths; if it creates this parent as
+                # an intermediate component it remains root-owned and the
+                # runtime user cannot create first-boot state below it.
+                if ! install -d -o kyber -g kyber -m 0755 \
+                    /persist/var /persist/var/log /persist/var/lock /persist/var/run; then
+                    echo "[kyber] WARNING: could not prepare writable cron state under /persist/var" >&2
+                fi
                 [ -e /persist/var/log/kyber-jobs.log ] || install -o kyber -g kyber -m 0644 /dev/null /persist/var/log/kyber-jobs.log
                 chown kyber:kyber /persist/var/log/kyber-jobs.log 2>/dev/null || true
                 # Background watcher: re-sync /etc/cron.d/kyber-jobs when the

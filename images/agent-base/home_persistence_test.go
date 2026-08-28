@@ -20,7 +20,6 @@ import (
 	"testing"
 )
 
-
 // dockerSandboxEnv is what these tests must pass so the entrypoint will run at
 // all under plain `docker run`.
 //
@@ -94,7 +93,7 @@ func TestHomePersistence_BindMountSurvivesRestart(t *testing.T) {
 		// be needed on some kernels. Best-effort only — CI ephemeral runners
 		// clean up automatically.
 		exec.Command("sudo", "rm", "-rf", persistDir).Run() //nolint:errcheck
-		os.RemoveAll(persistDir)                             //nolint:errcheck
+		os.RemoveAll(persistDir)                            //nolint:errcheck
 	})
 
 	const marker = "hello-from-boot-one"
@@ -161,7 +160,7 @@ func TestHomePersistence_FirstBootSeedsBashrc(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		exec.Command("sudo", "rm", "-rf", persistDir).Run() //nolint:errcheck
-		os.RemoveAll(persistDir)                             //nolint:errcheck
+		os.RemoveAll(persistDir)                            //nolint:errcheck
 	})
 
 	// Run WITHOUT --privileged: overlay mount will fail, triggering symlink
@@ -235,6 +234,49 @@ func TestAgentBase_ShipsCron(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "CRON_PRESENT") {
 		t.Errorf("expected /usr/sbin/cron to be executable in the image; got:\n%s", out)
+	}
+}
+
+// TestAgentBase_FirstBootRepairsPersistVarOwnership covers MAT-16's exact
+// first-boot shape: an intermediate /persist/var created by root before the
+// runtime starts. The entrypoint must name and repair the parent itself so the
+// kyber runtime user can create the turn-boundary sentinel without a restart.
+func TestAgentBase_FirstBootRepairsPersistVarOwnership(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+	buildAgentBaseImage(t)
+
+	persistDir, err := os.MkdirTemp("", "kyber-first-boot-var-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(persistDir, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		exec.Command("sudo", "rm", "-rf", persistDir).Run() //nolint:errcheck
+		os.RemoveAll(persistDir)                            //nolint:errcheck
+	})
+
+	seed := exec.Command("docker", "run", "--rm",
+		"--entrypoint", "/bin/sh", "-v", persistDir+":/persist", testImageTag,
+		"-c", "mkdir -p /persist/var && chown root:root /persist/var && chmod 0755 /persist/var")
+	if out, err := seed.CombinedOutput(); err != nil {
+		t.Fatalf("seed root-owned /persist/var: %v\n%s", err, out)
+	}
+
+	boot := dockerRun(dockerSandboxEnv(),
+		"--privileged", "-v", persistDir+":/persist", testImageTag,
+		"/bin/sh", "-c",
+		"test -w /persist/var && test -w /persist/var/run && : > /persist/var/run/kyber-cron-postrun-enabled && echo FIRST_BOOT_SENTINEL_WRITABLE",
+	)
+	out, err := boot.CombinedOutput()
+	if err != nil {
+		t.Fatalf("first boot did not repair /persist/var ownership: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "FIRST_BOOT_SENTINEL_WRITABLE") {
+		t.Fatalf("runtime user could not create first-boot sentinel:\n%s", out)
 	}
 }
 

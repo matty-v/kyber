@@ -1068,6 +1068,89 @@ func TestStartClaude_AccessTokenStillValid_SkipsRefresh(t *testing.T) {
 	}
 }
 
+func TestStartClaude_CronHooks_DoesNotClaimRegistrationWhenSentinelWriteFails(t *testing.T) {
+	home := t.TempDir()
+	binDir := t.TempDir()
+	writeCommand := func(name string) string {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	blockedParent := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(blockedParent, []byte("blocked"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"CLAUDE_ACCESS_TOKEN=cached-access-token",
+		"CLAUDE_REFRESH_TOKEN=unused-refresh-token",
+		fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", time.Now().Add(30*time.Minute).UnixMilli()),
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/should-not-be-called",
+		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_CRON_POSTRUN_CMD=" + writeCommand("kyber-cron-postrun"),
+		"KYBER_CRON_TURNSTART_CMD=" + writeCommand("kyber-cron-turn-start"),
+		"KYBER_CRON_POSTRUN_SENTINEL=" + filepath.Join(blockedParent, "sentinel"),
+	})
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	settings, readErr := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if readErr != nil {
+		t.Fatalf("read settings: %v\n%s", readErr, out)
+	}
+	if !strings.Contains(string(settings), "kyber-cron-postrun") || !strings.Contains(string(settings), "kyber-cron-turn-start") {
+		t.Fatalf("hooks were not registered before the sentinel check:\n%s", settings)
+	}
+	got := string(out)
+	if strings.Contains(got, "[kyber] cron context hooks registered\n") {
+		t.Fatalf("boot claimed cron hooks despite an unwritable sentinel:\n%s", got)
+	}
+	if !strings.Contains(got, "could not create cron context hook state directory") ||
+		!strings.Contains(got, "sentinel unavailable; feature disabled") {
+		t.Fatalf("boot did not report the sentinel failure:\n%s", got)
+	}
+}
+
+func TestStartClaude_CronHooks_FirstBootArmsSentinel(t *testing.T) {
+	home := t.TempDir()
+	binDir := t.TempDir()
+	writeCommand := func(name string) string {
+		path := filepath.Join(binDir, name)
+		if err := os.WriteFile(path, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	sentinel := filepath.Join(t.TempDir(), "var", "run", "kyber-cron-postrun-enabled")
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"CLAUDE_ACCESS_TOKEN=cached-access-token",
+		"CLAUDE_REFRESH_TOKEN=unused-refresh-token",
+		fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", time.Now().Add(30*time.Minute).UnixMilli()),
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/should-not-be-called",
+		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_CRON_POSTRUN_CMD=" + writeCommand("kyber-cron-postrun"),
+		"KYBER_CRON_TURNSTART_CMD=" + writeCommand("kyber-cron-turn-start"),
+		"KYBER_CRON_POSTRUN_SENTINEL=" + sentinel,
+	})
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Fatalf("first boot did not arm the sentinel: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "[kyber] cron context hooks registered") {
+		t.Fatalf("first boot did not report verified registration:\n%s", out)
+	}
+}
+
 // TestStartClaude_BootAfterRotation_UsesNewToken simulates three consecutive
 // boots with rotating mock Anthropic + recording mock control-plane:
 //  1. Fresh: refresh runs, rotation push records new tokens, secret updated.
