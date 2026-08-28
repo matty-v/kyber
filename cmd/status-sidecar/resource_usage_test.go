@@ -290,3 +290,22 @@ func TestSyncDiskExhaustedMarker(t *testing.T) {
 		t.Fatalf("marker still exists after recovery: %v", err)
 	}
 }
+
+func TestPartialDiskSampleCannotClearExhaustedMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if err := syncDiskExhaustedMarkerForSample(marker, "partial", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, "partial", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("partial recovery cleared marker: %v", err)
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, "ready", false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("ready recovery did not clear marker: %v", err)
+	}
+}

@@ -142,7 +142,8 @@ the sidecar walks only `/persist` every five minutes in a throttled background
 goroutine and reuses the cached result between walks. `diskUsageMethod`,
 `diskUsageState`, and `diskUsedSampledAt` expose that distinction and staleness.
 Unreadable paths are skipped, logged, and reported as a `partial` sample; that
-usable lower bound still participates in the 90% reserve check. A pending or
+usable lower bound may assert the 90% reserve but cannot clear an existing
+reserve because skipped paths may contain the missing bytes. A pending or
 failed walk never blocks heartbeat delivery or clears an existing
 disk-exhaustion marker. The control plane keeps only the latest sample in
 `status.activity.resources`, while the sidecar emits the same values as OTel

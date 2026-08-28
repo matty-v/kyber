@@ -46,6 +46,21 @@ func syncDiskExhaustedMarker(path string, reached bool) error {
 	return nil
 }
 
+func syncDiskExhaustedMarkerForSample(path, state string, reached bool) error {
+	switch state {
+	case "ready":
+		return syncDiskExhaustedMarker(path, reached)
+	case "partial":
+		// A reachable lower bound at 90% proves exhaustion. A lower partial
+		// result cannot prove recovery because skipped paths may contain the
+		// missing bytes, so it must never clear an existing marker.
+		if reached {
+			return syncDiskExhaustedMarker(path, true)
+		}
+	}
+	return nil
+}
+
 type resourceSampler struct {
 	cgroupPath   string
 	previousCPU  uint64

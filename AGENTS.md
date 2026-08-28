@@ -226,7 +226,8 @@ only when mountinfo says `/persist` is a whole-filesystem mount; bind-mounted
 directories use a throttled asynchronous tree walk and cached result, with the
 method/state/sample time exposed in Agent status. Permission-denied paths are
 skipped and logged as a `partial` sample; partial used bytes remain a useful
-lower bound and participate in the allocation reserve check. The control plane combines
+lower bound that may assert the allocation reserve but cannot clear an existing
+reserve. The control plane combines
 that disk sample with the metrics-server's agent-container CPU/memory sample
 and requested Agent limits; the sidecar does not enter the runtime container's
 chroot or inspect agent file contents.
