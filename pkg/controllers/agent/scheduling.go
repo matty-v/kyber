@@ -40,6 +40,15 @@ import (
 // scheduling) so we don't false-positive on routine boots.
 const schedulingGracePeriod = 30 * time.Second
 
+// stalledFallbackGracePeriod is how long a Pending pod may sit with NO
+// classified event before we report what we can see anyway. Much longer than
+// schedulingGracePeriod on purpose: the classified reasons are definitive the
+// moment they appear, while "nothing has happened yet" is normal for minutes
+// on a cold node pulling a large runtime image. Ten minutes is past any
+// healthy boot observed on the fleet and far short of the eleven hours a test
+// agent sat in Creating on kyber-canary with an entirely blank status.
+const stalledFallbackGracePeriod = 10 * time.Minute
+
 // Event reasons we care about for scheduling-status. Matches the issue's
 // scope (capacity / placement / image / storage). Anything else is left to
 // the existing reconciler logic.
@@ -100,11 +109,32 @@ func populateSchedulingStatus(ctx context.Context, c client.Client, pod *corev1.
 	}
 
 	if latest == nil {
-		// No matching event yet — either the pod is genuinely just
-		// booting, or the failure mode isn't one we classify. Leave
-		// existing status alone (some other call site may be managing
-		// it). Don't clear here — clearing happens on Running transition.
-		return false
+		// No matching event. Either the pod is genuinely still booting, or
+		// it is stuck in a way this file does not classify — a container
+		// that simply never starts emits no event at all, and only six
+		// reasons are recognised above.
+		//
+		// Saying nothing is the worse failure. An operator looking at an
+		// agent stuck for hours got an unchanging phase and an empty
+		// reason, so the only ground truth was `kubectl describe pod` on
+		// the box — exactly the gap this file was written to close, left
+		// open for every failure outside the six. Report what is
+		// observable instead, once it is clearly not a slow boot.
+		//
+		// Never overwrite a classified entry: a real reason always beats
+		// this one, and clearing still happens only on the Running
+		// transition.
+		if agent.Status.Scheduling != nil ||
+			time.Since(pod.CreationTimestamp.Time) < stalledFallbackGracePeriod {
+			return false
+		}
+		now := metav1.NewTime(time.Now().UTC())
+		agent.Status.Scheduling = &kyberv1.AgentSchedulingStatus{
+			Category:        "Other",
+			LastError:       describeStalledPod(pod),
+			FirstObservedAt: &now,
+		}
+		return true
 	}
 
 	category := classifySchedulingCategory(latest.Reason, latest.Message)
@@ -133,6 +163,45 @@ func populateSchedulingStatus(ctx context.Context, c client.Client, pod *corev1.
 		FirstObservedAt: &firstObserved,
 	}
 	return true
+}
+
+// describeStalledPod renders what can be seen about a Pod that has made no
+// progress and produced no classified event: its phase, and which containers
+// have not started, with whatever reason the kubelet did record on them.
+//
+// Deliberately descriptive rather than diagnostic. It cannot say WHY, because
+// nothing in the cluster said why — but "container agent has not started
+// (PodInitializing)" tells an operator where to look, and an empty banner
+// tells them nothing at all.
+func describeStalledPod(pod *corev1.Pod) string {
+	var stalled []string
+	for _, cs := range append(append([]corev1.ContainerStatus{},
+		pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...) {
+		if cs.State.Running != nil {
+			continue
+		}
+		if cs.State.Terminated != nil && cs.State.Terminated.ExitCode == 0 {
+			continue
+		}
+		detail := "no state reported"
+		if w := cs.State.Waiting; w != nil {
+			detail = w.Reason
+			if w.Message != "" {
+				detail += ": " + w.Message
+			}
+		} else if t := cs.State.Terminated; t != nil {
+			detail = t.Reason
+		}
+		stalled = append(stalled, "container "+cs.Name+" has not started ("+detail+")")
+	}
+
+	msg := "Pod has been " + string(pod.Status.Phase) +
+		" since " + pod.CreationTimestamp.UTC().Format(time.RFC3339) +
+		" with no scheduler or kubelet failure recorded."
+	if len(stalled) > 0 {
+		msg += " " + strings.Join(stalled, "; ") + "."
+	}
+	return msg
 }
 
 // clearSchedulingStatus drops the status entry. Caller should invoke this
