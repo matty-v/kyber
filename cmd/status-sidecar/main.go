@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -329,6 +330,7 @@ func recordEventMetrics(ctx context.Context, metrics *Metrics, body []byte, at t
 type config struct {
 	AgentName       string
 	ControlPlaneURL string
+	AgentDiskBytes  int64
 	// OtelEndpoint is the OTLP HTTP endpoint the metrics SDK posts to
 	// (kyber#256). Empty disables metrics — the rest of the sidecar
 	// keeps working.
@@ -372,6 +374,11 @@ func loadConfig() (config, error) {
 	if c.ControlPlaneURL == "" {
 		return c, fmt.Errorf("KYBER_CONTROL_PLANE_INTERNAL_URL unset")
 	}
+	diskBytes, err := strconv.ParseInt(os.Getenv("KYBER_AGENT_DISK_BYTES"), 10, 64)
+	if err != nil || diskBytes <= 0 {
+		return c, fmt.Errorf("KYBER_AGENT_DISK_BYTES must be a positive integer")
+	}
+	c.AgentDiskBytes = diskBytes
 	if c.CgroupMemoryEventsPath == "" {
 		// Derive the pod-level cgroup memory.events path from
 		// /proc/self/cgroup. On clusters where derivation fails (cgroup
@@ -405,7 +412,7 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 	}
 
 	oom := newOOMDetector(cfg.CgroupMemoryEventsPath)
-	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath)
+	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath, cfg.AgentDiskBytes)
 	resourceReadErrLogged := false
 	resourcePostErrLogged := false
 	logfn := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }
@@ -455,8 +462,13 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 			}
 		} else {
 			resourceReadErrLogged = false
-			if err := syncDiskExhaustedMarker(diskExhaustedMarker, usage.DiskReserveReached); err != nil {
-				logger.Warn("disk maintenance marker update failed", "err", err)
+			// A pending/failed directory walk must not clear a marker left by a
+			// previously full volume. Only a completed disk sample can safely
+			// change the maintenance signal.
+			if usage.DiskUsageState == "ready" {
+				if err := syncDiskExhaustedMarker(diskExhaustedMarker, usage.DiskReserveReached); err != nil {
+					logger.Warn("disk maintenance marker update failed", "err", err)
+				}
 			}
 			metrics.RecordResourceUsage(ctx, usage)
 			if err := postResourceUsage(ctx, client, cfg, now, usage); err != nil {

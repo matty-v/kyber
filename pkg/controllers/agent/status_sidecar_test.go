@@ -37,7 +37,7 @@ func TestAppendStatusSidecar_AppendsContainer(t *testing.T) {
 
 func TestAppendStatusSidecar_EnvVarsMatchTokenReporterConvention(t *testing.T) {
 	spec := &corev1.PodSpec{}
-	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
+	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1", DiskBytes: 2 * 1024 * 1024 * 1024})
 	side := mustStatusSidecar(t, spec)
 	envByName := map[string]string{}
 	for _, e := range side.Env {
@@ -48,6 +48,9 @@ func TestAppendStatusSidecar_EnvVarsMatchTokenReporterConvention(t *testing.T) {
 	}
 	if _, ok := envByName["KYBER_CONTROL_PLANE_INTERNAL_URL"]; !ok {
 		t.Error("KYBER_CONTROL_PLANE_INTERNAL_URL not set")
+	}
+	if got := envByName["KYBER_AGENT_DISK_BYTES"]; got != "2147483648" {
+		t.Errorf("KYBER_AGENT_DISK_BYTES: got %q, want 2147483648", got)
 	}
 }
 

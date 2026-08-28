@@ -1586,6 +1586,15 @@ components:
           format: int64
         diskReserveReached:
           type: boolean
+        diskUsageMethod:
+          type: string
+          enum: [statfs, directory]
+        diskUsageState:
+          type: string
+          enum: [pending, ready, error]
+        diskUsedSampledAt:
+          type: string
+          format: date-time
 
     AgentActivityStatus:
       type: object

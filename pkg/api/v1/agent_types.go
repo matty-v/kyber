@@ -884,6 +884,20 @@ type AgentResourceUsage struct {
 	DiskUsedBytes      int64       `json:"diskUsedBytes"`
 	DiskTotalBytes     int64       `json:"diskTotalBytes"`
 	DiskReserveReached bool        `json:"diskReserveReached"`
+	// DiskUsageMethod is "statfs" for whole-volume mounts and "directory"
+	// for bind-mounted volumes that require cached tree accounting.
+	// +kubebuilder:validation:Enum=statfs;directory
+	// +optional
+	DiskUsageMethod string `json:"diskUsageMethod,omitempty"`
+	// DiskUsageState makes an asynchronous directory sample observable while
+	// it is pending or after a failed walk; reserve decisions only use ready samples.
+	// +kubebuilder:validation:Enum=pending;ready;error
+	// +optional
+	DiskUsageState string `json:"diskUsageState,omitempty"`
+	// DiskUsedSampledAt is when diskUsedBytes was measured. It may be older
+	// than SampledAt when the directory method reuses its cached result.
+	// +optional
+	DiskUsedSampledAt *metav1.Time `json:"diskUsedSampledAt,omitempty"`
 }
 
 // +kubebuilder:object:root=true

@@ -279,6 +279,9 @@ type agentResourceUsageResponse struct {
 	DiskUsedBytes      int64    `json:"diskUsedBytes"`
 	DiskTotalBytes     int64    `json:"diskTotalBytes"`
 	DiskReserveReached bool     `json:"diskReserveReached"`
+	DiskUsageMethod    string   `json:"diskUsageMethod,omitempty"`
+	DiskUsageState     string   `json:"diskUsageState,omitempty"`
+	DiskUsedSampledAt  string   `json:"diskUsedSampledAt,omitempty"`
 }
 
 // agentSchedulingStatusResponse mirrors AgentSchedulingStatus on the wire.
@@ -585,6 +588,11 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 				DiskUsedBytes:      usage.DiskUsedBytes,
 				DiskTotalBytes:     usage.DiskTotalBytes,
 				DiskReserveReached: usage.DiskReserveReached,
+				DiskUsageMethod:    usage.DiskUsageMethod,
+				DiskUsageState:     usage.DiskUsageState,
+			}
+			if usage.DiskUsedSampledAt != nil {
+				act.Resources.DiskUsedSampledAt = usage.DiskUsedSampledAt.UTC().Format(time.RFC3339)
 			}
 			if usage.CPULimitMillicores != nil {
 				limit := float64(*usage.CPULimitMillicores) / 1000

@@ -253,6 +253,7 @@ func TestAgents_Get_ExposesIdentityRepoStatus(t *testing.T) {
 
 func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 	sampled := metav1.NewTime(time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC))
+	diskSampled := metav1.NewTime(time.Date(2026, 8, 27, 11, 58, 0, 0, time.UTC))
 	cpuLimit := int64(2000)
 	memoryLimit := int64(2 * 1024 * 1024 * 1024)
 	agent := sampleAgentCRD("dave")
@@ -261,6 +262,7 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 		MemoryUsedBytes: 1024 * 1024 * 1024, MemoryLimitBytes: &memoryLimit,
 		DiskUsedBytes: 18 * 1024 * 1024 * 1024, DiskTotalBytes: 20 * 1024 * 1024 * 1024,
 		DiskReserveReached: true,
+		DiskUsageMethod:    "directory", DiskUsageState: "ready", DiskUsedSampledAt: &diskSampled,
 	}}
 
 	h, _ := buildAgentHandler(t, agent)
@@ -280,6 +282,9 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 	}
 	if usage["sampledAt"] != "2026-08-27T12:00:00Z" {
 		t.Errorf("sampledAt = %v", usage["sampledAt"])
+	}
+	if usage["diskUsageMethod"] != "directory" || usage["diskUsageState"] != "ready" || usage["diskUsedSampledAt"] != "2026-08-27T11:58:00Z" {
+		t.Errorf("disk accounting metadata = %v", usage)
 	}
 }
 

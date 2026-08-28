@@ -2070,6 +2070,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	AppendStatusSidecar(&podSpec, SidecarConfig{
 		AgentName:    agent.Name,
 		Image:        r.StatusSidecarImage,
+		DiskBytes:    agent.Spec.Resources.Disk.Value(),
 		OtelEndpoint: r.SidecarOtelEndpoint,
 		Runtime:      agent.Spec.Runtime,
 		LogLevel:     r.SidecarLogLevel,

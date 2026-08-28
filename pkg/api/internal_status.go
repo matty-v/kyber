@@ -131,10 +131,21 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		memoryLimit := agent.Spec.Resources.Memory.Value()
 		ev.Resources.CPULimitMillicores = &cpuLimit
 		ev.Resources.MemoryLimitBytes = &memoryLimit
+		diskTotal := agent.Spec.Resources.Disk.Value()
+		if diskTotal > 0 {
+			ev.Resources.DiskTotalBytes = diskTotal
+		}
+		// Only the new topology-aware sidecar may drive the reserve signal.
+		// Older sidecars report node-level statfs on local-path volumes, so
+		// accepting their boolean during a rolling upgrade could exhaust every
+		// agent at once. Recompute from the allocation for completed samples.
+		ev.Resources.DiskReserveReached = ev.Resources.DiskUsageState == "ready" &&
+			ev.Resources.DiskTotalBytes > 0 &&
+			float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
 		// agent container or pod. Replace those misleading values with the
 		// metrics API's agent-container usage and the Agent's requested limits.
-		// Disk remains the sidecar's statfs sample of the shared PVC.
+		// Disk used bytes remain the sidecar's topology-aware sample.
 		if s.agentMetrics != nil {
 			metrics, metricsErr := s.agentMetrics.AgentContainer(ctx, s.namespace, "agent-"+agentName)
 			if metricsErr != nil {

@@ -3,15 +3,20 @@ package main
 import (
 	"bufio"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
 
 const diskReserveRatio = 0.90
+const directoryScanInterval = 5 * time.Minute
+const directoryScanYieldEvery = 256
 const diskExhaustedMarker = "/var/run/kyber/disk-exhausted"
 
 type resourceUsage struct {
@@ -22,6 +27,9 @@ type resourceUsage struct {
 	DiskUsedBytes      int64  `json:"diskUsedBytes"`
 	DiskTotalBytes     int64  `json:"diskTotalBytes"`
 	DiskReserveReached bool   `json:"diskReserveReached"`
+	DiskUsageMethod    string `json:"diskUsageMethod"`
+	DiskUsageState     string `json:"diskUsageState"`
+	DiskUsedSampledAt  string `json:"diskUsedSampledAt,omitempty"`
 }
 
 func syncDiskExhaustedMarker(path string, reached bool) error {
@@ -38,33 +46,27 @@ func syncDiskExhaustedMarker(path string, reached bool) error {
 }
 
 type resourceSampler struct {
-	persistPath  string
 	cgroupPath   string
 	previousCPU  uint64
 	previousTime time.Time
+	disk         *diskSampler
 }
 
-func newResourceSampler(persistPath, cgroupEventsPath string) *resourceSampler {
+func newResourceSampler(persistPath, cgroupEventsPath string, diskTotalBytes int64) *resourceSampler {
 	cgroupPath := ""
 	if cgroupEventsPath != "" {
 		cgroupPath = strings.TrimSuffix(cgroupEventsPath, "/memory.events")
 	}
-	return &resourceSampler{persistPath: persistPath, cgroupPath: cgroupPath}
+	return &resourceSampler{
+		cgroupPath: cgroupPath,
+		disk:       newDiskSampler(persistPath, "/proc/self/mountinfo", diskTotalBytes),
+	}
 }
 
 func (s *resourceSampler) sample(now time.Time) (resourceUsage, error) {
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(s.persistPath, &stat); err != nil {
-		return resourceUsage{}, fmt.Errorf("statfs %s: %w", s.persistPath, err)
-	}
-	total := int64(stat.Blocks) * int64(stat.Bsize) //nolint:gosec -- kernel values are bounded by the mounted filesystem
-	free := int64(stat.Bavail) * int64(stat.Bsize)  //nolint:gosec -- see above
-	usage := resourceUsage{
-		DiskUsedBytes:  total - free,
-		DiskTotalBytes: total,
-	}
-	if total > 0 {
-		usage.DiskReserveReached = float64(usage.DiskUsedBytes)/float64(total) >= diskReserveRatio
+	usage, err := s.disk.sample(now)
+	if err != nil {
+		return resourceUsage{}, err
 	}
 
 	if s.cgroupPath == "" {
@@ -94,6 +96,159 @@ func (s *resourceSampler) sample(now time.Time) (resourceUsage, error) {
 		return resourceUsage{}, err
 	}
 	return usage, nil
+}
+
+type diskSampler struct {
+	path       string
+	totalBytes int64
+	method     string
+	walk       func(string) (int64, error)
+
+	mu        sync.Mutex
+	usedBytes int64
+	sampledAt time.Time
+	state     string
+	lastStart time.Time
+	running   atomic.Bool
+}
+
+func newDiskSampler(path, mountInfoPath string, totalBytes int64) *diskSampler {
+	method := "directory"
+	if root, err := mountRoot(mountInfoPath, path); err == nil && root == "/" {
+		method = "statfs"
+	}
+	return &diskSampler{
+		path:       path,
+		totalBytes: totalBytes,
+		method:     method,
+		walk:       directoryUsage,
+		state:      "pending",
+	}
+}
+
+func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
+	if s.totalBytes <= 0 {
+		return resourceUsage{}, fmt.Errorf("disk allocation must be positive")
+	}
+	if s.method == "statfs" {
+		var stat syscall.Statfs_t
+		if err := syscall.Statfs(s.path, &stat); err != nil {
+			return resourceUsage{}, fmt.Errorf("statfs %s: %w", s.path, err)
+		}
+		filesystemTotal := int64(stat.Blocks) * int64(stat.Bsize) //nolint:gosec -- kernel values are bounded by the mounted filesystem
+		free := int64(stat.Bavail) * int64(stat.Bsize)            //nolint:gosec -- see above
+		return diskUsage(s.totalBytes, filesystemTotal-free, "statfs", "ready", now), nil
+	}
+
+	s.mu.Lock()
+	if !s.running.Load() && (s.lastStart.IsZero() || now.Sub(s.lastStart) >= directoryScanInterval) {
+		s.lastStart = now
+		s.running.Store(true)
+		go s.scan(now)
+	}
+	used, sampledAt, state := s.usedBytes, s.sampledAt, s.state
+	s.mu.Unlock()
+	return diskUsage(s.totalBytes, used, "directory", state, sampledAt), nil
+}
+
+func (s *diskSampler) scan(startedAt time.Time) {
+	used, err := s.walk(s.path)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer s.running.Store(false)
+	if err != nil {
+		s.state = "error"
+		return
+	}
+	s.usedBytes = used
+	s.sampledAt = startedAt
+	s.state = "ready"
+}
+
+func diskUsage(total, used int64, method, state string, sampledAt time.Time) resourceUsage {
+	usage := resourceUsage{
+		DiskUsedBytes:   used,
+		DiskTotalBytes:  total,
+		DiskUsageMethod: method,
+		DiskUsageState:  state,
+	}
+	if !sampledAt.IsZero() {
+		usage.DiskUsedSampledAt = sampledAt.UTC().Format(time.RFC3339)
+	}
+	if state == "ready" {
+		usage.DiskReserveReached = float64(used)/float64(total) >= diskReserveRatio
+	}
+	return usage
+}
+
+func mountRoot(mountInfoPath, target string) (string, error) {
+	f, err := os.Open(mountInfoPath)
+	if err != nil {
+		return "", fmt.Errorf("open mountinfo: %w", err)
+	}
+	defer f.Close()
+	target = filepath.Clean(target)
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) >= 5 && unescapeMountInfo(fields[4]) == target {
+			return unescapeMountInfo(fields[3]), nil
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", fmt.Errorf("read mountinfo: %w", err)
+	}
+	return "", fmt.Errorf("mountpoint %s missing from mountinfo", target)
+}
+
+func unescapeMountInfo(value string) string {
+	return strings.NewReplacer(`\040`, " ", `\011`, "\t", `\012`, "\n", `\134`, `\`).Replace(value)
+}
+
+func directoryUsage(root string) (int64, error) {
+	seen := make(map[[2]uint64]struct{})
+	var total int64
+	var rootDevice uint64
+	entries := 0
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			device := uint64(stat.Dev)
+			if path == root {
+				rootDevice = device
+			} else if rootDevice != 0 && device != rootDevice {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			if stat.Nlink > 1 {
+				key := [2]uint64{device, stat.Ino}
+				if _, duplicate := seen[key]; duplicate {
+					return nil
+				}
+				seen[key] = struct{}{}
+			}
+			total += stat.Blocks * 512 // allocated bytes, matching du rather than apparent size
+		} else {
+			total += info.Size()
+		}
+		entries++
+		if entries%directoryScanYieldEvery == 0 {
+			time.Sleep(time.Millisecond)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, fmt.Errorf("walk %s: %w", root, err)
+	}
+	return total, nil
 }
 
 func readInt64File(path string) (int64, error) {

@@ -11,6 +11,8 @@ const usage = {
   diskUsedBytes: 18 * 1024 ** 3,
   diskTotalBytes: 20 * 1024 ** 3,
   diskReserveReached: true,
+  diskUsageMethod: 'directory',
+  diskUsageState: 'ready',
 }
 
 describe('AgentResourceUsage', () => {
