@@ -187,6 +187,12 @@ if [ -n "${CODEX_AUTH_JSON:-}" ]; then
         # reporter starts, so force exactly one initial write-back.
         export KYBER_CODEX_PUSH_INITIAL=1
     fi
+    # 0077 for the credential writes below — and RESTORED at the end of this
+    # block, not left set. A umask is process-wide: leaking it made every later
+    # file and directory in the boot owner-only, which is how /etc/codex came
+    # out 0700 on k-2so and locked its runtime out of its own configuration for
+    # eighteen hours. The tightening is deliberate; its scope was not.
+    _prev_umask="$(umask)"
     umask 077
     _seed_marker="$CODEX_HOME/.kyber-seeded-auth"
     _secret_hash="$(printf '%s' "$CODEX_AUTH_JSON" | sha256sum | cut -d' ' -f1)"
@@ -223,7 +229,8 @@ if [ -n "${CODEX_AUTH_JSON:-}" ]; then
         echo "[kyber] keeping locally refreshed Codex credentials (secret unchanged)"
     fi
     chmod 0600 "$CODEX_HOME/auth.json" "$_seed_marker" 2>/dev/null || true
-    unset CODEX_AUTH_JSON _secret_hash _seeded_hash _seed_marker
+    umask "$_prev_umask"
+    unset CODEX_AUTH_JSON _secret_hash _seeded_hash _seed_marker _prev_umask
 fi
 
 if [ -z "${OPENAI_API_KEY:-}" ]; then
@@ -610,7 +617,11 @@ fi
 # /persist/var/log, so the log path is resolved defensively — an unwritable
 # redirect target here would kill the whole boot.
 if command -v kyber-skills >/dev/null 2>&1; then
-    KYBER_SKILLS_LOG="${KYBER_SKILLS_LOG:-/persist/var/log/kyber-skills.log}"
+    # $PERSIST_ROOT, not a literal /persist: the literal ignored
+    # KYBER_PERSIST_ROOT, so the test suite wrote this log onto the real
+    # /persist of whatever machine ran it — the same class of escape as the
+    # managed config, just less destructive.
+    KYBER_SKILLS_LOG="${KYBER_SKILLS_LOG:-$PERSIST_ROOT/var/log/kyber-skills.log}"
     mkdir -p "$(dirname "$KYBER_SKILLS_LOG")" 2>/dev/null || true
     [ -w "$(dirname "$KYBER_SKILLS_LOG")" ] || KYBER_SKILLS_LOG="$HOME/.kyber-skills.log"
     nohup kyber-skills report --repo-dir "${REPO_DIR:-}" --home "$HOME" \
