@@ -571,61 +571,34 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
     elif [ "${#KYBER_REQUESTED_CC_VERSION}" -gt 64 ]; then
         echo "[kyber] WARNING: KYBER_REQUESTED_CC_VERSION exceeds 64 chars; rejected; continuing on baked-in version ${KYBER_RUNTIME_DEFAULT_VERSION:-unset}"
         KYBER_CC_INSTALL_OUTCOME="rejected-length"
-    elif [ "${KYBER_REQUESTED_CC_VERSION}" = "${KYBER_RUNTIME_DEFAULT_VERSION:-}" ]; then
-        echo "[kyber] CC install: requested version matches baked-in (${KYBER_REQUESTED_CC_VERSION}); skipping npm install"
-        KYBER_CC_INSTALL_OUTCOME="skipped-equal"
     else
-        echo "[kyber] CC install: installing @anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION} (baked-in=${KYBER_RUNTIME_DEFAULT_VERSION:-unset})"
-        # Install as ROOT. The baked-in claude is `npm install -g`'d as root at
-        # image build, so /usr/lib/node_modules and /usr/bin/claude are
-        # root-owned; running this install as the (non-root) kyber user can't
-        # replace them — it fails with EACCES and the upgrade silently no-ops.
-        # kyber has passwordless sudo. Resolve npm's path explicitly because
-        # sudo's secure_path may not include it.
         _npm="$(command -v npm || echo /usr/bin/npm)"
-        # Self-heal stale npm staging dirs before installing. npm upgrades a
-        # global package by renaming the current dir aside to a hidden staging
-        # dir (.<pkg>-<hash>), unpacking the new version, then swapping. If a
-        # prior install was interrupted (OOM, pod kill, SIGTERM mid-unpack) the
-        # staging dir is left behind — and on whole-disk-persistence agents it
-        # is saved to the PVC, so it survives every reboot. The next install
-        # then fails forever with `ENOTEMPTY: rename ... .claude-code-<hash>`
-        # and the agent is permanently pinned to the last good version,
-        # ignoring every requestedVersion bump (kyber#483). These dirs are
-        # failed-install garbage, never the live install (that's `claude-code`,
-        # no leading dot), so removing them is safe.
-        _ccparent="$(dirname "$("${_npm}" root -g 2>/dev/null)/@anthropic-ai/claude-code")"
-        if [ -d "${_ccparent}" ]; then
-            for _stale in "${_ccparent}"/.claude-code-*; do
-                [ -e "${_stale}" ] || continue
-                echo "[kyber] CC install: clearing stale npm staging dir $(basename "${_stale}") before install"
-                sudo rm -rf "${_stale}" 2>&1 || true
-            done
+        _installed="$(claude --version 2>/dev/null | awk '{print $1; exit}' || true)"
+        _resolved="${KYBER_REQUESTED_CC_VERSION}"
+        if [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ]; then
+            _resolved="$("${_npm}" view @anthropic-ai/claude-code@latest version 2>/dev/null | tail -1 || true)"
         fi
-        _npm_install_ok="false"
-        if sudo "${_npm}" install -g "@anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION}" 2>&1; then
-            _npm_install_ok="true"
-        fi
-        # Determine success from the RUNNING binary, not npm's exit code alone:
-        # `claude --version` must actually run, and for a concrete request it
-        # must report exactly that version. Trusting the exit code by itself
-        # lets requestedSatisfied lie when an install reports OK but didn't
-        # take effect. `latest` has no version string to compare against, so
-        # there it is npm's exit code AND a binary that still answers
-        # --version — an empty answer means the install broke the CLI and must
-        # NOT be reported as satisfied.
-        _installed="$(claude --version 2>/dev/null | awk '{print $1; exit}')"
-        if [ "${_npm_install_ok}" = "true" ] && { { [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ] && [ -n "${_installed}" ]; } || [ "${_installed}" = "${KYBER_REQUESTED_CC_VERSION}" ]; }; then
-            if [ "${KYBER_REQUESTED_CC_VERSION}" = "latest" ]; then
-                echo "[kyber] CC install: succeeded (latest -> ${_installed})"
-            else
-                echo "[kyber] CC install: succeeded (${KYBER_REQUESTED_CC_VERSION})"
-            fi
-            KYBER_CC_INSTALL_OUTCOME="installed"
-        else
-            echo "[kyber] CC install: FAILED — claude --version reports '${_installed:-unknown}', not ${KYBER_REQUESTED_CC_VERSION}; falling back to baked-in ${KYBER_RUNTIME_DEFAULT_VERSION:-unset} (mismatch surfaced via the runtime report / PWA badge)"
+        if ! [[ "${_resolved}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?$ ]]; then
+            echo "[kyber] CC install: FAILED — could not resolve ${KYBER_REQUESTED_CC_VERSION}; previous install preserved"
             KYBER_CC_INSTALL_OUTCOME="failed"
+        elif [ "${_installed}" = "${_resolved}" ]; then
+            echo "[kyber] CC install: requested version already installed (${_resolved}); skipping install"
+            KYBER_CC_INSTALL_OUTCOME="skipped-equal"
+        else
+            echo "[kyber] CC install: installing @anthropic-ai/claude-code@${KYBER_REQUESTED_CC_VERSION} (resolved=${_resolved}, baked-in=${KYBER_RUNTIME_DEFAULT_VERSION:-unset})"
+            _installer="/usr/local/bin/kyber-harness-install"
+            if [ "${KYBER_BOOTPREP_DRY_RUN:-}" = "1" ] && [ -n "${KYBER_HARNESS_INSTALLER:-}" ]; then
+                _installer="${KYBER_HARNESS_INSTALLER}"
+            fi
+            if [ -x "${_installer}" ] && sudo "${_installer}" @anthropic-ai/claude-code "${_resolved}" claude 2>&1; then
+                echo "[kyber] CC install: succeeded (${_resolved})"
+                KYBER_CC_INSTALL_OUTCOME="installed"
+            else
+                echo "[kyber] CC install: FAILED — falling back to the previous verified install"
+                KYBER_CC_INSTALL_OUTCOME="failed"
+            fi
         fi
+        unset _npm _installed _resolved _installer
     fi
 fi
 export KYBER_CC_INSTALL_OUTCOME

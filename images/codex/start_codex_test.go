@@ -105,17 +105,17 @@ if [ "${1:-}" = "login" ] && [ "${2:-}" = "status" ]; then exit 0; fi
 exit 0`)
 	write("npm", `
 printf '%s\n' "$*" >> "$NPM_LOG"
-case "$*" in
-  *"@openai/codex@latest"*) printf '%s' '0.149.0' > "$VERSION_FILE" ;;
-  *) requested="${*: -1}"; printf '%s' "${requested##*@}" > "$VERSION_FILE" ;;
-esac`)
-	write("sudo", `printf '%s\n' "$*" >> "$SUDO_LOG"; exec "$@"`)
+	if [ "${1:-}" = "view" ]; then echo '0.149.0'; fi`)
+	write("kyber-harness-install", `
+printf '%s\n' "$*" >> "$INSTALLER_LOG"
+printf '%s' "$2" > "$VERSION_FILE"`)
+	write("sudo", `printf '%s\n' "$*" >> "$SUDO_LOG"; if [ "$1" = /usr/local/bin/kyber-harness-install ]; then shift; exec "$(dirname "$0")/kyber-harness-install" "$@"; fi; exec "$@"`)
 	write("curl", `exit 0`)
 	write("tmux", `exit 0`)
 	return dir + ":" + os.Getenv("PATH"), sudoLog, npmLog
 }
 
-func TestStartCodexLatestInstallsAsRootOnEveryBoot(t *testing.T) {
+func TestStartCodexLatestInstallsOnceAcrossTwoBoots(t *testing.T) {
 	path, sudoLog, npmLog := stubVersionInstallBin(t, "0.146.0")
 	home := t.TempDir()
 	out, err := runBoot(t, home, "", path,
@@ -123,18 +123,32 @@ func TestStartCodexLatestInstallsAsRootOnEveryBoot(t *testing.T) {
 		"VERSION_FILE="+filepath.Join(strings.Split(path, ":")[0], "codex.version"),
 		"SUDO_LOG="+sudoLog,
 		"NPM_LOG="+npmLog,
+		"INSTALLER_LOG="+npmLog,
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(strings.Split(path, ":")[0], "kyber-harness-install"),
 	)
 	if err != nil {
 		t.Fatalf("latest boot failed: %v\n%s", err, out)
 	}
-	for _, logPath := range []string{sudoLog, npmLog} {
-		got, err := os.ReadFile(logPath)
-		if err != nil {
-			t.Fatalf("read %s: %v", logPath, err)
-		}
-		if !strings.Contains(string(got), "install -g @openai/codex@latest") {
-			t.Fatalf("install log %q does not contain latest global install", got)
-		}
+	second, err := runBoot(t, home, "", path,
+		"KYBER_REQUESTED_CODEX_VERSION=latest",
+		"VERSION_FILE="+filepath.Join(strings.Split(path, ":")[0], "codex.version"),
+		"SUDO_LOG="+sudoLog,
+		"NPM_LOG="+npmLog,
+		"INSTALLER_LOG="+npmLog,
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(strings.Split(path, ":")[0], "kyber-harness-install"),
+	)
+	if err != nil {
+		t.Fatalf("second latest boot failed: %v\n%s", err, second)
+	}
+	got, err := os.ReadFile(npmLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(got), "@openai/codex 0.149.0 codex") != 1 {
+		t.Fatalf("atomic installer calls = %q, want exactly one across two boots", got)
+	}
+	if !strings.Contains(string(second), "already installed (0.149.0); skipping install") {
+		t.Fatalf("second boot did not skip the resolved latest version:\n%s", second)
 	}
 	if !strings.Contains(string(out), "runtime version reported: 0.149.0") {
 		t.Fatalf("boot did not launch/report installed latest version:\n%s", out)

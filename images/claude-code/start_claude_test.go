@@ -1291,15 +1291,19 @@ func TestStartClaude_PRC_RequestEmpty_NoInstall(t *testing.T) {
 }
 
 func TestStartClaude_PRC_RequestEqualsDefault_NoInstall(t *testing.T) {
+	npmLog := filepath.Join(t.TempDir(), "npm.log")
+	sudoLog := filepath.Join(t.TempDir(), "sudo.log")
+	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.0.99")
 	out := bootPrepRun(t,
-		"KYBER_REQUESTED_CC_VERSION=2.1.119",
-		"KYBER_RUNTIME_DEFAULT_VERSION=2.1.119",
+		"PATH="+stub+":"+testPATH(),
+		"KYBER_REQUESTED_CC_VERSION=2.0.99",
+		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
 	if strings.Contains(out, "installing @anthropic-ai/claude-code") {
 		t.Errorf("install must not fire when request equals default; got: %s", out)
 	}
-	if !strings.Contains(out, "requested version matches baked-in") {
-		t.Errorf("expected matches-baked-in log line; got: %s", out)
+	if !strings.Contains(out, "requested version already installed") {
+		t.Errorf("expected installed-version skip log line; got: %s", out)
 	}
 	if !strings.Contains(out, "CC_INSTALL_OUTCOME=skipped-equal") {
 		t.Errorf("expected outcome=skipped-equal; got: %s", out)
@@ -1318,20 +1322,19 @@ func TestStartClaude_PRC_RequestEqualsDefault_NoInstall(t *testing.T) {
 func stubInstallEnvDir(t *testing.T, npmLog string, npmExit int, sudoLog, claudeVersion string) string {
 	t.Helper()
 	dir := t.TempDir()
+	installedMarker := filepath.Join(dir, "installed")
 	write := func(name, body string) {
 		t.Helper()
 		if err := os.WriteFile(filepath.Join(dir, name), []byte("#!/bin/bash\n"+body+"\n"), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
-	write("sudo", fmt.Sprintf(`echo called > %q; exec "$@"`, sudoLog))
-	// `npm root -g` resolves the global node_modules dir; the boot script uses
-	// it to locate (and clear) stale staging dirs before install (kyber#483).
-	// Print $NPM_GLOBAL_ROOT so a test can point it at a fake global prefix;
-	// unset → empty (the staging-cleanup branch then no-ops, preserving the
-	// behavior of every pre-existing test that doesn't set it).
-	write("npm", fmt.Sprintf(`if [[ "$1" == "root" ]]; then echo "${NPM_GLOBAL_ROOT:-}"; exit 0; fi; echo "$@" > %q; exit %d`, npmLog, npmExit))
-	write("claude", fmt.Sprintf(`if [[ "$*" == "--version"* ]]; then echo %q; exit 0; fi; exit 0`, claudeVersion+" (Claude Code)"))
+	write("sudo", fmt.Sprintf(`echo called > %q; if [[ "$1" == /usr/local/bin/kyber-harness-install ]]; then shift; exec "$(dirname "$0")/kyber-harness-install" "$@"; fi; exec "$@"`, sudoLog))
+	// The shared installer owns npm staging and activation; this stub verifies
+	// that the boot script resolves the requested version and delegates to it.
+	write("npm", fmt.Sprintf(`if [[ "$1" == "view" ]]; then echo "2.9.1"; exit 0; fi; echo "$@" > %q; exit %d`, npmLog, npmExit))
+	write("kyber-harness-install", fmt.Sprintf(`echo "$@" > %q; if [[ "$2" == %q ]] && [[ %d == 0 ]]; then touch %q; exit 0; fi; exit 1`, npmLog, claudeVersion, npmExit, installedMarker))
+	write("claude", fmt.Sprintf(`if [[ "$*" == "--version"* ]]; then if [[ -f %q ]]; then echo %q; else echo '2.0.99 (Claude Code)'; fi; exit 0; fi; exit 0`, installedMarker, claudeVersion+" (Claude Code)"))
 	return dir
 }
 
@@ -1342,6 +1345,7 @@ func TestStartClaude_PRC_RequestDiffersFromDefault_NpmInstallFires(t *testing.T)
 	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.1.200")
 	out := bootPrepRun(t,
 		"PATH="+stub+":"+testPATH(),
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"),
 		"KYBER_REQUESTED_CC_VERSION=2.1.200",
 		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
@@ -1364,8 +1368,8 @@ func TestStartClaude_PRC_RequestDiffersFromDefault_NpmInstallFires(t *testing.T)
 	if err != nil {
 		t.Fatalf("npm log file: %v", err)
 	}
-	if !strings.Contains(string(npmArgs), "install -g @anthropic-ai/claude-code@2.1.200") {
-		t.Errorf("npm args: got %q, want substring 'install -g @anthropic-ai/claude-code@2.1.200'", string(npmArgs))
+	if !strings.Contains(string(npmArgs), "@anthropic-ai/claude-code 2.1.200 claude") {
+		t.Errorf("installer args: got %q, want atomic installer package/version/binary", string(npmArgs))
 	}
 }
 
@@ -1375,10 +1379,11 @@ func TestStartClaude_PRC_LatestAcceptsResolvedVersion(t *testing.T) {
 	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.9.1")
 	out := bootPrepRun(t,
 		"PATH="+stub+":"+testPATH(),
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"),
 		"KYBER_REQUESTED_CC_VERSION=latest",
 		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
-	if !strings.Contains(out, "CC install: succeeded (latest -> 2.9.1)") {
+	if !strings.Contains(out, "CC install: succeeded (2.9.1)") {
 		t.Errorf("latest install was not accepted: %s", out)
 	}
 	if !strings.Contains(out, "CC_INSTALL_OUTCOME=installed") {
@@ -1386,7 +1391,7 @@ func TestStartClaude_PRC_LatestAcceptsResolvedVersion(t *testing.T) {
 	}
 }
 
-func TestStartClaude_PRC_ClearsStaleNpmStagingDir(t *testing.T) {
+func TestStartClaude_PRC_UsesSharedAtomicInstaller(t *testing.T) {
 	// Regression for kyber#483: an interrupted prior `npm install -g` leaves a
 	// hidden staging dir (.claude-code-<hash>) in the global node_modules. On
 	// whole-disk-persistence agents that dir is saved to the PVC and survives
@@ -1398,32 +1403,14 @@ func TestStartClaude_PRC_ClearsStaleNpmStagingDir(t *testing.T) {
 	sudoLog := filepath.Join(t.TempDir(), "sudo.log")
 	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.1.200")
 
-	// Fake global prefix with a leftover, non-empty staging dir.
-	groot := t.TempDir()
-	stale := filepath.Join(groot, "@anthropic-ai", ".claude-code-DEADBEEF")
-	if err := os.MkdirAll(filepath.Join(stale, "junk"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	// The real install dir (no leading dot) must NOT be touched.
-	live := filepath.Join(groot, "@anthropic-ai", "claude-code")
-	if err := os.MkdirAll(live, 0o755); err != nil {
-		t.Fatal(err)
-	}
-
 	out := bootPrepRun(t,
 		"PATH="+stub+":"+testPATH(),
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"),
 		"KYBER_REQUESTED_CC_VERSION=2.1.200",
 		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
-		"NPM_GLOBAL_ROOT="+groot,
 	)
-	if !strings.Contains(out, "clearing stale npm staging dir .claude-code-DEADBEEF") {
-		t.Errorf("expected staging-dir cleanup log line; got: %s", out)
-	}
-	if _, err := os.Stat(stale); !os.IsNotExist(err) {
-		t.Errorf("stale staging dir should have been removed; stat err = %v", err)
-	}
-	if _, err := os.Stat(live); err != nil {
-		t.Errorf("the live install dir must be left intact; stat err = %v", err)
+	if !strings.Contains(out, "CC install: succeeded (2.1.200)") {
+		t.Errorf("shared atomic installer was not used successfully: %s", out)
 	}
 }
 
@@ -1437,6 +1424,7 @@ func TestStartClaude_PRC_InstallReportsOkButVersionUnchanged_Fails(t *testing.T)
 	stub := stubInstallEnvDir(t, npmLog, 0, sudoLog, "2.0.99") // claude still reports baked-in
 	out := bootPrepRun(t,
 		"PATH="+stub+":"+testPATH(),
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"),
 		"KYBER_REQUESTED_CC_VERSION=2.1.200",
 		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
@@ -1457,13 +1445,14 @@ func TestStartClaude_PRC_NpmInstallFailure_NonFatal(t *testing.T) {
 	stub := stubInstallEnvDir(t, npmLog, 1, sudoLog, "2.0.99")
 	out := bootPrepRun(t,
 		"PATH="+stub+":"+testPATH(),
+		"KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"),
 		"KYBER_REQUESTED_CC_VERSION=2.1.200",
 		"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99",
 	)
 	if !strings.Contains(out, "CC install: FAILED") {
 		t.Errorf("expected install-failure log; got: %s", out)
 	}
-	if !strings.Contains(out, "falling back to baked-in") {
+	if !strings.Contains(out, "falling back to the previous verified install") {
 		t.Errorf("expected fallback log; got: %s", out)
 	}
 	if !strings.Contains(out, "CC_INSTALL_OUTCOME=failed") {
