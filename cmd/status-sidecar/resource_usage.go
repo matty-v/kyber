@@ -13,9 +13,10 @@ import (
 	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/diskreserve"
 )
 
-const diskReserveRatio = 0.90
 const directoryScanInterval = 5 * time.Minute
 const directoryScanYieldEvery = 256
 const diskExhaustedMarker = "/var/run/kyber/disk-exhausted"
@@ -47,16 +48,19 @@ func syncDiskExhaustedMarker(path string, reached bool) error {
 }
 
 func syncDiskExhaustedMarkerForSample(path, state string, reached bool) error {
+	// "ready" and "partial" both carry a measured figure, and the hysteresis in
+	// diskreserve.Decide has already resolved it into this boolean, so the
+	// marker simply follows it. A partial sample used to be allowed to set this
+	// marker but never to remove it, which left the runtime session paused for
+	// the life of the volume on any agent whose walk is permanently partial —
+	// see the ClearRatio comment for why that asymmetry cost more than it
+	// bought.
+	//
+	// "pending" and "error" measured nothing, so they leave the marker exactly
+	// as it is rather than asserting either state.
 	switch state {
-	case "ready":
+	case "ready", "partial":
 		return syncDiskExhaustedMarker(path, reached)
-	case "partial":
-		// A reachable lower bound at 90% proves exhaustion. A lower partial
-		// result cannot prove recovery because skipped paths may contain the
-		// missing bytes, so it must never clear an existing marker.
-		if reached {
-			return syncDiskExhaustedMarker(path, true)
-		}
 	}
 	return nil
 }
@@ -127,6 +131,12 @@ type diskSampler struct {
 	state     string
 	lastStart time.Time
 	running   atomic.Bool
+
+	// reserveReached is the sampler's own last decision. Hysteresis needs a
+	// previous value, and the sidecar has no view of the Agent's status, so it
+	// keeps one. A fresh sidecar starts false and re-derives on its first
+	// completed walk; the control plane holds the durable copy.
+	reserveReached bool
 }
 
 func newDiskSampler(path, mountInfoPath string, totalBytes int64, warn func(string, ...any)) *diskSampler {
@@ -155,7 +165,7 @@ func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
 		}
 		filesystemTotal := int64(stat.Blocks) * int64(stat.Bsize) //nolint:gosec -- kernel values are bounded by the mounted filesystem
 		free := int64(stat.Bavail) * int64(stat.Bsize)            //nolint:gosec -- see above
-		return diskUsage(s.totalBytes, filesystemTotal-free, "statfs", "ready", now), nil
+		return s.decide(diskUsage(s.totalBytes, filesystemTotal-free, "statfs", "ready", now)), nil
 	}
 
 	s.mu.Lock()
@@ -166,7 +176,17 @@ func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
 	}
 	used, sampledAt, state := s.usedBytes, s.sampledAt, s.state
 	s.mu.Unlock()
-	return diskUsage(s.totalBytes, used, "directory", state, sampledAt), nil
+	return s.decide(diskUsage(s.totalBytes, used, "directory", state, sampledAt)), nil
+}
+
+// decide resolves a raw sample into a reserve verdict, applying hysteresis
+// against the sampler's previous decision and recording the result.
+func (s *diskSampler) decide(usage resourceUsage) resourceUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.reserveReached = diskreserve.Decide(s.reserveReached, usage.DiskUsedBytes, usage.DiskTotalBytes, usage.DiskUsageState)
+	usage.DiskReserveReached = s.reserveReached
+	return usage
 }
 
 func (s *diskSampler) scan(startedAt time.Time) {
@@ -202,9 +222,8 @@ func diskUsage(total, used int64, method, state string, sampledAt time.Time) res
 	if !sampledAt.IsZero() {
 		usage.DiskUsedSampledAt = sampledAt.UTC().Format(time.RFC3339)
 	}
-	if state == "ready" || state == "partial" {
-		usage.DiskReserveReached = float64(used)/float64(total) >= diskReserveRatio
-	}
+	// The reserve verdict is applied by diskSampler.decide, which has the
+	// previous decision the hysteresis band needs.
 	return usage
 }
 

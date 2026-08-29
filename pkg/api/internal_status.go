@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/diskreserve"
 )
 
 // statusEvent is one event the sidecar pushes. Type is the event kind
@@ -138,27 +139,25 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		// Only the new topology-aware sidecar may drive the reserve signal.
 		// Older sidecars report node-level statfs on local-path volumes, so
 		// accepting their boolean during a rolling upgrade could exhaust every
-		// agent at once. Recompute from the allocation for completed samples.
-		if ev.Resources.DiskUsageState == "ready" {
-			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
-				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
-		} else if ev.Resources.DiskUsageState == "partial" {
-			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
-				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
-			if previous := agent.Status.Activity.Resources; previous != nil && previous.DiskReserveReached {
-				// A partial lower bound may assert exhaustion, but cannot prove
-				// recovery because unreadable paths may hold the missing bytes.
-				ev.Resources.DiskReserveReached = true
-			}
-		} else if previous := agent.Status.Activity.Resources; previous != nil {
-			// A pending or failed asynchronous walk has no authority to clear
-			// an exhausted lifecycle. Keep the last completed decision aligned
-			// with the sidecar's retained disk-exhausted marker until a ready
-			// sample proves the volume recovered.
-			ev.Resources.DiskReserveReached = previous.DiskReserveReached
-		} else {
-			ev.Resources.DiskReserveReached = false
+		// agent at once. Recompute from the allocation instead, through the
+		// same decision the sidecar itself runs — if the two ever disagree the
+		// agent is paused while reporting Running, or the reverse.
+		//
+		// "partial" is treated exactly like "ready" here. It used to be allowed
+		// to assert exhaustion but never to clear it, which made DiskExhausted
+		// permanent on every agent with rootfs persistence, because their walk
+		// is always partial. diskreserve.ClearRatio explains why hysteresis is
+		// the better trade than refusing to clear.
+		var previousReached bool
+		if previous := agent.Status.Activity.Resources; previous != nil {
+			previousReached = previous.DiskReserveReached
 		}
+		ev.Resources.DiskReserveReached = diskreserve.Decide(
+			previousReached,
+			ev.Resources.DiskUsedBytes,
+			ev.Resources.DiskTotalBytes,
+			ev.Resources.DiskUsageState,
+		)
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
 		// agent container or pod. Replace those misleading values with the
 		// metrics API's agent-container usage and the Agent's requested limits.

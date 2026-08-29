@@ -221,7 +221,12 @@ func TestStatusEvent_ResourceUsagePreservesAgentUsageWhenMetricsDisappear(t *tes
 	}
 }
 
-func TestStatusEvent_NonReadyDiskSamplePreservesExhaustionUntilReady(t *testing.T) {
+// An unmeasured sample (pending/error) carries the previous decision forward,
+// while a measured one — ready or partial — moves the lifecycle in either
+// direction through the hysteresis band. The old name of this test,
+// ...PreservesExhaustionUntilReady, described the rule that made DiskExhausted
+// permanent on agents whose walk is always partial.
+func TestStatusEvent_DiskReserveMovesOnMeasuredSamplesOnly(t *testing.T) {
 	scheme := statusEventTestScheme(t)
 	agent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
@@ -265,8 +270,19 @@ func TestStatusEvent_NonReadyDiskSamplePreservesExhaustionUntilReady(t *testing.
 	if usage := post("partial", 95); !usage.DiskReserveReached {
 		t.Fatalf("partial sample above reserve did not preserve exhaustion: %+v", usage)
 	}
-	if usage := post("partial", 80); !usage.DiskReserveReached {
-		t.Fatalf("partial sample below reserve cleared exhaustion: %+v", usage)
+	// 85 is inside the hysteresis band, so the previous decision stands.
+	if usage := post("partial", 85); !usage.DiskReserveReached {
+		t.Fatalf("sample inside the hysteresis band flapped the reserve: %+v", usage)
+	}
+	// 80 is at the clear ratio. This previously asserted the opposite — that a
+	// partial sample could never clear exhaustion — which is what made
+	// DiskExhausted permanent for every agent with rootfs persistence, because
+	// their walk is always partial and the "ready" escape never arrived.
+	if usage := post("partial", 80); usage.DiskReserveReached {
+		t.Fatalf("partial sample below the clear ratio left the agent exhausted: %+v", usage)
+	}
+	if usage := post("ready", 95); !usage.DiskReserveReached {
+		t.Fatalf("ready sample above reserve did not exhaust: %+v", usage)
 	}
 	if usage := post("ready", 80); usage.DiskReserveReached {
 		t.Fatalf("ready sample below reserve did not clear exhaustion: %+v", usage)

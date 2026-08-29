@@ -291,21 +291,102 @@ func TestSyncDiskExhaustedMarker(t *testing.T) {
 	}
 }
 
-func TestPartialDiskSampleCannotClearExhaustedMarker(t *testing.T) {
+// A partial sample must be able to REMOVE the marker, not only write it.
+//
+// This test previously asserted the opposite, under the name
+// TestPartialDiskSampleCannotClearExhaustedMarker. That rule is what made
+// DiskExhausted permanent: directory accounting is always partial on an agent
+// with rootfs persistence, so the "ready sample proves recovery" escape it
+// relied on never happened, and the marker kept the runtime session paused for
+// the life of the volume. See diskreserve.ClearRatio.
+//
+// What must still hold is that a sample which measured NOTHING cannot move the
+// marker in either direction, which the pending/error cases below cover.
+func TestPartialDiskSampleClearsExhaustedMarkerOnRecovery(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
 	if err := syncDiskExhaustedMarkerForSample(marker, "partial", true); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("partial sample did not write the marker: %v", err)
+	}
 	if err := syncDiskExhaustedMarkerForSample(marker, "partial", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("partial recovery cleared marker: %v", err)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("partial recovery left the runtime paused: %v", err)
 	}
 	if err := syncDiskExhaustedMarkerForSample(marker, "ready", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("ready recovery did not clear marker: %v", err)
+	}
+}
+
+// pending and error mean no walk completed. Such a sample has no authority to
+// pause or resume anything, so it must leave the marker exactly as it found it.
+func TestUnmeasuredDiskSampleLeavesMarkerAlone(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if err := syncDiskExhaustedMarkerForSample(marker, "ready", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"pending", "error"} {
+		if err := syncDiskExhaustedMarkerForSample(marker, state, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("%s sample cleared an exhausted marker: %v", state, err)
+		}
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, "ready", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"pending", "error"} {
+		if err := syncDiskExhaustedMarkerForSample(marker, state, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("%s sample paused a healthy agent", state)
+		}
+	}
+}
+
+// The sampler carries its own previous decision, which is what the hysteresis
+// band holds onto. Walking a real directory tree back down past the clear ratio
+// must release the reserve; sitting inside the band must not flap it.
+func TestDiskSamplerHysteresisAcrossSamples(t *testing.T) {
+	dir := t.TempDir()
+	const total = 1000
+
+	var used int64
+	s := &diskSampler{
+		path:       dir,
+		totalBytes: total,
+		method:     "directory",
+		state:      "partial",
+		walk:       func(string) (int64, bool, error) { return used, true, nil },
+	}
+
+	step := func(bytes int64) resourceUsage {
+		t.Helper()
+		used = bytes
+		s.mu.Lock()
+		s.usedBytes, s.sampledAt, s.state = bytes, time.Now(), "partial"
+		s.mu.Unlock()
+		return s.decide(diskUsage(total, bytes, "directory", "partial", time.Now()))
+	}
+
+	if u := step(950); !u.DiskReserveReached {
+		t.Fatalf("95%% of the allocation did not trip the reserve: %+v", u)
+	}
+	if u := step(850); !u.DiskReserveReached {
+		t.Fatalf("85%% is inside the hysteresis band and must hold the previous decision: %+v", u)
+	}
+	if u := step(750); u.DiskReserveReached {
+		t.Fatalf("75%% is below the clear ratio and must release the reserve: %+v", u)
+	}
+	if u := step(850); u.DiskReserveReached {
+		t.Fatalf("85%% after recovery must hold released, not re-trip: %+v", u)
 	}
 }
