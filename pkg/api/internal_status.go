@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/diskreserve"
 )
 
 // statusEvent is one event the sidecar pushes. Type is the event kind
@@ -131,6 +132,16 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		memoryLimit := agent.Spec.Resources.Memory.Value()
 		ev.Resources.CPULimitMillicores = &cpuLimit
 		ev.Resources.MemoryLimitBytes = &memoryLimit
+		// The allocation the SIDECAR measured against, captured before the
+		// spec's value overwrites it. The two differ after an online PVC grow:
+		// KYBER_AGENT_DISK_BYTES is a pod env var read once at sidecar start
+		// (status_sidecar.go:85, main.go:377), so a resize does not reach a
+		// running pod. Deciding on the spec's larger number while the sidecar
+		// still holds the old one would clear the phase while the sidecar keeps
+		// the pause marker in place — the agent would report Running and answer
+		// nothing. Decide on what the pod actually measured; the operator's
+		// Start recreates the pod, and the new sidecar picks up the grow.
+		sampledTotal := ev.Resources.DiskTotalBytes
 		diskTotal := agent.Spec.Resources.Disk.Value()
 		if diskTotal > 0 {
 			ev.Resources.DiskTotalBytes = diskTotal
@@ -138,27 +149,33 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		// Only the new topology-aware sidecar may drive the reserve signal.
 		// Older sidecars report node-level statfs on local-path volumes, so
 		// accepting their boolean during a rolling upgrade could exhaust every
-		// agent at once. Recompute from the allocation for completed samples.
-		if ev.Resources.DiskUsageState == "ready" {
-			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
-				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
-		} else if ev.Resources.DiskUsageState == "partial" {
-			ev.Resources.DiskReserveReached = ev.Resources.DiskTotalBytes > 0 &&
-				float64(ev.Resources.DiskUsedBytes)/float64(ev.Resources.DiskTotalBytes) >= 0.90
-			if previous := agent.Status.Activity.Resources; previous != nil && previous.DiskReserveReached {
-				// A partial lower bound may assert exhaustion, but cannot prove
-				// recovery because unreadable paths may hold the missing bytes.
-				ev.Resources.DiskReserveReached = true
-			}
-		} else if previous := agent.Status.Activity.Resources; previous != nil {
-			// A pending or failed asynchronous walk has no authority to clear
-			// an exhausted lifecycle. Keep the last completed decision aligned
-			// with the sidecar's retained disk-exhausted marker until a ready
-			// sample proves the volume recovered.
-			ev.Resources.DiskReserveReached = previous.DiskReserveReached
-		} else {
-			ev.Resources.DiskReserveReached = false
+		// agent at once. Recompute from the allocation instead, through the
+		// same decision the sidecar itself runs — if the two ever disagree the
+		// agent is paused while reporting Running, or the reverse.
+		//
+		// "partial" is treated exactly like "ready" here. It used to be allowed
+		// to assert exhaustion but never to clear it, which made DiskExhausted
+		// permanent on every agent with rootfs persistence, because their walk
+		// is always partial. diskreserve.ClearRatio explains why hysteresis is
+		// the better trade than refusing to clear.
+		var previousReached bool
+		if previous := agent.Status.Activity.Resources; previous != nil {
+			previousReached = previous.DiskReserveReached
 		}
+		//
+		// An old sidecar sends no DiskUsageState, so Decide returns the previous
+		// decision for it whatever total is passed — its node-level statfs
+		// figure cannot exhaust a fleet through this path.
+		decideTotal := sampledTotal
+		if decideTotal <= 0 {
+			decideTotal = ev.Resources.DiskTotalBytes
+		}
+		ev.Resources.DiskReserveReached = diskreserve.Decide(
+			previousReached,
+			ev.Resources.DiskUsedBytes,
+			decideTotal,
+			ev.Resources.DiskUsageState,
+		)
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the
 		// agent container or pod. Replace those misleading values with the
 		// metrics API's agent-container usage and the Agent's requested limits.

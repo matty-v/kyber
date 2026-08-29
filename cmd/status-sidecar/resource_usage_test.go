@@ -26,7 +26,7 @@ func TestResourceSampler(t *testing.T) {
 	write("cpu.max", "200000 100000\n")
 
 	const allocation = int64(2 * 1024 * 1024 * 1024)
-	s := newResourceSampler(t.TempDir(), filepath.Join(dir, "memory.events"), allocation, nil)
+	s := newResourceSampler(t.TempDir(), filepath.Join(dir, "memory.events"), allocation, nil, false)
 	s.disk.method = "statfs"
 	start := time.Unix(100, 0)
 	first, err := s.sample(start)
@@ -80,7 +80,7 @@ func TestUnlimitedCgroupValues(t *testing.T) {
 }
 
 func TestResourceSamplerUnavailableCgroup(t *testing.T) {
-	s := newResourceSampler(t.TempDir(), "", 1024, nil)
+	s := newResourceSampler(t.TempDir(), "", 1024, nil, false)
 	if _, err := s.sample(time.Now()); err == nil {
 		t.Fatal("sample succeeded without a pod cgroup path")
 	}
@@ -291,21 +291,161 @@ func TestSyncDiskExhaustedMarker(t *testing.T) {
 	}
 }
 
-func TestPartialDiskSampleCannotClearExhaustedMarker(t *testing.T) {
+// A partial sample must be able to REMOVE the marker, not only write it.
+//
+// This test previously asserted the opposite, under the name
+// TestPartialDiskSampleCannotClearExhaustedMarker. That rule is what made
+// DiskExhausted permanent: directory accounting is always partial on an agent
+// with rootfs persistence, so the "ready sample proves recovery" escape it
+// relied on never happened, and the marker kept the runtime session paused for
+// the life of the volume. See diskreserve.ClearRatio.
+//
+// What must still hold is that a sample which measured NOTHING cannot move the
+// marker in either direction, which the pending/error cases below cover.
+func TestPartialDiskSampleClearsExhaustedMarkerOnRecovery(t *testing.T) {
 	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
 	if err := syncDiskExhaustedMarkerForSample(marker, "partial", true); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("partial sample did not write the marker: %v", err)
+	}
 	if err := syncDiskExhaustedMarkerForSample(marker, "partial", false); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(marker); err != nil {
-		t.Fatalf("partial recovery cleared marker: %v", err)
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("partial recovery left the runtime paused: %v", err)
 	}
 	if err := syncDiskExhaustedMarkerForSample(marker, "ready", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {
 		t.Fatalf("ready recovery did not clear marker: %v", err)
+	}
+}
+
+// pending and error mean no walk completed. Such a sample has no authority to
+// pause or resume anything, so it must leave the marker exactly as it found it.
+func TestUnmeasuredDiskSampleLeavesMarkerAlone(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if err := syncDiskExhaustedMarkerForSample(marker, "ready", true); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"pending", "error"} {
+		if err := syncDiskExhaustedMarkerForSample(marker, state, false); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(marker); err != nil {
+			t.Fatalf("%s sample cleared an exhausted marker: %v", state, err)
+		}
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, "ready", false); err != nil {
+		t.Fatal(err)
+	}
+	for _, state := range []string{"pending", "error"} {
+		if err := syncDiskExhaustedMarkerForSample(marker, state, true); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			t.Fatalf("%s sample paused a healthy agent", state)
+		}
+	}
+}
+
+// The sampler carries its own previous decision, which is what the hysteresis
+// band holds onto. Walking a real directory tree back down past the clear ratio
+// must release the reserve; sitting inside the band must not flap it.
+func TestDiskSamplerHysteresisAcrossSamples(t *testing.T) {
+	const total = 1000
+	s := &diskSampler{path: t.TempDir(), totalBytes: total, method: "directory", state: "partial"}
+
+	step := func(bytes int64) resourceUsage {
+		t.Helper()
+		return s.decide(diskUsage(total, bytes, "directory", "partial", time.Now()))
+	}
+
+	if u := step(950); !u.DiskReserveReached {
+		t.Fatalf("95%% of the allocation did not trip the reserve: %+v", u)
+	}
+	if u := step(850); !u.DiskReserveReached {
+		t.Fatalf("85%% is inside the hysteresis band and must hold the previous decision: %+v", u)
+	}
+	if u := step(750); u.DiskReserveReached {
+		t.Fatalf("75%% is below the clear ratio and must release the reserve: %+v", u)
+	}
+	if u := step(850); u.DiskReserveReached {
+		t.Fatalf("85%% after recovery must hold released, not re-trip: %+v", u)
+	}
+}
+
+// A sidecar container restart must not resume a runtime the control plane still
+// considers exhausted.
+//
+// The sidecar is a native sidecar with RestartPolicy:Always, so the kubelet can
+// restart it on its own while the pod and the agent container carry on. Its
+// hysteresis state is in memory; the pause marker on the shared runtime-control
+// emptyDir is not. A sample inside the hold band resolves to whatever the
+// previous decision was, so a sampler that restarts believing "not exhausted"
+// decides false at 85%, removes the marker, and un-pauses the runtime — while
+// the control plane, working from the Agent's durable status, still reports
+// DiskExhausted. Seeding from the marker is what keeps the two callers agreeing.
+func TestDiskSamplerSeedsHysteresisFromPauseMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if err := syncDiskExhaustedMarker(marker, true); err != nil {
+		t.Fatal(err)
+	}
+
+	const total = 1000
+	const inBand = 850 // 85%: between ClearRatio and TripRatio
+
+	newSampler := func(seed bool) *diskSampler {
+		s := newDiskSampler(t.TempDir(), "/proc/self/mountinfo", total, nil, seed)
+		s.method = "directory"
+		return s
+	}
+
+	// Restarted WITHOUT the seed — the bug this guards.
+	cold := newSampler(false)
+	if u := cold.decide(diskUsage(total, inBand, "directory", "partial", time.Now())); u.DiskReserveReached {
+		t.Fatal("unseeded sampler unexpectedly held exhausted; this test can no longer detect the regression")
+	}
+
+	// Restarted WITH the marker seed — what main.go now does.
+	warm := newSampler(diskExhaustedMarkerPresent(marker))
+	usage := warm.decide(diskUsage(total, inBand, "directory", "partial", time.Now()))
+	if !usage.DiskReserveReached {
+		t.Fatalf("restarted sidecar dropped the exhausted verdict inside the hold band: %+v", usage)
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, usage.DiskUsageState, usage.DiskReserveReached); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err != nil {
+		t.Fatalf("restarted sidecar removed the pause marker and resumed the runtime: %v", err)
+	}
+
+	// And once usage genuinely falls below the clear ratio it still releases.
+	released := warm.decide(diskUsage(total, 700, "directory", "partial", time.Now()))
+	if released.DiskReserveReached {
+		t.Fatalf("seeded sampler could not release below the clear ratio: %+v", released)
+	}
+	if err := syncDiskExhaustedMarkerForSample(marker, released.DiskUsageState, released.DiskReserveReached); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("marker survived a genuine recovery: %v", err)
+	}
+}
+
+// An absent marker means the runtime is not paused — the state after a whole-pod
+// recreation, where the emptyDir goes with the pod and the agent container comes
+// back with a fresh session. Seeding false there is correct, not a gap.
+func TestDiskSamplerSeedsHealthyWhenNoMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "control", "disk-exhausted")
+	if diskExhaustedMarkerPresent(marker) {
+		t.Fatal("no marker was written, but one was reported present")
+	}
+	s := newDiskSampler(t.TempDir(), "/proc/self/mountinfo", 1000, nil, diskExhaustedMarkerPresent(marker))
+	if u := s.decide(diskUsage(1000, 850, "directory", "partial", time.Now())); u.DiskReserveReached {
+		t.Fatalf("a fresh pod with no pause marker started out exhausted: %+v", u)
 	}
 }
