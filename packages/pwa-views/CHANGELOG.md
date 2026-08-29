@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.36.6 — 2026-08-28
+
+### Changed
+- Agent Detail now explains that a Claude Code OAuth credential may be missing,
+  expired, or invalid while preserving the existing re-authorization action.
+
 ## 0.36.5 — 2026-08-28
 
 ### Added

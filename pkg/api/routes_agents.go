@@ -491,6 +491,8 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		// agent looks healthy. Surface the probe's diagnosis wherever
 		// the PWA shows blockedReason (canary regression 2026-08-22).
 		resp.BlockedReason = c.Message
+	} else if a.Status.Phase == kyberv1.AgentPhaseNeedsAuth && a.Spec.Runtime == "claude-code" && authType == kyberv1.AgentAuthTypeOAuth {
+		resp.BlockedReason = "Claude Code OAuth credential is missing, expired, or invalid. Re-authorize to resume."
 	}
 	if a.Spec.IdentityRepo.Repo != "" {
 		ir := &agentIdentityRepoResponse{
