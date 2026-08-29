@@ -452,3 +452,55 @@ func TestStatusEvent_MemoryOOMUpdatesLastKernelOOMKillAt(t *testing.T) {
 			got.Status.LastKernelOOMKillAt.Time, want)
 	}
 }
+
+// After an online PVC grow the control plane must decide on the allocation the
+// SIDECAR measured against, not the spec's new larger one.
+//
+// KYBER_AGENT_DISK_BYTES is a pod env var read once at sidecar start, so a
+// resize never reaches a running pod. Deciding on the spec value would clear the
+// Agent phase while the sidecar — still dividing by the old allocation — keeps
+// the runtime paused through its marker. The agent would report Running and
+// answer nothing, which is the failure shape this whole lifecycle exists to make
+// visible rather than to create.
+func TestStatusEvent_DiskReserveUsesTheAllocationTheSidecarMeasured(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		// Spec has already been grown to 400; the running sidecar still has 100.
+		Spec: kyberv1.AgentSpec{Resources: kyberv1.AgentResources{
+			CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("400"),
+		}},
+		Status: kyberv1.AgentStatus{Activity: &kyberv1.ActivityStatus{Resources: &kyberv1.AgentResourceUsage{
+			DiskUsedBytes: 95, DiskTotalBytes: 100, DiskReserveReached: true,
+			DiskUsageMethod: "directory", DiskUsageState: "partial",
+		}}},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	// 95 of the sidecar's 100 is still exhausted; 95 of the spec's 400 would not be.
+	body := `{"type":"resource_usage","at":"2026-08-27T12:01:00Z","resources":{"diskUsedBytes":95,"diskTotalBytes":100,"diskUsageMethod":"directory","diskUsageState":"partial"}}`
+	resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("status-event: got %d", resp.StatusCode)
+	}
+
+	got := &kyberv1.Agent{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "alice"}, got); err != nil {
+		t.Fatal(err)
+	}
+	usage := got.Status.Activity.Resources
+	if !usage.DiskReserveReached {
+		t.Fatalf("a grown spec released the phase while the sidecar still measures 95%%: %+v", usage)
+	}
+	// The reported total still follows the spec, so the operator sees the new size.
+	if usage.DiskTotalBytes != 400 {
+		t.Fatalf("reported total did not follow the grown allocation: %+v", usage)
+	}
+}

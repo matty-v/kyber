@@ -132,6 +132,16 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		memoryLimit := agent.Spec.Resources.Memory.Value()
 		ev.Resources.CPULimitMillicores = &cpuLimit
 		ev.Resources.MemoryLimitBytes = &memoryLimit
+		// The allocation the SIDECAR measured against, captured before the
+		// spec's value overwrites it. The two differ after an online PVC grow:
+		// KYBER_AGENT_DISK_BYTES is a pod env var read once at sidecar start
+		// (status_sidecar.go:85, main.go:377), so a resize does not reach a
+		// running pod. Deciding on the spec's larger number while the sidecar
+		// still holds the old one would clear the phase while the sidecar keeps
+		// the pause marker in place — the agent would report Running and answer
+		// nothing. Decide on what the pod actually measured; the operator's
+		// Start recreates the pod, and the new sidecar picks up the grow.
+		sampledTotal := ev.Resources.DiskTotalBytes
 		diskTotal := agent.Spec.Resources.Disk.Value()
 		if diskTotal > 0 {
 			ev.Resources.DiskTotalBytes = diskTotal
@@ -152,10 +162,18 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		if previous := agent.Status.Activity.Resources; previous != nil {
 			previousReached = previous.DiskReserveReached
 		}
+		//
+		// An old sidecar sends no DiskUsageState, so Decide returns the previous
+		// decision for it whatever total is passed — its node-level statfs
+		// figure cannot exhaust a fleet through this path.
+		decideTotal := sampledTotal
+		if decideTotal <= 0 {
+			decideTotal = ev.Resources.DiskTotalBytes
+		}
 		ev.Resources.DiskReserveReached = diskreserve.Decide(
 			previousReached,
 			ev.Resources.DiskUsedBytes,
-			ev.Resources.DiskTotalBytes,
+			decideTotal,
 			ev.Resources.DiskUsageState,
 		)
 		// A cgroup-namespaced sidecar sees its own 100m/64Mi cgroup, not the

@@ -356,24 +356,11 @@ func TestUnmeasuredDiskSampleLeavesMarkerAlone(t *testing.T) {
 // band holds onto. Walking a real directory tree back down past the clear ratio
 // must release the reserve; sitting inside the band must not flap it.
 func TestDiskSamplerHysteresisAcrossSamples(t *testing.T) {
-	dir := t.TempDir()
 	const total = 1000
-
-	var used int64
-	s := &diskSampler{
-		path:       dir,
-		totalBytes: total,
-		method:     "directory",
-		state:      "partial",
-		walk:       func(string) (int64, bool, error) { return used, true, nil },
-	}
+	s := &diskSampler{path: t.TempDir(), totalBytes: total, method: "directory", state: "partial"}
 
 	step := func(bytes int64) resourceUsage {
 		t.Helper()
-		used = bytes
-		s.mu.Lock()
-		s.usedBytes, s.sampledAt, s.state = bytes, time.Now(), "partial"
-		s.mu.Unlock()
 		return s.decide(diskUsage(total, bytes, "directory", "partial", time.Now()))
 	}
 
@@ -414,7 +401,6 @@ func TestDiskSamplerSeedsHysteresisFromPauseMarker(t *testing.T) {
 	newSampler := func(seed bool) *diskSampler {
 		s := newDiskSampler(t.TempDir(), "/proc/self/mountinfo", total, nil, seed)
 		s.method = "directory"
-		s.usedBytes, s.state, s.sampledAt = inBand, "partial", time.Now()
 		return s
 	}
 
