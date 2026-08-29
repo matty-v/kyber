@@ -412,7 +412,10 @@ func runHeartbeats(ctx context.Context, cfg config, logger *slog.Logger, metrics
 	}
 
 	oom := newOOMDetector(cfg.CgroupMemoryEventsPath)
-	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath, cfg.AgentDiskBytes, logger.Warn)
+	// Seed from the pause marker so a restarted sidecar does not resume a
+	// runtime the control plane still considers exhausted.
+	resources := newResourceSampler(persistPath, cfg.CgroupMemoryEventsPath, cfg.AgentDiskBytes, logger.Warn,
+		diskExhaustedMarkerPresent(diskExhaustedMarker))
 	resourceReadErrLogged := false
 	resourcePostErrLogged := false
 	logfn := func(format string, args ...any) { logger.Info(fmt.Sprintf(format, args...)) }

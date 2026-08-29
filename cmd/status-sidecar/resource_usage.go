@@ -47,6 +47,25 @@ func syncDiskExhaustedMarker(path string, reached bool) error {
 	return nil
 }
 
+// diskExhaustedMarkerPresent reports whether the runtime is currently paused,
+// which is the sidecar's only durable record of its own previous verdict.
+//
+// The sidecar is a native sidecar with RestartPolicy:Always, so the kubelet
+// restarts it independently of the pod (kyber#575). Its in-memory decision dies
+// with the process while the pause marker — on the runtime-control emptyDir it
+// shares with the agent container — does not. Without seeding from it, a
+// restarted sidecar starts from "not exhausted", and a sample inside the
+// hysteresis band then resolves to false and REMOVES the marker: the runtime
+// resumes while the control plane, working from the Agent's durable status,
+// still reports DiskExhausted.
+//
+// On whole-pod recreation the emptyDir goes with the pod and the runtime comes
+// back unpaused, so an absent marker is the correct seed there too.
+func diskExhaustedMarkerPresent(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func syncDiskExhaustedMarkerForSample(path, state string, reached bool) error {
 	// "ready" and "partial" both carry a measured figure, and the hysteresis in
 	// diskreserve.Decide has already resolved it into this boolean, so the
@@ -72,14 +91,14 @@ type resourceSampler struct {
 	disk         *diskSampler
 }
 
-func newResourceSampler(persistPath, cgroupEventsPath string, diskTotalBytes int64, warn func(string, ...any)) *resourceSampler {
+func newResourceSampler(persistPath, cgroupEventsPath string, diskTotalBytes int64, warn func(string, ...any), reserveReached bool) *resourceSampler {
 	cgroupPath := ""
 	if cgroupEventsPath != "" {
 		cgroupPath = strings.TrimSuffix(cgroupEventsPath, "/memory.events")
 	}
 	return &resourceSampler{
 		cgroupPath: cgroupPath,
-		disk:       newDiskSampler(persistPath, "/proc/self/mountinfo", diskTotalBytes, warn),
+		disk:       newDiskSampler(persistPath, "/proc/self/mountinfo", diskTotalBytes, warn, reserveReached),
 	}
 }
 
@@ -132,25 +151,27 @@ type diskSampler struct {
 	lastStart time.Time
 	running   atomic.Bool
 
-	// reserveReached is the sampler's own last decision. Hysteresis needs a
-	// previous value, and the sidecar has no view of the Agent's status, so it
-	// keeps one. A fresh sidecar starts false and re-derives on its first
-	// completed walk; the control plane holds the durable copy.
+	// reserveReached is the sampler's own last decision, which is the previous
+	// value the hysteresis band needs. The sidecar has no view of the Agent's
+	// status, so a restarted process seeds this from the pause marker rather
+	// than from false — see diskExhaustedMarkerPresent for what goes wrong
+	// otherwise.
 	reserveReached bool
 }
 
-func newDiskSampler(path, mountInfoPath string, totalBytes int64, warn func(string, ...any)) *diskSampler {
+func newDiskSampler(path, mountInfoPath string, totalBytes int64, warn func(string, ...any), reserveReached bool) *diskSampler {
 	method := "directory"
 	if root, err := mountRoot(mountInfoPath, path); err == nil && root == "/" {
 		method = "statfs"
 	}
 	return &diskSampler{
-		path:       path,
-		totalBytes: totalBytes,
-		method:     method,
-		walk:       directoryUsage,
-		warn:       warn,
-		state:      "pending",
+		path:           path,
+		totalBytes:     totalBytes,
+		method:         method,
+		walk:           directoryUsage,
+		warn:           warn,
+		state:          "pending",
+		reserveReached: reserveReached,
 	}
 }
 
