@@ -1172,6 +1172,32 @@ func TestAgents_PatchSessionResume(t *testing.T) {
 	}
 }
 
+func TestAgents_PatchRequestReplyEnabled(t *testing.T) {
+	h, k := buildAgentHandler(t, sampleAgentCRD("dave"))
+	for _, value := range []bool{true, false} {
+		req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"requestReplyEnabled": value})
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("PATCH %v: want 200, got %d: %s", value, rr.Code, rr.Body.String())
+		}
+		var got kyberv1.Agent
+		if err := k.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+			t.Fatalf("getting agent: %v", err)
+		}
+		if got.Spec.RequestReplyEnabled != value {
+			t.Errorf("RequestReplyEnabled=%v, want %v", got.Spec.RequestReplyEnabled, value)
+		}
+		var resp api.AgentResponse
+		if err := json.NewDecoder(rr.Body).Decode(&resp); err != nil {
+			t.Fatalf("decoding: %v", err)
+		}
+		if resp.RequestReplyEnabled != value {
+			t.Errorf("response RequestReplyEnabled=%v, want %v", resp.RequestReplyEnabled, value)
+		}
+	}
+}
+
 func TestAgents_PatchStartupPromptRejectsOverLimit(t *testing.T) {
 	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
 	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"startupPrompt": strings.Repeat("界", 32769)})

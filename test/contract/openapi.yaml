@@ -1668,6 +1668,9 @@ components:
         sessionResume:
           type: boolean
           description: Resume the previous harness session after an unexpected session end (pod recreate, preemption, crash). Intentional session restarts always start fresh.
+        requestReplyEnabled:
+          type: boolean
+          description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
         currentModel:
           type: string
           description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
@@ -1728,6 +1731,9 @@ components:
         sessionResume:
           type: boolean
           description: Resume the previous harness session after an unexpected session end (pod recreate, preemption, crash). Intentional session restarts always start fresh.
+        requestReplyEnabled:
+          type: boolean
+          description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
         force:
           type: boolean
           description: Skip catalog validation of the model id (write-only).

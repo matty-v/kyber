@@ -93,6 +93,10 @@ func (s *Server) submitAgentRequest(w http.ResponseWriter, r *http.Request, agen
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
+	if !agent.Spec.RequestReplyEnabled {
+		writeJSONError(w, http.StatusForbidden, "agent_requests_disabled", "bounded requests are disabled for this agent")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxAgentRequestBodyBytes)
 	decoder := json.NewDecoder(r.Body)

@@ -12,10 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/inbound"
 	"github.com/matty-v/kyber/pkg/requeststore"
 )
@@ -30,6 +32,7 @@ type requestHarness struct {
 	handler http.Handler
 	store   requeststore.Store
 	queue   *inbound.Queue
+	k8s     client.Client
 }
 
 func buildRequestHarness(t *testing.T, store requeststore.Store, agents ...string) *requestHarness {
@@ -43,7 +46,9 @@ func buildRequestHarnessWithHandler(t *testing.T, store requeststore.Store, hand
 	scheme := mustNewScheme(t)
 	objects := make([]clientObject, 0, len(agents))
 	for _, name := range agents {
-		objects = append(objects, bareAgent(name))
+		agent := bareAgent(name)
+		agent.Spec.RequestReplyEnabled = true
+		objects = append(objects, agent)
 	}
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, object := range objects {
@@ -61,7 +66,7 @@ func buildRequestHarnessWithHandler(t *testing.T, store requeststore.Store, hand
 			{Name: "pwa", Key: lifecycleKey, Scopes: []string{"lifecycle:write"}},
 		},
 	}
-	return &requestHarness{handler: server.BuildHandler(), store: store, queue: queue}
+	return &requestHarness{handler: server.BuildHandler(), store: store, queue: queue, k8s: server.K8sClient}
 }
 
 // clientObject is the subset accepted by fake.ClientBuilder.WithObjects.
@@ -164,6 +169,44 @@ func TestAgentRequests_SubmitAndReadCompletedResponse(t *testing.T) {
 	}
 	if completed.Status != "completed" || completed.Response != "Kyber runs agents." || completed.Prompt != "" {
 		t.Fatalf("GET response = %+v", completed)
+	}
+}
+
+func TestAgentRequests_PerAgentOptInBlocksOnlyNewSubmissions(t *testing.T) {
+	store := newRequestMemoryStore(t, requeststore.DefaultLimits())
+	h := buildRequestHarness(t, store, "kiosk")
+
+	submitted := h.do(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey,
+		map[string]string{"prompt": "Run /features"})
+	if submitted.Code != http.StatusAccepted {
+		t.Fatalf("initial POST code = %d, body = %s", submitted.Code, submitted.Body.String())
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(submitted.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal POST: %v", err)
+	}
+
+	agent := &kyberv1.Agent{}
+	key := types.NamespacedName{Name: "kiosk", Namespace: "kyber-system"}
+	if err := h.k8s.Get(context.Background(), key, agent); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+	agent.Spec.RequestReplyEnabled = false
+	if err := h.k8s.Update(context.Background(), agent); err != nil {
+		t.Fatalf("disable requests: %v", err)
+	}
+
+	blocked := h.do(t, http.MethodPost, "/api/v1/agents/kiosk/requests", requestWriteKey,
+		map[string]string{"prompt": "Run /joke"})
+	if blocked.Code != http.StatusForbidden || !strings.Contains(blocked.Body.String(), "agent_requests_disabled") {
+		t.Fatalf("disabled POST code = %d, body = %s", blocked.Code, blocked.Body.String())
+	}
+
+	read := h.do(t, http.MethodGet, "/api/v1/agents/kiosk/requests/"+created.ID, requestReadKey, nil)
+	if read.Code != http.StatusOK {
+		t.Fatalf("existing GET code = %d, body = %s", read.Code, read.Body.String())
 	}
 }
 

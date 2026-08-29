@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { DropdownMenu, DropdownMenuContent } from '../components/ui/dropdown-menu'
-import { LifecycleMenuItems, MismatchBadges, SessionResumeCard, StatusCardBody } from './AgentDetail'
+import { LifecycleMenuItems, MismatchBadges, RequestReplyCard, SessionResumeCard, StatusCardBody } from './AgentDetail'
 import type { Agent, AgentPhase, AgentStatus } from '../lib/types'
 
 // AgentDetail.test.tsx — kyber#355 regression coverage for the Status
@@ -452,6 +452,30 @@ describe('AgentDetail SessionResumeCard', () => {
     const user = userEvent.setup()
     const onChange = vi.fn()
     render(<SessionResumeCard enabled={false} pending={true} onChange={onChange} />)
+
+    const box = screen.getByRole('checkbox')
+    expect(box).toBeDisabled()
+    await user.click(box)
+    expect(onChange).not.toHaveBeenCalled()
+  })
+})
+
+describe('AgentDetail RequestReplyCard', () => {
+  it('is opt-in and reports the flipped value', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<RequestReplyCard enabled={false} pending={false} onChange={onChange} />)
+
+    const box = screen.getByRole('checkbox')
+    expect(box).not.toBeChecked()
+    await user.click(box)
+    expect(onChange).toHaveBeenCalledWith(true)
+  })
+
+  it('blocks double-submits while saving', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    render(<RequestReplyCard enabled={true} pending={true} onChange={onChange} />)
 
     const box = screen.getByRole('checkbox')
     expect(box).toBeDisabled()

@@ -73,6 +73,8 @@ export interface Agent {
   // session end (pod recreate, preemption, crash). Intentional session
   // restarts always start fresh.
   sessionResume?: boolean
+  // Opt-in gate for authenticated bounded request/reply submissions.
+  requestReplyEnabled?: boolean
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
@@ -379,6 +381,7 @@ export interface CreateAgentRequest {
   model?: string
   startupPrompt?: string
   sessionResume?: boolean
+  requestReplyEnabled?: boolean
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string
@@ -453,6 +456,7 @@ export interface CodexDeviceAuthStatus {
 export interface PatchAgentRequest {
   startupPrompt?: string
   sessionResume?: boolean
+  requestReplyEnabled?: boolean
 }
 
 export interface SetModelRequest {
