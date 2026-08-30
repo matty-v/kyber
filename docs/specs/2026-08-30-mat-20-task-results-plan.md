@@ -27,7 +27,8 @@
 
 - [x] Check in the MAT-20 design with references to MAT-6, PR #183, and MAT-19.
 - [x] Run repository documentation checks.
-- [ ] Commit, push, open a stacked PR, and update Linear.
+- [x] Commit, push, and open stacked PR #185. Linear is updated separately
+  because its comment is external state.
 
 ## Progress log
 
