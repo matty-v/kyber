@@ -135,10 +135,13 @@ It cannot silently become a dependency while Kyber pins 0.146.0.
 
 ## Pending live evidence
 
-The dedicated `test-kyber-dev-agents` workflow could not run in this agent
-environment because `kubectl` is unavailable. No live test agent was created,
-so no cleanup is outstanding. The following remain required before this spike
-is complete:
+The dedicated `test-kyber-dev-agents` workflow initially found no `kubectl`
+client. A current official client was installed locally, after which the hard
+guard stopped because the active GCP account requires interactive
+reauthentication. The guard could not verify the exact project, cluster,
+context, and namespace, so it was not bypassed with a raw API credential. No
+live test agent was created and no cleanup is outstanding. The following remain
+required before this spike is complete:
 
 - one purpose-built Claude Code agent at the deployed pin;
 - one purpose-built Codex agent at the deployed pin;

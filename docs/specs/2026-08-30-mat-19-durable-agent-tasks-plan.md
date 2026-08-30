@@ -81,6 +81,7 @@ retention, Get, and List.
   conservative ambiguity. Opened MAT-28 and found managed `UserPromptSubmit`
   hooks in both pinned integrations plus a native Codex turn ID; generated the
   installed Codex 0.151 app-server schema as a stronger comparison. Updated the
-  draft so `dispatched` requires a persisted positive hook receipt. Live
-  dev-cluster restart evidence remains pending because this environment has no
-  `kubectl`; no test agent was created.
+  draft so `dispatched` requires a persisted positive hook receipt. Installed
+  the missing `kubectl` client, but the live workflow's hard guard then stopped
+  on expired interactive GCP credentials before it could verify the cluster.
+  No test agent was created.
