@@ -127,8 +127,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pursue design: [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation) |
 | G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks) |
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pursue design: [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization) |
-| G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review next |
-| G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
+| G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Pursue design: [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest) |
+| G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Review next |
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer by default |
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review with G5 |
 | G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | A2A-only |
@@ -408,6 +408,52 @@ model-generated claims automatically.
 **Decision question:** is a curated, validated capability manifest worth
 designing as a native Kyber discovery feature for gateways, UIs, and agent
 catalogs, independent of A2A?
+
+**Decision:** pursue the design in
+[MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest).
+Matt made this decision on 2026-08-30. MAT-24 is design-only and begins with a
+Claude Code/Codex capability audit under the thin-adapter guardrail.
+
+### G7 decision brief: live event subscriptions
+
+G7 asks whether task clients should receive ordered progress and result events
+as they happen instead of repeatedly polling the current task representation.
+
+**Current Kyber capability:** the PWA receives control-plane and CRD changes on
+a WebSocket, and each harness has its own live execution behavior. Bounded API
+requests expose only polling and a final response. Kyber has no durable,
+task-scoped event sequence that an external caller can resume after disconnect.
+
+**A2A-required future state:** every accepted task transition, status Message,
+and Artifact update produces an ordered event authorized exactly like the
+task. A subscriber can reconnect from a cursor, receive retained missed events,
+then follow live updates without gaps between replay and fanout. The A2A edge
+can project that native log through SSE while normal task reads remain the
+authoritative current snapshot.
+
+**Standalone Kyber value:** operator UIs, API automations, and other agents can
+show long-running progress promptly and efficiently. Resumability avoids
+fragile polling loops and lets callers recover after mobile or network
+disconnects. The value is strongest once G1 and G2 produce durable, meaningful
+task updates.
+
+**Cost and risk:** approximately three to five engineer weeks after G1 and G2
+for a transactional event sequence, retention and cursor rules, replay/live
+handoff, authorization, backpressure, connection limits, SSE/API integration,
+and restart tests. Harness-native events should feed G2 through thin adapters;
+G7 must not become a second transcript or token-streaming system. Slow clients,
+unbounded retention, leaked cross-principal events, and replay gaps are the
+main risks.
+
+**Proposed native cut:** persist one monotonic event sequence per task for
+state, bounded status, and result metadata already accepted by G2. Expose a
+principal-scoped resumable subscription with bounded retention, heartbeats,
+backpressure, and explicit cursor-expired behavior. Exclude raw transcript
+chunks, hidden reasoning, token deltas, and arbitrary harness events.
+
+**Decision question:** is a durable, resumable task event stream worth
+designing as a native Kyber feature for responsive UIs and API consumers,
+independent of A2A?
 
 ## 3. Direction: two projects, not one
 

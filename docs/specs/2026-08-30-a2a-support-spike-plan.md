@@ -93,3 +93,6 @@ starting a transport implementation.
   Added that guardrail and a harness-capability audit to MAT-6 and MAT-19–22,
   created MAT-23, recorded G5 as pursued, and prepared G6 (machine-readable
   public capability contract) for the next decision.
+- 2026-08-30: Matt chose to pursue G6. Created MAT-24 under the thin-adapter
+  guardrail, recorded the curated capability manifest as pursued, and prepared
+  G7 (live event subscriptions) for the next independent decision.
