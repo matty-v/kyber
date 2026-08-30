@@ -104,3 +104,7 @@ starting a transport implementation.
   in the initial A2A profile with a concrete-consumer revisit trigger, and
   prepared G9 (federated external identity) with a recommendation to use G5's
   static service principals initially and defer OAuth2/OIDC.
+- 2026-08-30: Matt chose to defer G9. Recorded MAT-23 service principals as the
+  initial A2A security profile and prepared G10 (Agent Card projection) with a
+  recommendation to bundle this A2A-only projection into the eventual protocol
+  adapter rather than create another native feature design.

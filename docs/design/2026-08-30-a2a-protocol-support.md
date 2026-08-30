@@ -130,8 +130,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Pursue design: [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest) |
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams) |
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer; revisit for a concrete disconnected consumer |
-| G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review next; defer federation recommended |
-| G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | A2A-only |
+| G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Defer OAuth2/OIDC; G5 is the initial security profile |
+| G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | Review next; bundle with A2A adapter recommended |
 | G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | A2A-only |
 | G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Last |
 
@@ -548,6 +548,51 @@ grant/credential flow, audience, tenant mapping, and revocation expectations.
 **Recommendation and decision question:** treat G5 as sufficient for the
 initial A2A security profile and defer federated OAuth2/OIDC. Is there a known
 cross-organization identity use case that warrants pursuing G9 design now?
+
+**Decision:** defer federated OAuth2/OIDC. Matt made this decision on
+2026-08-30. MAT-23's scoped, rotatable service principals define the initial
+A2A machine-to-machine security profile. Revisit G9 only for a concrete issuer,
+flow, audience, tenant mapping, and revocation requirement.
+
+### G10 decision brief: A2A Agent Card projection
+
+G10 asks whether Kyber should publish the normative A2A Agent Card and
+discovery routes by projecting the native capability manifest from G6. Unlike
+G6, this is protocol adapter work with little independent Kyber value.
+
+**Current Kyber capability:** there is no public Agent Card. MAT-24 will design
+the curated native contract containing stable public capabilities, media modes,
+task features, availability, and the security information needed for safe
+discovery.
+
+**A2A-required future state:** an A2A client can retrieve a valid Agent Card at
+the applicable discovery location and learn the agent's identity, skills,
+declared interfaces, security schemes, input/output modes, and optional
+features. Every claim is derived from the operator-approved G6 contract and
+actual deployed A2A features; unavailable or unsupported capabilities are not
+invented from harness metadata.
+
+**Standalone Kyber value:** negligible beyond the native manifest. Kyber-owned
+UIs, gateways, and catalogs should consume G6 directly. The Agent Card earns
+its place only as the standards-compatible representation used by external A2A
+clients.
+
+**Cost and risk:** approximately three to five engineer days once G6 and the
+initial G5 security profile exist, covering deterministic projection,
+well-known and tenant/agent routing, caching, version/media type, validation,
+and tests. The primary risk is advertising optional features before their
+backing gaps are implemented or allowing deployment details to drift from the
+card.
+
+**Proposed cut:** keep the Agent Card a read-only deterministic projection of
+G6 plus deployed adapter capabilities. Do not create a second operator-edited
+source of truth. Advertise the G5 Bearer scheme, omit deferred webhooks and
+OIDC, and validate generated cards against the pinned A2A schema/TCK fixtures.
+
+**Recommendation and decision question:** do not open an independent native
+feature design. Bundle G10 into the eventual A2A adapter issue with G11 and its
+conformance work. Is that the right disposition, or should Agent Card
+projection get a separate design issue now?
 
 ## 3. Direction: two projects, not one
 
