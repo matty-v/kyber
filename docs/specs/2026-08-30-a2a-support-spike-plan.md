@@ -71,3 +71,6 @@ starting a transport implementation.
   value. Reframed the recommendation as a twelve-item dependency-ordered gap
   register, replaced the monolithic delivery choice, and added the first G1
   decision brief for durable agent tasks.
+- 2026-08-30: Matt chose to pursue G1 as a separate design. Created MAT-19 with
+  MAT-6 and PR #183 references, recorded G1 as pursued, and prepared G2
+  (task-scoped progress and typed results) for the next independent decision.

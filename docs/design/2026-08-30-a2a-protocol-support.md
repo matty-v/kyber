@@ -105,8 +105,8 @@ implementation issue; it does not authorize the later gaps automatically.
 
 | Order | Gap | Current state | Future state | Native Kyber value | Depends on | Rough size | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Review first |
-| G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded text/data artifacts | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pending G1 |
+| G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Pursue design: [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks) |
+| G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded text/data artifacts | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Review next |
 | G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pending G1 |
 | G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pending G1 |
@@ -156,10 +156,53 @@ risks are retention cost, a false guarantee of execution durability while the
 runtime is unavailable, and allowing a generic task API to become an unbounded
 prompt or data-ingestion surface.
 
-**Decision question:** does Kyber want a durable, externally addressable agent
-task API for its own product, independent of A2A? If no, stop the inbound A2A
-path here. If yes, create a dedicated G1 design issue and review its API and
-execution guarantees before considering G2.
+**Decision:** pursue the design in
+[MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks).
+Matt made this decision on 2026-08-30 based on the feature's native automation
+value. MAT-19 is design-only and explicitly excludes G2–G12.
+
+### G2 decision brief: explicit progress and typed results
+
+G2 asks whether a durable Kyber task should expose structured progress and
+results instead of only a final text response. The decision can be made now,
+but implementation remains conditional on an approved G1 design.
+
+**Current Kyber capability:** the request/reply MCP tool accepts one bounded
+string and completes the request in a single atomic transition. Agent activity
+status can say that the whole runtime is working or idle, and transcripts may
+contain intermediate work, but neither is tied to one request or safe to expose
+as that request's result. A caller cannot distinguish “started,” “halfway,” or
+“produced one result while continuing.”
+
+**A2A-required future state:** the runtime can make validated, task-scoped
+status transitions and attach status Messages or output Artifacts. Artifacts
+contain one or more typed Parts, including text and structured JSON in the
+first bounded implementation. The task service rejects invalid transitions,
+cross-agent updates, oversized content, and updates after a terminal state.
+Streaming delivery remains G7; G2 only records queryable current state and
+results.
+
+**Standalone Kyber value:** API consumers and operator UIs can show meaningful
+progress for long-running work without reading a transcript or inferring state
+from global runtime activity. Typed JSON results let automations consume agent
+output without parsing prose. Multiple named results support reports, patches,
+or summaries while keeping internal reasoning private.
+
+**Cost and risk:** approximately two to three engineer weeks after G1 for the
+task-update contract, loopback MCP tools, sidecar/internal API forwarding,
+transition validation, bounded persistence, read shapes, and both-runtime
+tests. The main risk is asking a model-driven runtime to report progress
+reliably: updates are cooperative, not proof of real-world side effects. Typed
+results can also become an unbounded file-transfer feature unless G2 starts
+with strict text/JSON modes and byte/count caps.
+
+**Proposed native cut:** support a small transition vocabulary plus status text
+and named text/JSON results. Exclude raw files, remote URLs, incremental event
+delivery, cancellation, and follow-up input; those belong to later gaps.
+
+**Decision question:** is task-scoped progress plus bounded typed text/JSON
+output worth designing as a Kyber feature for automation and operator UX,
+independent of A2A?
 
 ## 3. Direction: two projects, not one
 
