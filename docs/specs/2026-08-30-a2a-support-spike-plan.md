@@ -108,3 +108,7 @@ starting a transport implementation.
   initial A2A security profile and prepared G10 (Agent Card projection) with a
   recommendation to bundle this A2A-only projection into the eventual protocol
   adapter rather than create another native feature design.
+- 2026-08-30: Matt chose to bundle G10 with the eventual A2A adapter. Recorded
+  MAT-24 as the sole native capability source, opened no separate G10 issue,
+  and prepared G11 (A2A HTTP+JSON binding) as the thin standards adapter that
+  delivers the original interoperability goal.

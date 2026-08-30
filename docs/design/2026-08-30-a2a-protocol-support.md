@@ -131,8 +131,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams) |
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer; revisit for a concrete disconnected consumer |
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Defer OAuth2/OIDC; G5 is the initial security profile |
-| G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | Review next; bundle with A2A adapter recommended |
-| G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | A2A-only |
+| G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | Bundle with G11; no separate native issue |
+| G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | Review next; pursue for formal A2A support |
 | G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Last |
 
 The sizes are intentionally not additive estimates for one project. Each gap
@@ -593,6 +593,56 @@ OIDC, and validate generated cards against the pinned A2A schema/TCK fixtures.
 feature design. Bundle G10 into the eventual A2A adapter issue with G11 and its
 conformance work. Is that the right disposition, or should Agent Card
 projection get a separate design issue now?
+
+**Decision:** bundle G10 with the A2A adapter. Matt made this decision on
+2026-08-30. No separate native design issue will be opened; MAT-24 remains the
+single capability source of truth and G11 owns its normative projection.
+
+### G11 decision brief: A2A HTTP+JSON binding
+
+G11 is the actual standards adapter: whether Kyber should expose the approved
+native task, capability, and authorization contracts through one declared A2A
+HTTP+JSON binding. It has little independent product value, but it is the
+feature that delivers formal A2A interoperability.
+
+**Current Kyber capability:** Kyber has its own authenticated agent request
+routes and runtime adapters, but no A2A URLs, wire types, method semantics,
+version negotiation, Agent Card, streaming projection, or normative error
+mapping.
+
+**A2A-required future state:** an external A2A client can discover a Kyber
+agent, authenticate with the advertised G5 security scheme, send and retrieve
+Messages/Tasks, continue or cancel when supported, retrieve typed Artifacts,
+and subscribe to events through the declared HTTP+JSON interface. Unsupported
+optional capabilities such as push notifications and OIDC are omitted from the
+card and rejected according to the specification. Native Kyber services remain
+the source of truth.
+
+**Standalone Kyber value:** low for existing Kyber clients, which should use
+the native API. The value is standards interoperability: third-party agents,
+gateways, and tooling can call Kyber agents without a Kyber-specific
+integration. This is the explicit outcome of MAT-6 rather than another native
+foundation.
+
+**Cost and risk:** approximately two to four engineer weeks after the required
+native designs are implemented, including G10 projection, HTTP routing and
+media types, official SDK integration where it reduces translation code,
+version/error mapping, security wiring, SSE projection, limits, observability,
+and interoperability tests. The estimate is conditional on a mapping audit;
+the adapter must stay thin. The main risks are semantic drift between native
+and A2A states, accidentally advertising deferred options, and leaking
+cross-principal tasks or internal harness details.
+
+**Proposed cut:** support one pinned A2A 1.0 HTTP+JSON binding backed entirely
+by G1–G7 and the G5 security profile. Bundle the deterministic G10 Agent Card.
+Do not create a parallel task store or agent loop. Declare webhooks and OIDC
+unsupported, map only normalized platform updates, and keep protocol types at
+the edge behind translation tests.
+
+**Recommendation and decision question:** pursue a design-only A2A adapter
+issue if formal interoperability remains the goal. It should reference every
+native dependency, bundle G10, and leave G12 to define the independent
+conformance/release gate. Pursue G11 design?
 
 ## 3. Direction: two projects, not one
 
