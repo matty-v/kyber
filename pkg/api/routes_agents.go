@@ -30,12 +30,13 @@ import (
 
 // CreateAgentRequest is the JSON body for POST /api/v1/agents.
 type CreateAgentRequest struct {
-	Name          string `json:"name"`
-	Machine       string `json:"machine"`
-	Runtime       string `json:"runtime"`
-	Model         string `json:"model"`
-	StartupPrompt string `json:"startupPrompt,omitempty"`
-	SessionResume bool   `json:"sessionResume,omitempty"`
+	Name                string `json:"name"`
+	Machine             string `json:"machine"`
+	Runtime             string `json:"runtime"`
+	Model               string `json:"model"`
+	StartupPrompt       string `json:"startupPrompt,omitempty"`
+	SessionResume       bool   `json:"sessionResume,omitempty"`
+	RequestReplyEnabled bool   `json:"requestReplyEnabled,omitempty"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
 	Resources    agentResourcesRequest    `json:"resources"`
@@ -110,10 +111,11 @@ type agentSecretsRequest struct {
 
 // PatchAgentRequest is the JSON body for PATCH /api/v1/agents/{name}.
 type PatchAgentRequest struct {
-	Model         *string                `json:"model,omitempty"`
-	StartupPrompt *string                `json:"startupPrompt,omitempty"`
-	SessionResume *bool                  `json:"sessionResume,omitempty"`
-	Resources     *agentResourcesRequest `json:"resources,omitempty"`
+	Model               *string                `json:"model,omitempty"`
+	StartupPrompt       *string                `json:"startupPrompt,omitempty"`
+	SessionResume       *bool                  `json:"sessionResume,omitempty"`
+	RequestReplyEnabled *bool                  `json:"requestReplyEnabled,omitempty"`
+	Resources           *agentResourcesRequest `json:"resources,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
 	// PUT-list semantics — callers that want additive semantics can fetch
@@ -163,14 +165,15 @@ var (
 
 // AgentResponse is the JSON representation of an Agent returned by the API.
 type AgentResponse struct {
-	ID            string                `json:"id"`
-	Phase         kyberv1.AgentPhase    `json:"phase"`
-	Machine       string                `json:"machine"`
-	Runtime       string                `json:"runtime"`
-	AuthType      kyberv1.AgentAuthType `json:"authType"`
-	Model         string                `json:"model"`
-	StartupPrompt string                `json:"startupPrompt,omitempty"`
-	SessionResume bool                  `json:"sessionResume,omitempty"`
+	ID                  string                `json:"id"`
+	Phase               kyberv1.AgentPhase    `json:"phase"`
+	Machine             string                `json:"machine"`
+	Runtime             string                `json:"runtime"`
+	AuthType            kyberv1.AgentAuthType `json:"authType"`
+	Model               string                `json:"model"`
+	StartupPrompt       string                `json:"startupPrompt,omitempty"`
+	SessionResume       bool                  `json:"sessionResume,omitempty"`
+	RequestReplyEnabled bool                  `json:"requestReplyEnabled,omitempty"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
@@ -405,15 +408,16 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		authType = kyberv1.AgentAuthTypeOAuth
 	}
 	resp := AgentResponse{
-		ID:            a.Name,
-		Phase:         a.Status.Phase,
-		Machine:       a.Spec.Machine,
-		Runtime:       a.Spec.Runtime,
-		AuthType:      authType,
-		Model:         a.Spec.Model,
-		StartupPrompt: a.Spec.StartupPrompt,
-		SessionResume: a.Spec.SessionResume,
-		CurrentModel:  a.Status.CurrentModel,
+		ID:                  a.Name,
+		Phase:               a.Status.Phase,
+		Machine:             a.Spec.Machine,
+		Runtime:             a.Spec.Runtime,
+		AuthType:            authType,
+		Model:               a.Spec.Model,
+		StartupPrompt:       a.Spec.StartupPrompt,
+		SessionResume:       a.Spec.SessionResume,
+		RequestReplyEnabled: a.Spec.RequestReplyEnabled,
+		CurrentModel:        a.Status.CurrentModel,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
 			Memory: a.Spec.Resources.Memory.String(),
@@ -930,11 +934,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			Namespace: s.Namespace,
 		},
 		Spec: kyberv1.AgentSpec{
-			Machine:       req.Machine,
-			Runtime:       req.Runtime,
-			Model:         req.Model,
-			StartupPrompt: req.StartupPrompt,
-			SessionResume: req.SessionResume,
+			Machine:             req.Machine,
+			Runtime:             req.Runtime,
+			Model:               req.Model,
+			StartupPrompt:       req.StartupPrompt,
+			SessionResume:       req.SessionResume,
+			RequestReplyEnabled: req.RequestReplyEnabled,
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1117,6 +1122,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 
 	if req.SessionResume != nil {
 		agent.Spec.SessionResume = *req.SessionResume
+	}
+
+	if req.RequestReplyEnabled != nil {
+		agent.Spec.RequestReplyEnabled = *req.RequestReplyEnabled
 	}
 
 	if req.Model != nil {

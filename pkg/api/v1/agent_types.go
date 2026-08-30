@@ -586,6 +586,13 @@ type AgentSpec struct {
 	// +optional
 	SessionResume bool `json:"sessionResume,omitempty"`
 
+	// RequestReplyEnabled allows authenticated callers with the dedicated
+	// request scopes to submit bounded requests to this agent. It is opt-in per
+	// agent; disabling it rejects new submissions without orphaning requests
+	// already dispatched to the runtime.
+	// +optional
+	RequestReplyEnabled bool `json:"requestReplyEnabled,omitempty"`
+
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 

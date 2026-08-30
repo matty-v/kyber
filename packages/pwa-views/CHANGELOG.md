@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.36.7 — 2026-08-29
+
+### Added
+- Agent Detail now provides an opt-in **Bounded requests** toggle. The setting
+  controls new authenticated request/reply submissions per agent; disabling it
+  does not orphan work already in flight.
+
 ## 0.36.6 — 2026-08-28
 
 ### Changed

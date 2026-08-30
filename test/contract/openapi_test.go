@@ -409,7 +409,9 @@ func TestContract_GetAgent_NotFound(t *testing.T) {
 }
 
 func TestContract_SubmitAndGetAgentRequest(t *testing.T) {
-	h := newContractServer(t, sampleAgentObj("kiosk"))
+	agent := sampleAgentObj("kiosk")
+	agent.Spec.RequestReplyEnabled = true
+	h := newContractServer(t, agent)
 	created := validateContract(t, h, authedReq(t, http.MethodPost,
 		"/api/v1/agents/kiosk/requests", map[string]string{
 			"prompt":      "Describe Kyber",

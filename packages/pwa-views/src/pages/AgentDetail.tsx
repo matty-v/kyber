@@ -21,6 +21,7 @@ import {
   useComputeConfig,
   usePatchAgent,
   useSetSessionResume,
+  useSetRequestReplyEnabled,
 } from '../hooks/useAPI'
 import { useEffectiveModelList } from '../lib/models'
 import { StatusBadge } from '../components/StatusBadge'
@@ -404,6 +405,39 @@ export function SessionResumeCard({
   )
 }
 
+export function RequestReplyCard({
+  enabled,
+  pending,
+  onChange,
+}: {
+  enabled: boolean
+  pending: boolean
+  onChange: (enabled: boolean) => void
+}) {
+  return (
+    <Card>
+      <h2 className="text-sm font-medium text-text-primary mb-2">Bounded requests</h2>
+      <label className="flex items-start gap-2 text-sm text-text-primary">
+        <input
+          type="checkbox"
+          className="mt-0.5"
+          checked={enabled}
+          disabled={pending}
+          onChange={(e) => onChange(e.target.checked)}
+        />
+        <span>
+          Allow authenticated request/reply submissions to this agent
+          <span className="mt-0.5 block text-xs text-text-muted">
+            Off by default. Callers still need dedicated request scopes, and
+            responses remain bounded and explicit. Disabling blocks new work;
+            requests already in flight can finish or expire.
+          </span>
+        </span>
+      </label>
+    </Card>
+  )
+}
+
 function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
   return (
     <Card>
@@ -561,6 +595,7 @@ export function AgentDetail() {
   const setAgentResources = useSetAgentResources()
   const patchAgent = usePatchAgent()
   const setSessionResume = useSetSessionResume()
+  const setRequestReplyEnabled = useSetRequestReplyEnabled()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent()
 
@@ -914,6 +949,11 @@ export function AgentDetail() {
             enabled={agent.sessionResume ?? false}
             pending={setSessionResume.isPending}
             onChange={(enabled) => setSessionResume.mutate({ name, sessionResume: enabled })}
+          />
+          <RequestReplyCard
+            enabled={agent.requestReplyEnabled ?? false}
+            pending={setRequestReplyEnabled.isPending}
+            onChange={(enabled) => setRequestReplyEnabled.mutate({ name, requestReplyEnabled: enabled })}
           />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}

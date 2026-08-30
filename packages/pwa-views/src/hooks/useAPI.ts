@@ -145,6 +145,21 @@ export function useSetSessionResume() {
   })
 }
 
+export function useSetRequestReplyEnabled() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, requestReplyEnabled }: { name: string; requestReplyEnabled: boolean }) =>
+      api.patchAgent(name, { requestReplyEnabled }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    meta: { successMessage: 'Bounded request setting saved', errorPrefix: 'Failed to save bounded request setting' },
+  })
+}
+
 // useRotateApiKey: rotates the control-plane API key. Cookie-authenticated
 // browsers receive a replacement HttpOnly session in the same response.
 export function useRotateApiKey() {
