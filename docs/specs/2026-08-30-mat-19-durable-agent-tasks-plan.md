@@ -32,28 +32,28 @@ retention, Get, and List.
 
 ## Investigation
 
-- [ ] Trace request creation, validation, dispatch, completion, expiry, and
+- [x] Trace request creation, validation, dispatch, completion, expiry, and
   failure across the control plane, Redis store, pod exec/queue boundary,
   status sidecar, and both runtime adapters.
-- [ ] Audit Claude Code and Codex primitives for session identity, queued input,
+- [x] Audit Claude Code and Codex primitives for session identity, queued input,
   turn completion, resume/restart behavior, and any stable correlation fields.
-- [ ] Trace existing PostgreSQL ownership, migration, backup, availability, and
+- [x] Trace existing PostgreSQL ownership, migration, backup, availability, and
   multi-replica patterns that a task repository should reuse.
-- [ ] Define the minimal task aggregate, lifecycle, atomic transitions,
+- [x] Define the minimal task aggregate, lifecycle, atomic transitions,
   idempotency rules, pagination contract, retention classes, and cleanup model.
-- [ ] Define dispatch leasing, retry/reconciliation, pod/control-plane restart,
+- [x] Define dispatch leasing, retry/reconciliation, pod/control-plane restart,
   runtime-unavailable, and ambiguous-delivery semantics without promising
   exactly-once execution.
-- [ ] Define native create/get/list API shapes and the internal runtime envelope,
+- [x] Define native create/get/list API shapes and the internal runtime envelope,
   leaving explicit seams for MAT-20–23 and MAT-25.
-- [ ] Threat-model unbounded prompts, task enumeration, retention growth,
+- [x] Threat-model unbounded prompts, task enumeration, retention growth,
   duplicate execution, stale dispatch, and transcript leakage.
-- [ ] Produce implementation slices, migration/compatibility strategy,
+- [x] Produce implementation slices, migration/compatibility strategy,
   observability, rollout/rollback, test matrix, and revised estimates.
 
 ## Deliverable
 
-- [ ] Write `docs/design/2026-08-30-durable-agent-tasks.md` with current-state
+- [x] Write `docs/design/2026-08-30-durable-agent-tasks.md` with current-state
   evidence, decisions, alternatives, schemas/state machine, failure semantics,
   API boundaries, security, operations, rollout, and open questions.
 - [ ] Verify material code claims with file references and distinguish observed
@@ -70,3 +70,8 @@ retention, Get, and List.
   five-minute hard lifetime, one Get operation, and terminal records bounded by
   count. The status sidecar exposes one loopback `respond` tool for an explicit
   request ID. These are foundations to adapt, not a durable task model.
+- 2026-08-30: Audited the shared tmux delivery and runtime adapter boundary.
+  Neither current adapter exposes a stable native turn receipt or task query to
+  the control plane. Drafted the PostgreSQL task model, durable dispatch lease,
+  conservative ambiguous-delivery behavior, native APIs, limits, rollout, and
+  test strategy. Five load-bearing review questions remain before approval.
