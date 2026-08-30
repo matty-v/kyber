@@ -109,10 +109,10 @@ api:
   # Used to render inbound-binding webhook URLs shown in the PWA/API.
   # Example: "https://kyber.your-tailnet.ts.net"
   publicURL: ""
-  # Bounded authenticated agent-to-agent request/reply API. Enabled by default;
-  # the control plane still fails closed when its Redis backend is unavailable.
+  # Defensive limits for authenticated, per-agent opt-in request/reply.
+  # The request store is available whenever Redis is reachable; each agent
+  # remains disabled until spec.requestReplyEnabled is explicitly set.
   agentRequests:
-    enabled: true
     lifetimeSeconds: 60
     maxPromptBytes: 2048
     maxCorrelationBytes: 256

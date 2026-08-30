@@ -10,14 +10,12 @@ import (
 )
 
 type agentRequestConfig struct {
-	Enabled bool
-	Limits  requeststore.Limits
+	Limits requeststore.Limits
 }
 
 func loadAgentRequestConfig() (agentRequestConfig, error) {
 	cfg := agentRequestConfig{
-		Enabled: os.Getenv("KYBER_AGENT_REQUESTS_ENABLED") == "true",
-		Limits:  requeststore.DefaultLimits(),
+		Limits: requeststore.DefaultLimits(),
 	}
 	fields := []struct {
 		name string
