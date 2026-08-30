@@ -1,6 +1,6 @@
 # Runtime turn receipt and recovery spike
 
-**Status:** In progress; live dev-cluster matrix pending
+**Status:** Prototype validated; sidecar handshake and destructive cut-point matrix pending
 **Date:** 2026-08-30
 **Tracker:** [MAT-28](https://linear.app/matty-v/issue/MAT-28/spikeruntime-native-turn-receipt-and-recovery-capabilities)
 **Consumer:** [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks)
@@ -133,23 +133,60 @@ Codex 0.151.0's app server appears capable of a stronger thread/turn adapter,
 but adopting it requires an explicit runtime-version and architecture decision.
 It cannot silently become a dependency while Kyber pins 0.146.0.
 
-## Pending live evidence
+## Live dev-cluster evidence
 
-The dedicated `test-kyber-dev-agents` workflow initially found no `kubectl`
-client. A current official client was installed locally, after which the hard
-guard stopped because the active GCP account requires interactive
-reauthentication. The guard could not verify the exact project, cluster,
-context, and namespace, so it was not bypassed with a raw API credential. No
-live test agent was created and no cleanup is outstanding. The following remain
-required before this spike is complete:
+The prototype ran on 2026-08-30 in the guarded `datawire-dev` / `kyber-dev`
+cluster, namespace `kyber-system`, using purpose-built agents on `peek-test`.
+The existing unrelated `echo` agent was not modified.
 
-- one purpose-built Claude Code agent at the deployed pin;
-- one purpose-built Codex agent at the deployed pin;
-- exact hook payload and acceptance/block behavior for task envelopes;
-- control-plane, session, and pod restart cut points from the matrix; and
-- explicit cleanup records for both test agents.
+| Runtime | Deployed image | Installed interactive runtime | Result |
+| --- | --- | --- | --- |
+| Codex | `codex:mat16-20260828233132-8264b3d` | 0.151.0 | exact task and attempt correlated to native session and turn IDs |
+| Claude Code | `claude-code:mat16-20260828233132-8264b3d` | TUI reported 2.1.251; image default was 2.1.119 and `latest` was requested | exact task and attempt correlated to native session ID; no turn ID |
 
-## Recommendation for MAT-19 while pending
+For each runtime, Kyber delivered a real task envelope through
+`kyber-job-dispatch`. The disposable managed `UserPromptSubmit` hook persisted
+only the task ID, attempt ID, event, session ID, and optional turn ID under
+`/persist`; it did not persist prompt or transcript content. The harness then
+consumed the same envelope and produced the exact expected response.
+
+The observed receipts were:
+
+- Codex: task `task_11111111111111111111111111111111`, attempt
+  `attempt_22222222222222222222222222222222`, session
+  `01a053cf-4daa-73d0-84a1-282d32f9ed99`, turn
+  `01a053cf-a7b4-7811-9eb1-e31b92954d2a`.
+- Claude Code: task `task_33333333333333333333333333333333`, attempt
+  `attempt_44444444444444444444444444444444`, session
+  `d9fe597e-cd64-472a-ae95-90e072654e00`, with an empty optional turn ID.
+
+Both receipt files survived a Kyber session restart. Claude's settings-backed
+disposable hook also survived that restart. Codex's file under
+`/etc/codex/managed_config.toml` was regenerated and the disposable addition
+was removed, so a production Codex hook must be rendered by the runtime boot
+path rather than patched into a live container.
+
+The test also confirmed an operational namespace constraint: a plain
+Kubernetes exec could not see the runtime tmux socket. Dispatch succeeded when
+run as the `kyber` user inside the runtime mount namespace, matching how the
+platform must enter the isolated agent environment.
+
+The purpose-built agents `sol-test-mat28-codex` and
+`sol-test-mat28-claude` were explicitly deleted after evidence capture. The
+only remaining agent on `peek-test` was the pre-existing `echo` agent.
+
+### What remains unproven
+
+This validates a positive, pre-model, task-correlated acceptance receipt on
+both harnesses. It does not yet validate the sidecar POST-then-query protocol,
+a lost response after database commit, a control-plane restart during the
+hook, hook exit-code behavior at the deployed versions, or automatic recovery
+after a pod restart. Those cut points require an implementation of the
+loopback receipt endpoint rather than a file-only evidence hook. Until then,
+an attempt crossing that boundary without a reconcilable receipt remains
+`delivery_unknown` and must not be blindly redelivered.
+
+## Recommendation for MAT-19
 
 - Add receipt fields and a `receipt_pending` internal dispatch state to the
   schema; do not expose a new public state.

@@ -37,8 +37,10 @@ retention, Get, and List.
   status sidecar, and both runtime adapters.
 - [x] Audit Claude Code and Codex primitives for session identity, queued input,
   turn completion, resume/restart behavior, and any stable correlation fields.
-- [ ] Complete MAT-28's live managed-hook receipt and restart failure matrix for
-  both pinned runtimes; this is now an implementation gate by Matt's decision.
+- [ ] Complete MAT-28's managed-hook failure matrix. Live positive receipt and
+  session-restart persistence now pass on both runtimes; the sidecar
+  POST/query handshake and destructive cut points remain the implementation
+  gate.
 - [x] Trace existing PostgreSQL ownership, migration, backup, availability, and
   multi-replica patterns that a task repository should reuse.
 - [x] Define the minimal task aggregate, lifecycle, atomic transitions,
@@ -58,9 +60,9 @@ retention, Get, and List.
 - [x] Write `docs/design/2026-08-30-durable-agent-tasks.md` with current-state
   evidence, decisions, alternatives, schemas/state machine, failure semantics,
   API boundaries, security, operations, rollout, and open questions.
-- [ ] Verify material code claims with file references and distinguish observed
+- [x] Verify material code claims with file references and distinguish observed
   harness behavior from assumptions requiring implementation prototypes.
-- [ ] Run documentation and repository checks appropriate to the changed files.
+- [x] Run documentation and repository checks appropriate to the changed files.
 - [ ] Commit and push the focused branch, open a stacked PR based on #183 while
   it remains unmerged, and link the result from MAT-19.
 
@@ -85,3 +87,13 @@ retention, Get, and List.
   the missing `kubectl` client, but the live workflow's hard guard then stopped
   on expired interactive GCP credentials before it could verify the cluster.
   No test agent was created.
+- 2026-08-30: After GCP reauthentication, ran purpose-built Codex 0.151.0 and
+  Claude Code 2.1.251 agents in `kyber-dev`. Real Kyber task envelopes produced
+  persisted, task/attempt-correlated pre-model receipts on both harnesses;
+  Codex included native session and turn IDs, while Claude included its session
+  ID only. Both receipt files survived session restart. Codex managed config
+  was regenerated on restart, proving the hook must be rendered at boot; the
+  Claude settings hook survived. Explicitly deleted both temporary agents and
+  left the unrelated `echo` agent untouched. The sidecar lost-response
+  handshake remains unproven, so unresolved attempts retain
+  `delivery_unknown`.

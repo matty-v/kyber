@@ -26,7 +26,10 @@ Kyber can use after a crash. The
 [MAT-28 receipt spike](2026-08-30-runtime-turn-receipt-spike.md) found a
 promising common positive boundary: both pinned integrations have managed
 `UserPromptSubmit` hooks, and Codex includes a native turn ID. Live restart and
-failure-cut testing is required before relying on it. Kyber therefore does not
+task-envelope tests validated that boundary for both harnesses, and persisted
+receipts survived session restarts. The sidecar recovery handshake and the
+remaining failure cut points are still required before production reliance.
+Kyber therefore does not
 automatically redeliver an unresolved attempt; it records
 `delivery_unknown`.
 
@@ -382,8 +385,10 @@ delivery helper. `Capabilities` states whether the harness integration can
 provide a stable native turn ID, a positive queued-input receipt, or resume
 status. The current audit finds no durable turn query in either pinned TUI
 integration, but both expose a managed pre-model prompt hook; Codex's verified
-payload also includes `turn_id`. MAT-28 must finish its live failure matrix
-before these capabilities are treated as production guarantees.
+payload also includes `turn_id`. MAT-28's live prototype validated positive
+receipts and session-restart persistence on both harnesses. Its sidecar
+handshake and remaining destructive failure matrix must finish before these
+capabilities are treated as production guarantees.
 
 `TaskEnvelope` contains the Kyber task ID, agent identity, deadline, bounded
 prompt, and a random execution-attempt token reserved for stale-pod protection.

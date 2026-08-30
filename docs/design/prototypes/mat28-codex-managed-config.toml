@@ -1,0 +1,26 @@
+# Disposable MAT-28 Codex configuration based on the generated Kyber managed
+# config in the purpose-built dev agent. Do not deploy this file.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+check_for_update_on_startup = false
+tui.resume_cwd = "current"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/usr/local/bin/kyber-cron-turn-start"
+timeout = 20
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/persist/mat28-capture-receipt.sh"
+timeout = 20
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "env KYBER_CLEAR_SESSION_TEXT=/clear /usr/local/bin/kyber-cron-postrun"
+timeout = 20
+
+[projects."/home/kyber"]
+trust_level = "trusted"
