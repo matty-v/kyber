@@ -1,6 +1,6 @@
 # A2A protocol support spike — execution plan
 
-**Status:** In progress
+**Status:** Complete
 **Date:** 2026-08-30
 **Tracker:** MAT-6
 **Branch:** `docs/mat-6-a2a-support-spike`
@@ -48,9 +48,9 @@ starting a transport implementation.
 - [x] Include a recommendation, alternatives, phased plan, independently
   shippable phase 1, rough engineering sizes, risks, and explicit `not yet`
   option.
-- [ ] Verify every material code/spec claim and run the repository's docs-only
+- [x] Verify every material code/spec claim and run the repository's docs-only
   checks.
-- [ ] Commit and push the focused branch and open a pull request for review.
+- [x] Commit and push the focused branch and open a pull request for review.
 
 ## Progress log
 
@@ -65,3 +65,5 @@ starting a transport implementation.
 - 2026-08-30: Drafted the recommendation: do not build without a named caller;
   split server and client work; use HTTP+JSON and PostgreSQL for a formal
   server; preserve MAT-9's explicit sidecar-authenticated completion boundary.
+- 2026-08-30: Repository docs-only checks passed, the branch was pushed, and
+  pull request #183 was opened for review.
