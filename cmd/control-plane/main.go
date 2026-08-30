@@ -311,22 +311,17 @@ func main() {
 		os.Exit(1)
 	}
 	var agentRequestStore requeststore.Store
-	if requestCfg.Enabled {
-		if redisClient == nil {
-			setupLog.Error(nil, "agent requests enabled without a reachable Redis backend")
+	if redisClient != nil {
+		agentRequestStore, err = requeststore.NewRedisStore(redisClient, requestCfg.Limits)
+		if err != nil {
+			setupLog.Error(err, "initializing agent request store")
 			os.Exit(1)
-		} else {
-			agentRequestStore, err = requeststore.NewRedisStore(redisClient, requestCfg.Limits)
-			if err != nil {
-				setupLog.Error(err, "initializing agent request store")
-				os.Exit(1)
-			}
-			setupLog.Info("agent requests enabled", "lifetimeSeconds", int(requestCfg.Limits.Lifetime.Seconds()),
-				"maxPromptBytes", requestCfg.Limits.MaxPromptBytes, "maxResponseBytes", requestCfg.Limits.MaxResponseBytes,
-				"maxOutstanding", requestCfg.Limits.MaxOutstanding, "maxTerminal", requestCfg.Limits.MaxTerminal)
 		}
+		setupLog.Info("agent request store available", "lifetimeSeconds", int(requestCfg.Limits.Lifetime.Seconds()),
+			"maxPromptBytes", requestCfg.Limits.MaxPromptBytes, "maxResponseBytes", requestCfg.Limits.MaxResponseBytes,
+			"maxOutstanding", requestCfg.Limits.MaxOutstanding, "maxTerminal", requestCfg.Limits.MaxTerminal)
 	} else {
-		setupLog.Info("agent requests disabled by feature gate")
+		setupLog.Info("agent request store unavailable without Redis; per-agent request endpoints fail closed")
 	}
 
 	// Retention worker: evict time-series points older than the configured horizon.

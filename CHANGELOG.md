@@ -46,11 +46,10 @@ preparing the code for open source:
   `kyber-request-reply.respond` MCP tool through the existing status sidecar;
   the authenticated internal handler enforces agent ownership, response size,
   expiry, and first-response-wins idempotency. The production path uses the
-  shared Redis client and is available by default behind Helm's explicit
-  `api.agentRequests.enabled` switch, while each agent must opt in with
-  `spec.requestReplyEnabled`. Turning an agent off rejects new submissions but
-  does not orphan requests already in flight. Installations can opt out globally,
-  and the API fails closed when Redis is unavailable. Operator-set lifetime and payload/count
+  shared Redis client whenever Redis is reachable, while each agent must opt in
+  with `spec.requestReplyEnabled`. Turning an agent off rejects new submissions
+  but does not orphan requests already in flight. Without Redis the control plane
+  stays available and request endpoints fail closed. Operator-set lifetime and payload/count
   limits are checked against compiled hard caps. Low-cardinality lifecycle
   metrics and structured per-request audit events cover accepted, dispatched,
   failed, and completed outcomes.
