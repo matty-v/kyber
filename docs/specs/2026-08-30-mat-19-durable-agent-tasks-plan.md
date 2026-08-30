@@ -37,6 +37,8 @@ retention, Get, and List.
   status sidecar, and both runtime adapters.
 - [x] Audit Claude Code and Codex primitives for session identity, queued input,
   turn completion, resume/restart behavior, and any stable correlation fields.
+- [ ] Complete MAT-28's live managed-hook receipt and restart failure matrix for
+  both pinned runtimes; this is now an implementation gate by Matt's decision.
 - [x] Trace existing PostgreSQL ownership, migration, backup, availability, and
   multi-replica patterns that a task repository should reuse.
 - [x] Define the minimal task aggregate, lifecycle, atomic transitions,
@@ -75,3 +77,10 @@ retention, Get, and List.
   the control plane. Drafted the PostgreSQL task model, durable dispatch lease,
   conservative ambiguous-delivery behavior, native APIs, limits, rollout, and
   test strategy. Five load-bearing review questions remain before approval.
+- 2026-08-30: Matt chose to prototype harness-native receipts before accepting
+  conservative ambiguity. Opened MAT-28 and found managed `UserPromptSubmit`
+  hooks in both pinned integrations plus a native Codex turn ID; generated the
+  installed Codex 0.151 app-server schema as a stronger comparison. Updated the
+  draft so `dispatched` requires a persisted positive hook receipt. Live
+  dev-cluster restart evidence remains pending because this environment has no
+  `kubectl`; no test agent was created.

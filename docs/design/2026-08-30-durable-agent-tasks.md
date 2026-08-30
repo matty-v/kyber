@@ -21,10 +21,14 @@ model.
 
 The durable guarantee applies to the **task record and dispatch intent**, not
 to uninterrupted model execution. The current adapters inject work into one
-long-lived tmux conversation and expose no stable harness turn ID that Kyber
-can query after a crash. Kyber therefore does not automatically redeliver an
-attempt whose delivery may have begun. It records an explicit
-`delivery_unknown` failure and lets the caller make a new idempotent decision.
+long-lived tmux conversation and expose no durable harness turn query that
+Kyber can use after a crash. The
+[MAT-28 receipt spike](2026-08-30-runtime-turn-receipt-spike.md) found a
+promising common positive boundary: both pinned integrations have managed
+`UserPromptSubmit` hooks, and Codex includes a native turn ID. Live restart and
+failure-cut testing is required before relying on it. Kyber therefore does not
+automatically redeliver an unresolved attempt; it records
+`delivery_unknown`.
 
 MAT-20 through MAT-23 and MAT-25 will extend this foundation with typed
 updates/results, cancellation, continuation, principal authorization, and
@@ -254,7 +258,7 @@ CREATE TABLE agent_task_dispatches (
   attempt_started_at TIMESTAMPTZ,
   last_error_code    TEXT NOT NULL DEFAULT '',
   updated_at         TIMESTAMPTZ NOT NULL,
-  CHECK (status IN ('pending', 'leased', 'attempting', 'delivered', 'closed'))
+  CHECK (status IN ('pending', 'leased', 'attempting', 'receipt_pending', 'delivered', 'closed'))
 );
 ```
 
@@ -319,18 +323,22 @@ allowed while no external delivery attempt has begun: for example, waiting for
 an Agent to become Running or a transient database wakeup failure.
 
 Immediately before invoking the existing delivery adapter, the worker commits
-`attempting` and `attempt_started_at`. From that point, an error or worker death
-is ambiguous unless the adapter can prove no bytes/input reached the runtime.
+`attempting` and `attempt_started_at`. After tmux submission it moves to
+`receipt_pending`; `dispatched` requires the matching managed
+`UserPromptSubmit` receipt described by MAT-28, not merely a successful paste.
+From `attempting` onward, an error or worker death is ambiguous unless the
+adapter or receipt handshake proves the prompt did not enter model processing.
 
 ### Outcomes
 
-- Proven delivery success atomically marks the task `dispatched` and dispatch
-  row `delivered`.
+- A persisted, matching positive harness receipt atomically marks the task
+  `dispatched` and dispatch row `delivered`.
 - A proven pre-delivery failure may return to `pending` with bounded backoff if
   the task deadline and attempt cap permit.
 - A known terminal unavailability at the deadline marks
   `failed/agent_unavailable`.
-- Any expired `attempting` lease marks `failed/delivery_unknown`; it is never
+- Any expired `attempting` or `receipt_pending` lease that the receipt
+  reconciler cannot resolve marks `failed/delivery_unknown`; it is never
   automatically redelivered.
 - Completion racing the delivery callback wins if its explicit sidecar update
   is valid. The later callback observes terminal state and no-ops.
@@ -346,7 +354,8 @@ On control-plane startup and continuously thereafter, a reconciler processes
 bounded batches:
 
 - expired `leased` rows that never reached `attempting` return to `pending`;
-- expired `attempting` rows become `failed/delivery_unknown`;
+- expired `attempting` and `receipt_pending` rows are queried through the
+  adapter receipt seam and become `failed/delivery_unknown` if unresolved;
 - queued/dispatched tasks past `deadline_at` become
   `failed/deadline_exceeded`; and
 - terminal tasks past `retain_until` are deleted in bounded batches.
@@ -371,8 +380,10 @@ type TaskDeliveryAdapter interface {
 The initial Claude Code and Codex implementations can wrap the existing tmux
 delivery helper. `Capabilities` states whether the harness integration can
 provide a stable native turn ID, a positive queued-input receipt, or resume
-status. The first audited value for all three is false with the current Kyber
-integration, so the common conservative semantics above apply.
+status. The current audit finds no durable turn query in either pinned TUI
+integration, but both expose a managed pre-model prompt hook; Codex's verified
+payload also includes `turn_id`. MAT-28 must finish its live failure matrix
+before these capabilities are treated as production guarantees.
 
 `TaskEnvelope` contains the Kyber task ID, agent identity, deadline, bounded
 prompt, and a random execution-attempt token reserved for stale-pod protection.
@@ -548,9 +559,9 @@ agents.
 
 1. Should the default execution deadline be 24 hours and terminal retention 7
    days, or should installations start with shorter defaults?
-2. Is `delivery_unknown` acceptable as the conservative outcome after an
-   ambiguous tmux delivery, or should the first implementation require a
-   prototype of harness-native turn receipts before dispatch ships?
+2. **Decided:** require MAT-28's harness receipt prototype before dispatch
+   implementation. Keep `delivery_unknown` only as the conservative fallback
+   for an attempt the receipt reconciler cannot resolve.
 3. Should G1 store the current caller name for migration into MAT-23, or remain
    limited to the legacy full-scope operator until stable principal IDs exist?
 4. Does the first slice need a compatibility text result, or may tasks remain
