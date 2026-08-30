@@ -115,3 +115,7 @@ starting a transport implementation.
 - 2026-08-30: Matt chose to pursue G11. Created MAT-26 as the thin A2A
   HTTP+JSON edge design, bundled G10 Agent Card projection into it, and prepared
   G12 (conformance and release discipline) as the final independent decision.
+- 2026-08-30: Matt chose to pursue G12. Created MAT-27 as the evidence-backed
+  conformance/release gate for MAT-26 and completed the twelve-gap review. The
+  resulting roadmap pursues G1–G7 and G11–G12, bundles G10 with G11, and defers
+  G8 webhooks and G9 federation behind concrete-consumer triggers.

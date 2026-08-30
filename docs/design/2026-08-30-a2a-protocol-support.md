@@ -133,7 +133,7 @@ implementation issue; it does not authorize the later gaps automatically.
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Defer OAuth2/OIDC; G5 is the initial security profile |
 | G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | Bundle with G11; no separate native issue |
 | G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | Pursue design: [MAT-26](https://linear.app/matty-v/issue/MAT-26/designplatform-thin-a2a-httpjson-edge-adapter) |
-| G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Review next and final |
+| G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Pursue design: [MAT-27](https://linear.app/matty-v/issue/MAT-27/designrelease-evidence-backed-a2a-conformance-gate) |
 
 The sizes are intentionally not additive estimates for one project. Each gap
 needs its own scope after the previous decision. Some work overlaps: for
@@ -694,6 +694,30 @@ pins deliberately, never floating on upstream main.
 **Recommendation and final decision question:** pursue G12 as a separate
 design-only release/conformance issue. It is required for Kyber to call G11
 formal support rather than merely an A2A-shaped endpoint. Pursue G12 design?
+
+**Decision:** pursue the design in
+[MAT-27](https://linear.app/matty-v/issue/MAT-27/designrelease-evidence-backed-a2a-conformance-gate).
+Matt made this decision on 2026-08-30. MAT-27 is design-only, gates the formal
+support claim for MAT-26, and prohibits certification language without a real
+certification authority.
+
+### Completed decision roadmap
+
+The gap-by-gap review is complete:
+
+- Pursue native designs: G1–G7 in MAT-19 through MAT-25.
+- Defer optional infrastructure: G8 webhooks until a concrete disconnected
+  consumer exists; G9 OAuth2/OIDC until a concrete federation topology exists.
+- Pursue the thin A2A edge: G10 is bundled into G11 in MAT-26.
+- Pursue the evidence-backed release gate: G12 in MAT-27.
+
+The designs can be explored in parallel where their contracts do not conflict,
+but implementation should stabilize the task identity/store and authorization
+boundary first. Runtime update, cancellation, and continuation adapters then
+map harness-native concepts into that envelope; resumable events build on the
+accepted updates. The capability manifest can progress alongside the task
+track. MAT-26 integrates only implemented native features, and MAT-27 is the
+gate before Kyber publishes a formal A2A support claim.
 
 ## 3. Direction: two projects, not one
 
