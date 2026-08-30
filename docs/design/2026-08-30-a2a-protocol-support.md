@@ -106,8 +106,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | Order | Gap | Current state | Future state | Native Kyber value | Depends on | Rough size | Decision |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Pursue design: [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks) |
-| G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded text/data artifacts | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Review next |
-| G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pending G1 |
+| G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded typed artifacts, including an explicit multimodal policy | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pursue design: [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results) |
+| G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Review next |
 | G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pending G1 |
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review after G1 |
@@ -175,12 +175,14 @@ as that request's result. A caller cannot distinguish “started,” “halfway,
 “produced one result while continuing.”
 
 **A2A-required future state:** the runtime can make validated, task-scoped
-status transitions and attach status Messages or output Artifacts. Artifacts
-contain one or more typed Parts, including text and structured JSON in the
-first bounded implementation. The task service rejects invalid transitions,
-cross-agent updates, oversized content, and updates after a terminal state.
-Streaming delivery remains G7; G2 only records queryable current state and
-results.
+status transitions and attach status Messages or output Artifacts. A2A
+Artifacts contain typed Parts that can carry text, structured data, inline raw
+bytes, or URL-referenced media with a media type. Kyber does not need to clone
+that schema as its native contract, but its result envelope must be extensible
+enough to project the supported modes honestly. The task service rejects
+invalid transitions, cross-agent updates, oversized content, and updates after
+a terminal state. Streaming delivery remains G7; G2 only records queryable
+current state and results.
 
 **Standalone Kyber value:** API consumers and operator UIs can show meaningful
 progress for long-running work without reading a transcript or inferring state
@@ -192,16 +194,61 @@ or summaries while keeping internal reasoning private.
 task-update contract, loopback MCP tools, sidecar/internal API forwarding,
 transition validation, bounded persistence, read shapes, and both-runtime
 tests. The main risk is asking a model-driven runtime to report progress
-reliably: updates are cooperative, not proof of real-world side effects. Typed
-results can also become an unbounded file-transfer feature unless G2 starts
-with strict text/JSON modes and byte/count caps.
+reliably: updates are cooperative, not proof of real-world side effects.
+Multimodal results can also become an unbounded or unsafe file-transfer feature
+without strict byte/count caps, ownership, retention, media validation, and
+SSRF controls.
 
-**Proposed native cut:** support a small transition vocabulary plus status text
-and named text/JSON results. Exclude raw files, remote URLs, incremental event
-delivery, cancellation, and follow-up input; those belong to later gaps.
+**Proposed native cut:** keep an extensible media-typed result envelope. Start
+with bounded text and structured JSON; the design must decide whether the
+first delivery also admits controlled object-backed media references. Those
+references would carry a name, media type, size, checksum, authorization, and
+expiry rather than exposing runtime filesystem paths or accepting arbitrary
+remote URLs. Inline arbitrary blobs, incremental event delivery, cancellation,
+and follow-up input are not part of the starting recommendation.
 
-**Decision question:** is task-scoped progress plus bounded typed text/JSON
-output worth designing as a Kyber feature for automation and operator UX,
+**Decision:** pursue the design in
+[MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results).
+Matt made this decision on 2026-08-30. The issue makes the supported multimodal
+subset and staging a load-bearing design question; implementation remains
+conditional on the G1 design in MAT-19.
+
+### G3 decision brief: cooperative cancellation
+
+G3 asks whether callers and operators should be able to stop queued or running
+task work without stopping the entire agent.
+
+**Current Kyber capability:** a bounded request can expire or be removed from
+the request/reply surface, but that does not reliably stop work already
+dispatched to the runtime. Agent restart and stop controls operate on the whole
+runtime, not one task, and may interrupt unrelated interactive work.
+
+**A2A-required future state:** cancellation is an idempotent task operation.
+Queued work can become canceled immediately; dispatched work records a
+cancel-requested state, delivers a typed control message to the runtime, and
+reaches a terminal state only after runtime acknowledgment or another known
+terminal outcome. Kyber must describe this as cooperative cancellation, not a
+guarantee that already-started side effects were undone.
+
+**Standalone Kyber value:** callers can abandon obsolete work, operators can
+limit runaway API jobs, and the platform can avoid further model and tool cost
+without killing the long-lived agent. This becomes increasingly valuable as
+G1 permits longer-running automation.
+
+**Cost and risk:** approximately two to three engineer weeks after G1 for the
+API and state transitions, dispatch control path, runtime integration,
+timeouts, observability, and both-runtime tests. A prompt delivered through
+tmux cannot reliably interrupt an active shell command or tool call. Correct
+semantics therefore depend on runtime cooperation, and external side effects
+may already have occurred before cancellation is observed.
+
+**Proposed native cut:** cancel queued tasks immediately. For dispatched work,
+record `cancel-requested`, notify the runtime, and publish `canceled` only on
+acknowledgment or a known exit. Do not use whole-agent `SIGKILL` as task
+cancellation, and do not promise rollback of side effects.
+
+**Decision question:** is cooperative, task-scoped cancellation worth
+designing as a Kyber feature for cost control and operator/API ergonomics,
 independent of A2A?
 
 ## 3. Direction: two projects, not one

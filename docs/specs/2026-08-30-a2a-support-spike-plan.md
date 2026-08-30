@@ -74,3 +74,8 @@ starting a transport implementation.
 - 2026-08-30: Matt chose to pursue G1 as a separate design. Created MAT-19 with
   MAT-6 and PR #183 references, recorded G1 as pursued, and prepared G2
   (task-scoped progress and typed results) for the next independent decision.
+- 2026-08-30: Matt chose to pursue G2 and asked whether results include
+  multimodal output. Confirmed that A2A Artifacts support text, structured data,
+  inline bytes, and media URLs; created MAT-20 to design Kyber's bounded native
+  subset, recorded G2 as pursued, and prepared G3 (cooperative cancellation) for
+  the next independent decision.
