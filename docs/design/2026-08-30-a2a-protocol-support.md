@@ -107,8 +107,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Pursue design: [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks) |
 | G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded typed artifacts, including an explicit multimodal policy | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pursue design: [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results) |
-| G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Review next |
-| G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
+| G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pursue design: [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation) |
+| G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Review next |
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pending G1 |
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review after G1 |
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
@@ -250,6 +250,51 @@ cancellation, and do not promise rollback of side effects.
 **Decision question:** is cooperative, task-scoped cancellation worth
 designing as a Kyber feature for cost control and operator/API ergonomics,
 independent of A2A?
+
+**Decision:** pursue the design in
+[MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation).
+Matt made this decision on 2026-08-30. MAT-21 is design-only and must align
+with the durable task and runtime update contracts in MAT-19 and MAT-20.
+
+### G4 decision brief: multi-turn task continuation
+
+G4 asks whether a durable task should pause for more input and then resume,
+rather than forcing every API request to be complete and independent.
+
+**Current Kyber capability:** Telegram and an attached terminal support natural
+multi-turn conversation with the long-lived agent, but bounded API requests do
+not. A request carries one prompt and one final response; a caller cannot answer
+a clarification, approve a proposed action, or supply newly requested input on
+the same task.
+
+**A2A-required future state:** a task can enter `input-required` or
+`auth-required`, expose a safe prompt explaining what it needs, accept a
+follow-up Message in the same task and context, then resume or reject it.
+Terminal failure and rejection remain distinguishable from a resumable pause.
+Every continuation is authorized, bounded, ordered, and idempotent.
+
+**Standalone Kyber value:** API automations could support approvals,
+clarifying questions, and human-in-the-loop workflows without falling back to
+transcript scraping or inventing a new task for every turn. It also creates a
+channel-independent primitive shared by a future UI, chat adapters, and other
+agents.
+
+**Cost and risk:** approximately three to five engineer weeks after G1 and G2
+for pause/resume states, message persistence, ordering and idempotency, runtime
+wakeup, expiry, authorization, UI/API shapes, and both-runtime tests. The main
+risks are indefinite paused tasks, duplicate or stale replies, prompt injection
+across participants, and accidentally treating credentials as ordinary task
+messages. `auth-required` must request a credential reference or authorization
+flow; secrets must not be persisted in task history.
+
+**Proposed native cut:** support one authorized follow-up at a time for an
+explicit `input-required` pause, with a bounded prompt, expiry, and idempotency
+key. Keep credential acquisition as a typed `auth-required` flow that passes
+references, never raw secrets. Defer arbitrary participant chat and concurrent
+branches.
+
+**Decision question:** is resumable, human-in-the-loop task continuation worth
+designing as a native Kyber automation feature, independent of A2A?
 
 ## 3. Direction: two projects, not one
 

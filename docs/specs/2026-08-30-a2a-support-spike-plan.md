@@ -79,3 +79,7 @@ starting a transport implementation.
   inline bytes, and media URLs; created MAT-20 to design Kyber's bounded native
   subset, recorded G2 as pursued, and prepared G3 (cooperative cancellation) for
   the next independent decision.
+- 2026-08-30: Matt chose to pursue G3. Created MAT-21 with MAT-6, PR #183,
+  MAT-19, and MAT-20 references, recorded cooperative cancellation as pursued,
+  and prepared G4 (multi-turn task continuation) for the next independent
+  decision.
