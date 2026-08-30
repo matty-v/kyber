@@ -67,3 +67,7 @@ starting a transport implementation.
   server; preserve MAT-9's explicit sidecar-authenticated completion boundary.
 - 2026-08-30: Repository docs-only checks passed, the branch was pushed, and
   pull request #183 was opened for review.
+- 2026-08-30: Matt asked to evaluate the path gap by gap based on native Kyber
+  value. Reframed the recommendation as a twelve-item dependency-ordered gap
+  register, replaced the monolithic delivery choice, and added the first G1
+  decision brief for durable agent tasks.

@@ -10,19 +10,19 @@ versions.
 
 ## Recommendation
 
-Do not claim formal A2A support yet. There is no identified caller that
-justifies the server-side task system Kyber would need, and the existing
-bounded request/reply API is deliberately too small and short-lived to be
-presented as an A2A task service.
+Do not treat A2A as one protocol feature to approve or reject. Work through the
+gap register in dependency order and decide whether each missing capability is
+worth building for Kyber on its own merits. Features that improve Kyber's
+native request, automation, and integration model can land independently;
+protocol-only adapters should wait until the underlying capabilities and a
+real A2A caller both exist.
 
-If a real inbound caller appears, build **server support as its own project**,
-starting with an explicitly experimental HTTP+JSON endpoint that serves an
-honest Agent Card and bridges one bounded text request to the existing
-request/reply path. That first phase is useful for interoperability discovery
-and synchronous delegation, but it is not formal support. Promote it to formal
-support only after Kyber has a persistent A2A task service, implements the
-mandatory operation behavior for the declared binding, and passes the official
-A2A Technology Compatibility Kit (TCK) for all declared capabilities.
+The first decision is a general-purpose durable agent task model. It is the
+load-bearing gap for polling, cancellation, multi-turn work, progress,
+artifacts, streaming, and restart recovery. If that model is not independently
+valuable to Kyber, formal inbound A2A support is not worth pursuing. If it is,
+the later A2A transport becomes a much smaller compatibility layer over a
+Kyber-native feature.
 
 Treat **outbound client support as a separate project**. It shares protocol
 types and an SDK choice with the server, but not the server's public ingress,
@@ -95,7 +95,73 @@ Primary protocol references are the
 [v1.0.1 release](https://github.com/a2aproject/A2A/releases/tag/v1.0.1), and
 [normative protobuf schema](https://github.com/a2aproject/A2A/blob/v1.0.1/specification/a2a.proto).
 
-## 2. Direction: two projects, not one
+## 2. Gap register
+
+Each gap below is an independent product decision. “A2A requirement” means the
+capability is needed for the future state of a formally conformant inbound
+HTTP+JSON server. “Native Kyber value” asks whether the feature earns its place
+without that protocol. A decision of `pursue` authorizes a separate design and
+implementation issue; it does not authorize the later gaps automatically.
+
+| Order | Gap | Current state | Future state | Native Kyber value | Depends on | Rough size | Decision |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Review first |
+| G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded text/data artifacts | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pending G1 |
+| G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pending G1 |
+| G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
+| G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pending G1 |
+| G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review after G1 |
+| G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
+| G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer by default |
+| G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review with G5 |
+| G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | A2A-only |
+| G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | A2A-only |
+| G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Last |
+
+The sizes are intentionally not additive estimates for one project. Each gap
+needs its own scope after the previous decision. Some work overlaps: for
+example, G1 plus G2 replaces much of the earlier monolithic Phase 2 estimate,
+while G10 and G11 stay small only if the native foundations already exist.
+
+### G1 decision brief: durable agent tasks
+
+This is the first review because it is both the largest dependency and the
+clearest standalone Kyber feature.
+
+**Current Kyber capability:** MAT-9 accepts a short authenticated prompt,
+queues it to a Running agent, and stores one explicit text response in Redis.
+The default lifetime is 60 seconds, the hard maximum is five minutes, at most
+two requests are outstanding per agent by default, and there is no list route.
+This is intentionally a bounded request/reply channel, not durable work.
+
+**A2A-required future state:** tasks survive control-plane restarts, remain
+addressable through a retention window, carry a context and reserved origin
+reference, expose current state, support stable descending pagination, and
+provide atomic state transitions. G5 defines external-principal ownership and
+access enforcement; later gaps add artifacts, cancellation, continuation, and
+events.
+
+**Standalone Kyber value:** this would let trusted systems submit long-running
+agent work without holding a terminal or polling ephemeral request IDs. Jobs,
+websites, other agents, and operator automation could share one durable status
+model. It would also give Kyber a safe result surface that remains narrower
+than transcripts. The feature is valuable only if Kyber wants to become an
+automation API, not merely an interactive agent host.
+
+**Cost and risk:** approximately four to six engineer weeks for the store,
+migrations, API, retention, limits, restart behavior, observability,
+and integration tests before progress/artifacts or cancellation. PostgreSQL is
+the proposed source of truth; Redis remains dispatch infrastructure. The main
+risks are retention cost, a false guarantee of execution durability while the
+runtime is unavailable, and allowing a generic task API to become an unbounded
+prompt or data-ingestion surface.
+
+**Decision question:** does Kyber want a durable, externally addressable agent
+task API for its own product, independent of A2A? If no, stop the inbound A2A
+path here. If yes, create a dedicated G1 design issue and review its API and
+execution guarantees before considering G2.
+
+## 3. Direction: two projects, not one
 
 ### Kyber agents as A2A servers
 
@@ -130,7 +196,7 @@ Server and client work may share a pinned `a2a-go` module and test fixtures.
 They should have separate specs, feature gates, threat models, and delivery
 decisions.
 
-## 3. Binding choice
+## 4. Binding choice
 
 Choose **HTTP+JSON** for the first and formal server binding.
 
@@ -152,7 +218,7 @@ Do not declare multiple bindings merely because the SDK can mount them. Each
 declared interface multiplies conformance and operational testing, and the spec
 requires equivalent behavior across them.
 
-## 4. Current Kyber foundation and exact gaps
+## 5. Current Kyber foundation and exact gaps
 
 ### Existing inbound webhooks are delivery, not A2A
 
@@ -249,7 +315,7 @@ memory saving that must never become public promises. A healthy loadable skill
 may still require credentials or operator approval unavailable to an external
 caller.
 
-## 5. Task model and persistence
+## 6. Task model and persistence
 
 Put the authoritative A2A task model in an API-owned **PostgreSQL store**.
 
@@ -290,7 +356,7 @@ artifacts and history awkward, and couple retention to cluster control-plane
 storage. Do not use the current TTL-only Redis request store as the source of
 truth; its deliberate expiry and list-free interface conflict with A2A.
 
-## 6. Agent Card source and honesty
+## 7. Agent Card source and honesty
 
 Use an **operator-authored per-agent A2A configuration with validated,
 selective derivation**:
@@ -330,7 +396,7 @@ component is unhealthy, do not serve a card that overclaims. Return an
 operator-visible configuration error while retaining the last valid config for
 diagnosis.
 
-## 7. Authentication and authorization
+## 8. Authentication and authorization
 
 For the first server binding, declare **HTTP Bearer authentication** and map it
 to Kyber named callers with new A2A-specific scopes. This is a standard A2A
@@ -370,94 +436,28 @@ redirects, and file fetches before dispatch. A card or message description must
 never become privileged instructions merely because it came through a standard
 protocol.
 
-## 8. Phased delivery and cost
+## 9. Cost interpretation
 
-Sizes are one experienced Kyber engineer, including design updates, tests,
-review fixes, and dev-environment verification but excluding queue time for
-review or production rollout.
+The register sizes assume one experienced Kyber engineer and include design,
+implementation, tests, documentation, and dev-environment verification. They
+are comparison ranges, not approved delivery estimates. The dedicated issue
+for a pursued gap must re-estimate it against the exact native use case.
 
-### Phase 0: demand validation — 2–3 days
+Building every inbound gap remains roughly three to five engineer months, but
+that total is no longer the proposed plan. The proposed plan is to spend only
+on gaps that pass their individual product decision. G10–G12 are the point at
+which accepted Kyber-native capabilities become formal A2A support.
 
-- name the first real caller, required binding, authentication, media types,
-  response latency, and task retention;
-- confirm whether direct Message responses are sufficient or the caller needs
-  addressable tasks; and
-- decline the project if no caller will integrate within the next release
-  horizon.
-
-**Value:** prevents building a public task platform for hypothetical demand.
-
-### Phase 1: experimental discovery and bounded send — 1–2 weeks
-
-- add opt-in per-agent A2A config and an honest static Agent Card;
-- mount the official SDK's HTTP+JSON handler for Send Message only;
-- accept text/plain Parts within MAT-9's current bounds, dispatch through the
-  existing request/reply path, and return a direct Message response;
-- declare streaming, push notifications, and extended card false; return
-  specified unsupported errors; and
-- use dedicated Bearer callers, limits, audit logs, and an explicit
-  `experimental` product label.
-
-**Value:** a real external A2A client can discover and synchronously delegate a
-small text request to a Kyber agent. **Not formal support:** mandatory task
-operations and full TCK conformance are absent. This phase must not be marketed
-as A2A-compatible or conformant.
-
-### Phase 2: formal non-streaming A2A server — 6–10 weeks
-
-- add PostgreSQL tasks, messages, artifacts, transitions, retention, ownership,
-  listing, and pagination;
-- add the explicit runtime task-update MCP bridge, follow-up input, cancellation
-  delivery, failure recovery, and bounded text/data artifacts;
-- implement Send Message, Get Task, List Tasks, and Cancel Task completely;
-- implement the required error behavior for disabled streaming, subscription,
-  push configuration, and extended-card operations;
-- enforce version negotiation and A2A caller isolation; and
-- pass all applicable HTTP+JSON TCK `MUST` checks plus Kyber restart,
-  authorization, race, and prompt-injection suites.
-
-**Value:** honest formal A2A 1.0 server support for non-streaming,
-poll-or-cancel task clients.
-
-### Phase 3a: streaming and subscriptions — 3–5 weeks
-
-- add cross-replica event fan-out with replay from the task event log;
-- implement SSE Send Streaming Message and Subscribe to Task, disconnect and
-  resume behavior, backpressure, and terminal closure; and
-- declare `streaming: true` only after TCK and proxy/load-balancer tests pass.
-
-**Value:** interactive progress and efficient long-running task monitoring.
-
-### Phase 3b: push notifications and extended card — 3–5 weeks
-
-- persist push configurations and implement all four operations;
-- add webhook egress allow/deny policy, DNS rebinding and private-address
-  defenses, redirects, authentication credentials, retry/idempotency policy,
-  cleanup, and delivery observability; and
-- add an authenticated extended card only if a real private-skill use case
-  exists.
-
-**Value:** disconnected consumers. This is optional and should remain off
-unless callers need it; webhook SSRF and credential handling make it a poor
-checkbox feature.
-
-### Separate client project — 2–4 weeks bounded, 6–10 weeks full
-
-A bounded text-only HTTP+JSON MCP sidecar with card discovery, endpoint
+Outbound client support remains separately costed: approximately two to four
+weeks for a bounded text-only HTTP+JSON MCP sidecar with discovery,
 allowlisting, Bearer secret references, Send/Get/Cancel, payload limits, and
-untrusted-output labeling is approximately 2–4 weeks. Supporting all card
-security schemes, bindings, streaming, files/artifacts, interactive
-input/auth-required states, and interoperability testing is another 4–6 weeks.
+untrusted-output labeling; another four to six weeks for broader bindings,
+security schemes, streaming, files/artifacts, and interrupted task states.
 
-The Phase 2 server plus hardening is therefore roughly **two to three engineer
-months** before Kyber should make a formal claim. A full server with streaming
-and push is roughly **three to five engineer months**. The bounded outbound
-client can ship independently and earlier if that is where demand appears.
+## 10. Risks and decisions that remain load-bearing
 
-## 9. Risks and decisions that remain load-bearing
-
-- **No caller:** the dominant product risk. Phase 0 is a real gate, not
-  paperwork.
+- **No caller:** the dominant risk for G10–G12, but not a reason to reject a
+  native gap that has a concrete Kyber consumer.
 - **Agent cooperation:** explicit task updates are more reliable than turn
   inference but remain model-driven. Timeouts, invalid transitions, and missing
   completion must be first-class failed outcomes.
@@ -478,19 +478,23 @@ client can ship independently and earlier if that is where demand appears.
   inspect skipped tests, and keep Kyber-owned coverage for behavior the TCK
   cannot observe.
 
-## 10. Acceptance decision
+## 11. Gap-by-gap decision process
 
-Matt can accept this recommendation by choosing one of three outcomes:
+Review exactly one gap at a time, beginning with G1. For each gap:
 
-1. **Recommended: not yet.** Close MAT-6 with this design, wait for a named
-   inbound or outbound caller, and rerun Phase 0 when one exists.
-2. **Experimental server.** Approve Phase 0 and Phase 1 only, with no formal
-   support claim and a decision checkpoint before building the task service.
-3. **Formal server.** Fund Phase 0 through Phase 2 as a two-to-three engineer
-   month project; streaming and push remain separately justified options.
+1. confirm the current and required future state against current code and the
+   pinned protocol;
+2. identify at least one concrete non-A2A Kyber consumer and the user outcome;
+3. reject protocol-driven scope that the native consumer does not need;
+4. decide `pursue`, `defer`, or `A2A-only` and record the reason in this table;
+5. if pursued, create a dedicated design/implementation issue with its own
+   acceptance criteria and cost; and
+6. update dependent gaps before reviewing the next one.
 
-Outbound need should create a separate client issue rather than changing this
-choice.
+Stopping is a valid outcome at every step. Formal A2A server work begins only
+when the prerequisite native gaps have been accepted and a real A2A caller
+justifies G10–G12. Outbound client demand remains a separate issue because it
+does not need this inbound task stack.
 
 ## Sources checked
 
