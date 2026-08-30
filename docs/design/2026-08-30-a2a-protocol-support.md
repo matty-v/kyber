@@ -108,8 +108,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G1 | Durable agent tasks | Bounded MAT-9 request records expire in at most five minutes and retain one response | Addressable, restart-safe task lifecycle with retention, Get, and List | High: long-running API automation, reliable job tracking, and a common request surface | None | L, 4–6 weeks | Pursue design: [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks) |
 | G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded typed artifacts, including an explicit multimodal policy | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pursue design: [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results) |
 | G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pursue design: [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation) |
-| G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Review next |
-| G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pending G1 |
+| G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks) |
+| G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Review next |
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review after G1 |
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer by default |
@@ -295,6 +295,54 @@ branches.
 
 **Decision question:** is resumable, human-in-the-loop task continuation worth
 designing as a native Kyber automation feature, independent of A2A?
+
+**Decision:** pursue the design in
+[MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks).
+Matt made this decision on 2026-08-30. MAT-22 is design-only and depends on the
+durable task and task-update contracts in MAT-19 and MAT-20.
+
+### G5 decision brief: principal-scoped task authorization
+
+G5 asks whether every task operation should be owned and authorized by a
+stable caller identity instead of treating possession of an agent-level token
+and task ID as sufficient access.
+
+**Current Kyber capability:** API access can use named static Bearer tokens with
+declared request scopes, but the scopes are not an enforced authorization model
+for task ownership. Request records are addressed by agent and request ID. The
+service does not persist a caller principal on each record or guarantee that
+create, read, list, continue, cancel, and result access are filtered to that
+principal.
+
+**A2A-required future state:** authentication resolves a stable principal and
+tenant boundary before task handling. Every task stores its owner; every
+operation enforces both action scope and resource ownership; list and event
+surfaces cannot reveal another caller's tasks. Operator access is explicit,
+least-privileged, and audited. G9 can later add federated OAuth/OIDC identities
+without changing this native authorization model.
+
+**Standalone Kyber value:** multiple automations, services, users, or future
+agents can safely share one Kyber installation without task IDs acting as
+bearer secrets. Per-principal revocation and auditability make the task API
+viable beyond a single trusted integration. This is a prerequisite for safely
+shipping G1 as a broadly reachable API.
+
+**Cost and risk:** approximately one to two engineer weeks after G1 for the
+principal model, persisted ownership, enforced scopes, list/query filters,
+operator override, migration, audit events, and adversarial tests. The largest
+risk is an incomplete check on a secondary surface such as artifacts,
+continuations, events, or cancellation. Existing tokens also need an explicit
+migration policy so legacy access does not silently become over-privileged.
+
+**Proposed native cut:** keep static Bearer credentials initially, but resolve
+each to a stable principal with explicit task action scopes. Persist owner and
+tenant on creation; require ownership plus scope for all subsequent operations;
+make operator override a separate audited permission. Defer federation and
+third-party identity claims to G9.
+
+**Decision question:** is principal-scoped ownership and authorization worth
+designing as a native Kyber security boundary for the task API, independent of
+A2A?
 
 ## 3. Direction: two projects, not one
 

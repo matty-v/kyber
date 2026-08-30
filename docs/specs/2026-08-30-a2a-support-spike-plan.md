@@ -83,3 +83,7 @@ starting a transport implementation.
   MAT-19, and MAT-20 references, recorded cooperative cancellation as pursued,
   and prepared G4 (multi-turn task continuation) for the next independent
   decision.
+- 2026-08-30: Matt chose to pursue G4. Created MAT-22 with MAT-6, PR #183,
+  MAT-19, and MAT-20 references, recorded multi-turn continuation as pursued,
+  and prepared G5 (principal-scoped task authorization) for the next
+  independent decision.
