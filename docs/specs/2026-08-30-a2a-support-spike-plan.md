@@ -87,3 +87,9 @@ starting a transport implementation.
   MAT-19, and MAT-20 references, recorded multi-turn continuation as pursued,
   and prepared G5 (principal-scoped task authorization) for the next
   independent decision.
+- 2026-08-30: Matt chose to pursue G5 and clarified the intended architecture:
+  Kyber should be a thin adapter over Claude Code and Codex concepts, exposing
+  one durable formal platform envelope rather than rebuilding an agent loop.
+  Added that guardrail and a harness-capability audit to MAT-6 and MAT-19–22,
+  created MAT-23, recorded G5 as pursued, and prepared G6 (machine-readable
+  public capability contract) for the next decision.

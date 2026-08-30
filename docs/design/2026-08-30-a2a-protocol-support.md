@@ -97,6 +97,23 @@ Primary protocol references are the
 
 ## 2. Gap register
 
+### Architecture guardrail: thin adapters, one platform envelope
+
+Kyber must not reimplement the agent loop already provided by Claude Code and
+Codex. Runtime adapters should pass through or project each harness's native
+prompt, approval, tool-progress, file, continuation, and interruption
+primitives wherever they exist. Each pursued design starts with a
+harness-capability audit; custom runtime machinery needs a documented gap in
+both supported harnesses.
+
+Kyber owns the smaller contract that must be uniform across runtimes and remain
+valid when a harness session or pod disappears: external task identity,
+durability and retention, idempotency, caller authorization, bounded state and
+result projection, and auditable capability claims. Harness sessions and
+events feed that envelope but are not its source of truth. The estimates below
+are planning ranges until the relevant capability audit identifies what can be
+adapted directly.
+
 Each gap below is an independent product decision. “A2A requirement” means the
 capability is needed for the future state of a formally conformant inbound
 HTTP+JSON server. “Native Kyber value” asks whether the feature earns its place
@@ -109,8 +126,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G2 | Explicit progress and typed results | Runtime can submit one final text response | Validated task transitions, status messages, and bounded typed artifacts, including an explicit multimodal policy | High: structured progress and results without transcript scraping | G1 | M, 2–3 weeks | Pursue design: [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results) |
 | G3 | Cooperative cancellation | No request cancellation path reaches a running agent | Idempotent cancel request, runtime delivery, acknowledgment, and honest terminal outcome | Medium/high: operator and API control over runaway or obsolete work | G1, runtime contract | M, 2–3 weeks | Pursue design: [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation) |
 | G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks) |
-| G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Review next |
-| G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review after G1 |
+| G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pursue design: [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization) |
+| G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Review next |
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pending G1–G2 |
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer by default |
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review with G5 |
@@ -343,6 +360,54 @@ third-party identity claims to G9.
 **Decision question:** is principal-scoped ownership and authorization worth
 designing as a native Kyber security boundary for the task API, independent of
 A2A?
+
+**Decision:** pursue the design in
+[MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization).
+Matt made this decision on 2026-08-30 and clarified that Kyber should expose a
+unified platform contract over harness-native concepts rather than reimplement
+them. MAT-23 is design-only and applies that thin-adapter boundary explicitly.
+
+### G6 decision brief: machine-readable public capability contract
+
+G6 asks whether each Kyber agent should publish a curated, machine-readable
+description of what external callers can ask it to do, independent of the A2A
+Agent Card wire format.
+
+**Current Kyber capability:** the platform can observe runtime skill reports
+and knows operational facts such as runtime type, model, endpoints, and health.
+Those facts are internal and dynamic. There is no stable, operator-approved
+public contract describing skill IDs, input/output media modes, supported task
+features, or whether a capability is currently available.
+
+**A2A-required future state:** G10 needs enough validated native data to project
+an honest Agent Card: identity and description, stable skills, endpoints,
+security schemes, input/output modes, supported optional features, and version.
+Claims must not be inferred solely from a model's prose or the presence of a
+tool; advertised capabilities must match the selected harness adapter and
+deployed platform features.
+
+**Standalone Kyber value:** gateways, UIs, automation catalogs, and other Kyber
+agents can discover compatible agents without scraping prompts or coupling to
+Kubernetes internals. Operators can curate the supported public surface while
+Kyber validates it against observed runtime and platform capabilities.
+
+**Cost and risk:** approximately two to three engineer weeks for the native
+manifest schema, CRD/API storage, validation, runtime-capability reconciliation,
+health projection, caching, UI/operator workflow, and tests. A thin adapter
+should reuse harness-native tool/skill metadata where available. The main risk
+is confusing discovered capabilities with approved public promises, producing
+stale or unsafe advertisements, or exposing private skill instructions.
+
+**Proposed native cut:** add an operator-authored per-agent public manifest with
+stable capability IDs, short descriptions, bounded media modes, and declared
+task features. Validate claims against Kyber's runtime-adapter capability
+matrix and deployment state; expose availability separately from the stable
+contract. Do not publish raw prompts, skill files, tool schemas, or
+model-generated claims automatically.
+
+**Decision question:** is a curated, validated capability manifest worth
+designing as a native Kyber discovery feature for gateways, UIs, and agent
+catalogs, independent of A2A?
 
 ## 3. Direction: two projects, not one
 
