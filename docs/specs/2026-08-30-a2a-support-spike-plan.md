@@ -100,3 +100,7 @@ starting a transport implementation.
   resumable task events, recorded G7 as pursued, and prepared optional G8
   (outbound task webhooks) with a recommendation to defer it until a concrete
   disconnected consumer exists.
+- 2026-08-30: Matt chose to defer G8. Recorded push notifications as unsupported
+  in the initial A2A profile with a concrete-consumer revisit trigger, and
+  prepared G9 (federated external identity) with a recommendation to use G5's
+  static service principals initially and defer OAuth2/OIDC.

@@ -129,8 +129,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pursue design: [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization) |
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Pursue design: [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest) |
 | G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams) |
-| G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Review next; defer recommended |
-| G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review with G5 |
+| G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer; revisit for a concrete disconnected consumer |
+| G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review next; defer federation recommended |
 | G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | A2A-only |
 | G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | A2A-only |
 | G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Last |
@@ -499,6 +499,55 @@ Defer caller-supplied arbitrary destinations and per-token progress callbacks.
 consumer requires it. Does Kyber have enough standalone need to pursue the
 webhook design now, or should the future A2A server declare push notifications
 unsupported initially?
+
+**Decision:** defer G8. Matt made this decision on 2026-08-30. The initial A2A
+surface will declare push notifications unsupported. Revisit when a concrete
+disconnected consumer needs callbacks strongly enough to justify the delivery
+and network-security infrastructure.
+
+### G9 decision brief: external identity for cross-organization agents
+
+G9 asks whether Kyber needs federated OAuth2/OIDC identity now, beyond the
+stable static-token principals and authorization boundary being designed in
+G5. A2A can advertise multiple security schemes and does not require OIDC for
+baseline interoperability.
+
+**Current Kyber capability:** installations can authenticate named static
+Bearer credentials, but task ownership and scopes are not yet fully enforced.
+G5 closes that authorization gap by resolving credentials to stable principals
+and applying ownership plus action scopes on every task surface.
+
+**A2A-required future state:** the Agent Card truthfully advertises a supported
+security scheme and every A2A operation applies G5 authorization. High-entropy,
+rotatable, revocable Bearer credentials over TLS can satisfy the initial
+machine-to-machine deployment. OAuth2/OIDC becomes necessary when callers from
+other organizations must bring identities issued by their own authorization
+servers or require delegated user consent and short-lived claims.
+
+**Standalone Kyber value:** federation would improve enterprise SSO,
+short-lived credentials, centralized revocation, workload identity, and
+cross-organization delegation. Those benefits are substantial only with a
+known identity provider, trust topology, tenant mapping, and consumer; a
+generic provider integration designed in advance is likely to encode the wrong
+flows.
+
+**Cost and risk:** the enforced static-principal baseline belongs to MAT-23.
+Adding production OAuth2/OIDC is a separate large effort, roughly three to five
+engineer weeks for issuer discovery, JWKS caching and rotation, audience and
+claim validation, principal/tenant mapping, scopes, clock skew, revocation
+expectations, configuration, observability, and adversarial tests. Multi-issuer
+or delegated user flows can make it larger. Authentication bugs directly
+compromise the task authorization boundary.
+
+**Proposed native cut:** finish G5 with rotatable named service principals,
+hashed credential storage, explicit scopes, audit, and no query-string tokens.
+Let G10 advertise that supported scheme. Defer OAuth2/OIDC until a concrete
+cross-organization or enterprise identity requirement names the issuer,
+grant/credential flow, audience, tenant mapping, and revocation expectations.
+
+**Recommendation and decision question:** treat G5 as sufficient for the
+initial A2A security profile and defer federated OAuth2/OIDC. Is there a known
+cross-organization identity use case that warrants pursuing G9 design now?
 
 ## 3. Direction: two projects, not one
 
