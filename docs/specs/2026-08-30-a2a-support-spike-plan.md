@@ -112,3 +112,6 @@ starting a transport implementation.
   MAT-24 as the sole native capability source, opened no separate G10 issue,
   and prepared G11 (A2A HTTP+JSON binding) as the thin standards adapter that
   delivers the original interoperability goal.
+- 2026-08-30: Matt chose to pursue G11. Created MAT-26 as the thin A2A
+  HTTP+JSON edge design, bundled G10 Agent Card projection into it, and prepared
+  G12 (conformance and release discipline) as the final independent decision.

@@ -132,8 +132,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer; revisit for a concrete disconnected consumer |
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Defer OAuth2/OIDC; G5 is the initial security profile |
 | G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | Bundle with G11; no separate native issue |
-| G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | Review next; pursue for formal A2A support |
-| G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Last |
+| G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | Pursue design: [MAT-26](https://linear.app/matty-v/issue/MAT-26/designplatform-thin-a2a-httpjson-edge-adapter) |
+| G12 | Conformance and release discipline | Normal Kyber tests only | Pinned SDK/TCK, applicable MUST pass, SHOULD review, security/restart tests, and published support matrix | Medium: repeatable compatibility discipline; specific suite is A2A-only | G10–G11 | M, 1–2 weeks | Review next and final |
 
 The sizes are intentionally not additive estimates for one project. Each gap
 needs its own scope after the previous decision. Some work overlaps: for
@@ -643,6 +643,57 @@ the edge behind translation tests.
 issue if formal interoperability remains the goal. It should reference every
 native dependency, bundle G10, and leave G12 to define the independent
 conformance/release gate. Pursue G11 design?
+
+**Decision:** pursue the design in
+[MAT-26](https://linear.app/matty-v/issue/MAT-26/designplatform-thin-a2a-httpjson-edge-adapter).
+Matt made this decision on 2026-08-30. MAT-26 bundles G10, references the native
+dependency designs, and explicitly excludes a parallel task store or agent
+loop.
+
+### G12 decision brief: conformance and release discipline
+
+G12 asks whether formal A2A support should have a repeatable compatibility gate
+and published support profile instead of relying only on ordinary endpoint
+tests and a claim that Kyber follows the specification.
+
+**Current Kyber capability:** normal unit, integration, security, and release
+tests protect Kyber behavior, but CI does not pin the A2A SDK or TCK, inventory
+the applicable normative requirements, test another implementation, or publish
+which binding/version/options Kyber actually supports.
+
+**A2A-required future state:** every release claiming A2A support runs a pinned
+conformance suite against the deployed edge, passes all applicable MUST
+requirements, records its disposition of SHOULD requirements, and exercises
+authorization, restart, retention, limits, streaming, cancellation, and
+unsupported-option behavior. Kyber publishes a support matrix naming the wire
+version, binding, security profile, optional capabilities, known limitations,
+and test artifact versions.
+
+The official TCK is useful but currently untagged and there is no formal A2A
+certification program. Kyber can claim tested or self-attested conformance with
+evidence; it must not claim certification.
+
+**Standalone Kyber value:** the A2A-specific suite has no value without G11,
+but the discipline is broadly useful: dependency pins, compatibility matrices,
+negative/security tests, deployed restart tests, and evidence-backed release
+claims reduce protocol drift and make upgrades reviewable.
+
+**Cost and risk:** approximately one to two engineer weeks after G11 for the
+requirement inventory, pinned TCK harness, test deployment and fixtures,
+cross-implementation smoke tests, CI/release gates, artifact retention,
+support-matrix automation, and upgrade runbook. The main risks are treating an
+untagged upstream TCK as stable truth, silently skipping inapplicable tests, or
+letting flaky network tests either block releases or be ignored.
+
+**Proposed native cut:** pin the A2A spec, Go SDK, and exact TCK commit; check in
+an applicability ledger for all normative requirements; run unit translation
+tests plus a deployed HTTP+JSON/TCK suite; add focused security, restart, and
+one independent-client smoke test; publish a generated support matrix. Upgrade
+pins deliberately, never floating on upstream main.
+
+**Recommendation and final decision question:** pursue G12 as a separate
+design-only release/conformance issue. It is required for Kyber to call G11
+formal support rather than merely an A2A-shaped endpoint. Pursue G12 design?
 
 ## 3. Direction: two projects, not one
 
