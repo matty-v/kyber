@@ -128,8 +128,8 @@ implementation issue; it does not authorize the later gaps automatically.
 | G4 | Multi-turn task continuation | Each bounded request is independent | Follow-up Messages on a task plus input-required, auth-required, rejected, and failed states | Medium: resumable approvals, clarification, and credential handoff for automations | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks) |
 | G5 | Principal-scoped task authorization | Named request scopes exist, but records are keyed only by agent and request ID | Every create/read/list/update/cancel is scoped to an authenticated caller or tenant | High: safe delegated automation and least-privileged integrations | G1 | M, 1–2 weeks | Pursue design: [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization) |
 | G6 | Machine-readable public capability contract | Skills are observable internally; no curated public capability document exists | Per-agent validated capability manifest with stable skill IDs, media modes, endpoints, and honest health | Medium/high: discovery for gateways, catalogs, and operators even without A2A | Skills reporting | M, 2–3 weeks | Pursue design: [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest) |
-| G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Review next |
-| G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Defer by default |
+| G7 | Live event subscriptions | PWA WebSocket carries CRD events; requests expose polling only | Ordered task event log and resumable per-task subscription, with SSE at the A2A edge | Medium: efficient progress UIs and API consumers | G1, G2 | L, 3–5 weeks | Pursue design: [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams) |
+| G8 | Outbound task webhooks | Kyber sends selected alerts; no caller-configured task callbacks | Persisted callback configs, authenticated delivery, retries, idempotency, SSRF defense, and cleanup | Medium/low until a disconnected consumer asks for it | G1, G2, G5 | L, 3–5 weeks | Review next; defer recommended |
 | G9 | External identity suitable for cross-organization agents | Static Bearer callers and optional unenforced scopes | Enforced per-principal task scopes; OAuth2/OIDC only if federation is required | High for any serious external API consumer; OAuth federation itself is demand-specific | G5 | M for enforced Bearer; L for OIDC | Review with G5 |
 | G10 | A2A Agent Card projection | No public card | Map G6 into the normative Agent Card and well-known/tenant discovery rules | Low without an A2A caller; protocol adapter over G6 | G6, G9 | S, 3–5 days | A2A-only |
 | G11 | A2A HTTP+JSON binding | No A2A routes, version negotiation, data model, or error mapping | One complete declared binding backed by G1–G6 and optional flags matching reality | Low without an A2A caller; interoperability value when one exists | G1–G6, G9–G10 | M, 2–4 weeks | A2A-only |
@@ -454,6 +454,51 @@ chunks, hidden reasoning, token deltas, and arbitrary harness events.
 **Decision question:** is a durable, resumable task event stream worth
 designing as a native Kyber feature for responsive UIs and API consumers,
 independent of A2A?
+
+**Decision:** pursue the design in
+[MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams).
+Matt made this decision on 2026-08-30. MAT-25 is design-only and limits the
+stream to normalized platform task events under the thin-adapter guardrail.
+
+### G8 decision brief: outbound task webhooks
+
+G8 asks whether a task caller should be able to register a callback URL and
+have Kyber deliver later task updates without keeping a subscription open.
+This is an optional A2A capability: Kyber can remain conformant to the baseline
+while declaring push notifications unsupported.
+
+**Current Kyber capability:** Kyber sends selected operator-configured alerts
+to chat channels, but a request caller cannot supply a per-task callback. There
+is no persisted delivery queue, caller-specific signing secret, retry ledger,
+or destination-validation policy for task notifications.
+
+**A2A-required future state if advertised:** callback configuration is
+authorized and persisted with the task. Delivery is signed or otherwise
+authenticated, retryable, deduplicable by the receiver, observable, and
+cleaned up with task retention. Destination handling defends against SSRF,
+DNS rebinding, redirect abuse, credential leakage, and internal-network access.
+
+**Standalone Kyber value:** disconnected automation platforms could receive
+completion or progress without polling or maintaining SSE. The value is lower
+while Kyber has no concrete webhook consumer; G7 already covers connected and
+reconnecting clients with a simpler trust boundary.
+
+**Cost and risk:** approximately three to five engineer weeks after G1, G2,
+and G5 for callback registration, encrypted credentials, an outbox/worker,
+signing, retries and dead-letter handling, destination policy, observability,
+rate limits, and adversarial network tests. The main risk is turning Kyber into
+a privileged network-pivot and reliable-delivery service for arbitrary URLs.
+This work is platform infrastructure, not a harness adapter.
+
+**Proposed native cut if pursued:** completion-only webhooks to pre-approved
+HTTPS destinations, with per-destination authentication, signed event IDs,
+bounded retry/backoff, an outbox, and no redirects or private-network targets.
+Defer caller-supplied arbitrary destinations and per-token progress callbacks.
+
+**Recommendation and decision question:** defer G8 until a real disconnected
+consumer requires it. Does Kyber have enough standalone need to pursue the
+webhook design now, or should the future A2A server declare push notifications
+unsupported initially?
 
 ## 3. Direction: two projects, not one
 

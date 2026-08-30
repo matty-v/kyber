@@ -96,3 +96,7 @@ starting a transport implementation.
 - 2026-08-30: Matt chose to pursue G6. Created MAT-24 under the thin-adapter
   guardrail, recorded the curated capability manifest as pursued, and prepared
   G7 (live event subscriptions) for the next independent decision.
+- 2026-08-30: Matt chose to pursue G7. Created MAT-25 for normalized, durable,
+  resumable task events, recorded G7 as pursued, and prepared optional G8
+  (outbound task webhooks) with a recommendation to defer it until a concrete
+  disconnected consumer exists.
