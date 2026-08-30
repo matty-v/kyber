@@ -38,9 +38,10 @@ retention, Get, and List.
 - [x] Audit Claude Code and Codex primitives for session identity, queued input,
   turn completion, resume/restart behavior, and any stable correlation fields.
 - [ ] Complete MAT-28's managed-hook failure matrix. Live positive receipt and
-  session-restart persistence now pass on both runtimes; the sidecar
-  POST/query handshake and destructive cut points remain the implementation
-  gate.
+  session-restart persistence pass on both runtimes, and the executable
+  sidecar POST/query protocol passes the lost-response cut point. The real
+  durable endpoint and destructive restart cut points remain the
+  implementation gate.
 - [x] Trace existing PostgreSQL ownership, migration, backup, availability, and
   multi-replica patterns that a task repository should reuse.
 - [x] Define the minimal task aggregate, lifecycle, atomic transitions,
@@ -97,3 +98,9 @@ retention, Get, and List.
   left the unrelated `echo` agent untouched. The sidecar lost-response
   handshake remains unproven, so unresolved attempts retain
   `delivery_unknown`.
+- 2026-08-30: Matt selected the sidecar handshake prototype. Added an
+  executable HTTP prototype for create-or-read receipt POST, identical replay,
+  conflicting replay, response loss after commit followed by exact GET
+  reconciliation, and fail-closed unavailability. All four cases pass on Go
+  1.26. This proves the protocol algorithm, not the production database and
+  restart behavior; unresolved real attempts still retain `delivery_unknown`.

@@ -1,6 +1,6 @@
 # Runtime turn receipt and recovery spike
 
-**Status:** Prototype validated; sidecar handshake and destructive cut-point matrix pending
+**Status:** Runtime receipt and handshake protocol prototypes validated; production cut-point matrix pending
 **Date:** 2026-08-30
 **Tracker:** [MAT-28](https://linear.app/matty-v/issue/MAT-28/spikeruntime-native-turn-receipt-and-recovery-capabilities)
 **Consumer:** [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks)
@@ -178,13 +178,26 @@ only remaining agent on `peek-test` was the pre-existing `echo` agent.
 ### What remains unproven
 
 This validates a positive, pre-model, task-correlated acceptance receipt on
-both harnesses. It does not yet validate the sidecar POST-then-query protocol,
-a lost response after database commit, a control-plane restart during the
-hook, hook exit-code behavior at the deployed versions, or automatic recovery
-after a pod restart. Those cut points require an implementation of the
-loopback receipt endpoint rather than a file-only evidence hook. Until then,
-an attempt crossing that boundary without a reconcilable receipt remains
-`delivery_unknown` and must not be blindly redelivered.
+both harnesses. A separate executable
+[`mat28-sidecar-handshake`](prototypes/mat28-sidecar-handshake/handshake_test.go)
+prototype validates the proposed loopback sidecar protocol over HTTP:
+
+- POST is create-or-read, keyed by the random attempt ID;
+- an identical POST replay returns the immutable stored receipt;
+- reuse of an attempt ID with different receipt data conflicts;
+- after a deliberately dropped POST response following a successful commit,
+  an exact GET by attempt ID proves acceptance; and
+- when neither POST nor GET proves the exact receipt, the hook fails closed so
+  the harness can block model processing.
+
+The protocol prototype passes all four cases on Go 1.26. It resolves the
+committed-but-response-lost algorithm, but it is not yet a production
+implementation. A control-plane restart during the hook, hook exit-code
+behavior at the deployed versions, durable database persistence, and automatic
+recovery after a pod restart still require the real loopback endpoint and
+repository. Until then, an attempt crossing that boundary without a
+reconcilable receipt remains `delivery_unknown` and must not be blindly
+redelivered.
 
 ## Recommendation for MAT-19
 

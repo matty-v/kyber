@@ -27,7 +27,9 @@ Kyber can use after a crash. The
 promising common positive boundary: both pinned integrations have managed
 `UserPromptSubmit` hooks, and Codex includes a native turn ID. Live restart and
 task-envelope tests validated that boundary for both harnesses, and persisted
-receipts survived session restarts. The sidecar recovery handshake and the
+receipts survived session restarts. MAT-28's executable HTTP prototype also
+validated the idempotent sidecar POST/query recovery handshake, including a
+lost response after commit. The production endpoint, durable repository, and
 remaining failure cut points are still required before production reliance.
 Kyber therefore does not
 automatically redeliver an unresolved attempt; it records
@@ -387,7 +389,9 @@ status. The current audit finds no durable turn query in either pinned TUI
 integration, but both expose a managed pre-model prompt hook; Codex's verified
 payload also includes `turn_id`. MAT-28's live prototype validated positive
 receipts and session-restart persistence on both harnesses. Its sidecar
-handshake and remaining destructive failure matrix must finish before these
+protocol prototype validated exact idempotent replay, conflict rejection,
+lost-response reconciliation by GET, and fail-closed ambiguity. The production
+endpoint and remaining destructive failure matrix must finish before these
 capabilities are treated as production guarantees.
 
 `TaskEnvelope` contains the Kyber task ID, agent identity, deadline, bounded
