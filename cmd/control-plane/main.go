@@ -1208,7 +1208,7 @@ func main() {
 				return errors.New("public API not yet initialized")
 			}
 			podName := "agent-" + job.Agent
-			jobName := "inbound-" + job.RequestID
+			jobName := inbound.DispatchJobName(job.RequestID)
 			_, stderr, err := publicAPI.ExecRunJobStdin(ctx, podName, jobName, strings.NewReader(job.Envelope))
 			if err != nil {
 				setupLog.Error(err, "inbound dispatch exec failed",

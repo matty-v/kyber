@@ -3,9 +3,17 @@ package inbound
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 )
+
+// DispatchJobName converts an opaque inbound/request ID into the restricted
+// filename-safe name accepted by kyber-job-dispatch. Platform request IDs use
+// a req_ prefix; the dispatcher deliberately rejects underscores.
+func DispatchJobName(requestID string) string {
+	return "inbound-" + strings.ReplaceAll(requestID, "_", "-")
+}
 
 // QueueDepth is the maximum number of in-flight jobs a single agent may hold
 // before further Enqueue calls are rejected with ErrQueueFull. Hardcoded for
