@@ -1,6 +1,6 @@
 # MAT-26 design plan: thin A2A HTTP+JSON edge adapter
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-26](https://linear.app/matty-v/issue/MAT-26/designplatform-thin-a2a-httpjson-edge-adapter)
 
 ## Decisions
