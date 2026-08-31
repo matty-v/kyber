@@ -1,6 +1,6 @@
 # MAT-25 design plan: durable resumable task event streams
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams)
 
 ## Decisions
