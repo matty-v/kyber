@@ -1,6 +1,6 @@
 # MAT-22 design plan: resumable multi-turn tasks
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks)
 
 ## Decisions

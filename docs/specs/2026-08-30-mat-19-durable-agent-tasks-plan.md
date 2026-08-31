@@ -1,6 +1,6 @@
 # MAT-19 durable agent tasks — design plan
 
-**Status:** In progress
+**Status:** Accepted
 **Date:** 2026-08-30
 **Tracker:** [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks)
 **Parent spike:** [MAT-6](https://linear.app/matty-v/issue/MAT-6)
@@ -37,11 +37,11 @@ retention, Get, and List.
   status sidecar, and both runtime adapters.
 - [x] Audit Claude Code and Codex primitives for session identity, queued input,
   turn completion, resume/restart behavior, and any stable correlation fields.
-- [ ] Complete MAT-28's managed-hook failure matrix. Live positive receipt and
+- [x] Complete MAT-28's design-gating prototype matrix. Live positive receipt and
   session-restart persistence pass on both runtimes, and the executable
   sidecar POST/query protocol passes the lost-response cut point. The real
   durable endpoint and destructive restart cut points remain the
-  implementation gate.
+  implementation acceptance gate rather than unfinished design work.
 - [x] Trace existing PostgreSQL ownership, migration, backup, availability, and
   multi-replica patterns that a task repository should reuse.
 - [x] Define the minimal task aggregate, lifecycle, atomic transitions,
@@ -64,8 +64,8 @@ retention, Get, and List.
 - [x] Verify material code claims with file references and distinguish observed
   harness behavior from assumptions requiring implementation prototypes.
 - [x] Run documentation and repository checks appropriate to the changed files.
-- [ ] Commit and push the focused branch, open a stacked PR based on #183 while
-  it remains unmerged, and link the result from MAT-19.
+- [x] Commit and push the focused branch, open stacked PR #184 based on #183,
+  and link the result from MAT-19.
 
 ## Progress log
 
@@ -104,3 +104,6 @@ retention, Get, and List.
   reconciliation, and fail-closed unavailability. All four cases pass on Go
   1.26. This proves the protocol algorithm, not the production database and
   restart behavior; unresolved real attempts still retain `delivery_unknown`.
+- 2026-08-30: Matt accepted MAT-19. Review follow-up records the settled
+  defaults, audit-only legacy caller migration, compatibility text result, and
+  PostgreSQL-required public runtime boundary.
