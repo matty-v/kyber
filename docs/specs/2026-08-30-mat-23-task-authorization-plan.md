@@ -1,6 +1,6 @@
 # MAT-23 design plan: principal-scoped task authorization
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization)
 
 ## Decisions

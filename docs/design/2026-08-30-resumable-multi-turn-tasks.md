@@ -1,6 +1,6 @@
 # Resumable multi-turn agent tasks
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-22](https://linear.app/matty-v/issue/MAT-22/designplatform-resumable-multi-turn-agent-tasks)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md), [MAT-20](2026-08-30-task-progress-typed-results.md), and [MAT-21](2026-08-30-cooperative-task-cancellation.md)
@@ -525,4 +525,3 @@ Approve MAT-22 with restart-safe replay. It formalizes a useful Kyber-native
 pause/resume workflow while keeping provider harnesses in charge of reasoning
 and tools. The bounded public message log is the minimum durable context needed
 to survive a lost session; it is not a replacement conversation engine.
-

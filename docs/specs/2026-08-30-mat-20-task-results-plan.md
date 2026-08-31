@@ -1,6 +1,6 @@
 # MAT-20 design plan: task progress and typed multimodal results
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results)
 
 ## Decisions

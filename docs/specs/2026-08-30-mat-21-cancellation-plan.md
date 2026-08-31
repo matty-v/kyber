@@ -1,6 +1,6 @@
 # MAT-21 design plan: cooperative task cancellation
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation)
 
 ## Decisions

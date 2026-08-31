@@ -1,6 +1,6 @@
 # Durable resumable task event streams
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-25](https://linear.app/matty-v/issue/MAT-25/designplatform-durable-resumable-task-event-streams)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md), [MAT-20](2026-08-30-task-progress-typed-results.md), [MAT-21](2026-08-30-cooperative-task-cancellation.md), [MAT-22](2026-08-30-resumable-multi-turn-tasks.md), and [MAT-23](2026-08-30-principal-scoped-task-authorization.md)
@@ -410,4 +410,3 @@ testing (0.5–1 week). A2A projection is separate.
   never enters the log.
 - PostgreSQL remains authoritative with Redis unavailable.
 - Native v1 exposes SSE only and preserves a clean later A2A projection seam.
-

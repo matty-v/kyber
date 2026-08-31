@@ -1,6 +1,6 @@
 # Task-scoped progress and typed multimodal results
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-20](https://linear.app/matty-v/issue/MAT-20/designplatform-task-scoped-progress-and-typed-multimodal-results)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md)

@@ -1,11 +1,13 @@
 # Thin A2A 1.0 HTTP+JSON edge adapter
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-26](https://linear.app/matty-v/issue/MAT-26/designplatform-thin-a2a-httpjson-edge-adapter)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md), [MAT-20](2026-08-30-task-progress-typed-results.md), [MAT-21](2026-08-30-cooperative-task-cancellation.md), [MAT-22](2026-08-30-resumable-multi-turn-tasks.md), [MAT-23](2026-08-30-principal-scoped-task-authorization.md), [MAT-24](2026-08-30-public-agent-capability-manifest.md), and [MAT-25](2026-08-30-durable-task-event-streams.md)
 **Origin:** [MAT-6](https://linear.app/matty-v/issue/MAT-6/spikeplatform-what-formal-a2a-protocol-support-would-require-for-kyber), [A2A gap study](2026-08-30-a2a-protocol-support.md), and gap-study PR #183
-**Normative input:** A2A specification 1.0.0 and official Go SDK v2.4.0, reviewed/pinned by commit at implementation time
+**Normative input:** A2A specification 1.0.0 at commit
+`173695755607e884aa9acf8ce4feed90e32727a1` and official Go SDK v2.4.0 at
+commit `5736cc7c76905476840257b2c3b0f84a6fea8134`
 
 ## 1. Decision
 
@@ -37,10 +39,12 @@ HTTP+JSON/REST bindings. It requires `A2A-Version` negotiation using major.minor
 semantics, defines task polling/list/cancel/subscribe operations, and requires
 the current Task as the first Subscribe-to-Task event.
 
-The official Go SDK v2.4.0 supports A2A 1.0 and REST server handlers. SDK
-version and protocol version are separate. Implementation pins both the module
-version and resolved commit/checksum; upgrades go through MAT-27 rather than
-floating on `latest` or upstream main.
+The official Go SDK v2.4.0 at commit
+`5736cc7c76905476840257b2c3b0f84a6fea8134` supports A2A 1.0 and REST server
+handlers. SDK version and protocol version are separate. The specification tag
+resolves to `173695755607e884aa9acf8ce4feed90e32727a1`. Implementation pins the
+module checksum too; upgrades go through MAT-27 rather than floating on
+`latest` or upstream main.
 
 The checked-in normative sources are:
 
@@ -202,11 +206,14 @@ key management and normative signing behavior receive their own design.
 
 Kyber always returns a Task for accepted work, including trivial work. It does
 not add a direct-Message fast path because native execution is durable and may
-outlive the request. Blocking Send Message waits only within a configured
-server deadline for terminal, input-required, or auth-required state; timeout
-returns the latest valid task according to normative SDK behavior rather than
-canceling the task. Non-blocking mode returns immediately after durable create
-and dispatch receipt semantics permit.
+outlive the request. Blocking Send Message waits for terminal, input-required,
+or auth-required state as A2A 1.0 requires. A server or gateway deadline does
+not turn a working task into a successful blocking response: if the response
+deadline expires, the adapter returns a retryable transport error when it can
+still write one, while the durable task continues and remains available through
+Get/Subscribe. A client disconnect likewise does not cancel the task.
+Non-blocking mode returns immediately after durable create and dispatch receipt
+semantics permit.
 
 Send Streaming Message and Subscribe share the MAT-25 event authority. They do
 not hold a direct harness connection. The former creates/continues first; the
@@ -393,10 +400,12 @@ list, cancel, event subscription, and denied access with the A2A entry point.
 
 ## 18. SDK boundary and upgrade policy
 
-Pin `github.com/a2aproject/a2a-go/v2` at v2.4.0 plus `go.sum` checksum and record
-the resolved commit in MAT-27 evidence. Before implementation, verify the tag
-against the official repository and security advisories. Wrap SDK construction
-in one package and expose only Kyber-owned interfaces.
+Pin `github.com/a2aproject/a2a-go/v2` at v2.4.0, resolved commit
+`5736cc7c76905476840257b2c3b0f84a6fea8134`, plus its `go.sum` checksum.
+MAT-27 records the same commit in evidence. Before implementation, reverify the
+tag against the official repository and security advisories without changing
+the pin silently. Wrap SDK construction in one package and expose only
+Kyber-owned interfaces.
 
 Allowed SDK responsibilities:
 
@@ -506,4 +515,3 @@ weeks). MAT-27 conformance infrastructure is separate.
   normative unsupported error.
 - MAT-27 can test the deployed adapter without special protocol behavior in
   core services.
-
