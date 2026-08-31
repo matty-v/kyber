@@ -79,6 +79,13 @@ func (s *requestMCPServer) handle(w http.ResponseWriter, r *http.Request) {
 		response.Result = map[string]any{}
 	case "tools/list":
 		response.Result = map[string]any{"tools": []map[string]any{{
+			"name":        "get_self_profile",
+			"description": "Read the current agent's safe self-profile: runtime, model, phase, requested resources, and installed skills.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{},
+			},
+		}, {
 			"name":        "respond",
 			"description": "Complete one dispatched Kyber agent request. Use only the request_id from the current kyber-request envelope.",
 			"inputSchema": map[string]any{
@@ -123,6 +130,9 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return requestToolError("invalid tool arguments")
 	}
+	if params.Name == "get_self_profile" {
+		return s.getSelfProfile(ctx)
+	}
 	if params.Name == "complete" {
 		return s.completeTask(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.Response)
 	}
@@ -158,6 +168,24 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	result := requestToolText("response accepted")
 	result.StructuredContent = map[string]any{"accepted": true, "request_id": params.Arguments.RequestID}
+	return result
+}
+
+func (s *requestMCPServer) getSelfProfile(ctx context.Context) requestToolResult {
+	var profile map[string]any
+	status, err := getFromCP(ctx, s.client, s.cfg, "self-profile", &profile)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return requestToolError("self profile was not found")
+		}
+		return requestToolError("self profile service is unavailable")
+	}
+	encoded, err := json.Marshal(profile)
+	if err != nil {
+		return requestToolError("could not encode self profile")
+	}
+	result := requestToolText("%s", encoded)
+	result.StructuredContent = profile
 	return result
 }
 

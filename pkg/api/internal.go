@@ -390,6 +390,8 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleSkillsReport(w, r, agentName)
 	case "request-reply":
 		s.handleRequestReply(w, r, agentName)
+	case "self-profile":
+		s.handleSelfProfile(w, r, agentName)
 	case "task-complete":
 		s.handleTaskComplete(w, r, agentName)
 	case "task-receipts":
