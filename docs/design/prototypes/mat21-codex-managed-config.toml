@@ -1,0 +1,30 @@
+# Disposable MAT-21 Codex config for the purpose-built dev agent.
+approval_policy = "never"
+sandbox_mode = "danger-full-access"
+check_for_update_on_startup = false
+tui.resume_cwd = "current"
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/usr/local/bin/kyber-cron-turn-start"
+timeout = 20
+
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "/persist/mat21-task-marker.sh"
+timeout = 20
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "env KYBER_CLEAR_SESSION_TEXT=/clear /usr/local/bin/kyber-cron-postrun"
+timeout = 20
+
+[[hooks.Stop.hooks]]
+type = "command"
+command = "/persist/mat21-task-marker.sh"
+timeout = 20
+
+[projects."/home/kyber"]
+trust_level = "trusted"
