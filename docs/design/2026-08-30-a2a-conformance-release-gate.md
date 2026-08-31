@@ -1,6 +1,6 @@
 # Evidence-backed A2A conformance release gate
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-27](https://linear.app/matty-v/issue/MAT-27/designrelease-evidence-backed-a2a-conformance-gate)
 **Gates:** [MAT-26](2026-08-30-a2a-http-json-edge-adapter.md)
@@ -34,15 +34,19 @@ machine-readable compatibility JSON plus HTML and JUnit reports. Kyber runs
 only the declared HTTP+JSON transport while ensuring undeclared transports are
 not accidentally advertised.
 
-The evidence baseline is pinned as one set:
+The initial evidence baseline, resolved from the official repositories on
+2026-08-30, is pinned as one set:
 
-- A2A specification artifact: `1.0.0` and its release commit/digest;
+- A2A specification artifact: `1.0.0`, commit
+  `173695755607e884aa9acf8ce4feed90e32727a1`;
 - wire protocol version: `1.0`;
-- official Go SDK: `github.com/a2aproject/a2a-go/v2` v2.4.0, resolved commit and
-  module checksum;
-- official TCK: exact commit SHA plus `uv.lock` digest;
-- independent client: exact official Python or JavaScript SDK version/commit,
-  deliberately different from the server's Go SDK; and
+- official Go SDK: `github.com/a2aproject/a2a-go/v2` v2.4.0, commit
+  `5736cc7c76905476840257b2c3b0f84a6fea8134`, plus module checksum;
+- official TCK: commit `5996b79f9cefa6fc390980e383e358a66fb9e49e` plus
+  its checked-in `uv.lock` digest;
+- independent client: official Python SDK v1.0.0, commit
+  `24db37ee24c927df936289ad6ffbc8c746a44db8`, deliberately different from
+  the server's Go SDK; and
 - Kyber source commit, image digests, chart version, feature flags, and Agent
   Card digest.
 
@@ -344,8 +348,8 @@ Generate, do not hand-maintain, a machine-readable and human-readable matrix:
   "unsupported": ["OAuth2/OIDC", "JSON-RPC", "gRPC", "extensions", "extendedAgentCard"],
   "limitsRef": "...",
   "deviations": [],
-  "sdk": {"module": "github.com/a2aproject/a2a-go/v2", "version": "v2.4.0", "commit": "..."},
-  "tck": {"commit": "...", "patches": []},
+  "sdk": {"module": "github.com/a2aproject/a2a-go/v2", "version": "v2.4.0", "commit": "5736cc7c76905476840257b2c3b0f84a6fea8134"},
+  "tck": {"commit": "5996b79f9cefa6fc390980e383e358a66fb9e49e", "patches": []},
   "evidenceDigest": "sha256:..."
 }
 ```
@@ -461,4 +465,3 @@ nightly load/failover matrices may take longer and cannot replace the gate.
 - Claim language says tested/self-attested, never certified, and advertises
   only MAT-26's actual HTTP+JSON Bearer+streaming profile.
 - Protocol/dependency upgrades are deliberate diffs with evidence and rollback.
-

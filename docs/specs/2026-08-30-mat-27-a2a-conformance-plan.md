@@ -1,6 +1,6 @@
 # MAT-27 design plan: evidence-backed A2A conformance gate
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-27](https://linear.app/matty-v/issue/MAT-27/designrelease-evidence-backed-a2a-conformance-gate)
 
 ## Decisions
