@@ -1,6 +1,6 @@
 # Curated public agent capability manifest
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md), [MAT-20](2026-08-30-task-progress-typed-results.md), [MAT-21](2026-08-30-cooperative-task-cancellation.md), [MAT-22](2026-08-30-resumable-multi-turn-tasks.md), and [MAT-23](2026-08-30-principal-scoped-task-authorization.md)
@@ -376,4 +376,3 @@ A2A projection is separate.
 - Upgrading an existing agent publishes nothing by default.
 - A later A2A projection can be deterministic without making A2A the native
   source of truth.
-

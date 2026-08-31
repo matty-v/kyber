@@ -1,6 +1,6 @@
 # Durable externally addressable agent tasks
 
-**Status:** Draft
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks)
 **Parent:** [MAT-6](https://linear.app/matty-v/issue/MAT-6)
@@ -564,19 +564,23 @@ violates the thin-adapter direction. It may be a separate execution mode if a
 future product requirement values isolated batch tasks over conversational
 agents.
 
-## 15. Open review questions
+## 15. Resolved review decisions
 
-1. Should the default execution deadline be 24 hours and terminal retention 7
-   days, or should installations start with shorter defaults?
-2. **Decided:** require MAT-28's harness receipt prototype before dispatch
-   implementation. Keep `delivery_unknown` only as the conservative fallback
-   for an attempt the receipt reconciler cannot resolve.
-3. Should G1 store the current caller name for migration into MAT-23, or remain
-   limited to the legacy full-scope operator until stable principal IDs exist?
-4. Does the first slice need a compatibility text result, or may tasks remain
-   `dispatched` until MAT-20 supplies the task-update tool?
-5. Should `/tasks` require PostgreSQL in every environment, or may an explicit
-   development-only memory mode exist for local tests and demos?
+1. Default execution deadline is 24 hours and terminal retention is 7 days,
+   with the bounded operator configuration described above.
+2. MAT-28's receipt prototype is a prerequisite for dispatch implementation.
+   Keep `delivery_unknown` as the conservative fallback for an attempt the
+   receipt reconciler cannot resolve.
+3. Before MAT-23 enforcement, store the authenticated caller's current name as
+   audit-only migration data. It never grants ownership. MAT-23 backfills the
+   explicit installation tenant/principal and stable principal IDs.
+4. The first implementation slice includes the existing bounded text response
+   as a compatibility result. MAT-20 replaces that bridge with the typed result
+   contract; a task must not remain dispatched merely because typed results are
+   not yet enabled.
+5. Public task routes require PostgreSQL and fail closed without it. Memory
+   repositories are permitted only behind tests, not as a runtime mode whose
+   behavior could diverge from production durability.
 
 ## 16. Revised estimate
 
