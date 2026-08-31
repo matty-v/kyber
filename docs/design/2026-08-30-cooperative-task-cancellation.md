@@ -1,6 +1,6 @@
 # Cooperative task cancellation
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-21](https://linear.app/matty-v/issue/MAT-21/designplatform-cooperative-task-cancellation)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md) and [MAT-20](2026-08-30-task-progress-typed-results.md)

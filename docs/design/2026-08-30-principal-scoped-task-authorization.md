@@ -1,6 +1,6 @@
 # Principal-scoped task authorization
 
-**Status:** Proposed
+**Status:** Accepted design
 **Date:** 2026-08-30
 **Tracker:** [MAT-23](https://linear.app/matty-v/issue/MAT-23/designplatform-principal-scoped-task-authorization)
 **Depends on:** [MAT-19](2026-08-30-durable-agent-tasks.md), [MAT-20](2026-08-30-task-progress-typed-results.md), [MAT-21](2026-08-30-cooperative-task-cancellation.md), and [MAT-22](2026-08-30-resumable-multi-turn-tasks.md)
@@ -323,4 +323,3 @@ revocation behavior (0.5–1 week), and adversarial testing/rollout telemetry
 - Internal agent mutations require the assigned agent and current attempt.
 - Administrative override is explicit, separately scoped, and fully audited.
 - Legacy data and credentials have a measurable, reversible migration path.
-
