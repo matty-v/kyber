@@ -79,7 +79,8 @@ Kubernetes round-trip on the hot path.
 - **Self-awareness is a projection, not Kubernetes access.**
   `GET /internal/agents/{name}/self-profile` returns only the caller's name,
   runtime, model, phase, requested resources, installed runtime version, and
-  reported skill names/descriptions. It deliberately omits placement, network,
+  reported skill names/descriptions (plus an explicit signal when no report has
+  arrived yet). It deliberately omits placement, network,
   credentials, channels, bindings, identity-repo configuration, and raw status.
   Agent pods still have no Kubernetes service-account token.
 - **Machine/node routes are node-agent-only.** `authorizeNodeAgent` admits only

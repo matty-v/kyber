@@ -12,12 +12,15 @@ import (
 	"github.com/matty-v/kyber/pkg/skillstore"
 )
 
+// SelfProfileResources is the requested compute allocation safe to show to
+// the agent itself.
 type SelfProfileResources struct {
 	CPU    string `json:"cpu"`
 	Memory string `json:"memory"`
 	Disk   string `json:"disk"`
 }
 
+// SelfProfileSkill is the public subset of one reported skill.
 type SelfProfileSkill struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -33,6 +36,7 @@ type SelfProfile struct {
 	Phase            kyberv1.AgentPhase   `json:"phase,omitempty"`
 	Resources        SelfProfileResources `json:"resources"`
 	InstalledVersion string               `json:"installedVersion,omitempty"`
+	SkillsReported   bool                 `json:"skillsReported"`
 	Skills           []SelfProfileSkill   `json:"skills"`
 }
 
@@ -76,6 +80,7 @@ func (s *InternalServer) handleSelfProfile(w http.ResponseWriter, r *http.Reques
 	if s.skillStore != nil {
 		report, err := s.skillStore.Get(r.Context(), agentName)
 		if err == nil {
+			profile.SkillsReported = true
 			for _, skill := range report.Skills {
 				profile.Skills = append(profile.Skills, SelfProfileSkill{
 					Name: skill.Name, Description: skill.Description,

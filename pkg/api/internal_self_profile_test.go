@@ -81,7 +81,39 @@ func TestInternalSelfProfile_IsSelfOnlyAndSanitized(t *testing.T) {
 	if profile.Name != "glyph" || profile.Runtime != "codex" || profile.Model != "gpt-live" || profile.Resources.Memory != "8Gi" {
 		t.Fatalf("profile = %+v", profile)
 	}
-	if len(profile.Skills) != 1 || profile.Skills[0].Name != "glyph-about" {
+	if !profile.SkillsReported || len(profile.Skills) != 1 || profile.Skills[0].Name != "glyph-about" {
 		t.Fatalf("skills = %+v", profile.Skills)
+	}
+}
+
+func TestInternalSelfProfile_DistinguishesUnreportedSkills(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := kyberv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "new-agent", Namespace: "kyber-system"}}
+	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).Build()
+	server := api.NewInternalServer(
+		briefstore.NewMemoryStore(),
+		api.WithKubeClient(kube, "kyber-system"),
+		api.WithSkillStore(skillstore.NewMemoryStore()),
+	)
+	ts := httptest.NewServer(server.Handler())
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/internal/agents/new-agent/self-profile")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	var profile api.SelfProfile
+	if err := json.NewDecoder(resp.Body).Decode(&profile); err != nil {
+		t.Fatal(err)
+	}
+	if profile.SkillsReported || profile.Skills == nil || len(profile.Skills) != 0 {
+		t.Fatalf("unreported skills = reported:%v skills:%+v", profile.SkillsReported, profile.Skills)
 	}
 }
