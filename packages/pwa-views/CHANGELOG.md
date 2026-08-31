@@ -1,5 +1,10 @@
 # @matty-v/kyber-pwa-views
 
+## 0.36.8 — 2026-08-31
+
+### Changed
+- Dependency updates: `@tanstack/react-query` 5.101.4 -> 5.102.8.
+
 ## 0.36.7 — 2026-08-29
 
 ### Added
