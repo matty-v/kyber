@@ -35,6 +35,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
+	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
@@ -124,6 +125,7 @@ type InternalServer struct {
 	runtimeDetectCache     runtimedetect.Cache
 	skillStore             skillstore.Store
 	requestStore           requeststore.Store
+	taskStore              taskstore.DispatchStore
 	agentMetrics           AgentMetricsProvider
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
@@ -212,6 +214,10 @@ func WithRequestStore(st requeststore.Store) InternalServerOption {
 	return func(s *InternalServer) {
 		s.requestStore = st
 	}
+}
+
+func WithTaskStore(st taskstore.DispatchStore) InternalServerOption {
+	return func(s *InternalServer) { s.taskStore = st }
 }
 
 // WithKubeClient wires a controller-runtime client and namespace into the InternalServer
@@ -361,6 +367,10 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 	if !s.authorizeAgentSelf(w, r, agentName) {
 		return
 	}
+	if strings.HasPrefix(parts[1], "task-receipts/") {
+		s.handleTaskReceiptGet(w, r, agentName, strings.TrimPrefix(parts[1], "task-receipts/"))
+		return
+	}
 	switch parts[1] {
 	case "session-brief":
 		s.handleSessionBrief(w, r, agentName)
@@ -380,6 +390,10 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleSkillsReport(w, r, agentName)
 	case "request-reply":
 		s.handleRequestReply(w, r, agentName)
+	case "task-complete":
+		s.handleTaskComplete(w, r, agentName)
+	case "task-receipts":
+		s.handleTaskReceiptPost(w, r, agentName)
 	case "status-event":
 		s.handleStatusEvent(w, r, agentName)
 	case "status":

@@ -685,6 +685,11 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action == "tasks" || strings.HasPrefix(action, "tasks/") {
+		s.handleAgentTasks(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "tasks"), "/"))
+		return
+	}
+
 	// User-defined per-agent secrets (#75): dispatch anything under "secrets".
 	if action == "secrets" || strings.HasPrefix(action, "secrets/") {
 		s.handleUserSecrets(w, r, name, action)

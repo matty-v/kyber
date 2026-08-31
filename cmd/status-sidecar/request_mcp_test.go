@@ -37,10 +37,30 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"respond"`, `"request_id"`, `"response"`} {
+	for _, want := range []string{`"name":"respond"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPCompleteForwardsTaskAndAttempt(t *testing.T) {
+	var path string
+	var payload map[string]string
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path = r.URL.Path
+		_ = json.NewDecoder(r.Body).Decode(&payload)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL}}
+	response := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "complete", "arguments": map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222", "response": "done"}})
+	result := response.Result.(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("tool error: %+v", result)
+	}
+	if path != "/internal/agents/alice/task-complete" || payload["response"] != "done" {
+		t.Fatalf("path=%q payload=%v", path, payload)
 	}
 }
 

@@ -42,6 +42,10 @@ type Job struct {
 	// OnDelivery receives the terminal delivery outcome for request jobs. It
 	// must be fast and concurrency-safe because it runs on the agent worker.
 	OnDelivery func(context.Context, DeliveryOutcome)
+	// BeforeDelivery runs after the agent is Running and immediately before
+	// invoking the runtime adapter. Durable tasks use it to persist the point
+	// after which a worker crash makes delivery ambiguous.
+	BeforeDelivery func(context.Context) error
 }
 
 // JobKind distinguishes internal request envelopes from existing webhook jobs.
@@ -50,6 +54,7 @@ type JobKind string
 const (
 	JobKindWebhook JobKind = ""
 	JobKindRequest JobKind = "request"
+	JobKindTask    JobKind = "task"
 )
 
 // DeliveryOutcome is the transport-level result reported to request state.

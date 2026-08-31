@@ -73,6 +73,10 @@ COPY --chmod=0755 scripts/kyber-cron-postrun /usr/local/bin/kyber-cron-postrun
 # turn cannot consume it. See scripts/kyber-cron-turn-start.
 COPY --chmod=0755 scripts/kyber-cron-turn-start /usr/local/bin/kyber-cron-turn-start
 
+# Managed UserPromptSubmit hook that proves a task envelope crossed the
+# harness boundary before model processing begins.
+COPY --chmod=0755 scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Agent controller overrides CMD with args: [/usr/local/bin/start-claude.sh] on
 # every claude-code pod — this placeholder is used only for bare-container dev/test.

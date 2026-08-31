@@ -100,6 +100,7 @@ fi
 # Stop-hook equivalent.
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
+KYBER_TASK_RECEIPT_CMD="${KYBER_TASK_RECEIPT_CMD:-/usr/local/bin/kyber-task-receipt}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
 
 arm_kyber_cron_postrun() {
@@ -145,6 +146,10 @@ if [ -x "$KYBER_POSTRUN_CMD" ] && [ -x "$KYBER_TURNSTART_CMD" ] && command -v jq
         || echo "[kyber] WARNING: could not register cron post-run hook" >&2
     register_kyber_hook UserPromptSubmit "$KYBER_TURNSTART_CMD" \
         || echo "[kyber] WARNING: could not register cron turn-start hook" >&2
+    if [ -x "$KYBER_TASK_RECEIPT_CMD" ]; then
+        register_kyber_hook UserPromptSubmit "$KYBER_TASK_RECEIPT_CMD claude-code" \
+            || echo "[kyber] WARNING: could not register task receipt hook" >&2
+    fi
 
     # Both or neither. The pair is the mechanism: arming without consuming
     # leaks markers and mutes --exclusive; consuming without arming is the
