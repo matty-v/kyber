@@ -32,7 +32,8 @@
 
 - [x] Check in the design and disposable prototype assets.
 - [x] Run repository checks.
-- [ ] Commit, push, open a stacked PR, and update Linear.
+- [x] Commit, push, and open stacked PR #186. Linear is updated separately
+  because its comment is external state.
 
 ## Progress log
 
