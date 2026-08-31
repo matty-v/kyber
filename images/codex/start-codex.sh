@@ -384,6 +384,7 @@ unset _device_auth_pending
 # a runtime that can only register half never claims the capability.
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
+KYBER_TASK_RECEIPT_CMD="${KYBER_TASK_RECEIPT_CMD:-/usr/local/bin/kyber-task-receipt}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
 arm_kyber_cron_postrun() {
     local sentinel_dir
@@ -434,6 +435,15 @@ if [ -x "$KYBER_TURNSTART_CMD" ]; then
 [[hooks.UserPromptSubmit.hooks]]
 type = \"command\"
 command = \"${KYBER_TURNSTART_CMD}\"
+timeout = 20
+"
+fi
+if [ -x "$KYBER_TASK_RECEIPT_CMD" ]; then
+    KYBER_CODEX_HOOKS_TOML="${KYBER_CODEX_HOOKS_TOML}
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = \"command\"
+command = \"${KYBER_TASK_RECEIPT_CMD} codex\"
 timeout = 20
 "
 fi

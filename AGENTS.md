@@ -206,6 +206,16 @@ in-memory outcome callback. They do not loop through the public webhook route,
 binding matcher, HMAC verifier, or deduper. Unlike legacy webhook jobs, they do
 not attempt delivery after the Running-phase wait reaches their expiry.
 
+Durable agent tasks are a separate PostgreSQL-backed contract in
+`pkg/taskstore/` and `pkg/taskdispatch/`, exposed at
+`/api/v1/agents/{agent}/tasks`. They are opt-in via
+`api.durableTasks.enabled`, require PostgreSQL, and never fall back to memory
+in production. Creation atomically stores the task plus dispatch intent;
+workers claim with cross-replica leases and reuse the per-agent inbound queue.
+The managed `UserPromptSubmit` hook must persist an exact task/attempt receipt
+through the status sidecar before public state becomes `dispatched`; ambiguous
+attempts fail as `delivery_unknown` and are never automatically replayed.
+
 WHY the trust boundary matters: `verifier.go` does constant-time compare and
 collapses ALL failures to a single `ErrSignatureMismatch` — never differentiate
 causes externally. The queue is bounded so a flooded agent sheds load

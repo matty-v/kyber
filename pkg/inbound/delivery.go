@@ -21,7 +21,7 @@ func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhook
 	return func(ctx context.Context, job Job) {
 		waitFor := webhookWait
 		processingDeadline := job.DeliverBefore
-		if job.Kind == JobKindRequest {
+		if job.Kind == JobKindRequest || job.Kind == JobKindTask {
 			waitFor = time.Until(job.DeliverBefore)
 			if waitFor <= 0 {
 				notifyDelivery(ctx, job, DeliveryAgentUnavailable)
@@ -47,13 +47,13 @@ func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhook
 		waitCtx, cancelWait := context.WithTimeout(ctx, waitFor)
 		waitErr := waitAgent(waitCtx, job, waitFor)
 		cancelWait()
-		if waitErr != nil && job.Kind == JobKindRequest {
+		if waitErr != nil && (job.Kind == JobKindRequest || job.Kind == JobKindTask) {
 			notifyDelivery(ctx, job, DeliveryAgentUnavailable)
 			return
 		}
 
 		deliverFor := deliveryTimeout
-		if job.Kind == JobKindRequest {
+		if job.Kind == JobKindRequest || job.Kind == JobKindTask {
 			remaining := time.Until(processingDeadline)
 			if remaining <= 0 {
 				notifyDelivery(ctx, job, DeliveryAgentUnavailable)
@@ -61,6 +61,12 @@ func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhook
 			}
 			if remaining < deliverFor {
 				deliverFor = remaining
+			}
+		}
+		if job.BeforeDelivery != nil {
+			if err := job.BeforeDelivery(ctx); err != nil {
+				notifyDelivery(ctx, job, DeliveryFailed)
+				return
 			}
 		}
 		deliverCtx, cancelDeliver := context.WithTimeout(ctx, deliverFor)
@@ -75,7 +81,7 @@ func NewDeliveryHandler(waitAgent WaitAgentFunc, deliver DeliverJobFunc, webhook
 }
 
 func notifyDelivery(ctx context.Context, job Job, outcome DeliveryOutcome) {
-	if job.Kind == JobKindRequest && job.OnDelivery != nil {
+	if (job.Kind == JobKindRequest || job.Kind == JobKindTask) && job.OnDelivery != nil {
 		job.OnDelivery(ctx, outcome)
 	}
 }

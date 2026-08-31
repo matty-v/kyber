@@ -119,6 +119,19 @@ api:
     maxResponseBytes: 8192
     maxOutstanding: 2
     maxTerminal: 20
+  # Durable agent tasks are an opt-in rollout surface. They additionally
+  # require PostgreSQL and per-Agent requestReplyEnabled=true.
+  durableTasks:
+    enabled: false
+    maxPromptBytes: 8192
+    maxCorrelationBytes: 256
+    maxResponseBytes: 32768
+    maxOutstanding: 8
+    maxRetained: 100000
+    maxDispatchAttempts: 3
+    defaultDeadlineHours: 24
+    maxDeadlineHours: 168
+    retentionHours: 168
   # existingSecret: name of a pre-created Secret that provides the api-key
   # key. When set, the chart does NOT create a Secret — the operator is responsible.
   # Overrides apiKey above.

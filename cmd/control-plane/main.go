@@ -60,6 +60,8 @@ import (
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
+	"github.com/matty-v/kyber/pkg/taskdispatch"
+	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 
 	// pkg/runtimes/claudecode now needs both blank-import side effect
@@ -203,6 +205,12 @@ func main() {
 	// has no skills", which is the false-healthy state the tab exists to kill.
 	var briefStore briefstore.BriefStore
 	var skillStore skillstore.Store
+	var agentTaskStore taskstore.Store
+	taskLimits, taskConfigErr := loadTaskLimits()
+	if taskConfigErr != nil {
+		setupLog.Error(taskConfigErr, "invalid durable task configuration")
+		os.Exit(1)
+	}
 	if pgURL := os.Getenv("KYBER_POSTGRES_URL"); pgURL != "" {
 		db, err := sql.Open("postgres", pgURL)
 		if err != nil {
@@ -244,6 +252,28 @@ func main() {
 		}
 		setupLog.Info("SkillStore: using Postgres")
 		skillStore = pgSkills
+
+		// Durable tasks deliberately share the established PostgreSQL pool but
+		// have their own versioned schema. Unlike briefs and skills there is no
+		// runtime memory fallback: acceptance without durable dispatch intent
+		// would violate the task API contract.
+		pgTasks, taskErr := taskstore.NewPostgresStore(db, taskLimits)
+		if taskErr != nil {
+			setupLog.Error(taskErr, "initializing durable task store")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		taskMigrateCtx, cancelTasks := context.WithTimeout(ctx, 2*time.Minute+30*time.Second)
+		taskErr = briefstore.MigrateWithRetry(taskMigrateCtx, pgTasks.Migrate,
+			2*time.Minute, 5*time.Second, setupLog.Info)
+		cancelTasks()
+		if taskErr != nil {
+			setupLog.Error(taskErr, "TaskStore Postgres migration never succeeded within the retry budget — exiting so Kubernetes restarts the pod")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		agentTaskStore = pgTasks
+		setupLog.Info("TaskStore: using Postgres")
 	} else {
 		setupLog.Info("BriefStore: KYBER_POSTGRES_URL not set — using in-memory store (briefs will not survive pod restart)")
 		briefStore = briefstore.NewMemoryStore()
@@ -648,6 +678,9 @@ func main() {
 	}
 	if agentRequestStore != nil {
 		internalOpts = append(internalOpts, internalapi.WithRequestStore(agentRequestStore))
+	}
+	if durable, ok := agentTaskStore.(taskstore.DispatchStore); ok {
+		internalOpts = append(internalOpts, internalapi.WithTaskStore(durable))
 	}
 	if agentMetrics, err := internalapi.NewKubernetesAgentMetrics(restCfg); err != nil {
 		setupLog.Error(err, "unable to configure Kubernetes agent metrics")
@@ -1370,6 +1403,8 @@ func main() {
 		InboundQueue:           inboundQueue,
 		InboundEnvelopeCache:   inboundEnvelopeCache,
 		RequestStore:           agentRequestStore,
+		TaskStore:              agentTaskStore,
+		TasksEnabled:           os.Getenv("KYBER_TASKS_ENABLED") == "true",
 		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
 		RuntimeDetectCache:     runtimeDetectCache,
 		// #500: the serve-time token-budget gauge resolves the context window
@@ -1423,6 +1458,43 @@ func main() {
 	inboundEventAgg := internalapi.NewInboundEventAggregator(
 		publicAPI.Recorder, publicAPI.K8sClient, publicAPI.Namespace)
 	publicAPI.InboundEventAggregator = inboundEventAgg
+
+	if publicAPI.TasksEnabled {
+		durable, ok := agentTaskStore.(taskstore.DispatchStore)
+		if !ok {
+			setupLog.Info("durable task creation enabled without PostgreSQL; routes remain fail-closed")
+		} else {
+			owner, _ := os.Hostname()
+			if owner == "" {
+				owner = "control-plane"
+			}
+			worker := &taskdispatch.Worker{Store: durable, Queue: inboundQueue, Owner: owner, PollInterval: time.Second, LeaseDuration: 2 * time.Minute}
+			if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error { worker.Run(runCtx); return nil })); err != nil {
+				setupLog.Error(err, "registering durable task dispatcher")
+				os.Exit(1)
+			}
+			if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error {
+				ticker := time.NewTicker(30 * time.Second)
+				defer ticker.Stop()
+				for {
+					if result, err := durable.Reconcile(runCtx, 100); err != nil && runCtx.Err() == nil {
+						setupLog.Error(err, "durable task reconciliation failed")
+					} else if err == nil && (result.RequeuedLeases+result.UnknownAttempts+result.ExpiredTasks+result.DeletedTasks) > 0 {
+						setupLog.Info("durable tasks reconciled", "requeued", result.RequeuedLeases, "unknown", result.UnknownAttempts, "expired", result.ExpiredTasks, "deleted", result.DeletedTasks)
+					}
+					select {
+					case <-runCtx.Done():
+						return nil
+					case <-ticker.C:
+					}
+				}
+			})); err != nil {
+				setupLog.Error(err, "registering durable task reconciler")
+				os.Exit(1)
+			}
+			setupLog.Info("durable task dispatcher enabled", "owner", owner)
+		}
+	}
 
 	if err := mgr.Add(manager.RunnableFunc(publicAPI.Start)); err != nil {
 		setupLog.Error(err, "unable to add public API to manager")

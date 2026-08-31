@@ -39,6 +39,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
+	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
 )
@@ -72,6 +73,13 @@ type Server struct {
 	// the authenticated request API. Nil keeps the new surface dark until the
 	// rollout wires a configured backend and feature gate.
 	RequestStore requeststore.Store
+
+	// TaskStore is the PostgreSQL-backed source of truth for durable agent
+	// tasks. Production never wires a memory fallback. TasksEnabled is an
+	// installation rollout gate; reads remain available when creation is later
+	// paused during rollback.
+	TaskStore    taskstore.Store
+	TasksEnabled bool
 
 	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
 	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)

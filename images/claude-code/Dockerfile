@@ -63,6 +63,7 @@ RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/$(dpkg --
 
 # Claude Code start script
 COPY --chmod=0755 images/claude-code/start-claude.sh /usr/local/bin/start-claude.sh
+COPY --chmod=0755 images/agent-base/scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
 COPY --chmod=0755 images/shared/kyber-harness-install /usr/local/bin/kyber-harness-install
 COPY --chmod=0755 images/shared/kyber-runtime-repair /usr/local/bin/kyber-runtime-repair
 # Shared identity-repo setup (kyber#676) — installed BESIDE the start script so

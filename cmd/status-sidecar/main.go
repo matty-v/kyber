@@ -190,6 +190,8 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// access/refresh/expires trio (kyber#681).
 	mux.HandleFunc("/codex-auth", forwardHandler(client, cfg, metrics, logger, "codex-auth", false))
 	mux.HandleFunc("/mcp", (&requestMCPServer{client: client, cfg: cfg}).handle)
+	mux.HandleFunc("/task-receipts", taskReceiptForwarder(client, cfg))
+	mux.HandleFunc("/task-receipts/", taskReceiptForwarder(client, cfg))
 	srv := &http.Server{
 		Addr:              localhostAddr,
 		Handler:           mux,
@@ -289,6 +291,35 @@ func postToCP(ctx context.Context, client *http.Client, cfg config, cpEndpoint s
 		return resp.StatusCode, fmt.Errorf("control plane returned %s", resp.Status)
 	}
 	return resp.StatusCode, nil
+}
+
+func taskReceiptForwarder(client *http.Client, cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost && r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		suffix := strings.TrimPrefix(r.URL.Path, "/task-receipts")
+		target := fmt.Sprintf("%s/internal/agents/%s/task-receipts%s", cfg.ControlPlaneURL, cfg.AgentName, suffix)
+		req, err := http.NewRequestWithContext(r.Context(), r.Method, target, http.MaxBytesReader(w, r.Body, 4096))
+		if err != nil {
+			http.Error(w, "invalid receipt request", http.StatusBadRequest)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token, err := readPodToken(podTokenPath); err == nil && token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, "task receipt service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, io.LimitReader(resp.Body, 8192))
+	}
 }
 
 // classifyForwardError maps an HTTP status code (or 0 for "no response") to
