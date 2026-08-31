@@ -1,6 +1,6 @@
 # MAT-24 design plan: curated public agent capability manifest
 
-**Status:** Complete; awaiting design decision
+**Status:** Accepted
 **Issue:** [MAT-24](https://linear.app/matty-v/issue/MAT-24/designplatform-curated-public-agent-capability-manifest)
 
 ## Decisions
