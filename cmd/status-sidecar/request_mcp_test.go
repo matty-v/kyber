@@ -37,10 +37,31 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"respond"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
+	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPGetSelfProfileReturnsStructuredContent(t *testing.T) {
+	controlPlane := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/internal/agents/glyph/self-profile" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"name":"glyph","runtime":"codex","resources":{"cpu":"2","memory":"8Gi","disk":"20Gi"},"skills":[]}`))
+	}))
+	defer controlPlane.Close()
+	server := &requestMCPServer{client: controlPlane.Client(), cfg: config{AgentName: "glyph", ControlPlaneURL: controlPlane.URL}}
+	response := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "get_self_profile", "arguments": map[string]any{}})
+	result := response.Result.(map[string]any)
+	if result["isError"] == true {
+		t.Fatalf("tool returned error: %+v", result)
+	}
+	structured := result["structuredContent"].(map[string]any)
+	if structured["name"] != "glyph" || structured["runtime"] != "codex" {
+		t.Fatalf("structured content = %+v", structured)
 	}
 }
 

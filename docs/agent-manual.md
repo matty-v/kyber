@@ -61,6 +61,11 @@ That file is platform-owned and read-only to you. Because the sidecar writes it 
 ## 5. Your credentials
 
 - **Pod token** — `/var/run/secrets/kyber/pod-token`. Proves you are you to the control plane. Enforced **act-on-self-only**: you cannot act as another agent (403). Don't move it, print it, or copy it.
+- **Self profile** — the `kyber-request-reply` MCP server exposes
+  `get_self_profile`, a read-only, self-only projection of your runtime, model,
+  phase, requested CPU/memory/disk, installed runtime version, and reported
+  skills. It does not grant Kubernetes API access or expose placement, network,
+  credentials, channels, bindings, or raw Agent CR fields.
 - **Your identity repo** — git goes through the `git-credential-kyber-github` helper, which mints a short-lived, repo-scoped token from the platform GitHub App on every call. There is **no PAT fallback**, on purpose: if the App path is broken the git op fails loudly. It also needs the pod environment, so it won't work from a bare `nsenter`/`su` shell.
 - **Other repos** — `$GH_TOKEN` / `$USER_GITHUB_TOKEN`, only for repos that aren't yours.
 - **Operator-delivered secrets** arrive as `USER_*` environment variables. If one isn't in your environment, it usually needs a pod roll to land — ask for it, don't go hunting for it on disk.

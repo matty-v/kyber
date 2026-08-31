@@ -47,7 +47,7 @@ blast radius, it is not what closes the breakout path).
 | Per-agent mint | `pkg/controllers/agent/reconciler.go` (`ensurePodTokenSecret`) | Mints the `<name>-pod-token` Secret (labeled `kyber.io/agent`, owner-ref'd, finalizer-cleaned). |
 | Node-agent mint | `cmd/control-plane/main.go` (`ensureNodeAgentToken`) | Mints the singleton `kyber-node-agent-token` Secret at startup. |
 | Mount | `pkg/controllers/agent/pod_builder.go`, `status_sidecar.go`, node-agent DaemonSet | Mounts the token at `/var/run/secrets/kyber/pod-token` (Optional). |
-| Clients | `start-claude.sh`, `kyber-job-dispatch`, `cmd/status-sidecar`, `pkg/nodeagent` | Read the token file and send it as `Authorization: Bearer`. |
+| Clients | `start-claude.sh`, `kyber-job-dispatch`, `cmd/status-sidecar`, `pkg/nodeagent` | Read the token file and send it as `Authorization: Bearer`. The status-sidecar exposes the allowlisted `get_self_profile` MCP tool without giving the runtime the token. |
 | NetworkPolicy | `deploy/helm/kyber/templates/networkpolicy.yaml` | `:8082`-scoped attack-surface reduction (second layer). |
 
 ## 3. Control / data flow
@@ -76,6 +76,13 @@ Kubernetes round-trip on the hot path.
   `/internal/agents/{name}/*` request only when the verified token identity
   equals `{name}`. Enforced in the dispatcher *before* any handler, so it cannot
   be bypassed by reaching a route directly. This is the load-bearing control.
+- **Self-awareness is a projection, not Kubernetes access.**
+  `GET /internal/agents/{name}/self-profile` returns only the caller's name,
+  runtime, model, phase, requested resources, installed runtime version, and
+  reported skill names/descriptions (plus an explicit signal when no report has
+  arrived yet). It deliberately omits placement, network,
+  credentials, channels, bindings, identity-repo configuration, and raw status.
+  Agent pods still have no Kubernetes service-account token.
 - **Machine/node routes are node-agent-only.** `authorizeNodeAgent` admits only
   the reserved `podtoken.NodeAgentIdentity`; an agent token is 403 there (so an
   agent cannot spoof node/preemption telemetry).
