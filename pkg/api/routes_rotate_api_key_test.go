@@ -195,3 +195,83 @@ func TestRotateAPIKey_RequiresAuth(t *testing.T) {
 		t.Fatalf("expected 401 (wrong key), got %d", rec2.Code)
 	}
 }
+
+// TestRotateAPIKey_BrowserSessionSurvivesForTheRotatingBrowserOnly: rotation is
+// the only lever that signs other browsers out, so both halves of it matter —
+// the browser that pressed the button must stay in, and every other cookie
+// must stop working. Since MAT-38 the second half is implicit (cookies are
+// signed with a key derived from the API key, so changing the key invalidates
+// them), which is exactly why it needs a test at this level rather than a
+// trust in an explicit revoke call that no longer exists.
+func TestRotateAPIKey_BrowserSessionSurvivesForTheRotatingBrowserOnly(t *testing.T) {
+	const ns = "kyber-system"
+	const secretName = "kyber-api-credentials"
+	const seedKey = "old-seed-key"
+	const origin = "https://kyber.example"
+
+	_, handler, _ := buildRotateAPIKeyHandler(t, secretName, ns, seedKey)
+
+	sessionCookie := func(t *testing.T) *http.Cookie {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, origin+"/api/v1/browser-session", nil)
+		req.Header.Set("Authorization", "Bearer "+seedKey)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("exchange status = %d, want 204: %s", rec.Code, rec.Body.String())
+		}
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == "kyber_browser_session" {
+				return c
+			}
+		}
+		t.Fatal("no session cookie issued")
+		return nil
+	}
+
+	authenticates := func(c *http.Cookie) bool {
+		req := httptest.NewRequest(http.MethodGet, origin+"/api/v1/config", nil)
+		req.AddCookie(c)
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec.Code != http.StatusUnauthorized
+	}
+
+	rotating := sessionCookie(t)
+	bystander := sessionCookie(t)
+	if !authenticates(rotating) || !authenticates(bystander) {
+		t.Fatal("fresh session cookies do not authenticate")
+	}
+
+	req := httptest.NewRequest(http.MethodPost, origin+"/api/v1/rotate-api-key", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Origin", origin)
+	req.AddCookie(rotating)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("rotate status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	var replacement *http.Cookie
+	for _, c := range rec.Result().Cookies() {
+		if c.Name == "kyber_browser_session" {
+			replacement = c
+		}
+	}
+	if replacement == nil {
+		t.Fatal("rotation did not re-issue a session cookie to the initiating browser")
+	}
+	if replacement.Value == rotating.Value {
+		t.Error("replacement cookie is the pre-rotation token")
+	}
+	if !authenticates(replacement) {
+		t.Error("the rotating browser was signed out by its own rotation")
+	}
+	if authenticates(rotating) {
+		t.Error("the pre-rotation cookie still authenticates")
+	}
+	if authenticates(bystander) {
+		t.Error("another browser's session survived the rotation")
+	}
+}

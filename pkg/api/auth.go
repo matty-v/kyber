@@ -2,14 +2,13 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -73,6 +72,26 @@ func (s ScopeSet) Has(required Scope) bool {
 		return true
 	}
 	return false
+}
+
+// names returns the explicitly-held scopes, sorted, for serializing a Caller
+// into a signed browser-session token. A full-scope set has no explicit
+// members — its `full` flag is carried separately in the claims, because a
+// full-scope caller must stay full-scope even if new scopes are added to the
+// vocabulary after the token was issued. Sorted so a token's bytes are a
+// function of the caller, not of map iteration order.
+func (s ScopeSet) names() []string {
+	if s.full || len(s.scopes) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(s.scopes))
+	for scope, held := range s.scopes {
+		if held {
+			out = append(out, string(scope))
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Caller is the authenticated principal behind a request (kyber#474). Name is
@@ -157,22 +176,16 @@ type scopedKey struct {
 // against the legacy shared key (full scope, mutable via SetKey for rotation
 // #143) and an optional set of named scoped keys (kyber#474).
 type APIKeyAuthenticator struct {
-	mu       sync.RWMutex
-	key      string // legacy full-scope key (rotatable)
-	callers  []scopedKey
-	sessions map[string]browserSession
-}
-
-type browserSession struct {
-	caller    Caller
-	expiresAt time.Time
+	mu      sync.RWMutex
+	key     string // legacy full-scope key (rotatable)
+	callers []scopedKey
 }
 
 // NewAPIKeyAuthenticator returns an Authenticator that accepts the legacy key
 // (resolving to a full-scope caller) plus any scoped callers. Existing callers
 // pass no scoped callers and get exactly the prior behavior.
 func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenticator {
-	a := &APIKeyAuthenticator{key: key, sessions: make(map[string]browserSession)}
+	a := &APIKeyAuthenticator{key: key}
 	for _, c := range callers {
 		scopes := make([]Scope, 0, len(c.Scopes))
 		for _, sc := range c.Scopes {
@@ -189,64 +202,56 @@ func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenti
 const browserSessionCookie = "kyber_browser_session"
 
 const (
-	browserSessionTTL  = 12 * time.Hour
-	maxBrowserSessions = 256
+	// browserSessionTTL is long because the cookie is renewed on use (see
+	// RenewBrowserSession) and survives a control-plane restart. It bounds an
+	// abandoned session, not an active one: an operator who opens the PWA
+	// within the window never re-pastes their key (MAT-38).
+	browserSessionTTL = 30 * 24 * time.Hour
+	// browserSessionRenewAfter is the remaining-lifetime threshold below which
+	// a request re-issues its cookie. Half the TTL, so a session in regular use
+	// is refreshed long before it can lapse, without setting a cookie on every
+	// single request.
+	browserSessionRenewAfter = browserSessionTTL / 2
 )
 
-// CreateBrowserSession issues an opaque, process-local browser credential.
-// The API key never becomes the cookie value and sessions disappear when the
-// control plane restarts.
+// CreateBrowserSession issues a signed browser credential for caller, valid
+// for browserSessionTTL. The API key never becomes the cookie value; the
+// cookie is a signed statement ABOUT the caller, verifiable without any
+// server-side session state (see browser_session_token.go).
 func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error) {
-	token, err := generateBrowserSessionToken()
+	return signBrowserSession(a.currentKey(), caller, time.Now(), browserSessionTTL)
+}
+
+// RenewBrowserSession slides a browser-session cookie forward when the request
+// that carried it is more than halfway to expiry. authMiddleware calls this
+// after a successful authentication.
+//
+// Renewal on use is what stops a session in daily use from lapsing: without
+// it, the cookie is a hard deadline running from the moment the key was
+// pasted, no matter how actively the operator is using the PWA.
+//
+// Skipped for WebSocket upgrades — gorilla writes the 101 response itself, so
+// a Set-Cookie staged here would not reliably reach the browser, and any REST
+// call in the same page load renews the cookie anyway.
+func (a *APIKeyAuthenticator) RenewBrowserSession(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "" || websocket.IsWebSocketUpgrade(r) {
+		return
+	}
+	cookie, err := r.Cookie(browserSessionCookie)
+	if err != nil || cookie.Value == "" {
+		return
+	}
+	caller, expiresAt, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now())
+	if err != nil || time.Until(expiresAt) > browserSessionRenewAfter {
+		return
+	}
+	token, err := a.CreateBrowserSession(*caller)
 	if err != nil {
-		return "", err
+		// The request itself authenticated fine; failing to extend it is not a
+		// reason to reject it. The operator re-authenticates at expiry.
+		return
 	}
-	a.storeBrowserSession(token, caller)
-	return token, nil
-}
-
-func generateBrowserSessionToken() (string, error) {
-	buf := make([]byte, 32)
-	if _, err := rand.Read(buf); err != nil {
-		return "", fmt.Errorf("generating browser session: %w", err)
-	}
-	return hex.EncodeToString(buf), nil
-}
-
-func (a *APIKeyAuthenticator) storeBrowserSession(token string, caller Caller) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	now := time.Now()
-	for existing, session := range a.sessions {
-		if now.After(session.expiresAt) {
-			delete(a.sessions, existing)
-		}
-	}
-	if len(a.sessions) >= maxBrowserSessions {
-		for existing := range a.sessions {
-			delete(a.sessions, existing)
-			break
-		}
-	}
-	a.sessions[token] = browserSession{caller: caller, expiresAt: now.Add(browserSessionTTL)}
-}
-
-// ReplaceBrowserSessions revokes all browser sessions and installs one
-// pre-generated replacement for the caller that initiated a key rotation.
-func (a *APIKeyAuthenticator) ReplaceBrowserSessions(token string, caller Caller) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions = map[string]browserSession{
-		token: {caller: caller, expiresAt: time.Now().Add(browserSessionTTL)},
-	}
-}
-
-// ClearBrowserSessions revokes every browser session, used when the legacy
-// key rotates so other signed-in browsers lose access immediately.
-func (a *APIKeyAuthenticator) ClearBrowserSessions() {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.sessions = make(map[string]browserSession)
+	setBrowserSessionCookie(w, r, token)
 }
 
 // SetKey atomically replaces the accepted legacy key. After this returns, the
@@ -283,12 +288,13 @@ func (a *APIKeyAuthenticator) currentKey() string {
 func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 	if r.Header.Get("Authorization") == "" {
 		if cookie, err := r.Cookie(browserSessionCookie); err == nil && cookie.Value != "" {
-			a.mu.RLock()
-			session, ok := a.sessions[cookie.Value]
-			a.mu.RUnlock()
-			if ok && time.Now().Before(session.expiresAt) {
-				return &session.caller, nil
+			caller, _, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now())
+			if err == nil {
+				return caller, nil
 			}
+			// Expired, tampered with, or signed under a pre-rotation key — all
+			// of which the operator recovers from the same way, and all of
+			// which the PWA keys its re-auth prompt on.
 			return nil, errSessionExpired("browser session expired or no longer valid — sign in again")
 		}
 	}
@@ -410,9 +416,22 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 			writeJSONError(w, http.StatusUnauthorized, code, err.Error())
 			return
 		}
+		// Slide the browser-session cookie forward before the handler runs —
+		// once next.ServeHTTP writes a body, Set-Cookie is too late.
+		if renewer, ok := auth.(browserSessionRenewer); ok {
+			renewer.RenewBrowserSession(w, r)
+		}
 		ctx := context.WithValue(r.Context(), callerCtxKey{}, caller)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// browserSessionRenewer is implemented by authenticators that hand out
+// browser-session cookies and can extend one in place. Kept as a narrow
+// optional interface so the Authenticator seam that V2/OIDC will implement
+// stays a single method.
+type browserSessionRenewer interface {
+	RenewBrowserSession(w http.ResponseWriter, r *http.Request)
 }
 
 func sameOriginRequest(r *http.Request) bool {

@@ -310,10 +310,15 @@ Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
 1. `pkg/api/server.go` `buildTopHandler()` → CORS, then Bearer API-key wall
    (`auth.go` `authMiddleware`, 401 on failure).
    The embedded PWA exchanges its bearer key once at
-   `POST /api/v1/browser-session` for a bounded, process-local opaque session
-   in an HttpOnly, SameSite=Strict cookie; raw keys are removed from legacy
-   localStorage. CLI and external clients continue to use Bearer auth. Browser
-   cookie mutations require a same-origin `Origin` header.
+   `POST /api/v1/browser-session` for an HttpOnly, SameSite=Strict cookie; raw
+   keys are removed from legacy localStorage. The cookie is a SIGNED token, not
+   a session record — HMAC over caller+expiry, keyed by HKDF from the live API
+   key (`browser_session_token.go`), so sessions survive a restart, carry no
+   server state, and are all invalidated by an API-key rotation. It is renewed
+   on use once past half its TTL (`RenewBrowserSession`, called from
+   `authMiddleware`); WebSocket upgrades are skipped. CLI and external clients
+   continue to use Bearer auth. Browser cookie mutations require a same-origin
+   `Origin` header.
 2. Routing is hand-rolled per route group: `pkg/api/routes_<group>.go`, one
    file per group, helpers in `routing.go` (`splitAction`). No router lib.
 3. Lifecycle mutations funnel through `setAgentDesiredPhase` and pass the

@@ -113,17 +113,16 @@ func TestEncodeExecExitPayloadUsesJSONEncoding(t *testing.T) {
 // answer with its own error code, not the generic "unauthorized".
 //
 // The distinction is what lets the PWA re-prompt for the key in place
-// instead of rendering a dead-end error. Sessions are process-local, so
-// every control-plane restart invalidates every open browser — this is the
-// single most common 401 an operator will ever see, and it is fully
-// recoverable.
+// instead of rendering a dead-end error. Sessions no longer die on a restart
+// (MAT-38), but they still lapse at 30 days and are all invalidated by an
+// API-key rotation — both fully recoverable by pasting the key again.
 func TestExpiredBrowserSessionReturnsDistinctCode(t *testing.T) {
 	s := &Server{APIKey: "legacy-key"}
 	h := s.BuildHandler()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
-	// A well-formed cookie the server has never issued — indistinguishable
-	// from one whose session was wiped by a restart.
+	// A cookie value this server would never have signed — the same 401 an
+	// operator gets from a lapsed session or one minted before a rotation.
 	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: "stale-token-from-a-previous-process"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

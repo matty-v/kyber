@@ -58,23 +58,17 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a replacement browser credential before changing persistent or
-	// in-memory state. This keeps a random-source failure from leaving the
-	// initiating browser signed out after an otherwise successful rotation.
+	// Note the initiating browser BEFORE the key changes. Its replacement
+	// cookie has to be signed under the NEW key, so it is minted after the
+	// swap — but whether this request even used a cookie is a fact about the
+	// request, and is captured here alongside the caller it authenticated as.
 	_, cookieErr := r.Cookie(browserSessionCookie)
 	usedBrowserSession := cookieErr == nil
 	var browserCaller *Caller
-	var replacementToken string
 	if usedBrowserSession {
 		browserCaller = callerFrom(r.Context())
 		if browserCaller == nil {
 			writeJSONError(w, http.StatusInternalServerError, "session_creation_failed", "authenticated caller missing")
-			return
-		}
-		var err error
-		replacementToken, err = generateBrowserSessionToken()
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "session_creation_failed", "failed to refresh browser session")
 			return
 		}
 	}
@@ -109,14 +103,21 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	s.auth.SetKey(newKey)
 	s.APIKey = newKey
 
-	// Rotation revokes every browser session along with the old legacy key.
-	// If this request itself used a browser session, immediately issue a fresh
-	// session for the authenticated caller so the initiating browser stays in.
+	// Rotation revokes every browser session along with the old legacy key:
+	// session cookies are signed with a key derived from the API key, so
+	// SetKey above already made every outstanding cookie fail verification.
+	// Nothing to clear. If this request itself used a browser session, mint a
+	// replacement under the new key so the initiating browser stays signed in.
 	if usedBrowserSession {
-		s.auth.ReplaceBrowserSessions(replacementToken, *browserCaller)
-		setBrowserSessionCookie(w, r, replacementToken)
-	} else {
-		s.auth.ClearBrowserSessions()
+		replacement, err := s.auth.CreateBrowserSession(*browserCaller)
+		if err != nil {
+			// The rotation itself succeeded and is already persisted; report
+			// it rather than failing the request, and let this browser
+			// re-authenticate with the key returned below.
+			slog.ErrorContext(r.Context(), "rotate-api-key: refreshing browser session failed", "err", err)
+		} else {
+			setBrowserSessionCookie(w, r, replacement)
+		}
 	}
 
 	// Audit trail via k8s Event. Target the Secret since that's the object
