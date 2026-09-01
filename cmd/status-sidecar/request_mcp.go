@@ -26,6 +26,7 @@ var taskReplyIDPattern = regexp.MustCompile(`^task_[a-f0-9]{32}$`)
 var taskAttemptIDPattern = regexp.MustCompile(`^attempt_[a-f0-9]{32}$`)
 var taskUpdateIDPattern = regexp.MustCompile(`^update_[a-f0-9]{32}$`)
 var taskResultIDPattern = regexp.MustCompile(`^result_[a-f0-9]{32}$`)
+var taskInteractionIDPattern = regexp.MustCompile(`^interaction_[a-f0-9]{32}$`)
 
 type requestRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -163,6 +164,18 @@ func (s *requestMCPServer) handle(w http.ResponseWriter, r *http.Request) {
 			"description": "Acknowledge that the exact current task attempt stopped future task work. This does not claim rollback of prior external effects.",
 			"inputSchema": taskControlToolSchema(true),
 		}, {
+			"name":        "request_input",
+			"description": "Pause the current durable task for one typed caller response, then end this turn immediately.",
+			"inputSchema": taskInteractionToolSchema(false),
+		}, {
+			"name":        "request_authorization",
+			"description": "Pause the current durable task for a registered authorization flow. Credentials are never accepted by this tool.",
+			"inputSchema": taskInteractionToolSchema(true),
+		}, {
+			"name":        "reject",
+			"description": "Reject the current durable task with a bounded task-visible reason.",
+			"inputSchema": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"task_id": map[string]any{"type": "string", "pattern": `^task_[a-f0-9]{32}$`}, "attempt_id": map[string]any{"type": "string", "pattern": `^attempt_[a-f0-9]{32}$`}, "reason": map[string]any{"type": "string", "maxLength": taskstore.HardMaxResponseBytes}}, "required": []string{"task_id", "attempt_id", "reason"}},
+		}, {
 			"name":        "complete",
 			"description": "Complete one dispatched durable Kyber task. Use only IDs from the current kyber-task envelope.",
 			"inputSchema": map[string]any{
@@ -186,23 +199,31 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	var params struct {
 		Name      string `json:"name"`
 		Arguments struct {
-			RequestID        string          `json:"request_id"`
-			TaskID           string          `json:"task_id"`
-			AttemptID        string          `json:"attempt_id"`
-			UpdateID         string          `json:"update_id"`
-			ResultID         string          `json:"result_id"`
-			Name             string          `json:"name"`
-			Description      string          `json:"description"`
-			Message          string          `json:"message"`
-			Percent          *int            `json:"percent"`
-			Text             string          `json:"text"`
-			Value            json.RawMessage `json:"value"`
-			Path             string          `json:"path"`
-			Filename         string          `json:"filename"`
-			MediaType        string          `json:"media_type"`
-			Response         string          `json:"response"`
-			AcknowledgmentID string          `json:"acknowledgment_id"`
-			Note             string          `json:"note"`
+			RequestID         string                        `json:"request_id"`
+			TaskID            string                        `json:"task_id"`
+			AttemptID         string                        `json:"attempt_id"`
+			UpdateID          string                        `json:"update_id"`
+			ResultID          string                        `json:"result_id"`
+			Name              string                        `json:"name"`
+			Description       string                        `json:"description"`
+			Message           string                        `json:"message"`
+			Percent           *int                          `json:"percent"`
+			Text              string                        `json:"text"`
+			Value             json.RawMessage               `json:"value"`
+			Path              string                        `json:"path"`
+			Filename          string                        `json:"filename"`
+			MediaType         string                        `json:"media_type"`
+			Response          string                        `json:"response"`
+			AcknowledgmentID  string                        `json:"acknowledgment_id"`
+			Note              string                        `json:"note"`
+			InteractionID     string                        `json:"interaction_id"`
+			Type              string                        `json:"type"`
+			Question          string                        `json:"question"`
+			Options           []taskstore.InteractionOption `json:"options"`
+			Schema            json.RawMessage               `json:"schema"`
+			AuthorizationFlow string                        `json:"authorization_flow"`
+			ExpiresInSeconds  int64                         `json:"expires_in_seconds"`
+			Reason            string                        `json:"reason"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -213,6 +234,12 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	if params.Name == "complete" {
 		return s.completeTask(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.Response)
+	}
+	if params.Name == "reject" {
+		return s.rejectTask(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.Reason)
+	}
+	if params.Name == "request_input" || params.Name == "request_authorization" {
+		return s.requestTaskInteraction(ctx, params.Name == "request_authorization", params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.InteractionID, params.Arguments.Type, params.Arguments.Question, params.Arguments.Options, params.Arguments.Schema, params.Arguments.AuthorizationFlow, params.Arguments.ExpiresInSeconds)
 	}
 	if params.Name == "get_control" {
 		return s.getTaskControl(ctx, params.Arguments.TaskID, params.Arguments.AttemptID)
@@ -264,6 +291,55 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	result := requestToolText("response accepted")
 	result.StructuredContent = map[string]any{"accepted": true, "request_id": params.Arguments.RequestID}
+	return result
+}
+
+func (s *requestMCPServer) rejectTask(ctx context.Context, taskID, attemptID, reason string) requestToolResult {
+	if !taskReplyIDPattern.MatchString(taskID) || !taskAttemptIDPattern.MatchString(attemptID) || strings.TrimSpace(reason) == "" {
+		return requestToolError("task, attempt, or reason is invalid")
+	}
+	body, _ := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID, "reason": reason})
+	status, err := postToCP(ctx, s.client, s.cfg, "task-reject", body)
+	if err != nil {
+		return taskMutationError(status, "task rejection")
+	}
+	return requestToolText("task rejected")
+}
+
+func taskInteractionToolSchema(auth bool) map[string]any {
+	properties := map[string]any{"task_id": map[string]any{"type": "string", "pattern": `^task_[a-f0-9]{32}$`}, "attempt_id": map[string]any{"type": "string", "pattern": `^attempt_[a-f0-9]{32}$`}, "interaction_id": map[string]any{"type": "string", "pattern": `^interaction_[a-f0-9]{32}$`}, "question": map[string]any{"type": "string", "maxLength": taskstore.HardMaxInteractionQuestionBytes}, "expires_in_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 604800}}
+	required := []string{"task_id", "attempt_id", "interaction_id", "question"}
+	if auth {
+		properties["authorization_flow"] = map[string]any{"type": "string", "maxLength": 256}
+		required = append(required, "authorization_flow")
+	} else {
+		properties["type"] = map[string]any{"type": "string", "enum": []string{"text", "choice", "confirm", "json"}}
+		properties["options"] = map[string]any{"type": "array", "maxItems": taskstore.HardMaxInteractionOptions}
+		properties["schema"] = map[string]any{"type": "object"}
+		required = append(required, "type")
+	}
+	return map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": required}
+}
+
+func (s *requestMCPServer) requestTaskInteraction(ctx context.Context, auth bool, taskID, attemptID, interactionID, typ, question string, options []taskstore.InteractionOption, schema json.RawMessage, flow string, expires int64) requestToolResult {
+	if !taskReplyIDPattern.MatchString(taskID) || !taskAttemptIDPattern.MatchString(attemptID) || !taskInteractionIDPattern.MatchString(interactionID) {
+		return requestToolError("task, attempt, or interaction id is invalid")
+	}
+	if auth {
+		typ = string(taskstore.InteractionAuthorization)
+	}
+	body, err := json.Marshal(map[string]any{"task_id": taskID, "attempt_id": attemptID, "interaction_id": interactionID, "type": typ, "question": question, "options": options, "schema": schema, "authorization_flow": flow, "expires_in_seconds": expires})
+	if err != nil {
+		return requestToolError("could not encode interaction")
+	}
+	var out map[string]any
+	status, err := postToCPJSON(ctx, s.client, s.cfg, "task-interactions", body, &out)
+	if err != nil {
+		return taskMutationError(status, "interaction request")
+	}
+	encoded, _ := json.Marshal(out)
+	result := requestToolText("%s", encoded)
+	result.StructuredContent = out
 	return result
 }
 

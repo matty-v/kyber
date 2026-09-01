@@ -90,3 +90,24 @@ results available but fails file publication and download closed; it never
 degrades file results to local disk. Malware scanning is explicit
 metadata (`not_configured` in v1); Kyber does not imply that unscanned content
 was inspected.
+
+## Multi-turn interactions
+
+A dispatched attempt may request exactly one typed interaction (`text`,
+`choice`, `confirm`, bounded `json`, or a registered `authorization` flow).
+Kyber atomically records the task-visible request and moves the task to
+`input_required` or `auth_required`. The attempt must then stop.
+
+The task owner answers through the interaction-specific public endpoint with
+an idempotency key. Kyber validates the response type, appends immutable caller
+and platform messages, and queues a fresh attempt. The continuation envelope
+contains only the original instruction and bounded task-visible interaction
+context. It never persists or replays a harness transcript, hidden reasoning,
+raw tool output, environment state, or credentials. Authorization completion
+carries only an opaque reference produced by a registered flow.
+
+PostgreSQL enforces one live interaction per task. Interaction expiry,
+cancellation, completion, rejection, stale attempts, and duplicate responses
+are resolved transactionally against the canonical task row. A resumed attempt
+consumes the answered interaction; a later interaction is a new durable turn,
+not a mutation of the prior attempt.

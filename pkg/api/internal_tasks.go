@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
@@ -25,6 +26,7 @@ var attemptIDPattern = regexp.MustCompile(`^attempt_[a-f0-9]{32}$`)
 var updateIDPattern = regexp.MustCompile(`^update_[a-f0-9]{32}$`)
 var resultIDPattern = regexp.MustCompile(`^result_[a-f0-9]{32}$`)
 var acknowledgmentIDPattern = regexp.MustCompile(`^ack_[a-f0-9]{32}$`)
+var internalInteractionIDPattern = regexp.MustCompile(`^interaction_[a-f0-9]{32}$`)
 
 func (s *InternalServer) handleTaskReceiptPost(w http.ResponseWriter, r *http.Request, agent string) {
 	if r.Method != http.MethodPost {
@@ -117,6 +119,65 @@ func (s *InternalServer) handleTaskComplete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *InternalServer) handleTaskReject(w http.ResponseWriter, r *http.Request, agent string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.taskStore == nil {
+		http.Error(w, "task service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		TaskID    string `json:"task_id"`
+		AttemptID string `json:"attempt_id"`
+		Reason    string `json:"reason"`
+	}
+	if !decodeInternalTaskBody(w, r, taskstore.HardMaxResponseBytes*6+2048, &body) || !taskIDPattern.MatchString(body.TaskID) || !attemptIDPattern.MatchString(body.AttemptID) || strings.TrimSpace(body.Reason) == "" {
+		http.Error(w, "invalid task rejection", http.StatusBadRequest)
+		return
+	}
+	_, err := s.taskStore.Reject(r.Context(), taskstore.AgentRef{Namespace: s.namespace, Name: agent}, body.TaskID, body.AttemptID, body.Reason)
+	if err != nil {
+		writeInternalTaskError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *InternalServer) handleTaskInteraction(w http.ResponseWriter, r *http.Request, agent string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if s.taskStore == nil {
+		http.Error(w, "task service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	var body struct {
+		TaskID            string                        `json:"task_id"`
+		AttemptID         string                        `json:"attempt_id"`
+		InteractionID     string                        `json:"interaction_id"`
+		Type              taskstore.InteractionType     `json:"type"`
+		Question          string                        `json:"question"`
+		Options           []taskstore.InteractionOption `json:"options"`
+		Schema            json.RawMessage               `json:"schema"`
+		AuthorizationFlow string                        `json:"authorization_flow"`
+		ExpiresInSeconds  int64                         `json:"expires_in_seconds"`
+	}
+	if !decodeInternalTaskBody(w, r, taskstore.HardMaxInteractionQuestionBytes*6+taskstore.HardMaxInteractionResponseBytes+8192, &body) || !taskIDPattern.MatchString(body.TaskID) || !attemptIDPattern.MatchString(body.AttemptID) || !internalInteractionIDPattern.MatchString(body.InteractionID) {
+		http.Error(w, "invalid task interaction", http.StatusBadRequest)
+		return
+	}
+	t, err := s.taskStore.RequestInteraction(r.Context(), taskstore.RequestInteractionParams{Agent: taskstore.AgentRef{Namespace: s.namespace, Name: agent}, TaskID: body.TaskID, AttemptID: body.AttemptID, InteractionID: body.InteractionID, Type: body.Type, Question: body.Question, Options: body.Options, Schema: body.Schema, AuthorizationFlow: body.AuthorizationFlow, ExpiresIn: time.Duration(body.ExpiresInSeconds) * time.Second})
+	if err != nil {
+		writeInternalTaskError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "taskVersion": t.Version, "state": t.State, "interaction": t.Interaction, "stop": true})
 }
 
 func (s *InternalServer) handleTaskControl(w http.ResponseWriter, r *http.Request, agent string) {

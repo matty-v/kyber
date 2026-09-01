@@ -71,7 +71,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_acknowledged_at TIMESTAMPTZ`,
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_ack_source TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE agent_tasks DROP CONSTRAINT IF EXISTS agent_tasks_state_check`,
-		`ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_state_check CHECK (state IN ('queued','dispatched','canceling','canceled','completed','failed'))`,
+		`ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_state_check CHECK (state IN ('queued','dispatched','input_required','auth_required','canceling','canceled','completed','failed','rejected'))`,
 		`CREATE TABLE IF NOT EXISTS agent_task_cancel_idempotency (created_by TEXT NOT NULL, agent_namespace TEXT NOT NULL, agent_name TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, applied BOOLEAN NOT NULL DEFAULT false, PRIMARY KEY(created_by,agent_namespace,agent_name,idempotency_key))`,
 		`ALTER TABLE agent_task_cancel_idempotency ADD COLUMN IF NOT EXISTS applied BOOLEAN NOT NULL DEFAULT false`,
 		`CREATE TABLE IF NOT EXISTS agent_task_cancel_deliveries (task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE, attempt_id TEXT NOT NULL, status TEXT NOT NULL, adapter_mode TEXT NOT NULL, delivery_count INTEGER NOT NULL DEFAULT 0, next_delivery_at TIMESTAMPTZ NOT NULL, lease_owner TEXT, lease_until TIMESTAMPTZ, acknowledgment_id TEXT NOT NULL DEFAULT '', last_safe_error TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL, CHECK(status IN ('pending','delivering','notified','interrupted','acknowledged','closed')), CHECK(adapter_mode IN ('notify_only','exact_interrupt')))`,
@@ -85,15 +85,19 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS agent_task_result_parts (id TEXT PRIMARY KEY, result_id TEXT NOT NULL REFERENCES agent_task_results(id) ON DELETE CASCADE, ordinal INTEGER NOT NULL, kind TEXT NOT NULL, text_value TEXT, json_value JSONB, object_id TEXT REFERENCES agent_task_objects(id) ON DELETE SET NULL, UNIQUE(result_id,ordinal), CHECK(kind IN ('text','json','file')))`,
 		`DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='agent_task_result_parts_object_id_fkey' AND conrelid='agent_task_result_parts'::regclass AND confdeltype='n') THEN ALTER TABLE agent_task_result_parts DROP CONSTRAINT IF EXISTS agent_task_result_parts_object_id_fkey; ALTER TABLE agent_task_result_parts ADD CONSTRAINT agent_task_result_parts_object_id_fkey FOREIGN KEY (object_id) REFERENCES agent_task_objects(id) ON DELETE SET NULL; END IF; END $$`,
 		`CREATE TABLE IF NOT EXISTS agent_task_updates (task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, sequence BIGINT NOT NULL, update_id TEXT NOT NULL, kind TEXT NOT NULL, safe_summary JSONB NOT NULL, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(task_id,sequence), UNIQUE(task_id,update_id), CHECK(kind IN ('progress','result','completed')))`,
+		`CREATE TABLE IF NOT EXISTS agent_task_interactions (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, attempt_id TEXT NOT NULL, type TEXT NOT NULL, status TEXT NOT NULL, question TEXT NOT NULL, options JSONB, schema JSONB, authorization_flow TEXT NOT NULL DEFAULT '', response JSONB, created_at TIMESTAMPTZ NOT NULL, expires_at TIMESTAMPTZ NOT NULL, answered_at TIMESTAMPTZ, CHECK(type IN ('text','choice','confirm','json','authorization')), CHECK(status IN ('paused','answered','consumed','expired')))`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS agent_task_one_live_interaction_idx ON agent_task_interactions(task_id) WHERE status IN ('paused','answered')`,
+		`CREATE TABLE IF NOT EXISTS agent_task_messages (task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, sequence BIGINT NOT NULL, role TEXT NOT NULL, kind TEXT NOT NULL, text_value TEXT NOT NULL DEFAULT '', data JSONB, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(task_id,sequence))`,
+		`CREATE TABLE IF NOT EXISTS agent_task_interaction_idempotency (responded_by TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, interaction_id TEXT NOT NULL REFERENCES agent_task_interactions(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, PRIMARY KEY(responded_by,task_id,interaction_id,idempotency_key))`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_created_idx ON agent_tasks(agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_state_created_idx ON agent_tasks(agent_namespace,agent_name,state,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_retain_idx ON agent_tasks(retain_until)`,
 		`DROP INDEX IF EXISTS agent_tasks_deadline_idx`,
-		`CREATE INDEX IF NOT EXISTS agent_tasks_deadline_idx ON agent_tasks(deadline_at) WHERE state IN ('queued','dispatched')`,
+		`CREATE INDEX IF NOT EXISTS agent_tasks_deadline_idx ON agent_tasks(deadline_at) WHERE state IN ('queued','dispatched','input_required','auth_required')`,
 		`CREATE INDEX IF NOT EXISTS agent_task_cancel_delivery_idx ON agent_task_cancel_deliveries(status,next_delivery_at,lease_until)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_dispatch_claim_idx ON agent_task_dispatches(status,next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_object_cleanup_idx ON agent_task_objects(status,next_attempt_at,lease_until)`,
-		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3) ON CONFLICT DO NOTHING`,
+		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3),(4) ON CONFLICT DO NOTHING`,
 	}
 	for _, q := range statements {
 		if _, err = tx.ExecContext(ctx, q); err != nil {
@@ -147,7 +151,7 @@ func (s *PostgresStore) Create(ctx context.Context, p CreateParams) (*CreateResu
 	if retained >= s.limits.MaxRetained {
 		return nil, ErrCapacity
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_tasks WHERE agent_namespace=$1 AND agent_name=$2 AND state IN ('queued','dispatched','canceling')`, p.Agent.Namespace, p.Agent.Name).Scan(&outstanding); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_tasks WHERE agent_namespace=$1 AND agent_name=$2 AND state IN ('queued','dispatched','input_required','auth_required','canceling')`, p.Agent.Namespace, p.Agent.Name).Scan(&outstanding); err != nil {
 		return nil, err
 	}
 	if outstanding >= s.limits.MaxOutstanding {
@@ -180,6 +184,10 @@ func (s *PostgresStore) Create(ctx context.Context, p CreateParams) (*CreateResu
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_dispatches(task_id,status,next_attempt_at,updated_at) VALUES($1,'pending',$2,$2)`, t.ID, now); err != nil {
 		return nil, err
 	}
+	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_messages(task_id,sequence,role,kind,text_value,created_at) VALUES($1,1,'caller','task_instruction',$2,$3)`, t.ID, t.Prompt, now); err != nil {
+		return nil, err
+	}
+	t.Messages = []Message{{Sequence: 1, Role: "caller", Kind: "task_instruction", Text: t.Prompt, CreatedAt: now}}
 	if p.IdempotencyKey != "" {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_idempotency(created_by,agent_namespace,agent_name,idempotency_key,request_hash,task_id) VALUES($1,$2,$3,$4,$5,$6)`, p.CreatedBy, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey, p.RequestHash, t.ID); err != nil {
 			return nil, err
@@ -242,6 +250,9 @@ func (s *PostgresStore) Get(ctx context.Context, a AgentRef, id string) (*Task, 
 		return nil, err
 	}
 	t.Results, err = loadResults(ctx, s.db, id)
+	if err == nil {
+		err = loadConversation(ctx, s.db, t)
+	}
 	return t, err
 }
 
@@ -297,6 +308,9 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 	}
 	for _, t := range items {
 		t.Results, err = loadResults(ctx, s.db, t.ID)
+		if err == nil {
+			err = loadConversation(ctx, s.db, t)
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -316,6 +330,7 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 func loadResults(ctx context.Context, q queryer, taskID string) ([]Result, error) {

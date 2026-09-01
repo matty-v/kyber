@@ -117,6 +117,46 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
 
+  /api/v1/agents/{name}/tasks/{taskId}/interactions/{interactionId}/respond:
+    post:
+      operationId: respondAgentTaskInteraction
+      summary: Answer the one outstanding typed task interaction
+      tags: [tasks]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string, pattern: '^task_[a-f0-9]{32}$'}}
+        - {name: interactionId, in: path, required: true, schema: {type: string, pattern: '^interaction_[a-f0-9]{32}$'}}
+        - {name: Idempotency-Key, in: header, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TaskInteractionResponse'}
+      responses:
+        '200': {description: Response accepted and continuation queued, content: {application/json: {schema: {$ref: '#/components/schemas/AgentTask'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /api/v1/agents/{name}/tasks/{taskId}/interactions/{interactionId}/authorize:
+    post:
+      operationId: authorizeAgentTaskInteraction
+      summary: Complete a registered authorization flow using an opaque reference
+      tags: [tasks]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string, pattern: '^task_[a-f0-9]{32}$'}}
+        - {name: interactionId, in: path, required: true, schema: {type: string, pattern: '^interaction_[a-f0-9]{32}$'}}
+        - {name: Idempotency-Key, in: header, schema: {type: string, maxLength: 128}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/TaskAuthorizationResponse'}
+      responses:
+        '200': {description: Authorization reference accepted and continuation queued, content: {application/json: {schema: {$ref: '#/components/schemas/AgentTask'}}}}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
   /api/v1/agents/{name}/tasks/{taskId}/results/{resultId}/parts/{ordinal}/content:
     get:
       operationId: downloadAgentTaskResultPart
@@ -1972,6 +2012,48 @@ components:
         percent: {type: integer, minimum: 0, maximum: 100}
         updatedAt: {type: string, format: date-time}
 
+    TaskInteractionResponse:
+      type: object
+      required: [response]
+      additionalProperties: false
+      properties:
+        response: {}
+
+    TaskAuthorizationResponse:
+      type: object
+      required: [reference]
+      additionalProperties: false
+      properties:
+        reference: {type: string, description: Opaque reference produced by a registered authorization flow.}
+
+    AgentTaskInteraction:
+      type: object
+      required: [id, attemptId, type, status, question, createdAt, expiresAt]
+      properties:
+        id: {type: string, pattern: '^interaction_[a-f0-9]{32}$'}
+        attemptId: {type: string, pattern: '^attempt_[a-f0-9]{32}$'}
+        type: {type: string, enum: [text, choice, confirm, json, authorization]}
+        status: {type: string, enum: [paused, answered, consumed, expired]}
+        question: {type: string}
+        options: {type: array, items: {type: object, required: [id, label], properties: {id: {type: string}, label: {type: string}}}}
+        schema: {type: object}
+        authorizationFlow: {type: string}
+        response: {}
+        createdAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        answeredAt: {type: string, format: date-time}
+
+    AgentTaskMessage:
+      type: object
+      required: [sequence, role, kind, createdAt]
+      properties:
+        sequence: {type: integer, format: int64}
+        role: {type: string, enum: [caller, agent, platform]}
+        kind: {type: string}
+        text: {type: string}
+        data: {}
+        createdAt: {type: string, format: date-time}
+
     AgentTaskFile:
       type: object
       required: [filename, mediaType, size, sha256, scanStatus, downloadPath]
@@ -2014,7 +2096,7 @@ components:
       properties:
         id: {type: string, pattern: '^task_[a-f0-9]{32}$'}
         agent: {type: string}
-        state: {type: string, enum: [queued, dispatched, canceling, canceled, completed, failed]}
+        state: {type: string, enum: [queued, dispatched, input_required, auth_required, canceling, canceled, completed, failed, rejected]}
         failureCode: {type: string}
         error: {type: string}
         correlation: {type: string}
@@ -2027,6 +2109,8 @@ components:
         completedAt: {type: string, format: date-time}
         progress: {$ref: '#/components/schemas/AgentTaskProgress'}
         cancel: {$ref: '#/components/schemas/AgentTaskCancellation'}
+        interaction: {$ref: '#/components/schemas/AgentTaskInteraction'}
+        messages: {type: array, items: {$ref: '#/components/schemas/AgentTaskMessage'}}
         results:
           type: array
           items: {$ref: '#/components/schemas/AgentTaskResult'}

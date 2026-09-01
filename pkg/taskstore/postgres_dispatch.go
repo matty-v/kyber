@@ -36,6 +36,9 @@ func (s *PostgresStore) ClaimPending(ctx context.Context, owner string, lease ti
 		v := completed.Time
 		t.CompletedAt = &v
 	}
+	if err = loadConversation(ctx, tx, t); err != nil {
+		return nil, err
+	}
 	// PostgreSQL text parameters cannot contain NUL bytes. Kubernetes namespace
 	// and name values cannot contain '/', so it is also an unambiguous lane key.
 	lane := t.AgentNamespace + "/" + t.AgentName
@@ -62,19 +65,27 @@ func (s *PostgresStore) ClaimPending(ctx context.Context, owner string, lease ti
 }
 
 func (s *PostgresStore) BeginAttempt(ctx context.Context, a AgentRef, id, owner, attemptID string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE agent_task_dispatches d SET status='attempting',attempt_started_at=clock_timestamp(),attempt_token=$5,updated_at=clock_timestamp() FROM agent_tasks t WHERE d.task_id=t.id AND d.task_id=$1 AND t.agent_namespace=$2 AND t.agent_name=$3 AND d.status='leased' AND d.lease_owner=$4 AND d.lease_until>clock_timestamp()`, id, a.Namespace, a.Name, owner, attemptID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	res, err := tx.ExecContext(ctx, `UPDATE agent_task_dispatches d SET status='attempting',attempt_started_at=clock_timestamp(),attempt_token=$5,updated_at=clock_timestamp() FROM agent_tasks t WHERE d.task_id=t.id AND d.task_id=$1 AND t.agent_namespace=$2 AND t.agent_name=$3 AND d.status='leased' AND d.lease_owner=$4 AND d.lease_until>clock_timestamp()`, id, a.Namespace, a.Name, owner, attemptID)
 	if err != nil {
 		return err
 	}
 	n, _ := res.RowsAffected()
 	if n != 1 {
 		var status, token string
-		if err := s.db.QueryRowContext(ctx, `SELECT d.status,d.attempt_token FROM agent_task_dispatches d JOIN agent_tasks t ON t.id=d.task_id WHERE d.task_id=$1 AND t.agent_namespace=$2 AND t.agent_name=$3`, id, a.Namespace, a.Name).Scan(&status, &token); err == nil && status == "delivered" && token == attemptID {
+		if err := tx.QueryRowContext(ctx, `SELECT d.status,d.attempt_token FROM agent_task_dispatches d JOIN agent_tasks t ON t.id=d.task_id WHERE d.task_id=$1 AND t.agent_namespace=$2 AND t.agent_name=$3`, id, a.Namespace, a.Name).Scan(&status, &token); err == nil && status == "delivered" && token == attemptID {
 			return nil
 		}
 		return ErrConflict
 	}
-	return nil
+	if _, err = tx.ExecContext(ctx, `UPDATE agent_task_interactions SET status='consumed' WHERE task_id=$1 AND status='answered'`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 func (s *PostgresStore) MarkReceiptPending(ctx context.Context, a AgentRef, id, owner, attemptID string) error {
 	res, err := s.db.ExecContext(ctx, `UPDATE agent_task_dispatches d SET status='receipt_pending',updated_at=clock_timestamp() FROM agent_tasks t WHERE d.task_id=t.id AND d.task_id=$1 AND t.agent_namespace=$2 AND t.agent_name=$3 AND d.status='attempting' AND d.lease_owner=$4 AND d.attempt_token=$5`, id, a.Namespace, a.Name, owner, attemptID)
@@ -225,7 +236,8 @@ func (s *PostgresStore) Reconcile(ctx context.Context, limit int) (*ReconcileRes
 	}{
 		{`WITH picked AS (SELECT d.task_id FROM agent_task_dispatches d JOIN agent_tasks t ON t.id=d.task_id WHERE d.status='leased' AND t.state='queued' AND d.lease_until<clock_timestamp() FOR UPDATE OF d SKIP LOCKED LIMIT $1) UPDATE agent_task_dispatches d SET status='pending',lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp(),updated_at=clock_timestamp() FROM picked WHERE d.task_id=picked.task_id`, &out.RequeuedLeases},
 		{`WITH picked AS (SELECT d.task_id FROM agent_task_dispatches d WHERE d.status IN ('attempting','receipt_pending') AND d.lease_until<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), closed AS (UPDATE agent_task_dispatches d SET status='closed',last_error_code='delivery_unknown',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM picked WHERE d.task_id=picked.task_id RETURNING d.task_id) UPDATE agent_tasks t SET state='failed',failure_code='delivery_unknown',version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM closed WHERE t.id=closed.task_id AND t.state IN ('queued','dispatched')`, &out.UnknownAttempts},
-		{`WITH picked AS (SELECT id FROM agent_tasks WHERE state IN ('queued','dispatched') AND deadline_at<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), closed AS (UPDATE agent_tasks t SET state='failed',failure_code='deadline_exceeded',version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM picked WHERE t.id=picked.id RETURNING t.id) UPDATE agent_task_dispatches d SET status='closed',last_error_code='deadline_exceeded',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM closed WHERE d.task_id=closed.id`, &out.ExpiredTasks},
+		{`WITH picked AS (SELECT id FROM agent_tasks WHERE state IN ('queued','dispatched','input_required','auth_required') AND deadline_at<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), closed AS (UPDATE agent_tasks t SET state='failed',failure_code=CASE WHEN t.state='input_required' THEN 'input_timeout' WHEN t.state='auth_required' THEN 'auth_timeout' ELSE 'deadline_exceeded' END,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM picked WHERE t.id=picked.id RETURNING t.id) UPDATE agent_task_dispatches d SET status='closed',last_error_code='deadline_exceeded',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM closed WHERE d.task_id=closed.id`, &out.ExpiredTasks},
+		{`WITH picked AS (SELECT i.id,i.task_id,i.type FROM agent_task_interactions i JOIN agent_tasks t ON t.id=i.task_id WHERE i.status='paused' AND i.expires_at<clock_timestamp() AND t.state IN ('input_required','auth_required') FOR UPDATE OF i,t SKIP LOCKED LIMIT $1), expired AS (UPDATE agent_task_interactions i SET status='expired' FROM picked WHERE i.id=picked.id RETURNING picked.task_id,picked.type), failed AS (UPDATE agent_tasks t SET state='failed',failure_code=CASE WHEN expired.type='authorization' THEN 'auth_timeout' ELSE 'input_timeout' END,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM expired WHERE t.id=expired.task_id RETURNING t.id) UPDATE agent_task_dispatches d SET status='closed',last_error_code='interaction_timeout',updated_at=clock_timestamp() FROM failed WHERE d.task_id=failed.id`, &out.ExpiredInteractions},
 		{`WITH picked AS (SELECT id FROM agent_tasks WHERE state='canceling' AND cancel_deadline_at<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), failed AS (UPDATE agent_tasks t SET state='failed',failure_code='cancel_unconfirmed',version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM picked WHERE t.id=picked.id RETURNING t.id), closed_cancel AS (UPDATE agent_task_cancel_deliveries c SET status='closed',last_safe_error='cancel_unconfirmed',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM failed WHERE c.task_id=failed.id) UPDATE agent_task_dispatches d SET status='closed',last_error_code='cancel_unconfirmed',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM failed WHERE d.task_id=failed.id`, &out.CancelUnconfirmed},
 		{`WITH picked AS (SELECT c.task_id FROM agent_task_cancel_deliveries c JOIN agent_tasks t ON t.id=c.task_id WHERE c.status IN ('pending','delivering','notified','interrupted') AND t.state IN ('completed','failed','canceled') FOR UPDATE OF c SKIP LOCKED LIMIT $1) UPDATE agent_task_cancel_deliveries c SET status='closed',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM picked WHERE c.task_id=picked.task_id`, &out.ClosedCancellations},
 		{`WITH picked AS (SELECT t.id FROM agent_tasks t WHERE t.state IN ('canceled','completed','failed') AND t.retain_until<clock_timestamp() AND NOT EXISTS (SELECT 1 FROM agent_task_objects o WHERE o.task_id=t.id) FOR UPDATE SKIP LOCKED LIMIT $1) DELETE FROM agent_tasks t USING picked WHERE t.id=picked.id`, &out.DeletedTasks},

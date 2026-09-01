@@ -9,24 +9,29 @@ import (
 )
 
 const (
-	HardMaxPromptBytes       = 32 * 1024
-	HardMaxCorrelationBytes  = 1024
-	HardMaxResponseBytes     = 128 * 1024
-	HardMaxIdempotencyBytes  = 128
-	HardMaxOutstanding       = 100
-	HardMaxListPage          = 100
-	HardMaxProgressBytes     = 4 * 1024
-	HardMaxProgressUpdates   = 2000
-	HardMaxResults           = 64
-	HardMaxResultParts       = 32
-	HardMaxTextPartBytes     = 128 * 1024
-	HardMaxJSONPartBytes     = 256 * 1024
-	HardMaxFileBytes         = 100 * 1024 * 1024
-	HardMaxTaskFileBytes     = 500 * 1024 * 1024
-	HardMaxResultNameBytes   = 256
-	HardMaxDescriptionBytes  = 4 * 1024
-	HardMaxFilenameBytes     = 255
-	HardMaxCancelReasonBytes = 2 * 1024
+	HardMaxPromptBytes              = 32 * 1024
+	HardMaxCorrelationBytes         = 1024
+	HardMaxResponseBytes            = 128 * 1024
+	HardMaxIdempotencyBytes         = 128
+	HardMaxOutstanding              = 100
+	HardMaxListPage                 = 100
+	HardMaxProgressBytes            = 4 * 1024
+	HardMaxProgressUpdates          = 2000
+	HardMaxResults                  = 64
+	HardMaxResultParts              = 32
+	HardMaxTextPartBytes            = 128 * 1024
+	HardMaxJSONPartBytes            = 256 * 1024
+	HardMaxFileBytes                = 100 * 1024 * 1024
+	HardMaxTaskFileBytes            = 500 * 1024 * 1024
+	HardMaxResultNameBytes          = 256
+	HardMaxDescriptionBytes         = 4 * 1024
+	HardMaxFilenameBytes            = 255
+	HardMaxCancelReasonBytes        = 2 * 1024
+	HardMaxInteractionQuestionBytes = 16 * 1024
+	HardMaxInteractionResponseBytes = 256 * 1024
+	HardMaxInteractionOptions       = 100
+	HardMaxTaskInteractions         = 64
+	HardMaxTaskMessages             = 256
 )
 
 var (
@@ -51,17 +56,23 @@ var (
 	ErrUpdateLimit          = errors.New("taskstore: progress update limit reached")
 	ErrInvalidAttempt       = errors.New("taskstore: invalid attempt")
 	ErrCancelReasonTooLarge = errors.New("taskstore: cancellation reason too large")
+	ErrInteractionLimit     = errors.New("taskstore: interaction limit reached")
+	ErrInteractionNotReady  = errors.New("taskstore: interaction is not awaiting a response")
+	ErrInteractionExpired   = errors.New("taskstore: interaction expired")
 )
 
 type State string
 
 const (
-	StateQueued     State = "queued"
-	StateDispatched State = "dispatched"
-	StateCanceling  State = "canceling"
-	StateCanceled   State = "canceled"
-	StateCompleted  State = "completed"
-	StateFailed     State = "failed"
+	StateQueued        State = "queued"
+	StateDispatched    State = "dispatched"
+	StateCanceling     State = "canceling"
+	StateInputRequired State = "input_required"
+	StateAuthRequired  State = "auth_required"
+	StateCanceled      State = "canceled"
+	StateCompleted     State = "completed"
+	StateFailed        State = "failed"
+	StateRejected      State = "rejected"
 )
 
 type FailureCode string
@@ -73,6 +84,9 @@ const (
 	FailureDeadline          FailureCode = "deadline_exceeded"
 	FailureInternal          FailureCode = "internal_error"
 	FailureCancelUnconfirmed FailureCode = "cancel_unconfirmed"
+	FailureInputTimeout      FailureCode = "input_timeout"
+	FailureAuthTimeout       FailureCode = "auth_timeout"
+	FailureContextTooLarge   FailureCode = "context_too_large"
 )
 
 type Limits struct {
@@ -92,6 +106,9 @@ type Limits struct {
 	MaxResultNameBytes, MaxDescriptionBytes, MaxFilenameBytes          int
 	MaxCancelReasonBytes                                               int
 	DefaultCancelDeadline, MaxCancelDeadline                           time.Duration
+	MaxInteractions, MaxMessages, MaxInteractionOptions                int
+	MaxInteractionQuestionBytes, MaxInteractionResponseBytes           int
+	DefaultInteractionExpiry, MaxInteractionExpiry                     time.Duration
 }
 
 func DefaultLimits() Limits {
@@ -106,6 +123,9 @@ func DefaultLimits() Limits {
 		MaxFileBytes: 25 * 1024 * 1024, MaxTaskFileBytes: 100 * 1024 * 1024,
 		MaxResultNameBytes: 128, MaxDescriptionBytes: 1024, MaxFilenameBytes: 255,
 		MaxCancelReasonBytes: 512, DefaultCancelDeadline: 5 * time.Minute, MaxCancelDeadline: time.Hour,
+		MaxInteractions: 16, MaxMessages: 64, MaxInteractionOptions: 20,
+		MaxInteractionQuestionBytes: 4 * 1024, MaxInteractionResponseBytes: 64 * 1024,
+		DefaultInteractionExpiry: 24 * time.Hour, MaxInteractionExpiry: 7 * 24 * time.Hour,
 	}
 }
 
@@ -135,6 +155,13 @@ func (l Limits) Validate() error {
 	}
 	if l.MaxCancelReasonBytes <= 0 || l.MaxCancelReasonBytes > HardMaxCancelReasonBytes ||
 		l.DefaultCancelDeadline <= 0 || l.MaxCancelDeadline < l.DefaultCancelDeadline || l.MaxCancelDeadline > time.Hour {
+		return ErrInvalid
+	}
+	if l.MaxInteractions <= 0 || l.MaxInteractions > HardMaxTaskInteractions || l.MaxMessages <= 0 || l.MaxMessages > HardMaxTaskMessages ||
+		l.MaxInteractionOptions <= 0 || l.MaxInteractionOptions > HardMaxInteractionOptions ||
+		l.MaxInteractionQuestionBytes <= 0 || l.MaxInteractionQuestionBytes > HardMaxInteractionQuestionBytes ||
+		l.MaxInteractionResponseBytes <= 0 || l.MaxInteractionResponseBytes > HardMaxInteractionResponseBytes ||
+		l.DefaultInteractionExpiry <= 0 || l.MaxInteractionExpiry < l.DefaultInteractionExpiry || l.MaxInteractionExpiry > 7*24*time.Hour {
 		return ErrInvalid
 	}
 	return nil
@@ -195,6 +222,73 @@ type Task struct {
 	Progress                                                      *Progress
 	Results                                                       []Result
 	Cancellation                                                  *Cancellation
+	Interaction                                                   *Interaction
+	Messages                                                      []Message
+}
+
+type InteractionType string
+
+const (
+	InteractionText          InteractionType = "text"
+	InteractionChoice        InteractionType = "choice"
+	InteractionConfirm       InteractionType = "confirm"
+	InteractionJSON          InteractionType = "json"
+	InteractionAuthorization InteractionType = "authorization"
+)
+
+type InteractionStatus string
+
+const (
+	InteractionPaused   InteractionStatus = "paused"
+	InteractionAnswered InteractionStatus = "answered"
+	InteractionConsumed InteractionStatus = "consumed"
+	InteractionExpired  InteractionStatus = "expired"
+)
+
+type InteractionOption struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+type Interaction struct {
+	ID                string              `json:"id"`
+	AttemptID         string              `json:"attemptId"`
+	Type              InteractionType     `json:"type"`
+	Status            InteractionStatus   `json:"status"`
+	Question          string              `json:"question"`
+	Options           []InteractionOption `json:"options,omitempty"`
+	Schema            json.RawMessage     `json:"schema,omitempty"`
+	AuthorizationFlow string              `json:"authorizationFlow,omitempty"`
+	Response          json.RawMessage     `json:"response,omitempty"`
+	CreatedAt         time.Time           `json:"createdAt"`
+	ExpiresAt         time.Time           `json:"expiresAt"`
+	AnsweredAt        *time.Time          `json:"answeredAt,omitempty"`
+}
+type Message struct {
+	Sequence  int64           `json:"sequence"`
+	Role      string          `json:"role"`
+	Kind      string          `json:"kind"`
+	Text      string          `json:"text,omitempty"`
+	Data      json.RawMessage `json:"data,omitempty"`
+	CreatedAt time.Time       `json:"createdAt"`
+}
+type RequestInteractionParams struct {
+	Agent                            AgentRef
+	TaskID, AttemptID, InteractionID string
+	Type                             InteractionType
+	Question                         string
+	Options                          []InteractionOption
+	Schema                           json.RawMessage
+	AuthorizationFlow                string
+	ExpiresIn                        time.Duration
+}
+type RespondInteractionParams struct {
+	Agent                                                           AgentRef
+	TaskID, InteractionID, RespondedBy, IdempotencyKey, RequestHash string
+	Response                                                        json.RawMessage
+}
+type InteractionResult struct {
+	Task   *Task
+	Replay bool
 }
 
 type Cancellation struct {
@@ -261,6 +355,9 @@ type Store interface {
 	Cancel(context.Context, CancelParams) (*CancelResult, error)
 	GetControl(context.Context, AgentRef, string, string) (*TaskControl, error)
 	AcknowledgeCancel(context.Context, AgentRef, string, string, string, string) (*Task, bool, error)
+	RequestInteraction(context.Context, RequestInteractionParams) (*Task, error)
+	RespondInteraction(context.Context, RespondInteractionParams) (*InteractionResult, error)
+	Reject(context.Context, AgentRef, string, string, string) (*Task, error)
 }
 
 type DispatchClaim struct {
@@ -279,7 +376,7 @@ type Receipt struct {
 }
 
 type ReconcileResult struct {
-	RequeuedLeases, UnknownAttempts, ExpiredTasks, CancelUnconfirmed, ClosedCancellations, DeletedTasks int64
+	RequeuedLeases, UnknownAttempts, ExpiredTasks, ExpiredInteractions, CancelUnconfirmed, ClosedCancellations, DeletedTasks int64
 }
 
 type ObjectDeletion struct {
@@ -340,6 +437,14 @@ func cloneTask(t *Task) *Task {
 		c.Progress = &v
 	}
 	c.Results = cloneResults(t.Results)
+	if t.Interaction != nil {
+		v := *t.Interaction
+		v.Options = append([]InteractionOption(nil), v.Options...)
+		v.Schema = append(json.RawMessage(nil), v.Schema...)
+		v.Response = append(json.RawMessage(nil), v.Response...)
+		c.Interaction = &v
+	}
+	c.Messages = append([]Message(nil), t.Messages...)
 	return &c
 }
 

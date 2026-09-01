@@ -20,21 +20,22 @@ type cancelIdempotencyRecord struct {
 // MemoryStore is a contract test double. Production public routes must use the
 // PostgreSQL store and must never silently fall back to this implementation.
 type MemoryStore struct {
-	mu          sync.Mutex
-	limits      Limits
-	now         func() time.Time
-	tasks       map[string]*Task
-	idempotency map[string]idempotencyRecord
-	updates     map[string]map[string]string
-	cancelKeys  map[string]cancelIdempotencyRecord
-	cancelAcks  map[string]string
+	mu              sync.Mutex
+	limits          Limits
+	now             func() time.Time
+	tasks           map[string]*Task
+	idempotency     map[string]idempotencyRecord
+	updates         map[string]map[string]string
+	cancelKeys      map[string]cancelIdempotencyRecord
+	cancelAcks      map[string]string
+	interactionKeys map[string]idempotencyRecord
 }
 
 func NewMemoryStore(limits Limits) (*MemoryStore, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}, cancelKeys: map[string]cancelIdempotencyRecord{}, cancelAcks: map[string]string{}}, nil
+	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}, cancelKeys: map[string]cancelIdempotencyRecord{}, cancelAcks: map[string]string{}, interactionKeys: map[string]idempotencyRecord{}}, nil
 }
 
 func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, error) {
@@ -60,7 +61,7 @@ func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, 
 	}
 	outstanding := 0
 	for _, t := range s.tasks {
-		if t.AgentNamespace == p.Agent.Namespace && t.AgentName == p.Agent.Name && (t.State == StateQueued || t.State == StateDispatched || t.State == StateCanceling) {
+		if t.AgentNamespace == p.Agent.Namespace && t.AgentName == p.Agent.Name && (t.State == StateQueued || t.State == StateDispatched || t.State == StateCanceling || t.State == StateInputRequired || t.State == StateAuthRequired) {
 			outstanding++
 		}
 	}
@@ -78,7 +79,7 @@ func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, 
 	if deadline.After(now.Add(s.limits.MaxDeadline)) {
 		deadline = now.Add(s.limits.MaxDeadline)
 	}
-	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention)}
+	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention), Messages: []Message{{Sequence: 1, Role: "caller", Kind: "task_instruction", Text: p.Prompt, CreatedAt: now}}}
 	s.tasks[t.ID] = t
 	if p.IdempotencyKey != "" {
 		s.idempotency[key] = idempotencyRecord{p.RequestHash, t.ID}
@@ -241,6 +242,261 @@ func (s *MemoryStore) Complete(_ context.Context, a AgentRef, id string, v int64
 	return nil
 }
 
+func (s *MemoryStore) RequestInteraction(_ context.Context, p RequestInteractionParams) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(p.Agent, p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if t.State != StateDispatched || p.InteractionID == "" || p.AttemptID == "" || strings.TrimSpace(p.Question) == "" {
+		return nil, ErrConflict
+	}
+	if t.Interaction != nil && (t.Interaction.Status == InteractionPaused || t.Interaction.Status == InteractionAnswered) {
+		return nil, ErrConflict
+	}
+	if len([]byte(p.Question)) > s.limits.MaxInteractionQuestionBytes || len(p.Options) > s.limits.MaxInteractionOptions {
+		return nil, ErrInvalid
+	}
+	count := 0
+	for _, m := range t.Messages {
+		if m.Kind == "input_request" || m.Kind == "authorization_request" {
+			count++
+		}
+	}
+	if count >= s.limits.MaxInteractions || len(t.Messages)+1 >= s.limits.MaxMessages {
+		return nil, ErrInteractionLimit
+	}
+	if p.Type != InteractionText && p.Type != InteractionChoice && p.Type != InteractionConfirm && p.Type != InteractionJSON && p.Type != InteractionAuthorization {
+		return nil, ErrInvalid
+	}
+	if p.Type == InteractionAuthorization && strings.TrimSpace(p.AuthorizationFlow) == "" {
+		return nil, ErrInvalid
+	}
+	now := s.now().UTC()
+	expiry := p.ExpiresIn
+	if expiry <= 0 {
+		expiry = s.limits.DefaultInteractionExpiry
+	}
+	if expiry > s.limits.MaxInteractionExpiry {
+		expiry = s.limits.MaxInteractionExpiry
+	}
+	expires := now.Add(expiry)
+	if expires.After(t.DeadlineAt) {
+		expires = t.DeadlineAt
+	}
+	i := &Interaction{ID: p.InteractionID, AttemptID: p.AttemptID, Type: p.Type, Status: InteractionPaused, Question: p.Question, Options: append([]InteractionOption(nil), p.Options...), Schema: append(json.RawMessage(nil), p.Schema...), AuthorizationFlow: p.AuthorizationFlow, CreatedAt: now, ExpiresAt: expires}
+	t.Interaction = i
+	state, kind := StateInputRequired, "input_request"
+	if p.Type == InteractionAuthorization {
+		state, kind = StateAuthRequired, "authorization_request"
+	}
+	t.State = state
+	t.Version++
+	t.UpdatedAt = now
+	t.Messages = append(t.Messages, Message{Sequence: int64(len(t.Messages) + 1), Role: "agent", Kind: kind, Text: p.Question, CreatedAt: now})
+	return cloneTask(t), nil
+}
+
+func (s *MemoryStore) RespondInteraction(_ context.Context, p RespondInteractionParams) (*InteractionResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(p.Agent, p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if t.CreatedBy != p.RespondedBy {
+		return nil, ErrNotFound
+	}
+	key := p.RespondedBy + "\x00" + p.TaskID + "\x00" + p.InteractionID + "\x00" + p.IdempotencyKey
+	if p.IdempotencyKey != "" {
+		if old, ok := s.interactionKeys[key]; ok {
+			if old.hash != p.RequestHash {
+				return nil, ErrIdempotencyConflict
+			}
+			return &InteractionResult{Task: cloneTask(t), Replay: true}, nil
+		}
+	}
+	if t.Interaction == nil || t.Interaction.ID != p.InteractionID {
+		return nil, ErrNotFound
+	}
+	if t.Interaction.Status != InteractionPaused {
+		return nil, ErrInteractionNotReady
+	}
+	now := s.now().UTC()
+	if !t.Interaction.ExpiresAt.After(now) {
+		t.Interaction.Status = InteractionExpired
+		t.State = StateFailed
+		if t.Interaction.Type == InteractionAuthorization {
+			t.FailureCode = FailureAuthTimeout
+		} else {
+			t.FailureCode = FailureInputTimeout
+		}
+		t.Version++
+		t.UpdatedAt = now
+		t.CompletedAt = &now
+		return nil, ErrInteractionExpired
+	}
+	if len(p.Response) == 0 || len(p.Response) > s.limits.MaxInteractionResponseBytes || !json.Valid(p.Response) {
+		return nil, ErrInvalid
+	}
+	if err := validateInteractionResponse(t.Interaction, p.Response); err != nil {
+		return nil, err
+	}
+	t.Interaction.Response = append(json.RawMessage(nil), p.Response...)
+	t.Interaction.Status = InteractionAnswered
+	t.Interaction.AnsweredAt = &now
+	kind := "input_response"
+	if t.Interaction.Type == InteractionAuthorization {
+		kind = "authorization_completed"
+	}
+	t.Messages = append(t.Messages, Message{Sequence: int64(len(t.Messages) + 1), Role: "caller", Kind: kind, Data: append(json.RawMessage(nil), p.Response...), CreatedAt: now}, Message{Sequence: int64(len(t.Messages) + 2), Role: "platform", Kind: "continuation_instruction", Text: "Continue the task using the caller response above.", CreatedAt: now})
+	t.State = StateQueued
+	t.Version++
+	t.UpdatedAt = now
+	if p.IdempotencyKey != "" {
+		s.interactionKeys[key] = idempotencyRecord{hash: p.RequestHash, taskID: t.ID}
+	}
+	return &InteractionResult{Task: cloneTask(t)}, nil
+}
+
+func validateInteractionResponse(i *Interaction, raw json.RawMessage) error {
+	var v any
+	if json.Unmarshal(raw, &v) != nil {
+		return ErrInvalid
+	}
+	switch i.Type {
+	case InteractionText:
+		if _, ok := v.(string); !ok {
+			return ErrInvalid
+		}
+	case InteractionConfirm:
+		if _, ok := v.(bool); !ok {
+			return ErrInvalid
+		}
+	case InteractionChoice:
+		s, ok := v.(string)
+		if !ok {
+			return ErrInvalid
+		}
+		found := false
+		for _, o := range i.Options {
+			if o.ID == s {
+				found = true
+			}
+		}
+		if !found {
+			return ErrInvalid
+		}
+	case InteractionJSON:
+		if err := validateBoundedJSONSchema(i.Schema, v); err != nil {
+			return err
+		}
+	case InteractionAuthorization:
+		m, ok := v.(map[string]any)
+		if !ok {
+			return ErrInvalid
+		}
+		ref, ok := m["reference"].(string)
+		if !ok || strings.TrimSpace(ref) == "" {
+			return ErrInvalid
+		}
+	default:
+		return ErrInvalid
+	}
+	return nil
+}
+
+// validateBoundedJSONSchema intentionally supports only the portable edge Kyber
+// promises: root type, required object fields, and primitive property types.
+// Richer schemas stay agent-domain data rather than becoming a hidden validator.
+func validateBoundedJSONSchema(raw json.RawMessage, v any) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	var schema struct {
+		Type       string   `json:"type"`
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Type string `json:"type"`
+		} `json:"properties"`
+	}
+	if json.Unmarshal(raw, &schema) != nil {
+		return ErrInvalid
+	}
+	typeOK := func(typ string, x any) bool {
+		switch typ {
+		case "":
+			return true
+		case "object":
+			_, ok := x.(map[string]any)
+			return ok
+		case "array":
+			_, ok := x.([]any)
+			return ok
+		case "string":
+			_, ok := x.(string)
+			return ok
+		case "boolean":
+			_, ok := x.(bool)
+			return ok
+		case "number":
+			_, ok := x.(float64)
+			return ok
+		case "integer":
+			n, ok := x.(float64)
+			return ok && n == float64(int64(n))
+		case "null":
+			return x == nil
+		default:
+			return false
+		}
+	}
+	if !typeOK(schema.Type, v) {
+		return ErrInvalid
+	}
+	if len(schema.Required) > 0 || len(schema.Properties) > 0 {
+		obj, ok := v.(map[string]any)
+		if !ok {
+			return ErrInvalid
+		}
+		for _, name := range schema.Required {
+			if _, ok = obj[name]; !ok {
+				return ErrInvalid
+			}
+		}
+		for name, p := range schema.Properties {
+			if value, ok := obj[name]; ok && !typeOK(p.Type, value) {
+				return ErrInvalid
+			}
+		}
+	}
+	return nil
+}
+
+func (s *MemoryStore) Reject(_ context.Context, a AgentRef, id, attemptID, reason string) (*Task, error) {
+	if attemptID == "" || strings.TrimSpace(reason) == "" || len(reason) > s.limits.MaxResponseBytes {
+		return nil, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(a, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.State != StateDispatched {
+		return nil, ErrConflict
+	}
+	now := s.now().UTC()
+	t.State = StateRejected
+	t.Response = reason
+	t.Version++
+	t.UpdatedAt = now
+	t.CompletedAt = &now
+	t.Messages = append(t.Messages, Message{Sequence: int64(len(t.Messages) + 1), Role: "agent", Kind: "terminal_summary", Text: reason, CreatedAt: now})
+	return cloneTask(t), nil
+}
+
 func (s *MemoryStore) Cancel(_ context.Context, p CancelParams) (*CancelResult, error) {
 	if p.TaskID == "" || p.RequestedBy == "" || len([]byte(p.IdempotencyKey)) > HardMaxIdempotencyBytes {
 		return nil, ErrInvalid
@@ -272,7 +528,7 @@ func (s *MemoryStore) Cancel(_ context.Context, p CancelParams) (*CancelResult, 
 		}
 		return &CancelResult{Task: cloneTask(t), Replay: true}, nil
 	}
-	if t.State == StateCompleted || t.State == StateFailed {
+	if t.State == StateCompleted || t.State == StateFailed || t.State == StateRejected {
 		if p.IdempotencyKey != "" {
 			s.cancelKeys[key] = cancelIdempotencyRecord{hash: p.RequestHash, taskID: t.ID}
 		}
@@ -284,7 +540,7 @@ func (s *MemoryStore) Cancel(_ context.Context, p CancelParams) (*CancelResult, 
 		deadline = t.DeadlineAt
 	}
 	t.Cancellation = &Cancellation{RequestedAt: now, RequestedBy: p.RequestedBy, Reason: p.Reason, DeadlineAt: deadline, Status: "requested", Scope: "future_task_work"}
-	if t.State == StateQueued {
+	if t.State == StateQueued || t.State == StateInputRequired || t.State == StateAuthRequired {
 		t.State = StateCanceled
 		t.CompletedAt = &now
 	} else {
