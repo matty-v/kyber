@@ -314,7 +314,7 @@ func taskInteractionToolSchema(auth bool) map[string]any {
 		required = append(required, "authorization_flow")
 	} else {
 		properties["type"] = map[string]any{"type": "string", "enum": []string{"text", "choice", "confirm", "json"}}
-		properties["options"] = map[string]any{"type": "array", "maxItems": taskstore.HardMaxInteractionOptions}
+		properties["options"] = map[string]any{"type": "array", "maxItems": taskstore.HardMaxInteractionOptions, "items": map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{"id": map[string]any{"type": "string", "maxLength": 256}, "label": map[string]any{"type": "string", "maxLength": 1024}}, "required": []string{"id", "label"}}}
 		properties["schema"] = map[string]any{"type": "object"}
 		required = append(required, "type")
 	}
