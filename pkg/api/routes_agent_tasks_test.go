@@ -162,6 +162,20 @@ func TestAgentTaskCancelQueuedAndReplay(t *testing.T) {
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("conflict=%d %s", conflict.Code, conflict.Body.String())
 	}
+	other := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "other work"}, "create-other-cancel-test")
+	if other.Code != http.StatusAccepted {
+		t.Fatal(other.Body.String())
+	}
+	var otherTask struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(other.Body.Bytes(), &otherTask); err != nil {
+		t.Fatal(err)
+	}
+	wrongTarget := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks/"+otherTask.ID+"/cancel", requestWriteKey, map[string]string{"reason": "superseded"}, "cancel-key")
+	if wrongTarget.Code != http.StatusConflict {
+		t.Fatalf("cross-task key reuse=%d %s", wrongTarget.Code, wrongTarget.Body.String())
+	}
 }
 
 func TestAgentTaskFileDownloadIsAuthorizedAndRanged(t *testing.T) {

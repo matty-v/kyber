@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -180,7 +181,9 @@ func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentNa
 		return
 	}
 	reason := strings.TrimSpace(in.Reason)
-	b, _ := json.Marshal([]string{reason})
+	// The target is part of the idempotent operation. Without it, reusing a key
+	// with the same reason on a different task could replay the first task.
+	b, _ := json.Marshal([]string{taskID, reason})
 	sum := sha256.Sum256(b)
 	result, err := s.TaskStore.Cancel(r.Context(), taskstore.CancelParams{
 		Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID,
@@ -197,6 +200,15 @@ func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentNa
 	if result.Replay {
 		w.Header().Set("Idempotent-Replay", "true")
 	}
+	slog.InfoContext(r.Context(), "durable task cancellation request",
+		"agent", agentName,
+		"task_id", taskID,
+		"actor", caller.Name,
+		"state", result.Task.State,
+		"applied", result.Applied,
+		"replay", result.Replay,
+		"adapter_mode", "notify_only",
+	)
 	out := taskResponse(result.Task, true)
 	if out.Cancel != nil {
 		out.Cancel.Applied = result.Applied

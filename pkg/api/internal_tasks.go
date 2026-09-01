@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -140,6 +141,11 @@ func (s *InternalServer) handleTaskControl(w http.ResponseWriter, r *http.Reques
 		writeInternalTaskError(w, err)
 		return
 	}
+	if control.CancelRequested {
+		slog.InfoContext(r.Context(), "durable task cancellation notified",
+			"agent", agent, "task_id", body.TaskID, "attempt_id", body.AttemptID,
+			"adapter_mode", "notify_only")
+	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(control)
 }
@@ -168,6 +174,9 @@ func (s *InternalServer) handleTaskCancelAck(w http.ResponseWriter, r *http.Requ
 		writeInternalTaskError(w, err)
 		return
 	}
+	slog.InfoContext(r.Context(), "durable task cancellation acknowledged",
+		"agent", agent, "task_id", body.TaskID, "attempt_id", body.AttemptID,
+		"state", task.State, "replay", replay, "adapter_mode", "notify_only")
 	if replay {
 		w.Header().Set("Idempotent-Replay", "true")
 	}

@@ -25,6 +25,24 @@ typed outputs without scraping an agent transcript. Authoritative code lives in
    exposes bounded summaries. File bytes are available only from the authorized
    Kyber download route; object keys never appear in public JSON.
 
+## Cooperative cancellation
+
+An authenticated task owner may request cancellation through
+`POST /api/v1/agents/{agent}/tasks/{task}/cancel`. A queued task becomes
+`canceled` atomically and its dispatch intent is closed. Once delivery may have
+started, the task instead becomes `canceling`: the exact active attempt observes
+the durable control request through `get_control` and confirms it with
+`ack_cancel`. Acknowledgments from stale attempts are rejected.
+
+The Claude Code and Codex TUI adapters are deliberately `notify_only`. Kyber
+does not synthesize Escape, Ctrl+C, or process signals, and does not claim that
+external effects are rolled back. Completion or failure may honestly win a
+race with cancellation. If the deadline passes without exact evidence, the
+task becomes `failed` with `cancel_unconfirmed`, preserving cancellation
+metadata for operator follow-up. Safe audit logs identify the actor, task,
+attempt, transition, and adapter mode; cancellation reasons and task content
+are never logged.
+
 ## Typed result boundary
 
 Results are immutable and contain ordered `text`, canonical `json`, or `file`

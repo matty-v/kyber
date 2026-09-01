@@ -24,9 +24,9 @@
 - [x] Add exact-attempt loopback `get_control` and `ack_cancel` operations.
 - [x] Add cancellation delivery/reconciliation, including restart-safe retries
   and `cancel_unconfirmed` deadlines.
-- [ ] Cover API, store, stale-attempt, repeat, terminal-race, deadline, and
+- [x] Cover API, store, stale-attempt, repeat, terminal-race, deadline, and
   no-generic-interrupt behavior with tests.
-- [ ] Run focused and repository verification, deploy to `kyber-dev`, and
+- [x] Run focused and repository verification, deploy to `kyber-dev`, and
   exercise cancellation end to end with purpose-built test agents.
 - [ ] Open the PR, resolve review and CI findings, and merge when green.
 
@@ -38,3 +38,7 @@
   durable notify-only control delivery, exact-attempt acknowledgment, honest
   completion races, and `cancel_unconfirmed` reconciliation. Focused taskstore,
   API, dispatcher, and status-sidecar suites pass.
+- 2026-09-01: Deployed the worktree to `kyber-dev`. Verified the six-state
+  migration against the existing PostgreSQL schema and exercised queued cancel,
+  closed dispatch, exact idempotent replay, and conflicting-key rejection over
+  the public API. Added PostgreSQL restart, stale-attempt, and timeout coverage.

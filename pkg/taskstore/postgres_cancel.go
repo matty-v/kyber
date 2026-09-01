@@ -34,6 +34,13 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 	}
 	defer tx.Rollback()
 	if p.IdempotencyKey != "" {
+		// Serialize first use of a key before checking it. Locking only the task
+		// row is insufficient because the same scoped key can race on two tasks,
+		// and a same-task loser would otherwise surface a unique violation instead
+		// of the canonical replay/conflict response.
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(concat_ws(chr(10),$1,$2,$3,$4),0))`, p.RequestedBy, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey); err != nil {
+			return nil, err
+		}
 		var hash, taskID string
 		var applied bool
 		err = tx.QueryRowContext(ctx, `SELECT request_hash,task_id,applied FROM agent_task_cancel_idempotency WHERE created_by=$1 AND agent_namespace=$2 AND agent_name=$3 AND idempotency_key=$4`, p.RequestedBy, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey).Scan(&hash, &taskID, &applied)
