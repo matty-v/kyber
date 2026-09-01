@@ -20,7 +20,7 @@ func TestBrowserSessionTokenRoundTrip(t *testing.T) {
 		"admin scoped": {Name: "ops", Scopes: newScopeSet(ScopeLifecycleAdmin)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			token, err := signBrowserSession("legacy-key", caller, now, browserSessionTTL)
+			token, err := signBrowserSession("legacy-key", caller, "", now, browserSessionTTL)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -87,13 +87,25 @@ func TestBrowserSessionScopesResolveAgainstLiveConfig(t *testing.T) {
 		}
 	})
 
+	t.Run("replacing the caller's key ends its sessions", func(t *testing.T) {
+		// The natural revocation move when a scoped key leaks: swap the value,
+		// keep the entry. Resolving by name alone would leave the compromised
+		// cookie working until it expired.
+		rekeyed := NewAPIKeyAuthenticator(key, ScopedCaller{
+			Name: "ci", Key: "ci-key-v2", Scopes: []string{string(ScopeLifecycleAdmin), string(ScopeRequestsWrite)},
+		})
+		if _, err := rekeyed.Authenticate(withCookie()); err == nil {
+			t.Fatal("session survived its caller's key being replaced")
+		}
+	})
+
 	t.Run("a scoped caller cannot borrow the shared key's name", func(t *testing.T) {
 		// A full-scope claim resolves only from the legacy key, never from the
 		// callers list — so naming a scoped caller "legacy" grants it nothing.
 		impostor := NewAPIKeyAuthenticator("", ScopedCaller{
 			Name: "legacy", Key: "impostor-key", Scopes: []string{string(ScopeRequestsRead)},
 		})
-		full, err := signBrowserSession("some-key", Caller{Name: "legacy", Scopes: newFullScopeSet()}, time.Now(), browserSessionTTL)
+		full, err := signBrowserSession("some-key", Caller{Name: "legacy", Scopes: newFullScopeSet()}, "", time.Now(), browserSessionTTL)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,12 +124,12 @@ func TestBrowserSessionScopesResolveAgainstLiveConfig(t *testing.T) {
 func TestBrowserSessionTokenIsDeterministic(t *testing.T) {
 	now := time.Unix(1_780_000_000, 0)
 	caller := Caller{Name: "ci", Scopes: newScopeSet(ScopeRequestsRead, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeLifecycleWrite)}
-	first, err := signBrowserSession("legacy-key", caller, now, browserSessionTTL)
+	first, err := signBrowserSession("legacy-key", caller, "", now, browserSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 20; i++ {
-		again, err := signBrowserSession("legacy-key", caller, now, browserSessionTTL)
+		again, err := signBrowserSession("legacy-key", caller, "", now, browserSessionTTL)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -130,7 +142,7 @@ func TestBrowserSessionTokenIsDeterministic(t *testing.T) {
 func TestBrowserSessionTokenRejections(t *testing.T) {
 	now := time.Unix(1_780_000_000, 0)
 	caller := Caller{Name: "legacy", Scopes: newFullScopeSet()}
-	valid, err := signBrowserSession("legacy-key", caller, now, browserSessionTTL)
+	valid, err := signBrowserSession("legacy-key", caller, "", now, browserSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +151,7 @@ func TestBrowserSessionTokenRejections(t *testing.T) {
 
 	// Re-sign the same claims under a different key: a well-formed token whose
 	// signature belongs to somebody else.
-	foreign, err := signBrowserSession("other-key", caller, now, browserSessionTTL)
+	foreign, err := signBrowserSession("other-key", caller, "", now, browserSessionTTL)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +184,7 @@ func TestBrowserSessionTokenRejections(t *testing.T) {
 
 func TestBrowserSessionTokenExpires(t *testing.T) {
 	issued := time.Unix(1_780_000_000, 0)
-	token, err := signBrowserSession("legacy-key", Caller{Name: "legacy", Scopes: newFullScopeSet()}, issued, time.Hour)
+	token, err := signBrowserSession("legacy-key", Caller{Name: "legacy", Scopes: newFullScopeSet()}, "", issued, time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +205,7 @@ func TestBrowserSessionTokenExpires(t *testing.T) {
 // An empty API key must not derive a usable signing key. Otherwise the
 // derivation is a public constant and anyone could mint a full-scope session.
 func TestBrowserSessionRequiresAnAPIKey(t *testing.T) {
-	if _, err := signBrowserSession("", Caller{Name: "legacy", Scopes: newFullScopeSet()}, time.Now(), browserSessionTTL); !errors.Is(err, errNoBrowserSessionKey) {
+	if _, err := signBrowserSession("", Caller{Name: "legacy", Scopes: newFullScopeSet()}, "", time.Now(), browserSessionTTL); !errors.Is(err, errNoBrowserSessionKey) {
 		t.Errorf("sign err = %v, want errNoBrowserSessionKey", err)
 	}
 	if _, err := verifyBrowserSession("", "v1.x.y", time.Now()); !errors.Is(err, errNoBrowserSessionKey) {
@@ -260,7 +272,7 @@ func TestBrowserSessionRenewal(t *testing.T) {
 	// half a TTL ago is inside the renewal window.
 	tokenIssuedAgo := func(t *testing.T, d time.Duration) string {
 		t.Helper()
-		token, err := signBrowserSession(key, caller, time.Now().Add(-d), browserSessionTTL)
+		token, err := signBrowserSession(key, caller, "", time.Now().Add(-d), browserSessionTTL)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -341,7 +353,7 @@ func TestBrowserSessionRenewal(t *testing.T) {
 func TestSessionCookieIsReplacedNotAppended(t *testing.T) {
 	const key = "legacy-key"
 	a := NewAPIKeyAuthenticator(key)
-	halfSpent, err := signBrowserSession(key, Caller{Name: "legacy", Scopes: newFullScopeSet()},
+	halfSpent, err := signBrowserSession(key, Caller{Name: "legacy", Scopes: newFullScopeSet()}, "",
 		time.Now().Add(-(browserSessionTTL - browserSessionRenewAfter + time.Hour)), browserSessionTTL)
 	if err != nil {
 		t.Fatal(err)

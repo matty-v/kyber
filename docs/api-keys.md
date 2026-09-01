@@ -44,10 +44,23 @@ operator:
   half the lifetime spent gets a fresh cookie, so a PWA opened at least monthly
   never asks for the key again.
 
-Rotating the API key changes the derived signing key, so it still invalidates
-every outstanding session immediately — the browser that performed the rotation
-is re-issued a cookie and stays signed in. That is the only way to sign other
-browsers out; there is no per-browser revocation.
+### Signing a browser out
+
+There are two levers, from broadest to narrowest:
+
+- **Rotate the shared API key.** The signing key is derived from it, so every
+  outstanding session everywhere stops working immediately. The browser that
+  performed the rotation is re-issued a cookie and stays signed in.
+- **Change or remove a scoped caller** in the `callers` document. A session
+  names its caller and carries no authority of its own, so narrowing that
+  caller's scopes, replacing its key value, or deleting the entry takes effect
+  on that caller's next request — no restart, and nobody else is signed out.
+
+There is no per-browser revocation: two browsers signed in as the same caller
+cannot be told apart, so signing one out signs both out.
+
+A control plane with no `KYBER_API_KEY` set cannot sign cookies at all;
+`POST /api/v1/browser-session` returns `503 session_unavailable` there.
 
 Legacy `localStorage['kyber_api_key']` values are consumed once and removed.
 

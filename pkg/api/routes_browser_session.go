@@ -1,13 +1,14 @@
 package api
 
 import (
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 )
 
-// handleBrowserSession exchanges a bearer API key for an opaque HttpOnly
+// handleBrowserSession exchanges a bearer API key for a signed HttpOnly
 // session cookie. It is mounted outside the normal auth wall because its job is
 // to establish that session, but it authenticates the supplied bearer key
 // directly and never accepts an existing cookie as the exchange credential.
@@ -27,6 +28,15 @@ func (s *Server) handleBrowserSession(w http.ResponseWriter, r *http.Request) {
 	}
 	token, err := s.auth.CreateBrowserSession(*caller)
 	if err != nil {
+		// Session cookies are signed with a key derived from the shared API
+		// key, so an install without one cannot issue them at all. That is a
+		// configuration answer, not a server fault — say so rather than
+		// returning a bare 500 the operator has to go read logs to explain.
+		if errors.Is(err, errNoBrowserSessionKey) {
+			writeJSONError(w, http.StatusServiceUnavailable, "session_unavailable",
+				"browser sessions require KYBER_API_KEY to be set on the control plane")
+			return
+		}
 		slog.ErrorContext(r.Context(), "creating browser session", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "session_creation_failed", "failed to create browser session")
 		return

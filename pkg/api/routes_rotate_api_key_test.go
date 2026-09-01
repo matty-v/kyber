@@ -21,7 +21,10 @@ import (
 // against a fake K8sClient seeded with the api-credentials Secret. Returns
 // the server, the underlying handler, and the seed key so tests can
 // authenticate the initial request and inspect the post-rotation state.
-func buildRotateAPIKeyHandler(t *testing.T, secretName, namespace, seedKey string) (*api.Server, http.Handler, *fake.ClientBuilder) {
+// Optional scoped callers must be supplied here rather than assigned to the
+// returned Server: BuildHandler constructs the authenticator on first call and
+// keeps it, so Callers set afterwards are never seen.
+func buildRotateAPIKeyHandler(t *testing.T, secretName, namespace, seedKey string, callers ...api.ScopedCaller) (*api.Server, http.Handler, *fake.ClientBuilder) {
 	t.Helper()
 
 	secret := &corev1.Secret{
@@ -42,6 +45,7 @@ func buildRotateAPIKeyHandler(t *testing.T, secretName, namespace, seedKey strin
 		APIKeySecretName: secretName,
 		Namespace:        namespace,
 		Recorder:         record.NewFakeRecorder(8),
+		Callers:          callers,
 	}
 	return srv, srv.BuildHandler(), cb
 }
@@ -197,24 +201,32 @@ func TestRotateAPIKey_RequiresAuth(t *testing.T) {
 }
 
 // TestRotateAPIKey_BrowserSessionSurvivesForTheRotatingBrowserOnly: rotation is
-// the only lever that signs other browsers out, so both halves of it matter —
-// the browser that pressed the button must stay in, and every other cookie
-// must stop working. Since MAT-38 the second half is implicit (cookies are
-// signed with a key derived from the API key, so changing the key invalidates
-// them), which is exactly why it needs a test at this level rather than a
-// trust in an explicit revoke call that no longer exists.
+// the only lever that signs every browser out, so both halves of it matter —
+// the browser that pressed the button must stay in, and every other cookie must
+// stop working. Since MAT-38 the second half is implicit (cookies are signed
+// with a key derived from the API key, so changing the key invalidates them),
+// which is exactly why it needs a test at this level rather than trust in an
+// explicit revoke call that no longer exists.
+//
+// The bystander is a DIFFERENT principal on purpose. Signing is deterministic
+// HMAC with second-granularity `iat`, so two sessions minted for the same
+// caller in the same second are byte-identical — a bystander built that way
+// would just be the rotating cookie again, and the assertion below would prove
+// nothing.
 func TestRotateAPIKey_BrowserSessionSurvivesForTheRotatingBrowserOnly(t *testing.T) {
 	const ns = "kyber-system"
 	const secretName = "kyber-api-credentials"
 	const seedKey = "old-seed-key"
+	const scopedKey = "ci-caller-key"
 	const origin = "https://kyber.example"
 
-	_, handler, _ := buildRotateAPIKeyHandler(t, secretName, ns, seedKey)
+	_, handler, _ := buildRotateAPIKeyHandler(t, secretName, ns, seedKey,
+		api.ScopedCaller{Name: "ci", Key: scopedKey, Scopes: []string{"lifecycle:write"}})
 
-	sessionCookie := func(t *testing.T) *http.Cookie {
+	sessionCookie := func(t *testing.T, bearer string) *http.Cookie {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodPost, origin+"/api/v1/browser-session", nil)
-		req.Header.Set("Authorization", "Bearer "+seedKey)
+		req.Header.Set("Authorization", "Bearer "+bearer)
 		rec := httptest.NewRecorder()
 		handler.ServeHTTP(rec, req)
 		if rec.Code != http.StatusNoContent {
@@ -237,8 +249,11 @@ func TestRotateAPIKey_BrowserSessionSurvivesForTheRotatingBrowserOnly(t *testing
 		return rec.Code != http.StatusUnauthorized
 	}
 
-	rotating := sessionCookie(t)
-	bystander := sessionCookie(t)
+	rotating := sessionCookie(t, seedKey)
+	bystander := sessionCookie(t, scopedKey)
+	if rotating.Value == bystander.Value {
+		t.Fatal("the two sessions are the same token — the bystander assertion would be vacuous")
+	}
 	if !authenticates(rotating) || !authenticates(bystander) {
 		t.Fatal("fresh session cookies do not authenticate")
 	}

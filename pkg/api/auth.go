@@ -198,7 +198,34 @@ const (
 // cookie is a signed statement ABOUT the caller, verifiable without any
 // server-side session state (see browser_session_token.go).
 func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error) {
-	return signBrowserSession(a.currentKey(), caller, time.Now(), browserSessionTTL)
+	apiKey := a.currentKey()
+	binding := ""
+	if !caller.Scopes.full {
+		callerKey, ok := a.scopedCallerKey(caller.Name)
+		if !ok {
+			return "", fmt.Errorf("no configured caller named %q", caller.Name)
+		}
+		var err error
+		if binding, err = browserSessionKeyBinding(apiKey, callerKey); err != nil {
+			return "", err
+		}
+	}
+	return signBrowserSession(apiKey, caller, binding, time.Now(), browserSessionTTL)
+}
+
+// scopedCallerKey returns the current key of the named scoped caller. Matches
+// the LAST entry, because that is what Authenticate does when two entries share
+// a name — the same principal must not resolve differently depending on whether
+// it presents a cookie or a bearer key.
+func (a *APIKeyAuthenticator) scopedCallerKey(name string) (string, bool) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	for i := len(a.callers) - 1; i >= 0; i-- {
+		if a.callers[i].caller.Name == name {
+			return a.callers[i].key, true
+		}
+	}
+	return "", false
 }
 
 // callerForSession resolves verified session claims into the caller's CURRENT
@@ -221,11 +248,25 @@ func (a *APIKeyAuthenticator) callerForSession(claims *browserSessionClaims) (*C
 		}
 		return &Caller{Name: claims.Name, Scopes: newFullScopeSet()}, nil
 	}
-	for i := range a.callers {
-		if a.callers[i].caller.Name == claims.Name {
-			c := a.callers[i].caller
-			return &c, nil
+	// Last match, mirroring Authenticate's bearer resolution, so a duplicated
+	// caller name cannot grant one authority over the cookie and another over
+	// the Bearer header.
+	for i := len(a.callers) - 1; i >= 0; i-- {
+		if a.callers[i].caller.Name != claims.Name {
+			continue
 		}
+		// The caller still exists — but is it still the same credential? If
+		// the operator replaced this caller's key, the sessions it authorized
+		// are revoked with it.
+		want, err := browserSessionKeyBinding(a.key, a.callers[i].key)
+		if err != nil {
+			return nil, err
+		}
+		if subtle.ConstantTimeCompare([]byte(want), []byte(claims.KeyBinding)) != 1 {
+			return nil, fmt.Errorf("browser session for caller %q was issued against a key that has since been replaced", claims.Name)
+		}
+		c := a.callers[i].caller
+		return &c, nil
 	}
 	return nil, fmt.Errorf("browser session names caller %q, which is no longer configured", claims.Name)
 }

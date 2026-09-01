@@ -29,6 +29,8 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Control plane has no shared API key, so it cannot sign sessions
 
   /api/v1/dev/compute/instances:
     get:

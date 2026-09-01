@@ -180,3 +180,36 @@ func TestBadAPIKeyKeepsGenericUnauthorized(t *testing.T) {
 		t.Errorf("code = %q, want \"unauthorized\"", body.Error.Code)
 	}
 }
+
+// An install with scoped callers but no shared key cannot sign session cookies
+// — the signing key is derived from the shared key. That is a configuration
+// answer, so it must read as one. A bare 500 would send the operator to the
+// control-plane logs to discover a setting they could have been told about.
+func TestBrowserSessionUnavailableWithoutASharedKey(t *testing.T) {
+	s := &Server{Callers: []ScopedCaller{{Name: "ci", Key: "ci-key", Scopes: []string{"lifecycle:write"}}}}
+	h := s.BuildHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/browser-session", nil)
+	req.Header.Set("Authorization", "Bearer ci-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "session_unavailable" {
+		t.Errorf("code = %q, want \"session_unavailable\"", body.Error.Code)
+	}
+	if !strings.Contains(body.Error.Message, "KYBER_API_KEY") {
+		t.Errorf("message = %q, want it to name the missing setting", body.Error.Message)
+	}
+}

@@ -76,8 +76,13 @@ var errMalformedBrowserSession = errors.New("malformed browser session token")
 type browserSessionClaims struct {
 	Name      string `json:"n"`
 	FullScope bool   `json:"f,omitempty"`
-	IssuedAt  int64  `json:"iat"`
-	ExpiresAt int64  `json:"exp"`
+	// KeyBinding ties a scoped caller's session to the key it was issued
+	// against, so replacing that key in configuration ends the session. Empty
+	// for full-scope sessions, which are already bound to the shared key by
+	// the signature itself. See browserSessionKeyBinding.
+	KeyBinding string `json:"kb,omitempty"`
+	IssuedAt   int64  `json:"iat"`
+	ExpiresAt  int64  `json:"exp"`
 }
 
 // expiresAt is the moment the session stops being valid.
@@ -95,19 +100,39 @@ func browserSessionSigningKey(apiKey string) ([]byte, error) {
 	return key, nil
 }
 
+// browserSessionKeyBinding is an opaque, unforgeable stand-in for a scoped
+// caller's key: HMAC of the key under the session signing key, truncated.
+//
+// It exists so that replacing a caller's key value in configuration ends that
+// caller's browser sessions. Without it, sessions resolve by NAME alone, and
+// the natural revocation move — swap the leaked key, keep the entry — would
+// leave a compromised cookie working until it expired.
+//
+// Keyed rather than a plain digest so the claim cannot be used to brute-force
+// the caller key offline, and truncated because it only ever needs to be
+// compared, never inverted.
+func browserSessionKeyBinding(apiKey, callerKey string) (string, error) {
+	key, err := browserSessionSigningKey(apiKey)
+	if err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(browserSessionMAC(key, "caller-key:"+callerKey)[:16]), nil
+}
+
 // signBrowserSession encodes caller into a signed token valid for ttl from
 // issuedAt. Output layout: "<version>.<base64url(claims)>.<base64url(hmac)>",
 // where the HMAC covers "<version>.<base64url(claims)>".
-func signBrowserSession(apiKey string, caller Caller, issuedAt time.Time, ttl time.Duration) (string, error) {
+func signBrowserSession(apiKey string, caller Caller, keyBinding string, issuedAt time.Time, ttl time.Duration) (string, error) {
 	key, err := browserSessionSigningKey(apiKey)
 	if err != nil {
 		return "", err
 	}
 	raw, err := json.Marshal(browserSessionClaims{
-		Name:      caller.Name,
-		FullScope: caller.Scopes.full,
-		IssuedAt:  issuedAt.Unix(),
-		ExpiresAt: issuedAt.Add(ttl).Unix(),
+		Name:       caller.Name,
+		FullScope:  caller.Scopes.full,
+		KeyBinding: keyBinding,
+		IssuedAt:   issuedAt.Unix(),
+		ExpiresAt:  issuedAt.Add(ttl).Unix(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("encoding browser session claims: %w", err)
