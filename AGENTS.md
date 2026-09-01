@@ -215,6 +215,14 @@ workers claim with cross-replica leases and reuse the per-agent inbound queue.
 The managed `UserPromptSubmit` hook must persist an exact task/attempt receipt
 through the status sidecar before public state becomes `dispatched`; ambiguous
 attempts fail as `delivery_unknown` and are never automatically replayed.
+The same task contract accepts cooperative progress and immutable typed results
+through the status sidecar's loopback `kyber-task` MCP tools. Text and canonical
+JSON remain inline; files must originate below `/persist/task-results`, pass the
+openat/no-follow safety checks, and stream into private GCS/S3-compatible object
+storage. PostgreSQL is the visibility authority: uploads are recorded pending
+before bytes leave the pod, downloads reauthorize every request, and leased
+cleanup retries provider deletion before removing metadata. See
+`docs/architecture/durable-tasks.md` before changing this cross-component path.
 
 WHY the trust boundary matters: `verifier.go` does constant-time compare and
 collapses ALL failures to a single `ErrSignatureMismatch` — never differentiate

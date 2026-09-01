@@ -91,3 +91,82 @@ func TestMemoryListStableCursorAndFilterBinding(t *testing.T) {
 		t.Fatalf("filter-mismatched cursor = %v", err)
 	}
 }
+
+func TestMemoryProgressIdempotencyAndConflict(t *testing.T) {
+	s := testStore(t)
+	task := createTask(t, s, "task_progress", "", "").Task
+	a := AgentRef{"kyber-system", "sol"}
+	if err := s.MarkDispatched(context.Background(), a, task.ID, task.Version); err != nil {
+		t.Fatal(err)
+	}
+	percent := 40
+	p, replay, err := s.ReportProgress(context.Background(), a, task.ID, "attempt_1", ProgressUpdate{UpdateID: "update_1", Message: "working", Percent: &percent})
+	if err != nil || replay || p.Message != "working" {
+		t.Fatalf("first: %+v %v %v", p, replay, err)
+	}
+	_, replay, err = s.ReportProgress(context.Background(), a, task.ID, "attempt_1", ProgressUpdate{UpdateID: "update_1", Message: "working", Percent: &percent})
+	if err != nil || !replay {
+		t.Fatalf("replay: %v %v", replay, err)
+	}
+	_, _, err = s.ReportProgress(context.Background(), a, task.ID, "attempt_1", ProgressUpdate{UpdateID: "update_1", Message: "different"})
+	if !errors.Is(err, ErrUpdateConflict) {
+		t.Fatalf("conflict=%v", err)
+	}
+}
+
+func TestMemoryImmutableResultAndLegacyResponse(t *testing.T) {
+	s := testStore(t)
+	task := createTask(t, s, "task_result", "", "").Task
+	a := AgentRef{"kyber-system", "sol"}
+	if err := s.MarkDispatched(context.Background(), a, task.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	r := Result{ID: "result_1", Name: "report", Parts: []ResultPart{{ID: "part_1", Kind: PartText, Text: "hello"}}}
+	saved, replay, err := s.PublishResult(context.Background(), a, task.ID, "attempt_1", r)
+	if err != nil || replay || saved.ContentDigest == "" {
+		t.Fatalf("publish: %+v %v %v", saved, replay, err)
+	}
+	_, replay, err = s.PublishResult(context.Background(), a, task.ID, "attempt_1", r)
+	if err != nil || !replay {
+		t.Fatalf("replay: %v %v", replay, err)
+	}
+	r.Parts[0].Text = "changed"
+	_, _, err = s.PublishResult(context.Background(), a, task.ID, "attempt_1", r)
+	if !errors.Is(err, ErrResultConflict) {
+		t.Fatalf("conflict=%v", err)
+	}
+
+	legacy := createTask(t, s, "task_legacy", "", "").Task
+	if err = s.MarkDispatched(context.Background(), a, legacy.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Complete(context.Background(), a, legacy.ID, 2, "done"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(context.Background(), a, legacy.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Response != "done" || len(got.Results) != 1 || got.Results[0].Name != "response" || got.Results[0].Parts[0].Text != "done" {
+		t.Fatalf("legacy=%+v", got)
+	}
+}
+
+func TestMemoryFileResultReplayIgnoresPrivateObjectIdentity(t *testing.T) {
+	s := testStore(t)
+	task := createTask(t, s, "task_file", "", "").Task
+	a := AgentRef{"kyber-system", "sol"}
+	if err := s.MarkDispatched(context.Background(), a, task.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	result := Result{ID: "result_file", Name: "report", Parts: []ResultPart{{ID: "part_file", Kind: PartFile, File: &FileMetadata{ObjectID: "temporary-1", Filename: "report.pdf", MediaType: "application/pdf", SizeBytes: 4, SHA256: "abcd", ScanStatus: "not_configured"}}}}
+	stored, replay, err := s.PublishResult(context.Background(), a, task.ID, "attempt_1", result)
+	if err != nil || replay || stored.Parts[0].File.ObjectID != "temporary-1" {
+		t.Fatalf("first=%+v replay=%v err=%v", stored, replay, err)
+	}
+	result.Parts[0].File.ObjectID = "temporary-2"
+	stored, replay, err = s.PublishResult(context.Background(), a, task.ID, "attempt_1", result)
+	if err != nil || !replay || stored.Parts[0].File.ObjectID != "temporary-1" {
+		t.Fatalf("replay=%+v replay=%v err=%v", stored, replay, err)
+	}
+}

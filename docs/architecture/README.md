@@ -68,6 +68,7 @@ tracked in the per-agent skill issues, not here.
 | [`pwa-views-publish-boundary.md`](pwa-views-publish-boundary.md) | PWA views publish boundary | deep-dive |
 | [`log-retention.md`](log-retention.md) | durable platform log retention: Vector shipper → GCS/S3 → generic archive/export read path | deep-dive |
 | [`internal-api-auth.md`](internal-api-auth.md) | per-agent identity + authz on the internal `:8082` API (pod-tokens, act-on-self-only, the `:8082`-scoped NetworkPolicy) | deep-dive |
+| [`durable-tasks.md`](durable-tasks.md) | durable task dispatch, cooperative progress, typed results, private file publication, and cleanup | deep-dive |
 | [`_TEMPLATE.md`](_TEMPLATE.md) | the per-subsystem deep-dive template — copy this to start a new page | template |
 
 Candidate subsystems still awaiting a deep-dive (accrue as follow-ups, not all

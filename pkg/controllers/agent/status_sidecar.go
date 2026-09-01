@@ -40,12 +40,13 @@ const (
 // deployment to every sidecar pod, so enabling the diagnostic-safety-net
 // logs is a single CP env-var edit instead of a per-pod patch.
 type SidecarConfig struct {
-	AgentName    string
-	Image        string
-	DiskBytes    int64
-	OtelEndpoint string
-	Runtime      string
-	LogLevel     string
+	AgentName       string
+	Image           string
+	DiskBytes       int64
+	OtelEndpoint    string
+	Runtime         string
+	LogLevel        string
+	TaskResultsRoot string
 }
 
 // AppendStatusSidecar appends the kyber-status-sidecar container to pod's
@@ -94,6 +95,9 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 	}
 	if cfg.Runtime != "" {
 		env = append(env, corev1.EnvVar{Name: "KYBER_RUNTIME_TYPE", Value: cfg.Runtime})
+	}
+	if cfg.TaskResultsRoot != "" {
+		env = append(env, corev1.EnvVar{Name: "KYBER_TASK_RESULTS_ROOT", Value: cfg.TaskResultsRoot})
 	}
 	// kyber#360 diagnostic-safety-net toggle. Off by default — only emit
 	// the env when the operator has set it on the CP deployment, so the

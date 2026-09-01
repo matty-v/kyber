@@ -212,6 +212,12 @@ func (s *PostgresStore) Reconcile(ctx context.Context, limit int) (*ReconcileRes
 	}
 	defer tx.Rollback()
 	out := &ReconcileResult{}
+	if _, err := tx.ExecContext(ctx, `WITH picked AS (SELECT id FROM agent_task_objects WHERE status='pending' AND lease_until<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE agent_task_objects o SET status='deleting',lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp() FROM picked WHERE o.id=picked.id`, limit); err != nil {
+		return nil, err
+	}
+	if _, err := tx.ExecContext(ctx, `WITH expired AS (SELECT id FROM agent_tasks WHERE state IN ('completed','failed') AND retain_until<clock_timestamp() LIMIT $1) UPDATE agent_task_objects o SET status='deleting' FROM expired WHERE o.task_id=expired.id AND o.status='ready'`, limit); err != nil {
+		return nil, err
+	}
 	queries := []struct {
 		q string
 		n *int64
@@ -219,7 +225,7 @@ func (s *PostgresStore) Reconcile(ctx context.Context, limit int) (*ReconcileRes
 		{`WITH picked AS (SELECT d.task_id FROM agent_task_dispatches d JOIN agent_tasks t ON t.id=d.task_id WHERE d.status='leased' AND t.state='queued' AND d.lease_until<clock_timestamp() FOR UPDATE OF d SKIP LOCKED LIMIT $1) UPDATE agent_task_dispatches d SET status='pending',lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp(),updated_at=clock_timestamp() FROM picked WHERE d.task_id=picked.task_id`, &out.RequeuedLeases},
 		{`WITH picked AS (SELECT d.task_id FROM agent_task_dispatches d WHERE d.status IN ('attempting','receipt_pending') AND d.lease_until<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), closed AS (UPDATE agent_task_dispatches d SET status='closed',last_error_code='delivery_unknown',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM picked WHERE d.task_id=picked.task_id RETURNING d.task_id) UPDATE agent_tasks t SET state='failed',failure_code='delivery_unknown',version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM closed WHERE t.id=closed.task_id AND t.state IN ('queued','dispatched')`, &out.UnknownAttempts},
 		{`WITH picked AS (SELECT id FROM agent_tasks WHERE state IN ('queued','dispatched') AND deadline_at<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1), closed AS (UPDATE agent_tasks t SET state='failed',failure_code='deadline_exceeded',version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() FROM picked WHERE t.id=picked.id RETURNING t.id) UPDATE agent_task_dispatches d SET status='closed',last_error_code='deadline_exceeded',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() FROM closed WHERE d.task_id=closed.id`, &out.ExpiredTasks},
-		{`WITH picked AS (SELECT id FROM agent_tasks WHERE state IN ('completed','failed') AND retain_until<clock_timestamp() FOR UPDATE SKIP LOCKED LIMIT $1) DELETE FROM agent_tasks t USING picked WHERE t.id=picked.id`, &out.DeletedTasks},
+		{`WITH picked AS (SELECT t.id FROM agent_tasks t WHERE t.state IN ('completed','failed') AND t.retain_until<clock_timestamp() AND NOT EXISTS (SELECT 1 FROM agent_task_objects o WHERE o.task_id=t.id) FOR UPDATE SKIP LOCKED LIMIT $1) DELETE FROM agent_tasks t USING picked WHERE t.id=picked.id`, &out.DeletedTasks},
 	}
 	for _, item := range queries {
 		res, err := tx.ExecContext(ctx, item.q, limit)
@@ -232,4 +238,63 @@ func (s *PostgresStore) Reconcile(ctx context.Context, limit int) (*ReconcileRes
 		return nil, err
 	}
 	return out, nil
+}
+
+func (s *PostgresStore) ClaimObjectDeletions(ctx context.Context, owner string, lease time.Duration, limit int) ([]ObjectDeletion, error) {
+	if owner == "" || lease <= 0 || limit < 1 || limit > 1000 {
+		return nil, ErrInvalid
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `WITH picked AS (SELECT id FROM agent_task_objects WHERE status='deleting' AND next_attempt_at<=clock_timestamp() AND (lease_until IS NULL OR lease_until<clock_timestamp()) ORDER BY next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE agent_task_objects o SET lease_owner=$2,lease_until=clock_timestamp()+$3::interval FROM picked WHERE o.id=picked.id RETURNING o.id,o.object_key`, limit, owner, lease.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ObjectDeletion
+	for rows.Next() {
+		var object ObjectDeletion
+		if err := rows.Scan(&object.ID, &object.ObjectKey); err != nil {
+			return nil, err
+		}
+		object.LeaseOwner = owner
+		out = append(out, object)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *PostgresStore) DeleteObjectRecord(ctx context.Context, id, owner string) error {
+	if id == "" || owner == "" {
+		return ErrInvalid
+	}
+	res, err := s.db.ExecContext(ctx, `DELETE FROM agent_task_objects WHERE id=$1 AND status='deleting' AND lease_owner=$2 AND lease_until>=clock_timestamp()`, id, owner)
+	if err == nil {
+		if n, _ := res.RowsAffected(); n != 1 {
+			return ErrConflict
+		}
+	}
+	return err
+}
+
+func (s *PostgresStore) RetryObjectDeletion(ctx context.Context, id, owner, message string) error {
+	if id == "" || owner == "" {
+		return ErrInvalid
+	}
+	if len(message) > 1024 {
+		message = message[:1024]
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE agent_task_objects SET deletion_attempts=deletion_attempts+1,last_error=$3,lease_owner=NULL,lease_until=NULL,next_attempt_at=clock_timestamp()+(LEAST(3600,power(2,LEAST(deletion_attempts,11)))::text||' seconds')::interval WHERE id=$1 AND status='deleting' AND lease_owner=$2`, id, owner, message)
+	return err
 }

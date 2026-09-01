@@ -3,6 +3,7 @@ package taskstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 )
@@ -14,6 +15,17 @@ const (
 	HardMaxIdempotencyBytes = 128
 	HardMaxOutstanding      = 100
 	HardMaxListPage         = 100
+	HardMaxProgressBytes    = 4 * 1024
+	HardMaxProgressUpdates  = 2000
+	HardMaxResults          = 64
+	HardMaxResultParts      = 32
+	HardMaxTextPartBytes    = 128 * 1024
+	HardMaxJSONPartBytes    = 256 * 1024
+	HardMaxFileBytes        = 100 * 1024 * 1024
+	HardMaxTaskFileBytes    = 500 * 1024 * 1024
+	HardMaxResultNameBytes  = 256
+	HardMaxDescriptionBytes = 4 * 1024
+	HardMaxFilenameBytes    = 255
 )
 
 var (
@@ -30,6 +42,13 @@ var (
 	ErrInvalidCursor       = errors.New("taskstore: invalid cursor")
 	ErrNoDispatch          = errors.New("taskstore: no dispatch available")
 	ErrReceiptConflict     = errors.New("taskstore: receipt conflict")
+	ErrUpdateConflict      = errors.New("taskstore: progress update conflict")
+	ErrResultConflict      = errors.New("taskstore: result conflict")
+	ErrProgressTooLarge    = errors.New("taskstore: progress too large")
+	ErrResultTooLarge      = errors.New("taskstore: result too large")
+	ErrResultLimit         = errors.New("taskstore: result limit reached")
+	ErrUpdateLimit         = errors.New("taskstore: progress update limit reached")
+	ErrInvalidAttempt      = errors.New("taskstore: invalid attempt")
 )
 
 type State string
@@ -52,17 +71,20 @@ const (
 )
 
 type Limits struct {
-	MaxPromptBytes      int
-	MaxCorrelationBytes int
-	MaxResponseBytes    int
-	MaxOutstanding      int
-	MaxRetained         int
-	DefaultDeadline     time.Duration
-	MaxDeadline         time.Duration
-	Retention           time.Duration
-	DefaultListPage     int
-	MaxListPage         int
-	MaxDispatchAttempts int
+	MaxPromptBytes                                                     int
+	MaxCorrelationBytes                                                int
+	MaxResponseBytes                                                   int
+	MaxOutstanding                                                     int
+	MaxRetained                                                        int
+	DefaultDeadline                                                    time.Duration
+	MaxDeadline                                                        time.Duration
+	Retention                                                          time.Duration
+	DefaultListPage                                                    int
+	MaxListPage                                                        int
+	MaxDispatchAttempts                                                int
+	MaxProgressBytes, MaxProgressUpdates, MaxResults, MaxResultParts   int
+	MaxTextPartBytes, MaxJSONPartBytes, MaxFileBytes, MaxTaskFileBytes int64
+	MaxResultNameBytes, MaxDescriptionBytes, MaxFilenameBytes          int
 }
 
 func DefaultLimits() Limits {
@@ -72,6 +94,10 @@ func DefaultLimits() Limits {
 		DefaultDeadline: 24 * time.Hour, MaxDeadline: 7 * 24 * time.Hour,
 		Retention: 7 * 24 * time.Hour, DefaultListPage: 20, MaxListPage: 100,
 		MaxDispatchAttempts: 3,
+		MaxProgressBytes:    1024, MaxProgressUpdates: 200, MaxResults: 16, MaxResultParts: 8,
+		MaxTextPartBytes: 32 * 1024, MaxJSONPartBytes: 64 * 1024,
+		MaxFileBytes: 25 * 1024 * 1024, MaxTaskFileBytes: 100 * 1024 * 1024,
+		MaxResultNameBytes: 128, MaxDescriptionBytes: 1024, MaxFilenameBytes: 255,
 	}
 }
 
@@ -85,13 +111,66 @@ func (l Limits) Validate() error {
 		l.Retention <= 0 || l.Retention > 30*24*time.Hour ||
 		l.DefaultListPage <= 0 || l.DefaultListPage > l.MaxListPage ||
 		l.MaxListPage <= 0 || l.MaxListPage > HardMaxListPage ||
-		l.MaxDispatchAttempts <= 0 || l.MaxDispatchAttempts > 10 {
+		l.MaxDispatchAttempts <= 0 || l.MaxDispatchAttempts > 10 ||
+		l.MaxProgressBytes <= 0 || l.MaxProgressBytes > HardMaxProgressBytes ||
+		l.MaxProgressUpdates <= 0 || l.MaxProgressUpdates > HardMaxProgressUpdates ||
+		l.MaxResults <= 0 || l.MaxResults > HardMaxResults ||
+		l.MaxResultParts <= 0 || l.MaxResultParts > HardMaxResultParts ||
+		l.MaxTextPartBytes <= 0 || l.MaxTextPartBytes > HardMaxTextPartBytes ||
+		l.MaxJSONPartBytes <= 0 || l.MaxJSONPartBytes > HardMaxJSONPartBytes ||
+		l.MaxFileBytes <= 0 || l.MaxFileBytes > HardMaxFileBytes ||
+		l.MaxTaskFileBytes <= 0 || l.MaxTaskFileBytes > HardMaxTaskFileBytes ||
+		l.MaxFileBytes > l.MaxTaskFileBytes || l.MaxResultNameBytes <= 0 || l.MaxResultNameBytes > HardMaxResultNameBytes ||
+		l.MaxDescriptionBytes < 0 || l.MaxDescriptionBytes > HardMaxDescriptionBytes ||
+		l.MaxFilenameBytes <= 0 || l.MaxFilenameBytes > HardMaxFilenameBytes {
 		return ErrInvalid
 	}
 	return nil
 }
 
 type AgentRef struct{ Namespace, Name string }
+
+type Progress struct {
+	Message   string    `json:"message"`
+	Percent   *int      `json:"percent,omitempty"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+type ProgressUpdate struct {
+	UpdateID string `json:"updateId"`
+	Message  string `json:"message"`
+	Percent  *int   `json:"percent,omitempty"`
+}
+type PartKind string
+
+const (
+	PartText PartKind = "text"
+	PartJSON PartKind = "json"
+	PartFile PartKind = "file"
+)
+
+type FileMetadata struct {
+	ObjectID   string `json:"-"`
+	Filename   string `json:"filename"`
+	MediaType  string `json:"mediaType"`
+	SHA256     string `json:"sha256"`
+	SizeBytes  int64  `json:"size"`
+	ScanStatus string `json:"scanStatus"`
+}
+type ResultPart struct {
+	ID   string          `json:"id"`
+	Kind PartKind        `json:"kind"`
+	Text string          `json:"text,omitempty"`
+	JSON json.RawMessage `json:"value,omitempty"`
+	File *FileMetadata   `json:"file,omitempty"`
+}
+type Result struct {
+	ID            string       `json:"id"`
+	Name          string       `json:"name"`
+	Description   string       `json:"description,omitempty"`
+	ContentDigest string       `json:"-"`
+	Parts         []ResultPart `json:"parts"`
+	CreatedAt     time.Time    `json:"createdAt"`
+}
 
 type Task struct {
 	ID, AgentNamespace, AgentName, CreatedBy, Prompt, Correlation string
@@ -101,6 +180,8 @@ type Task struct {
 	Version                                                       int64
 	CreatedAt, UpdatedAt, DeadlineAt, RetainUntil                 time.Time
 	CompletedAt                                                   *time.Time
+	Progress                                                      *Progress
+	Results                                                       []Result
 }
 
 type CreateParams struct {
@@ -135,6 +216,8 @@ type Store interface {
 	MarkDispatched(context.Context, AgentRef, string, int64) error
 	Fail(context.Context, AgentRef, string, int64, FailureCode) error
 	Complete(context.Context, AgentRef, string, int64, string) error
+	ReportProgress(context.Context, AgentRef, string, string, ProgressUpdate) (*Progress, bool, error)
+	PublishResult(context.Context, AgentRef, string, string, Result) (*Result, bool, error)
 }
 
 type DispatchClaim struct {
@@ -154,6 +237,17 @@ type Receipt struct {
 
 type ReconcileResult struct{ RequeuedLeases, UnknownAttempts, ExpiredTasks, DeletedTasks int64 }
 
+type ObjectDeletion struct {
+	ID         string
+	ObjectKey  string
+	LeaseOwner string
+}
+
+type PendingFile struct {
+	ObjectID, ResultID, Name, Filename, MediaType string
+	SizeBytes                                     int64
+}
+
 // DispatchStore is the production-only extension used by the durable worker
 // and receipt endpoint. The memory store intentionally need not emulate
 // cross-replica leases.
@@ -167,7 +261,12 @@ type DispatchStore interface {
 	FailDelivery(context.Context, AgentRef, string, string, int64, FailureCode) error
 	AcceptReceipt(context.Context, AgentRef, Receipt) (*Task, bool, error)
 	GetReceipt(context.Context, AgentRef, string) (*Receipt, error)
+	PrepareFileUpload(context.Context, AgentRef, string, string, PendingFile) error
+	AbandonFileUpload(context.Context, string) error
 	Reconcile(context.Context, int) (*ReconcileResult, error)
+	ClaimObjectDeletions(context.Context, string, time.Duration, int) ([]ObjectDeletion, error)
+	DeleteObjectRecord(context.Context, string, string) error
+	RetryObjectDeletion(context.Context, string, string, string) error
 }
 
 func cloneTask(t *Task) *Task {
@@ -179,5 +278,30 @@ func cloneTask(t *Task) *Task {
 		v := *t.CompletedAt
 		c.CompletedAt = &v
 	}
+	if t.Progress != nil {
+		v := *t.Progress
+		if t.Progress.Percent != nil {
+			p := *t.Progress.Percent
+			v.Percent = &p
+		}
+		c.Progress = &v
+	}
+	c.Results = cloneResults(t.Results)
 	return &c
+}
+
+func cloneResults(in []Result) []Result {
+	out := make([]Result, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].Parts = append([]ResultPart(nil), in[i].Parts...)
+		for j := range out[i].Parts {
+			out[i].Parts[j].JSON = append(json.RawMessage(nil), in[i].Parts[j].JSON...)
+			if in[i].Parts[j].File != nil {
+				v := *in[i].Parts[j].File
+				out[i].Parts[j].File = &v
+			}
+		}
+	}
+	return out
 }

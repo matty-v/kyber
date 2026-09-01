@@ -257,6 +257,7 @@ type AgentReconciler struct {
 	// to LevelInfo. Set to "debug" to enable the forwarder + snapshot
 	// debug log lines that would otherwise hide the next regression.
 	SidecarLogLevel string
+	TaskResultsRoot string
 	// DiscordLogLevel and TelegramLogLevel are component-specific effective
 	// levels passed to the channel sidecars as KYBER_LOG_LEVEL.
 	DiscordLogLevel  string
@@ -2097,12 +2098,13 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	// tolerate empty (dev installs / older deployments simply emit no
 	// metrics rather than crashing).
 	AppendStatusSidecar(&podSpec, SidecarConfig{
-		AgentName:    agent.Name,
-		Image:        r.StatusSidecarImage,
-		DiskBytes:    agent.Spec.Resources.Disk.Value(),
-		OtelEndpoint: r.SidecarOtelEndpoint,
-		Runtime:      agent.Spec.Runtime,
-		LogLevel:     r.SidecarLogLevel,
+		AgentName:       agent.Name,
+		Image:           r.StatusSidecarImage,
+		DiskBytes:       agent.Spec.Resources.Disk.Value(),
+		OtelEndpoint:    r.SidecarOtelEndpoint,
+		Runtime:         agent.Spec.Runtime,
+		LogLevel:        r.SidecarLogLevel,
+		TaskResultsRoot: r.TaskResultsRoot,
 	})
 
 	// Inject the Discord channel sidecar (kyber#646) when the agent enables

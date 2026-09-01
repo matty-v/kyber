@@ -35,6 +35,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
+	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -126,6 +127,7 @@ type InternalServer struct {
 	skillStore             skillstore.Store
 	requestStore           requeststore.Store
 	taskStore              taskstore.DispatchStore
+	taskObjectStore        taskobject.ObjectStore
 	agentMetrics           AgentMetricsProvider
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
@@ -220,6 +222,10 @@ func WithTaskStore(st taskstore.DispatchStore) InternalServerOption {
 	return func(s *InternalServer) { s.taskStore = st }
 }
 
+func WithTaskObjectStore(st taskobject.ObjectStore) InternalServerOption {
+	return func(s *InternalServer) { s.taskObjectStore = st }
+}
+
 // WithKubeClient wires a controller-runtime client and namespace into the InternalServer
 // so the OAuth rotation endpoint can read and patch Secrets.
 func WithKubeClient(c client.Client, namespace string) InternalServerOption {
@@ -273,9 +279,10 @@ func NewInternalServer(store briefstore.BriefStore, opts ...InternalServerOption
 	mux.HandleFunc("/internal/machines/", s.handleMachineRoutes)
 	mux.HandleFunc("/internal/nodes/", s.handleNodeRoutes)
 	s.server = &http.Server{
-		Handler:      mux,
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 10 * time.Second,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       2 * time.Minute,
+		WriteTimeout:      2 * time.Minute,
 	}
 	return s
 }
@@ -394,6 +401,12 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleSelfProfile(w, r, agentName)
 	case "task-complete":
 		s.handleTaskComplete(w, r, agentName)
+	case "task-progress":
+		s.handleTaskProgress(w, r, agentName)
+	case "task-results":
+		s.handleTaskResult(w, r, agentName)
+	case "task-files":
+		s.handleTaskFile(w, r, agentName)
 	case "task-receipts":
 		s.handleTaskReceiptPost(w, r, agentName)
 	case "status-event":

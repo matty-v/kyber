@@ -39,6 +39,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
+	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
@@ -78,8 +79,9 @@ type Server struct {
 	// tasks. Production never wires a memory fallback. TasksEnabled is an
 	// installation rollout gate; reads remain available when creation is later
 	// paused during rollback.
-	TaskStore    taskstore.Store
-	TasksEnabled bool
+	TaskStore       taskstore.Store
+	TaskObjectStore taskobject.ObjectStore
+	TasksEnabled    bool
 
 	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
 	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)
@@ -547,7 +549,7 @@ func (s *Server) Start(ctx context.Context) error {
 		Addr:         s.Addr,
 		Handler:      top,
 		ReadTimeout:  10 * time.Second,
-		WriteTimeout: 30 * time.Second,
+		WriteTimeout: 2 * time.Minute,
 	}
 
 	// Graceful shutdown when the context is cancelled.

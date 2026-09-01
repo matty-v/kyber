@@ -61,6 +61,7 @@ import (
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"
+	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/telemetry"
 
@@ -279,6 +280,16 @@ func main() {
 		briefStore = briefstore.NewMemoryStore()
 		setupLog.Info("SkillStore: KYBER_POSTGRES_URL not set — using in-memory store (agents re-report on their next boot or identity sync)")
 		skillStore = skillstore.NewMemoryStore()
+	}
+	var agentTaskObjectStore taskobject.ObjectStore
+	if os.Getenv("KYBER_TASKS_ENABLED") == "true" {
+		var objectErr error
+		agentTaskObjectStore, objectErr = buildTaskObjectStore(ctx)
+		if objectErr != nil {
+			setupLog.Error(objectErr, "task file storage unavailable; file publication and downloads will fail closed")
+		} else if agentTaskObjectStore != nil {
+			setupLog.Info("TaskObjectStore configured", "backend", taskObjectBackend())
+		}
 	}
 
 	// TokenStore + MetricsStore + NodeStore + StateChangeAccumulator:
@@ -624,6 +635,7 @@ func main() {
 		TelegramDefaultAllowedUserIDs: telegramDefaultAllowedUserIDs,
 		SidecarOtelEndpoint:           sidecarOtelEndpoint,
 		SidecarLogLevel:               sidecarLogLevel,
+		TaskResultsRoot:               os.Getenv("KYBER_TASK_RESULTS_ROOT"),
 		DiscordLogLevel:               discordLogLevel,
 		TelegramLogLevel:              telegramLogLevel,
 		SidecarAutoRollEnabled:        sidecarAutoRollEnabled,
@@ -681,6 +693,9 @@ func main() {
 	}
 	if durable, ok := agentTaskStore.(taskstore.DispatchStore); ok {
 		internalOpts = append(internalOpts, internalapi.WithTaskStore(durable))
+	}
+	if agentTaskObjectStore != nil {
+		internalOpts = append(internalOpts, internalapi.WithTaskObjectStore(agentTaskObjectStore))
 	}
 	if agentMetrics, err := internalapi.NewKubernetesAgentMetrics(restCfg); err != nil {
 		setupLog.Error(err, "unable to configure Kubernetes agent metrics")
@@ -1404,6 +1419,7 @@ func main() {
 		InboundEnvelopeCache:   inboundEnvelopeCache,
 		RequestStore:           agentRequestStore,
 		TaskStore:              agentTaskStore,
+		TaskObjectStore:        agentTaskObjectStore,
 		TasksEnabled:           os.Getenv("KYBER_TASKS_ENABLED") == "true",
 		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
 		RuntimeDetectCache:     runtimeDetectCache,
@@ -1482,6 +1498,13 @@ func main() {
 					} else if err == nil && (result.RequeuedLeases+result.UnknownAttempts+result.ExpiredTasks+result.DeletedTasks) > 0 {
 						setupLog.Info("durable tasks reconciled", "requeued", result.RequeuedLeases, "unknown", result.UnknownAttempts, "expired", result.ExpiredTasks, "deleted", result.DeletedTasks)
 					}
+					if agentTaskObjectStore != nil {
+						if deleted, err := cleanupTaskObjects(runCtx, durable, agentTaskObjectStore, 100); err != nil && runCtx.Err() == nil {
+							setupLog.Error(err, "durable task object cleanup failed")
+						} else if deleted > 0 {
+							setupLog.Info("durable task objects deleted", "count", deleted)
+						}
+					}
 					select {
 					case <-runCtx.Done():
 						return nil
@@ -1538,6 +1561,75 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+func taskObjectBackend() string {
+	backend := strings.ToLower(strings.TrimSpace(os.Getenv("KYBER_TASK_OBJECT_BACKEND")))
+	if backend == "" {
+		backend = strings.ToLower(strings.TrimSpace(os.Getenv("KYBER_LOG_ARCHIVE_BACKEND")))
+	}
+	if backend == "" {
+		backend = "gcs"
+	}
+	return backend
+}
+
+func buildTaskObjectStore(ctx context.Context) (taskobject.ObjectStore, error) {
+	bucket := strings.TrimSpace(os.Getenv("KYBER_TASK_OBJECT_BUCKET"))
+	if bucket == "" {
+		bucket = strings.TrimSpace(os.Getenv("KYBER_LOG_ARCHIVE_BUCKET"))
+	}
+	if bucket == "" {
+		return nil, errors.New("KYBER_TASK_OBJECT_BUCKET and KYBER_LOG_ARCHIVE_BUCKET are unset")
+	}
+	switch taskObjectBackend() {
+	case "gcs":
+		return taskobject.NewGCSStore(ctx, bucket)
+	case "s3":
+		endpoint := firstNonEmpty(os.Getenv("KYBER_TASK_OBJECT_ENDPOINT"), os.Getenv("KYBER_LOG_ARCHIVE_ENDPOINT"))
+		region := firstNonEmpty(os.Getenv("KYBER_TASK_OBJECT_REGION"), os.Getenv("KYBER_LOG_ARCHIVE_REGION"))
+		accessKey := firstNonEmpty(os.Getenv("KYBER_TASK_OBJECT_ACCESS_KEY"), os.Getenv("KYBER_LOG_ARCHIVE_ACCESS_KEY"))
+		secretKey := firstNonEmpty(os.Getenv("KYBER_TASK_OBJECT_SECRET_KEY"), os.Getenv("KYBER_LOG_ARCHIVE_SECRET_KEY"))
+		useTLSRaw := firstNonEmpty(os.Getenv("KYBER_TASK_OBJECT_USE_TLS"), os.Getenv("KYBER_LOG_ARCHIVE_USE_TLS"))
+		return taskobject.NewS3Store(endpoint, bucket, region, accessKey, secretKey, !strings.EqualFold(useTLSRaw, "false"))
+	default:
+		return nil, fmt.Errorf("KYBER_TASK_OBJECT_BACKEND=%q is not supported", taskObjectBackend())
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func cleanupTaskObjects(ctx context.Context, store taskstore.DispatchStore, objects taskobject.ObjectStore, limit int) (int, error) {
+	hostname, _ := os.Hostname()
+	owner := fmt.Sprintf("%s-%d", hostname, time.Now().UnixNano())
+	deletions, err := store.ClaimObjectDeletions(ctx, owner, 2*time.Minute, limit)
+	if err != nil {
+		return 0, err
+	}
+	deleted := 0
+	var failures []error
+	for _, object := range deletions {
+		if err := objects.Delete(ctx, object.ObjectKey); err != nil {
+			failures = append(failures, err)
+			if retryErr := store.RetryObjectDeletion(ctx, object.ID, object.LeaseOwner, err.Error()); retryErr != nil {
+				failures = append(failures, retryErr)
+			}
+			continue
+		}
+		if err := store.DeleteObjectRecord(ctx, object.ID, object.LeaseOwner); err != nil {
+			failures = append(failures, err)
+			continue
+		}
+		deleted++
+	}
+	return deleted, errors.Join(failures...)
 }
 
 // parseCORSAllowedOrigins splits the raw KYBER_CORS_ALLOWED_ORIGINS env var
