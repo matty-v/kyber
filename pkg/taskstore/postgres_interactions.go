@@ -187,14 +187,17 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 		return nil, err
 	}
 	defer tx.Rollback()
-	var owner string
+	var owner, tenantID, ownerPrincipalID, agentResourceID string
 	var state State
-	if err = tx.QueryRowContext(ctx, `SELECT created_by,state FROM agent_tasks WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 FOR UPDATE`, p.TaskID, p.Agent.Namespace, p.Agent.Name).Scan(&owner, &state); errors.Is(err, sql.ErrNoRows) {
+	if err = tx.QueryRowContext(ctx, `SELECT created_by,tenant_id,owner_principal_id,agent_resource_id,state FROM agent_tasks WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 FOR UPDATE`, p.TaskID, p.Agent.Namespace, p.Agent.Name).Scan(&owner, &tenantID, &ownerPrincipalID, &agentResourceID, &state); errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	} else if err != nil {
 		return nil, err
 	}
-	if owner != p.RespondedBy {
+	if p.Authorization.Valid() && (tenantID != p.Authorization.TenantID || ownerPrincipalID != p.Authorization.PrincipalID || agentResourceID != p.Authorization.AgentResourceID) {
+		return nil, ErrNotFound
+	}
+	if !p.Authorization.Valid() && owner != p.RespondedBy {
 		return nil, ErrNotFound
 	}
 	if p.IdempotencyKey != "" {

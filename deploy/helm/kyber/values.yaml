@@ -152,6 +152,10 @@ api:
   # Scoped API keys are an optional `callers` JSON doc on the api-key Secret, e.g.
   #   [ {"name":"pwa","key":"<32-byte hex>","scopes":["lifecycle:write"]},
   #     {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
+  # Task-scoped callers also require stable principalId, tenantId, credentialId,
+  # credentialGeneration, and exact agentResources ("namespace/name"). Public
+  # task routes enforce their narrow scopes and ownership regardless of the
+  # lifecycle authz rollout switch. See docs/api-keys.md for the full example.
   # The legacy api-key above always resolves to a full-scope caller (backward-
   # compatible). Scopes nest: lifecycle:admin ⊃ lifecycle:write — the impactful
   # verb (force-needs-auth) requires admin; start/stop/restart require write.

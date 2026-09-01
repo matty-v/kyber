@@ -65,7 +65,10 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 	if err != nil {
 		return nil, err
 	}
-	if t.CreatedBy != p.RequestedBy {
+	if p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID) {
+		return nil, ErrNotFound
+	}
+	if !p.Authorization.Valid() && t.CreatedBy != p.RequestedBy {
 		return nil, ErrNotFound
 	}
 	result := &CancelResult{Task: t}

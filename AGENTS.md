@@ -320,7 +320,7 @@ Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
    The embedded PWA exchanges its bearer key once at
    `POST /api/v1/browser-session` for an HttpOnly, SameSite=Strict cookie; raw
    keys are removed from legacy localStorage. The cookie is a SIGNED token, not
-   a session record — HMAC over caller-name+expiry, keyed by HKDF from the live
+   a session record — HMAC over principal/credential identity+expiry, keyed by HKDF from the live
    API key (`browser_session_token.go`), so sessions survive a restart, carry no
    server state, and are all invalidated by an API-key rotation. The token
    carries NO scopes: authority is re-resolved from live config every request
@@ -330,6 +330,12 @@ Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
    `authMiddleware`); WebSocket upgrades are skipped. CLI and external clients
    continue to use Bearer auth. Browser cookie mutations require a same-origin
    `Origin` header.
+   Durable-task routes additionally enforce narrow task-action scopes plus a
+   stable tenant/principal owner and exact `namespace/name` agent-resource
+   allowlist on every read and mutation. Repository queries apply that envelope
+   before pagination or loading results; object-addressed denials are
+   non-enumerating 404s. The legacy shared key maps to the explicit installation
+   tenant/admin principal for migration.
 2. Routing is hand-rolled per route group: `pkg/api/routes_<group>.go`, one
    file per group, helpers in `routing.go` (`splitAction`). No router lib.
 3. Lifecycle mutations funnel through `setAgentDesiredPhase` and pass the

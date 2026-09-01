@@ -50,13 +50,21 @@ func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, 
 	if err := validateCreate(s.limits, p); err != nil {
 		return nil, err
 	}
-	key := p.CreatedBy + "\x00" + p.Agent.Namespace + "\x00" + p.Agent.Name + "\x00" + p.IdempotencyKey
+	auth := p.Authorization
+	if !auth.Valid() {
+		auth = AuthorizationContext{TenantID: "tenant_legacy", PrincipalID: p.CreatedBy, AgentResourceID: p.Agent.Namespace + "/" + p.Agent.Name}
+	}
+	key := auth.TenantID + "\x00" + auth.PrincipalID + "\x00" + auth.AgentResourceID + "\x00" + p.Agent.Namespace + "\x00" + p.Agent.Name + "\x00" + p.IdempotencyKey
 	if p.IdempotencyKey != "" {
 		if old, ok := s.idempotency[key]; ok {
 			if old.hash != p.RequestHash {
 				return nil, ErrIdempotencyConflict
 			}
-			return &CreateResult{Task: cloneTask(s.tasks[old.taskID]), Replay: true}, nil
+			t := s.tasks[old.taskID]
+			if t == nil || t.TenantID != auth.TenantID || t.OwnerPrincipalID != auth.PrincipalID || t.AgentResourceID != auth.AgentResourceID {
+				return nil, ErrNotFound
+			}
+			return &CreateResult{Task: cloneTask(t), Replay: true}, nil
 		}
 	}
 	if _, ok := s.tasks[p.ID]; ok {
@@ -85,7 +93,7 @@ func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, 
 	if deadline.After(now.Add(s.limits.MaxDeadline)) {
 		deadline = now.Add(s.limits.MaxDeadline)
 	}
-	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention), Messages: []Message{{Sequence: 1, Role: "caller", Kind: "task_instruction", Text: p.Prompt, CreatedAt: now}}}
+	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, TenantID: auth.TenantID, OwnerPrincipalID: auth.PrincipalID, AgentResourceID: auth.AgentResourceID, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention), Messages: []Message{{Sequence: 1, Role: "caller", Kind: "task_instruction", Text: p.Prompt, CreatedAt: now}}}
 	s.tasks[t.ID] = t
 	if p.IdempotencyKey != "" {
 		s.idempotency[key] = idempotencyRecord{p.RequestHash, t.ID}
@@ -122,6 +130,16 @@ func (s *MemoryStore) Get(_ context.Context, a AgentRef, id string) (*Task, erro
 	return cloneTask(t), nil
 }
 
+func (s *MemoryStore) GetAuthorized(_ context.Context, a AgentRef, id string, auth AuthorizationContext) (*Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, ok := s.tasks[id]
+	if !ok || t.AgentNamespace != a.Namespace || t.AgentName != a.Name || !auth.Valid() || t.TenantID != auth.TenantID || t.OwnerPrincipalID != auth.PrincipalID || t.AgentResourceID != auth.AgentResourceID {
+		return nil, ErrNotFound
+	}
+	return cloneTask(t), nil
+}
+
 func (s *MemoryStore) List(_ context.Context, p ListParams) (*Page, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -136,14 +154,14 @@ func (s *MemoryStore) List(_ context.Context, p ListParams) (*Page, error) {
 	var beforeID string
 	var err error
 	if p.Cursor != "" {
-		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State)
+		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State, p.Authorization)
 		if err != nil {
 			return nil, err
 		}
 	}
 	items := make([]*Task, 0)
 	for _, t := range s.tasks {
-		if t.AgentNamespace != p.Agent.Namespace || t.AgentName != p.Agent.Name || (p.State != "" && t.State != p.State) {
+		if t.AgentNamespace != p.Agent.Namespace || t.AgentName != p.Agent.Name || (p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID)) || (p.State != "" && t.State != p.State) {
 			continue
 		}
 		if !before.IsZero() && (t.CreatedAt.After(before) || (t.CreatedAt.Equal(before) && t.ID >= beforeID)) {
@@ -160,7 +178,7 @@ func (s *MemoryStore) List(_ context.Context, p ListParams) (*Page, error) {
 	page := &Page{}
 	if len(items) > limit {
 		page.Tasks = items[:limit]
-		page.NextCursor, err = encodeCursor(p.Agent, p.State, page.Tasks[len(page.Tasks)-1])
+		page.NextCursor, err = encodeCursor(p.Agent, p.State, p.Authorization, page.Tasks[len(page.Tasks)-1])
 		if err != nil {
 			return nil, err
 		}
@@ -316,7 +334,10 @@ func (s *MemoryStore) RespondInteraction(_ context.Context, p RespondInteraction
 	if err != nil {
 		return nil, err
 	}
-	if t.CreatedBy != p.RespondedBy {
+	if p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID) {
+		return nil, ErrNotFound
+	}
+	if !p.Authorization.Valid() && t.CreatedBy != p.RespondedBy {
 		return nil, ErrNotFound
 	}
 	key := p.RespondedBy + "\x00" + p.TaskID + "\x00" + p.InteractionID + "\x00" + p.IdempotencyKey
@@ -547,7 +568,10 @@ func (s *MemoryStore) Cancel(_ context.Context, p CancelParams) (*CancelResult, 
 	if err != nil {
 		return nil, err
 	}
-	if t.CreatedBy != p.RequestedBy {
+	if p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID) {
+		return nil, ErrNotFound
+	}
+	if !p.Authorization.Valid() && t.CreatedBy != p.RequestedBy {
 		return nil, ErrNotFound
 	}
 	key := p.RequestedBy + "\x00" + p.Agent.Namespace + "\x00" + p.Agent.Name + "\x00" + p.IdempotencyKey

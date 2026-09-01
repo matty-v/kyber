@@ -214,6 +214,7 @@ type Result struct {
 
 type Task struct {
 	ID, AgentNamespace, AgentName, CreatedBy, Prompt, Correlation string
+	TenantID, OwnerPrincipalID, AgentResourceID                   string
 	State                                                         State
 	FailureCode                                                   FailureCode
 	Response                                                      string
@@ -285,6 +286,7 @@ type RequestInteractionParams struct {
 type RespondInteractionParams struct {
 	Agent                                                           AgentRef
 	TaskID, InteractionID, RespondedBy, IdempotencyKey, RequestHash string
+	Authorization                                                   AuthorizationContext
 	Response                                                        json.RawMessage
 }
 type InteractionResult struct {
@@ -310,6 +312,7 @@ type Cancellation struct {
 type CancelParams struct {
 	Agent                                                    AgentRef
 	TaskID, RequestedBy, Reason, IdempotencyKey, RequestHash string
+	Authorization                                            AuthorizationContext
 }
 
 type CancelResult struct {
@@ -327,6 +330,7 @@ type CreateParams struct {
 	ID                                                          string
 	Agent                                                       AgentRef
 	CreatedBy, Prompt, Correlation, IdempotencyKey, RequestHash string
+	Authorization                                               AuthorizationContext
 	DeadlineAt                                                  time.Time
 }
 
@@ -336,11 +340,21 @@ type CreateResult struct {
 }
 
 type ListParams struct {
-	Agent  AgentRef
-	State  State
-	Limit  int
-	Cursor string
+	Agent         AgentRef
+	Authorization AuthorizationContext
+	State         State
+	Limit         int
+	Cursor        string
 }
+
+type AuthorizationContext struct {
+	TenantID, PrincipalID, AgentResourceID string
+}
+
+func (a AuthorizationContext) Valid() bool {
+	return a.TenantID != "" && a.PrincipalID != "" && a.AgentResourceID != ""
+}
+
 type Page struct {
 	Tasks      []*Task
 	NextCursor string
@@ -351,6 +365,7 @@ type Page struct {
 type Store interface {
 	Create(context.Context, CreateParams) (*CreateResult, error)
 	Get(context.Context, AgentRef, string) (*Task, error)
+	GetAuthorized(context.Context, AgentRef, string, AuthorizationContext) (*Task, error)
 	List(context.Context, ListParams) (*Page, error)
 	MarkDispatched(context.Context, AgentRef, string, int64) error
 	Fail(context.Context, AgentRef, string, int64, FailureCode) error

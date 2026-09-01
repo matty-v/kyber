@@ -27,9 +27,11 @@ func buildTaskHarness(t *testing.T, enabled bool) (http.Handler, *taskstore.Memo
 		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(),
 		APIKey:    testAPIKey, Namespace: "kyber-system", TaskStore: store, TasksEnabled: enabled,
 		Callers: []api.ScopedCaller{
-			{Name: "writer", Key: requestWriteKey, Scopes: []string{"requests:write"}},
-			{Name: "other-writer", Key: "other-writer-secret", Scopes: []string{"requests:write"}},
-			{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}},
+			{Name: "writer", PrincipalID: "principal_writer", TenantID: "tenant_test", CredentialID: "credential_writer", CredentialGeneration: 1, AgentResources: []string{"kyber-system/kiosk"}, Key: requestWriteKey, Scopes: []string{"tasks:create", "tasks:read", "tasks:list", "tasks:continue", "tasks:cancel", "task-results:read"}},
+			{Name: "writer-rotated", PrincipalID: "principal_writer", TenantID: "tenant_test", CredentialID: "credential_writer_rotated", CredentialGeneration: 2, AgentResources: []string{"kyber-system/kiosk"}, Key: "writer-rotated-secret", Scopes: []string{"tasks:read", "tasks:list"}},
+			{Name: "other-writer", PrincipalID: "principal_other", TenantID: "tenant_test", CredentialID: "credential_other", CredentialGeneration: 1, AgentResources: []string{"kyber-system/kiosk"}, Key: "other-writer-secret", Scopes: []string{"tasks:create", "tasks:read", "tasks:list", "tasks:continue", "tasks:cancel", "task-results:read"}},
+			{Name: "reader", PrincipalID: "principal_reader", TenantID: "tenant_test", CredentialID: "credential_reader", CredentialGeneration: 1, AgentResources: []string{"kyber-system/kiosk"}, Key: requestReadKey, Scopes: []string{"tasks:read", "tasks:list", "task-results:read"}},
+			{Name: "wrong-agent", PrincipalID: "principal_wrong_agent", TenantID: "tenant_test", CredentialID: "credential_wrong_agent", CredentialGeneration: 1, AgentResources: []string{"kyber-system/other"}, Key: "wrong-agent-secret", Scopes: []string{"tasks:create", "tasks:read", "tasks:list"}},
 		},
 	}
 	return server.BuildHandler(), store
@@ -85,13 +87,25 @@ func TestAgentTasksCreateReplayGetAndList(t *testing.T) {
 	if replayed.ID != created.ID {
 		t.Fatalf("replay id=%s want %s", replayed.ID, created.ID)
 	}
-	get := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks/"+created.ID, requestReadKey, nil, "")
+	get := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks/"+created.ID, requestWriteKey, nil, "")
 	if get.Code != http.StatusOK {
 		t.Fatalf("get=%d %s", get.Code, get.Body.String())
 	}
-	list := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks?limit=1", requestReadKey, nil, "")
+	rotatedGet := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks/"+created.ID, "writer-rotated-secret", nil, "")
+	if rotatedGet.Code != http.StatusOK {
+		t.Fatalf("same principal after credential rotation get=%d %s", rotatedGet.Code, rotatedGet.Body.String())
+	}
+	list := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks?limit=1", requestWriteKey, nil, "")
 	if list.Code != http.StatusOK {
 		t.Fatalf("list=%d %s", list.Code, list.Body.String())
+	}
+	otherGet := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks/"+created.ID, "other-writer-secret", nil, "")
+	if otherGet.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner get=%d %s", otherGet.Code, otherGet.Body.String())
+	}
+	otherList := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks", "other-writer-secret", nil, "")
+	if otherList.Code != http.StatusOK || strings.Contains(otherList.Body.String(), created.ID) {
+		t.Fatalf("cross-owner list=%d %s", otherList.Code, otherList.Body.String())
 	}
 }
 
@@ -105,6 +119,10 @@ func TestAgentTasksFailClosedAndAuthorize(t *testing.T) {
 	forbidden := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestReadKey, map[string]string{"prompt": "x"}, "")
 	if forbidden.Code != http.StatusForbidden {
 		t.Fatalf("forbidden=%d %s", forbidden.Code, forbidden.Body.String())
+	}
+	wrongAgent := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", "wrong-agent-secret", map[string]string{"prompt": "x"}, "")
+	if wrongAgent.Code != http.StatusForbidden {
+		t.Fatalf("wrong agent resource=%d %s", wrongAgent.Code, wrongAgent.Body.String())
 	}
 }
 
@@ -227,7 +245,7 @@ func TestAgentTaskFileDownloadIsAuthorizedAndRanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	a := taskstore.AgentRef{Namespace: "kyber-system", Name: "kiosk"}
-	created, err := store.Create(t.Context(), taskstore.CreateParams{ID: "task_11111111111111111111111111111111", Agent: a, CreatedBy: "reader", Prompt: "make report"})
+	created, err := store.Create(t.Context(), taskstore.CreateParams{ID: "task_11111111111111111111111111111111", Agent: a, CreatedBy: "reader", Authorization: taskstore.AuthorizationContext{TenantID: "tenant_test", PrincipalID: "reader", AgentResourceID: "kyber-system/kiosk"}, Prompt: "make report"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +264,7 @@ func TestAgentTaskFileDownloadIsAuthorizedAndRanged(t *testing.T) {
 	}
 	agent := bareAgent("kiosk")
 	agent.Spec.RequestReplyEnabled = true
-	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", TaskStore: store, TaskObjectStore: objects, TasksEnabled: true, Callers: []api.ScopedCaller{{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}}}}
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", TaskStore: store, TaskObjectStore: objects, TasksEnabled: true, Callers: []api.ScopedCaller{{Name: "reader", PrincipalID: "reader", TenantID: "tenant_test", CredentialID: "credential_reader", CredentialGeneration: 1, AgentResources: []string{"kyber-system/kiosk"}, Key: requestReadKey, Scopes: []string{"task-results:read"}}}}
 	if server.TaskObjectStore == nil {
 		t.Fatal("task object store was not assigned")
 	}

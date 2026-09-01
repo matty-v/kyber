@@ -16,7 +16,7 @@ func (s *PostgresStore) ClaimPending(ctx context.Context, owner string, lease ti
 		return nil, err
 	}
 	defer tx.Rollback()
-	row := tx.QueryRowContext(ctx, `SELECT t.id,t.agent_namespace,t.agent_name,t.created_by,t.prompt,t.correlation,t.state,t.failure_code,t.response,t.version,t.created_at,t.updated_at,t.deadline_at,t.retain_until,t.completed_at,d.attempts
+	row := tx.QueryRowContext(ctx, `SELECT t.id,t.agent_namespace,t.agent_name,t.created_by,t.tenant_id,t.owner_principal_id,t.agent_resource_id,t.prompt,t.correlation,t.state,t.failure_code,t.response,t.version,t.created_at,t.updated_at,t.deadline_at,t.retain_until,t.completed_at,d.attempts
 		FROM agent_task_dispatches d JOIN agent_tasks t ON t.id=d.task_id
 		WHERE d.status='pending' AND t.state='queued' AND d.attempts<$1 AND d.next_attempt_at<=clock_timestamp() AND t.deadline_at>clock_timestamp()
 		AND NOT EXISTS (SELECT 1 FROM agent_tasks canceling WHERE canceling.agent_namespace=t.agent_namespace AND canceling.agent_name=t.agent_name AND canceling.state='canceling')
@@ -25,7 +25,7 @@ func (s *PostgresStore) ClaimPending(ctx context.Context, owner string, lease ti
 	t := &Task{}
 	var completed sql.NullTime
 	var attempts int
-	err = row.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &attempts)
+	err = row.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.TenantID, &t.OwnerPrincipalID, &t.AgentResourceID, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &attempts)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNoDispatch
 	}

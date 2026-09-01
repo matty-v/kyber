@@ -25,6 +25,24 @@ typed outputs without scraping an agent transcript. Authoritative code lives in
    exposes bounded summaries. File bytes are available only from the authorized
    Kyber download route; object keys never appear in public JSON.
 
+## Public authorization boundary
+
+Every task is created transactionally with a stable tenant ID, owner principal
+ID, and normalized agent resource ID. Public repository reads, list pages,
+continuations, cancellations, and result downloads require that complete
+envelope; filters run in PostgreSQL before result or message loading, ordering,
+limits, and cursor generation. Cursors are bound to the tenant, principal,
+agent resource, state filter, and sort contract.
+
+Callers also need the exact action scope (`tasks:create`, `tasks:read`,
+`tasks:list`, `tasks:continue`, `tasks:cancel`, or `task-results:read`) and the
+agent must appear in their exact resource allowlist. Scope and resource failures
+on object-addressed routes are indistinguishable from an absent task. Credential
+rotation preserves ownership through the stable principal ID, while browser
+sessions are revalidated against the current credential ID and generation on
+every request. Internal sidecar updates remain a separate agent/task/attempt
+boundary and never receive public-owner authority.
+
 ## Cooperative cancellation
 
 An authenticated task owner may request cancellation through
@@ -103,10 +121,11 @@ an idempotency key. Kyber validates the response type, appends immutable caller
 and platform messages, and queues a fresh attempt. The continuation envelope
 contains only the original instruction and bounded task-visible interaction
 context. It never persists or replays a harness transcript, hidden reasoning,
-raw tool output, environment state, or credentials. Authorization requests
-create an owner-, task-, and interaction-bound registered flow. Continuation is
-accepted only after a platform connector durably completes that exact flow, and
-the task message carries only its connector-produced opaque reference.
+raw tool output, environment state, or credentials. The authorization
+interaction type and registered-flow persistence are reserved for a future
+platform connector boundary. No public authorization-continuation route is
+advertised until a production producer can durably complete and bind the flow;
+ordinary typed responses cannot impersonate that completion.
 
 PostgreSQL enforces one live interaction per task. Interaction expiry,
 cancellation, completion, rejection, stale attempts, and duplicate responses

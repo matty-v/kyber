@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Scope is a named capability a caller may hold (kyber#474). Scopes are the
@@ -32,7 +33,16 @@ const (
 	// ScopeRequestsWrite permits submitting bounded agent requests.
 	ScopeRequestsWrite Scope = "requests:write"
 	// ScopeRequestsRead permits reading bounded agent request status/results.
-	ScopeRequestsRead Scope = "requests:read"
+	ScopeRequestsRead       Scope = "requests:read"
+	ScopeTasksCreate        Scope = "tasks:create"
+	ScopeTasksRead          Scope = "tasks:read"
+	ScopeTasksList          Scope = "tasks:list"
+	ScopeTasksContinue      Scope = "tasks:continue"
+	ScopeTasksCancel        Scope = "tasks:cancel"
+	ScopeTaskResultsRead    Scope = "task-results:read"
+	ScopeTaskEventsRead     Scope = "task-events:read"
+	ScopeTasksAdmin         Scope = "tasks:admin"
+	ScopeTasksPlatformAdmin Scope = "tasks:platform-admin"
 )
 
 // ScopeSet is the set of scopes a Caller holds. A full-scope set (the legacy
@@ -76,9 +86,36 @@ func (s ScopeSet) Has(required Scope) bool {
 // Caller is the authenticated principal behind a request (kyber#474). Name is
 // for audit logging only (never the key material); Scopes drives authorization.
 type Caller struct {
-	Name   string
-	Scopes ScopeSet
+	Name                 string
+	PrincipalID          string
+	TenantID             string
+	Kind                 string
+	Issuer               string
+	Subject              string
+	CredentialID         string
+	CredentialGeneration uint64
+	Scopes               ScopeSet
+	AgentResources       ResourceSet
 }
+
+type ResourceSet struct {
+	all       bool
+	resources map[string]bool
+}
+
+func newResourceSet(resources ...string) ResourceSet {
+	r := ResourceSet{resources: make(map[string]bool, len(resources))}
+	for _, resource := range resources {
+		if resource == "*" {
+			r.all = true
+		} else {
+			r.resources[resource] = true
+		}
+	}
+	return r
+}
+
+func (r ResourceSet) Has(resource string) bool { return r.all || r.resources[resource] }
 
 // SecretKeyRef points a ScopedCaller at a Secret data key in the control
 // plane's own namespace (kyber#557). Same-namespace-only by design: the cp's
@@ -96,10 +133,18 @@ type SecretKeyRef struct {
 // the shared callers doc carries no value — exactly one of Key/KeyFrom must
 // be set; KeyFrom entries are filled in by ResolveScopedCallers at startup.
 type ScopedCaller struct {
-	Name    string        `json:"name"`
-	Key     string        `json:"key,omitempty"`
-	KeyFrom *SecretKeyRef `json:"keyFrom,omitempty"`
-	Scopes  []string      `json:"scopes"`
+	Name                 string        `json:"name"`
+	PrincipalID          string        `json:"principalId,omitempty"`
+	TenantID             string        `json:"tenantId,omitempty"`
+	Kind                 string        `json:"kind,omitempty"`
+	Issuer               string        `json:"issuer,omitempty"`
+	Subject              string        `json:"subject,omitempty"`
+	CredentialID         string        `json:"credentialId,omitempty"`
+	CredentialGeneration uint64        `json:"credentialGeneration,omitempty"`
+	AgentResources       []string      `json:"agentResources,omitempty"`
+	Key                  string        `json:"key,omitempty"`
+	KeyFrom              *SecretKeyRef `json:"keyFrom,omitempty"`
+	Scopes               []string      `json:"scopes"`
 }
 
 // ParseScopedCallers parses the `callers` JSON document (a list of scoped keys)
@@ -128,14 +173,39 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		case c.KeyFrom != nil && (c.KeyFrom.Secret == "" || c.KeyFrom.Key == ""):
 			return nil, fmt.Errorf("caller %q: keyFrom requires both secret and key names", c.Name)
 		}
+		hasTaskScope := false
 		for _, sc := range c.Scopes {
-			if sc != string(ScopeLifecycleWrite) && sc != string(ScopeLifecycleAdmin) &&
-				sc != string(ScopeRequestsWrite) && sc != string(ScopeRequestsRead) {
+			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") {
+				hasTaskScope = true
+			}
+			if !validScope(Scope(sc)) {
 				return nil, fmt.Errorf("caller %q: unknown scope %q", c.Name, sc)
+			}
+		}
+		if hasTaskScope && (c.PrincipalID == "" || c.TenantID == "" || c.CredentialID == "" || c.CredentialGeneration == 0 || len(c.AgentResources) == 0) {
+			return nil, fmt.Errorf("caller %q: task scopes require principalId, tenantId, credentialId, credentialGeneration, and agentResources", c.Name)
+		}
+		if hasTaskScope {
+			for _, resource := range c.AgentResources {
+				parts := strings.Split(resource, "/")
+				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 {
+					return nil, fmt.Errorf("caller %q: agent resource %q must be an exact namespace/name", c.Name, resource)
+				}
 			}
 		}
 	}
 	return callers, nil
+}
+
+func validScope(sc Scope) bool {
+	switch sc {
+	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
+		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
+		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin:
+		return true
+	default:
+		return false
+	}
 }
 
 // Authenticator validates an HTTP request and returns the caller's identity.
@@ -160,6 +230,16 @@ type APIKeyAuthenticator struct {
 	callers []scopedKey
 }
 
+const (
+	legacyPrincipalID  = "principal_installation_admin"
+	legacyTenantID     = "tenant_installation"
+	legacyCredentialID = "credential_legacy_shared_key"
+)
+
+func legacyCaller() *Caller {
+	return &Caller{Name: "legacy", PrincipalID: legacyPrincipalID, TenantID: legacyTenantID, Kind: "installation-admin", Issuer: "kyber", Subject: "legacy-shared-key", CredentialID: legacyCredentialID, CredentialGeneration: 1, Scopes: newFullScopeSet(), AgentResources: newResourceSet("*")}
+}
+
 // NewAPIKeyAuthenticator returns an Authenticator that accepts the legacy key
 // (resolving to a full-scope caller) plus any scoped callers. Existing callers
 // pass no scoped callers and get exactly the prior behavior.
@@ -172,7 +252,7 @@ func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenti
 		}
 		a.callers = append(a.callers, scopedKey{
 			key:    c.Key,
-			caller: Caller{Name: c.Name, Scopes: newScopeSet(scopes...)},
+			caller: Caller{Name: c.Name, PrincipalID: c.PrincipalID, TenantID: c.TenantID, Kind: c.Kind, Issuer: c.Issuer, Subject: c.Subject, CredentialID: c.CredentialID, CredentialGeneration: c.CredentialGeneration, Scopes: newScopeSet(scopes...), AgentResources: newResourceSet(c.AgentResources...)},
 		})
 	}
 	return a
@@ -246,13 +326,18 @@ func (a *APIKeyAuthenticator) callerForSession(claims *browserSessionClaims) (*C
 		if a.key == "" {
 			return nil, errors.New("browser session names the shared key, which is no longer configured")
 		}
-		return &Caller{Name: claims.Name, Scopes: newFullScopeSet()}, nil
+		return legacyCaller(), nil
 	}
 	// Last match, mirroring Authenticate's bearer resolution, so a duplicated
 	// caller name cannot grant one authority over the cookie and another over
 	// the Bearer header.
 	for i := len(a.callers) - 1; i >= 0; i-- {
-		if a.callers[i].caller.Name != claims.Name {
+		configured := a.callers[i].caller
+		if claims.PrincipalID != "" {
+			if configured.PrincipalID != claims.PrincipalID || configured.CredentialID != claims.CredentialID || configured.CredentialGeneration != claims.CredentialGeneration {
+				continue
+			}
+		} else if configured.Name != claims.Name {
 			continue
 		}
 		// The caller still exists — but is it still the same credential? If
@@ -265,7 +350,7 @@ func (a *APIKeyAuthenticator) callerForSession(claims *browserSessionClaims) (*C
 		if subtle.ConstantTimeCompare([]byte(want), []byte(claims.KeyBinding)) != 1 {
 			return nil, fmt.Errorf("browser session for caller %q was issued against a key that has since been replaced", claims.Name)
 		}
-		c := a.callers[i].caller
+		c := configured
 		return &c, nil
 	}
 	return nil, fmt.Errorf("browser session names caller %q, which is no longer configured", claims.Name)
@@ -371,7 +456,7 @@ func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 		}
 	}
 	if subtle.ConstantTimeCompare([]byte(presented), []byte(legacy)) == 1 {
-		matched = &Caller{Name: "legacy", Scopes: newFullScopeSet()}
+		matched = legacyCaller()
 	}
 	if matched == nil {
 		return nil, errUnauthorized("invalid API key")
