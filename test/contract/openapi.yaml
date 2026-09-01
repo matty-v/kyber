@@ -18,7 +18,7 @@ paths:
   /api/v1/browser-session:
     post:
       operationId: createBrowserSession
-      summary: Exchange a bearer API key for an opaque HttpOnly browser session
+      summary: Exchange a bearer API key for a signed HttpOnly browser session
       tags: [authentication]
       responses:
         '204':
@@ -29,6 +29,8 @@ paths:
                 type: string
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '503':
+          description: Control plane has no shared API key, so it cannot sign sessions
 
   /api/v1/dev/compute/instances:
     get:

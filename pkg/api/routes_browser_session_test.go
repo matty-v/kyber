@@ -113,17 +113,16 @@ func TestEncodeExecExitPayloadUsesJSONEncoding(t *testing.T) {
 // answer with its own error code, not the generic "unauthorized".
 //
 // The distinction is what lets the PWA re-prompt for the key in place
-// instead of rendering a dead-end error. Sessions are process-local, so
-// every control-plane restart invalidates every open browser — this is the
-// single most common 401 an operator will ever see, and it is fully
-// recoverable.
+// instead of rendering a dead-end error. Sessions no longer die on a restart
+// (MAT-38), but they still lapse at 30 days and are all invalidated by an
+// API-key rotation — both fully recoverable by pasting the key again.
 func TestExpiredBrowserSessionReturnsDistinctCode(t *testing.T) {
 	s := &Server{APIKey: "legacy-key"}
 	h := s.BuildHandler()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
-	// A well-formed cookie the server has never issued — indistinguishable
-	// from one whose session was wiped by a restart.
+	// A cookie value this server would never have signed — the same 401 an
+	// operator gets from a lapsed session or one minted before a rotation.
 	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: "stale-token-from-a-previous-process"})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -179,5 +178,38 @@ func TestBadAPIKeyKeepsGenericUnauthorized(t *testing.T) {
 	}
 	if body.Error.Code != "unauthorized" {
 		t.Errorf("code = %q, want \"unauthorized\"", body.Error.Code)
+	}
+}
+
+// An install with scoped callers but no shared key cannot sign session cookies
+// — the signing key is derived from the shared key. That is a configuration
+// answer, so it must read as one. A bare 500 would send the operator to the
+// control-plane logs to discover a setting they could have been told about.
+func TestBrowserSessionUnavailableWithoutASharedKey(t *testing.T) {
+	s := &Server{Callers: []ScopedCaller{{Name: "ci", Key: "ci-key", Scopes: []string{"lifecycle:write"}}}}
+	h := s.BuildHandler()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/browser-session", nil)
+	req.Header.Set("Authorization", "Bearer ci-key")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503: %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body.Error.Code != "session_unavailable" {
+		t.Errorf("code = %q, want \"session_unavailable\"", body.Error.Code)
+	}
+	if !strings.Contains(body.Error.Message, "KYBER_API_KEY") {
+		t.Errorf("message = %q, want it to name the missing setting", body.Error.Message)
 	}
 }

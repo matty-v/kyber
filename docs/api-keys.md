@@ -30,9 +30,38 @@ The control-plane pod's spec mounts the Secret value into the `KYBER_API_KEY` en
 ### In the PWA
 
 The embedded PWA exchanges the pasted key once at
-`POST /api/v1/browser-session`, then uses an opaque HttpOnly session cookie.
-The raw key is not retained in browser-readable storage. Sessions last at most
-12 hours and are invalidated by a control-plane restart or API-key rotation.
+`POST /api/v1/browser-session`, then uses an HttpOnly session cookie. The raw
+key is not retained in browser-readable storage.
+
+The cookie is a **signed token, not a server-side session record** — it carries
+the caller and an expiry, signed with a key derived from the live API key
+(`pkg/api/browser_session_token.go`). Two consequences worth knowing as an
+operator:
+
+- Sessions **survive a control-plane restart**. Upgrades and pod recycles no
+  longer sign browsers out.
+- Sessions last 30 days and **renew on use**: any request made with more than
+  half the lifetime spent gets a fresh cookie, so a PWA opened at least monthly
+  never asks for the key again.
+
+### Signing a browser out
+
+There are two levers, from broadest to narrowest:
+
+- **Rotate the shared API key.** The signing key is derived from it, so every
+  outstanding session everywhere stops working immediately. The browser that
+  performed the rotation is re-issued a cookie and stays signed in.
+- **Change or remove a scoped caller** in the `callers` document. A session
+  names its caller and carries no authority of its own, so narrowing that
+  caller's scopes, replacing its key value, or deleting the entry takes effect
+  on that caller's next request — no restart, and nobody else is signed out.
+
+There is no per-browser revocation: two browsers signed in as the same caller
+cannot be told apart, so signing one out signs both out.
+
+A control plane with no `KYBER_API_KEY` set cannot sign cookies at all;
+`POST /api/v1/browser-session` returns `503 session_unavailable` there.
+
 Legacy `localStorage['kyber_api_key']` values are consumed once and removed.
 
 ### What the key grants
