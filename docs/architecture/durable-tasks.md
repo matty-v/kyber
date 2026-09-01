@@ -25,6 +25,24 @@ typed outputs without scraping an agent transcript. Authoritative code lives in
    exposes bounded summaries. File bytes are available only from the authorized
    Kyber download route; object keys never appear in public JSON.
 
+## Public authorization boundary
+
+Every task is created transactionally with a stable tenant ID, owner principal
+ID, and normalized agent resource ID. Public repository reads, list pages,
+continuations, cancellations, and result downloads require that complete
+envelope; filters run in PostgreSQL before result or message loading, ordering,
+limits, and cursor generation. Cursors are bound to the tenant, principal,
+agent resource, state filter, and sort contract.
+
+Callers also need the exact action scope (`tasks:create`, `tasks:read`,
+`tasks:list`, `tasks:continue`, `tasks:cancel`, or `task-results:read`) and the
+agent must appear in their exact resource allowlist. Scope and resource failures
+on object-addressed routes are indistinguishable from an absent task. Credential
+rotation preserves ownership through the stable principal ID, while browser
+sessions are revalidated against the current credential ID and generation on
+every request. Internal sidecar updates remain a separate agent/task/attempt
+boundary and never receive public-owner authority.
+
 ## Cooperative cancellation
 
 An authenticated task owner may request cancellation through

@@ -78,7 +78,7 @@ Single-tenant install — **everything**:
 The legacy single key grants **everything** (full scope). For agent **lifecycle**
 verbs specifically, you can now issue narrower keys — see below.
 
-### Caller scopes on lifecycle verbs (kyber#474)
+### Caller scopes and principal identity
 
 You can issue **scoped API keys** that are limited to certain agent lifecycle
 actions, instead of handing out the full-scope key. Scoped keys live in an
@@ -94,6 +94,20 @@ optional `callers` JSON document on the same `kyber-api-credentials` Secret:
   everything `write` grants (scopes nest: `admin` ⊃ `write`). So a `write`-only
   key cannot force-needs-auth an agent.
 
+Durable-task callers additionally declare stable security identity and an
+exact agent allowlist. Mutable names are display-only:
+
+```json
+[ {"name":"a2a-gateway","principalId":"principal_a2a_gateway","tenantId":"tenant_acme","credentialId":"credential_a2a_gateway","credentialGeneration":1,"agentResources":["kyber-system/researcher"],"keyFrom":{"secret":"a2a-gateway-key","key":"api-key"},"scopes":["tasks:create","tasks:read","tasks:list","tasks:continue","tasks:cancel","task-results:read","task-events:read"]} ]
+```
+
+Task scopes are independent: `tasks:create`, `tasks:read`, `tasks:list`,
+`tasks:continue`, `tasks:cancel`, `task-results:read`, and `task-events:read`
+grant only the named action. Task routes always enforce scope, tenant, stable
+principal ownership, and allowed-agent checks. During migration,
+`requests:write` maps to create/continue/cancel and `requests:read` maps to
+read/list/results/events. New callers should use the narrow scopes.
+
 The legacy `api-key` keeps working as a **full-scope** caller, so this is
 backward-compatible. Enforcement is **off by default** (`api.authz.enforce:
 false`): under-scoped callers are audit-logged but not blocked. Set
@@ -101,8 +115,7 @@ false`): under-scoped callers are audit-logged but not blocked. Set
 to an under-scoped caller. Roll out by defining scoped callers, watching the
 permissive-mode audit log, then enabling enforcement.
 
-Other (non-lifecycle) routes still accept any valid key — the scope model is
-designed to extend to them later. See
+Other routes without a documented scope still accept any valid key. See
 [`architecture/api-authorization.md`](architecture/api-authorization.md) for the
 full model and [Out of scope](#out-of-scope) for the broader "RBAC" follow-up.
 

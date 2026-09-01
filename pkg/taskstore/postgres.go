@@ -70,6 +70,13 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_deadline_at TIMESTAMPTZ`,
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_acknowledged_at TIMESTAMPTZ`,
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_ack_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS tenant_id TEXT`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS owner_principal_id TEXT`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS agent_resource_id TEXT`,
+		`UPDATE agent_tasks SET tenant_id='tenant_installation',owner_principal_id='principal_installation_admin',agent_resource_id=agent_namespace||'/'||agent_name WHERE tenant_id IS NULL OR owner_principal_id IS NULL OR agent_resource_id IS NULL`,
+		`ALTER TABLE agent_tasks ALTER COLUMN tenant_id SET NOT NULL`,
+		`ALTER TABLE agent_tasks ALTER COLUMN owner_principal_id SET NOT NULL`,
+		`ALTER TABLE agent_tasks ALTER COLUMN agent_resource_id SET NOT NULL`,
 		`ALTER TABLE agent_tasks DROP CONSTRAINT IF EXISTS agent_tasks_state_check`,
 		`ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_state_check CHECK (state IN ('queued','dispatched','input_required','auth_required','canceling','canceled','completed','failed','rejected'))`,
 		`CREATE TABLE IF NOT EXISTS agent_task_cancel_idempotency (created_by TEXT NOT NULL, agent_namespace TEXT NOT NULL, agent_name TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, applied BOOLEAN NOT NULL DEFAULT false, PRIMARY KEY(created_by,agent_namespace,agent_name,idempotency_key))`,
@@ -92,13 +99,14 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE TABLE IF NOT EXISTS agent_task_interaction_idempotency (responded_by TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, interaction_id TEXT NOT NULL REFERENCES agent_task_interactions(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, PRIMARY KEY(responded_by,task_id,interaction_id,idempotency_key))`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_created_idx ON agent_tasks(agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_state_created_idx ON agent_tasks(agent_namespace,agent_name,state,created_at DESC,id DESC)`,
+		`CREATE INDEX IF NOT EXISTS agent_tasks_owner_created_idx ON agent_tasks(tenant_id,owner_principal_id,agent_resource_id,agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_retain_idx ON agent_tasks(retain_until)`,
 		`DROP INDEX IF EXISTS agent_tasks_deadline_idx`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_deadline_idx ON agent_tasks(deadline_at) WHERE state IN ('queued','dispatched','input_required','auth_required')`,
 		`CREATE INDEX IF NOT EXISTS agent_task_cancel_delivery_idx ON agent_task_cancel_deliveries(status,next_delivery_at,lease_until)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_dispatch_claim_idx ON agent_task_dispatches(status,next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_object_cleanup_idx ON agent_task_objects(status,next_attempt_at,lease_until)`,
-		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3),(4) ON CONFLICT DO NOTHING`,
+		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3),(4),(5) ON CONFLICT DO NOTHING`,
 	}
 	for _, q := range statements {
 		if _, err = tx.ExecContext(ctx, q); err != nil {
@@ -173,8 +181,12 @@ func (s *PostgresStore) Create(ctx context.Context, p CreateParams) (*CreateResu
 	if !deadline.After(now) {
 		return nil, ErrInvalid
 	}
-	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention)}
-	_, err = tx.ExecContext(ctx, `INSERT INTO agent_tasks(id,agent_namespace,agent_name,created_by,prompt,correlation,state,version,created_at,updated_at,deadline_at,retain_until) VALUES($1,$2,$3,$4,$5,$6,'queued',1,$7,$7,$8,$9)`, t.ID, t.AgentNamespace, t.AgentName, t.CreatedBy, t.Prompt, t.Correlation, now, deadline, t.RetainUntil)
+	auth := p.Authorization
+	if !auth.Valid() {
+		auth = AuthorizationContext{TenantID: "tenant_legacy", PrincipalID: p.CreatedBy, AgentResourceID: p.Agent.Namespace + "/" + p.Agent.Name}
+	}
+	t := &Task{ID: p.ID, AgentNamespace: p.Agent.Namespace, AgentName: p.Agent.Name, CreatedBy: p.CreatedBy, TenantID: auth.TenantID, OwnerPrincipalID: auth.PrincipalID, AgentResourceID: auth.AgentResourceID, Prompt: p.Prompt, Correlation: p.Correlation, State: StateQueued, Version: 1, CreatedAt: now, UpdatedAt: now, DeadlineAt: deadline, RetainUntil: deadline.Add(s.limits.Retention)}
+	_, err = tx.ExecContext(ctx, `INSERT INTO agent_tasks(id,agent_namespace,agent_name,created_by,tenant_id,owner_principal_id,agent_resource_id,prompt,correlation,state,version,created_at,updated_at,deadline_at,retain_until) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'queued',1,$10,$10,$11,$12)`, t.ID, t.AgentNamespace, t.AgentName, t.CreatedBy, t.TenantID, t.OwnerPrincipalID, t.AgentResourceID, t.Prompt, t.Correlation, now, deadline, t.RetainUntil)
 	if err != nil {
 		var pe *pq.Error
 		if errors.As(err, &pe) && pe.Code == "23505" {
@@ -207,7 +219,7 @@ func scanTask(r rowScanner) (*Task, error) {
 	var completed, progressAt, cancelRequestedAt, cancelDeadlineAt, cancelAcknowledgedAt sql.NullTime
 	var progressPercent sql.NullInt64
 	var progressMessage, cancelRequestedBy, cancelReason, cancelAckSource string
-	err := r.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &progressMessage, &progressPercent, &progressAt, &cancelRequestedAt, &cancelRequestedBy, &cancelReason, &cancelDeadlineAt, &cancelAcknowledgedAt, &cancelAckSource)
+	err := r.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.TenantID, &t.OwnerPrincipalID, &t.AgentResourceID, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &progressMessage, &progressPercent, &progressAt, &cancelRequestedAt, &cancelRequestedBy, &cancelReason, &cancelDeadlineAt, &cancelAcknowledgedAt, &cancelAckSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -240,13 +252,28 @@ func scanTask(r rowScanner) (*Task, error) {
 	return t, nil
 }
 
-const selectTask = `SELECT id,agent_namespace,agent_name,created_by,prompt,correlation,state,failure_code,response,version,created_at,updated_at,deadline_at,retain_until,completed_at,progress_message,progress_percent,progress_updated_at,cancel_requested_at,cancel_requested_by,cancel_reason,cancel_deadline_at,cancel_acknowledged_at,cancel_ack_source FROM agent_tasks`
+const selectTask = `SELECT id,agent_namespace,agent_name,created_by,tenant_id,owner_principal_id,agent_resource_id,prompt,correlation,state,failure_code,response,version,created_at,updated_at,deadline_at,retain_until,completed_at,progress_message,progress_percent,progress_updated_at,cancel_requested_at,cancel_requested_by,cancel_reason,cancel_deadline_at,cancel_acknowledged_at,cancel_ack_source FROM agent_tasks`
 
 func getTaskTx(ctx context.Context, tx *sql.Tx, a AgentRef, id string) (*Task, error) {
 	return scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3`, id, a.Namespace, a.Name))
 }
 func (s *PostgresStore) Get(ctx context.Context, a AgentRef, id string) (*Task, error) {
-	t, err := scanTask(s.db.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND (state IN ('queued','dispatched','canceling') OR retain_until>=clock_timestamp())`, id, a.Namespace, a.Name))
+	t, err := scanTask(s.db.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND (state IN ('queued','dispatched','input_required','auth_required','canceling') OR retain_until>=clock_timestamp())`, id, a.Namespace, a.Name))
+	if err != nil {
+		return nil, err
+	}
+	t.Results, err = loadResults(ctx, s.db, id)
+	if err == nil {
+		err = loadConversation(ctx, s.db, t)
+	}
+	return t, err
+}
+
+func (s *PostgresStore) GetAuthorized(ctx context.Context, a AgentRef, id string, auth AuthorizationContext) (*Task, error) {
+	if !auth.Valid() {
+		return nil, ErrNotFound
+	}
+	t, err := scanTask(s.db.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND tenant_id=$4 AND owner_principal_id=$5 AND agent_resource_id=$6 AND (state IN ('queued','dispatched','input_required','auth_required','canceling') OR retain_until>=clock_timestamp())`, id, a.Namespace, a.Name, auth.TenantID, auth.PrincipalID, auth.AgentResourceID))
 	if err != nil {
 		return nil, err
 	}
@@ -269,14 +296,19 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 	var beforeID string
 	var err error
 	if p.Cursor != "" {
-		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State)
+		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State, p.Authorization)
 		if err != nil {
 			return nil, err
 		}
 	}
 	args := []any{p.Agent.Namespace, p.Agent.Name}
-	where := ` WHERE agent_namespace=$1 AND agent_name=$2 AND (state IN ('queued','dispatched','canceling') OR retain_until>=clock_timestamp())`
+	where := ` WHERE agent_namespace=$1 AND agent_name=$2 AND (state IN ('queued','dispatched','input_required','auth_required','canceling') OR retain_until>=clock_timestamp())`
 	n := 3
+	if p.Authorization.Valid() {
+		where += fmt.Sprintf(" AND tenant_id=$%d AND owner_principal_id=$%d AND agent_resource_id=$%d", n, n+1, n+2)
+		args = append(args, p.Authorization.TenantID, p.Authorization.PrincipalID, p.Authorization.AgentResourceID)
+		n += 3
+	}
 	if p.State != "" {
 		where += fmt.Sprintf(" AND state=$%d", n)
 		args = append(args, p.State)
@@ -319,7 +351,7 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 	page := &Page{}
 	if len(items) > limit {
 		page.Tasks = items[:limit]
-		page.NextCursor, err = encodeCursor(p.Agent, p.State, page.Tasks[len(page.Tasks)-1])
+		page.NextCursor, err = encodeCursor(p.Agent, p.State, p.Authorization, page.Tasks[len(page.Tasks)-1])
 		if err != nil {
 			return nil, err
 		}

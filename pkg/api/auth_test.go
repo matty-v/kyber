@@ -162,6 +162,41 @@ func TestScopeSet_RequestScopesAreIndependent(t *testing.T) {
 	}
 }
 
+func TestScopeSet_TaskScopesAreIndependent(t *testing.T) {
+	all := []Scope{ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel, ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin}
+	for _, granted := range all {
+		set := newScopeSet(granted)
+		for _, checked := range all {
+			if got := set.Has(checked); got != (checked == granted) {
+				t.Errorf("granting %q, Has(%q)=%v; task scopes must not imply one another", granted, checked, got)
+			}
+		}
+	}
+}
+
+func TestParseScopedCallers_TaskScopesRequireStableSecurityEnvelope(t *testing.T) {
+	good := `[{"name":"gateway","principalId":"principal_gateway","tenantId":"tenant_acme","credentialId":"credential_gateway","credentialGeneration":2,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["tasks:create","tasks:read"]}]`
+	callers, err := ParseScopedCallers(good)
+	if err != nil {
+		t.Fatalf("task caller with stable envelope should parse: %v", err)
+	}
+	if callers[0].PrincipalID != "principal_gateway" || callers[0].CredentialGeneration != 2 {
+		t.Fatalf("security envelope not preserved: %+v", callers[0])
+	}
+
+	for name, doc := range map[string]string{
+		"principal":  `[{"name":"gateway","tenantId":"tenant_acme","credentialId":"credential_gateway","credentialGeneration":1,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["tasks:read"]}]`,
+		"tenant":     `[{"name":"gateway","principalId":"principal_gateway","credentialId":"credential_gateway","credentialGeneration":1,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["tasks:read"]}]`,
+		"credential": `[{"name":"gateway","principalId":"principal_gateway","tenantId":"tenant_acme","credentialGeneration":1,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["tasks:read"]}]`,
+		"generation": `[{"name":"gateway","principalId":"principal_gateway","tenantId":"tenant_acme","credentialId":"credential_gateway","agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["tasks:read"]}]`,
+		"resources":  `[{"name":"gateway","principalId":"principal_gateway","tenantId":"tenant_acme","credentialId":"credential_gateway","credentialGeneration":1,"key":"secret","scopes":["tasks:read"]}]`,
+	} {
+		if _, err := ParseScopedCallers(doc); err == nil {
+			t.Errorf("task caller missing %s must be rejected", name)
+		}
+	}
+}
+
 func TestParseScopedCallers_KeyFrom(t *testing.T) {
 	// keyFrom is the kyber#557 alternative to inline key: a Secret reference,
 	// resolved at startup. Exactly one of key/keyFrom must be set — both or

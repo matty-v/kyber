@@ -49,6 +49,11 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
 |---|---|---|
 | `lifecycle:write` | the fail-safe verbs | `start`, `stop`, `restart`, OAuth re-auth resume to `Running` |
 | `lifecycle:admin` | the impactful verbs (⊃ `write`) | `force-needs-auth`, **agent/machine `DELETE`** (kyber#565) — **and** everything `write` grants |
+| `tasks:create` | create durable tasks | `POST /agents/{agent}/tasks` |
+| `tasks:read` / `tasks:list` | read or list owned tasks | task `GET` / collection `GET` |
+| `tasks:continue` / `tasks:cancel` | continue or cancel owned tasks | interaction response / cancel |
+| `task-results:read` | read owned task results and files | result content routes |
+| `task-events:read` | subscribe to owned task events | event stream and replay routes |
 
 **Privilege ordering (the #474 invariant):** scopes nest — `lifecycle:admin` ⊃
 `lifecycle:write`. The impactful verbs require the strictly-higher scope, so they
@@ -85,7 +90,15 @@ pre-#565 callers that omit it now get 400. Internal callers (the PWA client,
 e2e/contract tests) are migrated in the same change; the off-repo Holocron UI
 must append `?confirm=<name>` to its delete calls.
 
-The legacy shared `api-key` resolves to a **full-scope** caller (satisfies every
+Task scopes do not imply one another. Unlike the staged lifecycle gate, public
+task routes always enforce the exact action scope plus tenant, stable owner
+principal, and immutable agent-resource policy. Unauthorized object reads and
+mutations return the same 404 as an absent task, and list filtering occurs in
+the repository before pagination. `requests:read` and `requests:write` remain
+temporary compatibility bundles.
+
+The legacy shared `api-key` resolves to a **full-scope** installation-admin
+principal in the installation tenant (satisfies every
 check), so single-key installs are unaffected. The vocabulary is designed to
 extend later to non-lifecycle routes (e.g. `agents:write`) behind the same seam.
 
@@ -117,6 +130,14 @@ Scoped keys are an optional `callers` JSON document on the existing
 [ {"name":"pwa","key":"<32-byte hex>","scopes":["lifecycle:write"]},
   {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
 ```
+
+Any caller granted a task scope must also provide `principalId`, `tenantId`,
+`credentialId`, a non-zero `credentialGeneration`, and one or more exact
+`agentResources` (`namespace/name`). Key rotation may change credential ID or
+generation while preserving the principal ID, so retained tasks remain owned
+by the same principal. Browser sessions resolve the current configured caller
+on every request and are invalidated when their credential or generation is
+revoked.
 
 A malformed `callers` document is **fail-closed**: it is logged and rejected
 (scoped keys are not loaded; the legacy key still works) rather than silently

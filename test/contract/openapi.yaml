@@ -24,6 +24,7 @@ paths:
     post:
       operationId: createAgentTask
       summary: Create a durable agent task
+      description: Requires tasks:create and an allowed agent resource.
       tags: [tasks]
       parameters:
         - name: Idempotency-Key
@@ -35,7 +36,7 @@ paths:
           application/json:
             schema: {$ref: '#/components/schemas/CreateAgentTask'}
       responses:
-        '201':
+        '202':
           description: Durable task created
           content:
             application/json:
@@ -45,6 +46,7 @@ paths:
     get:
       operationId: listAgentTasks
       summary: List bounded durable task summaries
+      description: Requires tasks:list; returns only tasks owned by the authenticated principal.
       tags: [tasks]
       responses:
         '200':
@@ -65,6 +67,7 @@ paths:
     get:
       operationId: getAgentTask
       summary: Get durable task progress and detailed typed results
+      description: Requires tasks:read plus tenant, owner, and agent-resource authorization.
       tags: [tasks]
       parameters:
         - name: name
@@ -88,7 +91,7 @@ paths:
     post:
       operationId: cancelAgentTask
       summary: Request cooperative cancellation of a durable task
-      description: Cancellation stops future task work but does not roll back prior external effects.
+      description: Requires tasks:cancel and ownership. Cancellation stops future task work but does not roll back prior external effects.
       tags: [tasks]
       parameters:
         - name: name
@@ -121,6 +124,7 @@ paths:
     post:
       operationId: respondAgentTaskInteraction
       summary: Answer the one outstanding typed task interaction
+      description: Requires tasks:continue plus tenant, owner, and agent-resource authorization.
       tags: [tasks]
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
@@ -141,6 +145,7 @@ paths:
     post:
       operationId: authorizeAgentTaskInteraction
       summary: Resume from a completed, task-bound authorization flow
+      description: Requires tasks:continue plus tenant, owner, and agent-resource authorization.
       tags: [tasks]
       parameters:
         - {name: name, in: path, required: true, schema: {type: string}}
@@ -161,6 +166,7 @@ paths:
     get:
       operationId: downloadAgentTaskResultPart
       summary: Download authorized private task-result content
+      description: Requires task-results:read plus tenant, owner, and agent-resource authorization.
       tags: [tasks]
       parameters:
         - name: name

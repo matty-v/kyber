@@ -106,12 +106,12 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 	if subpath == "" {
 		switch r.Method {
 		case http.MethodPost:
-			if !s.requireScope(w, r, agentName, "task-submit", ScopeRequestsWrite) {
+			if !s.requireTaskScope(w, r, agentName, ScopeTasksCreate) {
 				return
 			}
 			s.createAgentTask(w, r, agentName)
 		case http.MethodGet:
-			if !s.requireScope(w, r, agentName, "task-list", ScopeRequestsRead) {
+			if !s.requireTaskScope(w, r, agentName, ScopeTasksList) {
 				return
 			}
 			s.listAgentTasks(w, r, agentName)
@@ -126,7 +126,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
-		if !s.requireScope(w, r, agentName, "task-cancel", ScopeRequestsWrite) {
+		if !s.requireTaskScope(w, r, agentName, ScopeTasksCancel) {
 			return
 		}
 		s.cancelAgentTask(w, r, agentName, parts[0])
@@ -137,7 +137,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
-		if !s.requireScope(w, r, agentName, "task-interaction-respond", ScopeRequestsWrite) {
+		if !s.requireTaskScope(w, r, agentName, ScopeTasksContinue) {
 			return
 		}
 		s.respondAgentTaskInteraction(w, r, agentName, parts[0], parts[2], parts[3] == "authorize")
@@ -152,7 +152,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
 		}
-		if !s.requireScope(w, r, agentName, "task-result-read", ScopeRequestsRead) {
+		if !s.requireTaskScope(w, r, agentName, ScopeTaskResultsRead) {
 			return
 		}
 		ordinal, err := strconv.Atoi(parts[4])
@@ -171,7 +171,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
-	if !s.requireScope(w, r, agentName, "task-read", ScopeRequestsRead) {
+	if !s.requireTaskScope(w, r, agentName, ScopeTasksRead) {
 		return
 	}
 	s.getAgentTask(w, r, agentName, subpath)
@@ -213,7 +213,11 @@ func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Requ
 	}
 	b, _ := json.Marshal([]any{taskID, interactionID, json.RawMessage(response)})
 	sum := sha256.Sum256(b)
-	result, err := s.TaskStore.RespondInteraction(r.Context(), taskstore.RespondInteractionParams{Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID, InteractionID: interactionID, RespondedBy: caller.Name, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]), Response: response})
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
+	result, err := s.TaskStore.RespondInteraction(r.Context(), taskstore.RespondInteractionParams{Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID, InteractionID: interactionID, RespondedBy: caller.PrincipalID, Authorization: auth, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]), Response: response})
 	if err != nil {
 		writeTaskStoreError(w, err)
 		return
@@ -246,9 +250,13 @@ func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentNa
 	// with the same reason on a different task could replay the first task.
 	b, _ := json.Marshal([]string{taskID, reason})
 	sum := sha256.Sum256(b)
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
 	result, err := s.TaskStore.Cancel(r.Context(), taskstore.CancelParams{
 		Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID,
-		RequestedBy: caller.Name, Reason: reason, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]),
+		RequestedBy: caller.PrincipalID, Authorization: auth, Reason: reason, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]),
 	})
 	if err != nil {
 		if errors.Is(err, taskstore.ErrNotFound) {
@@ -284,7 +292,11 @@ func (s *Server) downloadAgentTaskPart(w http.ResponseWriter, r *http.Request, a
 		}
 		return
 	}
-	task, err := s.TaskStore.Get(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, taskID)
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
+	task, err := s.TaskStore.GetAuthorized(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, taskID, auth)
 	if err != nil {
 		if errors.Is(err, taskstore.ErrNotFound) {
 			writeJSONError(w, http.StatusNotFound, "not_found", "task result not found")
@@ -396,6 +408,54 @@ func (s *Server) ensureTaskAgent(w http.ResponseWriter, r *http.Request, name st
 	return true
 }
 
+func (s *Server) requireTaskScope(w http.ResponseWriter, r *http.Request, agentName string, required Scope) bool {
+	caller := callerFrom(r.Context())
+	if caller == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return false
+	}
+	allowed := caller.Scopes.Has(required)
+	if !allowed {
+		switch required {
+		case ScopeTasksCreate, ScopeTasksContinue, ScopeTasksCancel:
+			allowed = caller.Scopes.Has(ScopeRequestsWrite)
+		case ScopeTasksRead, ScopeTasksList, ScopeTaskResultsRead, ScopeTaskEventsRead:
+			allowed = caller.Scopes.Has(ScopeRequestsRead)
+		}
+	}
+	if !allowed {
+		if required != ScopeTasksCreate && required != ScopeTasksList {
+			writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
+		} else {
+			writeJSONError(w, http.StatusForbidden, "forbidden", "caller lacks the required task scope")
+		}
+		return false
+	}
+	if !caller.AgentResources.Has(s.Namespace + "/" + agentName) {
+		if required != ScopeTasksCreate && required != ScopeTasksList {
+			writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
+		} else {
+			writeJSONError(w, http.StatusForbidden, "forbidden", "caller is not permitted to use this agent")
+		}
+		return false
+	}
+	return true
+}
+
+func (s *Server) taskAuthorizationContext(w http.ResponseWriter, r *http.Request, agentName string) (taskstore.AuthorizationContext, bool) {
+	caller := callerFrom(r.Context())
+	if caller == nil || caller.PrincipalID == "" || caller.TenantID == "" {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "stable principal identity required")
+		return taskstore.AuthorizationContext{}, false
+	}
+	resource := s.Namespace + "/" + agentName
+	if !caller.AgentResources.Has(resource) {
+		writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
+		return taskstore.AuthorizationContext{}, false
+	}
+	return taskstore.AuthorizationContext{TenantID: caller.TenantID, PrincipalID: caller.PrincipalID, AgentResourceID: resource}, true
+}
+
 func (s *Server) createAgentTask(w http.ResponseWriter, r *http.Request, agentName string) {
 	if !s.TasksEnabled {
 		writeJSONError(w, http.StatusServiceUnavailable, "task_creation_disabled", "durable task creation is disabled")
@@ -428,13 +488,17 @@ func (s *Server) createAgentTask(w http.ResponseWriter, r *http.Request, agentNa
 	}
 	key := r.Header.Get("Idempotency-Key")
 	hash := taskCreateHash(in)
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
 	for attempts := 0; attempts < 3; attempts++ {
 		id, err := newAgentTaskID()
 		if err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create task")
 			return
 		}
-		p := taskstore.CreateParams{ID: id, Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, CreatedBy: caller.Name, Prompt: in.Prompt, Correlation: in.Correlation, IdempotencyKey: key, RequestHash: hash}
+		p := taskstore.CreateParams{ID: id, Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, CreatedBy: caller.PrincipalID, Authorization: auth, Prompt: in.Prompt, Correlation: in.Correlation, IdempotencyKey: key, RequestHash: hash}
 		if in.DeadlineAt != nil {
 			p.DeadlineAt = *in.DeadlineAt
 		}
@@ -478,7 +542,11 @@ func (s *Server) getAgentTask(w http.ResponseWriter, r *http.Request, agentName,
 	if !s.requireTaskStore(w) {
 		return
 	}
-	t, err := s.TaskStore.Get(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, id)
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
+	t, err := s.TaskStore.GetAuthorized(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, id, auth)
 	if errors.Is(err, taskstore.ErrNotFound) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
 		return
@@ -508,7 +576,11 @@ func (s *Server) listAgentTasks(w http.ResponseWriter, r *http.Request, agentNam
 		writeJSONError(w, http.StatusBadRequest, "invalid_state", "unknown task state")
 		return
 	}
-	page, err := s.TaskStore.List(r.Context(), taskstore.ListParams{Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, State: state, Limit: limit, Cursor: r.URL.Query().Get("cursor")})
+	auth, ok := s.taskAuthorizationContext(w, r, agentName)
+	if !ok {
+		return
+	}
+	page, err := s.TaskStore.List(r.Context(), taskstore.ListParams{Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, Authorization: auth, State: state, Limit: limit, Cursor: r.URL.Query().Get("cursor")})
 	if err != nil {
 		if errors.Is(err, taskstore.ErrInvalidCursor) || errors.Is(err, taskstore.ErrInvalid) {
 			writeJSONError(w, http.StatusBadRequest, "invalid_page", "invalid task page parameters")

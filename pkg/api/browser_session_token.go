@@ -74,8 +74,11 @@ var errMalformedBrowserSession = errors.New("malformed browser session token")
 // cookie. That is fine — a caller name and an expiry are not secrets, and the
 // cookie is HttpOnly + SameSite=Strict.
 type browserSessionClaims struct {
-	Name      string `json:"n"`
-	FullScope bool   `json:"f,omitempty"`
+	Name                 string `json:"n"`
+	PrincipalID          string `json:"p,omitempty"`
+	CredentialID         string `json:"c,omitempty"`
+	CredentialGeneration uint64 `json:"g,omitempty"`
+	FullScope            bool   `json:"f,omitempty"`
 	// KeyBinding ties a scoped caller's session to the key it was issued
 	// against, so replacing that key in configuration ends the session. Empty
 	// for full-scope sessions, which are already bound to the shared key by
@@ -128,11 +131,14 @@ func signBrowserSession(apiKey string, caller Caller, keyBinding string, issuedA
 		return "", err
 	}
 	raw, err := json.Marshal(browserSessionClaims{
-		Name:       caller.Name,
-		FullScope:  caller.Scopes.full,
-		KeyBinding: keyBinding,
-		IssuedAt:   issuedAt.Unix(),
-		ExpiresAt:  issuedAt.Add(ttl).Unix(),
+		Name:                 caller.Name,
+		PrincipalID:          caller.PrincipalID,
+		CredentialID:         caller.CredentialID,
+		CredentialGeneration: caller.CredentialGeneration,
+		FullScope:            caller.Scopes.full,
+		KeyBinding:           keyBinding,
+		IssuedAt:             issuedAt.Unix(),
+		ExpiresAt:            issuedAt.Add(ttl).Unix(),
 	})
 	if err != nil {
 		return "", fmt.Errorf("encoding browser session claims: %w", err)

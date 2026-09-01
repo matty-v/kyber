@@ -213,3 +213,25 @@ func TestBrowserSessionUnavailableWithoutASharedKey(t *testing.T) {
 		t.Errorf("message = %q, want it to name the missing setting", body.Error.Message)
 	}
 }
+
+func TestBrowserSessionRejectsRevokedCredentialGeneration(t *testing.T) {
+	old := ScopedCaller{Name: "gateway", PrincipalID: "principal_gateway", TenantID: "tenant_acme", CredentialID: "credential_gateway", CredentialGeneration: 1, AgentResources: []string{"kyber-system/kiosk"}, Key: "scoped-key", Scopes: []string{"tasks:read"}}
+	issuer := NewAPIKeyAuthenticator("legacy-key", old)
+	caller, err := issuer.Authenticate(reqWithBearer("scoped-key"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := issuer.CreateBrowserSession(*caller)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rotated := old
+	rotated.CredentialGeneration = 2
+	verifier := NewAPIKeyAuthenticator("legacy-key", rotated)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: token})
+	if _, err := verifier.Authenticate(req); err == nil {
+		t.Fatal("session minted for a revoked credential generation must not authenticate")
+	}
+}
