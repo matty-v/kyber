@@ -120,7 +120,13 @@ func (w *Worker) enqueue(ctx context.Context, claim *taskstore.DispatchClaim, le
 
 func envelope(t *taskstore.Task, attempt string) string {
 	prompt, _ := json.Marshal(t.Prompt)
-	return fmt.Sprintf("[kyber-task:%s] attempt=%s\nagent: %s\ntask:\n  id: %s\n  attempt_id: %s\n  deadline_at: %s\n  prompt_json: %s\naction:\n  Handle only this task. Check kyber-request-reply.get_control before each material phase and after long-running tools. If cancellation is requested, stop future task work and call ack_cancel with this exact task and attempt; cancellation does not roll back prior external effects. Otherwise finish by calling complete with this task id, attempt id, and bounded response.\n", t.ID, attempt, t.AgentName, t.ID, attempt, t.DeadlineAt.UTC().Format(time.RFC3339Nano), prompt)
+	continuation := ""
+	if t.Interaction != nil && t.Interaction.Status == taskstore.InteractionAnswered {
+		question, _ := json.Marshal(t.Interaction.Question)
+		response, _ := json.Marshal(json.RawMessage(t.Interaction.Response))
+		continuation = fmt.Sprintf("  continuation:\n    interaction_id: %s\n    type: %s\n    question_json: %s\n    response_json: %s\n    instruction: Treat this response as satisfying the prior request. Continue the original task from it; do not request the same interaction again.\n", t.Interaction.ID, t.Interaction.Type, question, response)
+	}
+	return fmt.Sprintf("[kyber-task:%s] attempt=%s\nagent: %s\ntask:\n  id: %s\n  attempt_id: %s\n  deadline_at: %s\n  prompt_json: %s\n%saction:\n  Handle only this task. Check kyber-request-reply.get_control before each material phase and after long-running tools. If cancellation is requested, stop future task work and call ack_cancel with this exact task and attempt; cancellation does not roll back prior external effects. If input is required, call request_input or request_authorization and end the turn immediately. Otherwise finish by calling complete with this task id, attempt id, and bounded response.\n", t.ID, attempt, t.AgentName, t.ID, attempt, t.DeadlineAt.UTC().Format(time.RFC3339Nano), prompt, continuation)
 }
 func newAttemptID() (string, error) {
 	var b [16]byte

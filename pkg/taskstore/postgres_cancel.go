@@ -71,7 +71,7 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 	result := &CancelResult{Task: t}
 	if t.Cancellation != nil || t.State == StateCanceling || t.State == StateCanceled {
 		result.Replay = true
-	} else if t.State == StateQueued || t.State == StateDispatched {
+	} else if t.State == StateQueued || t.State == StateDispatched || t.State == StateInputRequired || t.State == StateAuthRequired {
 		var dispatchStatus, attemptID string
 		if err = tx.QueryRowContext(ctx, `SELECT status,attempt_token FROM agent_task_dispatches WHERE task_id=$1 FOR UPDATE`, t.ID).Scan(&dispatchStatus, &attemptID); err != nil {
 			return nil, err
@@ -88,7 +88,7 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 		if deadline.After(t.DeadlineAt) {
 			deadline = t.DeadlineAt
 		}
-		ambiguous := t.State == StateDispatched || dispatchStatus == "attempting" || dispatchStatus == "receipt_pending" || dispatchStatus == "delivered"
+		ambiguous := t.State == StateDispatched || dispatchStatus == "attempting" || dispatchStatus == "receipt_pending" || (dispatchStatus == "delivered" && t.State != StateInputRequired && t.State != StateAuthRequired)
 		if ambiguous {
 			if attemptID == "" {
 				return nil, ErrConflict

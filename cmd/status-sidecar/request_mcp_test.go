@@ -40,10 +40,37 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"get_control"`, `"name":"ack_cancel"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
+	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"get_control"`, `"name":"ack_cancel"`, `"name":"request_input"`, `"name":"request_authorization"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPTaskInteractions(t *testing.T) {
+	var bodies []map[string]any
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		bodies = append(bodies, b)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"accepted":true,"stop":true}`))
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL}}
+	base := map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222", "interaction_id": "interaction_33333333333333333333333333333333", "question": "region?", "type": "choice", "options": []map[string]string{{"id": "us", "label": "US"}}}
+	result := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "request_input", "arguments": base})
+	if result.Result.(map[string]any)["isError"] == true {
+		t.Fatalf("input=%+v", result.Result)
+	}
+	base["interaction_id"] = "interaction_44444444444444444444444444444444"
+	base["authorization_flow"] = "github-app"
+	result = requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "request_authorization", "arguments": base})
+	if result.Result.(map[string]any)["isError"] == true {
+		t.Fatalf("auth=%+v", result.Result)
+	}
+	if len(bodies) != 2 || bodies[0]["type"] != "choice" || bodies[1]["type"] != "authorization" || bodies[1]["authorization_flow"] != "github-app" {
+		t.Fatalf("bodies=%+v", bodies)
 	}
 }
 

@@ -25,6 +25,7 @@ import (
 const maxAgentTaskBodyBytes = 6*(taskstore.HardMaxPromptBytes+taskstore.HardMaxCorrelationBytes) + 2048
 
 var agentTaskIDPattern = regexp.MustCompile(`^task_[a-f0-9]{32}$`)
+var interactionIDPattern = regexp.MustCompile(`^interaction_[a-f0-9]{32}$`)
 
 type createAgentTaskInput struct {
 	Prompt      string     `json:"prompt"`
@@ -53,6 +54,8 @@ type agentTaskResponse struct {
 	Progress    *taskstore.Progress       `json:"progress,omitempty"`
 	Results     []agentTaskResultResponse `json:"results,omitempty"`
 	Cancel      *agentTaskCancelResponse  `json:"cancel,omitempty"`
+	Interaction *taskstore.Interaction    `json:"interaction,omitempty"`
+	Messages    []taskstore.Message       `json:"messages,omitempty"`
 }
 
 type agentTaskCancelResponse struct {
@@ -129,6 +132,17 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		s.cancelAgentTask(w, r, agentName, parts[0])
 		return
 	}
+	if len(parts) == 4 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "interactions" && interactionIDPattern.MatchString(parts[2]) && (parts[3] == "respond" || parts[3] == "authorize") {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, agentName, "task-interaction-respond", ScopeRequestsWrite) {
+			return
+		}
+		s.respondAgentTaskInteraction(w, r, agentName, parts[0], parts[2], parts[3] == "authorize")
+		return
+	}
 	if len(parts) == 7 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "results" && resultIDPattern.MatchString(parts[2]) && parts[3] == "parts" && parts[5] == "content" && parts[6] == "" {
 		// Retained for compatibility with a trailing slash normalized below.
 		parts = parts[:6]
@@ -161,6 +175,53 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		return
 	}
 	s.getAgentTask(w, r, agentName, subpath)
+}
+
+func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Request, agentName, taskID, interactionID string, authorization bool) {
+	if !s.requireTaskStore(w) {
+		return
+	}
+	caller := callerFrom(r.Context())
+	if caller == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, taskstore.HardMaxInteractionResponseBytes*6+2048)
+	var in struct {
+		Response            json.RawMessage `json:"response"`
+		AuthorizationFlowID string          `json:"authorizationFlowId"`
+	}
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if d.Decode(&in) != nil || d.Decode(&struct{}{}) != io.EOF {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid interaction response")
+		return
+	}
+	var response json.RawMessage
+	if authorization {
+		if strings.TrimSpace(in.AuthorizationFlowID) == "" || len(in.Response) > 0 {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "authorization requires a completed authorization flow ID")
+			return
+		}
+		response, _ = json.Marshal(map[string]string{"authorizationFlowId": strings.TrimSpace(in.AuthorizationFlowID)})
+	} else {
+		if len(in.Response) == 0 || in.AuthorizationFlowID != "" {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "response is required")
+			return
+		}
+		response = in.Response
+	}
+	b, _ := json.Marshal([]any{taskID, interactionID, json.RawMessage(response)})
+	sum := sha256.Sum256(b)
+	result, err := s.TaskStore.RespondInteraction(r.Context(), taskstore.RespondInteractionParams{Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID, InteractionID: interactionID, RespondedBy: caller.Name, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]), Response: response})
+	if err != nil {
+		writeTaskStoreError(w, err)
+		return
+	}
+	if result.Replay {
+		w.Header().Set("Idempotent-Replay", "true")
+	}
+	writeJSON(w, http.StatusOK, taskResponse(result.Task, false))
 }
 
 func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentName, taskID string) {
@@ -443,7 +504,7 @@ func (s *Server) listAgentTasks(w http.ResponseWriter, r *http.Request, agentNam
 		}
 	}
 	state := taskstore.State(r.URL.Query().Get("state"))
-	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateCanceling && state != taskstore.StateCanceled && state != taskstore.StateCompleted && state != taskstore.StateFailed {
+	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateInputRequired && state != taskstore.StateAuthRequired && state != taskstore.StateCanceling && state != taskstore.StateCanceled && state != taskstore.StateCompleted && state != taskstore.StateFailed && state != taskstore.StateRejected {
 		writeJSONError(w, http.StatusBadRequest, "invalid_state", "unknown task state")
 		return
 	}
@@ -467,6 +528,10 @@ func taskResponse(t *taskstore.Task, includeResult bool) agentTaskResponse {
 	out := agentTaskResponse{ID: t.ID, Agent: t.AgentName, State: t.State, FailureCode: t.FailureCode, Correlation: t.Correlation, Version: t.Version, CreatedAt: t.CreatedAt, UpdatedAt: t.UpdatedAt, DeadlineAt: t.DeadlineAt, RetainUntil: t.RetainUntil, CompletedAt: t.CompletedAt, Progress: t.Progress}
 	if includeResult && t.State == taskstore.StateCompleted {
 		out.Response = t.Response
+	}
+	if includeResult {
+		out.Interaction = t.Interaction
+		out.Messages = t.Messages
 	}
 	if t.State == taskstore.StateFailed {
 		switch t.FailureCode {
@@ -536,6 +601,16 @@ func writeTaskStoreError(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusConflict, "idempotency_conflict", "Idempotency-Key was already used with different input")
 	case errors.Is(err, taskstore.ErrCancelReasonTooLarge):
 		writeJSONError(w, http.StatusRequestEntityTooLarge, "cancel_reason_too_large", "cancellation reason exceeds the configured limit")
+	case errors.Is(err, taskstore.ErrNotFound):
+		writeJSONError(w, http.StatusNotFound, "not_found", "task interaction not found")
+	case errors.Is(err, taskstore.ErrInteractionExpired):
+		writeJSONError(w, http.StatusGone, "interaction_expired", "task interaction has expired")
+	case errors.Is(err, taskstore.ErrAuthorizationFlow):
+		writeJSONError(w, http.StatusConflict, "authorization_flow_invalid", "authorization flow is incomplete or does not match this task interaction")
+	case errors.Is(err, taskstore.ErrInteractionNotReady), errors.Is(err, taskstore.ErrConflict):
+		writeJSONError(w, http.StatusConflict, "interaction_conflict", "task interaction is not awaiting this response")
+	case errors.Is(err, taskstore.ErrInteractionLimit):
+		writeJSONError(w, http.StatusConflict, "interaction_limit", "task interaction limit reached")
 	case errors.Is(err, taskstore.ErrOutstandingLimit):
 		w.Header().Set("Retry-After", "1")
 		writeJSONError(w, http.StatusTooManyRequests, "too_many_tasks", "agent has too many outstanding tasks")

@@ -94,3 +94,13 @@ func TestWorkerPersistsAttemptBeforeDelivery(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 }
+
+func TestEnvelopeCarriesBoundedAnsweredInteraction(t *testing.T) {
+	task := &taskstore.Task{ID: "task_11111111111111111111111111111111", AgentName: "sol", Prompt: "deploy", DeadlineAt: time.Now().Add(time.Hour), Interaction: &taskstore.Interaction{ID: "interaction_22222222222222222222222222222222", Type: taskstore.InteractionChoice, Status: taskstore.InteractionAnswered, Question: "region?", Response: []byte(`"eu"`)}}
+	got := envelope(task, "attempt_33333333333333333333333333333333")
+	for _, want := range []string{"continuation:", task.Interaction.ID, `response_json: "eu"`, "do not request the same interaction again"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q: %s", want, got)
+		}
+	}
+}
