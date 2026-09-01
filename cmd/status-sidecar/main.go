@@ -23,6 +23,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -385,6 +386,7 @@ type config struct {
 	AgentName       string
 	ControlPlaneURL string
 	AgentDiskBytes  int64
+	TaskResultsRoot string
 	// OtelEndpoint is the OTLP HTTP endpoint the metrics SDK posts to
 	// (kyber#256). Empty disables metrics — the rest of the sidecar
 	// keeps working.
@@ -421,12 +423,20 @@ func loadConfig() (config, error) {
 		OtelEndpoint:           os.Getenv("KYBER_OTEL_ENDPOINT"),
 		Runtime:                os.Getenv("KYBER_RUNTIME_TYPE"),
 		CgroupMemoryEventsPath: os.Getenv("KYBER_CGROUP_MEMORY_EVENTS_PATH"),
+		TaskResultsRoot:        os.Getenv("KYBER_TASK_RESULTS_ROOT"),
 	}
 	if c.AgentName == "" {
 		return c, fmt.Errorf("AGENT_NAME unset")
 	}
 	if c.ControlPlaneURL == "" {
 		return c, fmt.Errorf("KYBER_CONTROL_PLANE_INTERNAL_URL unset")
+	}
+	if c.TaskResultsRoot == "" {
+		c.TaskResultsRoot = "/persist/task-results"
+	}
+	c.TaskResultsRoot = filepath.Clean(c.TaskResultsRoot)
+	if c.TaskResultsRoot != "/persist" && !strings.HasPrefix(c.TaskResultsRoot, "/persist/") {
+		return c, fmt.Errorf("KYBER_TASK_RESULTS_ROOT must be beneath /persist")
 	}
 	diskBytes, err := strconv.ParseInt(os.Getenv("KYBER_AGENT_DISK_BYTES"), 10, 64)
 	if err != nil || diskBytes <= 0 {

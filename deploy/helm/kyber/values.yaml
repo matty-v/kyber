@@ -129,6 +129,18 @@ api:
     maxOutstanding: 8
     maxRetained: 100000
     maxDispatchAttempts: 3
+    maxProgressBytes: 1024
+    maxProgressUpdates: 200
+    maxResults: 16
+    maxResultParts: 8
+    maxTextPartBytes: 32768
+    maxJSONPartBytes: 65536
+    maxFileBytes: 26214400
+    maxTaskFileBytes: 104857600
+    maxResultNameBytes: 128
+    maxDescriptionBytes: 1024
+    maxFilenameBytes: 255
+    resultsRoot: /persist/task-results
     defaultDeadlineHours: 24
     maxDeadlineHours: 168
     retentionHours: 168

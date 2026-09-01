@@ -449,6 +449,11 @@ spec:
             # init-container args — avoids hardcoding the Helm-rendered Service name.
             - name: KYBER_CONTROL_PLANE_INTERNAL_URL
               value: "http://{{ include "kyber.fullname" . }}-control-plane.{{ include "kyber.namespace" . }}.svc:{{ .Values.api.service.internalPort }}"
+            - name: KYBER_TASK_RESULTS_ROOT
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASK_RESULTS_ROOT
             - name: KYBER_ALERT_WEBHOOK_URL
               value: {{ .Values.telemetry.alertWebhookUrl | quote }}
             # GitHub identity-repo auto-create owner.

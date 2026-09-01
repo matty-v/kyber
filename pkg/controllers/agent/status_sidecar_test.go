@@ -54,6 +54,18 @@ func TestAppendStatusSidecar_EnvVarsMatchTokenReporterConvention(t *testing.T) {
 	}
 }
 
+func TestAppendStatusSidecar_ConfiguresTaskResultsRoot(t *testing.T) {
+	spec := &corev1.PodSpec{}
+	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1", TaskResultsRoot: "/persist/results"})
+	side := mustStatusSidecar(t, spec)
+	for _, env := range side.Env {
+		if env.Name == "KYBER_TASK_RESULTS_ROOT" && env.Value == "/persist/results" {
+			return
+		}
+	}
+	t.Fatal("KYBER_TASK_RESULTS_ROOT not propagated to status sidecar")
+}
+
 func TestAppendStatusSidecar_LivenessProbeOnHealthzPort(t *testing.T) {
 	spec := &corev1.PodSpec{}
 	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})

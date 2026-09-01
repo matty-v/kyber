@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/matty-v/kyber/pkg/api"
+	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
 )
 
@@ -114,5 +116,51 @@ func TestAgentTasksIdempotencyConflict(t *testing.T) {
 	two := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "two"}, "key")
 	if two.Code != http.StatusConflict {
 		t.Fatalf("conflict=%d %s", two.Code, two.Body.String())
+	}
+}
+
+func TestAgentTaskFileDownloadIsAuthorizedAndRanged(t *testing.T) {
+	store, err := taskstore.NewMemoryStore(taskstore.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := taskstore.AgentRef{Namespace: "kyber-system", Name: "kiosk"}
+	created, err := store.Create(t.Context(), taskstore.CreateParams{ID: "task_11111111111111111111111111111111", Agent: a, CreatedBy: "reader", Prompt: "make report"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.MarkDispatched(t.Context(), a, created.Task.ID, created.Task.Version); err != nil {
+		t.Fatal(err)
+	}
+	objects := taskobject.NewMemoryStore()
+	if err := objects.Put(t.Context(), "private-key", strings.NewReader("abcdef"), 6, taskobject.PutOptions{Filename: "report.pdf", ContentType: "application/pdf"}); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.PublishResult(t.Context(), a, created.Task.ID, "attempt_22222222222222222222222222222222", taskstore.Result{
+		ID: "result_33333333333333333333333333333333", Name: "report", Parts: []taskstore.ResultPart{{ID: "part_0", Kind: taskstore.PartFile, File: &taskstore.FileMetadata{ObjectID: "private-key", Filename: "report.pdf", MediaType: "application/pdf", SizeBytes: 6, SHA256: "digest", ScanStatus: "not_configured"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := bareAgent("kiosk")
+	agent.Spec.RequestReplyEnabled = true
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", TaskStore: store, TaskObjectStore: objects, TasksEnabled: true, Callers: []api.ScopedCaller{{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}}}}
+	if server.TaskObjectStore == nil {
+		t.Fatal("task object store was not assigned")
+	}
+	h := server.BuildHandler()
+	target := "/api/v1/agents/kiosk/tasks/task_11111111111111111111111111111111/results/result_33333333333333333333333333333333/parts/0/content"
+	r := httptest.NewRequest(http.MethodGet, target, nil)
+	r.Header.Set("Authorization", "Bearer "+requestReadKey)
+	r.Header.Set("Range", "bytes=1-3")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusPartialContent || w.Body.String() != "bcd" || w.Header().Get("Content-Disposition") != `attachment; filename="report.pdf"` {
+		t.Fatalf("download=%d headers=%v body=%q", w.Code, w.Header(), w.Body.String())
+	}
+	unauthorized := httptest.NewRecorder()
+	h.ServeHTTP(unauthorized, httptest.NewRequest(http.MethodGet, target, nil))
+	if unauthorized.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthorized=%d", unauthorized.Code)
 	}
 }

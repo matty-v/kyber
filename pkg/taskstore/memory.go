@@ -2,6 +2,9 @@ package taskstore
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"sort"
 	"strings"
 	"sync"
@@ -18,13 +21,14 @@ type MemoryStore struct {
 	now         func() time.Time
 	tasks       map[string]*Task
 	idempotency map[string]idempotencyRecord
+	updates     map[string]map[string]string
 }
 
 func NewMemoryStore(limits Limits) (*MemoryStore, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}}, nil
+	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}}, nil
 }
 
 func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, error) {
@@ -219,8 +223,183 @@ func (s *MemoryStore) Complete(_ context.Context, a AgentRef, id string, v int64
 	now := s.now().UTC()
 	t.State = StateCompleted
 	t.Response = response
+	if response != "" && len(t.Results) == 0 {
+		sum := sha256.Sum256([]byte(t.ID))
+		r := Result{ID: "result_" + hex.EncodeToString(sum[:16]), Name: "response", Parts: []ResultPart{{ID: "part_0", Kind: PartText, Text: response}}, CreatedAt: now}
+		r.ContentDigest = resultDigest(r)
+		t.Results = []Result{r}
+	}
 	t.Version++
 	t.UpdatedAt = now
 	t.CompletedAt = &now
+	return nil
+}
+
+func (s *MemoryStore) ReportProgress(_ context.Context, a AgentRef, id, attemptID string, u ProgressUpdate) (*Progress, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(a, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := validateProgress(s.limits, attemptID, u); err != nil {
+		return nil, false, err
+	}
+	fingerprint := progressDigest(u)
+	if prior, ok := s.updates[id][u.UpdateID]; ok {
+		if prior != fingerprint {
+			return nil, false, ErrUpdateConflict
+		}
+		p := *t.Progress
+		return &p, true, nil
+	}
+	if t.State != StateDispatched {
+		return nil, false, ErrConflict
+	}
+	if len(s.updates[id]) >= s.limits.MaxProgressUpdates {
+		return nil, false, ErrUpdateLimit
+	}
+	if s.updates[id] == nil {
+		s.updates[id] = map[string]string{}
+	}
+	now := s.now().UTC()
+	t.Progress = &Progress{Message: u.Message, Percent: cloneInt(u.Percent), UpdatedAt: now}
+	t.Version++
+	t.UpdatedAt = now
+	s.updates[id][u.UpdateID] = fingerprint
+	p := *t.Progress
+	p.Percent = cloneInt(p.Percent)
+	return &p, false, nil
+}
+
+func (s *MemoryStore) PublishResult(_ context.Context, a AgentRef, id, attemptID string, r Result) (*Result, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(a, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if err := validateResult(s.limits, attemptID, r); err != nil {
+		return nil, false, err
+	}
+	digest := resultDigest(r)
+	for i := range t.Results {
+		if t.Results[i].ID == r.ID {
+			if t.Results[i].ContentDigest != digest {
+				return nil, false, ErrResultConflict
+			}
+			out := cloneResults(t.Results[i : i+1])[0]
+			return &out, true, nil
+		}
+		if t.Results[i].Name == r.Name {
+			return nil, false, ErrResultConflict
+		}
+	}
+	if t.State != StateDispatched {
+		return nil, false, ErrConflict
+	}
+	if len(t.Results) >= s.limits.MaxResults {
+		return nil, false, ErrResultLimit
+	}
+	r.ContentDigest = digest
+	r.CreatedAt = s.now().UTC()
+	t.Results = append(t.Results, cloneResults([]Result{r})[0])
+	t.Version++
+	t.UpdatedAt = r.CreatedAt
+	out := cloneResults([]Result{r})[0]
+	return &out, false, nil
+}
+
+func cloneInt(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+func progressDigest(u ProgressUpdate) string {
+	b, _ := json.Marshal(struct {
+		Message string
+		Percent *int
+	}{u.Message, u.Percent})
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+func resultDigest(r Result) string {
+	r.Parts = cloneResults([]Result{r})[0].Parts
+	r.ContentDigest = ""
+	r.CreatedAt = time.Time{}
+	for i := range r.Parts {
+		if r.Parts[i].File != nil {
+			file := *r.Parts[i].File
+			file.ObjectID = ""
+			file.ScanStatus = ""
+			r.Parts[i].File = &file
+		}
+	}
+	b, _ := json.Marshal(r)
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:])
+}
+
+func validateProgress(l Limits, attempt string, u ProgressUpdate) error {
+	if attempt == "" {
+		return ErrInvalidAttempt
+	}
+	if u.UpdateID == "" || strings.TrimSpace(u.Message) == "" {
+		return ErrInvalid
+	}
+	if len([]byte(u.Message)) > l.MaxProgressBytes {
+		return ErrProgressTooLarge
+	}
+	if u.Percent != nil && (*u.Percent < 0 || *u.Percent > 100) {
+		return ErrInvalid
+	}
+	return nil
+}
+func validateResult(l Limits, attempt string, r Result) error {
+	if attempt == "" {
+		return ErrInvalidAttempt
+	}
+	if r.ID == "" || strings.TrimSpace(r.Name) == "" || len(r.Parts) == 0 {
+		return ErrInvalid
+	}
+	if len([]byte(r.Name)) > l.MaxResultNameBytes || len([]byte(r.Description)) > l.MaxDescriptionBytes || len(r.Parts) > l.MaxResultParts {
+		return ErrResultTooLarge
+	}
+	var files int64
+	seen := map[string]bool{}
+	for _, p := range r.Parts {
+		if p.ID == "" || seen[p.ID] {
+			return ErrInvalid
+		}
+		seen[p.ID] = true
+		switch p.Kind {
+		case PartText:
+			if p.JSON != nil || p.File != nil || int64(len([]byte(p.Text))) > l.MaxTextPartBytes {
+				return ErrResultTooLarge
+			}
+		case PartJSON:
+			if p.Text != "" || p.File != nil || len(p.JSON) == 0 || !json.Valid(p.JSON) {
+				return ErrInvalid
+			}
+			if int64(len(p.JSON)) > l.MaxJSONPartBytes {
+				return ErrResultTooLarge
+			}
+		case PartFile:
+			if p.Text != "" || p.JSON != nil || p.File == nil || p.File.ObjectID == "" || p.File.Filename == "" || p.File.MediaType == "" || p.File.SHA256 == "" || p.File.SizeBytes < 0 {
+				return ErrInvalid
+			}
+			if len([]byte(p.File.Filename)) > l.MaxFilenameBytes || p.File.SizeBytes > l.MaxFileBytes {
+				return ErrResultTooLarge
+			}
+			files += p.File.SizeBytes
+		default:
+			return ErrInvalid
+		}
+	}
+	if files > l.MaxTaskFileBytes {
+		return ErrResultTooLarge
+	}
 	return nil
 }

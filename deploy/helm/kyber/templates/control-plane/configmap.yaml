@@ -39,6 +39,18 @@ data:
   KYBER_TASKS_MAX_OUTSTANDING: {{ .Values.api.durableTasks.maxOutstanding | quote }}
   KYBER_TASKS_MAX_RETAINED: {{ .Values.api.durableTasks.maxRetained | quote }}
   KYBER_TASKS_MAX_DISPATCH_ATTEMPTS: {{ .Values.api.durableTasks.maxDispatchAttempts | quote }}
+  KYBER_TASKS_MAX_PROGRESS_BYTES: {{ .Values.api.durableTasks.maxProgressBytes | quote }}
+  KYBER_TASKS_MAX_PROGRESS_UPDATES: {{ .Values.api.durableTasks.maxProgressUpdates | quote }}
+  KYBER_TASKS_MAX_RESULTS: {{ .Values.api.durableTasks.maxResults | quote }}
+  KYBER_TASKS_MAX_RESULT_PARTS: {{ .Values.api.durableTasks.maxResultParts | quote }}
+  KYBER_TASKS_MAX_TEXT_PART_BYTES: {{ .Values.api.durableTasks.maxTextPartBytes | quote }}
+  KYBER_TASKS_MAX_JSON_PART_BYTES: {{ .Values.api.durableTasks.maxJSONPartBytes | quote }}
+  KYBER_TASKS_MAX_FILE_BYTES: {{ .Values.api.durableTasks.maxFileBytes | quote }}
+  KYBER_TASKS_MAX_TASK_FILE_BYTES: {{ .Values.api.durableTasks.maxTaskFileBytes | quote }}
+  KYBER_TASKS_MAX_RESULT_NAME_BYTES: {{ .Values.api.durableTasks.maxResultNameBytes | quote }}
+  KYBER_TASKS_MAX_DESCRIPTION_BYTES: {{ .Values.api.durableTasks.maxDescriptionBytes | quote }}
+  KYBER_TASKS_MAX_FILENAME_BYTES: {{ .Values.api.durableTasks.maxFilenameBytes | quote }}
+  KYBER_TASK_RESULTS_ROOT: {{ .Values.api.durableTasks.resultsRoot | quote }}
   KYBER_TASKS_DEFAULT_DEADLINE_HOURS: {{ .Values.api.durableTasks.defaultDeadlineHours | quote }}
   KYBER_TASKS_MAX_DEADLINE_HOURS: {{ .Values.api.durableTasks.maxDeadlineHours | quote }}
   KYBER_TASKS_RETENTION_HOURS: {{ .Values.api.durableTasks.retentionHours | quote }}

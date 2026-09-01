@@ -6,6 +6,9 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -37,10 +40,78 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
+	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPProgressAndInlineResults(t *testing.T) {
+	var paths []string
+	var bodies []map[string]any
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		paths = append(paths, r.URL.Path)
+		bodies = append(bodies, body)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL}}
+	calls := []map[string]any{
+		{"name": "report_progress", "arguments": map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222", "update_id": "update_33333333333333333333333333333333", "message": "halfway", "percent": 50}},
+		{"name": "publish_text", "arguments": map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222", "result_id": "result_44444444444444444444444444444444", "name": "summary", "text": "done"}},
+		{"name": "publish_json", "arguments": map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222", "result_id": "result_55555555555555555555555555555555", "name": "manifest", "value": map[string]any{"pages": 8}}},
+	}
+	for _, call := range calls {
+		response := requestMCPCall(t, server.handle, "tools/call", call)
+		if result := response.Result.(map[string]any); result["isError"] == true {
+			t.Fatalf("%s returned error: %+v", call["name"], result)
+		}
+	}
+	if got := strings.Join(paths, ","); got != "/internal/agents/alice/task-progress,/internal/agents/alice/task-results,/internal/agents/alice/task-results" {
+		t.Fatalf("paths = %s", got)
+	}
+	if bodies[0]["message"] != "halfway" || bodies[1]["kind"] != "text" || bodies[2]["kind"] != "json" {
+		t.Fatalf("bodies = %+v", bodies)
+	}
+}
+
+func TestRequestMCPPublishFileStreamsSafeResult(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "report.pdf"), []byte("%PDF-1.7\nfixture"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var gotPath string
+	var gotBody []byte
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		gotBody, _ = io.ReadAll(r.Body)
+		if r.Header.Get("X-Kyber-Task-Metadata") == "" {
+			t.Fatal("missing task metadata")
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"result":{"parts":[{"file":{"sha256":"f581fc87f30296eff11777c3ce1b9a8b7077071ad8abedfcba317fef0c807224"}}]}}`))
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL, TaskResultsRoot: root}}
+	response := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "publish_file", "arguments": map[string]any{
+		"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222",
+		"result_id": "result_33333333333333333333333333333333", "name": "report", "path": filepath.Join(root, "report.pdf"),
+	}})
+	if result := response.Result.(map[string]any); result["isError"] == true {
+		t.Fatalf("tool error: %+v", result)
+	}
+	if gotPath != "/internal/agents/alice/task-files" || string(gotBody) != "%PDF-1.7\nfixture" {
+		t.Fatalf("path=%q body=%q", gotPath, gotBody)
+	}
+	response = requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "publish_file", "arguments": map[string]any{
+		"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222",
+		"result_id": "result_44444444444444444444444444444444", "name": "escape", "path": "/etc/passwd",
+	}})
+	if result := response.Result.(map[string]any); result["isError"] != true {
+		t.Fatalf("outside path unexpectedly accepted: %+v", result)
 	}
 }
 
