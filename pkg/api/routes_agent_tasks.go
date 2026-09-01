@@ -132,7 +132,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		s.cancelAgentTask(w, r, agentName, parts[0])
 		return
 	}
-	if len(parts) == 4 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "interactions" && interactionIDPattern.MatchString(parts[2]) && (parts[3] == "respond" || parts[3] == "authorize") {
+	if len(parts) == 4 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "interactions" && interactionIDPattern.MatchString(parts[2]) && parts[3] == "respond" {
 		if r.Method != http.MethodPost {
 			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 			return
@@ -140,7 +140,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		if !s.requireTaskScope(w, r, agentName, ScopeTasksContinue) {
 			return
 		}
-		s.respondAgentTaskInteraction(w, r, agentName, parts[0], parts[2], parts[3] == "authorize")
+		s.respondAgentTaskInteraction(w, r, agentName, parts[0], parts[2])
 		return
 	}
 	if len(parts) == 7 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "results" && resultIDPattern.MatchString(parts[2]) && parts[3] == "parts" && parts[5] == "content" && parts[6] == "" {
@@ -177,7 +177,7 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 	s.getAgentTask(w, r, agentName, subpath)
 }
 
-func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Request, agentName, taskID, interactionID string, authorization bool) {
+func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Request, agentName, taskID, interactionID string) {
 	if !s.requireTaskStore(w) {
 		return
 	}
@@ -188,8 +188,7 @@ func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Requ
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, taskstore.HardMaxInteractionResponseBytes*6+2048)
 	var in struct {
-		Response            json.RawMessage `json:"response"`
-		AuthorizationFlowID string          `json:"authorizationFlowId"`
+		Response json.RawMessage `json:"response"`
 	}
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -197,20 +196,11 @@ func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid interaction response")
 		return
 	}
-	var response json.RawMessage
-	if authorization {
-		if strings.TrimSpace(in.AuthorizationFlowID) == "" || len(in.Response) > 0 {
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "authorization requires a completed authorization flow ID")
-			return
-		}
-		response, _ = json.Marshal(map[string]string{"authorizationFlowId": strings.TrimSpace(in.AuthorizationFlowID)})
-	} else {
-		if len(in.Response) == 0 || in.AuthorizationFlowID != "" {
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "response is required")
-			return
-		}
-		response = in.Response
+	if len(in.Response) == 0 {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "response is required")
+		return
 	}
+	response := in.Response
 	b, _ := json.Marshal([]any{taskID, interactionID, json.RawMessage(response)})
 	sum := sha256.Sum256(b)
 	auth, ok := s.taskAuthorizationContext(w, r, agentName)

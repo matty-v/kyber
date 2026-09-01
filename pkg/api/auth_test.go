@@ -195,6 +195,12 @@ func TestParseScopedCallers_TaskScopesRequireStableSecurityEnvelope(t *testing.T
 			t.Errorf("task caller missing %s must be rejected", name)
 		}
 	}
+	for _, resource := range []string{"*", "kiosk", "/kiosk", "kyber-system/", "Kyber-System/kiosk", "kyber-system/kiosk/extra"} {
+		doc := `[{"name":"gateway","principalId":"principal_gateway","tenantId":"tenant_acme","credentialId":"credential_gateway","credentialGeneration":1,"agentResources":["` + resource + `"],"key":"secret","scopes":["tasks:read"]}]`
+		if _, err := ParseScopedCallers(doc); err == nil {
+			t.Errorf("malformed or wildcard task resource %q must be rejected", resource)
+		}
+	}
 }
 
 func TestParseScopedCallers_KeyFrom(t *testing.T) {

@@ -141,27 +141,6 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
 
-  /api/v1/agents/{name}/tasks/{taskId}/interactions/{interactionId}/authorize:
-    post:
-      operationId: authorizeAgentTaskInteraction
-      summary: Resume from a completed, task-bound authorization flow
-      description: Requires tasks:continue plus tenant, owner, and agent-resource authorization.
-      tags: [tasks]
-      parameters:
-        - {name: name, in: path, required: true, schema: {type: string}}
-        - {name: taskId, in: path, required: true, schema: {type: string, pattern: '^task_[a-f0-9]{32}$'}}
-        - {name: interactionId, in: path, required: true, schema: {type: string, pattern: '^interaction_[a-f0-9]{32}$'}}
-        - {name: Idempotency-Key, in: header, schema: {type: string, maxLength: 128}}
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: {$ref: '#/components/schemas/TaskAuthorizationResponse'}
-      responses:
-        '200': {description: Completed authorization flow accepted and continuation queued, content: {application/json: {schema: {$ref: '#/components/schemas/AgentTask'}}}}
-        '404': {$ref: '#/components/responses/NotFound'}
-        '409': {$ref: '#/components/responses/Conflict'}
-
   /api/v1/agents/{name}/tasks/{taskId}/results/{resultId}/parts/{ordinal}/content:
     get:
       operationId: downloadAgentTaskResultPart
@@ -2024,13 +2003,6 @@ components:
       additionalProperties: false
       properties:
         response: {}
-
-    TaskAuthorizationResponse:
-      type: object
-      required: [authorizationFlowId]
-      additionalProperties: false
-      properties:
-        authorizationFlowId: {type: string, description: Opaque ID of a registered flow already completed for this caller and task interaction.}
 
     AgentTaskInteraction:
       type: object

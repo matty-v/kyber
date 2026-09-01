@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
 // Scope is a named capability a caller may hold (kyber#474). Scopes are the
@@ -183,6 +184,14 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		}
 		if hasTaskScope && (c.PrincipalID == "" || c.TenantID == "" || c.CredentialID == "" || c.CredentialGeneration == 0 || len(c.AgentResources) == 0) {
 			return nil, fmt.Errorf("caller %q: task scopes require principalId, tenantId, credentialId, credentialGeneration, and agentResources", c.Name)
+		}
+		if hasTaskScope {
+			for _, resource := range c.AgentResources {
+				parts := strings.Split(resource, "/")
+				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 {
+					return nil, fmt.Errorf("caller %q: agent resource %q must be an exact namespace/name", c.Name, resource)
+				}
+			}
 		}
 	}
 	return callers, nil

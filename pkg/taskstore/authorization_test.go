@@ -43,3 +43,29 @@ func TestMemoryStoreAuthorizationBindsTenantPrincipalResourceAndCursor(t *testin
 		t.Fatalf("cursor replay across principals error=%v, want invalid cursor", err)
 	}
 }
+
+func TestMemoryStoreCreateIdempotencyIsTenantScoped(t *testing.T) {
+	store, err := NewMemoryStore(DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := AgentRef{Namespace: "kyber-system", Name: "kiosk"}
+	base := CreateParams{Agent: agent, CreatedBy: "principal_local", Prompt: "same request", IdempotencyKey: "same-key", RequestHash: "same-hash"}
+	first := base
+	first.ID = "task_33333333333333333333333333333333"
+	first.Authorization = AuthorizationContext{TenantID: "tenant_a", PrincipalID: "principal_local", AgentResourceID: "kyber-system/kiosk"}
+	createdA, err := store.Create(t.Context(), first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := base
+	second.ID = "task_44444444444444444444444444444444"
+	second.Authorization = AuthorizationContext{TenantID: "tenant_b", PrincipalID: "principal_local", AgentResourceID: "kyber-system/kiosk"}
+	createdB, err := store.Create(t.Context(), second)
+	if err != nil {
+		t.Fatalf("tenant-local principal and idempotency key must not collide across tenants: %v", err)
+	}
+	if createdB.Replay || createdB.Task.ID == createdA.Task.ID {
+		t.Fatalf("cross-tenant create replayed first task: first=%s second=%s replay=%v", createdA.Task.ID, createdB.Task.ID, createdB.Replay)
+	}
+}

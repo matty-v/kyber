@@ -121,10 +121,11 @@ an idempotency key. Kyber validates the response type, appends immutable caller
 and platform messages, and queues a fresh attempt. The continuation envelope
 contains only the original instruction and bounded task-visible interaction
 context. It never persists or replays a harness transcript, hidden reasoning,
-raw tool output, environment state, or credentials. Authorization requests
-create an owner-, task-, and interaction-bound registered flow. Continuation is
-accepted only after a platform connector durably completes that exact flow, and
-the task message carries only its connector-produced opaque reference.
+raw tool output, environment state, or credentials. The authorization
+interaction type and registered-flow persistence are reserved for a future
+platform connector boundary. No public authorization-continuation route is
+advertised until a production producer can durably complete and bind the flow;
+ordinary typed responses cannot impersonate that completion.
 
 PostgreSQL enforces one live interaction per task. Interaction expiry,
 cancellation, completion, rejection, stale attempts, and duplicate responses
