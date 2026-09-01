@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -72,26 +71,6 @@ func (s ScopeSet) Has(required Scope) bool {
 		return true
 	}
 	return false
-}
-
-// names returns the explicitly-held scopes, sorted, for serializing a Caller
-// into a signed browser-session token. A full-scope set has no explicit
-// members — its `full` flag is carried separately in the claims, because a
-// full-scope caller must stay full-scope even if new scopes are added to the
-// vocabulary after the token was issued. Sorted so a token's bytes are a
-// function of the caller, not of map iteration order.
-func (s ScopeSet) names() []string {
-	if s.full || len(s.scopes) == 0 {
-		return nil
-	}
-	out := make([]string, 0, len(s.scopes))
-	for scope, held := range s.scopes {
-		if held {
-			out = append(out, string(scope))
-		}
-	}
-	sort.Strings(out)
-	return out
 }
 
 // Caller is the authenticated principal behind a request (kyber#474). Name is
@@ -222,6 +201,35 @@ func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error
 	return signBrowserSession(a.currentKey(), caller, time.Now(), browserSessionTTL)
 }
 
+// callerForSession resolves verified session claims into the caller's CURRENT
+// authority. The token names the principal; this decides what that principal
+// may do, now — so removing a scoped caller from configuration, or narrowing
+// its scopes, takes effect on the next request rather than whenever the
+// operator's cookie happens to expire.
+//
+// The two branches never consult each other's source, so a scoped caller that
+// happens to be named "legacy" cannot borrow full scope.
+func (a *APIKeyAuthenticator) callerForSession(claims *browserSessionClaims) (*Caller, error) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+
+	if claims.FullScope {
+		// Full scope is the legacy shared key's authority, so it exists only
+		// as long as that key does.
+		if a.key == "" {
+			return nil, errors.New("browser session names the shared key, which is no longer configured")
+		}
+		return &Caller{Name: claims.Name, Scopes: newFullScopeSet()}, nil
+	}
+	for i := range a.callers {
+		if a.callers[i].caller.Name == claims.Name {
+			c := a.callers[i].caller
+			return &c, nil
+		}
+	}
+	return nil, fmt.Errorf("browser session names caller %q, which is no longer configured", claims.Name)
+}
+
 // RenewBrowserSession slides a browser-session cookie forward when the request
 // that carried it is more than halfway to expiry. authMiddleware calls this
 // after a successful authentication.
@@ -241,8 +249,12 @@ func (a *APIKeyAuthenticator) RenewBrowserSession(w http.ResponseWriter, r *http
 	if err != nil || cookie.Value == "" {
 		return
 	}
-	caller, expiresAt, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now())
-	if err != nil || time.Until(expiresAt) > browserSessionRenewAfter {
+	claims, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now())
+	if err != nil || time.Until(claims.expiresAt()) > browserSessionRenewAfter {
+		return
+	}
+	caller, err := a.callerForSession(claims)
+	if err != nil {
 		return
 	}
 	token, err := a.CreateBrowserSession(*caller)
@@ -288,13 +300,15 @@ func (a *APIKeyAuthenticator) currentKey() string {
 func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 	if r.Header.Get("Authorization") == "" {
 		if cookie, err := r.Cookie(browserSessionCookie); err == nil && cookie.Value != "" {
-			caller, _, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now())
-			if err == nil {
-				return caller, nil
+			if claims, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now()); err == nil {
+				if caller, err := a.callerForSession(claims); err == nil {
+					return caller, nil
+				}
 			}
-			// Expired, tampered with, or signed under a pre-rotation key — all
-			// of which the operator recovers from the same way, and all of
-			// which the PWA keys its re-auth prompt on.
+			// Expired, tampered with, signed under a pre-rotation key, or
+			// naming a caller that no longer exists — the operator recovers
+			// from all of them the same way, and the PWA keys its re-auth
+			// prompt on this code.
 			return nil, errSessionExpired("browser session expired or no longer valid — sign in again")
 		}
 	}

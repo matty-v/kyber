@@ -35,9 +35,16 @@ func (s *Server) handleBrowserSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// setBrowserSessionCookie REPLACES any session cookie already staged on the
+// response rather than appending one. A single request can legitimately reach
+// here twice — authMiddleware renews a half-spent cookie before the handler
+// runs, and /api/v1/rotate-api-key then issues a replacement under the new
+// key. Appending would send the browser a cookie that is already dead
+// alongside the live one and leave the outcome to header ordering. This is the
+// only Set-Cookie the API emits, so replacing it drops nothing else.
 func setBrowserSessionCookie(w http.ResponseWriter, r *http.Request, token string) {
 	secure := r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https")
-	http.SetCookie(w, &http.Cookie{
+	cookie := &http.Cookie{
 		Name:     browserSessionCookie,
 		Value:    token,
 		Path:     "/api/",
@@ -46,5 +53,6 @@ func setBrowserSessionCookie(w http.ResponseWriter, r *http.Request, token strin
 		SameSite: http.SameSiteStrictMode,
 		MaxAge:   int(browserSessionTTL / time.Second),
 		Expires:  time.Now().Add(browserSessionTTL),
-	})
+	}
+	w.Header().Set("Set-Cookie", cookie.String())
 }

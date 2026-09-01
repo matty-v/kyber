@@ -24,30 +24,91 @@ func TestBrowserSessionTokenRoundTrip(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, expiresAt, err := verifyBrowserSession("legacy-key", token, now)
+			claims, err := verifyBrowserSession("legacy-key", token, now)
 			if err != nil {
 				t.Fatalf("verify: %v", err)
 			}
-			if got.Name != caller.Name {
-				t.Errorf("name = %q, want %q", got.Name, caller.Name)
+			if claims.Name != caller.Name {
+				t.Errorf("name = %q, want %q", claims.Name, caller.Name)
 			}
-			if want := now.Add(browserSessionTTL); !expiresAt.Equal(want) {
-				t.Errorf("expiresAt = %v, want %v", expiresAt, want)
+			if claims.FullScope != caller.Scopes.full {
+				t.Errorf("fullScope = %v, want %v", claims.FullScope, caller.Scopes.full)
 			}
-			// Scope authority must survive the round trip exactly: a
-			// full-scope caller stays full-scope, and a scoped one gains
-			// nothing it did not present with.
-			for _, scope := range []Scope{ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead} {
-				if got.Scopes.Has(scope) != caller.Scopes.Has(scope) {
-					t.Errorf("Has(%s) = %v, want %v", scope, got.Scopes.Has(scope), caller.Scopes.Has(scope))
-				}
+			if want := now.Add(browserSessionTTL); !claims.expiresAt().Equal(want) {
+				t.Errorf("expiresAt = %v, want %v", claims.expiresAt(), want)
 			}
 		})
 	}
 }
 
-// Tokens are a pure function of (key, caller, issuedAt) — no map iteration
-// order leaking into the bytes. Guards ScopeSet.names()'s sort.
+// A token must not carry authority. It names a principal; the scopes come from
+// live configuration at verify time, so narrowing or removing a caller takes
+// effect on the next request instead of whenever the cookie expires.
+func TestBrowserSessionScopesResolveAgainstLiveConfig(t *testing.T) {
+	const key = "legacy-key"
+	issuer := NewAPIKeyAuthenticator(key, ScopedCaller{
+		Name: "ci", Key: "ci-key", Scopes: []string{string(ScopeLifecycleAdmin), string(ScopeRequestsWrite)},
+	})
+	token, err := issuer.CreateBrowserSession(Caller{Name: "ci", Scopes: newScopeSet(ScopeLifecycleAdmin, ScopeRequestsWrite)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withCookie := func() *http.Request {
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: token})
+		return req
+	}
+
+	t.Run("narrowed scopes apply immediately", func(t *testing.T) {
+		narrowed := NewAPIKeyAuthenticator(key, ScopedCaller{
+			Name: "ci", Key: "ci-key", Scopes: []string{string(ScopeRequestsRead)},
+		})
+		caller, err := narrowed.Authenticate(withCookie())
+		if err != nil {
+			t.Fatalf("authenticate: %v", err)
+		}
+		if caller.Scopes.Has(ScopeLifecycleAdmin) {
+			t.Error("session still holds lifecycle:admin after it was removed from config")
+		}
+		if !caller.Scopes.Has(ScopeRequestsRead) {
+			t.Error("session did not pick up the caller's current scopes")
+		}
+	})
+
+	t.Run("removed caller is signed out", func(t *testing.T) {
+		removed := NewAPIKeyAuthenticator(key)
+		_, err := removed.Authenticate(withCookie())
+		if err == nil {
+			t.Fatal("a caller removed from config still authenticates")
+		}
+		var authErr *authError
+		if !errors.As(err, &authErr) || authErr.Code() != ErrCodeSessionExpired {
+			t.Errorf("err = %v, want code %q", err, ErrCodeSessionExpired)
+		}
+	})
+
+	t.Run("a scoped caller cannot borrow the shared key's name", func(t *testing.T) {
+		// A full-scope claim resolves only from the legacy key, never from the
+		// callers list — so naming a scoped caller "legacy" grants it nothing.
+		impostor := NewAPIKeyAuthenticator("", ScopedCaller{
+			Name: "legacy", Key: "impostor-key", Scopes: []string{string(ScopeRequestsRead)},
+		})
+		full, err := signBrowserSession("some-key", Caller{Name: "legacy", Scopes: newFullScopeSet()}, time.Now(), browserSessionTTL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+		req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: full})
+		if _, err := impostor.Authenticate(req); err == nil {
+			t.Fatal("full-scope session accepted with no shared key configured")
+		}
+	})
+}
+
+// Tokens are a pure function of (key, caller, issuedAt): signing is HMAC, not
+// a randomized signature, so the same inputs must always produce the same
+// cookie value. Guards against a future claims field with nondeterministic
+// encoding.
 func TestBrowserSessionTokenIsDeterministic(t *testing.T) {
 	now := time.Unix(1_780_000_000, 0)
 	caller := Caller{Name: "ci", Scopes: newScopeSet(ScopeRequestsRead, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeLifecycleWrite)}
@@ -102,7 +163,7 @@ func TestBrowserSessionTokenRejections(t *testing.T) {
 		"claims swapped under a kept mac": version + "." + escalated + "." + mac,
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, _, err := verifyBrowserSession("legacy-key", token, now); err == nil {
+			if _, err := verifyBrowserSession("legacy-key", token, now); err == nil {
 				t.Fatal("token verified, want rejection")
 			}
 		})
@@ -115,16 +176,16 @@ func TestBrowserSessionTokenExpires(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := verifyBrowserSession("legacy-key", token, issued.Add(59*time.Minute)); err != nil {
+	if _, err := verifyBrowserSession("legacy-key", token, issued.Add(59*time.Minute)); err != nil {
 		t.Fatalf("token rejected before expiry: %v", err)
 	}
 	// Exactly at expiry counts as expired — the boundary belongs to the dead
 	// side, so a token can never be accepted at a moment its own claims say
 	// it is finished.
-	if _, _, err := verifyBrowserSession("legacy-key", token, issued.Add(time.Hour)); err == nil {
+	if _, err := verifyBrowserSession("legacy-key", token, issued.Add(time.Hour)); err == nil {
 		t.Fatal("token accepted at its expiry instant")
 	}
-	if _, _, err := verifyBrowserSession("legacy-key", token, issued.Add(2*time.Hour)); err == nil {
+	if _, err := verifyBrowserSession("legacy-key", token, issued.Add(2*time.Hour)); err == nil {
 		t.Fatal("token accepted after expiry")
 	}
 }
@@ -135,7 +196,7 @@ func TestBrowserSessionRequiresAnAPIKey(t *testing.T) {
 	if _, err := signBrowserSession("", Caller{Name: "legacy", Scopes: newFullScopeSet()}, time.Now(), browserSessionTTL); !errors.Is(err, errNoBrowserSessionKey) {
 		t.Errorf("sign err = %v, want errNoBrowserSessionKey", err)
 	}
-	if _, _, err := verifyBrowserSession("", "v1.x.y", time.Now()); !errors.Is(err, errNoBrowserSessionKey) {
+	if _, err := verifyBrowserSession("", "v1.x.y", time.Now()); !errors.Is(err, errNoBrowserSessionKey) {
 		t.Errorf("verify err = %v, want errNoBrowserSessionKey", err)
 	}
 }
@@ -245,12 +306,12 @@ func TestBrowserSessionRenewal(t *testing.T) {
 		if c.Value == old {
 			t.Fatal("re-issued the same token")
 		}
-		_, expiresAt, err := verifyBrowserSession(key, c.Value, time.Now())
+		claims, err := verifyBrowserSession(key, c.Value, time.Now())
 		if err != nil {
 			t.Fatalf("renewed token does not verify: %v", err)
 		}
-		if time.Until(expiresAt) <= browserSessionRenewAfter {
-			t.Errorf("renewed token expires in %v, want more than %v", time.Until(expiresAt), browserSessionRenewAfter)
+		if time.Until(claims.expiresAt()) <= browserSessionRenewAfter {
+			t.Errorf("renewed token expires in %v, want more than %v", time.Until(claims.expiresAt()), browserSessionRenewAfter)
 		}
 	})
 
@@ -270,4 +331,50 @@ func TestBrowserSessionRenewal(t *testing.T) {
 			t.Fatalf("websocket upgrade got a Set-Cookie: %+v", c)
 		}
 	})
+}
+
+// A single request can stage a session cookie twice: authMiddleware renews a
+// half-spent one before the handler runs, and /api/v1/rotate-api-key then
+// issues a replacement signed under the NEW key. The response must carry only
+// the live cookie — appending would also hand the browser the pre-rotation one,
+// which no longer verifies, and leave the outcome to header ordering.
+func TestSessionCookieIsReplacedNotAppended(t *testing.T) {
+	const key = "legacy-key"
+	a := NewAPIKeyAuthenticator(key)
+	halfSpent, err := signBrowserSession(key, Caller{Name: "legacy", Scopes: newFullScopeSet()},
+		time.Now().Add(-(browserSessionTTL - browserSessionRenewAfter + time.Hour)), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Stands in for handleRotateAPIKey: swap the key, then re-cookie the
+	// initiating browser under it.
+	rotate := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		a.SetKey("rotated-key")
+		token, err := a.CreateBrowserSession(Caller{Name: "legacy", Scopes: newFullScopeSet()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		setBrowserSessionCookie(w, r, token)
+		w.WriteHeader(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "https://kyber.example/api/v1/rotate-api-key", nil)
+	req.Header.Set("X-Forwarded-Proto", "https")
+	req.Header.Set("Origin", "https://kyber.example")
+	req.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: halfSpent})
+	rr := httptest.NewRecorder()
+	authMiddleware(a, rotate).ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
+	}
+	staged := rr.Result().Header.Values("Set-Cookie")
+	if len(staged) != 1 {
+		t.Fatalf("Set-Cookie headers = %d, want exactly 1: %v", len(staged), staged)
+	}
+	cookies := rr.Result().Cookies()
+	if _, err := verifyBrowserSession("rotated-key", cookies[0].Value, time.Now()); err != nil {
+		t.Errorf("the surviving cookie does not verify under the new key: %v", err)
+	}
 }

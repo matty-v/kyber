@@ -61,13 +61,27 @@ var errMalformedBrowserSession = errors.New("malformed browser session token")
 
 // browserSessionClaims is the token payload. Field names are single letters
 // because this round-trips through a cookie header on every request.
+//
+// The claims deliberately do NOT carry the caller's scopes. A token names WHO
+// the session is for; what that principal may do is resolved against live
+// configuration on every request (APIKeyAuthenticator.callerForSession). If
+// the scopes were baked in, removing a scoped caller from configuration would
+// leave their browser holding its old authority until the token expired —
+// which the old server-side session map avoided only by accident, because a
+// restart wiped every session.
+//
+// The payload is signed, not encrypted: it is readable by anyone holding the
+// cookie. That is fine — a caller name and an expiry are not secrets, and the
+// cookie is HttpOnly + SameSite=Strict.
 type browserSessionClaims struct {
-	Name      string   `json:"n"`
-	FullScope bool     `json:"f,omitempty"`
-	Scopes    []string `json:"s,omitempty"`
-	IssuedAt  int64    `json:"iat"`
-	ExpiresAt int64    `json:"exp"`
+	Name      string `json:"n"`
+	FullScope bool   `json:"f,omitempty"`
+	IssuedAt  int64  `json:"iat"`
+	ExpiresAt int64  `json:"exp"`
 }
+
+// expiresAt is the moment the session stops being valid.
+func (c browserSessionClaims) expiresAt() time.Time { return time.Unix(c.ExpiresAt, 0) }
 
 // browserSessionSigningKey derives the HMAC key for the given API key.
 func browserSessionSigningKey(apiKey string) ([]byte, error) {
@@ -92,7 +106,6 @@ func signBrowserSession(apiKey string, caller Caller, issuedAt time.Time, ttl ti
 	raw, err := json.Marshal(browserSessionClaims{
 		Name:      caller.Name,
 		FullScope: caller.Scopes.full,
-		Scopes:    caller.Scopes.names(),
 		IssuedAt:  issuedAt.Unix(),
 		ExpiresAt: issuedAt.Add(ttl).Unix(),
 	})
@@ -103,56 +116,47 @@ func signBrowserSession(apiKey string, caller Caller, issuedAt time.Time, ttl ti
 	return signed + "." + base64.RawURLEncoding.EncodeToString(browserSessionMAC(key, signed)), nil
 }
 
-// verifyBrowserSession authenticates a token and returns the caller it names
-// plus its expiry. The signature is checked BEFORE the claims are parsed, so
+// verifyBrowserSession authenticates a token and returns the claims it
+// carries. The signature is checked BEFORE the claims are parsed, so
 // unverified bytes never reach the JSON decoder.
-func verifyBrowserSession(apiKey, token string, now time.Time) (*Caller, time.Time, error) {
+//
+// This establishes only that the control plane issued the token and that it
+// has not expired. Turning the claims into an authorized Caller is a separate
+// step against live configuration — see callerForSession.
+func verifyBrowserSession(apiKey, token string, now time.Time) (*browserSessionClaims, error) {
 	key, err := browserSessionSigningKey(apiKey)
 	if err != nil {
-		return nil, time.Time{}, err
+		return nil, err
 	}
 
 	version, rest, ok := strings.Cut(token, ".")
 	if !ok || version != browserSessionTokenVersion {
-		return nil, time.Time{}, errMalformedBrowserSession
+		return nil, errMalformedBrowserSession
 	}
 	encodedClaims, encodedMAC, ok := strings.Cut(rest, ".")
 	if !ok || strings.Contains(encodedMAC, ".") {
-		return nil, time.Time{}, errMalformedBrowserSession
+		return nil, errMalformedBrowserSession
 	}
 	presentedMAC, err := base64.RawURLEncoding.DecodeString(encodedMAC)
 	if err != nil {
-		return nil, time.Time{}, errMalformedBrowserSession
+		return nil, errMalformedBrowserSession
 	}
 	if !hmac.Equal(presentedMAC, browserSessionMAC(key, version+"."+encodedClaims)) {
-		return nil, time.Time{}, errors.New("browser session signature does not verify")
+		return nil, errors.New("browser session signature does not verify")
 	}
 
 	raw, err := base64.RawURLEncoding.DecodeString(encodedClaims)
 	if err != nil {
-		return nil, time.Time{}, errMalformedBrowserSession
+		return nil, errMalformedBrowserSession
 	}
 	var claims browserSessionClaims
 	if err := json.Unmarshal(raw, &claims); err != nil {
-		return nil, time.Time{}, errMalformedBrowserSession
+		return nil, errMalformedBrowserSession
 	}
-
-	expiresAt := time.Unix(claims.ExpiresAt, 0)
-	if !now.Before(expiresAt) {
-		return nil, time.Time{}, errors.New("browser session expired")
+	if !now.Before(claims.expiresAt()) {
+		return nil, errors.New("browser session expired")
 	}
-
-	caller := &Caller{Name: claims.Name}
-	if claims.FullScope {
-		caller.Scopes = newFullScopeSet()
-	} else {
-		scopes := make([]Scope, 0, len(claims.Scopes))
-		for _, s := range claims.Scopes {
-			scopes = append(scopes, Scope(s))
-		}
-		caller.Scopes = newScopeSet(scopes...)
-	}
-	return caller, expiresAt, nil
+	return &claims, nil
 }
 
 func browserSessionMAC(key []byte, signed string) []byte {

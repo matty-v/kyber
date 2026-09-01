@@ -312,9 +312,12 @@ Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
    The embedded PWA exchanges its bearer key once at
    `POST /api/v1/browser-session` for an HttpOnly, SameSite=Strict cookie; raw
    keys are removed from legacy localStorage. The cookie is a SIGNED token, not
-   a session record — HMAC over caller+expiry, keyed by HKDF from the live API
-   key (`browser_session_token.go`), so sessions survive a restart, carry no
-   server state, and are all invalidated by an API-key rotation. It is renewed
+   a session record — HMAC over caller-name+expiry, keyed by HKDF from the live
+   API key (`browser_session_token.go`), so sessions survive a restart, carry no
+   server state, and are all invalidated by an API-key rotation. The token
+   carries NO scopes: authority is re-resolved from live config every request
+   (`callerForSession`), so narrowing or removing a scoped caller takes effect
+   immediately instead of at cookie expiry. It is renewed
    on use once past half its TTL (`RenewBrowserSession`, called from
    `authMiddleware`); WebSocket upgrades are skipped. CLI and external clients
    continue to use Bearer auth. Browser cookie mutations require a same-origin
