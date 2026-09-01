@@ -9,46 +9,48 @@ import (
 )
 
 const (
-	HardMaxPromptBytes      = 32 * 1024
-	HardMaxCorrelationBytes = 1024
-	HardMaxResponseBytes    = 128 * 1024
-	HardMaxIdempotencyBytes = 128
-	HardMaxOutstanding      = 100
-	HardMaxListPage         = 100
-	HardMaxProgressBytes    = 4 * 1024
-	HardMaxProgressUpdates  = 2000
-	HardMaxResults          = 64
-	HardMaxResultParts      = 32
-	HardMaxTextPartBytes    = 128 * 1024
-	HardMaxJSONPartBytes    = 256 * 1024
-	HardMaxFileBytes        = 100 * 1024 * 1024
-	HardMaxTaskFileBytes    = 500 * 1024 * 1024
-	HardMaxResultNameBytes  = 256
-	HardMaxDescriptionBytes = 4 * 1024
-	HardMaxFilenameBytes    = 255
+	HardMaxPromptBytes       = 32 * 1024
+	HardMaxCorrelationBytes  = 1024
+	HardMaxResponseBytes     = 128 * 1024
+	HardMaxIdempotencyBytes  = 128
+	HardMaxOutstanding       = 100
+	HardMaxListPage          = 100
+	HardMaxProgressBytes     = 4 * 1024
+	HardMaxProgressUpdates   = 2000
+	HardMaxResults           = 64
+	HardMaxResultParts       = 32
+	HardMaxTextPartBytes     = 128 * 1024
+	HardMaxJSONPartBytes     = 256 * 1024
+	HardMaxFileBytes         = 100 * 1024 * 1024
+	HardMaxTaskFileBytes     = 500 * 1024 * 1024
+	HardMaxResultNameBytes   = 256
+	HardMaxDescriptionBytes  = 4 * 1024
+	HardMaxFilenameBytes     = 255
+	HardMaxCancelReasonBytes = 2 * 1024
 )
 
 var (
-	ErrNotFound            = errors.New("taskstore: task not found")
-	ErrInvalid             = errors.New("taskstore: invalid task")
-	ErrPromptTooLarge      = errors.New("taskstore: prompt too large")
-	ErrCorrelationTooLarge = errors.New("taskstore: correlation too large")
-	ErrResponseTooLarge    = errors.New("taskstore: response too large")
-	ErrIdempotencyTooLarge = errors.New("taskstore: idempotency key too large")
-	ErrIdempotencyConflict = errors.New("taskstore: idempotency conflict")
-	ErrOutstandingLimit    = errors.New("taskstore: outstanding task limit reached")
-	ErrCapacity            = errors.New("taskstore: retained task capacity exhausted")
-	ErrConflict            = errors.New("taskstore: transition conflict")
-	ErrInvalidCursor       = errors.New("taskstore: invalid cursor")
-	ErrNoDispatch          = errors.New("taskstore: no dispatch available")
-	ErrReceiptConflict     = errors.New("taskstore: receipt conflict")
-	ErrUpdateConflict      = errors.New("taskstore: progress update conflict")
-	ErrResultConflict      = errors.New("taskstore: result conflict")
-	ErrProgressTooLarge    = errors.New("taskstore: progress too large")
-	ErrResultTooLarge      = errors.New("taskstore: result too large")
-	ErrResultLimit         = errors.New("taskstore: result limit reached")
-	ErrUpdateLimit         = errors.New("taskstore: progress update limit reached")
-	ErrInvalidAttempt      = errors.New("taskstore: invalid attempt")
+	ErrNotFound             = errors.New("taskstore: task not found")
+	ErrInvalid              = errors.New("taskstore: invalid task")
+	ErrPromptTooLarge       = errors.New("taskstore: prompt too large")
+	ErrCorrelationTooLarge  = errors.New("taskstore: correlation too large")
+	ErrResponseTooLarge     = errors.New("taskstore: response too large")
+	ErrIdempotencyTooLarge  = errors.New("taskstore: idempotency key too large")
+	ErrIdempotencyConflict  = errors.New("taskstore: idempotency conflict")
+	ErrOutstandingLimit     = errors.New("taskstore: outstanding task limit reached")
+	ErrCapacity             = errors.New("taskstore: retained task capacity exhausted")
+	ErrConflict             = errors.New("taskstore: transition conflict")
+	ErrInvalidCursor        = errors.New("taskstore: invalid cursor")
+	ErrNoDispatch           = errors.New("taskstore: no dispatch available")
+	ErrReceiptConflict      = errors.New("taskstore: receipt conflict")
+	ErrUpdateConflict       = errors.New("taskstore: progress update conflict")
+	ErrResultConflict       = errors.New("taskstore: result conflict")
+	ErrProgressTooLarge     = errors.New("taskstore: progress too large")
+	ErrResultTooLarge       = errors.New("taskstore: result too large")
+	ErrResultLimit          = errors.New("taskstore: result limit reached")
+	ErrUpdateLimit          = errors.New("taskstore: progress update limit reached")
+	ErrInvalidAttempt       = errors.New("taskstore: invalid attempt")
+	ErrCancelReasonTooLarge = errors.New("taskstore: cancellation reason too large")
 )
 
 type State string
@@ -56,6 +58,8 @@ type State string
 const (
 	StateQueued     State = "queued"
 	StateDispatched State = "dispatched"
+	StateCanceling  State = "canceling"
+	StateCanceled   State = "canceled"
 	StateCompleted  State = "completed"
 	StateFailed     State = "failed"
 )
@@ -63,11 +67,12 @@ const (
 type FailureCode string
 
 const (
-	FailureAgentUnavailable FailureCode = "agent_unavailable"
-	FailureDelivery         FailureCode = "delivery_failed"
-	FailureDeliveryUnknown  FailureCode = "delivery_unknown"
-	FailureDeadline         FailureCode = "deadline_exceeded"
-	FailureInternal         FailureCode = "internal_error"
+	FailureAgentUnavailable  FailureCode = "agent_unavailable"
+	FailureDelivery          FailureCode = "delivery_failed"
+	FailureDeliveryUnknown   FailureCode = "delivery_unknown"
+	FailureDeadline          FailureCode = "deadline_exceeded"
+	FailureInternal          FailureCode = "internal_error"
+	FailureCancelUnconfirmed FailureCode = "cancel_unconfirmed"
 )
 
 type Limits struct {
@@ -85,6 +90,8 @@ type Limits struct {
 	MaxProgressBytes, MaxProgressUpdates, MaxResults, MaxResultParts   int
 	MaxTextPartBytes, MaxJSONPartBytes, MaxFileBytes, MaxTaskFileBytes int64
 	MaxResultNameBytes, MaxDescriptionBytes, MaxFilenameBytes          int
+	MaxCancelReasonBytes                                               int
+	DefaultCancelDeadline, MaxCancelDeadline                           time.Duration
 }
 
 func DefaultLimits() Limits {
@@ -98,6 +105,7 @@ func DefaultLimits() Limits {
 		MaxTextPartBytes: 32 * 1024, MaxJSONPartBytes: 64 * 1024,
 		MaxFileBytes: 25 * 1024 * 1024, MaxTaskFileBytes: 100 * 1024 * 1024,
 		MaxResultNameBytes: 128, MaxDescriptionBytes: 1024, MaxFilenameBytes: 255,
+		MaxCancelReasonBytes: 512, DefaultCancelDeadline: 5 * time.Minute, MaxCancelDeadline: time.Hour,
 	}
 }
 
@@ -123,6 +131,10 @@ func (l Limits) Validate() error {
 		l.MaxFileBytes > l.MaxTaskFileBytes || l.MaxResultNameBytes <= 0 || l.MaxResultNameBytes > HardMaxResultNameBytes ||
 		l.MaxDescriptionBytes < 0 || l.MaxDescriptionBytes > HardMaxDescriptionBytes ||
 		l.MaxFilenameBytes <= 0 || l.MaxFilenameBytes > HardMaxFilenameBytes {
+		return ErrInvalid
+	}
+	if l.MaxCancelReasonBytes <= 0 || l.MaxCancelReasonBytes > HardMaxCancelReasonBytes ||
+		l.DefaultCancelDeadline <= 0 || l.MaxCancelDeadline < l.DefaultCancelDeadline || l.MaxCancelDeadline > time.Hour {
 		return ErrInvalid
 	}
 	return nil
@@ -182,6 +194,34 @@ type Task struct {
 	CompletedAt                                                   *time.Time
 	Progress                                                      *Progress
 	Results                                                       []Result
+	Cancellation                                                  *Cancellation
+}
+
+type Cancellation struct {
+	RequestedAt    time.Time  `json:"requestedAt"`
+	RequestedBy    string     `json:"requestedBy"`
+	Reason         string     `json:"reason,omitempty"`
+	DeadlineAt     time.Time  `json:"deadlineAt"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt,omitempty"`
+	AckSource      string     `json:"ackSource,omitempty"`
+	Status         string     `json:"status"`
+	Scope          string     `json:"scope"`
+}
+
+type CancelParams struct {
+	Agent                                                    AgentRef
+	TaskID, RequestedBy, Reason, IdempotencyKey, RequestHash string
+}
+
+type CancelResult struct {
+	Task            *Task
+	Applied, Replay bool
+}
+
+type TaskControl struct {
+	CancelRequested bool      `json:"cancel_requested"`
+	Reason          string    `json:"reason,omitempty"`
+	RequestedAt     time.Time `json:"requested_at,omitempty"`
 }
 
 type CreateParams struct {
@@ -218,6 +258,9 @@ type Store interface {
 	Complete(context.Context, AgentRef, string, int64, string) error
 	ReportProgress(context.Context, AgentRef, string, string, ProgressUpdate) (*Progress, bool, error)
 	PublishResult(context.Context, AgentRef, string, string, Result) (*Result, bool, error)
+	Cancel(context.Context, CancelParams) (*CancelResult, error)
+	GetControl(context.Context, AgentRef, string, string) (*TaskControl, error)
+	AcknowledgeCancel(context.Context, AgentRef, string, string, string, string) (*Task, bool, error)
 }
 
 type DispatchClaim struct {
@@ -235,7 +278,9 @@ type Receipt struct {
 	TurnID    string `json:"turnId,omitempty"`
 }
 
-type ReconcileResult struct{ RequeuedLeases, UnknownAttempts, ExpiredTasks, DeletedTasks int64 }
+type ReconcileResult struct {
+	RequeuedLeases, UnknownAttempts, ExpiredTasks, CancelUnconfirmed, ClosedCancellations, DeletedTasks int64
+}
 
 type ObjectDeletion struct {
 	ID         string
@@ -277,6 +322,14 @@ func cloneTask(t *Task) *Task {
 	if t.CompletedAt != nil {
 		v := *t.CompletedAt
 		c.CompletedAt = &v
+	}
+	if t.Cancellation != nil {
+		v := *t.Cancellation
+		if t.Cancellation.AcknowledgedAt != nil {
+			a := *t.Cancellation.AcknowledgedAt
+			v.AcknowledgedAt = &a
+		}
+		c.Cancellation = &v
 	}
 	if t.Progress != nil {
 		v := *t.Progress

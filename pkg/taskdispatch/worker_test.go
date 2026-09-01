@@ -67,6 +67,16 @@ func TestWorkerPersistsAttemptBeforeDelivery(t *testing.T) {
 		if !strings.Contains(job.Envelope, "[kyber-task:"+task.ID+"] attempt=attempt_") {
 			t.Fatalf("envelope=%s", job.Envelope)
 		}
+		for _, required := range []string{"get_control", "ack_cancel", "does not roll back prior external effects"} {
+			if !strings.Contains(job.Envelope, required) {
+				t.Fatalf("envelope missing %q: %s", required, job.Envelope)
+			}
+		}
+		for _, forbidden := range []string{"Escape", "Ctrl+C", "process signal"} {
+			if strings.Contains(job.Envelope, forbidden) {
+				t.Fatalf("notify-only envelope contains generic interrupt %q: %s", forbidden, job.Envelope)
+			}
+		}
 	case <-time.After(time.Second):
 		t.Fatal("not delivered")
 	}

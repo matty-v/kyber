@@ -67,6 +67,76 @@ func TestMemoryTransitionsSingleAssignment(t *testing.T) {
 	}
 }
 
+func TestMemoryCancellationQueuedAndDispatched(t *testing.T) {
+	s := testStore(t)
+	a := AgentRef{"kyber-system", "sol"}
+	queued := createTask(t, s, "task_cancel_queued", "", "").Task
+	result, err := s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: queued.ID, RequestedBy: "operator", Reason: "superseded", IdempotencyKey: "cancel-1", RequestHash: "hash-1"})
+	if err != nil || !result.Applied || result.Task.State != StateCanceled || result.Task.Cancellation == nil || result.Task.Cancellation.Scope != "future_task_work" {
+		t.Fatalf("queued cancel=%+v err=%v", result, err)
+	}
+	replay, err := s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: queued.ID, RequestedBy: "operator", Reason: "superseded", IdempotencyKey: "cancel-1", RequestHash: "hash-1"})
+	if err != nil || !replay.Replay || !replay.Applied {
+		t.Fatalf("replay=%+v err=%v", replay, err)
+	}
+	_, err = s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: queued.ID, RequestedBy: "operator", Reason: "different", IdempotencyKey: "cancel-1", RequestHash: "hash-2"})
+	if !errors.Is(err, ErrIdempotencyConflict) {
+		t.Fatalf("idempotency conflict=%v", err)
+	}
+
+	dispatched := createTask(t, s, "task_cancel_dispatched", "", "").Task
+	if err = s.MarkDispatched(context.Background(), a, dispatched.ID, dispatched.Version); err != nil {
+		t.Fatal(err)
+	}
+	result, err = s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: dispatched.ID, RequestedBy: "operator"})
+	if err != nil || result.Task.State != StateCanceling {
+		t.Fatalf("dispatched cancel=%+v err=%v", result, err)
+	}
+	control, err := s.GetControl(context.Background(), a, dispatched.ID, "attempt_current")
+	if err != nil || !control.CancelRequested {
+		t.Fatalf("control=%+v err=%v", control, err)
+	}
+	ack, replayed, err := s.AcknowledgeCancel(context.Background(), a, dispatched.ID, "attempt_current", "ack_1", "stopped")
+	if err != nil || replayed || ack.State != StateCanceled || ack.Cancellation.AcknowledgedAt == nil {
+		t.Fatalf("ack=%+v replay=%v err=%v", ack, replayed, err)
+	}
+}
+
+func TestMemoryCancellationTerminalRaces(t *testing.T) {
+	s := testStore(t)
+	a := AgentRef{"kyber-system", "sol"}
+	completionWins := createTask(t, s, "task_completion_wins", "", "").Task
+	if err := s.MarkDispatched(context.Background(), a, completionWins.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	cancel, err := s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: completionWins.ID, RequestedBy: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Complete(context.Background(), a, completionWins.ID, cancel.Task.Version, "finished before observing cancel"); err != nil {
+		t.Fatalf("completion should honestly win: %v", err)
+	}
+	if _, _, err = s.AcknowledgeCancel(context.Background(), a, completionWins.ID, "attempt_current", "ack_after_completion", ""); !errors.Is(err, ErrConflict) {
+		t.Fatalf("late acknowledgment=%v", err)
+	}
+
+	ackWins := createTask(t, s, "task_ack_wins", "", "").Task
+	if err = s.MarkDispatched(context.Background(), a, ackWins.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	cancel, err = s.Cancel(context.Background(), CancelParams{Agent: a, TaskID: ackWins.ID, RequestedBy: "operator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acknowledged, _, err := s.AcknowledgeCancel(context.Background(), a, ackWins.ID, "attempt_current", "ack_wins", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = s.Complete(context.Background(), a, ackWins.ID, acknowledged.Version, "too late"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("late completion=%v", err)
+	}
+}
+
 func TestMemoryListStableCursorAndFilterBinding(t *testing.T) {
 	s := testStore(t)
 	for _, id := range []string{"task_1", "task_2", "task_3"} {

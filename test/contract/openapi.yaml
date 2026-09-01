@@ -84,6 +84,39 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
 
+  /api/v1/agents/{name}/tasks/{taskId}/cancel:
+    post:
+      operationId: cancelAgentTask
+      summary: Request cooperative cancellation of a durable task
+      description: Cancellation stops future task work but does not roll back prior external effects.
+      tags: [tasks]
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: {type: string}
+        - name: taskId
+          in: path
+          required: true
+          schema: {type: string, pattern: '^task_[a-f0-9]{32}$'}
+        - name: Idempotency-Key
+          in: header
+          schema: {type: string, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CancelAgentTask'}
+      responses:
+        '200':
+          description: Canonical task and cancellation status
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentTask'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
   /api/v1/agents/{name}/tasks/{taskId}/results/{resultId}/parts/{ordinal}/content:
     get:
       operationId: downloadAgentTaskResultPart
@@ -1911,6 +1944,26 @@ components:
         correlation: {type: string}
         deadlineAt: {type: string, format: date-time}
 
+    CancelAgentTask:
+      type: object
+      additionalProperties: false
+      properties:
+        reason: {type: string, maxLength: 2048}
+
+    AgentTaskCancellation:
+      type: object
+      required: [requestedAt, requestedBy, deadlineAt, status, scope, applied]
+      properties:
+        requestedAt: {type: string, format: date-time}
+        requestedBy: {type: string}
+        reason: {type: string}
+        deadlineAt: {type: string, format: date-time}
+        acknowledgedAt: {type: string, format: date-time}
+        ackSource: {type: string}
+        status: {type: string, enum: [requested, acknowledged]}
+        scope: {type: string, enum: [future_task_work]}
+        applied: {type: boolean}
+
     AgentTaskProgress:
       type: object
       required: [message, updatedAt]
@@ -1961,7 +2014,7 @@ components:
       properties:
         id: {type: string, pattern: '^task_[a-f0-9]{32}$'}
         agent: {type: string}
-        state: {type: string, enum: [queued, dispatched, completed, failed]}
+        state: {type: string, enum: [queued, dispatched, canceling, canceled, completed, failed]}
         failureCode: {type: string}
         error: {type: string}
         correlation: {type: string}
@@ -1973,6 +2026,7 @@ components:
         retainUntil: {type: string, format: date-time}
         completedAt: {type: string, format: date-time}
         progress: {$ref: '#/components/schemas/AgentTaskProgress'}
+        cancel: {$ref: '#/components/schemas/AgentTaskCancellation'}
         results:
           type: array
           items: {$ref: '#/components/schemas/AgentTaskResult'}

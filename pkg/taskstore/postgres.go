@@ -64,6 +64,17 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS progress_message TEXT NOT NULL DEFAULT ''`,
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS progress_percent SMALLINT`,
 		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS progress_updated_at TIMESTAMPTZ`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_requested_by TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_reason TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_deadline_at TIMESTAMPTZ`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_acknowledged_at TIMESTAMPTZ`,
+		`ALTER TABLE agent_tasks ADD COLUMN IF NOT EXISTS cancel_ack_source TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agent_tasks DROP CONSTRAINT IF EXISTS agent_tasks_state_check`,
+		`ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_state_check CHECK (state IN ('queued','dispatched','canceling','canceled','completed','failed'))`,
+		`CREATE TABLE IF NOT EXISTS agent_task_cancel_idempotency (created_by TEXT NOT NULL, agent_namespace TEXT NOT NULL, agent_name TEXT NOT NULL, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, applied BOOLEAN NOT NULL DEFAULT false, PRIMARY KEY(created_by,agent_namespace,agent_name,idempotency_key))`,
+		`ALTER TABLE agent_task_cancel_idempotency ADD COLUMN IF NOT EXISTS applied BOOLEAN NOT NULL DEFAULT false`,
+		`CREATE TABLE IF NOT EXISTS agent_task_cancel_deliveries (task_id TEXT PRIMARY KEY REFERENCES agent_tasks(id) ON DELETE CASCADE, attempt_id TEXT NOT NULL, status TEXT NOT NULL, adapter_mode TEXT NOT NULL, delivery_count INTEGER NOT NULL DEFAULT 0, next_delivery_at TIMESTAMPTZ NOT NULL, lease_owner TEXT, lease_until TIMESTAMPTZ, acknowledgment_id TEXT NOT NULL DEFAULT '', last_safe_error TEXT NOT NULL DEFAULT '', updated_at TIMESTAMPTZ NOT NULL, CHECK(status IN ('pending','delivering','notified','interrupted','acknowledged','closed')), CHECK(adapter_mode IN ('notify_only','exact_interrupt')))`,
 		`DO $$ BEGIN ALTER TABLE agent_tasks ADD CONSTRAINT agent_tasks_progress_percent_check CHECK (progress_percent IS NULL OR progress_percent BETWEEN 0 AND 100); EXCEPTION WHEN duplicate_object THEN NULL; END $$`,
 		`CREATE TABLE IF NOT EXISTS agent_task_results (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '', content_digest TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, UNIQUE(task_id,name))`,
 		`CREATE TABLE IF NOT EXISTS agent_task_objects (id TEXT PRIMARY KEY, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, object_key TEXT NOT NULL UNIQUE, status TEXT NOT NULL, filename TEXT NOT NULL, media_type TEXT NOT NULL, size_bytes BIGINT, sha256 TEXT, scan_status TEXT NOT NULL DEFAULT 'not_configured', lease_owner TEXT, lease_until TIMESTAMPTZ, deletion_attempts INTEGER NOT NULL DEFAULT 0, next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(), last_error TEXT NOT NULL DEFAULT '', retain_until TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL, ready_at TIMESTAMPTZ, CHECK(status IN ('pending','ready','deleting')))`,
@@ -77,10 +88,12 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_created_idx ON agent_tasks(agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_state_created_idx ON agent_tasks(agent_namespace,agent_name,state,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_retain_idx ON agent_tasks(retain_until)`,
+		`DROP INDEX IF EXISTS agent_tasks_deadline_idx`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_deadline_idx ON agent_tasks(deadline_at) WHERE state IN ('queued','dispatched')`,
+		`CREATE INDEX IF NOT EXISTS agent_task_cancel_delivery_idx ON agent_task_cancel_deliveries(status,next_delivery_at,lease_until)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_dispatch_claim_idx ON agent_task_dispatches(status,next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_object_cleanup_idx ON agent_task_objects(status,next_attempt_at,lease_until)`,
-		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2) ON CONFLICT DO NOTHING`,
+		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3) ON CONFLICT DO NOTHING`,
 	}
 	for _, q := range statements {
 		if _, err = tx.ExecContext(ctx, q); err != nil {
@@ -134,7 +147,7 @@ func (s *PostgresStore) Create(ctx context.Context, p CreateParams) (*CreateResu
 	if retained >= s.limits.MaxRetained {
 		return nil, ErrCapacity
 	}
-	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_tasks WHERE agent_namespace=$1 AND agent_name=$2 AND state IN ('queued','dispatched')`, p.Agent.Namespace, p.Agent.Name).Scan(&outstanding); err != nil {
+	if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_tasks WHERE agent_namespace=$1 AND agent_name=$2 AND state IN ('queued','dispatched','canceling')`, p.Agent.Namespace, p.Agent.Name).Scan(&outstanding); err != nil {
 		return nil, err
 	}
 	if outstanding >= s.limits.MaxOutstanding {
@@ -182,10 +195,10 @@ type rowScanner interface{ Scan(...any) error }
 
 func scanTask(r rowScanner) (*Task, error) {
 	t := &Task{}
-	var completed, progressAt sql.NullTime
+	var completed, progressAt, cancelRequestedAt, cancelDeadlineAt, cancelAcknowledgedAt sql.NullTime
 	var progressPercent sql.NullInt64
-	var progressMessage string
-	err := r.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &progressMessage, &progressPercent, &progressAt)
+	var progressMessage, cancelRequestedBy, cancelReason, cancelAckSource string
+	err := r.Scan(&t.ID, &t.AgentNamespace, &t.AgentName, &t.CreatedBy, &t.Prompt, &t.Correlation, &t.State, &t.FailureCode, &t.Response, &t.Version, &t.CreatedAt, &t.UpdatedAt, &t.DeadlineAt, &t.RetainUntil, &completed, &progressMessage, &progressPercent, &progressAt, &cancelRequestedAt, &cancelRequestedBy, &cancelReason, &cancelDeadlineAt, &cancelAcknowledgedAt, &cancelAckSource)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -203,16 +216,28 @@ func scanTask(r rowScanner) (*Task, error) {
 			t.Progress.Percent = &p
 		}
 	}
+	if cancelRequestedAt.Valid {
+		c := &Cancellation{RequestedAt: cancelRequestedAt.Time.UTC(), RequestedBy: cancelRequestedBy, Reason: cancelReason, Status: "requested", Scope: "future_task_work"}
+		if cancelDeadlineAt.Valid {
+			c.DeadlineAt = cancelDeadlineAt.Time.UTC()
+		}
+		if cancelAcknowledgedAt.Valid {
+			v := cancelAcknowledgedAt.Time.UTC()
+			c.AcknowledgedAt, c.Status = &v, "acknowledged"
+		}
+		c.AckSource = cancelAckSource
+		t.Cancellation = c
+	}
 	return t, nil
 }
 
-const selectTask = `SELECT id,agent_namespace,agent_name,created_by,prompt,correlation,state,failure_code,response,version,created_at,updated_at,deadline_at,retain_until,completed_at,progress_message,progress_percent,progress_updated_at FROM agent_tasks`
+const selectTask = `SELECT id,agent_namespace,agent_name,created_by,prompt,correlation,state,failure_code,response,version,created_at,updated_at,deadline_at,retain_until,completed_at,progress_message,progress_percent,progress_updated_at,cancel_requested_at,cancel_requested_by,cancel_reason,cancel_deadline_at,cancel_acknowledged_at,cancel_ack_source FROM agent_tasks`
 
 func getTaskTx(ctx context.Context, tx *sql.Tx, a AgentRef, id string) (*Task, error) {
 	return scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3`, id, a.Namespace, a.Name))
 }
 func (s *PostgresStore) Get(ctx context.Context, a AgentRef, id string) (*Task, error) {
-	t, err := scanTask(s.db.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND (state IN ('queued','dispatched') OR retain_until>=clock_timestamp())`, id, a.Namespace, a.Name))
+	t, err := scanTask(s.db.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND (state IN ('queued','dispatched','canceling') OR retain_until>=clock_timestamp())`, id, a.Namespace, a.Name))
 	if err != nil {
 		return nil, err
 	}
@@ -238,7 +263,7 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 		}
 	}
 	args := []any{p.Agent.Namespace, p.Agent.Name}
-	where := ` WHERE agent_namespace=$1 AND agent_name=$2 AND (state IN ('queued','dispatched') OR retain_until>=clock_timestamp())`
+	where := ` WHERE agent_namespace=$1 AND agent_name=$2 AND (state IN ('queued','dispatched','canceling') OR retain_until>=clock_timestamp())`
 	n := 3
 	if p.State != "" {
 		where += fmt.Sprintf(" AND state=$%d", n)
@@ -357,7 +382,7 @@ func (s *PostgresStore) MarkDispatched(ctx context.Context, a AgentRef, id strin
 	return err
 }
 func (s *PostgresStore) Fail(ctx context.Context, a AgentRef, id string, v int64, code FailureCode) error {
-	current, err := s.transition(ctx, a, id, v, `UPDATE agent_tasks SET state='failed',failure_code=$5,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND version=$4 AND state IN ('queued','dispatched')`, code)
+	current, err := s.transition(ctx, a, id, v, `UPDATE agent_tasks SET state='failed',failure_code=$5,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND version=$4 AND state IN ('queued','dispatched','canceling')`, code)
 	if errors.Is(err, ErrConflict) && current.State == StateFailed && current.FailureCode == code {
 		return nil
 	}
@@ -380,7 +405,7 @@ func (s *PostgresStore) Complete(ctx context.Context, a AgentRef, id string, v i
 		if t.State == StateCompleted && t.Response == response {
 			return nil
 		}
-		if t.Version != v || t.State != StateDispatched {
+		if t.Version != v || (t.State != StateDispatched && t.State != StateCanceling) {
 			return ErrConflict
 		}
 		var count int
@@ -403,7 +428,7 @@ func (s *PostgresStore) Complete(ctx context.Context, a AgentRef, id string, v i
 		}
 		return tx.Commit()
 	}
-	current, err := s.transition(ctx, a, id, v, `UPDATE agent_tasks SET state='completed',response=$5,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND version=$4 AND state='dispatched'`, response)
+	current, err := s.transition(ctx, a, id, v, `UPDATE agent_tasks SET state='completed',response=$5,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND version=$4 AND state IN ('dispatched','canceling')`, response)
 	if errors.Is(err, ErrConflict) && current.State == StateCompleted && current.Response == response {
 		return nil
 	}

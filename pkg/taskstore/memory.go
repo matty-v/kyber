@@ -12,6 +12,10 @@ import (
 )
 
 type idempotencyRecord struct{ hash, taskID string }
+type cancelIdempotencyRecord struct {
+	hash, taskID string
+	applied      bool
+}
 
 // MemoryStore is a contract test double. Production public routes must use the
 // PostgreSQL store and must never silently fall back to this implementation.
@@ -22,13 +26,15 @@ type MemoryStore struct {
 	tasks       map[string]*Task
 	idempotency map[string]idempotencyRecord
 	updates     map[string]map[string]string
+	cancelKeys  map[string]cancelIdempotencyRecord
+	cancelAcks  map[string]string
 }
 
 func NewMemoryStore(limits Limits) (*MemoryStore, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}}, nil
+	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}, cancelKeys: map[string]cancelIdempotencyRecord{}, cancelAcks: map[string]string{}}, nil
 }
 
 func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, error) {
@@ -54,7 +60,7 @@ func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, 
 	}
 	outstanding := 0
 	for _, t := range s.tasks {
-		if t.AgentNamespace == p.Agent.Namespace && t.AgentName == p.Agent.Name && (t.State == StateQueued || t.State == StateDispatched) {
+		if t.AgentNamespace == p.Agent.Namespace && t.AgentName == p.Agent.Name && (t.State == StateQueued || t.State == StateDispatched || t.State == StateCanceling) {
 			outstanding++
 		}
 	}
@@ -193,7 +199,7 @@ func (s *MemoryStore) Fail(_ context.Context, a AgentRef, id string, v int64, co
 	if t.State == StateFailed && t.FailureCode == code {
 		return nil
 	}
-	if t.Version != v || (t.State != StateQueued && t.State != StateDispatched) {
+	if t.Version != v || (t.State != StateQueued && t.State != StateDispatched && t.State != StateCanceling) {
 		return ErrConflict
 	}
 	now := s.now().UTC()
@@ -217,7 +223,7 @@ func (s *MemoryStore) Complete(_ context.Context, a AgentRef, id string, v int64
 	if t.State == StateCompleted && t.Response == response {
 		return nil
 	}
-	if t.Version != v || t.State != StateDispatched {
+	if t.Version != v || (t.State != StateDispatched && t.State != StateCanceling) {
 		return ErrConflict
 	}
 	now := s.now().UTC()
@@ -233,6 +239,110 @@ func (s *MemoryStore) Complete(_ context.Context, a AgentRef, id string, v int64
 	t.UpdatedAt = now
 	t.CompletedAt = &now
 	return nil
+}
+
+func (s *MemoryStore) Cancel(_ context.Context, p CancelParams) (*CancelResult, error) {
+	if p.TaskID == "" || p.RequestedBy == "" || len([]byte(p.IdempotencyKey)) > HardMaxIdempotencyBytes {
+		return nil, ErrInvalid
+	}
+	if len([]byte(p.Reason)) > s.limits.MaxCancelReasonBytes {
+		return nil, ErrCancelReasonTooLarge
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(p.Agent, p.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	if t.CreatedBy != p.RequestedBy {
+		return nil, ErrNotFound
+	}
+	key := p.RequestedBy + "\x00" + p.Agent.Namespace + "\x00" + p.Agent.Name + "\x00" + p.IdempotencyKey
+	if p.IdempotencyKey != "" {
+		if prior, ok := s.cancelKeys[key]; ok {
+			if prior.hash != p.RequestHash {
+				return nil, ErrIdempotencyConflict
+			}
+			return &CancelResult{Task: cloneTask(t), Applied: prior.applied, Replay: true}, nil
+		}
+	}
+	if t.Cancellation != nil || t.State == StateCanceled || t.State == StateCanceling {
+		if p.IdempotencyKey != "" {
+			s.cancelKeys[key] = cancelIdempotencyRecord{hash: p.RequestHash, taskID: t.ID}
+		}
+		return &CancelResult{Task: cloneTask(t), Replay: true}, nil
+	}
+	if t.State == StateCompleted || t.State == StateFailed {
+		if p.IdempotencyKey != "" {
+			s.cancelKeys[key] = cancelIdempotencyRecord{hash: p.RequestHash, taskID: t.ID}
+		}
+		return &CancelResult{Task: cloneTask(t)}, nil
+	}
+	now := s.now().UTC()
+	deadline := now.Add(s.limits.DefaultCancelDeadline)
+	if deadline.After(t.DeadlineAt) {
+		deadline = t.DeadlineAt
+	}
+	t.Cancellation = &Cancellation{RequestedAt: now, RequestedBy: p.RequestedBy, Reason: p.Reason, DeadlineAt: deadline, Status: "requested", Scope: "future_task_work"}
+	if t.State == StateQueued {
+		t.State = StateCanceled
+		t.CompletedAt = &now
+	} else {
+		t.State = StateCanceling
+	}
+	t.Version++
+	t.UpdatedAt = now
+	if p.IdempotencyKey != "" {
+		s.cancelKeys[key] = cancelIdempotencyRecord{hash: p.RequestHash, taskID: t.ID, applied: true}
+	}
+	return &CancelResult{Task: cloneTask(t), Applied: true}, nil
+}
+
+func (s *MemoryStore) GetControl(_ context.Context, a AgentRef, id, attemptID string) (*TaskControl, error) {
+	if attemptID == "" {
+		return nil, ErrInvalidAttempt
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(a, id)
+	if err != nil {
+		return nil, err
+	}
+	if t.Cancellation == nil {
+		return &TaskControl{}, nil
+	}
+	return &TaskControl{CancelRequested: true, Reason: t.Cancellation.Reason, RequestedAt: t.Cancellation.RequestedAt}, nil
+}
+
+func (s *MemoryStore) AcknowledgeCancel(_ context.Context, a AgentRef, id, attemptID, acknowledgmentID, note string) (*Task, bool, error) {
+	if attemptID == "" || acknowledgmentID == "" {
+		return nil, false, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	t, err := s.locked(a, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if prior, ok := s.cancelAcks[id]; ok {
+		if prior != acknowledgmentID {
+			return nil, false, ErrConflict
+		}
+		return cloneTask(t), true, nil
+	}
+	if t.State != StateCanceling || t.Cancellation == nil {
+		return nil, false, ErrConflict
+	}
+	now := s.now().UTC()
+	t.State = StateCanceled
+	t.Version++
+	t.UpdatedAt = now
+	t.CompletedAt = &now
+	t.Cancellation.AcknowledgedAt = &now
+	t.Cancellation.AckSource = "agent"
+	t.Cancellation.Status = "acknowledged"
+	s.cancelAcks[id] = acknowledgmentID
+	return cloneTask(t), false, nil
 }
 
 func (s *MemoryStore) ReportProgress(_ context.Context, a AgentRef, id, attemptID string, u ProgressUpdate) (*Progress, bool, error) {

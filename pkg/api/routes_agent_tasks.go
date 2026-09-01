@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -31,6 +32,10 @@ type createAgentTaskInput struct {
 	DeadlineAt  *time.Time `json:"deadlineAt,omitempty"`
 }
 
+type cancelAgentTaskInput struct {
+	Reason string `json:"reason,omitempty"`
+}
+
 type agentTaskResponse struct {
 	ID          string                    `json:"id"`
 	Agent       string                    `json:"agent"`
@@ -47,6 +52,19 @@ type agentTaskResponse struct {
 	CompletedAt *time.Time                `json:"completedAt,omitempty"`
 	Progress    *taskstore.Progress       `json:"progress,omitempty"`
 	Results     []agentTaskResultResponse `json:"results,omitempty"`
+	Cancel      *agentTaskCancelResponse  `json:"cancel,omitempty"`
+}
+
+type agentTaskCancelResponse struct {
+	RequestedAt    time.Time  `json:"requestedAt"`
+	RequestedBy    string     `json:"requestedBy"`
+	Reason         string     `json:"reason,omitempty"`
+	DeadlineAt     time.Time  `json:"deadlineAt"`
+	AcknowledgedAt *time.Time `json:"acknowledgedAt,omitempty"`
+	AckSource      string     `json:"ackSource,omitempty"`
+	Status         string     `json:"status"`
+	Scope          string     `json:"scope"`
+	Applied        bool       `json:"applied"`
 }
 
 type agentTaskResultResponse struct {
@@ -100,6 +118,17 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		return
 	}
 	parts := strings.Split(subpath, "/")
+	if len(parts) == 2 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "cancel" {
+		if r.Method != http.MethodPost {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+			return
+		}
+		if !s.requireScope(w, r, agentName, "task-cancel", ScopeRequestsWrite) {
+			return
+		}
+		s.cancelAgentTask(w, r, agentName, parts[0])
+		return
+	}
 	if len(parts) == 7 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "results" && resultIDPattern.MatchString(parts[2]) && parts[3] == "parts" && parts[5] == "content" && parts[6] == "" {
 		// Retained for compatibility with a trailing slash normalized below.
 		parts = parts[:6]
@@ -132,6 +161,59 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 		return
 	}
 	s.getAgentTask(w, r, agentName, subpath)
+}
+
+func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentName, taskID string) {
+	if !s.requireTaskStore(w) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, taskstore.HardMaxCancelReasonBytes*6+1024)
+	var in cancelAgentTaskInput
+	d := json.NewDecoder(r.Body)
+	d.DisallowUnknownFields()
+	if err := d.Decode(&in); err != nil || d.Decode(&struct{}{}) != io.EOF {
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid cancellation body")
+		return
+	}
+	caller := callerFrom(r.Context())
+	if caller == nil {
+		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "authentication required")
+		return
+	}
+	reason := strings.TrimSpace(in.Reason)
+	// The target is part of the idempotent operation. Without it, reusing a key
+	// with the same reason on a different task could replay the first task.
+	b, _ := json.Marshal([]string{taskID, reason})
+	sum := sha256.Sum256(b)
+	result, err := s.TaskStore.Cancel(r.Context(), taskstore.CancelParams{
+		Agent: taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, TaskID: taskID,
+		RequestedBy: caller.Name, Reason: reason, IdempotencyKey: r.Header.Get("Idempotency-Key"), RequestHash: hex.EncodeToString(sum[:]),
+	})
+	if err != nil {
+		if errors.Is(err, taskstore.ErrNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
+			return
+		}
+		writeTaskStoreError(w, err)
+		return
+	}
+	if result.Replay {
+		w.Header().Set("Idempotent-Replay", "true")
+	}
+	slog.InfoContext(r.Context(), "durable task cancellation request",
+		"agent", agentName,
+		"task_id", taskID,
+		"actor", caller.Name,
+		"state", result.Task.State,
+		"applied", result.Applied,
+		"replay", result.Replay,
+		"adapter_mode", "notify_only",
+	)
+	out := taskResponse(result.Task, true)
+	if out.Cancel != nil {
+		out.Cancel.Applied = result.Applied
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) downloadAgentTaskPart(w http.ResponseWriter, r *http.Request, agentName, taskID, resultID string, ordinal int) {
@@ -361,7 +443,7 @@ func (s *Server) listAgentTasks(w http.ResponseWriter, r *http.Request, agentNam
 		}
 	}
 	state := taskstore.State(r.URL.Query().Get("state"))
-	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateCompleted && state != taskstore.StateFailed {
+	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateCanceling && state != taskstore.StateCanceled && state != taskstore.StateCompleted && state != taskstore.StateFailed {
 		writeJSONError(w, http.StatusBadRequest, "invalid_state", "unknown task state")
 		return
 	}
@@ -396,9 +478,15 @@ func taskResponse(t *taskstore.Task, includeResult bool) agentTaskResponse {
 			out.Error = "task delivery could not be confirmed after an interruption"
 		case taskstore.FailureDeadline:
 			out.Error = "task deadline exceeded"
+		case taskstore.FailureCancelUnconfirmed:
+			out.Error = "task cancellation could not be confirmed"
 		default:
 			out.Error = "task failed"
 		}
+	}
+	if t.Cancellation != nil {
+		c := t.Cancellation
+		out.Cancel = &agentTaskCancelResponse{RequestedAt: c.RequestedAt, RequestedBy: c.RequestedBy, Reason: c.Reason, DeadlineAt: c.DeadlineAt, AcknowledgedAt: c.AcknowledgedAt, AckSource: c.AckSource, Status: c.Status, Scope: c.Scope}
 	}
 	for _, result := range t.Results {
 		r := agentTaskResultResponse{ID: result.ID, Name: result.Name, PartCount: len(result.Parts), CreatedAt: result.CreatedAt}
@@ -446,6 +534,8 @@ func writeTaskStoreError(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusBadRequest, "idempotency_key_too_large", "Idempotency-Key exceeds 128 bytes")
 	case errors.Is(err, taskstore.ErrIdempotencyConflict):
 		writeJSONError(w, http.StatusConflict, "idempotency_conflict", "Idempotency-Key was already used with different input")
+	case errors.Is(err, taskstore.ErrCancelReasonTooLarge):
+		writeJSONError(w, http.StatusRequestEntityTooLarge, "cancel_reason_too_large", "cancellation reason exceeds the configured limit")
 	case errors.Is(err, taskstore.ErrOutstandingLimit):
 		w.Header().Set("Retry-After", "1")
 		writeJSONError(w, http.StatusTooManyRequests, "too_many_tasks", "agent has too many outstanding tasks")
