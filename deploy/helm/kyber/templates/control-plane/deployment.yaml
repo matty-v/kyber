@@ -469,6 +469,11 @@ spec:
             #
             # test/chart/task_env_wiring_test.go fails if this list ever falls
             # behind the ConfigMap again.
+            #
+            # KYBER_TASK_OBJECT_* is deliberately absent: buildTaskObjectStore
+            # falls back to the KYBER_LOG_ARCHIVE_* values rendered below, so
+            # task files land in the log-archive bucket. Only the override —
+            # a separate bucket for task files — has no chart surface.
             - name: KYBER_TASKS_DEFAULT_DEADLINE_HOURS
               valueFrom:
                 configMapKeyRef:
