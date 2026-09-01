@@ -120,16 +120,47 @@ func TestAgentTasksIdempotencyConflict(t *testing.T) {
 	}
 }
 
+func TestAgentTasksListAcceptsMultiTurnStates(t *testing.T) {
+	h, _ := buildTaskHarness(t, true)
+	for _, state := range []string{"input_required", "auth_required", "rejected"} {
+		got := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks?state="+state, requestReadKey, nil, "")
+		if got.Code != http.StatusOK {
+			t.Errorf("state %s: %d %s", state, got.Code, got.Body.String())
+		}
+	}
+}
+
 func TestAgentTaskInteractionResponseIsOwnerOnlyAndIdempotent(t *testing.T) {
 	h, store := buildTaskHarness(t, true)
-	created := taskRequest(t,h,http.MethodPost,"/api/v1/agents/kiosk/tasks",requestWriteKey,map[string]string{"prompt":"choose"},"interaction-task")
-	var task struct{ID string `json:"id"`;Version int64 `json:"version"`};if err:=json.Unmarshal(created.Body.Bytes(),&task);err!=nil{t.Fatal(err)}
-	a:=taskstore.AgentRef{Namespace:"kyber-system",Name:"kiosk"};if err:=store.MarkDispatched(t.Context(),a,task.ID,task.Version);err!=nil{t.Fatal(err)}
-	paused,err:=store.RequestInteraction(t.Context(),taskstore.RequestInteractionParams{Agent:a,TaskID:task.ID,AttemptID:"attempt_22222222222222222222222222222222",InteractionID:"interaction_33333333333333333333333333333333",Type:taskstore.InteractionConfirm,Question:"continue?"});if err!=nil{t.Fatal(err)}
-	target:="/api/v1/agents/kiosk/tasks/"+task.ID+"/interactions/"+paused.Interaction.ID+"/respond"
-	denied:=taskRequest(t,h,http.MethodPost,target,"other-writer-secret",map[string]any{"response":true},"answer");if denied.Code!=http.StatusNotFound{t.Fatalf("denied=%d %s",denied.Code,denied.Body.String())}
-	answered:=taskRequest(t,h,http.MethodPost,target,requestWriteKey,map[string]any{"response":true},"answer");if answered.Code!=http.StatusOK{t.Fatalf("answered=%d %s",answered.Code,answered.Body.String())}
-	replay:=taskRequest(t,h,http.MethodPost,target,requestWriteKey,map[string]any{"response":true},"answer");if replay.Code!=http.StatusOK||replay.Header().Get("Idempotent-Replay")!="true"{t.Fatalf("replay=%d %s",replay.Code,replay.Body.String())}
+	created := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "choose"}, "interaction-task")
+	var task struct {
+		ID      string `json:"id"`
+		Version int64  `json:"version"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil {
+		t.Fatal(err)
+	}
+	a := taskstore.AgentRef{Namespace: "kyber-system", Name: "kiosk"}
+	if err := store.MarkDispatched(t.Context(), a, task.ID, task.Version); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.RequestInteraction(t.Context(), taskstore.RequestInteractionParams{Agent: a, TaskID: task.ID, AttemptID: "attempt_22222222222222222222222222222222", InteractionID: "interaction_33333333333333333333333333333333", Type: taskstore.InteractionConfirm, Question: "continue?"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := "/api/v1/agents/kiosk/tasks/" + task.ID + "/interactions/" + paused.Interaction.ID + "/respond"
+	denied := taskRequest(t, h, http.MethodPost, target, "other-writer-secret", map[string]any{"response": true}, "answer")
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("denied=%d %s", denied.Code, denied.Body.String())
+	}
+	answered := taskRequest(t, h, http.MethodPost, target, requestWriteKey, map[string]any{"response": true}, "answer")
+	if answered.Code != http.StatusOK {
+		t.Fatalf("answered=%d %s", answered.Code, answered.Body.String())
+	}
+	replay := taskRequest(t, h, http.MethodPost, target, requestWriteKey, map[string]any{"response": true}, "answer")
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replay") != "true" {
+		t.Fatalf("replay=%d %s", replay.Code, replay.Body.String())
+	}
 }
 
 func TestAgentTaskCancelQueuedAndReplay(t *testing.T) {

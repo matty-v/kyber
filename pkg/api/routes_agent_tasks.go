@@ -188,8 +188,8 @@ func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Requ
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, taskstore.HardMaxInteractionResponseBytes*6+2048)
 	var in struct {
-		Response  json.RawMessage `json:"response"`
-		Reference string          `json:"reference"`
+		Response            json.RawMessage `json:"response"`
+		AuthorizationFlowID string          `json:"authorizationFlowId"`
 	}
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
@@ -199,13 +199,13 @@ func (s *Server) respondAgentTaskInteraction(w http.ResponseWriter, r *http.Requ
 	}
 	var response json.RawMessage
 	if authorization {
-		if strings.TrimSpace(in.Reference) == "" || len(in.Response) > 0 {
-			writeJSONError(w, http.StatusBadRequest, "bad_request", "authorization requires an opaque reference")
+		if strings.TrimSpace(in.AuthorizationFlowID) == "" || len(in.Response) > 0 {
+			writeJSONError(w, http.StatusBadRequest, "bad_request", "authorization requires a completed authorization flow ID")
 			return
 		}
-		response, _ = json.Marshal(map[string]string{"reference": strings.TrimSpace(in.Reference)})
+		response, _ = json.Marshal(map[string]string{"authorizationFlowId": strings.TrimSpace(in.AuthorizationFlowID)})
 	} else {
-		if len(in.Response) == 0 || in.Reference != "" {
+		if len(in.Response) == 0 || in.AuthorizationFlowID != "" {
 			writeJSONError(w, http.StatusBadRequest, "bad_request", "response is required")
 			return
 		}
@@ -504,7 +504,7 @@ func (s *Server) listAgentTasks(w http.ResponseWriter, r *http.Request, agentNam
 		}
 	}
 	state := taskstore.State(r.URL.Query().Get("state"))
-	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateCanceling && state != taskstore.StateCanceled && state != taskstore.StateCompleted && state != taskstore.StateFailed {
+	if state != "" && state != taskstore.StateQueued && state != taskstore.StateDispatched && state != taskstore.StateInputRequired && state != taskstore.StateAuthRequired && state != taskstore.StateCanceling && state != taskstore.StateCanceled && state != taskstore.StateCompleted && state != taskstore.StateFailed && state != taskstore.StateRejected {
 		writeJSONError(w, http.StatusBadRequest, "invalid_state", "unknown task state")
 		return
 	}
@@ -605,6 +605,8 @@ func writeTaskStoreError(w http.ResponseWriter, err error) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "task interaction not found")
 	case errors.Is(err, taskstore.ErrInteractionExpired):
 		writeJSONError(w, http.StatusGone, "interaction_expired", "task interaction has expired")
+	case errors.Is(err, taskstore.ErrAuthorizationFlow):
+		writeJSONError(w, http.StatusConflict, "authorization_flow_invalid", "authorization flow is incomplete or does not match this task interaction")
 	case errors.Is(err, taskstore.ErrInteractionNotReady), errors.Is(err, taskstore.ErrConflict):
 		writeJSONError(w, http.StatusConflict, "interaction_conflict", "task interaction is not awaiting this response")
 	case errors.Is(err, taskstore.ErrInteractionLimit):

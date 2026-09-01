@@ -20,22 +20,28 @@ type cancelIdempotencyRecord struct {
 // MemoryStore is a contract test double. Production public routes must use the
 // PostgreSQL store and must never silently fall back to this implementation.
 type MemoryStore struct {
-	mu              sync.Mutex
-	limits          Limits
-	now             func() time.Time
-	tasks           map[string]*Task
-	idempotency     map[string]idempotencyRecord
-	updates         map[string]map[string]string
-	cancelKeys      map[string]cancelIdempotencyRecord
-	cancelAcks      map[string]string
-	interactionKeys map[string]idempotencyRecord
+	mu                 sync.Mutex
+	limits             Limits
+	now                func() time.Time
+	tasks              map[string]*Task
+	idempotency        map[string]idempotencyRecord
+	updates            map[string]map[string]string
+	cancelKeys         map[string]cancelIdempotencyRecord
+	cancelAcks         map[string]string
+	interactionKeys    map[string]idempotencyRecord
+	authorizationFlows map[string]memoryAuthorizationFlow
 }
 
 func NewMemoryStore(limits Limits) (*MemoryStore, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}, cancelKeys: map[string]cancelIdempotencyRecord{}, cancelAcks: map[string]string{}, interactionKeys: map[string]idempotencyRecord{}}, nil
+	return &MemoryStore{limits: limits, now: time.Now, tasks: map[string]*Task{}, idempotency: map[string]idempotencyRecord{}, updates: map[string]map[string]string{}, cancelKeys: map[string]cancelIdempotencyRecord{}, cancelAcks: map[string]string{}, interactionKeys: map[string]idempotencyRecord{}, authorizationFlows: map[string]memoryAuthorizationFlow{}}, nil
+}
+
+type memoryAuthorizationFlow struct {
+	taskID, interactionID, createdBy, reference string
+	complete                                    bool
 }
 
 func (s *MemoryStore) Create(_ context.Context, p CreateParams) (*CreateResult, error) {
@@ -270,7 +276,7 @@ func (s *MemoryStore) RequestInteraction(_ context.Context, p RequestInteraction
 	if p.Type != InteractionText && p.Type != InteractionChoice && p.Type != InteractionConfirm && p.Type != InteractionJSON && p.Type != InteractionAuthorization {
 		return nil, ErrInvalid
 	}
-	if p.Type == InteractionAuthorization && strings.TrimSpace(p.AuthorizationFlow) == "" {
+	if p.Type == InteractionAuthorization && !registeredAuthorizationKind(p.AuthorizationFlow) {
 		return nil, ErrInvalid
 	}
 	now := s.now().UTC()
@@ -284,6 +290,11 @@ func (s *MemoryStore) RequestInteraction(_ context.Context, p RequestInteraction
 	expires := now.Add(expiry)
 	if expires.After(t.DeadlineAt) {
 		expires = t.DeadlineAt
+	}
+	if p.Type == InteractionAuthorization {
+		flowID := authorizationFlowID(p.InteractionID)
+		s.authorizationFlows[flowID] = memoryAuthorizationFlow{taskID: p.TaskID, interactionID: p.InteractionID, createdBy: t.CreatedBy}
+		p.AuthorizationFlow = flowID
 	}
 	i := &Interaction{ID: p.InteractionID, AttemptID: p.AttemptID, Type: p.Type, Status: InteractionPaused, Question: p.Question, Options: append([]InteractionOption(nil), p.Options...), Schema: append(json.RawMessage(nil), p.Schema...), AuthorizationFlow: p.AuthorizationFlow, CreatedAt: now, ExpiresAt: expires}
 	t.Interaction = i
@@ -340,6 +351,19 @@ func (s *MemoryStore) RespondInteraction(_ context.Context, p RespondInteraction
 	if len(p.Response) == 0 || len(p.Response) > s.limits.MaxInteractionResponseBytes || !json.Valid(p.Response) {
 		return nil, ErrInvalid
 	}
+	if t.Interaction.Type == InteractionAuthorization {
+		var supplied struct {
+			AuthorizationFlowID string `json:"authorizationFlowId"`
+		}
+		if json.Unmarshal(p.Response, &supplied) != nil || supplied.AuthorizationFlowID != t.Interaction.AuthorizationFlow {
+			return nil, ErrAuthorizationFlow
+		}
+		flow, ok := s.authorizationFlows[supplied.AuthorizationFlowID]
+		if !ok || !flow.complete || flow.taskID != p.TaskID || flow.interactionID != p.InteractionID || flow.createdBy != p.RespondedBy {
+			return nil, ErrAuthorizationFlow
+		}
+		p.Response, _ = json.Marshal(map[string]string{"reference": flow.reference})
+	}
 	if err := validateInteractionResponse(t.Interaction, p.Response); err != nil {
 		return nil, err
 	}
@@ -358,6 +382,19 @@ func (s *MemoryStore) RespondInteraction(_ context.Context, p RespondInteraction
 		s.interactionKeys[key] = idempotencyRecord{hash: p.RequestHash, taskID: t.ID}
 	}
 	return &InteractionResult{Task: cloneTask(t)}, nil
+}
+
+func (s *MemoryStore) CompleteAuthorizationFlow(_ context.Context, p CompleteAuthorizationFlowParams) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	flow, ok := s.authorizationFlows[p.FlowID]
+	if !ok || flow.complete || flow.taskID != p.TaskID || flow.interactionID != p.InteractionID || flow.createdBy != p.CreatedBy || strings.TrimSpace(p.ConnectionReference) == "" {
+		return ErrAuthorizationFlow
+	}
+	flow.complete = true
+	flow.reference = strings.TrimSpace(p.ConnectionReference)
+	s.authorizationFlows[p.FlowID] = flow
+	return nil
 }
 
 func validateInteractionResponse(i *Interaction, raw json.RawMessage) error {

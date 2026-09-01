@@ -65,13 +65,21 @@ func TestMemoryAuthorizationRequiresOpaqueReferenceAndOwner(t *testing.T) {
 	if paused.State != StateAuthRequired {
 		t.Fatal(paused.State)
 	}
-	_, err = s.RespondInteraction(ctx, RespondInteractionParams{Agent: a, TaskID: cr.Task.ID, InteractionID: paused.Interaction.ID, RespondedBy: "bob", Response: json.RawMessage(`{"reference":"flow_1"}`)})
+	flowID := paused.Interaction.AuthorizationFlow
+	_, err = s.RespondInteraction(ctx, RespondInteractionParams{Agent: a, TaskID: cr.Task.ID, InteractionID: paused.Interaction.ID, RespondedBy: "bob", Response: json.RawMessage(`{"authorizationFlowId":"` + flowID + `"}`)})
 	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("owner err=%v", err)
 	}
 	_, err = s.RespondInteraction(ctx, RespondInteractionParams{Agent: a, TaskID: cr.Task.ID, InteractionID: paused.Interaction.ID, RespondedBy: "alice", Response: json.RawMessage(`{"token":"secret"}`)})
-	if !errors.Is(err, ErrInvalid) {
+	if !errors.Is(err, ErrAuthorizationFlow) {
 		t.Fatalf("credential err=%v", err)
+	}
+	if err = s.CompleteAuthorizationFlow(ctx, CompleteAuthorizationFlowParams{FlowID: flowID, TaskID: cr.Task.ID, InteractionID: paused.Interaction.ID, CreatedBy: "alice", ConnectionReference: "connection_github_1"}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := s.RespondInteraction(ctx, RespondInteractionParams{Agent: a, TaskID: cr.Task.ID, InteractionID: paused.Interaction.ID, RespondedBy: "alice", Response: json.RawMessage(`{"authorizationFlowId":"` + flowID + `"}`)})
+	if err != nil || res.Task.State != StateQueued || string(res.Task.Interaction.Response) != `{"reference":"connection_github_1"}` {
+		t.Fatalf("authorization result=%+v err=%v", res, err)
 	}
 }
 

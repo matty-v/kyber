@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+func registeredAuthorizationKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "github-app", "claude-oauth", "codex-oauth":
+		return true
+	default:
+		return false
+	}
+}
+
+func authorizationFlowID(interactionID string) string {
+	return "authflow_" + strings.TrimPrefix(interactionID, "interaction_")
+}
+
 func loadConversation(ctx context.Context, q queryer, t *Task) error {
 	rows, err := q.QueryContext(ctx, `SELECT sequence,role,kind,text_value,data,created_at FROM agent_task_messages WHERE task_id=$1 ORDER BY sequence`, t.ID)
 	if err != nil {
@@ -67,7 +80,7 @@ func validateInteractionRequest(l Limits, p RequestInteractionParams) error {
 			return ErrInvalid
 		}
 	case InteractionAuthorization:
-		if strings.TrimSpace(p.AuthorizationFlow) == "" {
+		if !registeredAuthorizationKind(p.AuthorizationFlow) {
 			return ErrInvalid
 		}
 	default:
@@ -129,6 +142,13 @@ func (s *PostgresStore) RequestInteraction(ctx context.Context, p RequestInterac
 	expires := time.Now().UTC().Add(expiry)
 	if expires.After(deadline) {
 		expires = deadline
+	}
+	if p.Type == InteractionAuthorization {
+		flowID := authorizationFlowID(p.InteractionID)
+		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_authorization_flows(id,task_id,interaction_id,created_by,connection_kind,status,created_at,expires_at) VALUES($1,$2,$3,$4,$5,'pending',clock_timestamp(),$6)`, flowID, p.TaskID, p.InteractionID, createdBy, strings.TrimSpace(p.AuthorizationFlow), expires); err != nil {
+			return nil, ErrConflict
+		}
+		p.AuthorizationFlow = flowID
 	}
 	var options, schema any
 	if len(p.Options) > 0 {
@@ -194,9 +214,9 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 		}
 	}
 	var i Interaction
-	var opts sql.NullString
+	var opts, schema sql.NullString
 	var expires time.Time
-	err = tx.QueryRowContext(ctx, `SELECT type,status,options,authorization_flow,expires_at FROM agent_task_interactions WHERE id=$1 AND task_id=$2 FOR UPDATE`, p.InteractionID, p.TaskID).Scan(&i.Type, &i.Status, &opts, &i.AuthorizationFlow, &expires)
+	err = tx.QueryRowContext(ctx, `SELECT type,status,options,schema,authorization_flow,expires_at FROM agent_task_interactions WHERE id=$1 AND task_id=$2 FOR UPDATE`, p.InteractionID, p.TaskID).Scan(&i.Type, &i.Status, &opts, &schema, &i.AuthorizationFlow, &expires)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
 	}
@@ -227,6 +247,26 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 	}
 	if opts.Valid {
 		_ = json.Unmarshal([]byte(opts.String), &i.Options)
+	}
+	if schema.Valid {
+		i.Schema = json.RawMessage(schema.String)
+	}
+	if i.Type == InteractionAuthorization {
+		var supplied struct {
+			AuthorizationFlowID string `json:"authorizationFlowId"`
+		}
+		if json.Unmarshal(p.Response, &supplied) != nil || supplied.AuthorizationFlowID != i.AuthorizationFlow {
+			return nil, ErrAuthorizationFlow
+		}
+		var reference string
+		err = tx.QueryRowContext(ctx, `SELECT connection_reference FROM agent_task_authorization_flows WHERE id=$1 AND task_id=$2 AND interaction_id=$3 AND created_by=$4 AND status='completed' AND expires_at>clock_timestamp() FOR UPDATE`, supplied.AuthorizationFlowID, p.TaskID, p.InteractionID, p.RespondedBy).Scan(&reference)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrAuthorizationFlow
+		}
+		if err != nil {
+			return nil, err
+		}
+		p.Response, _ = json.Marshal(map[string]string{"reference": reference})
 	}
 	if err = validateInteractionResponse(&i, p.Response); err != nil {
 		return nil, err
@@ -265,4 +305,18 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 	}
 	t, err := s.Get(ctx, p.Agent, p.TaskID)
 	return &InteractionResult{Task: t}, err
+}
+
+func (s *PostgresStore) CompleteAuthorizationFlow(ctx context.Context, p CompleteAuthorizationFlowParams) error {
+	if p.FlowID == "" || p.TaskID == "" || p.InteractionID == "" || p.CreatedBy == "" || strings.TrimSpace(p.ConnectionReference) == "" || len(p.ConnectionReference) > HardMaxInteractionResponseBytes {
+		return ErrInvalid
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE agent_task_authorization_flows SET status='completed',connection_reference=$5,completed_at=clock_timestamp() WHERE id=$1 AND task_id=$2 AND interaction_id=$3 AND created_by=$4 AND status='pending' AND expires_at>clock_timestamp()`, p.FlowID, p.TaskID, p.InteractionID, p.CreatedBy, strings.TrimSpace(p.ConnectionReference))
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return ErrAuthorizationFlow
+	}
+	return nil
 }

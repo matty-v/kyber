@@ -596,7 +596,7 @@ func writeInternalTaskError(w http.ResponseWriter, err error) {
 		http.Error(w, "invalid task operation", http.StatusBadRequest)
 	case errors.Is(err, taskstore.ErrNotFound):
 		http.Error(w, "task or receipt not found", http.StatusNotFound)
-	case errors.Is(err, taskstore.ErrConflict), errors.Is(err, taskstore.ErrReceiptConflict), errors.Is(err, taskstore.ErrInvalidAttempt), errors.Is(err, taskstore.ErrUpdateConflict), errors.Is(err, taskstore.ErrResultConflict):
+	case errors.Is(err, taskstore.ErrConflict), errors.Is(err, taskstore.ErrReceiptConflict), errors.Is(err, taskstore.ErrInvalidAttempt), errors.Is(err, taskstore.ErrUpdateConflict), errors.Is(err, taskstore.ErrResultConflict), errors.Is(err, taskstore.ErrAuthorizationFlow):
 		http.Error(w, "task operation conflicts with current state", http.StatusConflict)
 	case errors.Is(err, taskstore.ErrResponseTooLarge), errors.Is(err, taskstore.ErrProgressTooLarge), errors.Is(err, taskstore.ErrResultTooLarge):
 		http.Error(w, "response too large", http.StatusRequestEntityTooLarge)

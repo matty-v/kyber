@@ -59,6 +59,7 @@ var (
 	ErrInteractionLimit     = errors.New("taskstore: interaction limit reached")
 	ErrInteractionNotReady  = errors.New("taskstore: interaction is not awaiting a response")
 	ErrInteractionExpired   = errors.New("taskstore: interaction expired")
+	ErrAuthorizationFlow    = errors.New("taskstore: authorization flow is not complete or does not match")
 )
 
 type State string
@@ -291,6 +292,10 @@ type InteractionResult struct {
 	Replay bool
 }
 
+type CompleteAuthorizationFlowParams struct {
+	FlowID, TaskID, InteractionID, CreatedBy, ConnectionReference string
+}
+
 type Cancellation struct {
 	RequestedAt    time.Time  `json:"requestedAt"`
 	RequestedBy    string     `json:"requestedBy"`
@@ -357,6 +362,7 @@ type Store interface {
 	AcknowledgeCancel(context.Context, AgentRef, string, string, string, string) (*Task, bool, error)
 	RequestInteraction(context.Context, RequestInteractionParams) (*Task, error)
 	RespondInteraction(context.Context, RespondInteractionParams) (*InteractionResult, error)
+	CompleteAuthorizationFlow(context.Context, CompleteAuthorizationFlowParams) error
 	Reject(context.Context, AgentRef, string, string, string) (*Task, error)
 }
 

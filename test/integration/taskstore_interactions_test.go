@@ -99,3 +99,37 @@ func TestTaskInteractionRejectsStaleAttemptAndExpires(t *testing.T) {
 		t.Fatalf("expiry err=%v", err)
 	}
 }
+
+func TestPostgresJSONInteractionEnforcesPersistedSchema(t *testing.T) {
+	ctx := context.Background()
+	store := newTaskStore(t)
+	agent := taskstore.AgentRef{Namespace: "kyber-system", Name: "mat32-json-schema"}
+	created, err := store.Create(ctx, taskstore.CreateParams{ID: "task_99999999999999999999999999999999", Agent: agent, CreatedBy: "operator", Prompt: "configure"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, err := store.ClaimPending(ctx, "schema-worker", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt := "attempt_99999999999999999999999999999999"
+	if err = store.BeginAttempt(ctx, agent, claim.Task.ID, "schema-worker", attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = store.AcceptReceipt(ctx, agent, taskstore.Receipt{TaskID: created.Task.ID, AttemptID: attempt, Runtime: "codex", SessionID: "schema-session"}); err != nil {
+		t.Fatal(err)
+	}
+	paused, err := store.RequestInteraction(ctx, taskstore.RequestInteractionParams{
+		Agent: agent, TaskID: created.Task.ID, AttemptID: attempt,
+		InteractionID: "interaction_99999999999999999999999999999999",
+		Type:          taskstore.InteractionJSON, Question: "configuration?",
+		Schema: json.RawMessage(`{"type":"object","required":["region"],"properties":{"region":{"type":"string"}}}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.RespondInteraction(ctx, taskstore.RespondInteractionParams{Agent: agent, TaskID: created.Task.ID, InteractionID: paused.Interaction.ID, RespondedBy: "operator", Response: json.RawMessage(`{"region":42}`)})
+	if !errors.Is(err, taskstore.ErrInvalid) {
+		t.Fatalf("schema-invalid response err=%v", err)
+	}
+}
