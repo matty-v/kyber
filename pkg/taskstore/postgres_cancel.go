@@ -38,7 +38,7 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 		// row is insufficient because the same scoped key can race on two tasks,
 		// and a same-task loser would otherwise surface a unique violation instead
 		// of the canonical replay/conflict response.
-		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(concat_ws(chr(10),$1,$2,$3,$4),0))`, p.RequestedBy, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey); err != nil {
+		if _, err = tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtextextended(concat_ws(chr(10),$1::text,$2::text,$3::text,$4::text),0))`, p.RequestedBy, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey); err != nil {
 			return nil, err
 		}
 		var hash, taskID string
