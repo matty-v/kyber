@@ -130,7 +130,9 @@ func OpenTaskResult(root, rel string, maxSize int64) (*SafeFile, error) {
 		_ = unix.Close(fd)
 		return nil, ErrFileTooLarge
 	}
-	file := os.NewFile(uintptr(fd), filepath.Base(rel))
+	// The name is diagnostic only. Keep user-controlled path data out of the
+	// os.File value after the descriptor has been opened and validated.
+	file := os.NewFile(uintptr(fd), "task-result")
 	return &SafeFile{f: file, initial: st, remain: st.Size}, nil
 }
 
