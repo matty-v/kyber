@@ -155,6 +155,14 @@ func (s *requestMCPServer) handle(w http.ResponseWriter, r *http.Request) {
 				"media_type": map[string]any{"type": "string", "maxLength": 255},
 			}, "path"),
 		}, {
+			"name":        "get_control",
+			"description": "Check whether cooperative cancellation was requested for the exact current durable task attempt.",
+			"inputSchema": taskControlToolSchema(false),
+		}, {
+			"name":        "ack_cancel",
+			"description": "Acknowledge that the exact current task attempt stopped future task work. This does not claim rollback of prior external effects.",
+			"inputSchema": taskControlToolSchema(true),
+		}, {
 			"name":        "complete",
 			"description": "Complete one dispatched durable Kyber task. Use only IDs from the current kyber-task envelope.",
 			"inputSchema": map[string]any{
@@ -178,21 +186,23 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	var params struct {
 		Name      string `json:"name"`
 		Arguments struct {
-			RequestID   string          `json:"request_id"`
-			TaskID      string          `json:"task_id"`
-			AttemptID   string          `json:"attempt_id"`
-			UpdateID    string          `json:"update_id"`
-			ResultID    string          `json:"result_id"`
-			Name        string          `json:"name"`
-			Description string          `json:"description"`
-			Message     string          `json:"message"`
-			Percent     *int            `json:"percent"`
-			Text        string          `json:"text"`
-			Value       json.RawMessage `json:"value"`
-			Path        string          `json:"path"`
-			Filename    string          `json:"filename"`
-			MediaType   string          `json:"media_type"`
-			Response    string          `json:"response"`
+			RequestID        string          `json:"request_id"`
+			TaskID           string          `json:"task_id"`
+			AttemptID        string          `json:"attempt_id"`
+			UpdateID         string          `json:"update_id"`
+			ResultID         string          `json:"result_id"`
+			Name             string          `json:"name"`
+			Description      string          `json:"description"`
+			Message          string          `json:"message"`
+			Percent          *int            `json:"percent"`
+			Text             string          `json:"text"`
+			Value            json.RawMessage `json:"value"`
+			Path             string          `json:"path"`
+			Filename         string          `json:"filename"`
+			MediaType        string          `json:"media_type"`
+			Response         string          `json:"response"`
+			AcknowledgmentID string          `json:"acknowledgment_id"`
+			Note             string          `json:"note"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -203,6 +213,12 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	if params.Name == "complete" {
 		return s.completeTask(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.Response)
+	}
+	if params.Name == "get_control" {
+		return s.getTaskControl(ctx, params.Arguments.TaskID, params.Arguments.AttemptID)
+	}
+	if params.Name == "ack_cancel" {
+		return s.ackTaskCancel(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.AcknowledgmentID, params.Arguments.Note)
 	}
 	if params.Name == "report_progress" {
 		return s.reportTaskProgress(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.UpdateID, params.Arguments.Message, params.Arguments.Percent)
@@ -248,6 +264,50 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	result := requestToolText("response accepted")
 	result.StructuredContent = map[string]any{"accepted": true, "request_id": params.Arguments.RequestID}
+	return result
+}
+
+func taskControlToolSchema(ack bool) map[string]any {
+	properties := map[string]any{
+		"task_id":    map[string]any{"type": "string", "pattern": `^task_[a-f0-9]{32}$`},
+		"attempt_id": map[string]any{"type": "string", "pattern": `^attempt_[a-f0-9]{32}$`},
+	}
+	required := []string{"task_id", "attempt_id"}
+	if ack {
+		properties["acknowledgment_id"] = map[string]any{"type": "string", "pattern": `^ack_[a-f0-9]{32}$`}
+		properties["note"] = map[string]any{"type": "string", "maxLength": taskstore.HardMaxCancelReasonBytes}
+		required = append(required, "acknowledgment_id")
+	}
+	return map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": required}
+}
+
+func (s *requestMCPServer) getTaskControl(ctx context.Context, taskID, attemptID string) requestToolResult {
+	if !taskReplyIDPattern.MatchString(strings.TrimSpace(taskID)) || !taskAttemptIDPattern.MatchString(strings.TrimSpace(attemptID)) {
+		return requestToolError("task or attempt id is invalid")
+	}
+	body, _ := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID})
+	var control map[string]any
+	status, err := postToCPJSON(ctx, s.client, s.cfg, "task-control", body, &control)
+	if err != nil {
+		return taskMutationError(status, "control check")
+	}
+	encoded, _ := json.Marshal(control)
+	result := requestToolText("%s", encoded)
+	result.StructuredContent = control
+	return result
+}
+
+func (s *requestMCPServer) ackTaskCancel(ctx context.Context, taskID, attemptID, acknowledgmentID, note string) requestToolResult {
+	if !taskReplyIDPattern.MatchString(strings.TrimSpace(taskID)) || !taskAttemptIDPattern.MatchString(strings.TrimSpace(attemptID)) || !regexp.MustCompile(`^ack_[a-f0-9]{32}$`).MatchString(strings.TrimSpace(acknowledgmentID)) || len([]byte(note)) > taskstore.HardMaxCancelReasonBytes {
+		return requestToolError("cancellation acknowledgment is invalid")
+	}
+	body, _ := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID, "acknowledgment_id": acknowledgmentID, "note": note})
+	status, err := postToCP(ctx, s.client, s.cfg, "task-cancel-ack", body)
+	if err != nil {
+		return taskMutationError(status, "cancellation acknowledgment")
+	}
+	result := requestToolText("cancellation acknowledged; prior external effects may remain")
+	result.StructuredContent = map[string]any{"accepted": true, "task_id": taskID, "cancel_scope": "future_task_work"}
 	return result
 }
 

@@ -401,6 +401,10 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleSelfProfile(w, r, agentName)
 	case "task-complete":
 		s.handleTaskComplete(w, r, agentName)
+	case "task-control":
+		s.handleTaskControl(w, r, agentName)
+	case "task-cancel-ack":
+		s.handleTaskCancelAck(w, r, agentName)
 	case "task-progress":
 		s.handleTaskProgress(w, r, agentName)
 	case "task-results":

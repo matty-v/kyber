@@ -28,6 +28,7 @@ func buildTaskHarness(t *testing.T, enabled bool) (http.Handler, *taskstore.Memo
 		APIKey:    testAPIKey, Namespace: "kyber-system", TaskStore: store, TasksEnabled: enabled,
 		Callers: []api.ScopedCaller{
 			{Name: "writer", Key: requestWriteKey, Scopes: []string{"requests:write"}},
+			{Name: "other-writer", Key: "other-writer-secret", Scopes: []string{"requests:write"}},
 			{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}},
 		},
 	}
@@ -116,6 +117,50 @@ func TestAgentTasksIdempotencyConflict(t *testing.T) {
 	two := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "two"}, "key")
 	if two.Code != http.StatusConflict {
 		t.Fatalf("conflict=%d %s", two.Code, two.Body.String())
+	}
+}
+
+func TestAgentTaskCancelQueuedAndReplay(t *testing.T) {
+	h, _ := buildTaskHarness(t, true)
+	created := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "obsolete work"}, "create-cancel-test")
+	if created.Code != http.StatusAccepted {
+		t.Fatal(created.Body.String())
+	}
+	var task struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil {
+		t.Fatal(err)
+	}
+	target := "/api/v1/agents/kiosk/tasks/" + task.ID + "/cancel"
+	denied := taskRequest(t, h, http.MethodPost, target, "other-writer-secret", map[string]string{"reason": "not mine"}, "other-cancel-key")
+	if denied.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner cancel=%d %s", denied.Code, denied.Body.String())
+	}
+	canceled := taskRequest(t, h, http.MethodPost, target, requestWriteKey, map[string]string{"reason": "superseded"}, "cancel-key")
+	if canceled.Code != http.StatusOK {
+		t.Fatalf("cancel=%d %s", canceled.Code, canceled.Body.String())
+	}
+	var response struct {
+		State  string `json:"state"`
+		Cancel struct {
+			Applied bool   `json:"applied"`
+			Scope   string `json:"scope"`
+		} `json:"cancel"`
+	}
+	if err := json.Unmarshal(canceled.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.State != "canceled" || !response.Cancel.Applied || response.Cancel.Scope != "future_task_work" {
+		t.Fatalf("response=%+v", response)
+	}
+	replay := taskRequest(t, h, http.MethodPost, target, requestWriteKey, map[string]string{"reason": "superseded"}, "cancel-key")
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotent-Replay") != "true" {
+		t.Fatalf("replay=%d headers=%v body=%s", replay.Code, replay.Header(), replay.Body.String())
+	}
+	conflict := taskRequest(t, h, http.MethodPost, target, requestWriteKey, map[string]string{"reason": "different"}, "cancel-key")
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("conflict=%d %s", conflict.Code, conflict.Body.String())
 	}
 }
 

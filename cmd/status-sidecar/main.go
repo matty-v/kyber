@@ -294,6 +294,30 @@ func postToCP(ctx context.Context, client *http.Client, cfg config, cpEndpoint s
 	return resp.StatusCode, nil
 }
 
+func postToCPJSON(ctx context.Context, client *http.Client, cfg config, cpEndpoint string, body []byte, dst any) (int, error) {
+	url := fmt.Sprintf("%s/internal/agents/%s/%s", cfg.ControlPlaneURL, cfg.AgentName, cpEndpoint)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return 0, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if token, err := readPodToken(podTokenPath); err == nil && token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, fmt.Errorf("post: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode/100 != 2 {
+		return resp.StatusCode, fmt.Errorf("control plane returned %s", resp.Status)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 256<<10)).Decode(dst); err != nil {
+		return resp.StatusCode, fmt.Errorf("decode response: %w", err)
+	}
+	return resp.StatusCode, nil
+}
+
 func getFromCP(ctx context.Context, client *http.Client, cfg config, cpEndpoint string, dst any) (int, error) {
 	url := fmt.Sprintf("%s/internal/agents/%s/%s", cfg.ControlPlaneURL, cfg.AgentName, cpEndpoint)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

@@ -23,6 +23,7 @@ var taskIDPattern = regexp.MustCompile(`^task_[a-f0-9]{32}$`)
 var attemptIDPattern = regexp.MustCompile(`^attempt_[a-f0-9]{32}$`)
 var updateIDPattern = regexp.MustCompile(`^update_[a-f0-9]{32}$`)
 var resultIDPattern = regexp.MustCompile(`^result_[a-f0-9]{32}$`)
+var acknowledgmentIDPattern = regexp.MustCompile(`^ack_[a-f0-9]{32}$`)
 
 func (s *InternalServer) handleTaskReceiptPost(w http.ResponseWriter, r *http.Request, agent string) {
 	if r.Method != http.MethodPost {
@@ -115,6 +116,63 @@ func (s *InternalServer) handleTaskComplete(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *InternalServer) handleTaskControl(w http.ResponseWriter, r *http.Request, agent string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		TaskID    string `json:"task_id"`
+		AttemptID string `json:"attempt_id"`
+	}
+	if s.taskStore == nil {
+		http.Error(w, "task service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !decodeInternalTaskBody(w, r, 4096, &body) || !taskIDPattern.MatchString(body.TaskID) || !attemptIDPattern.MatchString(body.AttemptID) {
+		http.Error(w, "invalid task control request", http.StatusBadRequest)
+		return
+	}
+	control, err := s.taskStore.GetControl(r.Context(), taskstore.AgentRef{Namespace: s.namespace, Name: agent}, body.TaskID, body.AttemptID)
+	if err != nil {
+		writeInternalTaskError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(control)
+}
+
+func (s *InternalServer) handleTaskCancelAck(w http.ResponseWriter, r *http.Request, agent string) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var body struct {
+		TaskID           string `json:"task_id"`
+		AttemptID        string `json:"attempt_id"`
+		AcknowledgmentID string `json:"acknowledgment_id"`
+		Note             string `json:"note"`
+	}
+	if s.taskStore == nil {
+		http.Error(w, "task service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if !decodeInternalTaskBody(w, r, taskstore.HardMaxCancelReasonBytes*6+4096, &body) || !taskIDPattern.MatchString(body.TaskID) || !attemptIDPattern.MatchString(body.AttemptID) || !acknowledgmentIDPattern.MatchString(body.AcknowledgmentID) {
+		http.Error(w, "invalid cancellation acknowledgment", http.StatusBadRequest)
+		return
+	}
+	task, replay, err := s.taskStore.AcknowledgeCancel(r.Context(), taskstore.AgentRef{Namespace: s.namespace, Name: agent}, body.TaskID, body.AttemptID, body.AcknowledgmentID, body.Note)
+	if err != nil {
+		writeInternalTaskError(w, err)
+		return
+	}
+	if replay {
+		w.Header().Set("Idempotent-Replay", "true")
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"accepted": true, "taskVersion": task.Version})
 }
 
 func (s *InternalServer) handleTaskProgress(w http.ResponseWriter, r *http.Request, agent string) {

@@ -40,10 +40,40 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
+	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"get_control"`, `"name":"ack_cancel"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPCancellationControlAndAcknowledgment(t *testing.T) {
+	var paths []string
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasSuffix(r.URL.Path, "task-control") {
+			_, _ = w.Write([]byte(`{"cancel_requested":true,"reason":"superseded","requested_at":"2026-09-01T00:00:00Z"}`))
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL}}
+	ids := map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222"}
+	control := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "get_control", "arguments": ids})
+	structured := control.Result.(map[string]any)["structuredContent"].(map[string]any)
+	if structured["cancel_requested"] != true || structured["reason"] != "superseded" {
+		t.Fatalf("control=%+v", structured)
+	}
+	ids["acknowledgment_id"] = "ack_33333333333333333333333333333333"
+	ids["note"] = "stopped future work; prior effects may remain"
+	ack := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "ack_cancel", "arguments": ids})
+	if ack.Result.(map[string]any)["isError"] == true {
+		t.Fatalf("ack=%+v", ack.Result)
+	}
+	if got := strings.Join(paths, ","); got != "/internal/agents/alice/task-control,/internal/agents/alice/task-cancel-ack" {
+		t.Fatalf("paths=%s", got)
 	}
 }
 
