@@ -454,6 +454,126 @@ spec:
                 configMapKeyRef:
                   name: {{ include "kyber.fullname" . }}-control-plane
                   key: KYBER_TASK_RESULTS_ROOT
+            # Durable task settings (MAT-29/MAT-30). Every key the
+            # control-plane ConfigMap renders under api.durableTasks has to be
+            # injected here or the process never sees it: main.go reads them
+            # with os.Getenv, and a key sitting in a ConfigMap that nothing
+            # mounts or references is not an environment variable.
+            #
+            # This is exactly how api.durableTasks.enabled shipped inert — the
+            # value rendered, `helm get values` showed it true, and the feature
+            # stayed off on every cluster. The limits below had the same defect
+            # and it was invisible because each chart default happens to equal
+            # the compiled default in taskstore.DefaultLimits(), so nothing
+            # diverged until an operator changed one.
+            #
+            # test/chart/task_env_wiring_test.go fails if this list ever falls
+            # behind the ConfigMap again.
+            - name: KYBER_TASKS_DEFAULT_DEADLINE_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_DEFAULT_DEADLINE_HOURS
+            - name: KYBER_TASKS_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_ENABLED
+            - name: KYBER_TASKS_MAX_CORRELATION_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_CORRELATION_BYTES
+            - name: KYBER_TASKS_MAX_DEADLINE_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_DEADLINE_HOURS
+            - name: KYBER_TASKS_MAX_DESCRIPTION_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_DESCRIPTION_BYTES
+            - name: KYBER_TASKS_MAX_DISPATCH_ATTEMPTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_DISPATCH_ATTEMPTS
+            - name: KYBER_TASKS_MAX_FILENAME_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_FILENAME_BYTES
+            - name: KYBER_TASKS_MAX_FILE_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_FILE_BYTES
+            - name: KYBER_TASKS_MAX_JSON_PART_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_JSON_PART_BYTES
+            - name: KYBER_TASKS_MAX_OUTSTANDING
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_OUTSTANDING
+            - name: KYBER_TASKS_MAX_PROGRESS_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_PROGRESS_BYTES
+            - name: KYBER_TASKS_MAX_PROGRESS_UPDATES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_PROGRESS_UPDATES
+            - name: KYBER_TASKS_MAX_PROMPT_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_PROMPT_BYTES
+            - name: KYBER_TASKS_MAX_RESPONSE_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_RESPONSE_BYTES
+            - name: KYBER_TASKS_MAX_RESULTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_RESULTS
+            - name: KYBER_TASKS_MAX_RESULT_NAME_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_RESULT_NAME_BYTES
+            - name: KYBER_TASKS_MAX_RESULT_PARTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_RESULT_PARTS
+            - name: KYBER_TASKS_MAX_RETAINED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_RETAINED
+            - name: KYBER_TASKS_MAX_TASK_FILE_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_TASK_FILE_BYTES
+            - name: KYBER_TASKS_MAX_TEXT_PART_BYTES
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_MAX_TEXT_PART_BYTES
+            - name: KYBER_TASKS_RETENTION_HOURS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_TASKS_RETENTION_HOURS
             - name: KYBER_A2A_ENABLED
               valueFrom:
                 configMapKeyRef:
