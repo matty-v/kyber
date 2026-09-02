@@ -156,6 +156,11 @@ type AgentReconciler struct {
 	// later agent that reuses the name.
 	SkillStore skillstore.Store
 
+	// CapabilityPlatform is installation-owned evidence for public task
+	// feature availability. Runtime support alone must never advertise a task
+	// contract whose service or backing store is disabled.
+	CapabilityPlatform capabilities.PlatformState
+
 	// AlertSink receives alerts for notable agent events (e.g., Failed, retry limit reached).
 	// If nil, alerts are silently dropped. Use telemetry.NewLogAlertSink() for a safe default.
 	AlertSink telemetry.AlertSink
@@ -2331,7 +2336,7 @@ func (r *AgentReconciler) reconcilePublicCapabilities(ctx context.Context, agent
 	} else {
 		report, reportErr = r.SkillStore.Get(ctx, agent.Name)
 	}
-	desired := capabilities.Evaluate(agent, report, reportErr, time.Now())
+	desired := capabilities.Evaluate(agent, report, reportErr, r.CapabilityPlatform, time.Now())
 	if publicCapabilityStatusEqual(agent.Status.PublicCapabilities, desired) {
 		return capabilityEvidenceRequeue(agent, report), nil
 	}

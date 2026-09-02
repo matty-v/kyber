@@ -42,6 +42,7 @@ import (
 	internalapi "github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
 	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	machinecontroller "github.com/matty-v/kyber/pkg/controllers/machine"
@@ -618,6 +619,7 @@ func main() {
 		setupLog.Info("context-window override map disabled: KYBER_MODEL_CONTEXT_WINDOWS_CONFIGMAP not set")
 	}
 
+	_, durableTaskStoreReady := agentTaskStore.(taskstore.DispatchStore)
 	agentReconciler := &agentcontroller.AgentReconciler{
 		Client:                        mgr.GetClient(),
 		Scheme:                        mgr.GetScheme(),
@@ -657,6 +659,11 @@ func main() {
 		MetricsStore:           metricsStore,
 		StateChangeAccumulator: stateChangeAccum,
 		SkillStore:             skillStore,
+		CapabilityPlatform: capabilities.PlatformState{
+			TasksEnabled:     os.Getenv("KYBER_TASKS_ENABLED") == "true",
+			DurableTaskStore: durableTaskStoreReady,
+			TaskObjectStore:  agentTaskObjectStore != nil,
+		},
 
 		// Mint per-agent pod-tokens when the signing key is configured (#566).
 		PodTokenKey: internalSigningKey,

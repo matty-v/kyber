@@ -237,7 +237,8 @@ func validatePublicURL(raw string) error {
 		return fmt.Errorf("must be an absolute HTTPS URL without credentials or fragment")
 	}
 	host := strings.ToLower(strings.TrimSuffix(u.Hostname(), "."))
-	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") {
+	if host == "localhost" || strings.HasSuffix(host, ".local") || strings.HasSuffix(host, ".internal") ||
+		strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".cluster.local") {
 		return fmt.Errorf("internal host is not allowed")
 	}
 	if ip := net.ParseIP(host); ip != nil && (ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified() || ip.IsLinkLocalUnicast()) {

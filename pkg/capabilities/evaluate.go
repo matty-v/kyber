@@ -13,6 +13,16 @@ import (
 
 const SkillEvidenceMaxAge = 24 * time.Hour
 
+// PlatformState is installation-owned evidence for the task contracts that a
+// runtime adapter can consume. Zero values fail closed: an adapter supporting
+// a feature does not make that feature usable when the corresponding Kyber
+// service or backend is disabled.
+type PlatformState struct {
+	TasksEnabled     bool
+	DurableTaskStore bool
+	TaskObjectStore  bool
+}
+
 // AdapterMatrixVersion pins the internal observation vocabulary. It is not a
 // public capability claim: it only limits which operator declarations current
 // Kyber runtime adapters can mark available.
@@ -25,7 +35,7 @@ var adapterFeatureMatrix = map[string]map[string]bool{
 
 // Evaluate joins an explicit declaration with bounded private observations.
 // Observations may narrow availability but can never create a capability.
-func Evaluate(agent *kyberv1.Agent, report *skillscan.Report, reportErr error, now time.Time) *kyberv1.AgentPublicCapabilitiesStatus {
+func Evaluate(agent *kyberv1.Agent, report *skillscan.Report, reportErr error, platform PlatformState, now time.Time) *kyberv1.AgentPublicCapabilitiesStatus {
 	if agent.Spec.PublicCapabilities == nil {
 		return nil
 	}
@@ -47,7 +57,7 @@ func Evaluate(agent *kyberv1.Agent, report *skillscan.Report, reportErr error, n
 	status.Conditions = append(status.Conditions, condition("Valid", metav1.ConditionTrue, "Validated", "public capability declaration is valid", agent.Generation, now))
 	allAvailable := true
 	for _, declared := range agent.Spec.PublicCapabilities.Capabilities {
-		availability, reason := evaluateCapability(declared, agent, report, reportErr, now)
+		availability, reason := evaluateCapability(declared, agent, report, reportErr, platform, now)
 		if availability != "available" {
 			allAvailable = false
 		}
@@ -64,7 +74,7 @@ func Evaluate(agent *kyberv1.Agent, report *skillscan.Report, reportErr error, n
 	return status
 }
 
-func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.Agent, report *skillscan.Report, reportErr error, now time.Time) (string, string) {
+func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.Agent, report *skillscan.Report, reportErr error, platform PlatformState, now time.Time) (string, string) {
 	runtime, phase := agent.Spec.Runtime, agent.Status.Phase
 	if agent.Status.Runtime.Runtime == "" || agent.Status.Runtime.Usable == nil {
 		return "unknown", "runtime-evidence-unavailable"
@@ -89,6 +99,9 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 		if !supportedFeatures[feature] {
 			return "unavailable", "runtime-feature-unsupported"
 		}
+		if available, reason := platformFeatureAvailable(feature, platform); !available {
+			return "unavailable", reason
+		}
 	}
 	if len(declared.TaskFeatures) > 0 && !agent.Spec.RequestReplyEnabled {
 		return "unavailable", "task-interface-disabled"
@@ -105,6 +118,9 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 	for _, feature := range evidence.RequiredPlatformFeatures {
 		if !knownFeatures[feature] || feature == "event-replay" {
 			return "unavailable", "platform-feature-disabled"
+		}
+		if available, reason := platformFeatureAvailable(feature, platform); !available {
+			return "unavailable", reason
 		}
 	}
 	if len(evidence.RequiredPlatformFeatures) > 0 && !agent.Spec.RequestReplyEnabled {
@@ -155,6 +171,19 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 		}
 	}
 	return "available", ""
+}
+
+func platformFeatureAvailable(feature string, platform PlatformState) (bool, string) {
+	if !platform.TasksEnabled {
+		return false, "platform-task-service-disabled"
+	}
+	if !platform.DurableTaskStore {
+		return false, "platform-task-store-unavailable"
+	}
+	if feature == "files" && !platform.TaskObjectStore {
+		return false, "platform-object-store-unavailable"
+	}
+	return true, ""
 }
 
 func connectorAvailable(agent *kyberv1.Agent, connector string) bool {
