@@ -90,12 +90,16 @@ func (s *PostgresStore) EventSnapshot(ctx context.Context, a AgentRef, taskID st
 		return nil, 0, err
 	}
 	defer tx.Rollback()
-	t, err := getTaskTx(ctx, tx, a, taskID)
+	t, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND tenant_id=$4 AND owner_principal_id=$5 AND agent_resource_id=$6 AND (state IN ('queued','dispatched','input_required','auth_required','canceling') OR retain_until>=clock_timestamp())`, taskID, a.Namespace, a.Name, auth.TenantID, auth.PrincipalID, auth.AgentResourceID))
 	if err != nil {
 		return nil, 0, err
 	}
-	if t.TenantID != auth.TenantID || t.OwnerPrincipalID != auth.PrincipalID || t.AgentResourceID != auth.AgentResourceID {
-		return nil, 0, ErrNotFound
+	t.Results, err = loadResults(ctx, tx, taskID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err = loadConversation(ctx, tx, t); err != nil {
+		return nil, 0, err
 	}
 	var high int64
 	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(max(sequence),0) FROM agent_task_events WHERE task_id=$1 AND tenant_id=$2 AND owner_principal_id=$3 AND agent_resource_id=$4`, taskID, auth.TenantID, auth.PrincipalID, auth.AgentResourceID).Scan(&high); err != nil {

@@ -17,8 +17,9 @@ import (
 
 type fixedEventStore struct {
 	taskstore.Store
-	event   taskstore.TaskEvent
-	expired bool
+	event        taskstore.TaskEvent
+	expired      bool
+	snapshotTask *taskstore.Task
 }
 
 func (s *fixedEventStore) EventHighWater(context.Context, taskstore.AgentRef, string, taskstore.AuthorizationContext) (int64, error) {
@@ -26,6 +27,9 @@ func (s *fixedEventStore) EventHighWater(context.Context, taskstore.AgentRef, st
 }
 
 func (s *fixedEventStore) EventSnapshot(ctx context.Context, a taskstore.AgentRef, id string, auth taskstore.AuthorizationContext) (*taskstore.Task, int64, error) {
+	if s.snapshotTask != nil {
+		return s.snapshotTask, s.event.Sequence, nil
+	}
 	t, err := s.Store.GetAuthorized(ctx, a, id, auth)
 	return t, s.event.Sequence, err
 }
@@ -117,6 +121,22 @@ func TestTaskEventSnapshotCursorAndTerminalReplay(t *testing.T) {
 	h.ServeHTTP(rw, resumed)
 	if rw.Code != http.StatusOK || strings.Contains(rw.Body.String(), "event: task.created") {
 		t.Fatalf("resumed=%d body=%q", rw.Code, rw.Body.String())
+	}
+}
+
+func TestTaskEventSnapshotPreservesResultsAndConversation(t *testing.T) {
+	h, id, store := buildTaskEventHarness(t)
+	now := time.Now().UTC()
+	store.snapshotTask = &taskstore.Task{
+		ID: id, AgentNamespace: "kyber-system", AgentName: "kiosk", State: taskstore.StateInputRequired, Version: 3,
+		CreatedAt: now, UpdatedAt: now, DeadlineAt: now.Add(time.Hour), RetainUntil: now.Add(24 * time.Hour),
+		Results:     []taskstore.Result{{ID: "result_1", Name: "report", Parts: []taskstore.ResultPart{{ID: "part_1", Kind: taskstore.PartText, Text: "ready"}}, CreatedAt: now}},
+		Interaction: &taskstore.Interaction{ID: "interaction_1", AttemptID: "attempt_1", Type: taskstore.InteractionText, Status: taskstore.InteractionPaused, Question: "continue?", CreatedAt: now, ExpiresAt: now.Add(time.Hour)},
+		Messages:    []taskstore.Message{{Sequence: 1, Role: "agent", Kind: "text", Text: "continue?", CreatedAt: now}},
+	}
+	got := taskRequest(t, h, http.MethodGet, "/api/v1/agents/kiosk/tasks/"+id, requestWriteKey, nil, "")
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"name":"report"`) || !strings.Contains(got.Body.String(), `"question":"continue?"`) || !strings.Contains(got.Body.String(), `"messages":[`) || !strings.Contains(got.Body.String(), `"eventCursor":`) {
+		t.Fatalf("snapshot=%d %s", got.Code, got.Body.String())
 	}
 }
 
