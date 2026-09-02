@@ -180,4 +180,19 @@ func TestPinnedOfficialHTTPJSONTCK(t *testing.T) {
 			t.Fatalf("TCK report %s: %v", name, err)
 		}
 	}
+	pythonSDK := os.Getenv("KYBER_A2A_PYTHON_SDK_DIR")
+	if pythonSDK == "" {
+		t.Log("KYBER_A2A_PYTHON_SDK_DIR is not set; independent-client smoke skipped")
+		return
+	}
+	packageDir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoRoot := filepath.Clean(filepath.Join(packageDir, "..", ".."))
+	smoke := exec.Command("uv", "run", "--project", pythonSDK, "python", filepath.Join(repoRoot, "test", "a2aconformance", "python_client_smoke.py"), fixture.URL+"/a2a/v1/agents/conformance")
+	smoke.Env = append(os.Environ(), "PYTHONDONTWRITEBYTECODE=1")
+	if output, err := smoke.CombinedOutput(); err != nil {
+		t.Fatalf("independent Python SDK smoke failed: %v\n%s", err, output)
+	}
 }

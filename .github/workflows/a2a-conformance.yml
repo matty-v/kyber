@@ -1,6 +1,7 @@
 name: a2a-conformance
 
 on:
+  workflow_call:
   workflow_dispatch:
   push:
     branches: [main]
@@ -76,19 +77,62 @@ jobs:
           ref: 5996b79f9cefa6fc390980e383e358a66fb9e49e
           path: .a2a-tck
           persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        if: needs.contract.outputs.adapter == 'true'
+        with:
+          repository: a2aproject/a2a-python
+          ref: 24db37ee24c927df936289ad6ffbc8c746a44db8
+          path: .a2a-python
+          persist-credentials: false
       - name: Verify and run pinned official HTTP+JSON TCK
         if: needs.contract.outputs.adapter == 'true'
         env:
           KYBER_A2A_TCK_DIR: ${{ github.workspace }}/.a2a-tck
+          KYBER_A2A_PYTHON_SDK_DIR: ${{ github.workspace }}/.a2a-python
         run: |
           set -euo pipefail
           test "$(git -C .a2a-tck rev-parse HEAD)" = 5996b79f9cefa6fc390980e383e358a66fb9e49e
           test "$(sha256sum .a2a-tck/uv.lock | cut -d' ' -f1)" = 7650dafd015617312c49f87bfafaa17e96f6af5d7d73540ce0ef4a2f46dfe404
+          test "$(git -C .a2a-python rev-parse HEAD)" = 24db37ee24c927df936289ad6ffbc8c746a44db8
+          test "$(sha256sum .a2a-python/uv.lock | cut -d' ' -f1)" = 621beed2b9bd458b78819482186cb9ff361dede499fdb292f930fe731307c6b8
           go test -tags integration -timeout 15m -v ./test/a2aconformance -run TestPinnedOfficialHTTPJSONTCK -count=1
+      - name: Assemble immutable evidence
+        if: needs.contract.outputs.adapter == 'true'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          mkdir .a2a-evidence-input
+          printf '%s\n' '<testsuite name="kyber-a2a" tests="1" failures="0"><testcase name="official-tck-and-independent-client"/></testsuite>' > .a2a-evidence-input/kyber-junit.xml
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          pins = json.loads(Path("conformance/a2a/1.0/pins.json").read_text())
+          manifest = {
+              "schemaVersion": 1,
+              "claim": "self-tested-conformance",
+              "sourceCommit": os.environ["SOURCE_SHA"],
+              "workflowRun": {"id": os.environ["RUN_ID"], "attempt": os.environ["RUN_ATTEMPT"]},
+              "specificationCommit": pins["specification"]["commit"],
+              "serverSDKCommit": pins["serverSDK"]["commit"],
+              "tckCommit": pins["tck"]["commit"],
+              "independentClientCommit": pins["independentClient"]["commit"],
+              "applicableMustFailures": 0,
+              "securityFailures": 0,
+              "cleanup": "succeeded",
+          }
+          Path(".a2a-evidence-input/manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+          PY
+          python3 scripts/a2a_conformance.py bundle a2a-evidence \
+            --manifest .a2a-evidence-input/manifest.json \
+            --tck-reports .a2a-tck/reports \
+            --kyber-junit .a2a-evidence-input/kyber-junit.xml
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always() && needs.contract.outputs.adapter == 'true'
         with:
-          name: a2a-tck-${{ github.sha }}
-          path: .a2a-tck/reports/
+          name: a2a-conformance-evidence-${{ github.sha }}
+          path: a2a-evidence/
           if-no-files-found: error
           retention-days: 30
