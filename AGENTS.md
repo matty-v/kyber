@@ -187,7 +187,18 @@ Durable Discord delivery is a non-goal: the Gateway sidecar serves running
 agent pods only. Users who need acceptance or durable queuing while a pod is
 absent must provide an external relay into Kyber's signed inbound webhook.
 
-### 1.4 Inbound dispatch gauntlet (how prompts reach agents)
+### 1.4 A2A conformance contract
+The A2A 1.0 HTTP+JSON claim is generated from `conformance/a2a/1.0/` and
+validated by `scripts/a2a_conformance.py`; never hand-edit the generated
+support matrix. The complete normative inventory comes from the exact pinned
+official TCK commit. Applicable and deferred-optional rows require exact test
+references, while non-applicable rows require reviewed reasons. Adapter-path
+changes must run the pinned official TCK through the loopback Bearer injection
+shim in `test/a2aconformance`; do not patch upstream TCK source or weaken a
+failing MUST into a skip. Evidence bundles are immutable directories with an
+exact SHA256SUMS file and must use the self-tested—not certified—claim.
+
+### 1.5 Inbound dispatch gauntlet (how prompts reach agents)
 External senders POST signed envelopes to
 `/webhooks/inbound/<agent>/<binding>`. The pipeline, in fixed order:
 HMAC verify → dedup (body hash) → binding match + filters → per-binding rate

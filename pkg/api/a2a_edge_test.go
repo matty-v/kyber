@@ -76,7 +76,7 @@ func TestA2AFeatureGateAuthVersionAndCard(t *testing.T) {
 		t.Fatalf("missing version=%d %s", got.Code, got.Body.String())
 	}
 	card := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/.well-known/agent-card.json", requestWriteKey, "", nil)
-	if card.Code != http.StatusOK || !strings.Contains(card.Body.String(), `"protocolBinding":"HTTP+JSON"`) || !strings.Contains(card.Body.String(), `"id":"inspect"`) || strings.Contains(card.Body.String(), "evidence") {
+	if card.Code != http.StatusOK || !strings.Contains(card.Body.String(), `"protocolBinding":"HTTP+JSON"`) || !strings.Contains(card.Body.String(), `"url":"https://kyber.example/a2a/v1/agents/kiosk"`) || !strings.Contains(card.Body.String(), `"id":"inspect"`) || !strings.Contains(card.Body.String(), `"tags":[]`) || !strings.Contains(card.Body.String(), `"bearer":{"list":[]}`) || strings.Contains(card.Body.String(), "evidence") {
 		t.Fatalf("card=%d %s", card.Code, card.Body.String())
 	}
 }
@@ -159,6 +159,35 @@ func TestA2ARejectsUnsupportedInputAndPush(t *testing.T) {
 	push := map[string]any{"message": map[string]any{"messageId": "msg-push", "role": "ROLE_USER", "parts": []map[string]any{{"text": "x"}}}, "configuration": map[string]any{"returnImmediately": true, "taskPushNotificationConfig": map[string]any{"url": "https://example.com"}}}
 	if got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", push); got.Code != http.StatusBadRequest {
 		t.Fatalf("push=%d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestA2AUnsupportedOptionalOperationsStayDark(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	for _, tc := range []struct {
+		name, method, target, reason string
+		body                         any
+	}{
+		{"extended-card", http.MethodGet, "/a2a/v1/agents/kiosk/extendedAgentCard", "UNSUPPORTED_OPERATION", nil},
+		{"create-push-config", http.MethodPost, "/a2a/v1/agents/kiosk/tasks/task-1/pushNotificationConfigs", "PUSH_NOTIFICATION_NOT_SUPPORTED", map[string]any{"taskId": "task-1", "url": "https://example.invalid/hook"}},
+		{"get-push-config", http.MethodGet, "/a2a/v1/agents/kiosk/tasks/task-1/pushNotificationConfigs/config-1", "PUSH_NOTIFICATION_NOT_SUPPORTED", nil},
+		{"list-push-configs", http.MethodGet, "/a2a/v1/agents/kiosk/tasks/task-1/pushNotificationConfigs", "PUSH_NOTIFICATION_NOT_SUPPORTED", nil},
+		{"delete-push-config", http.MethodDelete, "/a2a/v1/agents/kiosk/tasks/task-1/pushNotificationConfigs/config-1", "PUSH_NOTIFICATION_NOT_SUPPORTED", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := a2aRequest(t, h, tc.method, tc.target, requestWriteKey, "1.0", tc.body)
+			if got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), `"reason":"`+tc.reason+`"`) {
+				t.Fatalf("status=%d body=%s", got.Code, got.Body.String())
+			}
+		})
+	}
+}
+
+func TestA2ASubscribeRejectsUnknownTaskBeforeStartingSSE(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/tasks/missing:subscribe", requestWriteKey, "1.0", nil)
+	if got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "task_not_found") {
+		t.Fatalf("status=%d body=%s", got.Code, got.Body.String())
 	}
 }
 

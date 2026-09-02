@@ -149,6 +149,14 @@ jobs:
       - name: Node version alignment
         run: bash scripts/node-version-guard_test.sh
 
+      # MAT-37: this is deliberately in the existing required `test` job so
+      # ledger drift, stale generated claims, expired exceptions, and unsafe
+      # evidence handling block every PR without a branch-protection rollout.
+      - name: A2A conformance contract
+        run: |
+          python3 scripts/a2a_conformance.py validate
+          python3 scripts/a2a_conformance_test.py
+
       - name: Lint
         if: needs.changes.outputs.go == 'true'
         run: make lint

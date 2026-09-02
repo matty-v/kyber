@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "protocolVersion": "1.0",
+  "specification": {
+    "repository": "https://github.com/a2aproject/A2A",
+    "version": "1.0.0",
+    "commit": "173695755607e884aa9acf8ce4feed90e32727a1",
+    "protoSHA256": "4b74c0baa923ae0acb55474e548f1d6e5d3f83b80d757b65f8bf3e99a3c2257f",
+    "documentSHA256": "087c6f6272ec08a7fcd90eb16843bf97e25e0dcd155afa5779033d23d5ac377d"
+  },
+  "serverSDK": {
+    "module": "github.com/a2aproject/a2a-go/v2",
+    "version": "v2.4.0",
+    "commit": "5736cc7c76905476840257b2c3b0f84a6fea8134",
+    "moduleSum": "h1:da0iwA6voxLhXIw1B3GSAdrhs5UIa2v6m+v/Fix5qTw=",
+    "goModSum": "h1:EghJ/rY9OCC6jme1z+otOBf+1YCVVCpMSPZU31t3hKY="
+  },
+  "tck": {
+    "repository": "https://github.com/a2aproject/a2a-tck",
+    "commit": "5996b79f9cefa6fc390980e383e358a66fb9e49e",
+    "uvLockSHA256": "7650dafd015617312c49f87bfafaa17e96f6af5d7d73540ce0ef4a2f46dfe404",
+    "inventoryCount": 129
+  },
+  "independentClient": {
+    "repository": "https://github.com/a2aproject/a2a-python",
+    "version": "v1.0.0",
+    "commit": "24db37ee24c927df936289ad6ffbc8c746a44db8",
+    "uvLockSHA256": "621beed2b9bd458b78819482186cb9ff361dede499fdb292f930fe731307c6b8"
+  },
+  "retrievedAt": "2026-09-02"
+}

@@ -1,0 +1,70 @@
+{
+  "bindings": [
+    "HTTP+JSON"
+  ],
+  "capabilities": {
+    "extendedAgentCard": false,
+    "pushNotifications": false,
+    "streaming": true
+  },
+  "claim": "self-tested-conformance",
+  "deviations": [],
+  "evidenceDigest": "unpublished",
+  "independentClient": {
+    "commit": "24db37ee24c927df936289ad6ffbc8c746a44db8",
+    "version": "v1.0.0"
+  },
+  "inputModes": [
+    "application/json",
+    "text/markdown",
+    "text/plain"
+  ],
+  "limitsRef": "docs/architecture/durable-tasks.md#a2a-10-httpjson-edge",
+  "outputModes": [
+    "application/json",
+    "text/markdown",
+    "text/plain",
+    "files"
+  ],
+  "protocolVersion": "1.0",
+  "requirementCounts": {
+    "MAY": {
+      "applicable": 4
+    },
+    "MUST": {
+      "applicable": 78,
+      "deferred-optional": 16,
+      "not-applicable": 20
+    },
+    "SHOULD": {
+      "applicable": 11
+    }
+  },
+  "securitySchemes": [
+    "Bearer"
+  ],
+  "serverSDK": {
+    "commit": "5736cc7c76905476840257b2c3b0f84a6fea8134",
+    "goModSum": "h1:EghJ/rY9OCC6jme1z+otOBf+1YCVVCpMSPZU31t3hKY=",
+    "module": "github.com/a2aproject/a2a-go/v2",
+    "moduleSum": "h1:da0iwA6voxLhXIw1B3GSAdrhs5UIa2v6m+v/Fix5qTw=",
+    "version": "v2.4.0"
+  },
+  "specification": "1.0.0",
+  "tck": {
+    "commit": "5996b79f9cefa6fc390980e383e358a66fb9e49e",
+    "patches": [
+      "TCK-ADAPT-001",
+      "TCK-ADAPT-002",
+      "TCK-EXCLUDE-001"
+    ]
+  },
+  "unsupported": [
+    "OAuth2/OIDC",
+    "JSON-RPC",
+    "gRPC",
+    "push notifications",
+    "extensions",
+    "extended Agent Card"
+  ]
+}

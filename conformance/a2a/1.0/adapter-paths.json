@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "owners": ["platform-a2a", "security"],
+  "paths": [
+    ".github/workflows/a2a-conformance.yml",
+    "cmd/a2a-conformance/",
+    "conformance/a2a/",
+    "deploy/helm/kyber/templates/control-plane/",
+    "deploy/helm/kyber/values.yaml",
+    "pkg/api/a2a_",
+    "pkg/api/auth.go",
+    "pkg/api/middleware.go",
+    "pkg/api/server.go",
+    "pkg/api/v1/agent_types.go",
+    "pkg/capabilities/",
+    "pkg/taskdispatch/",
+    "pkg/taskobject/",
+    "pkg/taskstore/",
+    "test/a2aconformance/",
+    "test/contract/openapi.yaml"
+  ]
+}

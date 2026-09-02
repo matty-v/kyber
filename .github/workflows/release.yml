@@ -35,6 +35,11 @@ env:
   REGISTRY: ghcr.io/matty-v
 
 jobs:
+  # A release may only claim A2A support after the pinned contract, official
+  # TCK, and independent-client smoke have passed for the tagged commit.
+  a2a-conformance:
+    uses: ./.github/workflows/a2a-conformance.yml
+
   # --------------------------------------------------------------------
   # meta: resolve tag + sha + claude-code version (read once, reuse).
   # --------------------------------------------------------------------
@@ -329,7 +334,7 @@ jobs:
   # Once all 8 images are pushed: create the GitHub Release.
   # --------------------------------------------------------------------
   release:
-    needs: [meta, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-runtime-base, build-claude-code, build-codex]
+    needs: [meta, a2a-conformance, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-runtime-base, build-claude-code, build-codex]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
