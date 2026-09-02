@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.37.1 — 2026-09-01
+
+### Fixed
+- Agent disk usage now distinguishes an enforced filesystem limit from a soft
+  directory-backed reservation and shows shared backing-disk pressure for
+  local-path installs.
+
 ## 0.37.0 — 2026-09-01
 
 ### Added

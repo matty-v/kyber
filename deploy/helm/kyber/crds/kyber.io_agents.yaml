@@ -691,6 +691,21 @@ spec:
                       cpuUsageMillicores:
                         format: int64
                         type: integer
+                      diskBackingAvailableBytes:
+                        format: int64
+                        type: integer
+                      diskBackingTotalBytes:
+                        description: |-
+                          DiskBackingTotalBytes and DiskBackingAvailableBytes expose pressure on the
+                          filesystem that physically backs the PVC. For directory-backed volumes
+                          this filesystem is shared with other agents and node workloads.
+                        format: int64
+                        type: integer
+                      diskLimitEnforced:
+                        description: |-
+                          DiskLimitEnforced distinguishes a dedicated, capacity-bounded filesystem
+                          from a directory-backed soft reservation such as k3s local-path.
+                        type: boolean
                       diskReserveReached:
                         type: boolean
                       diskTotalBytes:
@@ -735,6 +750,7 @@ spec:
                         type: string
                     required:
                     - cpuUsageMillicores
+                    - diskLimitEnforced
                     - diskReserveReached
                     - diskTotalBytes
                     - diskUsedBytes

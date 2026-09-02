@@ -25,8 +25,12 @@ func TestResourceSampler(t *testing.T) {
 	write("cpu.stat", "usage_usec 1000000\n")
 	write("cpu.max", "200000 100000\n")
 
-	const allocation = int64(2 * 1024 * 1024 * 1024)
-	s := newResourceSampler(t.TempDir(), filepath.Join(dir, "memory.events"), allocation, nil, false)
+	persist := t.TempDir()
+	allocation, _, err := filesystemCapacity(persist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := newResourceSampler(persist, filepath.Join(dir, "memory.events"), allocation, nil, false)
 	s.disk.method = "statfs"
 	start := time.Unix(100, 0)
 	first, err := s.sample(start)
@@ -48,6 +52,9 @@ func TestResourceSampler(t *testing.T) {
 	if first.DiskUsageMethod != "statfs" || first.DiskUsageState != "ready" {
 		t.Errorf("disk accounting = %s/%s, want statfs/ready", first.DiskUsageMethod, first.DiskUsageState)
 	}
+	if !first.DiskLimitEnforced || first.DiskBackingTotalBytes <= 0 || first.DiskBackingAvailableBytes <= 0 {
+		t.Errorf("whole-volume enforcement/backing metadata = %+v", first)
+	}
 
 	write("cpu.stat", "usage_usec 2500000\n")
 	second, err := s.sample(start.Add(time.Second))
@@ -56,6 +63,28 @@ func TestResourceSampler(t *testing.T) {
 	}
 	if second.CPUUsageMillicores != 1500 {
 		t.Errorf("CPU usage = %v, want 1500m", second.CPUUsageMillicores)
+	}
+}
+
+func TestCapacityBounded(t *testing.T) {
+	const gib = int64(1024 * 1024 * 1024)
+	tests := []struct {
+		name       string
+		allocation int64
+		filesystem int64
+		want       bool
+	}{
+		{name: "dedicated filesystem", allocation: 20 * gib, filesystem: 20*gib - 128*1024*1024, want: true},
+		{name: "filesystem metadata tolerance", allocation: 20 * gib, filesystem: 21 * gib, want: true},
+		{name: "shared host filesystem", allocation: 20 * gib, filesystem: 900 * gib, want: false},
+		{name: "missing allocation", filesystem: 20 * gib, want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := capacityBounded(tc.allocation, tc.filesystem); got != tc.want {
+				t.Errorf("capacityBounded(%d, %d) = %v, want %v", tc.allocation, tc.filesystem, got, tc.want)
+			}
+		})
 	}
 }
 
@@ -107,7 +136,7 @@ func TestDirectoryDiskSampleIsAsyncAndUsesAllocation(t *testing.T) {
 	started := make(chan struct{})
 	release := make(chan struct{})
 	s := &diskSampler{
-		path:       "/persist",
+		path:       t.TempDir(),
 		totalBytes: 2 * 1024 * 1024 * 1024,
 		method:     "directory",
 		state:      "pending",
@@ -128,6 +157,9 @@ func TestDirectoryDiskSampleIsAsyncAndUsesAllocation(t *testing.T) {
 	}
 	if first.DiskTotalBytes != 2*1024*1024*1024 || first.DiskUsageState != "pending" {
 		t.Fatalf("first sample = %+v", first)
+	}
+	if first.DiskLimitEnforced || first.DiskBackingTotalBytes <= 0 || first.DiskBackingAvailableBytes <= 0 {
+		t.Fatalf("directory enforcement/backing metadata = %+v", first)
 	}
 	<-started
 	close(release)

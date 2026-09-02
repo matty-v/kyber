@@ -1009,7 +1009,17 @@ type AgentResourceUsage struct {
 	MemoryLimitBytes   *int64      `json:"memoryLimitBytes,omitempty"`
 	DiskUsedBytes      int64       `json:"diskUsedBytes"`
 	DiskTotalBytes     int64       `json:"diskTotalBytes"`
-	DiskReserveReached bool        `json:"diskReserveReached"`
+	// DiskLimitEnforced distinguishes a dedicated, capacity-bounded filesystem
+	// from a directory-backed soft reservation such as k3s local-path.
+	DiskLimitEnforced bool `json:"diskLimitEnforced"`
+	// DiskBackingTotalBytes and DiskBackingAvailableBytes expose pressure on the
+	// filesystem that physically backs the PVC. For directory-backed volumes
+	// this filesystem is shared with other agents and node workloads.
+	// +optional
+	DiskBackingTotalBytes int64 `json:"diskBackingTotalBytes,omitempty"`
+	// +optional
+	DiskBackingAvailableBytes int64 `json:"diskBackingAvailableBytes,omitempty"`
+	DiskReserveReached        bool  `json:"diskReserveReached"`
 	// DiskUsageMethod is "statfs" for whole-volume mounts and "directory"
 	// for bind-mounted volumes that require cached tree accounting.
 	// +kubebuilder:validation:Enum=statfs;directory

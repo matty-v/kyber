@@ -280,17 +280,20 @@ type agentActivityStatusResponse struct {
 }
 
 type agentResourceUsageResponse struct {
-	SampledAt          string   `json:"sampledAt"`
-	CPUUsageCores      float64  `json:"cpuUsageCores"`
-	CPULimitCores      *float64 `json:"cpuLimitCores,omitempty"`
-	MemoryUsedBytes    int64    `json:"memoryUsedBytes"`
-	MemoryLimitBytes   *int64   `json:"memoryLimitBytes,omitempty"`
-	DiskUsedBytes      int64    `json:"diskUsedBytes"`
-	DiskTotalBytes     int64    `json:"diskTotalBytes"`
-	DiskReserveReached bool     `json:"diskReserveReached"`
-	DiskUsageMethod    string   `json:"diskUsageMethod,omitempty"`
-	DiskUsageState     string   `json:"diskUsageState,omitempty"`
-	DiskUsedSampledAt  string   `json:"diskUsedSampledAt,omitempty"`
+	SampledAt                 string   `json:"sampledAt"`
+	CPUUsageCores             float64  `json:"cpuUsageCores"`
+	CPULimitCores             *float64 `json:"cpuLimitCores,omitempty"`
+	MemoryUsedBytes           int64    `json:"memoryUsedBytes"`
+	MemoryLimitBytes          *int64   `json:"memoryLimitBytes,omitempty"`
+	DiskUsedBytes             int64    `json:"diskUsedBytes"`
+	DiskTotalBytes            int64    `json:"diskTotalBytes"`
+	DiskLimitEnforced         bool     `json:"diskLimitEnforced"`
+	DiskBackingTotalBytes     int64    `json:"diskBackingTotalBytes,omitempty"`
+	DiskBackingAvailableBytes int64    `json:"diskBackingAvailableBytes,omitempty"`
+	DiskReserveReached        bool     `json:"diskReserveReached"`
+	DiskUsageMethod           string   `json:"diskUsageMethod,omitempty"`
+	DiskUsageState            string   `json:"diskUsageState,omitempty"`
+	DiskUsedSampledAt         string   `json:"diskUsedSampledAt,omitempty"`
 }
 
 // agentSchedulingStatusResponse mirrors AgentSchedulingStatus on the wire.
@@ -604,15 +607,18 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		}
 		if usage := a.Status.Activity.Resources; usage != nil {
 			act.Resources = &agentResourceUsageResponse{
-				SampledAt:          usage.SampledAt.UTC().Format(time.RFC3339),
-				CPUUsageCores:      float64(usage.CPUUsageMillicores) / 1000,
-				MemoryUsedBytes:    usage.MemoryUsedBytes,
-				MemoryLimitBytes:   usage.MemoryLimitBytes,
-				DiskUsedBytes:      usage.DiskUsedBytes,
-				DiskTotalBytes:     usage.DiskTotalBytes,
-				DiskReserveReached: usage.DiskReserveReached,
-				DiskUsageMethod:    usage.DiskUsageMethod,
-				DiskUsageState:     usage.DiskUsageState,
+				SampledAt:                 usage.SampledAt.UTC().Format(time.RFC3339),
+				CPUUsageCores:             float64(usage.CPUUsageMillicores) / 1000,
+				MemoryUsedBytes:           usage.MemoryUsedBytes,
+				MemoryLimitBytes:          usage.MemoryLimitBytes,
+				DiskUsedBytes:             usage.DiskUsedBytes,
+				DiskTotalBytes:            usage.DiskTotalBytes,
+				DiskLimitEnforced:         usage.DiskLimitEnforced,
+				DiskBackingTotalBytes:     usage.DiskBackingTotalBytes,
+				DiskBackingAvailableBytes: usage.DiskBackingAvailableBytes,
+				DiskReserveReached:        usage.DiskReserveReached,
+				DiskUsageMethod:           usage.DiskUsageMethod,
+				DiskUsageState:            usage.DiskUsageState,
 			}
 			if usage.DiskUsedSampledAt != nil {
 				act.Resources.DiskUsedSampledAt = usage.DiskUsedSampledAt.UTC().Format(time.RFC3339)

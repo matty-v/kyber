@@ -22,16 +22,19 @@ const directoryScanYieldEvery = 256
 const diskExhaustedMarker = "/var/run/kyber/disk-exhausted"
 
 type resourceUsage struct {
-	CPUUsageMillicores int64  `json:"cpuUsageMillicores"`
-	CPULimitMillicores *int64 `json:"cpuLimitMillicores,omitempty"`
-	MemoryUsedBytes    int64  `json:"memoryUsedBytes"`
-	MemoryLimitBytes   *int64 `json:"memoryLimitBytes,omitempty"`
-	DiskUsedBytes      int64  `json:"diskUsedBytes"`
-	DiskTotalBytes     int64  `json:"diskTotalBytes"`
-	DiskReserveReached bool   `json:"diskReserveReached"`
-	DiskUsageMethod    string `json:"diskUsageMethod"`
-	DiskUsageState     string `json:"diskUsageState"`
-	DiskUsedSampledAt  string `json:"diskUsedSampledAt,omitempty"`
+	CPUUsageMillicores        int64  `json:"cpuUsageMillicores"`
+	CPULimitMillicores        *int64 `json:"cpuLimitMillicores,omitempty"`
+	MemoryUsedBytes           int64  `json:"memoryUsedBytes"`
+	MemoryLimitBytes          *int64 `json:"memoryLimitBytes,omitempty"`
+	DiskUsedBytes             int64  `json:"diskUsedBytes"`
+	DiskTotalBytes            int64  `json:"diskTotalBytes"`
+	DiskLimitEnforced         bool   `json:"diskLimitEnforced"`
+	DiskBackingTotalBytes     int64  `json:"diskBackingTotalBytes,omitempty"`
+	DiskBackingAvailableBytes int64  `json:"diskBackingAvailableBytes,omitempty"`
+	DiskReserveReached        bool   `json:"diskReserveReached"`
+	DiskUsageMethod           string `json:"diskUsageMethod"`
+	DiskUsageState            string `json:"diskUsageState"`
+	DiskUsedSampledAt         string `json:"diskUsedSampledAt,omitempty"`
 }
 
 func syncDiskExhaustedMarker(path string, reached bool) error {
@@ -180,13 +183,15 @@ func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
 		return resourceUsage{}, fmt.Errorf("disk allocation must be positive")
 	}
 	if s.method == "statfs" {
-		var stat syscall.Statfs_t
-		if err := syscall.Statfs(s.path, &stat); err != nil {
-			return resourceUsage{}, fmt.Errorf("statfs %s: %w", s.path, err)
+		backingTotal, backingAvailable, err := filesystemCapacity(s.path)
+		if err != nil {
+			return resourceUsage{}, err
 		}
-		filesystemTotal := int64(stat.Blocks) * int64(stat.Bsize) //nolint:gosec -- kernel values are bounded by the mounted filesystem
-		free := int64(stat.Bavail) * int64(stat.Bsize)            //nolint:gosec -- see above
-		return s.decide(diskUsage(s.totalBytes, filesystemTotal-free, "statfs", "ready", now)), nil
+		usage := diskUsage(s.totalBytes, backingTotal-backingAvailable, "statfs", "ready", now)
+		usage.DiskLimitEnforced = capacityBounded(s.totalBytes, backingTotal)
+		usage.DiskBackingTotalBytes = backingTotal
+		usage.DiskBackingAvailableBytes = backingAvailable
+		return s.decide(usage), nil
 	}
 
 	s.mu.Lock()
@@ -197,7 +202,33 @@ func (s *diskSampler) sample(now time.Time) (resourceUsage, error) {
 	}
 	used, sampledAt, state := s.usedBytes, s.sampledAt, s.state
 	s.mu.Unlock()
-	return s.decide(diskUsage(s.totalBytes, used, "directory", state, sampledAt)), nil
+	usage := diskUsage(s.totalBytes, used, "directory", state, sampledAt)
+	if backingTotal, backingAvailable, err := filesystemCapacity(s.path); err == nil {
+		usage.DiskBackingTotalBytes = backingTotal
+		usage.DiskBackingAvailableBytes = backingAvailable
+	} else if s.warn != nil {
+		s.warn("disk backing filesystem accounting failed", "path", s.path, "err", err)
+	}
+	return s.decide(usage), nil
+}
+
+func filesystemCapacity(path string) (total, available int64, err error) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(path, &stat); err != nil {
+		return 0, 0, fmt.Errorf("statfs %s: %w", path, err)
+	}
+	return int64(stat.Blocks) * int64(stat.Bsize), int64(stat.Bavail) * int64(stat.Bsize), nil //nolint:gosec -- kernel values are bounded by the mounted filesystem
+}
+
+func capacityBounded(allocation, filesystemTotal int64) bool {
+	if allocation <= 0 || filesystemTotal <= 0 {
+		return false
+	}
+	tolerance := allocation / 20
+	if tolerance < 64*1024*1024 {
+		tolerance = 64 * 1024 * 1024
+	}
+	return filesystemTotal <= allocation+tolerance
 }
 
 // decide resolves a raw sample into a reserve verdict, applying hysteresis

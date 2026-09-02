@@ -1815,7 +1815,7 @@ components:
 
     AgentResourceUsage:
       type: object
-      required: [sampledAt, cpuUsageCores, memoryUsedBytes, diskUsedBytes, diskTotalBytes, diskReserveReached]
+      required: [sampledAt, cpuUsageCores, memoryUsedBytes, diskUsedBytes, diskTotalBytes, diskLimitEnforced, diskReserveReached]
       properties:
         sampledAt:
           type: string
@@ -1836,6 +1836,14 @@ components:
           type: integer
           format: int64
         diskTotalBytes:
+          type: integer
+          format: int64
+        diskLimitEnforced:
+          type: boolean
+        diskBackingTotalBytes:
+          type: integer
+          format: int64
+        diskBackingAvailableBytes:
           type: integer
           format: int64
         diskReserveReached:
