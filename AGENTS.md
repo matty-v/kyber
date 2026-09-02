@@ -223,6 +223,12 @@ storage. PostgreSQL is the visibility authority: uploads are recorded pending
 before bytes leave the pod, downloads reauthorize every request, and leased
 cleanup retries provider deletion before removing metadata. See
 `docs/architecture/durable-tasks.md` before changing this cross-component path.
+Every accepted public task mutation also appends a normalized per-task event in
+that same PostgreSQL transaction. Task Get exposes the signed high-water cursor;
+the `task-events:read` SSE route replays and polls PostgreSQL by monotonic
+sequence, never a harness transcript or process-local event bus. Preserve cursor
+principal binding, replay-to-live catch-up, terminal close, and periodic auth
+checks when changing task mutations or middleware streaming interfaces.
 
 Operator-curated discovery lives in `pkg/capabilities/`: the declaration is
 `Agent.spec.publicCapabilities`, bounded reconciliation output is

@@ -37,6 +37,9 @@ func (s *PostgresStore) Reject(ctx context.Context, a AgentRef, id, attemptID, r
 	if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_messages(task_id,sequence,role,kind,text_value,created_at) SELECT $1,COALESCE(max(sequence),0)+1,'agent','terminal_summary',$2,clock_timestamp() FROM agent_task_messages WHERE task_id=$1`, id, reason); err != nil {
 		return nil, err
 	}
+	if err = appendTaskEventTx(ctx, tx, id, EventTaskTerminal, map[string]any{"priorState": state, "state": StateRejected, "reasonCode": "rejected"}); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}

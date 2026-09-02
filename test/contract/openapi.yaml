@@ -120,6 +120,39 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
 
+  /api/v1/agents/{name}/tasks/{taskId}/events:
+    get:
+      operationId: streamAgentTaskEvents
+      summary: Replay and follow normalized durable task events
+      description: Requires task-events:read plus tenant, owner, and agent-resource authorization. Last-Event-ID and cursor are opaque, signed, and principal-bound.
+      tags: [tasks]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: taskId, in: path, required: true, schema: {type: string, pattern: '^task_[a-f0-9]{32}$'}}
+        - {name: Last-Event-ID, in: header, required: false, schema: {type: string}}
+        - {name: cursor, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: Resumable Server-Sent Events stream; terminal tasks close after retained replay.
+          content:
+            text/event-stream:
+              schema: {type: string}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '410':
+          description: Cursor predates the retained event floor; fetch the task snapshot and reconnect with eventCursor.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [code, taskId, snapshotRequired, currentCursor]
+                properties:
+                  code: {type: string, enum: [event_cursor_expired]}
+                  taskId: {type: string, pattern: '^task_[a-f0-9]{32}$'}
+                  snapshotRequired: {type: boolean, enum: [true]}
+                  currentCursor: {type: string}
+        '429': {description: Task event connection capacity exceeded}
+
   /api/v1/agents/{name}/tasks/{taskId}/interactions/{interactionId}/respond:
     post:
       operationId: respondAgentTaskInteraction
@@ -2199,6 +2232,9 @@ components:
         cancel: {$ref: '#/components/schemas/AgentTaskCancellation'}
         interaction: {$ref: '#/components/schemas/AgentTaskInteraction'}
         messages: {type: array, items: {$ref: '#/components/schemas/AgentTaskMessage'}}
+        eventCursor:
+          type: string
+          description: Opaque signed cursor at the snapshot's event high-water mark.
         results:
           type: array
           items: {$ref: '#/components/schemas/AgentTaskResult'}

@@ -24,6 +24,27 @@ typed outputs without scraping an agent transcript. Authoritative code lives in
 4. Public Get exposes current progress and detailed typed result metadata. List
    exposes bounded summaries. File bytes are available only from the authorized
    Kyber download route; object keys never appear in public JSON.
+5. Every accepted public mutation appends one normalized event in the same
+   PostgreSQL transaction. `GET /api/v1/agents/{agent}/tasks/{task}/events`
+   replays those rows in per-task sequence order and then follows them as SSE.
+   PostgreSQL polling is the correctness path across replicas and restarts;
+   cursors are opaque, signed, and bound to the task, tenant, principal,
+   credential generation, and agent resource.
+
+Task Get includes an `eventCursor` at the snapshot's current event high-water
+mark. A client that needs future changes only first reads the snapshot, then
+connects with that cursor in `Last-Event-ID`. A fresh stream replays retained
+history. Expired cursors return `410 event_cursor_expired` and require snapshot
+recovery; bad signatures and cross-task or cross-principal reuse return the
+non-enumerating `400 invalid_cursor` response.
+
+The event vocabulary is closed and task-contract-only: creation, state,
+progress, result metadata, interactions, cancellation, and terminal state.
+Result bytes, cancellation reasons, interaction responses, transcripts, token
+deltas, raw tools, attempt receipts, leases, pod identity, and harness-native
+events are never published. Terminal streams close after replay; active streams
+heartbeat, poll for catch-up, periodically reauthorize, and reconnect after a
+bounded lifetime.
 
 ## Public authorization boundary
 

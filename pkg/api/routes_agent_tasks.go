@@ -56,6 +56,7 @@ type agentTaskResponse struct {
 	Cancel      *agentTaskCancelResponse  `json:"cancel,omitempty"`
 	Interaction *taskstore.Interaction    `json:"interaction,omitempty"`
 	Messages    []taskstore.Message       `json:"messages,omitempty"`
+	EventCursor string                    `json:"eventCursor,omitempty"`
 }
 
 type agentTaskCancelResponse struct {
@@ -130,6 +131,17 @@ func (s *Server) handleAgentTasks(w http.ResponseWriter, r *http.Request, agentN
 			return
 		}
 		s.cancelAgentTask(w, r, agentName, parts[0])
+		return
+	}
+	if len(parts) == 2 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "events" {
+		if r.Method != http.MethodGet {
+			writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
+			return
+		}
+		if !s.requireTaskScope(w, r, agentName, ScopeTaskEventsRead) {
+			return
+		}
+		s.streamAgentTaskEvents(w, r, agentName, parts[0])
 		return
 	}
 	if len(parts) == 4 && agentTaskIDPattern.MatchString(parts[0]) && parts[1] == "interactions" && interactionIDPattern.MatchString(parts[2]) && parts[3] == "respond" {
@@ -536,7 +548,15 @@ func (s *Server) getAgentTask(w http.ResponseWriter, r *http.Request, agentName,
 	if !ok {
 		return
 	}
-	t, err := s.TaskStore.GetAuthorized(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}, id, auth)
+	a := taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}
+	var t *taskstore.Task
+	var highWater int64
+	var err error
+	if events, ok := s.TaskStore.(taskstore.EventStore); ok {
+		t, highWater, err = events.EventSnapshot(r.Context(), a, id, auth)
+	} else {
+		t, err = s.TaskStore.GetAuthorized(r.Context(), a, id, auth)
+	}
 	if errors.Is(err, taskstore.ErrNotFound) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "task not found")
 		return
@@ -545,7 +565,13 @@ func (s *Server) getAgentTask(w http.ResponseWriter, r *http.Request, agentName,
 		writeJSONError(w, http.StatusServiceUnavailable, "task_store_error", "failed to read task")
 		return
 	}
-	writeJSON(w, http.StatusOK, taskResponse(t, true))
+	out := taskResponse(t, true)
+	if _, ok := s.TaskStore.(taskstore.EventStore); ok {
+		if cursor, cursorErr := s.encodeTaskEventCursor(r, agentName, id, highWater); cursorErr == nil {
+			out.EventCursor = cursor
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) listAgentTasks(w http.ResponseWriter, r *http.Request, agentName string) {

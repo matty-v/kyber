@@ -82,6 +82,12 @@ type Server struct {
 	TaskStore       taskstore.Store
 	TaskObjectStore taskobject.ObjectStore
 	TasksEnabled    bool
+	taskEventMu     sync.Mutex
+	taskEventTotal  int
+	taskEventByUser map[string]int
+	taskEventByTask map[string]int
+	taskEventByTeam map[string]int
+	taskEventRecent map[string][]time.Time
 
 	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
 	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)

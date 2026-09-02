@@ -92,6 +92,7 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 			deadline = t.DeadlineAt
 		}
 		ambiguous := t.State == StateDispatched || dispatchStatus == "attempting" || dispatchStatus == "receipt_pending" || (dispatchStatus == "delivered" && t.State != StateInputRequired && t.State != StateAuthRequired)
+		nextState := StateCanceled
 		if ambiguous {
 			if attemptID == "" {
 				return nil, ErrConflict
@@ -100,6 +101,7 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 			if err == nil {
 				_, err = tx.ExecContext(ctx, `INSERT INTO agent_task_cancel_deliveries(task_id,attempt_id,status,adapter_mode,next_delivery_at,updated_at) VALUES($1,$2,'pending','notify_only',$3,$3) ON CONFLICT (task_id) DO NOTHING`, t.ID, attemptID, now)
 			}
+			nextState = StateCanceling
 		} else {
 			_, err = tx.ExecContext(ctx, `UPDATE agent_tasks SET state='canceled',cancel_requested_at=$2,cancel_requested_by=$3,cancel_reason=$4,cancel_deadline_at=$5,version=version+1,updated_at=$2,completed_at=$2 WHERE id=$1`, t.ID, now, p.RequestedBy, p.Reason, deadline)
 			if err == nil {
@@ -108,6 +110,14 @@ func (s *PostgresStore) Cancel(ctx context.Context, p CancelParams) (*CancelResu
 		}
 		if err != nil {
 			return nil, err
+		}
+		if err = appendTaskEventTx(ctx, tx, t.ID, EventTaskCancellationRequested, map[string]any{"state": nextState, "requestedAt": now, "deadlineAt": deadline}); err != nil {
+			return nil, err
+		}
+		if nextState == StateCanceled {
+			if err = appendTaskEventTx(ctx, tx, t.ID, EventTaskTerminal, map[string]any{"priorState": t.State, "state": StateCanceled, "reasonCode": "canceled"}); err != nil {
+				return nil, err
+			}
 		}
 		result.Applied = true
 	}
@@ -207,6 +217,9 @@ func (s *PostgresStore) AcknowledgeCancel(ctx context.Context, a AgentRef, id, a
 		_, err = tx.ExecContext(ctx, `UPDATE agent_task_dispatches SET status='closed',last_error_code='canceled',lease_owner=NULL,lease_until=NULL,updated_at=clock_timestamp() WHERE task_id=$1`, id)
 	}
 	if err != nil {
+		return nil, false, err
+	}
+	if err = appendTaskEventTx(ctx, tx, id, EventTaskTerminal, map[string]any{"priorState": StateCanceling, "state": StateCanceled, "reasonCode": "canceled"}); err != nil {
 		return nil, false, err
 	}
 	t, err = getTaskTx(ctx, tx, a, id)
