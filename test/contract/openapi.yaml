@@ -1113,6 +1113,107 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /a2a/v1/agents/{name}/.well-known/agent-card.json:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+    get:
+      operationId: getA2AAgentCard
+      summary: Get the authenticated A2A 1.0 Agent Card projection
+      tags: [a2a]
+      responses:
+        '200': {$ref: '#/components/responses/A2AJSON'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /a2a/v1/agents/{name}/message:send:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+    post:
+      operationId: sendA2AMessage
+      summary: Create or continue a native durable task through A2A
+      tags: [a2a]
+      requestBody: {$ref: '#/components/requestBodies/A2AJSON'}
+      responses:
+        '200': {$ref: '#/components/responses/A2AJSON'}
+        '400': {$ref: '#/components/responses/A2AProblem'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+
+  /a2a/v1/agents/{name}/message:stream:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+    post:
+      operationId: streamA2AMessage
+      summary: Create or continue a task and stream native task events
+      tags: [a2a]
+      requestBody: {$ref: '#/components/requestBodies/A2AJSON'}
+      responses:
+        '200': {$ref: '#/components/responses/A2AEventStream'}
+        '400': {$ref: '#/components/responses/A2AProblem'}
+
+  /a2a/v1/agents/{name}/tasks:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+    get:
+      operationId: listA2ATasks
+      summary: List caller-owned native durable tasks through A2A
+      tags: [a2a]
+      responses:
+        '200': {$ref: '#/components/responses/A2AJSON'}
+        '400': {$ref: '#/components/responses/A2AProblem'}
+
+  /a2a/v1/agents/{name}/tasks/{taskId}:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+      - name: taskId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: getA2ATask
+      summary: Get a caller-owned native durable task through A2A
+      tags: [a2a]
+      responses:
+        '200': {$ref: '#/components/responses/A2AJSON'}
+        '404': {$ref: '#/components/responses/A2AProblem'}
+
+  /a2a/v1/agents/{name}/tasks/{taskId}:cancel:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+      - name: taskId
+        in: path
+        required: true
+        schema: {type: string}
+    post:
+      operationId: cancelA2ATask
+      summary: Request cooperative native task cancellation through A2A
+      tags: [a2a]
+      requestBody: {$ref: '#/components/requestBodies/A2AJSON'}
+      responses:
+        '200': {$ref: '#/components/responses/A2AJSON'}
+        '400': {$ref: '#/components/responses/A2AProblem'}
+
+  /a2a/v1/agents/{name}/tasks/{taskId}:subscribe:
+    parameters:
+      - {$ref: '#/components/parameters/A2AAgentName'}
+      - {$ref: '#/components/parameters/A2AVersion'}
+      - name: taskId
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: subscribeA2ATask
+      summary: Stream a current snapshot and subsequent native task events
+      tags: [a2a]
+      responses:
+        '200': {$ref: '#/components/responses/A2AEventStream'}
+        '404': {$ref: '#/components/responses/A2AProblem'}
+
 components:
   securitySchemes:
     BearerAuth:
@@ -1151,6 +1252,31 @@ components:
       schema:
         type: string
         example: dave
+
+    A2AAgentName:
+      name: name
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9](?:[a-z0-9\-]{0,61}[a-z0-9])?$'
+
+    A2AVersion:
+      name: A2A-Version
+      in: header
+      required: true
+      schema:
+        type: string
+        enum: ['1.0']
+
+  requestBodies:
+    A2AJSON:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
 
   schemas:
     CodexDeviceAuthStatus:
@@ -2287,6 +2413,32 @@ components:
           $ref: '#/components/schemas/ErrorDetail'
 
   responses:
+    A2AJSON:
+      description: A2A 1.0 HTTP+JSON response defined by the pinned protocol SDK
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+
+    A2AEventStream:
+      description: A2A 1.0 server-sent event stream
+      content:
+        text/event-stream:
+          schema: {type: string}
+
+    A2AProblem:
+      description: A2A 1.0 protocol error
+      content:
+        application/problem+json:
+          schema:
+            type: object
+            additionalProperties: true
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+
     InternalError:
       description: Internal operation failed
       content:

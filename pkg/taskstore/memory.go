@@ -150,20 +150,29 @@ func (s *MemoryStore) List(_ context.Context, p ListParams) (*Page, error) {
 	if limit < 1 || limit > s.limits.MaxListPage {
 		return nil, ErrInvalid
 	}
+	if p.State != "" && len(p.States) != 0 {
+		return nil, ErrInvalid
+	}
 	var before time.Time
 	var beforeID string
 	var err error
 	if p.Cursor != "" {
-		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State, p.Authorization)
+		before, beforeID, err = decodeCursor(p.Cursor, p)
 		if err != nil {
 			return nil, err
 		}
 	}
 	items := make([]*Task, 0)
+	total := 0
+	states := make(map[State]bool, len(p.States))
+	for _, state := range p.States {
+		states[state] = true
+	}
 	for _, t := range s.tasks {
-		if t.AgentNamespace != p.Agent.Namespace || t.AgentName != p.Agent.Name || (p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID)) || (p.State != "" && t.State != p.State) {
+		if t.AgentNamespace != p.Agent.Namespace || t.AgentName != p.Agent.Name || (p.Authorization.Valid() && (t.TenantID != p.Authorization.TenantID || t.OwnerPrincipalID != p.Authorization.PrincipalID || t.AgentResourceID != p.Authorization.AgentResourceID)) || (p.State != "" && t.State != p.State) || (len(states) != 0 && !states[t.State]) || (p.Correlation != "" && t.Correlation != p.Correlation) || (!p.UpdatedAfter.IsZero() && !t.UpdatedAt.After(p.UpdatedAfter)) {
 			continue
 		}
+		total++
 		if !before.IsZero() && (t.CreatedAt.After(before) || (t.CreatedAt.Equal(before) && t.ID >= beforeID)) {
 			continue
 		}
@@ -175,10 +184,10 @@ func (s *MemoryStore) List(_ context.Context, p ListParams) (*Page, error) {
 		}
 		return items[i].CreatedAt.After(items[j].CreatedAt)
 	})
-	page := &Page{}
+	page := &Page{Total: total}
 	if len(items) > limit {
 		page.Tasks = items[:limit]
-		page.NextCursor, err = encodeCursor(p.Agent, p.State, p.Authorization, page.Tasks[len(page.Tasks)-1])
+		page.NextCursor, err = encodeCursor(p, page.Tasks[len(page.Tasks)-1])
 		if err != nil {
 			return nil, err
 		}

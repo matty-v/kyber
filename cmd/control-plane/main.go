@@ -1428,6 +1428,7 @@ func main() {
 		TaskStore:              agentTaskStore,
 		TaskObjectStore:        agentTaskObjectStore,
 		TasksEnabled:           os.Getenv("KYBER_TASKS_ENABLED") == "true",
+		A2AEnabled:             os.Getenv("KYBER_A2A_ENABLED") == "true",
 		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),
 		RuntimeDetectCache:     runtimeDetectCache,
 		// #500: the serve-time token-budget gauge resolves the context window

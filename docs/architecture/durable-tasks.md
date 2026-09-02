@@ -130,6 +130,24 @@ degrades file results to local disk. Malware scanning is explicit
 metadata (`not_configured` in v1); Kyber does not imply that unscanned content
 was inspected.
 
+### A2A protocol edge
+
+`api.a2a.enabled` exposes the A2A 1.0 HTTP+JSON binding under
+`/a2a/v1/agents/{agent}/` and is disabled by default. It also requires
+`api.durableTasks.enabled`; enabling the edge without the native task service
+returns a service-unavailable protocol error. Every operation requires a Kyber
+Bearer principal, an exact MAT-23 task scope, agent-resource access, and
+`A2A-Version: 1.0`.
+
+The adapter uses the official Go SDK only for 1.0 wire types, REST routing,
+SSE framing, and normative errors. Native Kyber services remain authoritative
+for persistence, dispatch, ownership, idempotency, cancellation, multi-turn
+continuation, results, and event replay. Agent Cards are deterministic
+projections of reconciled, currently available MAT-24 public capabilities;
+they never expose private evidence, runtime details, prompts, tools, or
+credentials. Push notifications, extended cards, JSON-RPC, gRPC, and protocol
+extensions are intentionally unsupported in v1.
+
 ## Multi-turn interactions
 
 A dispatched attempt may request exactly one typed interaction (`text`,

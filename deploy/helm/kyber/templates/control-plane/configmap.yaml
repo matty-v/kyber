@@ -33,6 +33,7 @@ data:
   KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ .Values.api.agentRequests.maxOutstanding | quote }}
   KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ .Values.api.agentRequests.maxTerminal | quote }}
   KYBER_TASKS_ENABLED: {{ .Values.api.durableTasks.enabled | quote }}
+  KYBER_A2A_ENABLED: {{ .Values.api.a2a.enabled | quote }}
   KYBER_TASKS_MAX_PROMPT_BYTES: {{ .Values.api.durableTasks.maxPromptBytes | quote }}
   KYBER_TASKS_MAX_CORRELATION_BYTES: {{ .Values.api.durableTasks.maxCorrelationBytes | quote }}
   KYBER_TASKS_MAX_RESPONSE_BYTES: {{ .Values.api.durableTasks.maxResponseBytes | quote }}

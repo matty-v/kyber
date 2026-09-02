@@ -82,6 +82,9 @@ type Server struct {
 	TaskStore       taskstore.Store
 	TaskObjectStore taskobject.ObjectStore
 	TasksEnabled    bool
+	// A2AEnabled exposes the authenticated A2A 1.0 HTTP+JSON edge. It is an
+	// independent, disabled-by-default installation rollout gate.
+	A2AEnabled      bool
 	taskEventMu     sync.Mutex
 	taskEventTotal  int
 	taskEventByUser map[string]int
@@ -740,6 +743,7 @@ func (s *Server) buildTopHandler() http.Handler {
 	top.Handle("/webhooks/", webhookMux)
 	// Protected API routes — auth required.
 	top.Handle("/api/", protected)
+	top.Handle("/a2a/", protected)
 	// PWA static assets and SPA fallback — no auth required.
 	top.Handle("/", spaHandler)
 
@@ -755,6 +759,9 @@ func (s *Server) buildTopHandler() http.Handler {
 // registerProtectedRoutes registers all /api/v1/* routes on mux.
 // These routes require API key authentication (applied by the caller).
 func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
+	if s.A2AEnabled {
+		mux.HandleFunc("/a2a/v1/agents/", s.handleA2A)
+	}
 	if s.ComputeSimulation != nil {
 		mux.HandleFunc("/api/v1/dev/compute/instances", s.handleComputeSimulation)
 		mux.HandleFunc("/api/v1/dev/compute/scenarios", s.handleComputeSimulation)

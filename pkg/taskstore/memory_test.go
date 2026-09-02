@@ -162,6 +162,68 @@ func TestMemoryListStableCursorAndFilterBinding(t *testing.T) {
 	}
 }
 
+func TestMemoryListFiltersBeforePaginationAndReportsTotal(t *testing.T) {
+	s := testStore(t)
+	a := AgentRef{"kyber-system", "sol"}
+	for _, tc := range []struct {
+		id          string
+		correlation string
+	}{
+		{id: "task_1", correlation: "context-a"},
+		{id: "task_2", correlation: "context-b"},
+		{id: "task_3", correlation: "context-a"},
+	} {
+		_, err := s.Create(context.Background(), CreateParams{
+			ID: tc.id, Agent: a, CreatedBy: "operator", Prompt: "ship it", Correlation: tc.correlation,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page, err := s.List(context.Background(), ListParams{Agent: a, Correlation: "context-a", Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 2 || len(page.Tasks) != 1 || page.Tasks[0].ID != "task_3" || page.NextCursor == "" {
+		t.Fatalf("filtered page: %+v", page)
+	}
+	next, err := s.List(context.Background(), ListParams{Agent: a, Correlation: "context-a", Limit: 1, Cursor: page.NextCursor})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Total != 2 || len(next.Tasks) != 1 || next.Tasks[0].ID != "task_1" || next.NextCursor != "" {
+		t.Fatalf("filtered next page: %+v", next)
+	}
+}
+
+func TestMemoryListCursorBindsA2AFilters(t *testing.T) {
+	s := testStore(t)
+	a := AgentRef{"kyber-system", "sol"}
+	for _, id := range []string{"task_1", "task_2"} {
+		createTask(t, s, id, "", "")
+	}
+	updatedAfter := time.Date(2026, 8, 30, 0, 0, 0, 0, time.UTC)
+	page, err := s.List(context.Background(), ListParams{
+		Agent: a, States: []State{StateQueued, StateDispatched}, UpdatedAfter: updatedAfter, Limit: 1,
+	})
+	if err != nil || page.NextCursor == "" {
+		t.Fatalf("first page=%+v err=%v", page, err)
+	}
+	_, err = s.List(context.Background(), ListParams{
+		Agent: a, States: []State{StateQueued, StateDispatched}, UpdatedAfter: updatedAfter.Add(time.Hour), Limit: 1, Cursor: page.NextCursor,
+	})
+	if !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("updated-after-mismatched cursor = %v", err)
+	}
+	_, err = s.List(context.Background(), ListParams{
+		Agent: a, States: []State{StateQueued, StateDispatched}, UpdatedAfter: updatedAfter, Correlation: "different", Limit: 1, Cursor: page.NextCursor,
+	})
+	if !errors.Is(err, ErrInvalidCursor) {
+		t.Fatalf("correlation-mismatched cursor = %v", err)
+	}
+}
+
 func TestMemoryProgressIdempotencyAndConflict(t *testing.T) {
 	s := testStore(t)
 	task := createTask(t, s, "task_progress", "", "").Task

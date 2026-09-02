@@ -454,6 +454,11 @@ spec:
                 configMapKeyRef:
                   name: {{ include "kyber.fullname" . }}-control-plane
                   key: KYBER_TASK_RESULTS_ROOT
+            - name: KYBER_A2A_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "kyber.fullname" . }}-control-plane
+                  key: KYBER_A2A_ENABLED
             - name: KYBER_ALERT_WEBHOOK_URL
               value: {{ .Values.telemetry.alertWebhookUrl | quote }}
             # GitHub identity-repo auto-create owner.
