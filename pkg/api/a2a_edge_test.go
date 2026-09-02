@@ -2,10 +2,12 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -129,5 +131,90 @@ func TestA2ARejectsUnsupportedInputAndPush(t *testing.T) {
 	push := map[string]any{"message": map[string]any{"messageId": "msg-push", "role": "ROLE_USER", "parts": []map[string]any{{"text": "x"}}}, "configuration": map[string]any{"returnImmediately": true, "taskPushNotificationConfig": map[string]any{"url": "https://example.com"}}}
 	if got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", push); got.Code != http.StatusBadRequest {
 		t.Fatalf("push=%d %s", got.Code, got.Body.String())
+	}
+}
+
+func TestA2ACancelAndMediaNegotiation(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	body := map[string]any{"message": map[string]any{"messageId": "msg-cancel", "role": "ROLE_USER", "parts": []map[string]any{{"text": "wait"}}}, "configuration": map[string]any{"returnImmediately": true}}
+	created := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", body)
+	var sent struct {
+		Task struct{ ID string } `json:"task"`
+	}
+	_ = json.Unmarshal(created.Body.Bytes(), &sent)
+	canceled := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/tasks/"+sent.Task.ID+":cancel", requestWriteKey, "1.0", map[string]any{})
+	if canceled.Code != http.StatusOK || !strings.Contains(canceled.Body.String(), "TASK_STATE_CANCELED") {
+		t.Fatalf("cancel=%d %s", canceled.Code, canceled.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "/a2a/v1/agents/kiosk/tasks", nil)
+	req.Header.Set("Authorization", "Bearer "+requestWriteKey)
+	req.Header.Set("A2A-Version", "1.0")
+	req.Header.Set("Accept", "image/png")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotAcceptable {
+		t.Fatalf("accept=%d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestA2AConcurrentSendsCreateIndependentTasks(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	const count = 8
+	ids := make(chan string, count)
+	var wg sync.WaitGroup
+	for i := 0; i < count; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			body := map[string]any{"message": map[string]any{"messageId": "burst-" + string(rune('a'+i)), "role": "ROLE_USER", "parts": []map[string]any{{"text": "work"}}}, "configuration": map[string]any{"returnImmediately": true}}
+			got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", body)
+			if got.Code != http.StatusOK {
+				t.Errorf("send %d=%d %s", i, got.Code, got.Body.String())
+				return
+			}
+			var response struct {
+				Task struct{ ID string } `json:"task"`
+			}
+			_ = json.Unmarshal(got.Body.Bytes(), &response)
+			ids <- response.Task.ID
+		}(i)
+	}
+	wg.Wait()
+	close(ids)
+	seen := map[string]bool{}
+	for id := range ids {
+		seen[id] = true
+	}
+	if len(seen) != count {
+		t.Fatalf("unique tasks=%d want %d", len(seen), count)
+	}
+}
+
+type a2aEventMemoryStore struct{ *taskstore.MemoryStore }
+
+func (s *a2aEventMemoryStore) EventSnapshot(ctx context.Context, agent taskstore.AgentRef, id string, auth taskstore.AuthorizationContext) (*taskstore.Task, int64, error) {
+	t, err := s.GetAuthorized(ctx, agent, id, auth)
+	return t, 0, err
+}
+func (*a2aEventMemoryStore) EventHighWater(context.Context, taskstore.AgentRef, string, taskstore.AuthorizationContext) (int64, error) {
+	return 0, nil
+}
+func (*a2aEventMemoryStore) ReadEvents(context.Context, taskstore.EventReadParams) (*taskstore.EventPage, error) {
+	return &taskstore.EventPage{Terminal: true}, nil
+}
+
+func TestA2AStreamingStartsWithCurrentTaskSnapshot(t *testing.T) {
+	base, err := taskstore.NewMemoryStore(taskstore.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &a2aEventMemoryStore{MemoryStore: base}
+	agent := bareAgent("kiosk")
+	agent.Spec.RequestReplyEnabled = true
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", TaskStore: store, TasksEnabled: true, A2AEnabled: true, Callers: []api.ScopedCaller{{Name: "a2a", PrincipalID: "principal_a2a", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: requestWriteKey, Scopes: []string{"tasks:create", "task-events:read"}}}}
+	body := map[string]any{"message": map[string]any{"messageId": "msg-stream", "role": "ROLE_USER", "parts": []map[string]any{{"text": "stream"}}}}
+	got := a2aRequest(t, server.BuildHandler(), http.MethodPost, "/a2a/v1/agents/kiosk/message:stream", requestWriteKey, "1.0", body)
+	if got.Code != http.StatusOK || !strings.Contains(got.Header().Get("Content-Type"), "text/event-stream") || !strings.Contains(got.Body.String(), `"task"`) || !strings.Contains(got.Body.String(), "TASK_STATE_SUBMITTED") {
+		t.Fatalf("stream=%d headers=%v body=%s", got.Code, got.Header(), got.Body.String())
 	}
 }

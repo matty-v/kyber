@@ -13,6 +13,10 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/matty-v/kyber/pkg/taskstore"
+	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/types"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // a2aTaskHandler is deliberately only a translator. Kyber's native task store
@@ -37,7 +41,15 @@ func (h *a2aTaskHandler) authorize(ctx context.Context, scope Scope) (taskstore.
 	return taskstore.AuthorizationContext{TenantID: caller.TenantID, PrincipalID: caller.PrincipalID, AgentResourceID: h.server.Namespace + "/" + h.agent}, nil
 }
 
+func tenantMatches(ctx context.Context, tenant string) bool {
+	caller := callerFrom(ctx)
+	return tenant == "" || (caller != nil && tenant == caller.TenantID)
+}
+
 func (h *a2aTaskHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
+	if !tenantMatches(ctx, req.Tenant) {
+		return nil, a2a.ErrTaskNotFound
+	}
 	auth, err := h.authorize(ctx, ScopeTasksRead)
 	if err != nil {
 		return nil, err
@@ -50,6 +62,9 @@ func (h *a2aTaskHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (
 }
 
 func (h *a2aTaskHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	if !tenantMatches(ctx, req.Tenant) {
+		return nil, a2a.ErrUnauthorized
+	}
 	auth, err := h.authorize(ctx, ScopeTasksList)
 	if err != nil {
 		return nil, err
@@ -74,6 +89,12 @@ func (h *a2aTaskHandler) ListTasks(ctx context.Context, req *a2a.ListTasksReques
 }
 
 func (h *a2aTaskHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	if !tenantMatches(ctx, req.Tenant) {
+		return nil, a2a.ErrTaskNotFound
+	}
+	if len(req.Metadata) != 0 {
+		return nil, a2a.ErrInvalidParams
+	}
 	auth, err := h.authorize(ctx, ScopeTasksCancel)
 	if err != nil {
 		return nil, err
@@ -118,8 +139,14 @@ func (h *a2aTaskHandler) send(ctx context.Context, req *a2a.SendMessageRequest) 
 	if req == nil || req.Message == nil || req.Message.Role != a2a.MessageRoleUser || req.Message.ID == "" || len(req.Metadata) != 0 || len(req.Message.Metadata) != 0 || len(req.Message.Extensions) != 0 || len(req.Message.ReferenceTasks) != 0 {
 		return nil, a2a.ErrInvalidParams
 	}
+	if !tenantMatches(ctx, req.Tenant) {
+		return nil, a2a.ErrUnauthorized
+	}
 	if req.Config != nil && req.Config.PushConfig != nil {
 		return nil, a2a.ErrPushNotificationNotSupported
+	}
+	if err := h.ensureAgentAcceptsTasks(ctx); err != nil {
+		return nil, err
 	}
 	prompt, err := a2aPrompt(req.Message.Parts)
 	if err != nil {
@@ -155,6 +182,24 @@ func (h *a2aTaskHandler) send(ctx context.Context, req *a2a.SendMessageRequest) 
 	return nil, a2a.ErrInternalError
 }
 
+func (h *a2aTaskHandler) ensureAgentAcceptsTasks(ctx context.Context) error {
+	if h.server.K8sClient == nil {
+		return a2a.ErrInternalError
+	}
+	agent := &kyberv1.Agent{}
+	err := h.server.K8sClient.Get(ctx, types.NamespacedName{Namespace: h.server.Namespace, Name: h.agent}, agent)
+	if k8serrors.IsNotFound(err) {
+		return a2a.ErrTaskNotFound
+	}
+	if err != nil {
+		return a2a.ErrInternalError
+	}
+	if !agent.Spec.RequestReplyEnabled {
+		return a2a.NewError(a2a.ErrUnsupportedOperation, "agent does not accept durable tasks")
+	}
+	return nil
+}
+
 func (h *a2aTaskHandler) continueTask(ctx context.Context, req *a2a.SendMessageRequest, prompt string) (*taskstore.Task, error) {
 	auth, err := h.authorize(ctx, ScopeTasksContinue)
 	if err != nil {
@@ -177,6 +222,9 @@ func (h *a2aTaskHandler) continueTask(ctx context.Context, req *a2a.SendMessageR
 }
 
 func (h *a2aTaskHandler) SubscribeToTask(ctx context.Context, req *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	if !tenantMatches(ctx, req.Tenant) {
+		return func(yield func(a2a.Event, error) bool) { yield(nil, a2a.ErrTaskNotFound) }
+	}
 	return h.streamTask(ctx, string(req.ID), nil)
 }
 
@@ -312,7 +360,9 @@ func nativeA2ATask(t *taskstore.Task, historyLength *int, includeArtifacts bool)
 		}
 	}
 	start := 0
-	if historyLength != nil {
+	if historyLength == nil && len(t.Messages) > 20 {
+		start = len(t.Messages) - 20
+	} else if historyLength != nil {
 		if *historyLength <= 0 {
 			return out
 		}
@@ -352,8 +402,12 @@ func nativeA2AStatus(t *taskstore.Task) a2a.TaskStatus {
 	if t.Response != "" {
 		text = t.Response
 	}
+	contextID := t.Correlation
+	if contextID == "" {
+		contextID = t.ID
+	}
 	if text != "" {
-		status.Message = &a2a.Message{ID: fmt.Sprintf("%s-status-%d", t.ID, t.Version), TaskID: a2a.TaskID(t.ID), ContextID: t.Correlation, Role: a2a.MessageRoleAgent, Parts: a2a.ContentParts{a2a.NewTextPart(text)}}
+		status.Message = &a2a.Message{ID: fmt.Sprintf("%s-status-%d", t.ID, t.Version), TaskID: a2a.TaskID(t.ID), ContextID: contextID, Role: a2a.MessageRoleAgent, Parts: a2a.ContentParts{a2a.NewTextPart(text)}}
 	}
 	return status
 }
@@ -434,6 +488,8 @@ func a2aStoreError(err error) error {
 	case errors.Is(err, taskstore.ErrNotFound):
 		return a2a.ErrTaskNotFound
 	case errors.Is(err, taskstore.ErrInvalid), errors.Is(err, taskstore.ErrInvalidCursor), errors.Is(err, taskstore.ErrIdempotencyConflict), errors.Is(err, taskstore.ErrInteractionNotReady), errors.Is(err, taskstore.ErrInteractionExpired):
+		return a2a.ErrInvalidParams
+	case errors.Is(err, taskstore.ErrPromptTooLarge), errors.Is(err, taskstore.ErrCorrelationTooLarge), errors.Is(err, taskstore.ErrResponseTooLarge), errors.Is(err, taskstore.ErrIdempotencyTooLarge):
 		return a2a.ErrInvalidParams
 	default:
 		return a2a.ErrInternalError

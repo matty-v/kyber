@@ -46,7 +46,7 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 		writeA2AEdgeError(w, http.StatusServiceUnavailable, a2a.ErrUnsupportedOperation, "durable task service is unavailable")
 		return
 	}
-	if r.Header.Get("A2A-Version") != string(a2a.Version) {
+	if len(r.Header.Values("A2A-Version")) != 1 || r.Header.Get("A2A-Version") != string(a2a.Version) {
 		writeA2AEdgeError(w, http.StatusBadRequest, a2a.ErrVersionNotSupported, "Kyber supports A2A-Version 1.0")
 		return
 	}
@@ -165,8 +165,12 @@ func (s *Server) a2aCard(r *http.Request, name string) (*a2a.AgentCard, error) {
 		if !available[capability.ID] {
 			continue
 		}
-		card.Skills = append(card.Skills, a2a.AgentSkill{ID: capability.ID, Name: capability.Name, Description: capability.Description, InputModes: capability.InputModes, OutputModes: capability.OutputModes})
-		for _, mode := range capability.InputModes {
+		inputModes := a2aSupportedInputModes(capability.InputModes)
+		if len(inputModes) == 0 {
+			continue
+		}
+		card.Skills = append(card.Skills, a2a.AgentSkill{ID: capability.ID, Name: capability.Name, Description: capability.Description, InputModes: inputModes, OutputModes: capability.OutputModes})
+		for _, mode := range inputModes {
 			inputs[mode] = true
 		}
 		for _, mode := range capability.OutputModes {
@@ -182,4 +186,15 @@ func (s *Server) a2aCard(r *http.Request, name string) (*a2a.AgentCard, error) {
 	sort.Strings(card.DefaultInputModes)
 	sort.Strings(card.DefaultOutputModes)
 	return card, nil
+}
+
+func a2aSupportedInputModes(modes []string) []string {
+	out := make([]string, 0, len(modes))
+	for _, mode := range modes {
+		switch mode {
+		case "text/plain", "text/markdown", "application/json":
+			out = append(out, mode)
+		}
+	}
+	return out
 }
