@@ -281,10 +281,7 @@ func (h *a2aTaskHandler) streamTask(ctx context.Context, id string, history *int
 					yield(nil, a2aStoreError(getErr))
 					return
 				}
-				var event a2a.Event = &a2a.TaskStatusUpdateEvent{TaskID: a2a.TaskID(id), ContextID: latest.Correlation, Status: nativeA2AStatus(latest)}
-				if nativeEvent.Type == taskstore.EventTaskResultAdded && len(latest.Results) > 0 {
-					event = &a2a.TaskArtifactUpdateEvent{TaskID: a2a.TaskID(id), ContextID: latest.Correlation, Artifact: nativeA2AArtifact(latest, latest.Results[len(latest.Results)-1]), LastChunk: true}
-				}
+				event := nativeA2AEvent(latest, nativeEvent)
 				if !yield(event, nil) {
 					return
 				}
@@ -295,6 +292,43 @@ func (h *a2aTaskHandler) streamTask(ctx context.Context, id string, history *int
 			}
 		}
 	}
+}
+
+func nativeA2AEvent(task *taskstore.Task, event taskstore.TaskEvent) a2a.Event {
+	contextID := task.Correlation
+	if contextID == "" {
+		contextID = task.ID
+	}
+	if event.Type == taskstore.EventTaskResultAdded {
+		var payload struct {
+			ResultID string `json:"resultId"`
+		}
+		_ = json.Unmarshal(event.Payload, &payload)
+		for _, result := range task.Results {
+			if result.ID == payload.ResultID {
+				return &a2a.TaskArtifactUpdateEvent{TaskID: a2a.TaskID(task.ID), ContextID: contextID, Artifact: nativeA2AArtifact(task, result), LastChunk: true}
+			}
+		}
+	}
+	var payload struct {
+		State    taskstore.State `json:"state"`
+		Message  string          `json:"message"`
+		Question string          `json:"question"`
+	}
+	_ = json.Unmarshal(event.Payload, &payload)
+	state := nativeA2AState(payload.State)
+	if state == a2a.TaskStateUnspecified {
+		state = nativeA2AState(task.State)
+	}
+	status := a2a.TaskStatus{State: state, Timestamp: &event.OccurredAt}
+	message := payload.Message
+	if message == "" {
+		message = payload.Question
+	}
+	if message != "" {
+		status.Message = &a2a.Message{ID: event.ID, TaskID: a2a.TaskID(task.ID), ContextID: contextID, Role: a2a.MessageRoleAgent, Parts: a2a.ContentParts{a2a.NewTextPart(message)}}
+	}
+	return &a2a.TaskStatusUpdateEvent{TaskID: a2a.TaskID(task.ID), ContextID: contextID, Status: status}
 }
 
 func (h *a2aTaskHandler) GetTaskPushConfig(context.Context, *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {

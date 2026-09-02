@@ -218,3 +218,25 @@ func TestA2AStreamingStartsWithCurrentTaskSnapshot(t *testing.T) {
 		t.Fatalf("stream=%d headers=%v body=%s", got.Code, got.Header(), got.Body.String())
 	}
 }
+
+func TestA2AContinuesPausedNativeTask(t *testing.T) {
+	h, store := buildA2AHarness(t, true)
+	createBody := map[string]any{"message": map[string]any{"messageId": "msg-start", "contextId": "ctx-turns", "role": "ROLE_USER", "parts": []map[string]any{{"text": "deploy"}}}, "configuration": map[string]any{"returnImmediately": true}}
+	created := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", createBody)
+	var sent struct {
+		Task struct{ ID string } `json:"task"`
+	}
+	_ = json.Unmarshal(created.Body.Bytes(), &sent)
+	ref := taskstore.AgentRef{Namespace: "kyber-system", Name: "kiosk"}
+	if err := store.MarkDispatched(context.Background(), ref, sent.Task.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.RequestInteraction(context.Background(), taskstore.RequestInteractionParams{Agent: ref, TaskID: sent.Task.ID, AttemptID: "attempt-1", InteractionID: "interaction-1", Type: taskstore.InteractionText, Question: "Which region?"}); err != nil {
+		t.Fatal(err)
+	}
+	continueBody := map[string]any{"message": map[string]any{"messageId": "msg-answer", "taskId": sent.Task.ID, "contextId": "ctx-turns", "role": "ROLE_USER", "parts": []map[string]any{{"text": "us-central1"}}}, "configuration": map[string]any{"returnImmediately": true}}
+	continued := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", continueBody)
+	if continued.Code != http.StatusOK || !strings.Contains(continued.Body.String(), "TASK_STATE_SUBMITTED") || !strings.Contains(continued.Body.String(), "us-central1") {
+		t.Fatalf("continued=%d %s", continued.Code, continued.Body.String())
+	}
+}

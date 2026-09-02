@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -69,9 +71,36 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, a2aMaxBody)
 	}
+	if isStream {
+		release, retryAfter, ok := s.acquireTaskEventStream(r, agent+":"+child)
+		if !ok {
+			w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfter))
+			writeA2AEdgeError(w, http.StatusTooManyRequests, a2a.ErrServerError, "task event stream capacity exceeded")
+			return
+		}
+		defer release()
+		ctx, cancel := context.WithTimeout(r.Context(), taskEventMaxAge)
+		defer cancel()
+		go func() {
+			ticker := time.NewTicker(taskEventHeartbeat)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					if !s.taskEventCallerStillAuthorized(r, agent) {
+						cancel()
+						return
+					}
+				}
+			}
+		}()
+		r = r.WithContext(ctx)
+	}
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = child, ""
-	a2asrv.NewRESTHandler(&a2aTaskHandler{server: s, agent: agent}).ServeHTTP(w, r2)
+	a2asrv.NewRESTHandler(&a2aTaskHandler{server: s, agent: agent}, a2asrv.WithTransportKeepAlive(taskEventHeartbeat)).ServeHTTP(w, r2)
 }
 
 func writeA2AEdgeError(w http.ResponseWriter, status int, cause error, message string) {
