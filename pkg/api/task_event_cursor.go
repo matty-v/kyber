@@ -43,8 +43,7 @@ func (s *Server) taskEventCursorKey(r *http.Request) ([]byte, error) {
 	if key == "" {
 		return nil, taskstore.ErrInvalidCursor
 	}
-	sum := sha256.Sum256([]byte("kyber-task-event-cursor-v1\x00" + key))
-	return sum[:], nil
+	return []byte(key), nil
 }
 
 func (s *Server) encodeTaskEventCursor(r *http.Request, agentName, taskID string, sequence int64) (string, error) {
@@ -63,7 +62,7 @@ func (s *Server) encodeTaskEventCursor(r *http.Request, agentName, taskID string
 		return "", err
 	}
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(strconv.Itoa(taskEventCursorVersion) + "." + body))
+	_, _ = mac.Write([]byte("kyber-task-event-cursor-v1." + body))
 	return strconv.Itoa(taskEventCursorVersion) + "." + body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
@@ -81,7 +80,7 @@ func (s *Server) decodeTaskEventCursor(r *http.Request, agentName, taskID, value
 		return 0, taskstore.ErrInvalidCursor
 	}
 	mac := hmac.New(sha256.New, key)
-	_, _ = mac.Write([]byte(parts[0] + "." + parts[1]))
+	_, _ = mac.Write([]byte("kyber-task-event-cursor-v1." + parts[1]))
 	if !hmac.Equal(presented, mac.Sum(nil)) {
 		return 0, taskstore.ErrInvalidCursor
 	}
