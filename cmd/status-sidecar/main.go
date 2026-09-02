@@ -168,6 +168,7 @@ func main() {
 //	POST /refresh-token  → /internal/agents/{name}/refresh-token
 //	POST /codex-auth     → /internal/agents/{name}/codex-auth
 //	POST /mcp            → MCP kyber-request-reply.respond tool
+//	POST /a2a/mcp        → MCP outbound A2A client tools
 //
 // Each handler reads the body and forwards verbatim via postToCP. The
 // sidecar applies agent identity + auth to the outbound request.
@@ -191,6 +192,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// access/refresh/expires trio (kyber#681).
 	mux.HandleFunc("/codex-auth", forwardHandler(client, cfg, metrics, logger, "codex-auth", false))
 	mux.HandleFunc("/mcp", (&requestMCPServer{client: client, cfg: cfg}).handle)
+	mux.HandleFunc("/a2a/mcp", (&outboundA2AMCPServer{}).handle)
 	mux.HandleFunc("/task-receipts", taskReceiptForwarder(client, cfg))
 	mux.HandleFunc("/task-receipts/", taskReceiptForwarder(client, cfg))
 	srv := &http.Server{

@@ -548,6 +548,7 @@ if [ "$KYBER_CODEX_CONFIG_USABLE" = "true" ]; then
     kyber_converge_mcp kyber_telegram "${KYBER_TELEGRAM_MCP_URL:-}" "Telegram"
     kyber_converge_mcp kyber_discord "${KYBER_DISCORD_MCP_URL:-}" "Discord"
     kyber_converge_mcp kyber_request_reply "${KYBER_REQUEST_MCP_URL:-}" "Request/reply"
+    kyber_converge_mcp kyber_a2a "${KYBER_A2A_MCP_URL:-}" "Outbound A2A"
 fi
 
 

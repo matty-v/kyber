@@ -350,6 +350,9 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 	if got := envMap["KYBER_REQUEST_MCP_URL"]; got != pkgruntimes.RequestMCPURL() {
 		t.Errorf("KYBER_REQUEST_MCP_URL: got %q, want %q", got, pkgruntimes.RequestMCPURL())
 	}
+	if got := envMap["KYBER_A2A_MCP_URL"]; got != pkgruntimes.A2AMCPURL() {
+		t.Errorf("KYBER_A2A_MCP_URL: got %q, want %q", got, pkgruntimes.A2AMCPURL())
+	}
 
 	// TZ should be omitted when KYBER_AGENT_TIMEZONE is unset — the test
 	// helper does not set the env var, so the pod env should not contain TZ.

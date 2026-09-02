@@ -242,6 +242,17 @@ if [ -n "${KYBER_REQUEST_MCP_URL:-}" ]; then
     fi
 fi
 
+# ---- Platform outbound A2A MCP tool ----
+if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+    claude mcp remove kyber-a2a --scope user >/dev/null 2>&1 || true
+    if claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL" \
+            --transport http --scope user >/dev/null 2>&1; then
+        echo "[kyber] Outbound A2A MCP tools registered at $KYBER_A2A_MCP_URL"
+    else
+        echo "[kyber] WARNING: could not register outbound A2A MCP tools" >&2
+    fi
+fi
+
 # ---- Identity repo ----
 # Clone-or-sync the identity repo and install the git credential helper. The
 # implementation is SHARED with every other runtime (kyber#676) — it used to

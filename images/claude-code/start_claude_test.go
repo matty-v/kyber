@@ -171,6 +171,21 @@ func TestStartClaudeRegistersRequestReplyMCP(t *testing.T) {
 	}
 }
 
+func TestStartClaudeRegistersA2AMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`claude mcp remove kyber-a2a --scope user`,
+		`claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL"`,
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-claude.sh missing A2A MCP registration %q", want)
+		}
+	}
+}
+
 func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
 	if err != nil {
