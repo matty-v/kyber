@@ -134,6 +134,36 @@ func TestA2ARejectsUnsupportedInputAndPush(t *testing.T) {
 	}
 }
 
+func TestA2ARejectsAmbiguousTrailingAndOversizedJSON(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	for name, raw := range map[string]string{
+		"duplicate": `{"message":{"messageId":"one","messageId":"two","role":"ROLE_USER","parts":[{"text":"x"}]}}`,
+		"trailing":  `{"message":{"messageId":"one","role":"ROLE_USER","parts":[{"text":"x"}]}} {}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodPost, "/a2a/v1/agents/kiosk/message:send", strings.NewReader(raw))
+			req.Header.Set("Authorization", "Bearer "+requestWriteKey)
+			req.Header.Set("A2A-Version", "1.0")
+			req.Header.Set("Content-Type", "application/json")
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+		})
+	}
+	oversized := strings.Repeat("x", (256<<10)+1)
+	req := httptest.NewRequest(http.MethodPost, "/a2a/v1/agents/kiosk/message:send", strings.NewReader(oversized))
+	req.Header.Set("Authorization", "Bearer "+requestWriteKey)
+	req.Header.Set("A2A-Version", "1.0")
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("oversized=%d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestA2ACancelAndMediaNegotiation(t *testing.T) {
 	h, _ := buildA2AHarness(t, true)
 	body := map[string]any{"message": map[string]any{"messageId": "msg-cancel", "role": "ROLE_USER", "parts": []map[string]any{{"text": "wait"}}}, "configuration": map[string]any{"returnImmediately": true}}

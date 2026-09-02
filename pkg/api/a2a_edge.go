@@ -1,15 +1,18 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -63,13 +66,27 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 		writeA2AEdgeError(w, http.StatusNotAcceptable, a2a.ErrUnsupportedContentType, "requested response media type is not supported")
 		return
 	}
-	if r.Method == http.MethodPost {
+	needsJSONBody := child == "/message:send" || child == "/message:stream" || (r.Method == http.MethodPost && strings.Contains(child, "/pushNotificationConfigs"))
+	if needsJSONBody {
 		mediaType := strings.ToLower(strings.TrimSpace(strings.Split(r.Header.Get("Content-Type"), ";")[0]))
 		if mediaType != "application/json" {
 			writeA2AEdgeError(w, http.StatusUnsupportedMediaType, a2a.ErrUnsupportedContentType, "Content-Type must be application/json")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, a2aMaxBody)
+		raw, err := io.ReadAll(io.LimitReader(r.Body, a2aMaxBody+1))
+		if err != nil {
+			writeA2AEdgeError(w, http.StatusBadRequest, a2a.ErrParseError, "invalid JSON body")
+			return
+		}
+		if len(raw) > a2aMaxBody {
+			writeA2AEdgeError(w, http.StatusRequestEntityTooLarge, a2a.ErrInvalidRequest, "request body exceeds the configured limit")
+			return
+		}
+		if err := validateA2AJSON(raw); err != nil {
+			writeA2AEdgeError(w, http.StatusBadRequest, a2a.ErrParseError, "invalid JSON body")
+			return
+		}
+		r.Body = io.NopCloser(bytes.NewReader(raw))
 	}
 	if isStream {
 		release, retryAfter, ok := s.acquireTaskEventStream(r, agent+":"+child)
@@ -101,6 +118,83 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = child, ""
 	a2asrv.NewRESTHandler(&a2aTaskHandler{server: s, agent: agent}, a2asrv.WithTransportKeepAlive(taskEventHeartbeat)).ServeHTTP(w, r2)
+}
+
+func validateA2AJSON(raw []byte) error {
+	if len(raw) == 0 || !utf8.Valid(raw) {
+		return errors.New("invalid JSON")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if err := validateA2AJSONValue(decoder, 0); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return errors.New("JSON body must contain one value")
+	}
+	return nil
+}
+
+func validateA2AJSONValue(decoder *json.Decoder, depth int) error {
+	if depth > 32 {
+		return errors.New("JSON exceeds maximum depth")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := map[string]struct{}{}
+		count := 0
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return errors.New("duplicate object key")
+			}
+			seen[key] = struct{}{}
+			count++
+			if count > 256 {
+				return errors.New("object exceeds maximum fields")
+			}
+			if err := validateA2AJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim('}') {
+			return errors.New("unterminated object")
+		}
+	case '[':
+		count := 0
+		for decoder.More() {
+			count++
+			if count > 256 {
+				return errors.New("array exceeds maximum items")
+			}
+			if err := validateA2AJSONValue(decoder, depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim(']') {
+			return errors.New("unterminated array")
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	return nil
 }
 
 func writeA2AEdgeError(w http.ResponseWriter, status int, cause error, message string) {
