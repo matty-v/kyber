@@ -60,6 +60,40 @@ export interface AgentStatus {
   message?: string
 }
 
+export type PublicCapabilityAvailability = 'available' | 'degraded' | 'unavailable' | 'unknown'
+
+export interface PublicCapabilityEvidence {
+  requiredSkills?: string[]
+  requiredConnectors?: string[]
+  requiredPlatformFeatures?: string[]
+  runtimeAdapters?: string[]
+}
+
+export interface PublicCapability {
+  id: string
+  version: string
+  name: string
+  description: string
+  inputModes: string[]
+  outputModes: string[]
+  taskFeatures?: string[]
+  evidence?: PublicCapabilityEvidence
+}
+
+export interface PublicCapabilitiesManifest {
+  schemaVersion: 'v1alpha1'
+  identity: { displayName: string; description: string; documentationUrl?: string }
+  capabilities: PublicCapability[]
+}
+
+export interface PublicCapabilitiesStatus {
+  observedGeneration?: number
+  manifestRevision?: string
+  observedAt?: string
+  conditions?: Array<{ type: string; status: string; reason: string; message: string }>
+  capabilities?: Array<{ id: string; availability: PublicCapabilityAvailability; reason?: string }>
+}
+
 export interface Agent {
   id: string
   phase: AgentPhase
@@ -75,6 +109,8 @@ export interface Agent {
   sessionResume?: boolean
   // Opt-in gate for authenticated bounded request/reply submissions.
   requestReplyEnabled?: boolean
+  publicCapabilities?: PublicCapabilitiesManifest
+  publicCapabilitiesStatus?: PublicCapabilitiesStatus
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
@@ -457,6 +493,7 @@ export interface PatchAgentRequest {
   startupPrompt?: string
   sessionResume?: boolean
   requestReplyEnabled?: boolean
+  publicCapabilities?: PublicCapabilitiesManifest | null
 }
 
 export interface SetModelRequest {

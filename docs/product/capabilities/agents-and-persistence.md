@@ -20,6 +20,22 @@ session. Startup prompts are operator-visible configuration, not secrets.
 
 An agent keeps its entire filesystem across restarts, upgrades, and preemption: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. This is the defining difference from a throwaway container: the agent picks up where it left off instead of starting from a blank disk.
 
+## Curate what an agent promises publicly
+
+An operator can publish a versioned capability manifest for an agent from its
+detail page. Each capability has a stable ID, business description, accepted
+and emitted media types, and supported durable-task features. Publication is
+explicit and empty by default: Kyber never turns a skill, prompt, tool schema,
+model claim, or filesystem observation into a public promise on its own.
+
+Private evidence requirements can bind a declaration to healthy skills,
+connectors, platform features, and a compatible Claude Code or Codex adapter.
+The controller reports availability and drift without exposing that evidence
+through the public manifest. Missing, stale, broken, or mismatched evidence
+fails closed. Authenticated clients with `capabilities:read` and permission for
+the exact agent resource can cache the safe projection from
+`GET /api/v1/agents/{name}/capabilities` using its ETag.
+
 ## A lifecycle you can read at a glance
 
 An agent moves through named phases. Most transitions are automatic: Kyber drives the agent toward your declared intent (run it, stop it) and recovers it across machine interruptions. If the cheaper interruptible machine under an agent is reclaimed, Kyber drains the agent gracefully, parks it, and brings it back when a replacement machine is ready. You see the state change but do not have to act.

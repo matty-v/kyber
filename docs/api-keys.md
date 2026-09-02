@@ -108,6 +108,14 @@ principal ownership, and allowed-agent checks. During migration,
 `requests:write` maps to create/continue/cancel and `requests:read` maps to
 read/list/results/events. New callers should use the narrow scopes.
 
+Capability-discovery callers use `capabilities:read`; operator tooling that
+publishes or unpublishes a declaration uses `capabilities:write`. Both use the same stable
+principal, tenant, credential-generation, and exact `agentResources`
+envelope. The scope permits only the privacy-safe projection at
+`GET /api/v1/agents/{name}/capabilities`; it never exposes private evidence,
+skill reports, prompts, runtime metadata, or operator configuration. The
+legacy shared key remains full-scope for compatibility.
+
 The legacy `api-key` keeps working as a **full-scope** caller, so this is
 backward-compatible. Enforcement is **off by default** (`api.authz.enforce:
 false`): under-scoped callers are audit-logged but not blocked. Set

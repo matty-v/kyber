@@ -8,7 +8,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
 	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/skillscan"
 	"github.com/matty-v/kyber/pkg/skillstore"
@@ -256,5 +261,21 @@ func TestSkillsReport_MethodNotAllowed(t *testing.T) {
 	internal.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusMethodNotAllowed {
 		t.Fatalf("status = %d, want 405", rr.Code)
+	}
+}
+
+func TestSkillsReportTriggersCapabilityReconcile(t *testing.T) {
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "dave", Namespace: "kyber-system", UID: types.UID("agent-dave")}, Spec: kyberv1.AgentSpec{PublicCapabilities: &kyberv1.AgentPublicCapabilities{SchemaVersion: "v1alpha1", Identity: kyberv1.AgentPublicCapabilityIdentity{DisplayName: "Dave", Description: "A test agent."}}}}
+	client := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build()
+	internal := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithSkillStore(skillstore.NewMemoryStore()), api.WithKubeClient(client, "kyber-system"))
+	if rr := postSkills(t, internal, "dave", oneHealthySkill); rr.Code != http.StatusNoContent {
+		t.Fatalf("POST=%d %s", rr.Code, rr.Body.String())
+	}
+	stored := &kyberv1.Agent{}
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "dave"}, stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Annotations["kyber.io/capability-evidence-reported-at"] == "" {
+		t.Fatal("evidence refresh annotation was not written")
 	}
 }

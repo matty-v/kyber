@@ -181,6 +181,30 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
 
+  /api/v1/agents/{name}/capabilities:
+    get:
+      operationId: getAgentCapabilities
+      summary: Read the validated operator-curated public capability manifest
+      description: Requires capabilities:read plus stable principal, tenant, and exact agent-resource authorization. Private evidence is never returned.
+      tags: [agents]
+      parameters:
+        - {name: name, in: path, required: true, schema: {type: string}}
+        - {name: If-None-Match, in: header, schema: {type: string}}
+      responses:
+        '200':
+          description: Validated public capability manifest and current availability
+          headers:
+            ETag: {schema: {type: string}}
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/AgentCapabilities'}
+        '304': {description: Manifest and availability have not changed}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Caller lacks capabilities:read}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {description: Declaration has not reconciled or the agent store is unavailable}
+
   /api/v1/browser-session:
     post:
       operationId: createBrowserSession
@@ -1839,6 +1863,10 @@ components:
         requestReplyEnabled:
           type: boolean
           description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
+        publicCapabilities:
+          $ref: '#/components/schemas/PublicCapabilitiesDeclaration'
+        publicCapabilitiesStatus:
+          $ref: '#/components/schemas/PublicCapabilitiesStatus'
         currentModel:
           type: string
           description: Concrete model observed from the running runtime; populated after its first response when the harness chooses the default.
@@ -1852,6 +1880,88 @@ components:
           type: string
           format: date-time
           example: "2026-04-10T00:00:00Z"
+
+    PublicCapabilityIdentity:
+      type: object
+      required: [displayName, description]
+      properties:
+        displayName: {type: string, maxLength: 128}
+        description: {type: string, maxLength: 1024}
+        documentationUrl: {type: string, format: uri, maxLength: 2048}
+
+    PublicCapabilityEvidence:
+      type: object
+      description: Operator-only evidence requirements; never included in AgentCapabilities.
+      properties:
+        requiredSkills: {type: array, maxItems: 16, items: {type: string}}
+        requiredConnectors: {type: array, maxItems: 16, items: {type: string}}
+        requiredPlatformFeatures: {type: array, maxItems: 16, items: {type: string}}
+        runtimeAdapters: {type: array, maxItems: 8, items: {type: string}}
+
+    PublicCapabilityDeclarationItem:
+      type: object
+      required: [id, version, name, description, inputModes, outputModes]
+      properties:
+        id: {type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'}
+        version: {type: string, maxLength: 64}
+        name: {type: string, maxLength: 128}
+        description: {type: string, maxLength: 1024}
+        inputModes: {type: array, minItems: 1, maxItems: 16, items: {type: string}}
+        outputModes: {type: array, minItems: 1, maxItems: 16, items: {type: string}}
+        taskFeatures: {type: array, maxItems: 16, items: {type: string}}
+        evidence: {$ref: '#/components/schemas/PublicCapabilityEvidence'}
+
+    PublicCapabilitiesDeclaration:
+      type: object
+      required: [schemaVersion, identity]
+      properties:
+        schemaVersion: {type: string, enum: [v1alpha1]}
+        identity: {$ref: '#/components/schemas/PublicCapabilityIdentity'}
+        capabilities:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/PublicCapabilityDeclarationItem'}
+
+    PublicCapabilitiesStatus:
+      type: object
+      properties:
+        observedGeneration: {type: integer, format: int64}
+        manifestRevision: {type: string}
+        observedAt: {type: string, format: date-time}
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [id, availability]
+            properties:
+              id: {type: string}
+              availability: {type: string, enum: [available, degraded, unavailable, unknown]}
+              reason: {type: string}
+
+    AgentCapabilities:
+      type: object
+      required: [schemaVersion, agentResourceId, revision, generatedAt, identity, capabilities]
+      properties:
+        schemaVersion: {type: string, enum: [v1alpha1]}
+        agentResourceId: {type: string}
+        revision: {type: string}
+        generatedAt: {type: string, format: date-time}
+        identity: {$ref: '#/components/schemas/PublicCapabilityIdentity'}
+        capabilities:
+          type: array
+          items:
+            type: object
+            required: [id, version, name, description, inputModes, outputModes, availability]
+            properties:
+              id: {type: string}
+              version: {type: string}
+              name: {type: string}
+              description: {type: string}
+              inputModes: {type: array, items: {type: string}}
+              outputModes: {type: array, items: {type: string}}
+              taskFeatures: {type: array, items: {type: string}}
+              availability: {type: string, enum: [available, degraded, unavailable, unknown]}
+              reason: {type: string}
 
     RuntimeRepairResponse:
       type: object

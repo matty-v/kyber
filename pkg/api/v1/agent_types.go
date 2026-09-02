@@ -559,6 +559,93 @@ type AgentSecrets struct {
 	AuthType AgentAuthType `json:"authType"`
 }
 
+// AgentPublicCapabilities is the versioned, operator-curated capability
+// contract. Evidence is private reconciliation input and is deliberately kept
+// separate from the allowlisted public projection.
+type AgentPublicCapabilities struct {
+	// +kubebuilder:validation:Enum=v1alpha1
+	SchemaVersion string                        `json:"schemaVersion"`
+	Identity      AgentPublicCapabilityIdentity `json:"identity"`
+	// +kubebuilder:validation:MaxItems=50
+	Capabilities []AgentPublicCapability `json:"capabilities,omitempty"`
+}
+
+type AgentPublicCapabilityIdentity struct {
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	DisplayName string `json:"displayName"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Description string `json:"description"`
+	// +optional
+	// +kubebuilder:validation:Pattern=`^https://[^[:space:]]+$`
+	// +kubebuilder:validation:MaxLength=2048
+	DocumentationURL string `json:"documentationUrl,omitempty"`
+}
+
+type AgentPublicCapability struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+	// +kubebuilder:validation:MaxLength=64
+	ID string `json:"id"`
+	// +kubebuilder:validation:MaxLength=64
+	// +kubebuilder:validation:MinLength=1
+	Version string `json:"version"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=128
+	Name string `json:"name"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=1024
+	Description string `json:"description"`
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Enum=text/plain;text/markdown;application/json;application/octet-stream;image/png;image/jpeg;image/webp;audio/mpeg;audio/wav;audio/ogg
+	InputModes []string `json:"inputModes"`
+	// +kubebuilder:validation:MinItems=1
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Enum=text/plain;text/markdown;application/json;application/octet-stream;image/png;image/jpeg;image/webp;audio/mpeg;audio/wav;audio/ogg
+	OutputModes []string `json:"outputModes"`
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Enum=durable;progress;typed-results;files;cancellation;multi-turn;authorization-request;event-replay
+	TaskFeatures []string `json:"taskFeatures,omitempty"`
+	// +optional
+	Evidence *AgentPublicCapabilityEvidence `json:"evidence,omitempty"`
+}
+
+// AgentPublicCapabilityEvidence is operator-only configuration. These fields
+// are validation inputs and must never be serialized by a public projection.
+type AgentPublicCapabilityEvidence struct {
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+	RequiredSkills []string `json:"requiredSkills,omitempty"`
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+	RequiredConnectors []string `json:"requiredConnectors,omitempty"`
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:Enum=durable;progress;typed-results;files;cancellation;multi-turn;authorization-request;event-replay
+	RequiredPlatformFeatures []string `json:"requiredPlatformFeatures,omitempty"`
+	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:items:Enum=claude-code;codex
+	RuntimeAdapters []string `json:"runtimeAdapters,omitempty"`
+}
+
+type AgentPublicCapabilitiesStatus struct {
+	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
+	ManifestRevision   string             `json:"manifestRevision,omitempty"`
+	ObservedAt         *metav1.Time       `json:"observedAt,omitempty"`
+	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// +kubebuilder:validation:MaxItems=50
+	Capabilities []AgentPublicCapabilityAvailability `json:"capabilities,omitempty"`
+}
+
+type AgentPublicCapabilityAvailability struct {
+	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+	ID string `json:"id"`
+	// +kubebuilder:validation:Enum=available;degraded;unavailable;unknown
+	Availability string `json:"availability"`
+	// +kubebuilder:validation:MaxLength=128
+	Reason string `json:"reason,omitempty"`
+}
+
 // AgentSpec defines the desired state of an Agent.
 type AgentSpec struct {
 	// Machine is the name of the Machine CRD this agent should run on.
@@ -592,6 +679,12 @@ type AgentSpec struct {
 	// already dispatched to the runtime.
 	// +optional
 	RequestReplyEnabled bool `json:"requestReplyEnabled,omitempty"`
+
+	// PublicCapabilities is the operator-authored public contract for this
+	// agent. It is never inferred from skills, prompts, tools, or runtime
+	// metadata. Nil means that the agent publishes no capabilities.
+	// +optional
+	PublicCapabilities *AgentPublicCapabilities `json:"publicCapabilities,omitempty"`
 
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
@@ -777,6 +870,12 @@ type AgentStatus struct {
 	// each pod start.
 	// +optional
 	Runtime AgentRuntimeStatus `json:"runtime,omitempty"`
+
+	// PublicCapabilities reports validation and current availability for the
+	// operator-authored declaration. Private evidence is represented only by
+	// bounded reason codes and is never copied into the public API projection.
+	// +optional
+	PublicCapabilities *AgentPublicCapabilitiesStatus `json:"publicCapabilities,omitempty"`
 
 	// Jobs is the bounded ring buffer of recent job dispatch runs. Capped at
 	// 50 entries per spec.jobs[].name by the controller; older entries roll

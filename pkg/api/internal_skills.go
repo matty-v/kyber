@@ -1,12 +1,17 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/skillscan"
 )
 
@@ -83,14 +88,39 @@ func (s *InternalServer) handleSkillsReport(w http.ResponseWriter, r *http.Reque
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	report.ReportedAt = time.Now().UTC().Format(time.RFC3339)
+	report.ReportedAt = time.Now().UTC().Format(time.RFC3339Nano)
 
 	if err := s.skillStore.Put(r.Context(), agentName, &report); err != nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "skill_store_error",
 			"skill report storage is unavailable")
 		return
 	}
+	// Skill reports are durable-store writes, not Kubernetes objects, so they
+	// would not otherwise enqueue the Agent reconciler. Touch a private
+	// metadata annotation to make availability converge immediately. Failure is
+	// best-effort: the report remains accepted and the next natural reconcile
+	// still joins it.
+	s.triggerCapabilityReconcile(r.Context(), agentName, report.ReportedAt)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *InternalServer) triggerCapabilityReconcile(ctx context.Context, agentName, reportedAt string) {
+	if s.k8sClient == nil || s.namespace == "" {
+		return
+	}
+	agent := &kyberv1.Agent{}
+	if err := s.k8sClient.Get(ctx, types.NamespacedName{Namespace: s.namespace, Name: agentName}, agent); err != nil {
+		return
+	}
+	if agent.Spec.PublicCapabilities == nil {
+		return
+	}
+	patch := client.MergeFrom(agent.DeepCopy())
+	if agent.Annotations == nil {
+		agent.Annotations = map[string]string{}
+	}
+	agent.Annotations["kyber.io/capability-evidence-reported-at"] = reportedAt
+	_ = s.k8sClient.Patch(ctx, agent, patch)
 }
 
 // sanitizeSkillReport enforces the wire bounds and normalizes whitespace in

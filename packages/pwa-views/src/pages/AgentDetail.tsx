@@ -44,6 +44,7 @@ import { ShellTab } from '../components/ShellTab'
 import { CodexDeviceAuthPanel } from '../components/CodexDeviceAuthPanel'
 import { AgentTerminalPeek } from '../components/TerminalPeek'
 import { WebhooksTab } from '../components/WebhooksTab'
+import { PublicCapabilitiesEditor } from '../components/PublicCapabilitiesEditor'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -955,6 +956,7 @@ export function AgentDetail() {
             pending={setRequestReplyEnabled.isPending}
             onChange={(enabled) => setRequestReplyEnabled.mutate({ name, requestReplyEnabled: enabled })}
           />
+          <PublicCapabilitiesEditor agent={agent} />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />

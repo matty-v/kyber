@@ -386,6 +386,162 @@ spec:
                   If both spec.model and the fleet default are empty, the runtime harness
                   selects its own default model.
                 type: string
+              publicCapabilities:
+                description: |-
+                  PublicCapabilities is the operator-authored public contract for this
+                  agent. It is never inferred from skills, prompts, tools, or runtime
+                  metadata. Nil means that the agent publishes no capabilities.
+                properties:
+                  capabilities:
+                    items:
+                      properties:
+                        description:
+                          maxLength: 1024
+                          minLength: 1
+                          type: string
+                        evidence:
+                          description: |-
+                            AgentPublicCapabilityEvidence is operator-only configuration. These fields
+                            are validation inputs and must never be serialized by a public projection.
+                          properties:
+                            requiredConnectors:
+                              items:
+                                pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+                                type: string
+                              maxItems: 16
+                              type: array
+                            requiredPlatformFeatures:
+                              items:
+                                enum:
+                                - durable
+                                - progress
+                                - typed-results
+                                - files
+                                - cancellation
+                                - multi-turn
+                                - authorization-request
+                                - event-replay
+                                type: string
+                              maxItems: 16
+                              type: array
+                            requiredSkills:
+                              items:
+                                pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+                                type: string
+                              maxItems: 16
+                              type: array
+                            runtimeAdapters:
+                              items:
+                                enum:
+                                - claude-code
+                                - codex
+                                type: string
+                              maxItems: 8
+                              type: array
+                          type: object
+                        id:
+                          maxLength: 64
+                          pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+                          type: string
+                        inputModes:
+                          items:
+                            enum:
+                            - text/plain
+                            - text/markdown
+                            - application/json
+                            - application/octet-stream
+                            - image/png
+                            - image/jpeg
+                            - image/webp
+                            - audio/mpeg
+                            - audio/wav
+                            - audio/ogg
+                            type: string
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                        name:
+                          maxLength: 128
+                          minLength: 1
+                          type: string
+                        outputModes:
+                          items:
+                            enum:
+                            - text/plain
+                            - text/markdown
+                            - application/json
+                            - application/octet-stream
+                            - image/png
+                            - image/jpeg
+                            - image/webp
+                            - audio/mpeg
+                            - audio/wav
+                            - audio/ogg
+                            type: string
+                          maxItems: 16
+                          minItems: 1
+                          type: array
+                        taskFeatures:
+                          items:
+                            enum:
+                            - durable
+                            - progress
+                            - typed-results
+                            - files
+                            - cancellation
+                            - multi-turn
+                            - authorization-request
+                            - event-replay
+                            type: string
+                          maxItems: 16
+                          type: array
+                        version:
+                          maxLength: 64
+                          minLength: 1
+                          type: string
+                      required:
+                      - description
+                      - id
+                      - inputModes
+                      - name
+                      - outputModes
+                      - version
+                      type: object
+                    maxItems: 50
+                    type: array
+                  identity:
+                    properties:
+                      description:
+                        maxLength: 1024
+                        minLength: 1
+                        type: string
+                      displayName:
+                        maxLength: 128
+                        minLength: 1
+                        type: string
+                      documentationUrl:
+                        maxLength: 2048
+                        pattern: ^https://[^[:space:]]+$
+                        type: string
+                    required:
+                    - description
+                    - displayName
+                    type: object
+                  schemaVersion:
+                    enum:
+                    - v1alpha1
+                    type: string
+                required:
+                - identity
+                - schemaVersion
+                type: object
+              requestReplyEnabled:
+                description: |-
+                  RequestReplyEnabled allows authenticated callers with the dedicated
+                  request scopes to submit bounded requests to this agent. It is opt-in per
+                  agent; disabling it rejects new submissions without orphaning requests
+                  already dispatched to the runtime.
+                type: boolean
               resources:
                 description: Resources specifies the compute resources requested for
                   the agent pod.
@@ -482,13 +638,6 @@ spec:
                   the trigger to continue interrupted work. An intentional
                   restart-session always starts a fresh session regardless of this
                   flag: intentional restart is the operator's context-clearing tool.
-                type: boolean
-              requestReplyEnabled:
-                description: |-
-                  RequestReplyEnabled allows authenticated callers with the dedicated
-                  request scopes to submit bounded requests to this agent. It is opt-in
-                  per agent; disabling it rejects new submissions without orphaning
-                  requests already dispatched to the runtime.
                 type: boolean
               startupPrompt:
                 description: |-
@@ -849,6 +998,100 @@ spec:
               podName:
                 description: PodName is the name of the currently running agent pod.
                 type: string
+              publicCapabilities:
+                description: |-
+                  PublicCapabilities reports validation and current availability for the
+                  operator-authored declaration. Private evidence is represented only by
+                  bounded reason codes and is never copied into the public API projection.
+                properties:
+                  capabilities:
+                    items:
+                      properties:
+                        availability:
+                          enum:
+                          - available
+                          - degraded
+                          - unavailable
+                          - unknown
+                          type: string
+                        id:
+                          pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+                          type: string
+                        reason:
+                          maxLength: 128
+                          type: string
+                      required:
+                      - availability
+                      - id
+                      type: object
+                    maxItems: 50
+                    type: array
+                  conditions:
+                    items:
+                      description: Condition contains details for one aspect of the
+                        current state of this API Resource.
+                      properties:
+                        lastTransitionTime:
+                          description: |-
+                            lastTransitionTime is the last time the condition transitioned from one status to another.
+                            This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                          format: date-time
+                          type: string
+                        message:
+                          description: |-
+                            message is a human readable message indicating details about the transition.
+                            This may be an empty string.
+                          maxLength: 32768
+                          type: string
+                        observedGeneration:
+                          description: |-
+                            observedGeneration represents the .metadata.generation that the condition was set based upon.
+                            For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                            with respect to the current state of the instance.
+                          format: int64
+                          minimum: 0
+                          type: integer
+                        reason:
+                          description: |-
+                            reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                            Producers of specific condition types may define expected values and meanings for this field,
+                            and whether the values are considered a guaranteed API.
+                            The value should be a CamelCase string.
+                            This field may not be empty.
+                          maxLength: 1024
+                          minLength: 1
+                          pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                          type: string
+                        status:
+                          description: status of the condition, one of True, False,
+                            Unknown.
+                          enum:
+                          - "True"
+                          - "False"
+                          - Unknown
+                          type: string
+                        type:
+                          description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                          maxLength: 316
+                          pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                          type: string
+                      required:
+                      - lastTransitionTime
+                      - message
+                      - reason
+                      - status
+                      - type
+                      type: object
+                    type: array
+                  manifestRevision:
+                    type: string
+                  observedAt:
+                    format: date-time
+                    type: string
+                  observedGeneration:
+                    format: int64
+                    type: integer
+                type: object
               recoveryInput:
                 description: |-
                   RecoveryInput identifies the operator-supplied input that the most

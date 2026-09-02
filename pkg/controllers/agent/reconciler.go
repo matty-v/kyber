@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -22,10 +23,12 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/skillscan"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/telemetry"
@@ -394,6 +397,15 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
+	// Reconcile the operator-curated public contract independently from the
+	// pod lifecycle. Runtime observations may narrow availability but never
+	// create declarations. A status change is persisted before the many early
+	// returns below so stopped and not-yet-scheduled agents are covered too.
+	capabilityRequeue, err := r.reconcilePublicCapabilities(ctx, agent)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
+
 	// 3a. Ensure the user-secrets shell Secrets exist (#75). These are mounted
 	// unconditionally by pod_builder.go, so they must exist before any pod is
 	// created — see docs/design/2026-04-18-user-secrets-design.md.
@@ -724,7 +736,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				base = remaining + time.Second
 			}
 		}
-		return ctrl.Result{RequeueAfter: minNonZero(base, identityRequeue)}, nil
+		return ctrl.Result{RequeueAfter: minNonZero(minNonZero(base, identityRequeue), capabilityRequeue)}, nil
 	}
 
 	// 6a. If the event is an auto-restart, check whether the backoff window has elapsed.
@@ -808,7 +820,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: minNonZero(requeueAfter, identityRequeue)}, nil
+	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue)}, nil
 }
 
 // minNonZero returns the smaller of two durations, treating 0 as "no
@@ -2298,6 +2310,78 @@ func (r *AgentReconciler) stampObservedGeneration(ctx context.Context, agent *ky
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.ObservedGeneration = agent.Generation
 	return r.Status().Patch(ctx, agent, patch)
+}
+
+func (r *AgentReconciler) reconcilePublicCapabilities(ctx context.Context, agent *kyberv1.Agent) (time.Duration, error) {
+	if agent.Spec.PublicCapabilities == nil {
+		if agent.Status.PublicCapabilities == nil {
+			return 0, nil
+		}
+		patch := client.MergeFrom(agent.DeepCopy())
+		agent.Status.PublicCapabilities = nil
+		if err := r.Status().Patch(ctx, agent, patch); err != nil {
+			return 0, fmt.Errorf("clearing public capability status: %w", err)
+		}
+		return 0, nil
+	}
+	var reportErr error
+	var report *skillscan.Report
+	if r.SkillStore == nil {
+		reportErr = fmt.Errorf("skill reporting is not configured")
+	} else {
+		report, reportErr = r.SkillStore.Get(ctx, agent.Name)
+	}
+	desired := capabilities.Evaluate(agent, report, reportErr, time.Now())
+	if publicCapabilityStatusEqual(agent.Status.PublicCapabilities, desired) {
+		return capabilityEvidenceRequeue(agent, report), nil
+	}
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.PublicCapabilities = desired
+	if err := r.Status().Patch(ctx, agent, patch); err != nil {
+		return 0, fmt.Errorf("patching public capability status: %w", err)
+	}
+	return capabilityEvidenceRequeue(agent, report), nil
+}
+
+func capabilityEvidenceRequeue(agent *kyberv1.Agent, report *skillscan.Report) time.Duration {
+	if agent.Spec.PublicCapabilities == nil || report == nil {
+		return 0
+	}
+	requiresSkills := false
+	for _, capability := range agent.Spec.PublicCapabilities.Capabilities {
+		if capability.Evidence != nil && len(capability.Evidence.RequiredSkills) > 0 {
+			requiresSkills = true
+			break
+		}
+	}
+	if !requiresSkills {
+		return 0
+	}
+	reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt)
+	if err != nil {
+		return 0
+	}
+	remaining := reportedAt.Add(capabilities.SkillEvidenceMaxAge).Sub(time.Now())
+	if remaining <= 0 {
+		return 0
+	}
+	return remaining + time.Second
+}
+
+func publicCapabilityStatusEqual(a, b *kyberv1.AgentPublicCapabilitiesStatus) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.ObservedGeneration != b.ObservedGeneration || a.ManifestRevision != b.ManifestRevision || !reflect.DeepEqual(a.Capabilities, b.Capabilities) || len(a.Conditions) != len(b.Conditions) {
+		return false
+	}
+	for i := range a.Conditions {
+		ac, bc := a.Conditions[i], b.Conditions[i]
+		if ac.Type != bc.Type || ac.Status != bc.Status || ac.Reason != bc.Reason || ac.Message != bc.Message || ac.ObservedGeneration != bc.ObservedGeneration {
+			return false
+		}
+	}
+	return true
 }
 
 // isOrphanedTerminating reports whether `pod` is Terminating on a node that
