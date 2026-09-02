@@ -344,6 +344,9 @@ type ListParams struct {
 	Agent         AgentRef
 	Authorization AuthorizationContext
 	State         State
+	States        []State
+	Correlation   string
+	UpdatedAfter  time.Time
 	Limit         int
 	Cursor        string
 }
@@ -413,6 +416,7 @@ func (a AuthorizationContext) Valid() bool {
 type Page struct {
 	Tasks      []*Task
 	NextCursor string
+	Total      int
 }
 
 // Store implementations must make every mutation atomic. Create also persists

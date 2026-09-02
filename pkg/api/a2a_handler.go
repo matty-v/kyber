@@ -73,18 +73,23 @@ func (h *a2aTaskHandler) ListTasks(ctx context.Context, req *a2a.ListTasksReques
 	if err != nil {
 		return nil, err
 	}
-	page, err := h.server.TaskStore.List(ctx, taskstore.ListParams{Agent: h.ref(), Authorization: auth, State: state, Limit: req.PageSize, Cursor: req.PageToken})
+	params := taskstore.ListParams{Agent: h.ref(), Authorization: auth, State: state, Correlation: req.ContextID, Limit: req.PageSize, Cursor: req.PageToken}
+	if req.Status == a2a.TaskStateWorking {
+		params.State = ""
+		params.States = []taskstore.State{taskstore.StateDispatched, taskstore.StateCanceling}
+	}
+	if req.StatusTimestampAfter != nil {
+		params.UpdatedAfter = req.StatusTimestampAfter.UTC()
+	}
+	page, err := h.server.TaskStore.List(ctx, params)
 	if err != nil {
 		return nil, a2aStoreError(err)
 	}
 	out := &a2a.ListTasksResponse{Tasks: make([]*a2a.Task, 0, len(page.Tasks)), PageSize: req.PageSize, NextPageToken: page.NextCursor}
 	for _, t := range page.Tasks {
-		if req.ContextID != "" && t.Correlation != req.ContextID {
-			continue
-		}
 		out.Tasks = append(out.Tasks, nativeA2ATask(t, req.HistoryLength, req.IncludeArtifacts))
 	}
-	out.TotalSize = len(out.Tasks)
+	out.TotalSize = page.Total
 	return out, nil
 }
 

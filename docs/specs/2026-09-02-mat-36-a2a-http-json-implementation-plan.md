@@ -18,11 +18,12 @@
 - [x] Return explicit A2A errors for unsupported push, extended-card, transport,
   content, and version requests; keep all SDK-owned execution and persistence
   components out of the adapter.
-- [ ] Add focused protocol, translation, authorization, concurrency, streaming,
+- [x] Add focused protocol, translation, authorization, concurrency, streaming,
   and contract tests plus operator configuration documentation.
 - [ ] Run repository validation, deploy the worktree to kyber-dev GCP, exercise
   live authenticated A2A flows, review the PR, fix findings, and merge only
   after CI is green.
 
-Current next action: run full repository validation, address review findings,
-then deploy and exercise the authenticated edge in kyber-dev GCP.
+Current next action: push the completed review fixes, rerun the worktree deploy,
+and merge after CI is green. Live enabled-path exercise remains gated on applying
+the new Helm flag through the normal dev delivery path.

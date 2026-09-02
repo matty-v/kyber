@@ -34,7 +34,7 @@ func buildA2AHarness(t *testing.T, enabled bool) (http.Handler, *taskstore.Memor
 		t.Fatal(err)
 	}
 	agent.Status.PublicCapabilities = &kyberv1.AgentPublicCapabilitiesStatus{ObservedGeneration: agent.Generation, ManifestRevision: digest, Conditions: []metav1.Condition{{Type: "Valid", Status: metav1.ConditionTrue}}, Capabilities: []kyberv1.AgentPublicCapabilityAvailability{{ID: "inspect", Availability: "available"}}}
-	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", PublicURL: "https://kyber.example", TaskStore: store, TasksEnabled: true, A2AEnabled: enabled, Callers: []api.ScopedCaller{{Name: "a2a", PrincipalID: "principal_a2a", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: requestWriteKey, Scopes: []string{"tasks:create", "tasks:read", "tasks:list", "tasks:continue", "tasks:cancel", "task-results:read", "task-events:read"}}, {Name: "other", PrincipalID: "principal_other", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: "other-a2a-secret", Scopes: []string{"tasks:read", "tasks:list"}}}}
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", PublicURL: "https://kyber.example", TaskStore: &a2aEventMemoryStore{MemoryStore: store}, TasksEnabled: true, A2AEnabled: enabled, Callers: []api.ScopedCaller{{Name: "a2a", PrincipalID: "principal_a2a", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: requestWriteKey, Scopes: []string{"tasks:create", "tasks:read", "tasks:list", "tasks:continue", "tasks:cancel", "task-results:read", "task-events:read"}}, {Name: "other", PrincipalID: "principal_other", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: "other-a2a-secret", Scopes: []string{"tasks:read", "tasks:list"}}}}
 	return server.BuildHandler(), store
 }
 
@@ -81,6 +81,20 @@ func TestA2AFeatureGateAuthVersionAndCard(t *testing.T) {
 	}
 }
 
+func TestA2ACardFailsClosedWithoutEventStore(t *testing.T) {
+	store, err := taskstore.NewMemoryStore(taskstore.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := bareAgent("kiosk")
+	agent.Spec.RequestReplyEnabled = true
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", TaskStore: store, TasksEnabled: true, A2AEnabled: true}
+	got := a2aRequest(t, server.BuildHandler(), http.MethodGet, "/a2a/v1/agents/kiosk/.well-known/agent-card.json", testAPIKey, "", nil)
+	if got.Code != http.StatusServiceUnavailable {
+		t.Fatalf("card=%d %s", got.Code, got.Body.String())
+	}
+}
+
 func TestA2ASendReplayGetListAndOwnerIsolation(t *testing.T) {
 	h, _ := buildA2AHarness(t, true)
 	body := map[string]any{"message": map[string]any{"messageId": "msg-1", "contextId": "ctx-1", "role": "ROLE_USER", "parts": []map[string]any{{"text": "inspect the fleet"}}}, "configuration": map[string]any{"returnImmediately": true}}
@@ -119,6 +133,20 @@ func TestA2ASendReplayGetListAndOwnerIsolation(t *testing.T) {
 	other := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks/"+response.Task.ID, "other-a2a-secret", "1.0", nil)
 	if other.Code != http.StatusNotFound {
 		t.Fatalf("other=%d %s", other.Code, other.Body.String())
+	}
+}
+
+func TestA2AContextFilterIsAppliedBeforePagination(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	for _, item := range []struct{ id, context string }{{"match", "wanted"}, {"newer", "other"}} {
+		body := map[string]any{"message": map[string]any{"messageId": item.id, "contextId": item.context, "role": "ROLE_USER", "parts": []map[string]any{{"text": item.id}}}, "configuration": map[string]any{"returnImmediately": true}}
+		if got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", body); got.Code != http.StatusOK {
+			t.Fatalf("create=%d %s", got.Code, got.Body.String())
+		}
+	}
+	got := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks?pageSize=1&contextId=wanted", requestWriteKey, "1.0", nil)
+	if got.Code != http.StatusOK || !strings.Contains(got.Body.String(), `"contextId":"wanted"`) || strings.Contains(got.Body.String(), `"contextId":"other"`) || !strings.Contains(got.Body.String(), `"totalSize":1`) {
+		t.Fatalf("list=%d %s", got.Code, got.Body.String())
 	}
 }
 

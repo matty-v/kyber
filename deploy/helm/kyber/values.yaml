@@ -143,12 +143,12 @@ api:
     resultsRoot: /persist/task-results
     defaultDeadlineHours: 24
     maxDeadlineHours: 168
+    retentionHours: 168
 
   # A2A 1.0 HTTP+JSON edge. Requires durableTasks and remains dark unless
   # explicitly enabled for the installation.
   a2a:
     enabled: false
-    retentionHours: 168
   # existingSecret: name of a pre-created Secret that provides the api-key
   # key. When set, the chart does NOT create a Secret — the operator is responsible.
   # Overrides apiKey above.

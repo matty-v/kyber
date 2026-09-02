@@ -23,6 +23,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/capabilities"
+	"github.com/matty-v/kyber/pkg/taskstore"
 )
 
 const (
@@ -242,6 +243,12 @@ func (s *Server) handleA2ACard(w http.ResponseWriter, r *http.Request, name stri
 var errA2ACardNotFound = errors.New("A2A agent card not found")
 
 func (s *Server) a2aCard(r *http.Request, name string) (*a2a.AgentCard, error) {
+	if !s.TasksEnabled || s.TaskStore == nil {
+		return nil, errors.New("durable task service unavailable")
+	}
+	if _, ok := s.TaskStore.(taskstore.EventStore); !ok {
+		return nil, errors.New("durable task event service unavailable")
+	}
 	if s.K8sClient == nil {
 		return nil, errors.New("Kubernetes client unavailable")
 	}

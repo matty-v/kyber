@@ -148,6 +148,8 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_created_idx ON agent_tasks(agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_state_created_idx ON agent_tasks(agent_namespace,agent_name,state,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_owner_created_idx ON agent_tasks(tenant_id,owner_principal_id,agent_resource_id,agent_namespace,agent_name,created_at DESC,id DESC)`,
+		`CREATE INDEX IF NOT EXISTS agent_tasks_owner_correlation_created_idx ON agent_tasks(tenant_id,owner_principal_id,agent_resource_id,agent_namespace,agent_name,correlation,created_at DESC,id DESC)`,
+		`CREATE INDEX IF NOT EXISTS agent_tasks_owner_updated_created_idx ON agent_tasks(tenant_id,owner_principal_id,agent_resource_id,agent_namespace,agent_name,updated_at,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_retain_idx ON agent_tasks(retain_until)`,
 		`DROP INDEX IF EXISTS agent_tasks_deadline_idx`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_deadline_idx ON agent_tasks(deadline_at) WHERE state IN ('queued','dispatched','input_required','auth_required')`,
@@ -348,11 +350,14 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 	if limit < 1 || limit > s.limits.MaxListPage {
 		return nil, ErrInvalid
 	}
+	if p.State != "" && len(p.States) != 0 {
+		return nil, ErrInvalid
+	}
 	var before time.Time
 	var beforeID string
 	var err error
 	if p.Cursor != "" {
-		before, beforeID, err = decodeCursor(p.Cursor, p.Agent, p.State, p.Authorization)
+		before, beforeID, err = decodeCursor(p.Cursor, p)
 		if err != nil {
 			return nil, err
 		}
@@ -369,6 +374,32 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 		where += fmt.Sprintf(" AND state=$%d", n)
 		args = append(args, p.State)
 		n++
+	}
+	if len(p.States) != 0 {
+		where += " AND state IN ("
+		for i, state := range p.States {
+			if i > 0 {
+				where += ","
+			}
+			where += fmt.Sprintf("$%d", n)
+			args = append(args, state)
+			n++
+		}
+		where += ")"
+	}
+	if p.Correlation != "" {
+		where += fmt.Sprintf(" AND correlation=$%d", n)
+		args = append(args, p.Correlation)
+		n++
+	}
+	if !p.UpdatedAfter.IsZero() {
+		where += fmt.Sprintf(" AND updated_at>$%d", n)
+		args = append(args, p.UpdatedAfter.UTC())
+		n++
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, "SELECT count(*) FROM agent_tasks"+where, args...).Scan(&total); err != nil {
+		return nil, err
 	}
 	if !before.IsZero() {
 		where += fmt.Sprintf(" AND (created_at,id)<($%d,$%d)", n, n+1)
@@ -404,10 +435,10 @@ func (s *PostgresStore) List(ctx context.Context, p ListParams) (*Page, error) {
 			return nil, err
 		}
 	}
-	page := &Page{}
+	page := &Page{Total: total}
 	if len(items) > limit {
 		page.Tasks = items[:limit]
-		page.NextCursor, err = encodeCursor(p.Agent, p.State, p.Authorization, page.Tasks[len(page.Tasks)-1])
+		page.NextCursor, err = encodeCursor(p, page.Tasks[len(page.Tasks)-1])
 		if err != nil {
 			return nil, err
 		}
