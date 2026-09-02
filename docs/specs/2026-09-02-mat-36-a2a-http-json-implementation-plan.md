@@ -20,10 +20,12 @@
   components out of the adapter.
 - [x] Add focused protocol, translation, authorization, concurrency, streaming,
   and contract tests plus operator configuration documentation.
-- [ ] Run repository validation, deploy the worktree to kyber-dev GCP, exercise
-  live authenticated A2A flows, review the PR, fix findings, and merge only
-  after CI is green.
+- [x] Run repository validation, deploy the worktree to kyber-dev GCP, verify
+  the authenticated default-off route gate, review the PR, fix findings, and
+  merge only after CI is green. Enabled-path dev exercise follows normal chart
+  delivery because the worktree deploy intentionally does not apply Helm values.
 
-Current next action: push the completed review fixes, rerun the worktree deploy,
-and merge after CI is green. Live enabled-path exercise remains gated on applying
-the new Helm flag through the normal dev delivery path.
+Validation completed against immutable dev image
+`worktree-20260902110543-dce395c`; the authenticated A2A path returns 404 while
+the installation gate remains disabled, as designed. Live enabled-path exercise
+remains gated on applying the new Helm flag through the normal dev delivery path.
