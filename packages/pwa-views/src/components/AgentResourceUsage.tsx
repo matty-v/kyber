@@ -33,11 +33,24 @@ function ResourceRow({ label, used, total, display }: { label: string; used: num
 export function AgentResourceUsage({ usage }: { usage: ResourceUsage }) {
   const cpuTotal = usage.cpuLimitCores
   const memoryTotal = usage.memoryLimitBytes
+  const backingTotal = usage.diskBackingTotalBytes
+  const backingAvailable = usage.diskBackingAvailableBytes
+  const sharedBackingUsed = backingTotal !== undefined && backingAvailable !== undefined
+    ? Math.max(0, backingTotal - backingAvailable)
+    : undefined
   return (
     <div className="space-y-3" aria-label="Current resource usage">
       <ResourceRow label="CPU" used={usage.cpuUsageCores} total={cpuTotal} display={`${usage.cpuUsageCores.toFixed(2)} of ${cpuTotal?.toFixed(2) ?? 'unlimited'} cores`} />
       <ResourceRow label="Memory" used={usage.memoryUsedBytes} total={memoryTotal} display={`${formatBytes(usage.memoryUsedBytes)} of ${memoryTotal ? formatBytes(memoryTotal) : 'unlimited'}`} />
-      <ResourceRow label="Disk" used={usage.diskUsedBytes} total={usage.diskTotalBytes} display={`${formatBytes(usage.diskUsedBytes)} of ${formatBytes(usage.diskTotalBytes)}`} />
+      <ResourceRow label={usage.diskLimitEnforced ? 'Disk' : 'Disk reservation'} used={usage.diskUsedBytes} total={usage.diskTotalBytes} display={`${formatBytes(usage.diskUsedBytes)} of ${formatBytes(usage.diskTotalBytes)}${usage.diskLimitEnforced ? '' : ' (soft)'}`} />
+      {!usage.diskLimitEnforced && sharedBackingUsed !== undefined && backingTotal !== undefined && (
+        <ResourceRow label="Shared backing disk" used={sharedBackingUsed} total={backingTotal} display={`${formatBytes(backingAvailable ?? 0)} free of ${formatBytes(backingTotal)}`} />
+      )}
+      {!usage.diskLimitEnforced && (
+        <p className="text-xs text-warn" data-testid="disk-soft-reservation-note">
+          This storage class does not enforce the agent reservation. Other workloads share the backing disk.
+        </p>
+      )}
     </div>
   )
 }

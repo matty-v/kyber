@@ -141,9 +141,13 @@ come from `statfs`. For a bind-mounted directory (including k3s `local-path`),
 the sidecar walks only `/persist` every five minutes in a throttled background
 goroutine and reuses the cached result between walks. `diskUsageMethod`,
 `diskUsageState`, and `diskUsedSampledAt` expose that distinction and staleness.
+`diskLimitEnforced` is true only for a whole-filesystem mount; a directory-backed
+volume is a soft reservation. `diskBackingTotalBytes` and
+`diskBackingAvailableBytes` come from `statfs` on `/persist`, so operators can
+see shared-node pressure even while per-Agent used bytes come from the tree
+walk.
 Unreadable paths are skipped, logged, and reported as a `partial` sample; that
-usable lower bound may assert the 90% reserve but cannot clear an existing
-reserve because skipped paths may contain the missing bytes. A pending or
+usable lower bound participates in the same hysteresis as a complete sample. A pending or
 failed walk never blocks heartbeat delivery or clears an existing
 disk-exhaustion marker. The control plane keeps only the latest sample in
 `status.activity.resources`, while the sidecar emits the same values as OTel

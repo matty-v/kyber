@@ -261,6 +261,7 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 		SampledAt: sampled, CPUUsageMillicores: 750, CPULimitMillicores: &cpuLimit,
 		MemoryUsedBytes: 1024 * 1024 * 1024, MemoryLimitBytes: &memoryLimit,
 		DiskUsedBytes: 18 * 1024 * 1024 * 1024, DiskTotalBytes: 20 * 1024 * 1024 * 1024,
+		DiskLimitEnforced: false, DiskBackingTotalBytes: 100 * 1024 * 1024 * 1024, DiskBackingAvailableBytes: 60 * 1024 * 1024 * 1024,
 		DiskReserveReached: true,
 		DiskUsageMethod:    "directory", DiskUsageState: "ready", DiskUsedSampledAt: &diskSampled,
 	}}
@@ -285,6 +286,9 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 	}
 	if usage["diskUsageMethod"] != "directory" || usage["diskUsageState"] != "ready" || usage["diskUsedSampledAt"] != "2026-08-27T11:58:00Z" {
 		t.Errorf("disk accounting metadata = %v", usage)
+	}
+	if usage["diskLimitEnforced"] != false || usage["diskBackingTotalBytes"] != float64(100*1024*1024*1024) || usage["diskBackingAvailableBytes"] != float64(60*1024*1024*1024) {
+		t.Errorf("disk enforcement metadata = %v", usage)
 	}
 }
 

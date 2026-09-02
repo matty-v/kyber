@@ -263,9 +263,13 @@ only when mountinfo says `/persist` is a whole-filesystem mount; bind-mounted
 directories use a throttled asynchronous tree walk and cached result, with the
 method/state/sample time exposed in Agent status. Permission-denied paths are
 skipped and logged as a `partial` sample; partial used bytes remain a useful
-lower bound that may assert the allocation reserve but cannot clear an existing
-reserve. The control plane combines
-that disk sample with the metrics-server's agent-container CPU/memory sample
+lower bound and participates in the same reserve hysteresis as a complete
+sample. The sidecar combines that topology with `statfs` backing-store capacity:
+a whole-filesystem mount is
+reported as enforced only when its size is within tolerance of the allocation;
+directory-backed storage such as k3s local-path is explicitly a soft
+reservation and reports shared backing total/available bytes.
+The control plane combines that disk sample with the metrics-server's agent-container CPU/memory sample
 and requested Agent limits; the sidecar does not enter the runtime container's
 chroot or inspect agent file contents.
 Persistence: the agent's root filesystem is a real directory on its PVC

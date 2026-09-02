@@ -907,6 +907,15 @@ doesn't have. On GCE that means the GCE PD CSI driver isn't installed (§ 7); on
 any other cluster, leave `agentStorageClass` empty so the cluster's default
 StorageClass binds the volume.
 
+On k3s, the default `local-path` StorageClass is directory-backed and does not
+enforce the capacity requested by a PVC. Kyber treats an Agent's disk value as
+a scheduling reservation and usage threshold in that configuration, not as a
+filesystem quota. The Agent resource panel labels it **Disk reservation
+(soft)** and separately shows pressure on the shared backing filesystem. Leave
+headroom for the operating system and platform workloads; an Agent that writes
+past its reservation can otherwise consume shared node space. Use a
+quota-capable StorageClass when a hard per-Agent limit is required.
+
 ### PWA loads but API calls return 401
 
 The API key in the browser doesn't match the one in the k8s secret. Open the PWA

@@ -194,6 +194,9 @@ export interface AgentResourceUsage {
 	memoryLimitBytes?: number
 	diskUsedBytes: number
 	diskTotalBytes: number
+	diskLimitEnforced: boolean
+	diskBackingTotalBytes?: number
+	diskBackingAvailableBytes?: number
 	diskReserveReached: boolean
 	diskUsageMethod?: 'statfs' | 'directory'
 	diskUsageState?: 'pending' | 'ready' | 'partial' | 'error'
