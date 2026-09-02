@@ -1,7 +1,9 @@
 # MAT-34 implementation plan: curated public capability manifests
 
-**Issue:** [MAT-34](https://linear.app/matty-v/issue/MAT-34/a2a-69-implement-curated-public-capability-manifests)  
-**Design:** [MAT-24 accepted design](../design/2026-08-30-public-agent-capability-manifest.md)  
+**Issue:** [MAT-34](https://linear.app/matty-v/issue/MAT-34/a2a-69-implement-curated-public-capability-manifests)
+
+**Design:** [MAT-24 accepted design](../design/2026-08-30-public-agent-capability-manifest.md)
+
 **Origin:** [MAT-6 spike and gap study](../design/2026-08-30-a2a-protocol-support.md)
 
 - [x] Add the empty-by-default `Agent.spec.publicCapabilities` declaration and
