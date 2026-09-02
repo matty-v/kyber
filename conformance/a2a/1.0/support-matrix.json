@@ -53,7 +53,11 @@
   "specification": "1.0.0",
   "tck": {
     "commit": "5996b79f9cefa6fc390980e383e358a66fb9e49e",
-    "patches": []
+    "patches": [
+      "TCK-ADAPT-001",
+      "TCK-ADAPT-002",
+      "TCK-EXCLUDE-001"
+    ]
   },
   "unsupported": [
     "OAuth2/OIDC",

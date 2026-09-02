@@ -1,4 +1,35 @@
 {
   "schemaVersion": 1,
-  "patches": []
+  "patches": [
+    {
+      "id": "TCK-ADAPT-001",
+      "type": "runner-adaptation",
+      "reason": "The pinned TCK cannot attach the Bearer credential required by Kyber's declared profile. A loopback-only wrapper injects the least-privilege fixture credential without modifying upstream source.",
+      "path": "test/a2aconformance/tck_test.go",
+      "sha256": "29b7f50fee0e061d2b0527e93b8fdee6ace8310b59b875c0864c1451f05599e4",
+      "owner": "platform-a2a",
+      "approvedBy": "MAT-27 accepted design",
+      "expires": "2027-09-02"
+    },
+    {
+      "id": "TCK-ADAPT-002",
+      "type": "fixture-isolation",
+      "reason": "The pinned TCK reuses message IDs with different request bodies across independent tests. The wrapper isolates only conflicting cross-test IDs while preserving identical idempotent replays.",
+      "path": "test/a2aconformance/tck_test.go",
+      "sha256": "29b7f50fee0e061d2b0527e93b8fdee6ace8310b59b875c0864c1451f05599e4",
+      "owner": "platform-a2a",
+      "approvedBy": "MAT-27 accepted design",
+      "expires": "2027-09-02"
+    },
+    {
+      "id": "TCK-EXCLUDE-001",
+      "type": "test-selection",
+      "reason": "The pinned DM-MSG-001 test incorrectly requires SendMessage to return the Message union variant although A2A also permits a Task, and CORE-SEND-003 omits its expected error declaration and rejects the required ContentTypeNotSupportedError. Kyber supplemental tests retain both normative checks.",
+      "path": "test/a2aconformance/tck_test.go",
+      "sha256": "29b7f50fee0e061d2b0527e93b8fdee6ace8310b59b875c0864c1451f05599e4",
+      "owner": "platform-a2a",
+      "approvedBy": "MAT-27 accepted design",
+      "expires": "2027-09-02"
+    }
+  ]
 }

@@ -183,6 +183,14 @@ func TestA2AUnsupportedOptionalOperationsStayDark(t *testing.T) {
 	}
 }
 
+func TestA2ASubscribeRejectsUnknownTaskBeforeStartingSSE(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/tasks/missing:subscribe", requestWriteKey, "1.0", nil)
+	if got.Code != http.StatusNotFound || !strings.Contains(got.Body.String(), "task_not_found") {
+		t.Fatalf("status=%d body=%s", got.Code, got.Body.String())
+	}
+}
+
 func TestA2ARejectsAmbiguousTrailingAndOversizedJSON(t *testing.T) {
 	h, _ := buildA2AHarness(t, true)
 	for name, raw := range map[string]string{

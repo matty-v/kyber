@@ -57,6 +57,23 @@ func (s *Server) handleA2A(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("A2A-Version", string(a2a.Version))
+	if strings.HasPrefix(child, "/tasks/") && strings.HasSuffix(child, ":subscribe") {
+		id := strings.TrimSuffix(strings.TrimPrefix(child, "/tasks/"), ":subscribe")
+		caller := callerFrom(r.Context())
+		if caller == nil || !caller.Scopes.Has(ScopeTaskEventsRead) || !caller.AgentResources.Has(s.Namespace+"/"+agent) {
+			writeA2AEdgeError(w, http.StatusForbidden, a2a.ErrUnauthorized, "task event access is not authorized")
+			return
+		}
+		auth := taskstore.AuthorizationContext{TenantID: caller.TenantID, PrincipalID: caller.PrincipalID, AgentResourceID: s.Namespace + "/" + agent}
+		if _, err := s.TaskStore.GetAuthorized(r.Context(), taskstore.AgentRef{Namespace: s.Namespace, Name: agent}, id, auth); err != nil {
+			if errors.Is(err, taskstore.ErrNotFound) {
+				writeA2AEdgeError(w, http.StatusNotFound, a2a.ErrTaskNotFound, "task not found")
+			} else {
+				writeA2AEdgeError(w, http.StatusInternalServerError, a2a.ErrInternalError, "task lookup failed")
+			}
+			return
+		}
+	}
 	if encoding := strings.TrimSpace(r.Header.Get("Content-Encoding")); encoding != "" && !strings.EqualFold(encoding, "identity") {
 		writeA2AEdgeError(w, http.StatusUnsupportedMediaType, a2a.ErrUnsupportedContentType, "content encoding is not supported")
 		return
