@@ -1,0 +1,133 @@
+package api_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/capabilities"
+	"github.com/matty-v/kyber/pkg/taskstore"
+)
+
+func buildA2AHarness(t *testing.T, enabled bool) (http.Handler, *taskstore.MemoryStore) {
+	t.Helper()
+	store, err := taskstore.NewMemoryStore(taskstore.DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent := bareAgent("kiosk")
+	agent.Generation = 7
+	agent.Spec.RequestReplyEnabled = true
+	agent.Spec.PublicCapabilities = &kyberv1.AgentPublicCapabilities{SchemaVersion: capabilities.SchemaV1Alpha1, Identity: kyberv1.AgentPublicCapabilityIdentity{DisplayName: "Kiosk", Description: "Operates the kiosk."}, Capabilities: []kyberv1.AgentPublicCapability{{ID: "inspect", Version: "1", Name: "Inspect", Description: "Inspect the fleet.", InputModes: []string{"text/plain"}, OutputModes: []string{"application/json", "text/plain"}}}}
+	_, digest, err := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent.Status.PublicCapabilities = &kyberv1.AgentPublicCapabilitiesStatus{ObservedGeneration: agent.Generation, ManifestRevision: digest, Conditions: []metav1.Condition{{Type: "Valid", Status: metav1.ConditionTrue}}, Capabilities: []kyberv1.AgentPublicCapabilityAvailability{{ID: "inspect", Availability: "available"}}}
+	server := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build(), APIKey: testAPIKey, Namespace: "kyber-system", PublicURL: "https://kyber.example", TaskStore: store, TasksEnabled: true, A2AEnabled: enabled, Callers: []api.ScopedCaller{{Name: "a2a", PrincipalID: "principal_a2a", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: requestWriteKey, Scopes: []string{"tasks:create", "tasks:read", "tasks:list", "tasks:continue", "tasks:cancel", "task-results:read", "task-events:read"}}, {Name: "other", PrincipalID: "principal_other", TenantID: "tenant_test", AgentResources: []string{"kyber-system/kiosk"}, Key: "other-a2a-secret", Scopes: []string{"tasks:read", "tasks:list"}}}}
+	return server.BuildHandler(), store
+}
+
+func a2aRequest(t *testing.T, h http.Handler, method, target, key, version string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var raw []byte
+	if body != nil {
+		var err error
+		raw, err = json.Marshal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := httptest.NewRequest(method, target, bytes.NewReader(raw))
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
+	if version != "" {
+		req.Header.Set("A2A-Version", version)
+	}
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	return rr
+}
+
+func TestA2AFeatureGateAuthVersionAndCard(t *testing.T) {
+	disabled, _ := buildA2AHarness(t, false)
+	if got := a2aRequest(t, disabled, http.MethodGet, "/a2a/v1/agents/kiosk/.well-known/agent-card.json", requestWriteKey, "", nil); got.Code != http.StatusNotFound {
+		t.Fatalf("disabled=%d %s", got.Code, got.Body.String())
+	}
+	h, _ := buildA2AHarness(t, true)
+	if got := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks", "", "1.0", nil); got.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated=%d %s", got.Code, got.Body.String())
+	}
+	if got := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks", requestWriteKey, "", nil); got.Code != http.StatusBadRequest || !strings.Contains(got.Body.String(), "version_not_supported") {
+		t.Fatalf("missing version=%d %s", got.Code, got.Body.String())
+	}
+	card := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/.well-known/agent-card.json", requestWriteKey, "", nil)
+	if card.Code != http.StatusOK || !strings.Contains(card.Body.String(), `"protocolBinding":"HTTP+JSON"`) || !strings.Contains(card.Body.String(), `"id":"inspect"`) || strings.Contains(card.Body.String(), "evidence") {
+		t.Fatalf("card=%d %s", card.Code, card.Body.String())
+	}
+}
+
+func TestA2ASendReplayGetListAndOwnerIsolation(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	body := map[string]any{"message": map[string]any{"messageId": "msg-1", "contextId": "ctx-1", "role": "ROLE_USER", "parts": []map[string]any{{"text": "inspect the fleet"}}}, "configuration": map[string]any{"returnImmediately": true}}
+	first := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", body)
+	if first.Code != http.StatusOK {
+		t.Fatalf("send=%d %s", first.Code, first.Body.String())
+	}
+	var response struct {
+		Task struct {
+			ID, ContextID string
+			Status        struct{ State string }
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Task.ID == "" || response.Task.ContextID != "ctx-1" || response.Task.Status.State != "TASK_STATE_SUBMITTED" {
+		t.Fatalf("response=%+v body=%s", response, first.Body.String())
+	}
+	replay := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", body)
+	var replayResponse struct {
+		Task struct{ ID string } `json:"task"`
+	}
+	_ = json.Unmarshal(replay.Body.Bytes(), &replayResponse)
+	if replay.Code != http.StatusOK || replayResponse.Task.ID != response.Task.ID {
+		t.Fatalf("replay=%d %s", replay.Code, replay.Body.String())
+	}
+	get := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks/"+response.Task.ID+"?historyLength=1", requestWriteKey, "1.0", nil)
+	if get.Code != http.StatusOK || !strings.Contains(get.Body.String(), "inspect the fleet") {
+		t.Fatalf("get=%d %s", get.Code, get.Body.String())
+	}
+	list := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks?pageSize=10&contextId=ctx-1", requestWriteKey, "1.0", nil)
+	if list.Code != http.StatusOK || !strings.Contains(list.Body.String(), response.Task.ID) {
+		t.Fatalf("list=%d %s", list.Code, list.Body.String())
+	}
+	other := a2aRequest(t, h, http.MethodGet, "/a2a/v1/agents/kiosk/tasks/"+response.Task.ID, "other-a2a-secret", "1.0", nil)
+	if other.Code != http.StatusNotFound {
+		t.Fatalf("other=%d %s", other.Code, other.Body.String())
+	}
+}
+
+func TestA2ARejectsUnsupportedInputAndPush(t *testing.T) {
+	h, _ := buildA2AHarness(t, true)
+	raw := map[string]any{"message": map[string]any{"messageId": "msg-raw", "role": "ROLE_USER", "parts": []map[string]any{{"raw": "YQ=="}}}, "configuration": map[string]any{"returnImmediately": true}}
+	if got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", raw); got.Code != http.StatusBadRequest && got.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("raw=%d %s", got.Code, got.Body.String())
+	}
+	push := map[string]any{"message": map[string]any{"messageId": "msg-push", "role": "ROLE_USER", "parts": []map[string]any{{"text": "x"}}}, "configuration": map[string]any{"returnImmediately": true, "taskPushNotificationConfig": map[string]any{"url": "https://example.com"}}}
+	if got := a2aRequest(t, h, http.MethodPost, "/a2a/v1/agents/kiosk/message:send", requestWriteKey, "1.0", push); got.Code != http.StatusBadRequest {
+		t.Fatalf("push=%d %s", got.Code, got.Body.String())
+	}
+}
