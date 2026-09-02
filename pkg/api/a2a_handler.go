@@ -349,7 +349,10 @@ func (h *a2aTaskHandler) DeleteTaskPushConfig(context.Context, *a2a.DeleteTaskPu
 	return a2a.ErrPushNotificationNotSupported
 }
 func (h *a2aTaskHandler) GetExtendedAgentCard(context.Context, *a2a.GetExtendedAgentCardRequest) (*a2a.AgentCard, error) {
-	return nil, a2a.ErrExtendedCardNotConfigured
+	// The public Agent Card deliberately leaves extendedAgentCard absent. A2A
+	// 1.0 distinguishes that from advertising the capability without having a
+	// card configured: undeclared support must return UnsupportedOperation.
+	return nil, a2a.ErrUnsupportedOperation
 }
 
 func historyLength(req *a2a.SendMessageRequest) *int {

@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "claim": "self-tested-conformance",
+  "specification": "1.0.0",
+  "protocolVersion": "1.0",
+  "bindings": ["HTTP+JSON"],
+  "securitySchemes": ["Bearer"],
+  "capabilities": {
+    "streaming": true,
+    "pushNotifications": false,
+    "extendedAgentCard": false
+  },
+  "inputModes": ["application/json", "text/markdown", "text/plain"],
+  "outputModes": ["application/json", "text/markdown", "text/plain", "files"],
+  "unsupported": [
+    "OAuth2/OIDC",
+    "JSON-RPC",
+    "gRPC",
+    "push notifications",
+    "extensions",
+    "extended Agent Card"
+  ],
+  "limitsRef": "docs/architecture/durable-tasks.md#a2a-10-httpjson-edge"
+}

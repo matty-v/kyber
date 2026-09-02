@@ -225,7 +225,11 @@ func (s *Server) handleA2ACard(w http.ResponseWriter, r *http.Request, name stri
 	}
 	w.Header().Set("Cache-Control", "private, max-age=10, must-revalidate")
 	w.Header().Set("Content-Type", "application/json")
-	encoded, err := json.Marshal(card)
+	// Capability status is reconciled from the Agent resource. The short cache
+	// lifetime bounds this validator even when the resource has no usable
+	// creation timestamp (notably deterministic fixtures).
+	w.Header().Set("Last-Modified", time.Now().UTC().Truncate(time.Second).Format(http.TimeFormat))
+	encoded, err := marshalA2ACard(card)
 	if err != nil {
 		writeA2AEdgeError(w, http.StatusInternalServerError, a2a.ErrInternalError, "agent card unavailable")
 		return
@@ -238,6 +242,30 @@ func (s *Server) handleA2ACard(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 	_, _ = w.Write(append(encoded, '\n'))
+}
+
+// marshalA2ACard bridges the v2.4.0 Go SDK's pre-1.0 JSON shape for
+// SecuritySchemeScopes to the A2A 1.0 StringList wire object. Keep this
+// adaptation at the protocol edge; Kyber's native model remains SDK-free.
+func marshalA2ACard(card *a2a.AgentCard) ([]byte, error) {
+	encoded, err := json.Marshal(card)
+	if err != nil {
+		return nil, err
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		return nil, err
+	}
+	if requirements, ok := wire["securityRequirements"].([]any); ok {
+		for _, requirement := range requirements {
+			wrapped, _ := requirement.(map[string]any)
+			schemes, _ := wrapped["schemes"].(map[string]any)
+			for name, scopes := range schemes {
+				schemes[name] = map[string]any{"list": scopes}
+			}
+		}
+	}
+	return json.Marshal(wire)
 }
 
 var errA2ACardNotFound = errors.New("A2A agent card not found")
@@ -278,9 +306,9 @@ func (s *Server) a2aCard(r *http.Request, name string) (*a2a.AgentCard, error) {
 	for _, item := range status.Capabilities {
 		available[item.ID] = item.Availability == "available"
 	}
-	base := strings.TrimRight(s.PublicURL, "/") + a2aAgentPrefix + name + "/"
+	base := strings.TrimRight(s.PublicURL, "/") + a2aAgentPrefix + name
 	if strings.TrimSpace(s.PublicURL) == "" {
-		base = a2aAgentPrefix + name + "/"
+		base = a2aAgentPrefix + name
 	}
 	card := &a2a.AgentCard{
 		Name: manifest.Identity.DisplayName, Description: manifest.Identity.Description, DocumentationURL: manifest.Identity.DocumentationURL,
@@ -299,7 +327,7 @@ func (s *Server) a2aCard(r *http.Request, name string) (*a2a.AgentCard, error) {
 		if len(inputModes) == 0 {
 			continue
 		}
-		card.Skills = append(card.Skills, a2a.AgentSkill{ID: capability.ID, Name: capability.Name, Description: capability.Description, InputModes: inputModes, OutputModes: capability.OutputModes})
+		card.Skills = append(card.Skills, a2a.AgentSkill{ID: capability.ID, Name: capability.Name, Description: capability.Description, Tags: []string{}, InputModes: inputModes, OutputModes: capability.OutputModes})
 		for _, mode := range inputModes {
 			inputs[mode] = true
 		}

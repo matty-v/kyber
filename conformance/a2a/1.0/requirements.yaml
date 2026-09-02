@@ -1,0 +1,2770 @@
+{
+  "inventorySource": "Pinned official TCK RequirementSpec registry; quoteDigest hashes the pinned requirement description.",
+  "requirements": [
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:c4ff90157b9e4472d3a94e1cc1f8b96090afa94e7151426be2c722557b5ba22a",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent MUST use a Task to track operation requiring authorization",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:654deb17016c1d079e7231b318518af3925c28ae4818842f9d1f1e291e3e80d3",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent MUST transition to auth_required state",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:958e6a3518c7c2494a1be7f7d108e7535ed395fcba28f1db350e58abda06e5cc",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent MUST include status message explaining authorization",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:deec7a0f784d17da5d7a42776dce7d4883669f97091f885e8a38c69a9650a20e",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent MUST arrange to receive credentials out-of-band",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-005",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:8e4a5645b386d57fdbeba89bd00f29267b2fb4ea04ff0769e79ce45d7c004a6d",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent SHOULD maintain active response streams during auth_required",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-INTASK-006",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:cbb9ada106b4691cb953cc54d565ca53210be395e5c1011d89c1e306dc928b64",
+        "section": "7.6.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent SHOULD support receiving messages during auth_required",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-SCOPE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:8ea147d47d647c501fa9865691dc6971aa8fd9f19e67e4b13ce4e10af817366a",
+        "section": "13.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Authorization checks on every operation request",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-SCOPE-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:9a4b88886b028af660de7779c8bee725415c7cf207ec913055a2a09bb8847a50",
+        "section": "13.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Results scoped to caller's authorization boundaries",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-SCOPE-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:a40df3292388a7f72582303e8a55de7f80671c8aad1a22a0feee0bc4d7783ffb",
+        "section": "3.3.2"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Server must not reveal existence of unauthorized resources",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-SERVER-001",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2b8071a0e3788423df68696966dd9fdcba798c4e43712d1d31b2e8f10037ec2c",
+        "section": "7.2"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Clients should verify server TLS certificates",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-SERVER-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5ff51e639dbed5fb5e776ac1ea59f1445b1986ee25514d5f81da1e88ec524f69",
+        "section": "7.4"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Server must authenticate every incoming request",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-TLS-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:dcb03c62db48c6bcf0408a64ce3c2273ca04225a35166894fd9f64552becb820",
+        "section": "7.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Production deployments must use encrypted communication",
+      "topic": "auth"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "AUTH-TLS-002",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:cba6421bfbf7a45f225f477c7fadd418864df3e12e3108b8bb04f28214648fc2",
+        "section": "7.1"
+      },
+      "tckSource": "tck/requirements/auth.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Modern TLS configurations recommended",
+      "topic": "auth"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "interop",
+      "id": "BIND-EQUIV-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:39477c5e2c2835c37c748570cb9c1e25d8058044947b4797836e55dcc7b40633",
+        "section": "5.1"
+      },
+      "tckSource": "tck/requirements/interop.py",
+      "tests": [],
+      "title": "All supported protocols provide identical functionality",
+      "topic": "interop"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "interop",
+      "id": "BIND-EQUIV-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4d034b0e85c38576b3e6832cc19aecdab273fd66ffafc0296acc227247501f53",
+        "section": "5.1"
+      },
+      "tckSource": "tck/requirements/interop.py",
+      "tests": [],
+      "title": "All bindings return semantically equivalent results",
+      "topic": "interop"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "interop",
+      "id": "BIND-EQUIV-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:761c9b9e0fcd103d163c0759d1885243af5fe4c16df201a4fe272568f6390e07",
+        "section": "5.1"
+      },
+      "tckSource": "tck/requirements/interop.py",
+      "tests": [],
+      "title": "All bindings map errors consistently",
+      "topic": "interop"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "interop",
+      "id": "BIND-EQUIV-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:3dc60eb624d444590c384a4dfe547c4292bc537116a4ee44f3675cd20fdfcbf5",
+        "section": "5.1"
+      },
+      "tckSource": "tck/requirements/interop.py",
+      "tests": [],
+      "title": "All bindings support same authentication schemes",
+      "topic": "interop"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "BIND-FIELD-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:55de854de4a2642dbd67c5434799ade5d96972048be79051f4085caee96807c6",
+        "section": "5.2"
+      },
+      "tckSource": "tck/requirements/interop.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agents must declare all supported protocols in AgentCard",
+      "topic": "interop"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-CACHE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4d607e11f0ab97b6805a38b120184c0304a8884660abdb9ef337412f360d78d2",
+        "section": "8.6.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent Card endpoint includes Cache-Control header",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-CACHE-002",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:534a6fa34a4fe66d23b2cc7a7bc5bfeb5d6b2902d0914cce63fbc87a28e0d2c0",
+        "section": "8.6.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent Card endpoint includes ETag header",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-CACHE-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MAY",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:0828f2d64caaeb4f5dee7058aa233627b4920882d3948521fcf97a004a7837a0",
+        "section": "8.6.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_may_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent Card endpoint may include Last-Modified header",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-DISC-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:54dee3b3f3adb1d52657010cc4392dfa40de8ec7b7e9ba432333668abb5388f3",
+        "section": "8.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent Card must be available",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-EXT-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2d3cb8c79b5f6a1fe58cbec5d10a12ed06fc8f21865338d8157929dcf81cc949",
+        "section": "3.1.11"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Extended Agent Card requires authentication",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-EXT-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:333ba76b932b72a267330a651488217ed29b00020b878181f9cfa0fb3ace4e4a",
+        "section": "3.1.11"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Extended card not configured returns specific error",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-PROTO-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5885654fbeef3f4d6e5317e616f8d5dc6bbe19267e2b33985fb2a8f04281cc56",
+        "section": "8.3"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "AgentCard must properly declare supported protocols",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-PROTO-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:1e3ef342a3d614987baf759249a119367b27f1c84ce29c4d106e94ec24568714",
+        "section": "8.3.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Each interface must declare transport and URL",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-SIGN-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:89f6816a1a142e2a973a02489f92e4a6b709fc2179832d3e40a5be0ee02e2e00",
+        "section": "8.4.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Agent Card canonicalized with JCS before signing",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-SIGN-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5db5e98509a84563c3b7eecdf1f902e2c36cdd12d27cf928bd26003fa0185207",
+        "section": "8.4.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Signatures field excluded from signed content",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-SIGN-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:3aedf0f3965442c775b4f110b5059cde2eb6f1c032ad98e59745f686b045051e",
+        "section": "8.4.2"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Signature protected header includes required parameters",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "agent-card",
+      "id": "CARD-SIGN-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:9503f1008642cd75cd4a8c64e00fd7fa35d5487eb24905b7cb9789a847b780c5",
+        "section": "8.4.3"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Expired or revoked keys must not be used for verification",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CARD-STRUCT-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:eefdc2204a794f1b74e1ea33c4ae442f3504454653306b28dee8103a739accfa",
+        "section": "4.4.1"
+      },
+      "tckSource": "tck/requirements/agent_card.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "AgentCard contains required fields",
+      "topic": "agent-card"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CANCEL-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:c321467a1978c8e183cba62b02d4f498591e2674f52851efdb335405dc21b25c",
+        "section": "3.1.5"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "CancelTask returns updated task with cancellation status",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CANCEL-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:fee9c2fc2f81816d8db039a78438a6fabbfb6c451f21ffbe94d6eeb6d0078af1",
+        "section": "3.1.5"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "CancelTask returns TaskNotCancelableError for terminal tasks",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CANCEL-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:cd03c6331125aa0009c866cfb095ef14de4774e85d77d2fe06739ef66eae4e6b",
+        "section": "3.1.5"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "CancelTask returns TaskNotFoundError for invalid task ID",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CAP-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5bf73509f109683de30c46bbd780ad151804872f4e219eac11a060c6b4987dea",
+        "section": "3.3.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Push notification operations return error when not supported",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CAP-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:f4115fc6289c2c41171447c21d83fa4785096653411778c5c48982d4c5395797",
+        "section": "3.3.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Streaming operations return error when not supported",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CAP-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:651165a0045b984c555edf24a93fdda64967ef80ce1d16d20f7a6664268c70a8",
+        "section": "3.3.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Extended agent card operations return error when not supported",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-CAP-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:6bc3389b8cd92359ed1f6a87875bf8989b4e7c75c7f904ac42519e23eda66cc3",
+        "section": "3.3.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Required extension missing returns ExtensionSupportRequiredError",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-ERR-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:aea001f3d726722c817e57deeb5e775b90178fda9e7d1dedd769104279859bf0",
+        "section": "3.3.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Server returns appropriate errors with actionable information",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-ERR-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:472d08420bc0c3aac4d703bfa76f4b47f0d188b8d72355accd290c61a1b0221e",
+        "section": "3.3.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Server validates all input parameters before processing",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-EXECUTION-MODE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:79357e2e4825b8acf3ded8813151adc5c6ae51601b66135cc47b7b9559e8a8c2",
+        "section": "3.2.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Blocking mode waits for terminal or interrupted state",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-EXECUTION-MODE-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:58654d0d46c7601a384e795a252b246ac5bdc305956df84f1c78bb93c690795c",
+        "section": "3.2.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Non-blocking mode returns immediately",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-GET-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:67aab799747d2ec0aec6ac215a607a294e98f659eefe75627540ec221046db86",
+        "section": "3.1.3"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "GetTask returns current task state",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-GET-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:dcec99eb1cd24542ef8fddce5f80229851daa589c44cd5424fdbcbdb2e80a194",
+        "section": "3.1.3"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "GetTask returns TaskNotFoundError for invalid task ID",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-001",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:dbf817dbe1bd523079a9e84d168f3a55c16aa3b0968816cf3049215a243f4e78",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "historyLength=0 omits history from response",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:f1bba5e33869c9c25313a810aee441869c31bd8873cc3f11a6833b7ebcf7663e",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "History length does not exceed requested historyLength",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-003",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:bec48ae840dc435d334eec847c042a8accc6eb62580b26b61bca19bc76ff00d8",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "historyLength=0 on SendMessage omits history from response",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MAY",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2f69c25cada4221ee673dd6de23543869f9c52c43f431f74cb4ad9461905ebf9",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_may_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agents may persist messages in task history",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-005",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:90fb6a9e1d19f4928239a0d4e7deaa2b9dd8f95e1dbbbc14886da454691e20ad",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "History messages are in chronological order",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-HIST-006",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5fb7589534261db88cf3c8854a93c89e64c01b1cd3b890ccb3c878693986baf7",
+        "section": "3.2.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "History content matches exchanged messages",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-LIST-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:cbb3e158048ed47c2bc946a28963abd5de66681c50d93004b378923069725f77",
+        "section": "3.1.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "ListTasks returns only authorized tasks",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-LIST-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:9f55703a2c48f22536f0af57d2396cf4d262287a67ad30ce427a3c29e7f8e0aa",
+        "section": "3.1.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "ListTasks uses cursor-based pagination",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-LIST-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:58551e7e87a3991646cc6e7ab4d0e25d58a140810fb1e041fcb29ce45d825e05",
+        "section": "3.1.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "ListTasks sorts by status timestamp descending",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-LIST-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:bc02a7d6dbef5e60909b35ae68df2ffe8bd5cf30bb11ce350e5685a64c905789",
+        "section": "3.1.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "ListTasks nextPageToken empty string on final page",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-LIST-005",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4d5240e9a380e21696db9098df3c0d8c2d370dd24121659ac03a0da63d21ad65",
+        "section": "3.1.4"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "ListTasks omits artifacts when includeArtifacts is false",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MAY",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:292bd7c1c9a094cebdd09b4f19134d22ae3f3d7352fd86ecc8c6cb80cd52bc66",
+        "section": "3.4.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_may_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent may generate contextId when not provided",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-001a",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:af6d112e244a718cde502849e724024ced88bc3bfed1e74e5a7181ffe374dc60",
+        "section": "3.4.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Generated contextId must be included in response",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MAY",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:1ef94b8d05e10df92c9058dc78d96a35603a168da3d17b8fe0f3317ba6742e92",
+        "section": "3.4.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_may_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent may accept client-provided contextId",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-002a",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:9444cdd32d1661764fb2172dc43671e3de55498969e3132a61ab6a977818cb56",
+        "section": "3.4.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent rejects unacceptable client-provided contextId",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:42209db3916b0486931f96271c7783e911bb55484ba86112405be561f0e0182c",
+        "section": "3.4.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent generates unique taskId for new tasks",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:f0f35d7a4feb440b0bd7215a83624e676913f5ea6b44fcb3d72b1e59af8046e9",
+        "section": "3.4.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent returns TaskNotFoundError for invalid taskId in message",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-005",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:aa879d9330303f668f5413a5e29ab21386eec9add6600710899d5b3b61115034",
+        "section": "3.4.3"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent infers contextId from task when only taskId provided",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-MULTI-006",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:6098c8a67cbc5ad6670408a6dffeebe50928255d6ce4dac3e97f08179ddcf858",
+        "section": "3.4.3"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Agent rejects mismatching contextId and taskId",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-SEND-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:af6c7908a93baaee89bdb396a1f91b2781fa6fd0cac331f1499a234e0c8cc733",
+        "section": "3.1.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "SendMessage returns Task or Message",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-SEND-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:b24a3516542fbd734e4547a5df669815c2add21a6b77f993f22cf83dcbc6ae4a",
+        "section": "3.1.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "SendMessage rejects messages to terminal tasks",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-SEND-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:1a61f8bf5687a1937777dc10bfb0034b83ef887553e60d3a8e55d7cdd1f17b21",
+        "section": "3.1.1"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "SendMessage returns ContentTypeNotSupportedError for unsupported media",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-STREAM-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:25db5ef6efa85d93d060491858debd087d9c7e30106ba923c5cb2cf4281422ef",
+        "section": "3.1.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "SendStreamingMessage establishes streaming connection",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-STREAM-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:55b767b2f1fec03ef06d694d8cd9d02f208177e26d0f2ddb41d5babaaf48e83c",
+        "section": "3.1.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Message-only stream contains exactly one Message then closes",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "CORE-STREAM-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:861776161465bf4ca131de80210011f98a6f08860ae66334e40233c0eaf2a143",
+        "section": "3.1.2"
+      },
+      "tckSource": "tck/requirements/core_operations.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ASendReplayGetListAndOwnerIsolation"
+      ],
+      "title": "Task lifecycle stream begins with Task and closes at terminal state",
+      "topic": "core-operations"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-ART-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:ff01a453e5aa38b3092ac4e3b417080c1c2ecff58cec9948aa7dcaa65b037ba7",
+        "section": "4.1.7"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Artifact contains required fields",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-MSG-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:d833e828125f40f0817166c560de7a9484aaf18497818804de2baa49169879f6",
+        "section": "4.1.4"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Message contains required fields",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-MSG-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:b22a0acae52ffd42392b9233dbec4dca1e502b3b1081f9e10315a13bd5a445de",
+        "section": "4.1.5"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Role uses valid enumeration values",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-PART-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:55d6d5d8e4300ec726ff58b0ab392dfd1124c1a9511d6fb6725e3ba078737c82",
+        "section": "4.1.6"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Part uses oneof semantics",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-SERIAL-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:60031a8a33215d66935c20415f83915de64b34f3a087595b05bfa50f9dfa356f",
+        "section": "5.5"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "JSON serialization uses camelCase field names",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-SERIAL-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:738ed088b8bd02749aebb0ce1746cc6a591599562ad6c7ca162b32414de1c8cc",
+        "section": "5.5"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Enum values use ProtoJSON string representation",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-SERIAL-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4cbac369bb183a010797df77049066d95cc4ec31d72ff8392b9f2f55032bd414",
+        "section": "5.6.1"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Timestamps use ISO 8601 format in UTC",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-SERIAL-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:a10dd027fcac8cfbcf3b786e711c4dde927ceba9b657edc4bce204edac1dc6cf",
+        "section": "5.7"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Required fields must be present in messages",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-SERIAL-005",
+      "lastReviewed": "2026-09-02",
+      "level": "SHOULD",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:ceed5a5cf45ca815475ef71c7bd410bccaa4285fc40eb22bad7cbe3e7aff5a05",
+        "section": "5.7"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_should_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Implementations should ignore unrecognized fields",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-STATUS-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:449f72b8d7a84e280c9199c49886260d411e9a9b8c78b99648dd16ea8b2c1771",
+        "section": "4.1.2"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "TaskStatus contains required state field",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-TASK-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:985120764c17a8b9952cae04d3aa60c1c3609bdcc6eb35efc18becda9d2e6650",
+        "section": "4.1.1"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "Task object contains required fields",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "DM-TASK-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:e63d1968b257e62eed0375468aba27b243bb4a829b1a5c92f019b1ba8b85bb75",
+        "section": "4.1.3"
+      },
+      "tckSource": "tck/requirements/data_model.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_translation_test.go::TestNativeA2AArtifactsPreserveTextDataAndAuthorizedFileReferences"
+      ],
+      "title": "TaskState uses valid enumeration values",
+      "topic": "data-model"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-ERR-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2ee237bbcfa71f2de13757d2c9f7692cd98e2fe001840d2e33c0b226918a73bc",
+        "section": "10.6"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "A2A errors include ErrorInfo in status details",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-ERR-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:a694c22b1241b2e305f4a95a5865f38e4700bbeed7ab2d3cc8f81693b7cadd68",
+        "section": "5.4"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "A2A error types mapped to correct gRPC status codes",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-ERR-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:dbe0f85b5a9b8ed572b0974c90a16719040f4faefda0bc0770363db6a7ab0698",
+        "section": "10.7"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "gRPC streaming uses server streaming RPCs",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-META-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:6b6190ee05d159ae771ba2059b556bc7232bcb77ea1d8e9bc17463493ae99c54",
+        "section": "10.2"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "Service parameters transmitted as gRPC metadata",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-SVC-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:1970740bcc36d0ef4ddd507a3d47ebcfa1bdbb386a70ce9011b7a6171506a0a3",
+        "section": "10.1"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "Implement A2AService gRPC service",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-SVC-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4f285122c50566ee173a20c685a67430cf101421222f352153d58ceb46641dc0",
+        "section": "10.1"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "Use Protocol Buffers version 3 serialization",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-grpc",
+      "id": "GRPC-SVC-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:bb40f4a72e9c3763fb76d8caefde2daf891713aab624fc2cafeb635ffc21a1e5",
+        "section": "10.1"
+      },
+      "tckSource": "tck/requirements/binding_grpc.py",
+      "tests": [],
+      "title": "gRPC over HTTP/2 with TLS",
+      "topic": "binding-grpc"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-ERR-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:99233d4c78b049d29a595232337d669be1015a2aab4683f266f833f3f0de3d81",
+        "section": "11.6"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "Error responses use AIP-193 format",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-ERR-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:d32579fa5b3d68debbe1ca09b921b94cd8e8d44c87abda0d30bf7362df323e97",
+        "section": "11.6"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "A2A errors include ErrorInfo in details array",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-QP-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:f235b65549a76b019a05b7766b6ef6cbebbb044fb4a5827c15c946bc51449dc1",
+        "section": "11.5"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "Query parameter names use camelCase",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-SSE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2339a34c0bfaaf189c050f1d2e9ff3a79d4e60e7d984963dd23c66c4756af1ad",
+        "section": "11.7"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "REST streaming uses Server-Sent Events",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-STATUS-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:7ac734a85d82e1f99d64b1f41e595a629888e8d40d267b7d5cb6d1efe8f81e8c",
+        "section": "5.4"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "A2A errors map to correct HTTP status codes",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-SVC-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:162297b911c7efb26be4db7686bfc9e40739578e55944906919d260d4fae964b",
+        "section": "11.1"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "Content-Type is application/json",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-SVC-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:b4b3a9d69b10cb2b95b5583ee798168fcf10eceaeb416d9d2b9c5783ce6baa7d",
+        "section": "11.2"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "Service parameters transmitted as HTTP headers",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-URL-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:7266203f6579d9e90301bcf975b0e8118ca5a126fedc2b89435771272ee0cdd3",
+        "section": "11.3"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "RESTful resource-based URL patterns",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "HTTP_JSON-URL-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:7631f4abdd5e9027ece487430e36e65246518258dc8c1fc806b2dbd6c6a16845",
+        "section": "11.3"
+      },
+      "tckSource": "tck/requirements/binding_http_json.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2ACancelAndMediaNegotiation"
+      ],
+      "title": "Standard HTTP methods for each operation",
+      "topic": "binding-http-json"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-ERR-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:de0036d1e826c5dde7cd0dc821edd26db3bed141188ff3d29179659f93eafaf9",
+        "section": "9.5"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Error responses use JSON-RPC 2.0 error object structure",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-ERR-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:4ae4fadfcaeea830788d5cd3f634628c71b078da3db4672903103cadfaf4f39b",
+        "section": "9.5"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "A2A-specific errors use codes -32001 to -32099",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-ERR-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:74d0d886f4fd0bd6742241e0904471d9d440426c613776c6afc630fcd92b9966",
+        "section": "9.5"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "A2A errors include ErrorInfo in data array",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-FMT-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:dab39076314490a6dd198b256a5e2b549987a2b61d301c1dcdbb64975647c1ad",
+        "section": "9.1"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Requests use JSON-RPC 2.0 format",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-FMT-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:c558c2b20141359fe6b412b944458b0f2d3c34f3c8d4987ae46827922527421f",
+        "section": "9.1"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Content-Type is application/json",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-SSE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:6f649b149ebc4c09c395e79d884db40572576ac15e4f2cf611f43ccf813fcf34",
+        "section": "9.4.2"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Streaming uses Server-Sent Events with text/event-stream",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-SSE-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:83a90416ca52f96947e28d64a1d7c0c6560e945279e73321f0bc736a6066de38",
+        "section": "5.4"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "A2A error types mapped to correct JSON-RPC error codes",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-SVC-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:ac417f89ce2aabce23e5599cf77317b88b4a7b4b86d4b017e31bea3e5de1ca0f",
+        "section": "9.1"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Method names use PascalCase matching gRPC conventions",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "not-applicable",
+      "declaredFeature": "binding-jsonrpc",
+      "id": "JSONRPC-SVC-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares only the HTTP+JSON protocol binding.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:7091ccb4f94732c76f4ca5e45c3164e4e238027837cb324e46fad4e220f1d4ca",
+        "section": "9.2"
+      },
+      "tckSource": "tck/requirements/binding_jsonrpc.py",
+      "tests": [],
+      "title": "Service parameters transmitted as HTTP headers",
+      "topic": "binding-jsonrpc"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-CREATE-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:5cf40bfba12dca8935921eb819ae01c0053762d09ff1c16e3ddb6dad11d64f0f",
+        "section": "3.1.7"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "CreatePushNotificationConfig establishes webhook endpoint",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-CREATE-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:45ce6e0d253cb79aed5dc6698cc1096649e3275efcb98a05a3c0fcc9f0c3545d",
+        "section": "3.1.7"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Push config persists until task completion or deletion",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-DEL-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:98101b6a01296309844285f0b24f87a082b6a5418d32961b77d1e168ebeca094",
+        "section": "3.1.10"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "DeletePushNotificationConfig permanently removes config",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-DEL-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:76eb6a1413aa0f23198be86cbee82e438540df1e097a9a28d7dd5805f4e94044",
+        "section": "3.1.10"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "DeletePushNotificationConfig is idempotent",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-DELIVER-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:f167f6820b31b3023bd075cb88c168cb4a9475f346ad03cb6ce4410b72004b88",
+        "section": "4.3.3"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Agent includes authentication in webhook requests",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-DELIVER-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:8177b16e6d94f7cd1e1780b27ebd79698f033387cc71714fd83f15d0f0942207",
+        "section": "4.3.3"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Agent attempts delivery at least once per webhook",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-DELIVER-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:1bb499d3b30696c9f03d2eeb3a10ec447a0207c072f6717b4484e26db603dabe",
+        "section": "4.3.3"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "Webhook payload uses StreamResponse format",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-GET-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:308ed53312ad7e9a094b88cdf9c99839c05008ac2f9f65541d95efb290c9e63b",
+        "section": "3.1.8"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "GetPushNotificationConfig returns configuration details",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-GET-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:13b512e07958483fde1798c54746fb5d962b415351b6e8206320bc157e071ac4",
+        "section": "3.1.8"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "GetPushNotificationConfig fails for nonexistent config",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "deferred-optional",
+      "declaredFeature": "push-notifications",
+      "id": "PUSH-LIST-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber does not declare this optional capability in its Agent Card.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:e7c63e259948b78c80be7563dc2a886f5111224ce9426722e2099b2acaf96c62",
+        "section": "3.1.9"
+      },
+      "tckSource": "tck/requirements/push_notifications.py",
+      "tests": [
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AUnsupportedOptionalOperationsStayDark"
+      ],
+      "title": "ListPushNotificationConfigs returns all active configs",
+      "topic": "push-notifications"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-ORDER-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:66f44d76e4cf5bbb2605bc6ea888ef12ba5f5b5d795cbe141092404c3011b99d",
+        "section": "3.5.2"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "Events delivered in generation order",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-ORDER-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:cd021b73de2b32c20370b5809a9053a80abe414940aa7cdc534dbd5e793d5ab3",
+        "section": "3.5.2"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "Events broadcast to all active streams",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-ORDER-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:10c0f91ddd41061864b4ff41f188c177bbda0ca0bd2eb1f085fecee57a449f24",
+        "section": "3.5.2"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "Each stream receives same events in same order",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-ORDER-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:398d44570a1fbd43e80e72821dc042db4055573c1cdd7e594caba20eae55d216",
+        "section": "3.5.2"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "Closing one stream does not affect others",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-SUB-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:d755cde7a7f0ae13a923376b1185fe7471f848c45fadabe5966f0aad19dd6ca5",
+        "section": "3.1.6"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "SubscribeToTask returns Task as first event",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-SUB-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:2366e989f27d1b82132f29d2bfb783f058a22365507f4949101c508e2b1d3671",
+        "section": "3.1.6"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "SubscribeToTask stream terminates at terminal state",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-SUB-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:7726e1d6bd0ef7b8cd29af0868e655b6dff60134ee291084d94036e0621f99d3",
+        "section": "3.1.6"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "SubscribeToTask rejects terminal tasks",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "STREAM-SUB-004",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:88abec931a06561ca1650703edf7eff628850db1d9937610af3d123e6c9ae917",
+        "section": "3.1.6"
+      },
+      "tckSource": "tck/requirements/streaming.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AStreamingStartsWithCurrentTaskSnapshot"
+      ],
+      "title": "SubscribeToTask returns TaskNotFoundError for invalid task",
+      "topic": "streaming"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "VER-CLIENT-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:db146ade70d6a1f02181164418a5483272387dfaf2a869c888a178d28a0f6535",
+        "section": "3.6.1"
+      },
+      "tckSource": "tck/requirements/versioning.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Clients must send A2A-Version header with each request",
+      "topic": "versioning"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "VER-CLIENT-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:9a7c83c2ae399288e1a412eee9645ed0fa80ace69552d12f236718cf45a99073",
+        "section": "3.6"
+      },
+      "tckSource": "tck/requirements/versioning.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Patch version numbers must not affect negotiation",
+      "topic": "versioning"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "VER-SERVER-001",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:04fec6e20493e976d31c00f1880be6f584ce4ab536c8f0adddc001720959adc8",
+        "section": "3.6.2"
+      },
+      "tckSource": "tck/requirements/versioning.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent processes requests using requested version semantics",
+      "topic": "versioning"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "VER-SERVER-002",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:a8063ab8604c6fbc910b50706d7cf7ba7135343ae22b14313750282ad9a0f469",
+        "section": "3.6.2"
+      },
+      "tckSource": "tck/requirements/versioning.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent returns VersionNotSupportedError for unsupported version",
+      "topic": "versioning"
+    },
+    {
+      "applicability": "applicable",
+      "declaredFeature": "core",
+      "id": "VER-SERVER-003",
+      "lastReviewed": "2026-09-02",
+      "level": "MUST",
+      "owner": "platform-a2a",
+      "reason": "Kyber declares and implements this requirement in its HTTP+JSON Bearer profile.",
+      "reviewedBy": "protocol-security",
+      "source": {
+        "artifact": "a2a-spec-1.0.0",
+        "quoteDigest": "sha256:93f42e476183ce6387b3dbe961302b9e55257e933aada08ae257087d104a7d44",
+        "section": "3.6.2"
+      },
+      "tckSource": "tck/requirements/versioning.py",
+      "tests": [
+        "tck:tests/compatibility/core_operations/test_requirements.py::test_must_requirement",
+        "kyber:pkg/api/a2a_edge_test.go::TestA2AFeatureGateAuthVersionAndCard"
+      ],
+      "title": "Agent interprets empty version header as 0.3",
+      "topic": "versioning"
+    }
+  ],
+  "schemaVersion": 1,
+  "specificationCommit": "173695755607e884aa9acf8ce4feed90e32727a1",
+  "tckCommit": "5996b79f9cefa6fc390980e383e358a66fb9e49e"
+}
