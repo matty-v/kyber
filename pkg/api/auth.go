@@ -43,6 +43,8 @@ const (
 	ScopeTaskEventsRead     Scope = "task-events:read"
 	ScopeTasksAdmin         Scope = "tasks:admin"
 	ScopeTasksPlatformAdmin Scope = "tasks:platform-admin"
+	ScopeCapabilitiesRead   Scope = "capabilities:read"
+	ScopeCapabilitiesWrite  Scope = "capabilities:write"
 )
 
 // ScopeSet is the set of scopes a Caller holds. A full-scope set (the legacy
@@ -175,7 +177,7 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		}
 		hasTaskScope := false
 		for _, sc := range c.Scopes {
-			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") {
+			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") || strings.HasPrefix(sc, "capabilities:") {
 				hasTaskScope = true
 			}
 			if !validScope(Scope(sc)) {
@@ -201,7 +203,8 @@ func validScope(sc Scope) bool {
 	switch sc {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
-		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin:
+		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite:
 		return true
 	default:
 		return false

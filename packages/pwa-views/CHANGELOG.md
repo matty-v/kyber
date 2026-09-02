@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.37.0 — 2026-09-01
+
+### Added
+- Agent Detail now provides a structured editor for operator-curated public
+  capability manifests, including an exact privacy-safe preview, private
+  evidence suggestions, availability/drift state, and explicit
+  publish/update/unpublish actions.
+
 ## 0.36.8 — 2026-08-31
 
 ### Changed

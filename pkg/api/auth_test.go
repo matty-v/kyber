@@ -203,6 +203,21 @@ func TestParseScopedCallers_TaskScopesRequireStableSecurityEnvelope(t *testing.T
 	}
 }
 
+func TestParseScopedCallers_CapabilityScopesRequireStableSecurityEnvelope(t *testing.T) {
+	good := `[{"name":"catalog","principalId":"principal_catalog","tenantId":"tenant_acme","credentialId":"credential_catalog","credentialGeneration":2,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["capabilities:read","capabilities:write"]}]`
+	if _, err := ParseScopedCallers(good); err != nil {
+		t.Fatalf("capability caller with stable envelope should parse: %v", err)
+	}
+	missingPrincipal := `[{"name":"catalog","tenantId":"tenant_acme","credentialId":"credential_catalog","credentialGeneration":2,"agentResources":["kyber-system/kiosk"],"key":"secret","scopes":["capabilities:read"]}]`
+	if _, err := ParseScopedCallers(missingPrincipal); err == nil {
+		t.Fatal("capability caller without a stable principal must be rejected")
+	}
+	wildcard := `[{"name":"catalog","principalId":"principal_catalog","tenantId":"tenant_acme","credentialId":"credential_catalog","credentialGeneration":2,"agentResources":["*"],"key":"secret","scopes":["capabilities:read"]}]`
+	if _, err := ParseScopedCallers(wildcard); err == nil {
+		t.Fatal("capability caller with wildcard resources must be rejected")
+	}
+}
+
 func TestParseScopedCallers_KeyFrom(t *testing.T) {
 	// keyFrom is the kyber#557 alternative to inline key: a Secret reference,
 	// resolved at startup. Exactly one of key/keyFrom must be set — both or

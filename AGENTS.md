@@ -224,6 +224,17 @@ before bytes leave the pod, downloads reauthorize every request, and leased
 cleanup retries provider deletion before removing metadata. See
 `docs/architecture/durable-tasks.md` before changing this cross-component path.
 
+Operator-curated discovery lives in `pkg/capabilities/`: the declaration is
+`Agent.spec.publicCapabilities`, bounded reconciliation output is
+`Agent.status.publicCapabilities`, and the privacy-safe authenticated
+projection is `/api/v1/agents/{agent}/capabilities`. Skill reports are private
+evidence only and may narrow availability; they must never create or broaden a
+declaration. The public response is an explicit allowlist and must never gain
+evidence IDs, paths, prompts, tool schemas, runtime/model, pod/node, or internal
+endpoint fields. A skill report touches the agent's private evidence-refresh
+annotation so the controller re-evaluates drift, and the controller schedules
+the staleness boundary so old evidence cannot remain healthy indefinitely.
+
 WHY the trust boundary matters: `verifier.go` does constant-time compare and
 collapses ALL failures to a single `ErrSignatureMismatch` — never differentiate
 causes externally. The queue is bounded so a flooded agent sheds load

@@ -23,6 +23,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/oauth"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/tokenreport"
@@ -111,11 +112,14 @@ type agentSecretsRequest struct {
 
 // PatchAgentRequest is the JSON body for PATCH /api/v1/agents/{name}.
 type PatchAgentRequest struct {
-	Model               *string                `json:"model,omitempty"`
-	StartupPrompt       *string                `json:"startupPrompt,omitempty"`
-	SessionResume       *bool                  `json:"sessionResume,omitempty"`
-	RequestReplyEnabled *bool                  `json:"requestReplyEnabled,omitempty"`
-	Resources           *agentResourcesRequest `json:"resources,omitempty"`
+	Model               *string `json:"model,omitempty"`
+	StartupPrompt       *string `json:"startupPrompt,omitempty"`
+	SessionResume       *bool   `json:"sessionResume,omitempty"`
+	RequestReplyEnabled *bool   `json:"requestReplyEnabled,omitempty"`
+	// PublicCapabilities is RawMessage so PATCH can distinguish omitted (leave
+	// unchanged) from explicit null (unpublish) and an object (validate/update).
+	PublicCapabilities json.RawMessage        `json:"publicCapabilities,omitempty"`
+	Resources          *agentResourcesRequest `json:"resources,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
 	// PUT-list semantics — callers that want additive semantics can fetch
@@ -165,15 +169,17 @@ var (
 
 // AgentResponse is the JSON representation of an Agent returned by the API.
 type AgentResponse struct {
-	ID                  string                `json:"id"`
-	Phase               kyberv1.AgentPhase    `json:"phase"`
-	Machine             string                `json:"machine"`
-	Runtime             string                `json:"runtime"`
-	AuthType            kyberv1.AgentAuthType `json:"authType"`
-	Model               string                `json:"model"`
-	StartupPrompt       string                `json:"startupPrompt,omitempty"`
-	SessionResume       bool                  `json:"sessionResume,omitempty"`
-	RequestReplyEnabled bool                  `json:"requestReplyEnabled,omitempty"`
+	ID                       string                                 `json:"id"`
+	Phase                    kyberv1.AgentPhase                     `json:"phase"`
+	Machine                  string                                 `json:"machine"`
+	Runtime                  string                                 `json:"runtime"`
+	AuthType                 kyberv1.AgentAuthType                  `json:"authType"`
+	Model                    string                                 `json:"model"`
+	StartupPrompt            string                                 `json:"startupPrompt,omitempty"`
+	SessionResume            bool                                   `json:"sessionResume,omitempty"`
+	RequestReplyEnabled      bool                                   `json:"requestReplyEnabled,omitempty"`
+	PublicCapabilities       *kyberv1.AgentPublicCapabilities       `json:"publicCapabilities,omitempty"`
+	PublicCapabilitiesStatus *kyberv1.AgentPublicCapabilitiesStatus `json:"publicCapabilitiesStatus,omitempty"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
@@ -408,16 +414,18 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		authType = kyberv1.AgentAuthTypeOAuth
 	}
 	resp := AgentResponse{
-		ID:                  a.Name,
-		Phase:               a.Status.Phase,
-		Machine:             a.Spec.Machine,
-		Runtime:             a.Spec.Runtime,
-		AuthType:            authType,
-		Model:               a.Spec.Model,
-		StartupPrompt:       a.Spec.StartupPrompt,
-		SessionResume:       a.Spec.SessionResume,
-		RequestReplyEnabled: a.Spec.RequestReplyEnabled,
-		CurrentModel:        a.Status.CurrentModel,
+		ID:                       a.Name,
+		Phase:                    a.Status.Phase,
+		Machine:                  a.Spec.Machine,
+		Runtime:                  a.Spec.Runtime,
+		AuthType:                 authType,
+		Model:                    a.Spec.Model,
+		StartupPrompt:            a.Spec.StartupPrompt,
+		SessionResume:            a.Spec.SessionResume,
+		RequestReplyEnabled:      a.Spec.RequestReplyEnabled,
+		PublicCapabilities:       a.Spec.PublicCapabilities,
+		PublicCapabilitiesStatus: a.Status.PublicCapabilities,
+		CurrentModel:             a.Status.CurrentModel,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
 			Memory: a.Spec.Resources.Memory.String(),
@@ -674,6 +682,9 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		// Read-only by design: skills are managed by talking to the
 		// agent, never from the API. See routes_agent_skills.go.
 		s.handleAgentSkills(w, r, name)
+		return
+	case "capabilities":
+		s.handleAgentCapabilities(w, r, name)
 		return
 	}
 
@@ -1102,6 +1113,13 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
+	if len(req.PublicCapabilities) > 0 && !s.requireCapabilityResource(w, r, name, ScopeCapabilitiesWrite) {
+		return
+	}
+	if len(req.PublicCapabilities) > 0 && patchIncludesLifecycleFields(req) &&
+		!s.requireScope(w, r, name, "agent-patch", ScopeLifecycleWrite) {
+		return
+	}
 
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
@@ -1116,6 +1134,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 	}
 
 	patch := client.MergeFrom(agent.DeepCopy())
+	_, priorCapabilityDigest, _ := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
 
 	if req.StartupPrompt != nil {
 		if utf8.RuneCountInString(*req.StartupPrompt) > 32768 {
@@ -1131,6 +1150,23 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 
 	if req.RequestReplyEnabled != nil {
 		agent.Spec.RequestReplyEnabled = *req.RequestReplyEnabled
+	}
+
+	if len(req.PublicCapabilities) > 0 {
+		if strings.TrimSpace(string(req.PublicCapabilities)) == "null" {
+			agent.Spec.PublicCapabilities = nil
+		} else {
+			var declaration kyberv1.AgentPublicCapabilities
+			if err := json.Unmarshal(req.PublicCapabilities, &declaration); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "publicCapabilities must be an object or null", "publicCapabilities")
+				return
+			}
+			if _, _, err := capabilities.NormalizeAndValidate(&declaration); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "publicCapabilities")
+				return
+			}
+			agent.Spec.PublicCapabilities = &declaration
+		}
 	}
 
 	if req.Model != nil {
@@ -1185,8 +1221,36 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 		return
 	}
+	if len(req.PublicCapabilities) > 0 {
+		_, nextCapabilityDigest, validationErr := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
+		caller := callerFrom(r.Context())
+		actor := "unknown"
+		if caller != nil {
+			actor = caller.PrincipalID
+		}
+		slog.Info("public capability declaration changed", "actor", actor, "agent", s.Namespace+"/"+name,
+			"prior_digest", priorCapabilityDigest, "new_digest", nextCapabilityDigest,
+			"capability_ids", publicCapabilityIDs(agent.Spec.PublicCapabilities), "valid", validationErr == nil)
+	}
 
 	writeJSON(w, http.StatusOK, agentToResponse(agent))
+}
+
+func patchIncludesLifecycleFields(req PatchAgentRequest) bool {
+	return req.Model != nil || req.StartupPrompt != nil || req.SessionResume != nil ||
+		req.RequestReplyEnabled != nil || req.Resources != nil || req.Jobs != nil
+}
+
+func publicCapabilityIDs(declaration *kyberv1.AgentPublicCapabilities) []string {
+	if declaration == nil {
+		return []string{}
+	}
+	ids := make([]string, 0, len(declaration.Capabilities))
+	for _, capability := range declaration.Capabilities {
+		ids = append(ids, capability.ID)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // jobNameRe matches the regex enforced by the CRD validator on AgentJob.Name.
