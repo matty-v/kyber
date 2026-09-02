@@ -95,7 +95,7 @@ func TestCORSMiddleware_PreflightAllowedOrigin(t *testing.T) {
 		}
 	}
 	allowHeaders := w.Header().Get("Access-Control-Allow-Headers")
-	for _, h := range []string{"Authorization", "Content-Type"} {
+	for _, h := range []string{"Authorization", "Content-Type", "Idempotency-Key", "Last-Event-ID"} {
 		if !contains(allowHeaders, h) {
 			t.Errorf("Allow-Headers missing %s: %q", h, allowHeaders)
 		}

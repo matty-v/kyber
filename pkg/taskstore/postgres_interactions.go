@@ -172,6 +172,9 @@ func (s *PostgresStore) RequestInteraction(ctx context.Context, p RequestInterac
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_tasks SET state=$2,version=version+1,updated_at=clock_timestamp() WHERE id=$1`, p.TaskID, nextState); err != nil {
 		return nil, err
 	}
+	if err = appendTaskEventTx(ctx, tx, p.TaskID, EventTaskInteractionRequested, map[string]any{"interactionId": p.InteractionID, "type": p.Type, "question": p.Question, "options": p.Options, "expiresAt": expires, "state": nextState}); err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -243,6 +246,9 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 		if _, err = tx.ExecContext(ctx, `UPDATE agent_task_dispatches SET status='closed',last_error_code=$2,updated_at=clock_timestamp() WHERE task_id=$1`, p.TaskID, code); err != nil {
 			return nil, err
 		}
+		if err = appendTaskEventTx(ctx, tx, p.TaskID, EventTaskTerminal, map[string]any{"priorState": state, "state": StateFailed, "failureCode": code}); err != nil {
+			return nil, err
+		}
 		if err = tx.Commit(); err != nil {
 			return nil, err
 		}
@@ -302,6 +308,9 @@ func (s *PostgresStore) RespondInteraction(ctx context.Context, p RespondInterac
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_interaction_idempotency(responded_by,task_id,interaction_id,idempotency_key,request_hash) VALUES($1,$2,$3,$4,$5)`, p.RespondedBy, p.TaskID, p.InteractionID, p.IdempotencyKey, p.RequestHash); err != nil {
 			return nil, err
 		}
+	}
+	if err = appendTaskEventTx(ctx, tx, p.TaskID, EventTaskInteractionResolved, map[string]any{"interactionId": p.InteractionID, "type": i.Type, "state": StateQueued}); err != nil {
+		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err

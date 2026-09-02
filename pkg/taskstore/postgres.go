@@ -113,6 +113,38 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE UNIQUE INDEX IF NOT EXISTS agent_task_one_live_interaction_idx ON agent_task_interactions(task_id) WHERE status IN ('paused','answered')`,
 		`CREATE TABLE IF NOT EXISTS agent_task_messages (task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, sequence BIGINT NOT NULL, role TEXT NOT NULL, kind TEXT NOT NULL, text_value TEXT NOT NULL DEFAULT '', data JSONB, created_at TIMESTAMPTZ NOT NULL, PRIMARY KEY(task_id,sequence))`,
 		`CREATE TABLE IF NOT EXISTS agent_task_interaction_idempotency (responded_by TEXT NOT NULL, task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE, interaction_id TEXT NOT NULL REFERENCES agent_task_interactions(id) ON DELETE CASCADE, idempotency_key TEXT NOT NULL, request_hash TEXT NOT NULL, PRIMARY KEY(responded_by,task_id,interaction_id,idempotency_key))`,
+		`CREATE TABLE IF NOT EXISTS agent_task_events (
+			event_id TEXT PRIMARY KEY,
+			task_id TEXT NOT NULL REFERENCES agent_tasks(id) ON DELETE CASCADE,
+			tenant_id TEXT NOT NULL,
+			owner_principal_id TEXT NOT NULL,
+			agent_resource_id TEXT NOT NULL,
+			sequence BIGINT NOT NULL,
+			task_version BIGINT NOT NULL,
+			type TEXT NOT NULL,
+			occurred_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+			payload_version TEXT NOT NULL DEFAULT 'v1',
+			payload JSONB NOT NULL,
+			UNIQUE(task_id,sequence),
+			CHECK(sequence > 0),
+			CHECK(type IN ('task.created','task.snapshot_imported','task.state_changed','task.progress','task.result_added','task.interaction_requested','task.interaction_resolved','task.cancellation_requested','task.terminal'))
+		)`,
+		`DO $$ BEGIN
+			IF EXISTS (
+				SELECT 1 FROM pg_constraint
+				WHERE conname='agent_task_events_type_check'
+				AND conrelid='agent_task_events'::regclass
+				AND pg_get_constraintdef(oid) NOT LIKE '%task.snapshot_imported%'
+			) THEN
+				ALTER TABLE agent_task_events DROP CONSTRAINT agent_task_events_type_check;
+				ALTER TABLE agent_task_events ADD CONSTRAINT agent_task_events_type_check CHECK(type IN ('task.created','task.snapshot_imported','task.state_changed','task.progress','task.result_added','task.interaction_requested','task.interaction_resolved','task.cancellation_requested','task.terminal'));
+			END IF;
+		END $$`,
+		`INSERT INTO agent_task_events(event_id,task_id,tenant_id,owner_principal_id,agent_resource_id,sequence,task_version,type,occurred_at,payload_version,payload)
+		 SELECT 'event_migration_'||md5(t.id),t.id,t.tenant_id,t.owner_principal_id,t.agent_resource_id,1,t.version,'task.snapshot_imported',clock_timestamp(),'v1',jsonb_build_object('agent',t.agent_name,'state',t.state,'createdAt',t.created_at,'migrationGenerated',true)
+		 FROM agent_tasks t WHERE NOT EXISTS (SELECT 1 FROM agent_task_events e WHERE e.task_id=t.id)`,
+		`CREATE INDEX IF NOT EXISTS agent_task_events_task_sequence_idx ON agent_task_events(task_id,sequence)`,
+		`CREATE INDEX IF NOT EXISTS agent_task_events_retention_idx ON agent_task_events(occurred_at)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_created_idx ON agent_tasks(agent_namespace,agent_name,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_agent_state_created_idx ON agent_tasks(agent_namespace,agent_name,state,created_at DESC,id DESC)`,
 		`CREATE INDEX IF NOT EXISTS agent_tasks_owner_created_idx ON agent_tasks(tenant_id,owner_principal_id,agent_resource_id,agent_namespace,agent_name,created_at DESC,id DESC)`,
@@ -122,7 +154,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		`CREATE INDEX IF NOT EXISTS agent_task_cancel_delivery_idx ON agent_task_cancel_deliveries(status,next_delivery_at,lease_until)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_dispatch_claim_idx ON agent_task_dispatches(status,next_attempt_at)`,
 		`CREATE INDEX IF NOT EXISTS agent_task_object_cleanup_idx ON agent_task_objects(status,next_attempt_at,lease_until)`,
-		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3),(4),(5) ON CONFLICT DO NOTHING`,
+		`INSERT INTO kyber_task_schema_migrations(version) VALUES (1),(2),(3),(4),(5),(6) ON CONFLICT DO NOTHING`,
 	}
 	for _, q := range statements {
 		if _, err = tx.ExecContext(ctx, q); err != nil {
@@ -224,6 +256,11 @@ func (s *PostgresStore) Create(ctx context.Context, p CreateParams) (*CreateResu
 		if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_idempotency(created_by,tenant_id,principal_id,agent_resource_id,agent_namespace,agent_name,idempotency_key,request_hash,task_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, p.CreatedBy, auth.TenantID, auth.PrincipalID, auth.AgentResourceID, p.Agent.Namespace, p.Agent.Name, p.IdempotencyKey, p.RequestHash, t.ID); err != nil {
 			return nil, err
 		}
+	}
+	if err = appendTaskEventTx(ctx, tx, t.ID, EventTaskCreated, map[string]any{
+		"agent": t.AgentName, "state": t.State, "createdAt": t.CreatedAt,
+	}); err != nil {
+		return nil, err
 	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
@@ -422,9 +459,18 @@ func loadResults(ctx context.Context, q queryer, taskID string) ([]Result, error
 }
 
 func (s *PostgresStore) transition(ctx context.Context, a AgentRef, id string, v int64, query string, args ...any) (*Task, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	before, err := scanTask(tx.QueryRowContext(ctx, selectTask+` WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 FOR UPDATE`, id, a.Namespace, a.Name))
+	if err != nil {
+		return nil, err
+	}
 	all := []any{id, a.Namespace, a.Name, v}
 	all = append(all, args...)
-	res, err := s.db.ExecContext(ctx, query, all...)
+	res, err := tx.ExecContext(ctx, query, all...)
 	if err != nil {
 		return nil, err
 	}
@@ -433,13 +479,23 @@ func (s *PostgresStore) transition(ctx context.Context, a AgentRef, id string, v
 		return nil, err
 	}
 	if n == 1 {
+		after, getErr := getTaskTx(ctx, tx, a, id)
+		if getErr != nil {
+			return nil, getErr
+		}
+		typ := EventTaskStateChanged
+		if terminalState(after.State) {
+			typ = EventTaskTerminal
+		}
+		if err = appendTaskEventTx(ctx, tx, id, typ, map[string]any{"priorState": before.State, "state": after.State, "failureCode": after.FailureCode, "version": after.Version}); err != nil {
+			return nil, err
+		}
+		if err = tx.Commit(); err != nil {
+			return nil, err
+		}
 		return nil, nil
 	}
-	current, err := s.Get(ctx, a, id)
-	if err != nil {
-		return nil, err
-	}
-	return current, ErrConflict
+	return before, ErrConflict
 }
 func (s *PostgresStore) MarkDispatched(ctx context.Context, a AgentRef, id string, v int64) error {
 	current, err := s.transition(ctx, a, id, v, `UPDATE agent_tasks SET state='dispatched',version=version+1,updated_at=clock_timestamp() WHERE id=$1 AND agent_namespace=$2 AND agent_name=$3 AND version=$4 AND state='queued'`)
@@ -479,6 +535,7 @@ func (s *PostgresStore) Complete(ctx context.Context, a AgentRef, id string, v i
 		if err = tx.QueryRowContext(ctx, `SELECT count(*) FROM agent_task_results WHERE task_id=$1`, id).Scan(&count); err != nil {
 			return err
 		}
+		legacyResultID := ""
 		if count == 0 {
 			sum := sha256.Sum256([]byte(id))
 			rid := "result_" + hex.EncodeToString(sum[:16])
@@ -489,8 +546,17 @@ func (s *PostgresStore) Complete(ctx context.Context, a AgentRef, id string, v i
 			if _, err = tx.ExecContext(ctx, `INSERT INTO agent_task_result_parts(id,result_id,ordinal,kind,text_value) VALUES($1,$2,0,'text',$3)`, r.Parts[0].ID, rid, response); err != nil {
 				return err
 			}
+			legacyResultID = rid
 		}
 		if _, err = tx.ExecContext(ctx, `UPDATE agent_tasks SET state='completed',response=$2,version=version+1,updated_at=clock_timestamp(),completed_at=clock_timestamp() WHERE id=$1`, id, response); err != nil {
+			return err
+		}
+		if legacyResultID != "" {
+			if err = appendTaskEventTx(ctx, tx, id, EventTaskResultAdded, map[string]any{"resultId": legacyResultID, "name": "response", "parts": []map[string]any{{"kind": PartText}}}); err != nil {
+				return err
+			}
+		}
+		if err = appendTaskEventTx(ctx, tx, id, EventTaskTerminal, map[string]any{"priorState": t.State, "state": StateCompleted, "version": t.Version + 1}); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -560,6 +626,9 @@ func (s *PostgresStore) ReportProgress(ctx context.Context, a AgentRef, id, atte
 	}
 	_, err = tx.ExecContext(ctx, `UPDATE agent_tasks SET progress_message=$2,progress_percent=$3,progress_updated_at=$4,updated_at=$4,version=version+1 WHERE id=$1`, id, u.Message, u.Percent, now)
 	if err != nil {
+		return nil, false, err
+	}
+	if err = appendTaskEventTx(ctx, tx, id, EventTaskProgress, map[string]any{"updateId": u.UpdateID, "message": u.Message, "percent": u.Percent}); err != nil {
 		return nil, false, err
 	}
 	if err = tx.Commit(); err != nil {
@@ -668,6 +737,20 @@ func (s *PostgresStore) PublishResult(ctx context.Context, a AgentRef, id, attem
 		return nil, false, err
 	}
 	if _, err = tx.ExecContext(ctx, `UPDATE agent_tasks SET updated_at=clock_timestamp(),version=version+1 WHERE id=$1`, id); err != nil {
+		return nil, false, err
+	}
+	parts := make([]map[string]any, 0, len(r.Parts))
+	for _, part := range r.Parts {
+		item := map[string]any{"kind": part.Kind}
+		if part.File != nil {
+			item["filename"] = part.File.Filename
+			item["mediaType"] = part.File.MediaType
+			item["size"] = part.File.SizeBytes
+			item["sha256"] = part.File.SHA256
+		}
+		parts = append(parts, item)
+	}
+	if err = appendTaskEventTx(ctx, tx, id, EventTaskResultAdded, map[string]any{"resultId": r.ID, "name": r.Name, "parts": parts}); err != nil {
 		return nil, false, err
 	}
 	if err = tx.Commit(); err != nil {

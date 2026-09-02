@@ -45,6 +45,21 @@ func (rw *responseWriter) Write(b []byte) (int, error) {
 	return rw.ResponseWriter.Write(b)
 }
 
+// Flush preserves http.Flusher through the logging wrapper so SSE and other
+// streaming handlers can establish and advance responses promptly.
+func (rw *responseWriter) Flush() {
+	if !rw.wrote {
+		rw.WriteHeader(http.StatusOK)
+	}
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap lets http.ResponseController reach optional interfaces such as write
+// deadlines on the underlying server response writer.
+func (rw *responseWriter) Unwrap() http.ResponseWriter { return rw.ResponseWriter }
+
 // Hijack implements http.Hijacker so that WebSocket upgrades work through the
 // logging middleware wrapper. Without this, gorilla/websocket's type assertion
 // w.(http.Hijacker) would fail and return 500.

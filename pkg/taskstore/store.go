@@ -60,6 +60,7 @@ var (
 	ErrInteractionNotReady  = errors.New("taskstore: interaction is not awaiting a response")
 	ErrInteractionExpired   = errors.New("taskstore: interaction expired")
 	ErrAuthorizationFlow    = errors.New("taskstore: authorization flow is not complete or does not match")
+	ErrEventCursorExpired   = errors.New("taskstore: event cursor expired")
 )
 
 type State string
@@ -349,6 +350,60 @@ type ListParams struct {
 
 type AuthorizationContext struct {
 	TenantID, PrincipalID, AgentResourceID string
+}
+
+type EventType string
+
+const (
+	EventTaskCreated               EventType = "task.created"
+	EventTaskSnapshotImported      EventType = "task.snapshot_imported"
+	EventTaskStateChanged          EventType = "task.state_changed"
+	EventTaskProgress              EventType = "task.progress"
+	EventTaskResultAdded           EventType = "task.result_added"
+	EventTaskInteractionRequested  EventType = "task.interaction_requested"
+	EventTaskInteractionResolved   EventType = "task.interaction_resolved"
+	EventTaskCancellationRequested EventType = "task.cancellation_requested"
+	EventTaskTerminal              EventType = "task.terminal"
+)
+
+// TaskEvent is a normalized, immutable public change to a durable task. Payload
+// is deliberately bounded task-contract JSON; runtime transcripts never enter
+// this type or its backing table.
+type TaskEvent struct {
+	ID             string          `json:"eventId"`
+	TaskID         string          `json:"taskId"`
+	Sequence       int64           `json:"sequence"`
+	TaskVersion    int64           `json:"taskVersion"`
+	Type           EventType       `json:"type"`
+	OccurredAt     time.Time       `json:"occurredAt"`
+	PayloadVersion string          `json:"schemaVersion"`
+	Payload        json.RawMessage `json:"payload"`
+}
+
+type EventReadParams struct {
+	Agent         AgentRef
+	TaskID        string
+	Authorization AuthorizationContext
+	AfterSequence int64
+	Through       int64
+	Limit         int
+	Resume        bool
+}
+
+type EventPage struct {
+	Events        []TaskEvent
+	RetainedFloor int64
+	HighWater     int64
+	Terminal      bool
+}
+
+// EventStore is the production PostgreSQL extension used by task snapshots and
+// resumable SSE. Keeping it separate lets non-durable test stores remain small.
+type EventStore interface {
+	Store
+	ReadEvents(context.Context, EventReadParams) (*EventPage, error)
+	EventHighWater(context.Context, AgentRef, string, AuthorizationContext) (int64, error)
+	EventSnapshot(context.Context, AgentRef, string, AuthorizationContext) (*Task, int64, error)
 }
 
 func (a AuthorizationContext) Valid() bool {
