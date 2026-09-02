@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
@@ -179,7 +180,7 @@ func TestDirectoryDiskSampleIsAsyncAndUsesAllocation(t *testing.T) {
 }
 
 func TestDirectoryDiskPartialSampleWarnsAndCanReachReserve(t *testing.T) {
-	var warning string
+	var warnings []string
 	s := &diskSampler{
 		path:       "/persist",
 		totalBytes: 100,
@@ -188,7 +189,7 @@ func TestDirectoryDiskPartialSampleWarnsAndCanReachReserve(t *testing.T) {
 		lastStart:  time.Unix(100, 0),
 		walk:       func(string) (int64, bool, error) { return 95, true, nil },
 		warn: func(message string, _ ...any) {
-			warning = message
+			warnings = append(warnings, message)
 		},
 	}
 	s.scan(time.Unix(100, 0))
@@ -199,8 +200,10 @@ func TestDirectoryDiskPartialSampleWarnsAndCanReachReserve(t *testing.T) {
 	if usage.DiskUsageState != "partial" || !usage.DiskReserveReached {
 		t.Fatalf("partial sample = %+v, want reserve reached", usage)
 	}
-	if !strings.Contains(warning, "skipped unreadable paths") {
-		t.Fatalf("warning = %q", warning)
+	if !slices.ContainsFunc(warnings, func(warning string) bool {
+		return strings.Contains(warning, "skipped unreadable paths")
+	}) {
+		t.Fatalf("warnings = %q", warnings)
 	}
 }
 
