@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -22,6 +24,12 @@ func callOutboundA2AMCP(t *testing.T, method string) requestRPCResponse {
 		t.Fatalf("decode response: %v", err)
 	}
 	return response
+}
+
+type outboundA2ARoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f outboundA2ARoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
 }
 
 func TestOutboundA2AMCPInitializesWithDistinctIdentity(t *testing.T) {
@@ -126,6 +134,43 @@ func TestOutboundA2ADialRejectsProhibitedAddresses(t *testing.T) {
 		t.Run(address, func(t *testing.T) {
 			if _, err := outboundA2ADialContext(false)(context.Background(), "tcp", address); err == nil {
 				t.Fatal("dial succeeded, want destination policy error")
+			}
+		})
+	}
+}
+
+func TestOutboundA2AAuthTransportAddsHeadersWithoutMutatingRequest(t *testing.T) {
+	original := httptest.NewRequest(http.MethodGet, "https://agents.example/tasks/1", nil)
+	transport := &outboundA2AAuthTransport{credential: "top-secret", base: outboundA2ARoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.Header.Get("Authorization") != "Bearer top-secret" || request.Header.Get("A2A-Version") != "1.0" {
+			t.Fatalf("headers = %#v", request.Header)
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+	})}
+	response, err := transport.RoundTrip(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if original.Header.Get("Authorization") != "" {
+		t.Fatal("transport mutated caller request")
+	}
+}
+
+func TestOutboundA2AHTTPTransportRejectsRedirectAndOversize(t *testing.T) {
+	tests := []struct {
+		name     string
+		response *http.Response
+	}{
+		{"redirect", &http.Response{StatusCode: http.StatusFound, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("redirect"))}},
+		{"oversize", &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(strings.Repeat("x", maxAgentCardBytes+1)))}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			base := outboundA2ARoundTripFunc(func(*http.Request) (*http.Response, error) { return tc.response, nil })
+			transport := &outboundA2AHTTPTransport{base: &outboundA2AAuthTransport{base: base, credential: "secret"}}
+			if _, err := transport.RoundTrip(httptest.NewRequest(http.MethodGet, "https://agents.example", nil)); err == nil {
+				t.Fatal("RoundTrip succeeded, want error")
 			}
 		})
 	}

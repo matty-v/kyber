@@ -119,14 +119,14 @@ func TestAppendStatusSidecar_ResourceLimits(t *testing.T) {
 	}
 }
 
-func TestAppendStatusSidecar_MountsPersistReadOnly(t *testing.T) {
+func TestAppendStatusSidecar_MountsPersistForManagedA2AResults(t *testing.T) {
 	spec := &corev1.PodSpec{}
 	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
 	side := mustStatusSidecar(t, spec)
 	for _, mount := range side.VolumeMounts {
 		if mount.Name == "persist" {
-			if mount.MountPath != "/persist" || !mount.ReadOnly {
-				t.Errorf("persist mount = %+v, want read-only /persist", mount)
+			if mount.MountPath != "/persist" || mount.ReadOnly {
+				t.Errorf("persist mount = %+v, want writable /persist", mount)
 			}
 			return
 		}
@@ -276,5 +276,8 @@ func TestAppendStatusSidecar_SecurityHardened(t *testing.T) {
 	}
 	if side.SecurityContext.AllowPrivilegeEscalation == nil || *side.SecurityContext.AllowPrivilegeEscalation {
 		t.Error("AllowPrivilegeEscalation must be false")
+	}
+	if side.SecurityContext.RunAsUser == nil || *side.SecurityContext.RunAsUser != 0 {
+		t.Error("RunAsUser must be root for the root-owned persist PVC")
 	}
 }

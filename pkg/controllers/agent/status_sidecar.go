@@ -165,7 +165,6 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 			{
 				Name:      "persist",
 				MountPath: "/persist",
-				ReadOnly:  true,
 			},
 			{
 				Name:      PodTokenVolumeName,
@@ -178,6 +177,11 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 		// Distroless/static-debian12:nonroot in the image already runs
 		// as a non-root user; this just hardens the container further.
 		SecurityContext: &corev1.SecurityContext{
+			// Outbound A2A file artifacts land on the root-owned persist PVC.
+			// Match the Telegram attachment sidecar's uid-alignment contract;
+			// no-follow writes and root-owned result directories keep the
+			// runtime from redirecting those writes through symlinks.
+			RunAsUser:                ptrTo(int64(0)),
 			ReadOnlyRootFilesystem:   ptrTo(true),
 			AllowPrivilegeEscalation: ptrTo(false),
 		},

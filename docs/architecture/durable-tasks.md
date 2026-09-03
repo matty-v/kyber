@@ -159,6 +159,14 @@ and checks addresses at connection time to prevent DNS-rebinding bypasses;
 loopback, link-local, and metadata ranges are always blocked, and private
 address space requires explicit operator opt-in. Redirects fail closed.
 
+The remote A2A service remains the durability and ownership authority for the
+delegated task. Kyber returns the peer/task/context handle and can recover work
+after either a sidecar or coordinator restart through `get_task` or the
+owner-scoped remote `list_tasks`; it does not create a second mutable copy of
+the remote task in local task tables. Bounded `await_task` reconnects from the
+remote snapshot before following live events, so correctness does not depend
+on a process-local stream or cursor.
+
 ## Multi-turn interactions
 
 A dispatched attempt may request exactly one typed interaction (`text`,

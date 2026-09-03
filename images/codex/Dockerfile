@@ -36,5 +36,6 @@ RUN install -d -m 0755 /opt/kyber
 COPY --chmod=0644 docs/agent-manual.md /opt/kyber/KYBER.md
 COPY images/shared/skills/telegram-messaging /opt/kyber/skills/telegram-messaging
 COPY images/shared/skills/discord-messaging /opt/kyber/skills/discord-messaging
+COPY images/shared/skills/a2a-client /opt/kyber/skills/a2a-client
 
 ENV KYBER_START_CMD="/usr/local/bin/start-codex.sh"

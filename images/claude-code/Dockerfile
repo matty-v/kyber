@@ -91,6 +91,7 @@ RUN install -d -m 0755 /opt/kyber
 COPY --chmod=0644 docs/agent-manual.md /opt/kyber/KYBER.md
 COPY images/shared/skills/telegram-messaging /opt/kyber/skills/telegram-messaging
 COPY images/shared/skills/discord-messaging /opt/kyber/skills/discord-messaging
+COPY images/shared/skills/a2a-client /opt/kyber/skills/a2a-client
 
 # Kyber token-usage reporter — runs as a background process alongside
 # Claude Code. See cmd/token-reporter/ for details.

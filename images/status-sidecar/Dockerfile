@@ -24,7 +24,8 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /build/kyber-status-sidecar /usr/local/bin/kyber-status-sidecar
 
 # distroless/static-debian12:nonroot runs as uid 65532 by default. The
-# sidecar reads the pod-token from a Secret volume (read-only) and writes
-# nothing to disk; nonroot is a clean fit.
+# The pod spec runs this image as root because outbound A2A file results must
+# be created on the root-owned persist PVC. The root filesystem remains
+# read-only and the writer uses component-wise openat with O_NOFOLLOW.
 
 ENTRYPOINT ["/usr/local/bin/kyber-status-sidecar"]
