@@ -1112,6 +1112,48 @@ func TestAgents_Patch(t *testing.T) {
 	}
 }
 
+func TestAgents_PatchRejectsUnsafeA2APeers(t *testing.T) {
+	tests := []struct {
+		name  string
+		peers []map[string]interface{}
+	}{
+		{
+			name: "userinfo URL",
+			peers: []map[string]interface{}{{
+				"name": "auditor", "url": "https://user@agents.example/a2a", "credential": map[string]interface{}{"existingSecret": "auditor-token", "key": "token"},
+			}},
+		},
+		{
+			name: "duplicate name",
+			peers: []map[string]interface{}{
+				{"name": "auditor", "url": "https://one.example/a2a", "credential": map[string]interface{}{"existingSecret": "auditor-token", "key": "token"}},
+				{"name": "auditor", "url": "https://two.example/a2a", "credential": map[string]interface{}{"existingSecret": "auditor-token", "key": "token"}},
+			},
+		},
+		{
+			name: "invalid secret name",
+			peers: []map[string]interface{}{{
+				"name": "auditor", "url": "https://agents.example/a2a", "credential": map[string]interface{}{"existingSecret": "NOT_VALID", "key": "token"},
+			}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := sampleAgentCRD("dave")
+			h, _ := buildAgentHandler(t, agent)
+			req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"a2aPeers": tc.peers})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
+			}
+			if !strings.Contains(rr.Body.String(), `"field":"a2aPeers"`) {
+				t.Fatalf("response does not identify a2aPeers: %s", rr.Body.String())
+			}
+		})
+	}
+}
+
 func TestAgents_PatchStartupPromptSetAndClear(t *testing.T) {
 	h, k := buildAgentHandler(t, sampleAgentCRD("dave"))
 	for _, tc := range []struct {

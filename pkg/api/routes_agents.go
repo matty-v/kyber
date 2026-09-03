@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strconv"
@@ -20,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/validation"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -838,6 +840,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtime is required", "runtime")
 		return
 	}
+	if err := validateA2APeers(req.A2APeers); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "a2aPeers")
+		return
+	}
 	if len(s.ValidRuntimes) > 0 && !s.ValidRuntimes[req.Runtime] {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"unknown runtime '"+req.Runtime+"'", "runtime")
@@ -1127,7 +1133,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 	if len(req.PublicCapabilities) > 0 && !s.requireCapabilityResource(w, r, name, ScopeCapabilitiesWrite) {
 		return
 	}
-	if len(req.PublicCapabilities) > 0 && patchIncludesLifecycleFields(req) &&
+	if patchIncludesLifecycleFields(req) &&
 		!s.requireScope(w, r, name, "agent-patch", ScopeLifecycleWrite) {
 		return
 	}
@@ -1163,6 +1169,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		agent.Spec.RequestReplyEnabled = *req.RequestReplyEnabled
 	}
 	if req.A2APeers != nil {
+		if err := validateA2APeers(*req.A2APeers); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "a2aPeers")
+			return
+		}
 		agent.Spec.A2APeers = append([]kyberv1.AgentA2APeer(nil), (*req.A2APeers)...)
 	}
 
@@ -1253,6 +1263,38 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 func patchIncludesLifecycleFields(req PatchAgentRequest) bool {
 	return req.Model != nil || req.StartupPrompt != nil || req.SessionResume != nil ||
 		req.RequestReplyEnabled != nil || req.A2APeers != nil || req.Resources != nil || req.Jobs != nil
+}
+
+var a2aPeerNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+func validateA2APeers(peers []kyberv1.AgentA2APeer) error {
+	if len(peers) > 16 {
+		return fmt.Errorf("must contain at most 16 peers")
+	}
+	seen := make(map[string]struct{}, len(peers))
+	for i, peer := range peers {
+		if !a2aPeerNamePattern.MatchString(peer.Name) {
+			return fmt.Errorf("peer %d name must be a lowercase DNS label of at most 63 characters", i)
+		}
+		if _, exists := seen[peer.Name]; exists {
+			return fmt.Errorf("peer name %q is duplicated", peer.Name)
+		}
+		seen[peer.Name] = struct{}{}
+		if len(peer.URL) > 2048 {
+			return fmt.Errorf("peer %q URL exceeds 2048 characters", peer.Name)
+		}
+		parsed, err := url.Parse(peer.URL)
+		if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return fmt.Errorf("peer %q URL must be HTTPS without userinfo, query, or fragment", peer.Name)
+		}
+		if problems := validation.IsDNS1123Subdomain(peer.Credential.ExistingSecret); len(problems) > 0 {
+			return fmt.Errorf("peer %q credential existingSecret must be a valid Kubernetes Secret name", peer.Name)
+		}
+		if len(peer.Credential.Key) == 0 || len(peer.Credential.Key) > 253 {
+			return fmt.Errorf("peer %q credential key must contain 1 to 253 characters", peer.Name)
+		}
+	}
+	return nil
 }
 
 func publicCapabilityIDs(declaration *kyberv1.AgentPublicCapabilities) []string {

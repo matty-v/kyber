@@ -58,6 +58,40 @@ func TestOutboundA2AMCPPublishesBoundedToolSurface(t *testing.T) {
 		if schema["additionalProperties"] != false {
 			t.Errorf("tool %q schema is not closed", name)
 		}
+		properties := schema["properties"].(map[string]any)
+		for propertyName, raw := range properties {
+			property := raw.(map[string]any)
+			switch property["type"] {
+			case "string":
+				if property["maxLength"] == nil {
+					t.Errorf("tool %q string property %q is unbounded", name, propertyName)
+				}
+			case "integer":
+				if property["maximum"] == nil {
+					t.Errorf("tool %q integer property %q is unbounded", name, propertyName)
+				}
+			}
+		}
+	}
+}
+
+func TestOutboundA2AOperationsRejectUnboundedHandles(t *testing.T) {
+	peer := outboundA2APeer{}
+	tooLongTaskID := strings.Repeat("t", maxA2ATaskIDBytes+1)
+	tooLongCursor := strings.Repeat("c", maxA2ACursorBytes+1)
+	historyLength := maxA2AHistoryLength + 1
+
+	if _, err := getOutboundA2ATask(context.Background(), peer, tooLongTaskID, nil); err == nil {
+		t.Fatal("get task accepted an oversized task ID")
+	}
+	if _, err := getOutboundA2ATask(context.Background(), peer, "task", &historyLength); err == nil {
+		t.Fatal("get task accepted an oversized history length")
+	}
+	if _, err := awaitOutboundA2ATask(context.Background(), peer, "task", tooLongCursor, 1); err == nil {
+		t.Fatal("await task accepted an oversized cursor")
+	}
+	if _, err := downloadOutboundA2AArtifact(context.Background(), peer, "task", "artifact", maxA2AArtifactParts); err == nil {
+		t.Fatal("download artifact accepted an oversized part index")
 	}
 }
 

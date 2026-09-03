@@ -79,6 +79,7 @@ spec:
                         namespace. The value is injected only into the status sidecar.
                       properties:
                         existingSecret:
+                          maxLength: 253
                           pattern: ^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$
                           type: string
                         key:
@@ -91,6 +92,7 @@ spec:
                       type: object
                     name:
                       description: Name is the stable handle exposed to the runtime.
+                      maxLength: 63
                       pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
                       type: string
                     url:

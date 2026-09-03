@@ -22,6 +22,14 @@ import (
 
 const maxAgentCardBytes = 256 << 10
 const maxA2AEventStreamBytes = 1 << 20
+const maxA2ATaskIDBytes = 256
+const maxA2AContextIDBytes = 256
+const maxA2ACursorBytes = 1024
+const maxA2AArtifactIDBytes = 256
+const maxA2AHistoryLength = 100
+const maxA2AArtifactParts = 1024
+const maxA2APeerURLBytes = 2048
+const maxA2ACredentialBytes = 16 << 10
 
 var outboundA2APeerNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`)
 
@@ -93,18 +101,21 @@ func loadOutboundA2APeers(raw string) (map[string]outboundA2APeer, error) {
 		return nil, fmt.Errorf("KYBER_A2A_PEERS_JSON exceeds 16 peers")
 	}
 	for _, candidate := range configured {
-		if !outboundA2APeerNamePattern.MatchString(candidate.Name) {
+		if len(candidate.Name) > 63 || !outboundA2APeerNamePattern.MatchString(candidate.Name) {
 			return nil, fmt.Errorf("invalid outbound A2A peer name")
 		}
 		if _, exists := peers[candidate.Name]; exists {
 			return nil, fmt.Errorf("duplicate outbound A2A peer name %q", candidate.Name)
+		}
+		if len(candidate.URL) > maxA2APeerURLBytes {
+			return nil, fmt.Errorf("peer %q URL exceeds limit", candidate.Name)
 		}
 		base, err := url.Parse(candidate.URL)
 		if err != nil || base.Scheme != "https" || base.Hostname() == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
 			return nil, fmt.Errorf("peer %q must have an HTTPS base URL without userinfo, query, or fragment", candidate.Name)
 		}
 		credential, ok := os.LookupEnv(candidate.CredentialEnv)
-		if !ok || strings.TrimSpace(credential) == "" {
+		if !ok || strings.TrimSpace(credential) == "" || len(credential) > maxA2ACredentialBytes {
 			return nil, fmt.Errorf("peer %q credential is unavailable", candidate.Name)
 		}
 		peers[candidate.Name] = outboundA2APeer{Name: candidate.Name, BaseURL: base, Credential: credential, AllowPrivate: candidate.AllowPrivate}
@@ -116,19 +127,18 @@ func (s *outboundA2AMCPServer) callTool(ctx context.Context, raw json.RawMessage
 	var params struct {
 		Name      string `json:"name"`
 		Arguments struct {
-			Peer             string `json:"peer"`
-			SkillID          string `json:"skill_id"`
-			Message          string `json:"message"`
-			ContextID        string `json:"context_id"`
-			IdempotencyKey   string `json:"idempotency_key"`
-			TaskID           string `json:"task_id"`
-			HistoryLength    *int   `json:"history_length"`
-			IncludeArtifacts bool   `json:"include_artifacts"`
-			Limit            int    `json:"limit"`
-			Cursor           string `json:"cursor"`
-			TimeoutSeconds   int    `json:"timeout_seconds"`
-			ArtifactID       string `json:"artifact_id"`
-			PartIndex        int    `json:"part_index"`
+			Peer           string `json:"peer"`
+			SkillID        string `json:"skill_id"`
+			Message        string `json:"message"`
+			ContextID      string `json:"context_id"`
+			IdempotencyKey string `json:"idempotency_key"`
+			TaskID         string `json:"task_id"`
+			HistoryLength  *int   `json:"history_length"`
+			Limit          int    `json:"limit"`
+			Cursor         string `json:"cursor"`
+			TimeoutSeconds int    `json:"timeout_seconds"`
+			ArtifactID     string `json:"artifact_id"`
+			PartIndex      int    `json:"part_index"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -290,6 +300,12 @@ func sendOutboundA2AMessage(ctx context.Context, peer outboundA2APeer, text, con
 		}
 		message.ID = idempotencyKey
 	}
+	if len(contextID) > maxA2AContextIDBytes {
+		return nil, fmt.Errorf("context ID exceeds limit")
+	}
+	if len(taskID) > maxA2ATaskIDBytes {
+		return nil, fmt.Errorf("task ID exceeds limit")
+	}
 	message.ContextID = contextID
 	message.TaskID = a2a.TaskID(taskID)
 	request := &a2a.SendMessageRequest{Message: message, Config: &a2a.SendMessageConfig{ReturnImmediately: true}}
@@ -301,8 +317,11 @@ func sendOutboundA2AMessage(ctx context.Context, peer outboundA2APeer, text, con
 }
 
 func getOutboundA2ATask(ctx context.Context, peer outboundA2APeer, taskID string, historyLength *int) (any, error) {
-	if taskID == "" {
-		return nil, fmt.Errorf("task ID is required")
+	if taskID == "" || len(taskID) > maxA2ATaskIDBytes {
+		return nil, fmt.Errorf("task ID is required and bounded")
+	}
+	if historyLength != nil && (*historyLength < 0 || *historyLength > maxA2AHistoryLength) {
+		return nil, fmt.Errorf("history length is outside bounds")
 	}
 	result, err := outboundA2ATransport(peer).GetTask(ctx, a2aclient.ServiceParams{}, &a2a.GetTaskRequest{ID: a2a.TaskID(taskID), HistoryLength: historyLength})
 	if err != nil {
@@ -326,8 +345,8 @@ func listOutboundA2ATasks(ctx context.Context, peer outboundA2APeer, limit int) 
 }
 
 func cancelOutboundA2ATask(ctx context.Context, peer outboundA2APeer, taskID string) (any, error) {
-	if taskID == "" {
-		return nil, fmt.Errorf("task ID is required")
+	if taskID == "" || len(taskID) > maxA2ATaskIDBytes {
+		return nil, fmt.Errorf("task ID is required and bounded")
 	}
 	result, err := outboundA2ATransport(peer).CancelTask(ctx, a2aclient.ServiceParams{}, &a2a.CancelTaskRequest{ID: a2a.TaskID(taskID)})
 	if err != nil {
@@ -337,8 +356,11 @@ func cancelOutboundA2ATask(ctx context.Context, peer outboundA2APeer, taskID str
 }
 
 func awaitOutboundA2ATask(ctx context.Context, peer outboundA2APeer, taskID, cursor string, timeoutSeconds int) (any, error) {
-	if taskID == "" {
-		return nil, fmt.Errorf("task ID is required")
+	if taskID == "" || len(taskID) > maxA2ATaskIDBytes {
+		return nil, fmt.Errorf("task ID is required and bounded")
+	}
+	if len(cursor) > maxA2ACursorBytes {
+		return nil, fmt.Errorf("cursor exceeds limit")
 	}
 	if timeoutSeconds == 0 {
 		timeoutSeconds = 30
@@ -386,8 +408,8 @@ func awaitOutboundA2ATask(ctx context.Context, peer outboundA2APeer, taskID, cur
 const maxOutboundArtifactBytes = 20 << 20
 
 func downloadOutboundA2AArtifact(ctx context.Context, peer outboundA2APeer, taskID, artifactID string, partIndex int) (any, error) {
-	if taskID == "" || artifactID == "" || partIndex < 0 {
-		return nil, fmt.Errorf("task, artifact, and non-negative part index are required")
+	if taskID == "" || len(taskID) > maxA2ATaskIDBytes || artifactID == "" || len(artifactID) > maxA2AArtifactIDBytes || partIndex < 0 || partIndex >= maxA2AArtifactParts {
+		return nil, fmt.Errorf("task, artifact, and part index are required and bounded")
 	}
 	task, err := outboundA2ATransport(peer).GetTask(ctx, a2aclient.ServiceParams{}, &a2a.GetTaskRequest{ID: a2a.TaskID(taskID)})
 	if err != nil {
@@ -482,9 +504,11 @@ func writeOutboundA2AArtifact(taskID, artifactID string, partIndex int, filename
 	file := os.NewFile(uintptr(fd), name)
 	if _, err := file.Write(content); err != nil {
 		file.Close()
+		_ = unix.Unlinkat(dir, name, 0)
 		return "", fmt.Errorf("writing artifact file: %w", err)
 	}
 	if err := file.Close(); err != nil {
+		_ = unix.Unlinkat(dir, name, 0)
 		return "", fmt.Errorf("closing artifact file: %w", err)
 	}
 	return filepath.Join("/persist/a2a-results", dirname, name), nil
@@ -574,8 +598,10 @@ func outboundA2AError(message string) requestToolResult {
 }
 
 func outboundA2ATools() []map[string]any {
-	peer := map[string]any{"type": "string", "minLength": 1, "maxLength": 128}
-	taskID := map[string]any{"type": "string", "minLength": 1, "maxLength": 256}
+	peer := map[string]any{"type": "string", "minLength": 1, "maxLength": 63, "pattern": outboundA2APeerNamePattern.String()}
+	taskID := map[string]any{"type": "string", "minLength": 1, "maxLength": maxA2ATaskIDBytes}
+	message := map[string]any{"type": "string", "minLength": 1, "maxLength": 64 << 10}
+	idempotencyKey := map[string]any{"type": "string", "maxLength": 256}
 	object := func(properties map[string]any, required ...string) map[string]any {
 		return map[string]any{"type": "object", "additionalProperties": false, "properties": properties, "required": required}
 	}
@@ -584,13 +610,13 @@ func outboundA2ATools() []map[string]any {
 	}
 	return []map[string]any{
 		tool("discover_peer", "Read the bounded Agent Card for an operator-configured peer.", object(map[string]any{"peer": peer}, "peer")),
-		tool("delegate_task", "Delegate a new durable task to an operator-configured peer.", object(map[string]any{"peer": peer, "skill_id": map[string]any{"type": "string"}, "message": map[string]any{"type": "string"}, "context_id": map[string]any{"type": "string"}, "idempotency_key": map[string]any{"type": "string"}}, "peer", "skill_id", "message")),
-		tool("get_task", "Get a delegated task by durable handle.", object(map[string]any{"peer": peer, "task_id": taskID, "history_length": map[string]any{"type": "integer", "minimum": 0}, "include_artifacts": map[string]any{"type": "boolean"}}, "peer", "task_id")),
+		tool("delegate_task", "Delegate a new durable task to an operator-configured peer.", object(map[string]any{"peer": peer, "skill_id": map[string]any{"type": "string", "minLength": 1, "maxLength": 128}, "message": message, "context_id": map[string]any{"type": "string", "maxLength": maxA2AContextIDBytes}, "idempotency_key": idempotencyKey}, "peer", "skill_id", "message")),
+		tool("get_task", "Get a delegated task by durable handle.", object(map[string]any{"peer": peer, "task_id": taskID, "history_length": map[string]any{"type": "integer", "minimum": 0, "maximum": maxA2AHistoryLength}}, "peer", "task_id")),
 		tool("list_tasks", "List this source agent's tasks for one configured peer.", object(map[string]any{"peer": peer, "limit": map[string]any{"type": "integer", "minimum": 1, "maximum": 100}}, "peer")),
-		tool("await_task", "Wait for bounded task progress using resumable A2A events.", object(map[string]any{"peer": peer, "task_id": taskID, "cursor": map[string]any{"type": "string"}, "timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 60}}, "peer", "task_id")),
-		tool("continue_task", "Continue an input-required delegated task.", object(map[string]any{"peer": peer, "task_id": taskID, "message": map[string]any{"type": "string"}, "idempotency_key": map[string]any{"type": "string"}}, "peer", "task_id", "message")),
+		tool("await_task", "Wait for bounded task progress using resumable A2A events.", object(map[string]any{"peer": peer, "task_id": taskID, "cursor": map[string]any{"type": "string", "maxLength": maxA2ACursorBytes}, "timeout_seconds": map[string]any{"type": "integer", "minimum": 1, "maximum": 60}}, "peer", "task_id")),
+		tool("continue_task", "Continue an input-required delegated task.", object(map[string]any{"peer": peer, "task_id": taskID, "message": message, "idempotency_key": idempotencyKey}, "peer", "task_id", "message")),
 		tool("cancel_task", "Request cancellation of a delegated task.", object(map[string]any{"peer": peer, "task_id": taskID}, "peer", "task_id")),
-		tool("download_artifact", "Download one authorized artifact part beneath the managed results directory.", object(map[string]any{"peer": peer, "task_id": taskID, "artifact_id": map[string]any{"type": "string"}, "part_index": map[string]any{"type": "integer", "minimum": 0}}, "peer", "task_id", "artifact_id", "part_index")),
+		tool("download_artifact", "Download one authorized artifact part beneath the managed results directory.", object(map[string]any{"peer": peer, "task_id": taskID, "artifact_id": map[string]any{"type": "string", "minLength": 1, "maxLength": maxA2AArtifactIDBytes}, "part_index": map[string]any{"type": "integer", "minimum": 0, "maximum": maxA2AArtifactParts - 1}}, "peer", "task_id", "artifact_id", "part_index")),
 	}
 }
 

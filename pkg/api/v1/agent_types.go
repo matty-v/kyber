@@ -784,6 +784,7 @@ type AgentSpec struct {
 // AgentA2APeer declares one allowlisted outbound A2A destination.
 type AgentA2APeer struct {
 	// Name is the stable handle exposed to the runtime.
+	// +kubebuilder:validation:MaxLength=63
 	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
 	Name string `json:"name"`
 
@@ -804,6 +805,7 @@ type AgentA2APeer struct {
 
 // AgentA2ACredentialRef identifies an operator-provisioned bearer credential.
 type AgentA2ACredentialRef struct {
+	// +kubebuilder:validation:MaxLength=253
 	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`
 	ExistingSecret string `json:"existingSecret"`
 	// +kubebuilder:validation:MinLength=1

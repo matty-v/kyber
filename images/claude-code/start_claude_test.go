@@ -1983,7 +1983,7 @@ func TestStartClaude_BootSweepsStalePollerBeforeLaunch(t *testing.T) {
 	}
 	s := string(src)
 
-	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`+"\n\necho \"[kyber] tmux session 'agent' started")
+	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`)
 	if launch < 0 {
 		t.Fatal("could not locate the boot tmux launch")
 	}
@@ -2800,7 +2800,7 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	}
 	s := string(src)
 	for what, want := range map[string]string{
-		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue"`,
+		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"`,
 		"resume arg set prompt":      `CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"`,
 		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
 		"boot gate":                  `if claude_has_prior_session; then`,
