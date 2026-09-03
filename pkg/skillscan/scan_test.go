@@ -152,6 +152,53 @@ func TestScan_HealthySkillIsLinkedInBothRuntimes(t *testing.T) {
 	}
 }
 
+func TestScan_LegacyFlatSkillCompatibilityWrapperIsManaged(t *testing.T) {
+	f := newFixture(t)
+	source := filepath.Join(f.repo, "skills", "approve.md")
+	body := "---\nname: approve\ndescription: Approve a plan.\n---\nbody\n"
+	if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range []string{".claude", ".codex"} {
+		wrapper := filepath.Join(f.home, runtime, "skills", "approve")
+		if err := os.MkdirAll(wrapper, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(source, filepath.Join(wrapper, "SKILL.md")); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	rep := f.scan()
+	sk := findSkill(t, rep, "approve")
+	if sk.Path != filepath.Join("skills", "approve.md") || len(sk.Linked) != 2 {
+		t.Fatalf("flat skill = %+v", sk)
+	}
+	if !sk.Healthy() || len(rep.Issues) != 0 {
+		t.Fatalf("compatibility wrapper reported unhealthy: skill=%+v report=%+v", sk.Issues, rep.Issues)
+	}
+}
+
+func TestScan_CanonicalPackageTakesPrecedenceOverFlatSkill(t *testing.T) {
+	f := newFixture(t)
+	f.skill("approve", "---\nname: approve\ndescription: Canonical package.\n---\n")
+	flat := filepath.Join(f.repo, "skills", "approve.md")
+	if err := os.WriteFile(flat, []byte("---\nname: approve\ndescription: Legacy copy.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.link("approve", filepath.Join(f.repo, "skills", "approve"))
+	rep := f.scan()
+	canonical := findSkill(t, rep, "approve")
+	if canonical.Path != "skills/approve" || canonical.Description != "Canonical package." || len(canonical.Linked) != 2 {
+		t.Fatalf("canonical package did not win: %+v", canonical)
+	}
+	for _, s := range rep.Skills {
+		if s.Path == "skills/approve.md" && len(s.Linked) != 0 {
+			t.Fatalf("flat predecessor unexpectedly linked: %+v", s)
+		}
+	}
+}
+
 // The regression that motivates the whole feature: the skill is committed and
 // present in the repo, and no runtime can load it. Before this scanner, every
 // reporting surface called that state healthy.

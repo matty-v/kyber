@@ -229,7 +229,7 @@ func Scan(opts Options) (*Report, error) {
 		abs := filepath.Join(opts.RepoDir, skills[i].Path)
 		for _, rh := range runtimeHomes {
 			link := filepath.Join(opts.HomeDir, rh.dir, skills[i].Name)
-			if linkResolvesTo(link, abs) {
+			if linkResolvesTo(link, abs) || linkResolvesTo(filepath.Join(link, "SKILL.md"), abs) {
 				skills[i].Linked = append(skills[i].Linked, rh.runtime)
 			}
 		}
@@ -344,8 +344,8 @@ func sourceRank(source string) int {
 }
 
 // collect walks <repo>/skills and <repo>/vendor/*/skills in linker order and
-// returns one Skill per directory found, each already carrying its own
-// content-level issues.
+// returns package-directory skills plus legacy flat <name>.md skills, each
+// already carrying its own content-level issues.
 func collect(repoDir string) []Skill {
 	if repoDir == "" {
 		return nil
@@ -398,8 +398,40 @@ func collect(repoDir string) []Skill {
 			readSkillMD(filepath.Join(repoDir, sk.Path, "SKILL.md"), &sk)
 			out = append(out, sk)
 		}
+		for _, e := range entries {
+			if e.IsDir() || isHidden(e.Name()) || filepath.Ext(e.Name()) != ".md" || ignoredFlatSkill(e.Name()) {
+				continue
+			}
+			if packageSkillExists(filepath.Join(repoDir, src.rel), strings.TrimSuffix(e.Name(), ".md")) {
+				continue
+			}
+			path := filepath.Join(src.rel, e.Name())
+			info, err := os.Stat(filepath.Join(repoDir, path))
+			if err != nil || !info.Mode().IsRegular() {
+				continue
+			}
+			sk := Skill{
+				Name:          strings.TrimSuffix(e.Name(), ".md"),
+				Source:        src.source,
+				SourcePackage: src.pkgName,
+				Path:          path,
+				Linked:        []string{},
+			}
+			readSkillMD(filepath.Join(repoDir, path), &sk)
+			out = append(out, sk)
+		}
 	}
 	return out
+}
+
+func packageSkillExists(sourceDir, name string) bool {
+	info, err := os.Stat(filepath.Join(sourceDir, name, "SKILL.md"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+func ignoredFlatSkill(name string) bool {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	return strings.EqualFold(base, "README") || strings.EqualFold(base, "index")
 }
 
 // frontmatter is the subset of SKILL.md's YAML header the platform depends on.
@@ -526,6 +558,9 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 			}
 			isLink := li.Mode()&os.ModeSymlink != 0
 			if !isLink {
+				if e.IsDir() && compatWrapperUnderRepo(full, opts.RepoDir) {
+					continue
+				}
 				if e.IsDir() {
 					issues = append(issues, Issue{
 						Code:     IssueUnmanaged,
@@ -585,6 +620,18 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 		return issues[i].Detail < issues[j].Detail
 	})
 	return out, issues
+}
+
+func compatWrapperUnderRepo(dir, repoDir string) bool {
+	if repoDir == "" {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		return false
+	}
+	target, err := filepath.EvalSymlinks(filepath.Join(dir, "SKILL.md"))
+	return err == nil && underDir(target, repoDir)
 }
 
 // linkResolvesTo reports whether link is a symlink (or path) that resolves to
