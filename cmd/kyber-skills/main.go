@@ -433,7 +433,11 @@ func validSkillName(name string) error {
 // agent has a skill" two different things.
 func linkAll(repoDir, homeDir string) (int, error) {
 	for _, rel := range runtimeSkillDirs {
-		if err := os.MkdirAll(filepath.Join(homeDir, rel), 0o755); err != nil {
+		runtimeDir := filepath.Join(homeDir, rel)
+		if err := os.MkdirAll(runtimeDir, 0o755); err != nil {
+			return 0, err
+		}
+		if err := removeDanglingLinks(runtimeDir); err != nil {
 			return 0, err
 		}
 	}
@@ -488,8 +492,85 @@ func linkAll(repoDir, homeDir string) (int, error) {
 				count++
 			}
 		}
+		for _, e := range entries {
+			if e.IsDir() || isIgnoredFlatSkill(e.Name()) {
+				continue
+			}
+			file := filepath.Join(src, e.Name())
+			info, err := os.Stat(file)
+			if err != nil || !info.Mode().IsRegular() || filepath.Ext(e.Name()) != ".md" {
+				continue
+			}
+			name := strings.TrimSuffix(e.Name(), ".md")
+			if hasPackageSkill(src, name) {
+				continue
+			}
+			var relinked bool
+			for _, rel := range runtimeSkillDirs {
+				dst := filepath.Join(homeDir, rel, name)
+				if compatWrapperPointsAt(dst, file) {
+					continue
+				}
+				if err := os.RemoveAll(dst); err != nil {
+					return count, err
+				}
+				if err := os.MkdirAll(dst, 0o755); err != nil {
+					return count, err
+				}
+				if err := os.Symlink(file, filepath.Join(dst, "SKILL.md")); err != nil {
+					return count, err
+				}
+				relinked = true
+			}
+			if relinked {
+				count++
+			}
+		}
 	}
 	return count, nil
+}
+
+func hasPackageSkill(src, name string) bool {
+	info, err := os.Stat(filepath.Join(src, name, "SKILL.md"))
+	return err == nil && info.Mode().IsRegular()
+}
+
+func isIgnoredFlatSkill(name string) bool {
+	base := strings.TrimSuffix(name, filepath.Ext(name))
+	return strings.EqualFold(base, "README") || strings.EqualFold(base, "index")
+}
+
+func compatWrapperPointsAt(path, want string) bool {
+	info, err := os.Lstat(path)
+	if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		return false
+	}
+	entries, err := os.ReadDir(path)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		return false
+	}
+	return linkPointsAt(filepath.Join(path, "SKILL.md"), want)
+}
+
+func removeDanglingLinks(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if _, err := filepath.EvalSymlinks(path); err == nil {
+			continue
+		}
+		if err := os.Remove(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // linkPointsAt reports whether path is a symlink already resolving to want.

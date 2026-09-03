@@ -79,6 +79,8 @@ For a configured identity repo, the controller's `reconcileIdentityRepo` records
 
 Skills live in the identity repo, at `skills/<name>/SKILL.md` plus whatever else the package needs alongside it. That path is the contract: at boot and on every identity sync, the shared syncer links each package into **both** runtime homes (`~/.claude/skills/` and `~/.codex/skills/`), so the same repo works whichever runtime the agent runs.
 
+Legacy identity repos may still contain flat `skills/<name>.md` files. The linker keeps those loadable through a managed `<name>/SKILL.md` compatibility wrapper, and the scanner attributes that wrapper back to the repo rather than reporting Kyber's own generated directory as unmanaged. New and imported skills are always normalized to the package layout above. Convergence also removes dangling direct links left behind by renamed or migrated skills; it never deletes real runtime-home directories because those may contain user-authored state that still needs importing.
+
 Three sources of skills end up in those homes, and the API reports all three:
 
 | Source | Where it lives | Who owns it |

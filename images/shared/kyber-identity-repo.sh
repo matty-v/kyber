@@ -342,6 +342,15 @@ RUN ln -sfn "$REPO_MEM" "$NATIVE_MEM"
 RUN chown -h kyber:kyber "$NATIVE_MEM" 2>/dev/null || true
 echo "[kyber] sync: memory wired → $REPO_MEM"
 mkdir -p "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"
+# Remove obsolete direct links left by skills that were renamed or migrated.
+# Real directories are never pruned here: they may be user-authored state that
+# needs importing, while a dangling symlink cannot load anything.
+for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
+    for entry in "$runtime_skills"/*; do
+        [ -L "$entry" ] || continue
+        [ -e "$entry" ] || rm -f "$entry"
+    done
+done
 for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
     [ -d "$skills_src" ] || continue
     # Primary layout (identity-repo convention, see kyber-agent-template README):
@@ -364,6 +373,10 @@ for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
         [ -f "$f" ] || continue
         name=$(basename "$f" .md)
         case "$name" in README | readme | index) continue ;; esac
+        # A package directory is the canonical layout. During migration an
+        # old flat file may coexist with it; never let the compatibility pass
+        # replace the canonical package link with stale instructions.
+        [ -f "$skills_src/$name/SKILL.md" ] && continue
         for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
             rm -rf "$runtime_skills/$name"
             mkdir -p "$runtime_skills/$name"

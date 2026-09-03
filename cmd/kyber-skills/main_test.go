@@ -89,6 +89,16 @@ func (f *repoFixture) writeSkill(t *testing.T, name, body string) {
 	}
 }
 
+func (f *repoFixture) writeFlatSkill(t *testing.T, name, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(f.repoDir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(f.repoDir, "skills", name+".md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // captureSidecar stands in for the status sidecar's localhost forwarder and
 // records the reports it receives.
 func captureSidecar(t *testing.T, status int) (*httptest.Server, *[]skillscan.Report) {
@@ -437,6 +447,69 @@ func TestConverge_PicksUpASkillWrittenAfterBoot(t *testing.T) {
 	}
 	if !rep.Skills[0].Healthy() {
 		t.Errorf("a committed, pushed, linked skill should be clean; got %+v", rep.Skills[0].Issues)
+	}
+}
+
+func TestConverge_LegacyFlatSkillIsManagedAndStaleLinksAreRemoved(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeFlatSkill(t, "approve", "---\nname: approve\ndescription: Approve a plan.\n---\nbody\n")
+	for _, runtime := range []string{".claude", ".codex"} {
+		stale := filepath.Join(f.home, runtime, "skills", "approve.md")
+		if err := os.Symlink(filepath.Join(f.repoDir, "skills", "deleted.md"), stale); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	repJSON, err := convergeAndReport(paths{repoDir: f.repoDir, homeDir: f.home}, func(*skillscan.Report) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rep skillscan.Report
+	if err := json.Unmarshal(repJSON, &rep); err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Skills) != 1 || rep.Skills[0].Name != "approve" || len(rep.Skills[0].Linked) != 2 {
+		t.Fatalf("flat skill report = %+v", rep.Skills)
+	}
+	if len(rep.Issues) != 0 {
+		t.Fatalf("flat compatibility wrappers must be managed; issues = %+v", rep.Issues)
+	}
+	for _, runtime := range []string{".claude", ".codex"} {
+		wrapper := filepath.Join(f.home, runtime, "skills", "approve")
+		if !compatWrapperPointsAt(wrapper, filepath.Join(f.repoDir, "skills", "approve.md")) {
+			t.Errorf("%s is not a managed compatibility wrapper", wrapper)
+		}
+		if _, err := os.Lstat(filepath.Join(f.home, runtime, "skills", "approve.md")); !os.IsNotExist(err) {
+			t.Errorf("stale link still exists: %v", err)
+		}
+	}
+}
+
+func TestConverge_CanonicalPackageWinsOverLegacyFlatSkill(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "approve", "---\nname: approve\ndescription: Canonical package.\n---\npackage\n")
+	f.writeFlatSkill(t, "approve", "---\nname: approve\ndescription: Legacy copy.\n---\nlegacy\n")
+	if _, err := convergeAndReport(paths{repoDir: f.repoDir, homeDir: f.home}, func(*skillscan.Report) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	rep, err := skillscan.Scan(skillscan.Options{RepoDir: f.repoDir, HomeDir: f.home})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var canonical, legacy *skillscan.Skill
+	for i := range rep.Skills {
+		switch rep.Skills[i].Path {
+		case "skills/approve":
+			canonical = &rep.Skills[i]
+		case "skills/approve.md":
+			legacy = &rep.Skills[i]
+		}
+	}
+	if canonical == nil || len(canonical.Linked) != 2 || canonical.Description != "Canonical package." {
+		t.Fatalf("canonical package was not linked/won: %+v", canonical)
+	}
+	if legacy != nil && len(legacy.Linked) != 0 {
+		t.Fatalf("legacy flat skill unexpectedly linked: %+v", legacy)
 	}
 }
 
