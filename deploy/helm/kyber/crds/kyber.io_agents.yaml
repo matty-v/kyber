@@ -59,6 +59,55 @@ spec:
           spec:
             description: AgentSpec defines the desired state of an Agent.
             properties:
+              a2aPeers:
+                description: |-
+                  A2APeers is the operator-curated set of remote agents this agent may
+                  contact through the managed kyber-a2a MCP tools. Runtimes select only a
+                  peer name; endpoints and credentials remain private to the status sidecar.
+                items:
+                  description: AgentA2APeer declares one allowlisted outbound A2A
+                    destination.
+                  properties:
+                    allowPrivateNetwork:
+                      description: |-
+                        AllowPrivateNetwork permits this peer to resolve to private address
+                        space. Loopback, link-local, and cloud metadata addresses stay blocked.
+                      type: boolean
+                    credential:
+                      description: |-
+                        Credential references one key in a Kubernetes Secret in the Agent's
+                        namespace. The value is injected only into the status sidecar.
+                      properties:
+                        existingSecret:
+                          pattern: ^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$
+                          type: string
+                        key:
+                          maxLength: 253
+                          minLength: 1
+                          type: string
+                      required:
+                      - existingSecret
+                      - key
+                      type: object
+                    name:
+                      description: Name is the stable handle exposed to the runtime.
+                      pattern: ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$
+                      type: string
+                    url:
+                      description: URL is the HTTPS base URL of the remote A2A service.
+                      maxLength: 2048
+                      pattern: ^https://[^[:space:]]+$
+                      type: string
+                  required:
+                  - credential
+                  - name
+                  - url
+                  type: object
+                maxItems: 16
+                type: array
+                x-kubernetes-list-map-keys:
+                - name
+                x-kubernetes-list-type: map
               channels:
                 description: |-
                   Channels declares bidirectional comms channels for this agent, each

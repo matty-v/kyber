@@ -109,6 +109,7 @@ export interface Agent {
   sessionResume?: boolean
   // Opt-in gate for authenticated bounded request/reply submissions.
   requestReplyEnabled?: boolean
+  a2aPeers?: AgentA2APeer[]
   publicCapabilities?: PublicCapabilitiesManifest
   publicCapabilitiesStatus?: PublicCapabilitiesStatus
   // Concrete model observed from the running agent. This is populated after
@@ -169,6 +170,16 @@ export interface Agent {
   // working/idle state via in-pod kyber-token-reporter).
   activity?: AgentActivityStatus
   createdAt: string
+}
+
+export interface AgentA2APeer {
+  name: string
+  url: string
+  credential: {
+    existingSecret: string
+    key: string
+  }
+  allowPrivateNetwork?: boolean
 }
 
 // Mirrors agentActivityStatusResponse from pkg/api/routes_agents.go.
@@ -421,6 +432,7 @@ export interface CreateAgentRequest {
   startupPrompt?: string
   sessionResume?: boolean
   requestReplyEnabled?: boolean
+  a2aPeers?: AgentA2APeer[]
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string
@@ -496,6 +508,7 @@ export interface PatchAgentRequest {
   startupPrompt?: string
   sessionResume?: boolean
   requestReplyEnabled?: boolean
+  a2aPeers?: AgentA2APeer[]
   publicCapabilities?: PublicCapabilitiesManifest | null
 }
 

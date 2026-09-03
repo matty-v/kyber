@@ -2030,6 +2030,11 @@ components:
         requestReplyEnabled:
           type: boolean
           description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
+        a2aPeers:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/AgentA2APeer'
         publicCapabilities:
           $ref: '#/components/schemas/PublicCapabilitiesDeclaration'
         publicCapabilitiesStatus:
@@ -2055,6 +2060,31 @@ components:
         displayName: {type: string, maxLength: 128}
         description: {type: string, maxLength: 1024}
         documentationUrl: {type: string, format: uri, maxLength: 2048}
+
+    AgentA2APeer:
+      type: object
+      required: [name, url, credential]
+      properties:
+        name:
+          type: string
+          pattern: '^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$'
+        url:
+          type: string
+          maxLength: 2048
+          pattern: '^https://[^[:space:]]+$'
+        credential:
+          type: object
+          required: [existingSecret, key]
+          properties:
+            existingSecret:
+              type: string
+              pattern: '^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$'
+            key:
+              type: string
+              minLength: 1
+              maxLength: 253
+        allowPrivateNetwork:
+          type: boolean
 
     PublicCapabilityEvidence:
       type: object
@@ -2179,6 +2209,11 @@ components:
         requestReplyEnabled:
           type: boolean
           description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
+        a2aPeers:
+          type: array
+          maxItems: 16
+          items:
+            $ref: '#/components/schemas/AgentA2APeer'
         force:
           type: boolean
           description: Skip catalog validation of the model id (write-only).

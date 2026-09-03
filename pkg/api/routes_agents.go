@@ -31,13 +31,14 @@ import (
 
 // CreateAgentRequest is the JSON body for POST /api/v1/agents.
 type CreateAgentRequest struct {
-	Name                string `json:"name"`
-	Machine             string `json:"machine"`
-	Runtime             string `json:"runtime"`
-	Model               string `json:"model"`
-	StartupPrompt       string `json:"startupPrompt,omitempty"`
-	SessionResume       bool   `json:"sessionResume,omitempty"`
-	RequestReplyEnabled bool   `json:"requestReplyEnabled,omitempty"`
+	Name                string                 `json:"name"`
+	Machine             string                 `json:"machine"`
+	Runtime             string                 `json:"runtime"`
+	Model               string                 `json:"model"`
+	StartupPrompt       string                 `json:"startupPrompt,omitempty"`
+	SessionResume       bool                   `json:"sessionResume,omitempty"`
+	RequestReplyEnabled bool                   `json:"requestReplyEnabled,omitempty"`
+	A2APeers            []kyberv1.AgentA2APeer `json:"a2aPeers,omitempty"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
 	Resources    agentResourcesRequest    `json:"resources"`
@@ -112,10 +113,11 @@ type agentSecretsRequest struct {
 
 // PatchAgentRequest is the JSON body for PATCH /api/v1/agents/{name}.
 type PatchAgentRequest struct {
-	Model               *string `json:"model,omitempty"`
-	StartupPrompt       *string `json:"startupPrompt,omitempty"`
-	SessionResume       *bool   `json:"sessionResume,omitempty"`
-	RequestReplyEnabled *bool   `json:"requestReplyEnabled,omitempty"`
+	Model               *string                 `json:"model,omitempty"`
+	StartupPrompt       *string                 `json:"startupPrompt,omitempty"`
+	SessionResume       *bool                   `json:"sessionResume,omitempty"`
+	RequestReplyEnabled *bool                   `json:"requestReplyEnabled,omitempty"`
+	A2APeers            *[]kyberv1.AgentA2APeer `json:"a2aPeers,omitempty"`
 	// PublicCapabilities is RawMessage so PATCH can distinguish omitted (leave
 	// unchanged) from explicit null (unpublish) and an object (validate/update).
 	PublicCapabilities json.RawMessage        `json:"publicCapabilities,omitempty"`
@@ -179,6 +181,7 @@ type AgentResponse struct {
 	SessionResume            bool                                   `json:"sessionResume,omitempty"`
 	RequestReplyEnabled      bool                                   `json:"requestReplyEnabled,omitempty"`
 	PublicCapabilities       *kyberv1.AgentPublicCapabilities       `json:"publicCapabilities,omitempty"`
+	A2APeers                 []kyberv1.AgentA2APeer                 `json:"a2aPeers,omitempty"`
 	PublicCapabilitiesStatus *kyberv1.AgentPublicCapabilitiesStatus `json:"publicCapabilitiesStatus,omitempty"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
@@ -428,6 +431,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		RequestReplyEnabled:      a.Spec.RequestReplyEnabled,
 		PublicCapabilities:       a.Spec.PublicCapabilities,
 		PublicCapabilitiesStatus: a.Status.PublicCapabilities,
+		A2APeers:                 a.Spec.A2APeers,
 		CurrentModel:             a.Status.CurrentModel,
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
@@ -962,6 +966,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			StartupPrompt:       req.StartupPrompt,
 			SessionResume:       req.SessionResume,
 			RequestReplyEnabled: req.RequestReplyEnabled,
+			A2APeers:            req.A2APeers,
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1157,6 +1162,9 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 	if req.RequestReplyEnabled != nil {
 		agent.Spec.RequestReplyEnabled = *req.RequestReplyEnabled
 	}
+	if req.A2APeers != nil {
+		agent.Spec.A2APeers = append([]kyberv1.AgentA2APeer(nil), (*req.A2APeers)...)
+	}
 
 	if len(req.PublicCapabilities) > 0 {
 		if strings.TrimSpace(string(req.PublicCapabilities)) == "null" {
@@ -1244,7 +1252,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 
 func patchIncludesLifecycleFields(req PatchAgentRequest) bool {
 	return req.Model != nil || req.StartupPrompt != nil || req.SessionResume != nil ||
-		req.RequestReplyEnabled != nil || req.Resources != nil || req.Jobs != nil
+		req.RequestReplyEnabled != nil || req.A2APeers != nil || req.Resources != nil || req.Jobs != nil
 }
 
 func publicCapabilityIDs(declaration *kyberv1.AgentPublicCapabilities) []string {

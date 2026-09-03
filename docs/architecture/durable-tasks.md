@@ -148,6 +148,17 @@ they never expose private evidence, runtime details, prompts, tools, or
 credentials. Push notifications, extended cards, JSON-RPC, gRPC, and protocol
 extensions are intentionally unsupported in v1.
 
+### Outbound A2A client boundary
+
+Supported runtimes receive a separate loopback `kyber-a2a` MCP server owned by
+the status sidecar. Operators configure named destinations in
+`Agent.spec.a2aPeers`; a peer binds an HTTPS base URL to one Kubernetes Secret
+key. The controller injects that key only into the sidecar, while the runtime
+sees the peer name and bounded task operations. Destination dialing resolves
+and checks addresses at connection time to prevent DNS-rebinding bypasses;
+loopback, link-local, and metadata ranges are always blocked, and private
+address space requires explicit operator opt-in. Redirects fail closed.
+
 ## Multi-turn interactions
 
 A dispatched attempt may request exactly one typed interaction (`text`,

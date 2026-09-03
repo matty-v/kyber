@@ -192,7 +192,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// access/refresh/expires trio (kyber#681).
 	mux.HandleFunc("/codex-auth", forwardHandler(client, cfg, metrics, logger, "codex-auth", false))
 	mux.HandleFunc("/mcp", (&requestMCPServer{client: client, cfg: cfg}).handle)
-	mux.HandleFunc("/a2a/mcp", (&outboundA2AMCPServer{}).handle)
+	mux.HandleFunc("/a2a/mcp", (&outboundA2AMCPServer{peers: cfg.A2APeers}).handle)
 	mux.HandleFunc("/task-receipts", taskReceiptForwarder(client, cfg))
 	mux.HandleFunc("/task-receipts/", taskReceiptForwarder(client, cfg))
 	srv := &http.Server{
@@ -413,6 +413,7 @@ type config struct {
 	ControlPlaneURL string
 	AgentDiskBytes  int64
 	TaskResultsRoot string
+	A2APeers        map[string]outboundA2APeer
 	// OtelEndpoint is the OTLP HTTP endpoint the metrics SDK posts to
 	// (kyber#256). Empty disables metrics — the rest of the sidecar
 	// keeps working.
@@ -464,6 +465,11 @@ func loadConfig() (config, error) {
 	if c.TaskResultsRoot != "/persist" && !strings.HasPrefix(c.TaskResultsRoot, "/persist/") {
 		return c, fmt.Errorf("KYBER_TASK_RESULTS_ROOT must be beneath /persist")
 	}
+	peers, err := loadOutboundA2APeers(os.Getenv("KYBER_A2A_PEERS_JSON"))
+	if err != nil {
+		return c, err
+	}
+	c.A2APeers = peers
 	diskBytes, err := strconv.ParseInt(os.Getenv("KYBER_AGENT_DISK_BYTES"), 10, 64)
 	if err != nil || diskBytes <= 0 {
 		return c, fmt.Errorf("KYBER_AGENT_DISK_BYTES must be a positive integer")

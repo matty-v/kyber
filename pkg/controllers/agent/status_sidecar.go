@@ -13,6 +13,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
@@ -47,6 +48,17 @@ type SidecarConfig struct {
 	Runtime         string
 	LogLevel        string
 	TaskResultsRoot string
+	A2APeers        []A2APeerConfig
+}
+
+// A2APeerConfig is the controller-to-sidecar projection of an allowlisted
+// peer. Credential Secret selectors are rendered only on the sidecar.
+type A2APeerConfig struct {
+	Name             string
+	URL              string
+	CredentialSecret string
+	CredentialKey    string
+	AllowPrivate     bool
 }
 
 // AppendStatusSidecar appends the kyber-status-sidecar container to pod's
@@ -106,6 +118,27 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 	// LevelDebug when value == "debug" (case-insensitive).
 	if cfg.LogLevel != "" {
 		env = append(env, corev1.EnvVar{Name: "KYBER_SIDECAR_LOG_LEVEL", Value: cfg.LogLevel})
+	}
+	if len(cfg.A2APeers) > 0 {
+		type peerEnvelope struct {
+			Name          string `json:"name"`
+			URL           string `json:"url"`
+			CredentialEnv string `json:"credentialEnv"`
+			AllowPrivate  bool   `json:"allowPrivateNetwork,omitempty"`
+		}
+		peers := make([]peerEnvelope, 0, len(cfg.A2APeers))
+		for i, peer := range cfg.A2APeers {
+			credentialEnv := "KYBER_A2A_PEER_CREDENTIAL_" + strconv.Itoa(i)
+			peers = append(peers, peerEnvelope{Name: peer.Name, URL: peer.URL, CredentialEnv: credentialEnv, AllowPrivate: peer.AllowPrivate})
+			env = append(env, corev1.EnvVar{Name: credentialEnv, ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: peer.CredentialSecret},
+					Key:                  peer.CredentialKey,
+				},
+			}})
+		}
+		encoded, _ := json.Marshal(peers)
+		env = append(env, corev1.EnvVar{Name: "KYBER_A2A_PEERS_JSON", Value: string(encoded)})
 	}
 
 	container := corev1.Container{
