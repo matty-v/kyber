@@ -184,6 +184,13 @@ func TestStartClaudeRegistersA2AMCP(t *testing.T) {
 			t.Fatalf("start-claude.sh missing A2A MCP registration %q", want)
 		}
 	}
+	s := string(script)
+	trust := strings.Index(s, `echo "[kyber] Claude Code workspace trusted: $LAUNCH_DIR"`)
+	register := strings.Index(s, `claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL"`)
+	launch := strings.LastIndex(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`)
+	if trust < 0 || register < trust || launch < register {
+		t.Fatalf("A2A registration must run after state preparation and before Claude launch: trust=%d register=%d launch=%d", trust, register, launch)
+	}
 }
 
 func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T) {

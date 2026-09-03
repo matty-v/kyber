@@ -242,17 +242,6 @@ if [ -n "${KYBER_REQUEST_MCP_URL:-}" ]; then
     fi
 fi
 
-# ---- Platform outbound A2A MCP tool ----
-if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
-    claude mcp remove kyber-a2a --scope user >/dev/null 2>&1 || true
-    if claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL" \
-            --transport http --scope user >/dev/null 2>&1; then
-        echo "[kyber] Outbound A2A MCP tools registered at $KYBER_A2A_MCP_URL"
-    else
-        echo "[kyber] WARNING: could not register outbound A2A MCP tools" >&2
-    fi
-fi
-
 # ---- Identity repo ----
 # Clone-or-sync the identity repo and install the git credential helper. The
 # implementation is SHARED with every other runtime (kyber#676) — it used to
@@ -302,16 +291,6 @@ if [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ -r "$DISCORD_SKILL_SRC/SKILL.md" ] &
     echo "[kyber] Discord messaging skill installed"
 elif [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ ! -r "$DISCORD_SKILL_SRC/SKILL.md" ]; then
     echo "[kyber] WARNING: Discord messaging skill is missing or unreadable at $DISCORD_SKILL_SRC" >&2
-fi
-
-A2A_SKILL_SRC="${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"
-A2A_SKILL_DST="$HOME/.claude/skills/a2a-client"
-if [ -n "${KYBER_A2A_MCP_URL:-}" ] && [ -r "$A2A_SKILL_SRC/SKILL.md" ] && [ ! -e "$A2A_SKILL_DST" ]; then
-    mkdir -p "$HOME/.claude/skills"
-    ln -s "$A2A_SKILL_SRC" "$A2A_SKILL_DST"
-    echo "[kyber] A2A client skill installed"
-elif [ -n "${KYBER_A2A_MCP_URL:-}" ] && [ ! -r "$A2A_SKILL_SRC/SKILL.md" ]; then
-    echo "[kyber] WARNING: A2A client skill is missing or unreadable at $A2A_SKILL_SRC" >&2
 fi
 
 # ---- Skill inventory ----
@@ -1071,6 +1050,30 @@ if [ "$(id -u)" -eq 0 ]; then
     chown kyber:kyber "$CLAUDE_STATE"
 fi
 echo "[kyber] Claude Code workspace trusted: $LAUNCH_DIR"
+
+# Register outbound A2A only after runtime version/auth preparation and the
+# final workspace-state rewrite. Some Claude Code migrations replace both
+# ~/.claude.json and ~/.claude during those steps; registering earlier can log
+# success and then silently disappear before the harness starts.
+if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+    claude mcp remove kyber-a2a --scope user >/dev/null 2>&1 || true
+    if claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL" \
+            --transport http --scope user >/dev/null 2>&1; then
+        echo "[kyber] Outbound A2A MCP tools registered at $KYBER_A2A_MCP_URL"
+    else
+        echo "[kyber] WARNING: could not register outbound A2A MCP tools" >&2
+    fi
+
+    A2A_SKILL_SRC="${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"
+    A2A_SKILL_DST="$HOME/.claude/skills/a2a-client"
+    if [ -r "$A2A_SKILL_SRC/SKILL.md" ] && [ ! -e "$A2A_SKILL_DST" ]; then
+        mkdir -p "$HOME/.claude/skills"
+        ln -s "$A2A_SKILL_SRC" "$A2A_SKILL_DST"
+        echo "[kyber] A2A client skill installed"
+    elif [ ! -r "$A2A_SKILL_SRC/SKILL.md" ]; then
+        echo "[kyber] WARNING: A2A client skill is missing or unreadable at $A2A_SKILL_SRC" >&2
+    fi
+fi
 
 # Dump a re-runnable launch script so POST /restart-session (#128) can
 # kill-tmux + relaunch in place without rolling the pod. The heredoc is
