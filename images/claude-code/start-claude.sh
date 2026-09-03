@@ -1203,6 +1203,17 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     fi
     sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
 
+    if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+        (
+            for _attempt in \$(seq 1 30); do
+                sleep 2
+                mkdir -p /home/kyber/.claude/skills
+                ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" /home/kyber/.claude/skills/a2a-client
+                chown -h kyber:kyber /home/kyber/.claude/skills/a2a-client 2>/dev/null || true
+            done
+        ) &
+    fi
+
     echo "[kyber] restart-session: tmux 'agent' session restarted"
 ) 200>"\$SESSION_LOCK"
 LAUNCH_SH
@@ -1240,8 +1251,8 @@ tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"
 # the packaged skill after launch; skills are resolved from disk on demand.
 if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
     (
-        for _attempt in 1 2 3 4 5; do
-            sleep 1
+        for _attempt in $(seq 1 30); do
+            sleep 2
             mkdir -p "$HOME/.claude/skills"
             if [ -r "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client/SKILL.md" ]; then
                 ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" "$HOME/.claude/skills/a2a-client"
