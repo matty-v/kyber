@@ -58,3 +58,29 @@ func TestDiscordSkillPackagedForBothRuntimes(t *testing.T) {
 		}
 	}
 }
+
+func TestA2AClientSkillPackagedForBothRuntimes(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Clean(filepath.Join(wd, "..", ".."))
+	for _, dockerfile := range []string{"images/codex/Dockerfile", "images/claude-code/Dockerfile"} {
+		body, err := os.ReadFile(filepath.Join(root, dockerfile))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), "images/shared/skills/a2a-client") {
+			t.Errorf("%s does not package the A2A client skill", dockerfile)
+		}
+	}
+	for _, script := range []string{"images/codex/start-codex.sh", "images/claude-code/start-claude.sh"} {
+		body, err := os.ReadFile(filepath.Join(root, script))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(body), `KYBER_A2A_MCP_URL`) || !strings.Contains(string(body), "a2a-client") {
+			t.Errorf("%s does not conditionally install the A2A client skill", script)
+		}
+	}
+}

@@ -650,6 +650,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	} else if rolled {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
+	if rolled, rollErr := r.convergeA2AConfig(ctx, agent, pod); rollErr != nil {
+		logger.Info("A2A peer configuration convergence failed (best-effort)", "agent", agent.Name, "err", rollErr)
+	} else if rolled {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
 
 	// 5e. Mirror pod-derived state into Agent.Status (kyber#355). Populates
 	// the Status card on the Agent detail page: PodName, PodIP, NodeName,
@@ -2114,6 +2119,15 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	// OtelEndpoint + Runtime drive per-agent metrics (kyber#256) — both
 	// tolerate empty (dev installs / older deployments simply emit no
 	// metrics rather than crashing).
+	a2aPeers := make([]A2APeerConfig, 0, len(agent.Spec.A2APeers))
+	for _, peer := range agent.Spec.A2APeers {
+		a2aPeers = append(a2aPeers, A2APeerConfig{
+			Name: peer.Name, URL: peer.URL,
+			CredentialSecret: peer.Credential.ExistingSecret,
+			CredentialKey:    peer.Credential.Key,
+			AllowPrivate:     peer.AllowPrivateNetwork,
+		})
+	}
 	AppendStatusSidecar(&podSpec, SidecarConfig{
 		AgentName:       agent.Name,
 		Image:           r.StatusSidecarImage,
@@ -2122,6 +2136,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		Runtime:         agent.Spec.Runtime,
 		LogLevel:        r.SidecarLogLevel,
 		TaskResultsRoot: r.TaskResultsRoot,
+		A2APeers:        a2aPeers,
 	})
 
 	// Inject the Discord channel sidecar (kyber#646) when the agent enables
@@ -2204,6 +2219,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			Labels:    AgentPodLabels(agent, adapter),
 			Annotations: map[string]string{
 				DiscordConfigRevisionAnnotation: agent.Annotations[DiscordConfigRevisionAnnotation],
+				A2AConfigRevisionAnnotation:     a2aConfigRevision(agent.Spec.A2APeers),
 			},
 		},
 		Spec: podSpec,

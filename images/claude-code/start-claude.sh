@@ -623,6 +623,15 @@ fi
 
 # ---- Build arguments ----
 CLAUDE_ARGS="--dangerously-skip-permissions"
+A2A_CLAUDE_ARGS=""
+if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+    A2A_MCP_CONFIG="/persist/var/run/kyber-a2a-mcp.json"
+    mkdir -p "$(dirname "$A2A_MCP_CONFIG")"
+    jq -n --arg url "$KYBER_A2A_MCP_URL" \
+        '{mcpServers:{"kyber-a2a":{type:"http",url:$url}}}' > "$A2A_MCP_CONFIG"
+    chmod 0644 "$A2A_MCP_CONFIG"
+    A2A_CLAUDE_ARGS="--mcp-config $A2A_MCP_CONFIG"
+fi
 
 # API-key agents use --bare mode which accepts ANTHROPIC_API_KEY without the
 # interactive "Use this API key?" prompt that blocks headless startup.
@@ -737,7 +746,7 @@ fi
 # A configured startup prompt is the initial user turn for every new harness
 # session. Quote it as one shell argument because the tmux command is a command
 # string; never interpolate its raw contents into generated shell source.
-CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS"
+CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS $A2A_CLAUDE_ARGS"
 if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CLAUDE_LAUNCH_ARGS="$CLAUDE_LAUNCH_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"
 fi
@@ -747,7 +756,7 @@ fi
 # with no turn to act on, so an agent interrupted mid-task would never pick
 # the task back up. --continue sits before the `--` separator because flags
 # must precede the positional prompt.
-CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue"
+CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"
 if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"
 fi
@@ -1051,6 +1060,29 @@ if [ "$(id -u)" -eq 0 ]; then
 fi
 echo "[kyber] Claude Code workspace trusted: $LAUNCH_DIR"
 
+# Keep a user-scoped entry for operator inspection and older Claude versions.
+# The launch-bound --mcp-config above is authoritative because newer Claude
+# migrations may replace ~/.claude.json during process startup.
+if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+    claude mcp remove kyber-a2a --scope user >/dev/null 2>&1 || true
+    if claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL" \
+            --transport http --scope user >/dev/null 2>&1; then
+        echo "[kyber] Outbound A2A MCP tools registered at $KYBER_A2A_MCP_URL"
+    else
+        echo "[kyber] WARNING: could not register outbound A2A MCP tools" >&2
+    fi
+
+    A2A_SKILL_SRC="${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"
+    A2A_SKILL_DST="$HOME/.claude/skills/a2a-client"
+    if [ -r "$A2A_SKILL_SRC/SKILL.md" ] && [ ! -e "$A2A_SKILL_DST" ]; then
+        mkdir -p "$HOME/.claude/skills"
+        ln -s "$A2A_SKILL_SRC" "$A2A_SKILL_DST"
+        echo "[kyber] A2A client skill installed"
+    elif [ ! -r "$A2A_SKILL_SRC/SKILL.md" ]; then
+        echo "[kyber] WARNING: A2A client skill is missing or unreadable at $A2A_SKILL_SRC" >&2
+    fi
+fi
+
 # Dump a re-runnable launch script so POST /restart-session (#128) can
 # kill-tmux + relaunch in place without rolling the pod. The heredoc is
 # unquoted so $LAUNCH_DIR and $CLAUDE_ARGS expand to their resolved values
@@ -1171,6 +1203,17 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     fi
     sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
 
+    if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+        (
+            for _attempt in \$(seq 1 30); do
+                sleep 2
+                mkdir -p /home/kyber/.claude/skills
+                ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" /home/kyber/.claude/skills/a2a-client
+                chown -h kyber:kyber /home/kyber/.claude/skills/a2a-client 2>/dev/null || true
+            done
+        ) &
+    fi
+
     echo "[kyber] restart-session: tmux 'agent' session restarted"
 ) 200>"\$SESSION_LOCK"
 LAUNCH_SH
@@ -1203,6 +1246,20 @@ if [ "$SESSION_RESUME_ENABLED" = "1" ]; then
 fi
 echo "[kyber] Starting Claude Code in tmux (cwd=$LAUNCH_DIR)"
 tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"
+
+# Claude may replace ~/.claude during its first-start migration. Re-converge
+# the packaged skill after launch; skills are resolved from disk on demand.
+if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
+    (
+        for _attempt in $(seq 1 30); do
+            sleep 2
+            mkdir -p "$HOME/.claude/skills"
+            if [ -r "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client/SKILL.md" ]; then
+                ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" "$HOME/.claude/skills/a2a-client"
+            fi
+        done
+    ) &
+fi
 
 echo "[kyber] tmux session 'agent' started — waiting"
 

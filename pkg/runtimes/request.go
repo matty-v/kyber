@@ -11,3 +11,8 @@ const StatusSidecarForwarderPort = 8091
 func RequestMCPURL() string {
 	return fmt.Sprintf("http://127.0.0.1:%d/mcp", StatusSidecarForwarderPort)
 }
+
+// A2AMCPURL is the distinct loopback endpoint for outbound A2A tools.
+func A2AMCPURL() string {
+	return fmt.Sprintf("http://127.0.0.1:%d/a2a/mcp", StatusSidecarForwarderPort)
+}

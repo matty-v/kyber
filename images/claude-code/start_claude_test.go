@@ -171,6 +171,31 @@ func TestStartClaudeRegistersRequestReplyMCP(t *testing.T) {
 	}
 }
 
+func TestStartClaudeRegistersA2AMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		`claude mcp remove kyber-a2a --scope user`,
+		`claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL"`,
+		`A2A_CLAUDE_ARGS="--mcp-config $A2A_MCP_CONFIG"`,
+		`CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"`,
+		`ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"`,
+	} {
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-claude.sh missing A2A MCP registration %q", want)
+		}
+	}
+	s := string(script)
+	trust := strings.Index(s, `echo "[kyber] Claude Code workspace trusted: $LAUNCH_DIR"`)
+	register := strings.Index(s, `claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL"`)
+	launch := strings.LastIndex(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`)
+	if trust < 0 || register < trust || launch < register {
+		t.Fatalf("A2A registration must run after state preparation and before Claude launch: trust=%d register=%d launch=%d", trust, register, launch)
+	}
+}
+
 func TestStartClaudeTrustsResolvedLaunchDirectoryBeforeClaudeStarts(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
 	if err != nil {
@@ -1958,7 +1983,7 @@ func TestStartClaude_BootSweepsStalePollerBeforeLaunch(t *testing.T) {
 	}
 	s := string(src)
 
-	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`+"\n\necho \"[kyber] tmux session 'agent' started")
+	launch := strings.Index(s, `tmux new-session -d -s agent -c "$LAUNCH_DIR" "$BOOT_LAUNCH_CMD"`)
 	if launch < 0 {
 		t.Fatal("could not locate the boot tmux launch")
 	}
@@ -2775,7 +2800,7 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	}
 	s := string(src)
 	for what, want := range map[string]string{
-		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue"`,
+		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"`,
 		"resume arg set prompt":      `CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"`,
 		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
 		"boot gate":                  `if claude_has_prior_session; then`,

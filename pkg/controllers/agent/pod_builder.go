@@ -414,6 +414,7 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 		{Name: "KYBER_REFRESH_TOKEN_URL", Value: fmt.Sprintf("%s/internal/agents/%s/refresh-token", controlPlaneInternalURL(), agent.Name)},
 		{Name: "KYBER_REQUEST_MCP_URL", Value: pkgruntimes.RequestMCPURL()},
+		{Name: "KYBER_A2A_MCP_URL", Value: pkgruntimes.A2AMCPURL()},
 		// Persistence model and the fail-closed sandbox check (kyber#78).
 		// The entrypoint re-derives the boundary from /proc/self/uid_map rather
 		// than trusting these, but they are what tells it whether an unisolated

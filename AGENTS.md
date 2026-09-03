@@ -198,6 +198,14 @@ shim in `test/a2aconformance`; do not patch upstream TCK source or weaken a
 failing MUST into a skip. Evidence bundles are immutable directories with an
 exact SHA256SUMS file and must use the self-tested—not certified—claim.
 
+Outbound A2A is exposed to both runtimes as the status sidecar's distinct
+loopback `kyber-a2a` MCP endpoint (`/a2a/mcp`). Agents select only names from
+`Agent.spec.a2aPeers`; HTTPS endpoints and Kubernetes Secret-backed bearer
+credentials are projected into the sidecar and never the runtime container.
+Private address space requires an explicit per-peer opt-in, while loopback,
+link-local, metadata, userinfo URLs, and redirects remain prohibited. Keep
+tool schemas closed and bounded; never replace this surface with generic HTTP.
+
 ### 1.5 Inbound dispatch gauntlet (how prompts reach agents)
 External senders POST signed envelopes to
 `/webhooks/inbound/<agent>/<binding>`. The pipeline, in fixed order:

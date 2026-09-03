@@ -686,6 +686,15 @@ type AgentSpec struct {
 	// +optional
 	PublicCapabilities *AgentPublicCapabilities `json:"publicCapabilities,omitempty"`
 
+	// A2APeers is the operator-curated set of remote agents this agent may
+	// contact through the managed kyber-a2a MCP tools. Runtimes select only a
+	// peer name; endpoints and credentials remain private to the status sidecar.
+	// +optional
+	// +kubebuilder:validation:MaxItems=16
+	// +listType=map
+	// +listMapKey=name
+	A2APeers []AgentA2APeer `json:"a2aPeers,omitempty"`
+
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 
@@ -770,6 +779,38 @@ type AgentSpec struct {
 	// which are the older runtime-coupled / outbound-only paths.
 	// +optional
 	Channels *AgentChannels `json:"channels,omitempty"`
+}
+
+// AgentA2APeer declares one allowlisted outbound A2A destination.
+type AgentA2APeer struct {
+	// Name is the stable handle exposed to the runtime.
+	// +kubebuilder:validation:MaxLength=63
+	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$`
+	Name string `json:"name"`
+
+	// URL is the HTTPS base URL of the remote A2A service.
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https://[^[:space:]]+$`
+	URL string `json:"url"`
+
+	// Credential references one key in a Kubernetes Secret in the Agent's
+	// namespace. The value is injected only into the status sidecar.
+	Credential AgentA2ACredentialRef `json:"credential"`
+
+	// AllowPrivateNetwork permits this peer to resolve to private address
+	// space. Loopback, link-local, and cloud metadata addresses stay blocked.
+	// +optional
+	AllowPrivateNetwork bool `json:"allowPrivateNetwork,omitempty"`
+}
+
+// AgentA2ACredentialRef identifies an operator-provisioned bearer credential.
+type AgentA2ACredentialRef struct {
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`
+	ExistingSecret string `json:"existingSecret"`
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Key string `json:"key"`
 }
 
 // AgentChannels groups the per-channel bidirectional configs for an agent.

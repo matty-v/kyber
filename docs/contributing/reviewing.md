@@ -259,3 +259,17 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
   reservations. Arm a convergence canary only after that persistence succeeds,
   or conflicting operator intent creates a phantom canary that can never be
   verified. Never add an out-of-band `r.Delete` to a convergence helper.
+
+### 18. Mixed-scope PATCH authorization must gate each mutation class independently
+
+- **Fragile area:** `pkg/api/routes_agents.go` — `patchAgent` and any endpoint
+  that accepts fields protected by different scopes in one request body.
+- **The trap:** conditioning the lifecycle authorization check on a capability
+  field also being present protects mixed requests but leaves a lifecycle-only
+  request unchecked. This surfaced when `a2aPeers` joined the general Agent
+  PATCH: a scoped caller without `lifecycle:write` could otherwise change the
+  sidecar's operator-curated outbound destinations. Each mutation class must
+  independently require its own scope, and a mixed request must satisfy every
+  applicable check. **Look harder at:** authorization conditions containing
+  `&&` between “request includes class A” and “request includes class B”; that
+  usually means single-class requests bypass one of the checks.

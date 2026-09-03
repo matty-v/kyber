@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -66,6 +67,31 @@ func TestAppendStatusSidecar_ConfiguresTaskResultsRoot(t *testing.T) {
 	t.Fatal("KYBER_TASK_RESULTS_ROOT not propagated to status sidecar")
 }
 
+func TestAppendStatusSidecar_ConfiguresA2APeersOnlyOnSidecar(t *testing.T) {
+	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}}
+	AppendStatusSidecar(spec, SidecarConfig{
+		AgentName: "alice", Image: "img:v1", DiskBytes: 1024,
+		A2APeers: []A2APeerConfig{{Name: "auditor", URL: "https://agents.example/auditor", CredentialSecret: "auditor-token", CredentialKey: "token"}},
+	})
+	sidecar := spec.InitContainers[0]
+	env := make(map[string]corev1.EnvVar, len(sidecar.Env))
+	for _, variable := range sidecar.Env {
+		env[variable.Name] = variable
+	}
+	if got := env["KYBER_A2A_PEERS_JSON"].Value; !strings.Contains(got, `"name":"auditor"`) || strings.Contains(got, "auditor-token") {
+		t.Fatalf("KYBER_A2A_PEERS_JSON = %q", got)
+	}
+	credential := env["KYBER_A2A_PEER_CREDENTIAL_0"].ValueFrom
+	if credential == nil || credential.SecretKeyRef == nil || credential.SecretKeyRef.Name != "auditor-token" || credential.SecretKeyRef.Key != "token" {
+		t.Fatalf("credential env = %#v", credential)
+	}
+	for _, variable := range spec.Containers[0].Env {
+		if strings.HasPrefix(variable.Name, "KYBER_A2A_PEER_CREDENTIAL_") {
+			t.Fatalf("runtime received credential env %q", variable.Name)
+		}
+	}
+}
+
 func TestAppendStatusSidecar_LivenessProbeOnHealthzPort(t *testing.T) {
 	spec := &corev1.PodSpec{}
 	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
@@ -93,14 +119,14 @@ func TestAppendStatusSidecar_ResourceLimits(t *testing.T) {
 	}
 }
 
-func TestAppendStatusSidecar_MountsPersistReadOnly(t *testing.T) {
+func TestAppendStatusSidecar_MountsPersistForManagedA2AResults(t *testing.T) {
 	spec := &corev1.PodSpec{}
 	AppendStatusSidecar(spec, SidecarConfig{AgentName: "alice", Image: "img:v1"})
 	side := mustStatusSidecar(t, spec)
 	for _, mount := range side.VolumeMounts {
 		if mount.Name == "persist" {
-			if mount.MountPath != "/persist" || !mount.ReadOnly {
-				t.Errorf("persist mount = %+v, want read-only /persist", mount)
+			if mount.MountPath != "/persist" || mount.ReadOnly {
+				t.Errorf("persist mount = %+v, want writable /persist", mount)
 			}
 			return
 		}
@@ -250,5 +276,8 @@ func TestAppendStatusSidecar_SecurityHardened(t *testing.T) {
 	}
 	if side.SecurityContext.AllowPrivilegeEscalation == nil || *side.SecurityContext.AllowPrivilegeEscalation {
 		t.Error("AllowPrivilegeEscalation must be false")
+	}
+	if side.SecurityContext.RunAsUser == nil || *side.SecurityContext.RunAsUser != 0 {
+		t.Error("RunAsUser must be root for the root-owned persist PVC")
 	}
 }

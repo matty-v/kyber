@@ -548,6 +548,7 @@ if [ "$KYBER_CODEX_CONFIG_USABLE" = "true" ]; then
     kyber_converge_mcp kyber_telegram "${KYBER_TELEGRAM_MCP_URL:-}" "Telegram"
     kyber_converge_mcp kyber_discord "${KYBER_DISCORD_MCP_URL:-}" "Discord"
     kyber_converge_mcp kyber_request_reply "${KYBER_REQUEST_MCP_URL:-}" "Request/reply"
+    kyber_converge_mcp kyber_a2a "${KYBER_A2A_MCP_URL:-}" "Outbound A2A"
 fi
 
 
@@ -679,6 +680,21 @@ if [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ -r "$DISCORD_SKILL_SRC/SKILL.md" ] &
     echo "[kyber] Discord messaging skill installed"
 elif [ -n "${KYBER_DISCORD_MCP_URL:-}" ] && [ ! -r "$DISCORD_SKILL_SRC/SKILL.md" ]; then
     echo "[kyber] WARNING: Discord messaging skill is missing or unreadable at $DISCORD_SKILL_SRC" >&2
+fi
+
+A2A_SKILL_SRC="${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"
+A2A_SKILL_DST="$CODEX_HOME/skills/a2a-client"
+if [ -n "${REPO_DIR:-}" ] && [ -r "$REPO_DIR/skills/a2a-client/SKILL.md" ]; then
+    mkdir -p "$CODEX_HOME/skills"
+    rm -rf "$A2A_SKILL_DST"
+    ln -s "$REPO_DIR/skills/a2a-client" "$A2A_SKILL_DST"
+fi
+if [ -n "${KYBER_A2A_MCP_URL:-}" ] && [ -r "$A2A_SKILL_SRC/SKILL.md" ] && [ ! -e "$A2A_SKILL_DST" ]; then
+    mkdir -p "$CODEX_HOME/skills"
+    ln -s "$A2A_SKILL_SRC" "$A2A_SKILL_DST"
+    echo "[kyber] A2A client skill installed"
+elif [ -n "${KYBER_A2A_MCP_URL:-}" ] && [ ! -r "$A2A_SKILL_SRC/SKILL.md" ]; then
+    echo "[kyber] WARNING: A2A client skill is missing or unreadable at $A2A_SKILL_SRC" >&2
 fi
 
 # ---- Skill inventory ----

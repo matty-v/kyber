@@ -71,6 +71,9 @@ func TestAgentCapabilitiesWriteRequiresScopeAndSupportsUnpublish(t *testing.T) {
 	if got := request("capability-writer", `{"publicCapabilities":null,"model":"smuggled-model"}`); got.Code != http.StatusForbidden {
 		t.Fatalf("mixed lifecycle mutation=%d %s", got.Code, got.Body.String())
 	}
+	if got := request("no-scope", `{"a2aPeers":[{"name":"auditor","url":"https://agents.example/a2a","credential":{"existingSecret":"auditor-token","key":"token"}}]}`); got.Code != http.StatusForbidden {
+		t.Fatalf("A2A peer mutation without lifecycle scope=%d %s", got.Code, got.Body.String())
+	}
 	if got := request("capability-writer", `{"publicCapabilities":null}`); got.Code != http.StatusOK {
 		t.Fatalf("writer=%d %s", got.Code, got.Body.String())
 	}
