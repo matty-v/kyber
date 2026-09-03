@@ -20,6 +20,10 @@ vi.mock('../hooks/useAPI', () => ({
   useStopAgent: vi.fn(),
   useRestartAgent: vi.fn(),
   useDeleteAgent: vi.fn(),
+  useForceNeedsAuthAgent: vi.fn(),
+  useRepairAgentRuntime: vi.fn(),
+  useRestartAgentSession: vi.fn(),
+  useCompactAgentSession: vi.fn(),
 }))
 
 // Replace useNavigate with a spy; keep the real MemoryRouter/usePrefixedPath.
@@ -43,6 +47,10 @@ function renderList(agents: Agent[]) {
     useAPIModule.useStopAgent,
     useAPIModule.useRestartAgent,
     useAPIModule.useDeleteAgent,
+    useAPIModule.useForceNeedsAuthAgent,
+    useAPIModule.useRepairAgentRuntime,
+    useAPIModule.useRestartAgentSession,
+    useAPIModule.useCompactAgentSession,
   ]) {
     vi.mocked(hook).mockReturnValue(
       idleMutation as unknown as ReturnType<typeof hook>,
