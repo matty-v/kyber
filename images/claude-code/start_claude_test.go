@@ -179,6 +179,9 @@ func TestStartClaudeRegistersA2AMCP(t *testing.T) {
 	for _, want := range []string{
 		`claude mcp remove kyber-a2a --scope user`,
 		`claude mcp add kyber-a2a "$KYBER_A2A_MCP_URL"`,
+		`A2A_CLAUDE_ARGS="--mcp-config $A2A_MCP_CONFIG"`,
+		`CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"`,
+		`ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client"`,
 	} {
 		if !strings.Contains(string(script), want) {
 			t.Fatalf("start-claude.sh missing A2A MCP registration %q", want)
