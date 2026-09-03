@@ -1,5 +1,22 @@
 # @matty-v/kyber-pwa-views
 
+## 0.38.0 — 2026-09-03
+
+### Fixed
+- The agent list's row menu now offers the same actions as the agent detail
+  page's More menu for the same phase. It previously rendered a fixed
+  Start / Stop / Restart / Delete list that never read the agent's phase, so a
+  Running agent was offered Start and a crashed one was offered Restart — the
+  dead button kyber#599 removed from the detail page. The recovery actions a
+  wedged agent needs (Require re-auth, Repair runtime, Restart pod out of
+  NeedsAuth) and the session actions were missing from the list entirely.
+
+### Changed
+- The lifecycle and session menu items moved to a shared
+  `AgentActionMenuItems` component used by both pages, so the two surfaces
+  cannot drift apart again. Configuration actions (Set Model / Set Harness
+  Version / Set Resources) remain detail-page only — they open dialogs.
+
 ## 0.37.1 — 2026-09-01
 
 ### Fixed

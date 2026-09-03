@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { Bot, Plus, Play, Square, RotateCcw, Trash2, MoreHorizontal } from 'lucide-react'
+import { Bot, Plus, Trash2, MoreHorizontal } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
   useAgents,
@@ -9,6 +9,10 @@ import {
   useStopAgent,
   useRestartAgent,
   useDeleteAgent,
+  useForceNeedsAuthAgent,
+  useRepairAgentRuntime,
+  useRestartAgentSession,
+  useCompactAgentSession,
 } from '../hooks/useAPI'
 import { Card } from '../components/Card'
 import { StatusBadge } from '../components/StatusBadge'
@@ -29,8 +33,47 @@ import {
 import { DataTable } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
 import type { Agent } from '../lib/types'
+import {
+  LifecycleMenuItems,
+  SessionMenuItems,
+} from '../components/AgentActionMenuItems'
+import {
+  isLifecycleKind,
+  lifecycleActionEndpoint,
+  lifecycleItemsInMore,
+  sessionItemsInMore,
+} from '../lib/design/agent-actions'
 
-type ActionKind = 'start' | 'stop' | 'restart' | 'delete'
+// The list offers the same actions as the detail page's More menu, minus the
+// configuration dialogs. Kinds are the shared vocabulary from agent-actions.ts
+// rather than a second hardcoded list — the previous static
+// 'start' | 'stop' | 'restart' | 'delete' set was phase-blind and offered
+// Start on a Running agent and Restart on a crashed one (kyber#599).
+type ActionKind =
+  | 'start'
+  | 'stop'
+  | 'restart'
+  | 'force-needs-auth'
+  | 'repair-runtime'
+  | 'retry-startup'
+  | 'compact-session'
+  | 'restart-session'
+  | 'delete'
+
+// Confirm-dialog titles. capitalize() on the raw kind produced
+// "Force-needs-auth agent?", so each kind carries the sentence an operator
+// should actually read.
+const ACTION_TITLE: Record<ActionKind, string> = {
+  start: 'Start agent?',
+  stop: 'Stop agent?',
+  restart: 'Restart pod?',
+  'force-needs-auth': 'Require re-auth?',
+  'repair-runtime': 'Repair runtime?',
+  'retry-startup': 'Restart pod?',
+  'compact-session': 'Compact session?',
+  'restart-session': 'Restart session?',
+  delete: 'Delete agent?',
+}
 
 interface ActionState {
   kind: ActionKind
@@ -47,6 +90,10 @@ export function AgentList() {
   const stopAgent = useStopAgent()
   const restartAgent = useRestartAgent()
   const deleteAgent = useDeleteAgent()
+  const forceNeedsAuthAgent = useForceNeedsAuthAgent()
+  const repairAgentRuntime = useRepairAgentRuntime()
+  const restartAgentSession = useRestartAgentSession()
+  const compactAgentSession = useCompactAgentSession()
 
   const isActing =
     startAgent.isPending ||
@@ -165,10 +212,18 @@ export function AgentList() {
     if (!pending) return
     const { kind, agent } = pending
     try {
-      if (kind === 'start') await startAgent.mutateAsync(agent.id)
-      if (kind === 'stop') await stopAgent.mutateAsync(agent.id)
-      if (kind === 'restart') await restartAgent.mutateAsync(agent.id)
-      if (kind === 'delete') await deleteAgent.mutateAsync(agent.id)
+      // Lifecycle kinds resolve through lifecycleActionEndpoint, the same
+      // mapping the detail page uses, so 'retry-startup' fires /start here too
+      // instead of becoming a no-op the operator has to discover.
+      const action = isLifecycleKind(kind) ? lifecycleActionEndpoint(kind) : kind
+      if (action === 'start') await startAgent.mutateAsync(agent.id)
+      if (action === 'stop') await stopAgent.mutateAsync(agent.id)
+      if (action === 'restart') await restartAgent.mutateAsync(agent.id)
+      if (action === 'force-needs-auth') await forceNeedsAuthAgent.mutateAsync(agent.id)
+      if (action === 'repair-runtime') await repairAgentRuntime.mutateAsync(agent.id)
+      if (action === 'restart-session') await restartAgentSession.mutateAsync(agent.id)
+      if (action === 'compact-session') await compactAgentSession.mutateAsync(agent.id)
+      if (action === 'delete') await deleteAgent.mutateAsync(agent.id)
     } finally {
       setPending(null)
     }
@@ -288,7 +343,7 @@ export function AgentList() {
 
       <ConfirmDialog
         open={pending !== null}
-        title={pending ? `${capitalize(pending.kind)} agent?` : ''}
+        title={pending ? ACTION_TITLE[pending.kind] : ''}
         message={pending ? agentActionConfirmMessage(pending.kind, pending.agent.id) : ''}
         confirmLabel={pending?.kind === 'delete' ? 'Delete' : 'Confirm'}
         dangerous={pending?.kind === 'delete'}
@@ -298,10 +353,6 @@ export function AgentList() {
       />
     </div>
   )
-}
-
-function capitalize(s: string): string {
-  return s.charAt(0).toUpperCase() + s.slice(1)
 }
 
 // formatTokens humanizes a token count for the agents overview. Tight table
@@ -323,13 +374,20 @@ function formatPct(p: number): string {
   return `${p.toFixed(p >= 100 ? 0 : 1)}%`
 }
 
-function AgentActionsMenu({
+// Exported for isolated per-phase testing, mirroring the
+// StatusCardBody/LifecycleMenuItems convention on the detail page. The parity
+// guard in AgentList.actions.test.tsx mounts this directly.
+export function AgentActionsMenu({
   agent,
   onAction,
 }: {
   agent: Agent
   onAction: (kind: ActionKind, agent: Agent) => void
 }) {
+  // Same gating as the detail page: a section with no applicable items renders
+  // nothing rather than an empty separator. Delete is always available.
+  const hasSessionActions = sessionItemsInMore(agent.phase).length > 0
+  const hasPodActions = lifecycleItemsInMore(agent.phase).length > 0
   return (
     <div
       className="flex items-center shrink-0"
@@ -342,19 +400,22 @@ function AgentActionsMenu({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
-          <DropdownMenuItem onSelect={() => onAction('start', agent)}>
-            <Play className="h-3.5 w-3.5" />
-            Start
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onAction('stop', agent)}>
-            <Square className="h-3.5 w-3.5" />
-            Stop
-          </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => onAction('restart', agent)}>
-            <RotateCcw className="h-3.5 w-3.5" />
-            Restart
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
+          {hasSessionActions && (
+            <SessionMenuItems
+              phase={agent.phase}
+              onSelect={(k) => onAction(k, agent)}
+            />
+          )}
+          {hasPodActions && (
+            <>
+              {hasSessionActions && <DropdownMenuSeparator />}
+              <LifecycleMenuItems
+                phase={agent.phase}
+                onSelect={(k) => onAction(k, agent)}
+              />
+            </>
+          )}
+          {(hasSessionActions || hasPodActions) && <DropdownMenuSeparator />}
           <DropdownMenuItem
             variant="danger"
             onSelect={() => onAction('delete', agent)}

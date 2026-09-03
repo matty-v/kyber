@@ -488,68 +488,12 @@ function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
   )
 }
 
-// LifecycleMenuItems renders the per-phase lifecycle actions inside the agent
-// detail "More" dropdown. Extracted + exported (like StatusCardBody above) so
-// the actions surfaced per phase can be tested in isolation without mounting
-// the whole detail page — kyber#599: a crashed agent (Failed/MemoryExhausted)
-// must surface the WORKING recovery, Start (desiredPhase=Running), and no
-// longer the no-op Restart pod (which only ever fired from Running). The
-// per-phase set itself is owned by lifecycleItemsInMore; this just maps each
-// applicable kind to its labelled menu item.
-export function LifecycleMenuItems({
-  phase,
-  onSelect,
-}: {
-  phase: AgentPhase
-  onSelect: (kind: ActionKind) => void
-}) {
-  const items = lifecycleItemsInMore(phase)
-  return (
-    <>
-      {items.includes('start') && (
-        <DropdownMenuItem onSelect={() => onSelect('start')}>
-          <Play className="h-3.5 w-3.5" />
-          Start
-        </DropdownMenuItem>
-      )}
-      {items.includes('stop') && (
-        <DropdownMenuItem onSelect={() => onSelect('stop')}>
-          <Square className="h-3.5 w-3.5" />
-          Stop
-        </DropdownMenuItem>
-      )}
-      {items.includes('restart') && (
-        <DropdownMenuItem onSelect={() => onSelect('restart')}>
-          <RotateCcw className="h-3.5 w-3.5" />
-          Restart pod
-        </DropdownMenuItem>
-      )}
-      {items.includes('force-needs-auth') && (
-        <DropdownMenuItem onSelect={() => onSelect('force-needs-auth')}>
-          <KeyRound className="h-3.5 w-3.5" />
-          Require re-auth
-        </DropdownMenuItem>
-      )}
-      {items.includes('repair-runtime') && (
-        <DropdownMenuItem onSelect={() => onSelect('repair-runtime')}>
-          <Wrench className="h-3.5 w-3.5" />
-          Repair runtime
-        </DropdownMenuItem>
-      )}
-      {/* kyber#26: the only lifecycle control a NeedsAuth agent gets. Labelled
-          for what the operator sees happen (the pod is rebuilt) rather than for
-          the endpoint it calls (/start) — see agent-actions.ts for why it is
-          not the 'restart' kind. Sits beside, and does not replace, the
-          Re-authorize panel further down the page. */}
-      {items.includes('retry-startup') && (
-        <DropdownMenuItem onSelect={() => onSelect('retry-startup')}>
-          <RotateCcw className="h-3.5 w-3.5" />
-          Restart pod
-        </DropdownMenuItem>
-      )}
-    </>
-  )
-}
+// LifecycleMenuItems now lives in components/AgentActionMenuItems.tsx so the
+// agent LIST renders the identical per-phase menu. Re-exported here because it
+// was exported from this module for isolated testing (kyber#599) and callers
+// and tests still import it from this path.
+export { LifecycleMenuItems } from '../components/AgentActionMenuItems'
+import { LifecycleMenuItems as LifecycleItems, SessionMenuItems } from '../components/AgentActionMenuItems'
 
 export function AgentDetail() {
   const { name = '' } = useParams<{ name: string }>()
@@ -739,31 +683,14 @@ export function AgentDetail() {
               {hasAgentActions && (
                 <>
                   <DropdownMenuLabel>Agent actions</DropdownMenuLabel>
-                  {sessionActions.includes('compact-session') && (
-                    <DropdownMenuItem
-                      onSelect={() => setPending('compact-session')}
-                      aria-label="Compact session"
-                    >
-                      <Minimize2 className="h-3.5 w-3.5" />
-                      Compact session
-                    </DropdownMenuItem>
-                  )}
-                  {sessionActions.includes('restart-session') && (
-                    <DropdownMenuItem
-                      onSelect={() => setPending('restart-session')}
-                      aria-label="Restart session"
-                    >
-                      <RotateCcw className="h-3.5 w-3.5" />
-                      Restart session
-                    </DropdownMenuItem>
-                  )}
+                  <SessionMenuItems phase={agent.phase} onSelect={setPending} />
                 </>
               )}
               {hasPodActions && (
                 <>
                   {hasAgentActions && <DropdownMenuSeparator />}
                   <DropdownMenuLabel>Pod actions</DropdownMenuLabel>
-                  <LifecycleMenuItems phase={agent.phase} onSelect={setPending} />
+                  <LifecycleItems phase={agent.phase} onSelect={setPending} />
                 </>
               )}
               {(hasAgentActions || hasPodActions) && <DropdownMenuSeparator />}
