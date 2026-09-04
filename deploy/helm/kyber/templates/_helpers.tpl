@@ -211,3 +211,33 @@ When preview.postgresSecretName is set use that; otherwise default to
 {{- printf "%s-postgres" .Release.Name -}}
 {{- end -}}
 {{- end }}
+
+{{/*
+Render a chart value that the control plane parses as a number.
+
+Helm parses every YAML number as a float64, and Go prints a float64 above about
+one million in exponent form — so a bare `{{ .Values.x | quote }}` turns
+26214400 into "2.62144e+07". Every consumer of these keys parses the string with
+strconv or resource.ParseQuantity, so an exponent-form value is either rejected
+outright (v1.4.0 crash-looped the control plane on
+api.durableTasks.maxFileBytes) or silently dropped in favour of a compiled
+default (metrics.redisRetentionSeconds).
+
+Three cases, all of which matter:
+
+  - unset renders "", which every consumer treats as "use the compiled
+    default". This is what a bare `quote` produced and must be preserved: a
+    plain `int64` maps nil to 0, and the task limits reject 0 and exit.
+  - a string is passed through untouched, so an operator can still write a
+    Kubernetes quantity like "200Mi" where the consumer accepts one.
+  - a number renders as a plain integer.
+*/}}
+{{- define "kyber.numericValue" -}}
+{{- if kindIs "invalid" . -}}
+{{ "" | quote }}
+{{- else if kindIs "string" . -}}
+{{ . | quote }}
+{{- else -}}
+{{ . | int64 | quote }}
+{{- end -}}
+{{- end }}

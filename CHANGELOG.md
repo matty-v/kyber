@@ -12,8 +12,10 @@
   (`2.62144e+07` instead of `26214400`) because Helm parses YAML numbers as
   floats. The control plane parses them as integers at startup and exits before
   it checks whether durable tasks are enabled, so every cluster crash-looped its
-  new control plane whether or not tasks or A2A were switched on. All numeric
-  request and task limits now render as integers.
+  new control plane whether or not tasks or A2A were switched on. Every numeric
+  setting the chart hands the control plane now renders as a plain integer,
+  including `metrics.redisRetentionSeconds`, which was silently discarded and
+  fell back to 7-day retention for any operator asking for more than 11 days.
 - Add a managed outbound A2A client to Claude Code and Codex agents. Operators
   allowlist named HTTPS peers and Secret-backed credentials; runtimes receive
   bounded discovery, delegation, task follow-up, continuation, cancellation,

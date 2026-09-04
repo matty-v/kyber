@@ -310,11 +310,11 @@ spec:
             - name: KYBER_TRANSCRIPT_RETENTION_ENABLED
               value: {{ .Values.transcripts.retention.enabled | quote }}
             - name: KYBER_TRANSCRIPT_RETENTION_MAX_AGE_DAYS
-              value: {{ .Values.transcripts.retention.maxAgeDays | quote }}
+              value: {{ include "kyber.numericValue" .Values.transcripts.retention.maxAgeDays }}
             - name: KYBER_TRANSCRIPT_RETENTION_MAX_BYTES_PER_AGENT
-              value: {{ .Values.transcripts.retention.maxBytesPerAgent | quote }}
+              value: {{ include "kyber.numericValue" .Values.transcripts.retention.maxBytesPerAgent }}
             - name: KYBER_TRANSCRIPT_RETENTION_PRUNE_INTERVAL_MINUTES
-              value: {{ .Values.transcripts.retention.pruneIntervalMinutes | quote }}
+              value: {{ include "kyber.numericValue" .Values.transcripts.retention.pruneIntervalMinutes }}
             - name: KYBER_TRANSCRIPT_RETENTION_ARCHIVE_CROSSCHECK
               value: {{ .Values.transcripts.retention.archiveCrosscheck | quote }}
             # PostgreSQL DSN — first-party StatefulSet (postgres:16-alpine).
