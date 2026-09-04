@@ -2030,6 +2030,8 @@ components:
         requestReplyEnabled:
           type: boolean
           description: Allow authenticated callers with request scopes to submit bounded requests to this agent. Defaults to false.
+        profile:
+          $ref: '#/components/schemas/AgentProfile'
         a2aPeers:
           type: array
           maxItems: 16
@@ -2052,6 +2054,16 @@ components:
           type: string
           format: date-time
           example: "2026-04-10T00:00:00Z"
+
+    AgentProfile:
+      type: object
+      properties:
+        alias:
+          type: string
+          maxLength: 80
+        description:
+          type: string
+          maxLength: 500
 
     PublicCapabilityIdentity:
       type: object
