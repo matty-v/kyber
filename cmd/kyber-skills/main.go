@@ -456,6 +456,7 @@ func linkAll(repoDir, homeDir string) (int, error) {
 	}
 
 	var count int
+	managedNames := managedSkillNames(sources)
 	for _, src := range sources {
 		entries, err := os.ReadDir(src)
 		if err != nil {
@@ -527,7 +528,67 @@ func linkAll(repoDir, homeDir string) (int, error) {
 			}
 		}
 	}
+	for _, rel := range runtimeSkillDirs {
+		if err := removeStaleCompatWrappers(filepath.Join(homeDir, rel), managedNames); err != nil {
+			return count, err
+		}
+	}
 	return count, nil
+}
+
+func managedSkillNames(sources []string) map[string]bool {
+	names := make(map[string]bool)
+	for _, src := range sources {
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			if e.IsDir() {
+				if hasPackageSkill(src, e.Name()) {
+					names[e.Name()] = true
+				}
+				continue
+			}
+			if filepath.Ext(e.Name()) == ".md" && !isIgnoredFlatSkill(e.Name()) {
+				names[strings.TrimSuffix(e.Name(), ".md")] = true
+			}
+		}
+	}
+	return names
+}
+
+func removeStaleCompatWrappers(dir string, managedNames map[string]bool) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if managedNames[e.Name()] || !e.IsDir() {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		info, err := os.Lstat(path)
+		if err != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		children, err := os.ReadDir(path)
+		if err != nil || len(children) != 1 || children[0].Name() != "SKILL.md" {
+			continue
+		}
+		link := filepath.Join(path, "SKILL.md")
+		linkInfo, err := os.Lstat(link)
+		if err != nil || linkInfo.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if _, err := filepath.EvalSymlinks(link); err == nil {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func hasPackageSkill(src, name string) bool {

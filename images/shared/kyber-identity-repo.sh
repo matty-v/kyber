@@ -349,6 +349,9 @@ for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
     for entry in "$runtime_skills"/*; do
         [ -L "$entry" ] || continue
         [ -e "$entry" ] || rm -f "$entry"
+        if [ -d "$entry" ] && [ -L "$entry/SKILL.md" ] && [ ! -e "$entry/SKILL.md" ]; then
+            rm -rf "$entry"
+        fi
     done
 done
 for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do

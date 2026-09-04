@@ -513,6 +513,23 @@ func TestConverge_CanonicalPackageWinsOverLegacyFlatSkill(t *testing.T) {
 	}
 }
 
+func TestConverge_RemovesStaleGeneratedCompatibilityWrapper(t *testing.T) {
+	f := newRepoFixture(t)
+	stale := filepath.Join(f.home, ".codex", "skills", "old-skill")
+	if err := os.MkdirAll(stale, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(f.repoDir, "skills", "removed.md"), filepath.Join(stale, "SKILL.md")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := convergeAndReport(paths{repoDir: f.repoDir, homeDir: f.home}, func(*skillscan.Report) error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(stale); !os.IsNotExist(err) {
+		t.Fatalf("stale generated wrapper remains: %v", err)
+	}
+}
+
 // Auto-linking makes a skill work before it is safe. Without this the tab would
 // show a brand-new uncommitted skill as perfectly healthy, right up until the
 // pod was reprovisioned and it vanished — the false-healthy state this whole
