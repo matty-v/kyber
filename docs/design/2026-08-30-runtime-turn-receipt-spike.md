@@ -1,6 +1,6 @@
 # Runtime turn receipt and recovery spike
 
-**Status:** Runtime receipt and handshake protocol prototypes validated; production cut-point matrix pending
+**Status:** Complete — runtime receipts, production handshake, and recovery matrix validated
 **Date:** 2026-08-30
 **Tracker:** [MAT-28](https://linear.app/matty-v/issue/MAT-28/spikeruntime-native-turn-receipt-and-recovery-capabilities)
 **Consumer:** [MAT-19](https://linear.app/matty-v/issue/MAT-19/designplatform-durable-externally-addressable-agent-tasks)
@@ -175,7 +175,7 @@ The purpose-built agents `sol-test-mat28-codex` and
 `sol-test-mat28-claude` were explicitly deleted after evidence capture. The
 only remaining agent on `peek-test` was the pre-existing `echo` agent.
 
-### What remains unproven
+### Prototype boundary before production implementation
 
 This validates a positive, pre-model, task-correlated acceptance receipt on
 both harnesses. A separate executable
@@ -190,14 +190,80 @@ prototype validates the proposed loopback sidecar protocol over HTTP:
 - when neither POST nor GET proves the exact receipt, the hook fails closed so
   the harness can block model processing.
 
-The protocol prototype passes all four cases on Go 1.26. It resolves the
-committed-but-response-lost algorithm, but it is not yet a production
-implementation. A control-plane restart during the hook, hook exit-code
-behavior at the deployed versions, durable database persistence, and automatic
-recovery after a pod restart still require the real loopback endpoint and
-repository. Until then, an attempt crossing that boundary without a
-reconcilable receipt remains `delivery_unknown` and must not be blindly
-redelivered.
+The protocol prototype passes all four cases on Go 1.26. At the time of the
+prototype this resolved the committed-but-response-lost algorithm, but the real
+loopback endpoint and PostgreSQL repository did not yet exist. The production
+implementation and its destructive recovery evidence are recorded below.
+
+## Production implementation and recovery evidence
+
+The matrix was completed on 2026-09-04 against the guarded
+`datawire-dev/us-central1-a/kyber-dev` cluster in namespace `kyber-system`.
+All four components used the same worktree image tag
+`worktree-20260904154423-7d16514`. The control plane reported a PostgreSQL task
+store. Tests used only purpose-built `sol-test-mat28-prod-*` agents; the
+pre-existing `echo` agent was not modified.
+
+The destructive production rerun used Claude as the representative harness
+because the loopback forwarder, PostgreSQL receipt repository, dispatcher
+lease, and reconciler are shared by both runtimes. Codex-specific evidence
+remains the exact-session-and-turn live run above plus the managed-config boot
+tests. The rerun recorded the deployed image but did not recapture the
+dynamically selected Claude CLI version before cleanup; version-specific hook
+claims therefore remain anchored to the 2026-08-30 Claude Code 2.1.251 and
+Codex 0.151.0 observations rather than an inferred version from the image.
+
+MAT-29 had by then implemented the protocol proposed by this spike:
+
+- the dispatcher moves an injected attempt to internal `receipt_pending` and
+  does not publish `dispatched` until it accepts the matching hook receipt;
+- the status sidecar forwards create-or-read POST and exact-attempt GET calls
+  over the pod-loopback trust boundary;
+- PostgreSQL stores the immutable runtime, session ID, optional turn ID, and
+  random attempt token; and
+- both managed harness configurations render the receipt hook at boot.
+
+### Live production-path results
+
+| Case | Observed result |
+| --- | --- |
+| Positive Claude task | `task_f15eb542bbee25d216604579b7f76563` moved `queued -> dispatched -> completed`; attempt `attempt_27baea7138eb20642470f5d627378dc7` stored Claude session `874c9509-d00c-4dad-be96-0a9da3763885`; response was exactly `RECEIPT_OK` |
+| Idempotent POST | replaying the identical persisted receipt returned HTTP 200 and did not create a second receipt |
+| Conflicting POST | reusing the attempt token with a different session ID returned HTTP 409 |
+| Ordinary prompt | the managed receipt command returned 0, created no receipt, and emitted no prompt content into pod logs |
+| Receipt service unavailable | the managed receipt command returned 2 |
+| Real Claude fail-closed turn | `task_b61b0a3110274ea6c1bf022270e2c4ce` produced a local hook receipt but no database receipt, no task user turn, no assistant execution, and no response; after the two-minute ambiguity lease it terminated as `failed/delivery_unknown` |
+| Control-plane replacement after commit | the completed task stayed at version 3 and its exact receipt remained queryable through a newly started control-plane process |
+| Agent pod replacement after commit | the same task and receipt survived the new pod; the attempt was not redelivered and no second completion/event appeared |
+
+The fail-closed Claude transcript contained only an informational hook record
+for the rejected task envelope. It contained no corresponding user turn and no
+assistant output, confirming the documented exit-code-2 behavior in Kyber's
+long-lived TUI integration rather than inferring acceptance from a transcript.
+The database event sequence was `task.created`, then
+`task.terminal(failed, delivery_unknown)` with no intervening dispatched event.
+
+The earlier executable prototype remains the deliberately reproducible test
+for a response lost *after* commit: an exact GET recovers the immutable receipt.
+The production endpoint adds the same create-or-read, replay, conflict, and GET
+semantics over PostgreSQL. Together with process and pod replacement above,
+this closes the original ambiguity question without requiring transcript
+parsing or a custom runtime loop.
+
+### Final classification
+
+- Claude Code: **class 2**, a durable Kyber acceptance receipt built from the
+  supported pre-model hook and native session ID, queryable from Kyber's
+  database; the harness itself still exposes no supported durable turn query.
+- Codex TUI: **class 2**, with the same contract plus a native turn ID in hook
+  payloads. A future app-server adapter may reach class 1, but it is not a
+  dependency of this design.
+
+An attempt with no reconcilable receipt must still terminate conservatively as
+`delivery_unknown`; it must never be blindly redelivered. A persisted receipt
+is sufficient to make `dispatched` durable across control-plane and pod
+replacement, but it does not make arbitrary model/tool side effects
+repeatable.
 
 ## Recommendation for MAT-19
 
