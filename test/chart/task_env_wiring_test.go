@@ -1,6 +1,7 @@
 package chart
 
 import (
+	"io"
 	"regexp"
 	"strings"
 	"testing"
@@ -89,6 +90,7 @@ func taskKeysInControlPlaneConfigMap(t *testing.T, rendered string) []string {
 func taskEnvKeysOnControlPlaneContainer(t *testing.T, rendered string) map[string]bool {
 	t.Helper()
 	reachable := map[string]bool{}
+	configMapName := controlPlaneConfigMapName(t, rendered)
 	forEachDoc(t, rendered, func(doc map[string]any) {
 		if kind, _ := doc["kind"].(string); kind != "Deployment" {
 			return
@@ -108,7 +110,19 @@ func taskEnvKeysOnControlPlaneContainer(t *testing.T, rendered string) map[strin
 			env, _ := container["env"].([]any)
 			for _, e := range env {
 				entry, _ := e.(map[string]any)
-				if name, _ := entry["name"].(string); strings.HasPrefix(name, "KYBER_TASK") {
+				name, _ := entry["name"].(string)
+				if !strings.HasPrefix(name, "KYBER_TASK") {
+					continue
+				}
+				if _, literal := entry["value"]; literal {
+					reachable[name] = true
+					continue
+				}
+				valueFrom, _ := entry["valueFrom"].(map[string]any)
+				ref, _ := valueFrom["configMapKeyRef"].(map[string]any)
+				refName, _ := ref["name"].(string)
+				refKey, _ := ref["key"].(string)
+				if refName == configMapName && refKey == name {
 					reachable[name] = true
 				}
 			}
@@ -117,7 +131,7 @@ func taskEnvKeysOnControlPlaneContainer(t *testing.T, rendered string) map[strin
 			if envFrom, _ := container["envFrom"].([]any); len(envFrom) > 0 {
 				for _, f := range envFrom {
 					src, _ := f.(map[string]any)
-					if ref, _ := src["configMapRef"].(map[string]any); ref != nil {
+					if ref, _ := src["configMapRef"].(map[string]any); ref != nil && ref["name"] == configMapName {
 						for _, key := range taskKeysInControlPlaneConfigMap(t, rendered) {
 							reachable[key] = true
 						}
@@ -127,6 +141,22 @@ func taskEnvKeysOnControlPlaneContainer(t *testing.T, rendered string) map[strin
 		}
 	})
 	return reachable
+}
+
+func controlPlaneConfigMapName(t *testing.T, rendered string) string {
+	t.Helper()
+	var name string
+	forEachDoc(t, rendered, func(doc map[string]any) {
+		if kind, _ := doc["kind"].(string); kind != "ConfigMap" || !isControlPlaneComponent(doc) {
+			return
+		}
+		metadata, _ := doc["metadata"].(map[string]any)
+		name, _ = metadata["name"].(string)
+	})
+	if name == "" {
+		t.Fatal("control-plane ConfigMap not found")
+	}
+	return name
 }
 
 func isControlPlaneComponent(doc map[string]any) bool {
@@ -141,8 +171,10 @@ func forEachDoc(t *testing.T, rendered string, fn func(map[string]any)) {
 	dec := yaml.NewDecoder(strings.NewReader(rendered))
 	for {
 		var doc map[string]any
-		if err := dec.Decode(&doc); err != nil {
+		if err := dec.Decode(&doc); err == io.EOF {
 			return
+		} else if err != nil {
+			t.Fatalf("decode rendered Helm document: %v", err)
 		}
 		if doc != nil {
 			fn(doc)
