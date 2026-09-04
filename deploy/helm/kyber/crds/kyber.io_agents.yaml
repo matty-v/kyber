@@ -349,6 +349,18 @@ spec:
                   - signatureHeader
                   type: object
                 type: array
+              profile:
+                description: Profile is operator-editable presentation metadata.
+                properties:
+                  alias:
+                    description: Alias is the human-friendly display name.
+                    maxLength: 80
+                    type: string
+                  description:
+                    description: Description is a short operator-facing summary.
+                    maxLength: 500
+                    type: string
+                type: object
               jobs:
                 description: |-
                   Jobs declares recurring scheduled prompts for this agent. Each entry is

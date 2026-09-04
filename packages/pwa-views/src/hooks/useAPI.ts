@@ -128,6 +128,21 @@ export function usePatchAgent() {
   })
 }
 
+export function useUpdateAgentProfile() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, profile }: { name: string; profile: { alias: string; description: string } }) =>
+      api.patchAgent(name, { profile }),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    meta: { successMessage: 'Agent profile saved', errorPrefix: 'Failed to save agent profile' },
+  })
+}
+
 // useSetSessionResume flips the kyber#118 per-agent session-resume toggle.
 // Separate from usePatchAgent so each control keeps its own toast copy.
 export function useSetSessionResume() {

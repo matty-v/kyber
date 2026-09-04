@@ -1244,6 +1244,46 @@ func TestAgents_PatchRequestReplyEnabled(t *testing.T) {
 	}
 }
 
+func TestAgents_PatchProfileSetAndClear(t *testing.T) {
+	h, k := buildAgentHandler(t, sampleAgentCRD("dave"))
+	for _, tc := range []struct {
+		name, alias, description string
+	}{
+		{"set", "Dave", "Handles deployment reviews"},
+		{"clear", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{
+				"profile": map[string]string{"alias": tc.alias, "description": tc.description},
+			})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+			}
+			var got kyberv1.Agent
+			if err := k.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
+				t.Fatalf("getting agent: %v", err)
+			}
+			if got.Spec.Profile.Alias != tc.alias || got.Spec.Profile.Description != tc.description {
+				t.Fatalf("profile=%+v, want alias=%q description=%q", got.Spec.Profile, tc.alias, tc.description)
+			}
+		})
+	}
+}
+
+func TestAgents_PatchProfileRejectsOverLimit(t *testing.T) {
+	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
+	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{
+		"profile": map[string]string{"alias": strings.Repeat("界", 81)},
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "profile.alias") {
+		t.Fatalf("want field-specific 400, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAgents_PatchStartupPromptRejectsOverLimit(t *testing.T) {
 	h, _ := buildAgentHandler(t, sampleAgentCRD("dave"))
 	req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{"startupPrompt": strings.Repeat("界", 32769)})

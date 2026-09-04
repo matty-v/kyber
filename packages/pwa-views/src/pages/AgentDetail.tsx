@@ -22,6 +22,7 @@ import {
   usePatchAgent,
   useSetSessionResume,
   useSetRequestReplyEnabled,
+  useUpdateAgentProfile,
 } from '../hooks/useAPI'
 import { useEffectiveModelList } from '../lib/models'
 import { StatusBadge } from '../components/StatusBadge'
@@ -512,6 +513,8 @@ export function AgentDetail() {
   const [newCPU, setNewCPU] = useState('')
   const [newMemory, setNewMemory] = useState('')
   const [startupPrompt, setStartupPrompt] = useState('')
+  const [profileAlias, setProfileAlias] = useState('')
+  const [profileDescription, setProfileDescription] = useState('')
   const agentModels = useAgentModels(name, pending === 'set-model')
 
   useEffect(() => {
@@ -539,6 +542,7 @@ export function AgentDetail() {
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
   const setAgentResources = useSetAgentResources()
   const patchAgent = usePatchAgent()
+  const updateAgentProfile = useUpdateAgentProfile()
   const setSessionResume = useSetSessionResume()
   const setRequestReplyEnabled = useSetRequestReplyEnabled()
   const deleteAgent = useDeleteAgent()
@@ -547,6 +551,11 @@ export function AgentDetail() {
   useEffect(() => {
     setStartupPrompt(agent?.startupPrompt ?? '')
   }, [agent?.startupPrompt])
+
+  useEffect(() => {
+    setProfileAlias(agent?.profile?.alias ?? '')
+    setProfileDescription(agent?.profile?.description ?? '')
+  }, [agent?.profile?.alias, agent?.profile?.description])
 
   const isActing =
     startAgent.isPending ||
@@ -747,6 +756,43 @@ export function AgentDetail() {
 
         <TabsContent value="overview">
           <div className="space-y-4">
+          <Card>
+            <h2 className="mb-1 text-sm font-semibold text-text-primary">Agent profile</h2>
+            <p className="mb-3 text-xs text-text-muted">An operator-facing identity. Changes do not restart the agent.</p>
+            <div className="space-y-3">
+              <label className="block text-xs font-medium text-text-muted">
+                Alias
+                <input
+                  value={profileAlias}
+                  maxLength={80}
+                  onChange={(e) => setProfileAlias(e.target.value)}
+                  placeholder={name}
+                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                />
+              </label>
+              <label className="block text-xs font-medium text-text-muted">
+                Description
+                <textarea
+                  value={profileDescription}
+                  maxLength={500}
+                  rows={3}
+                  onChange={(e) => setProfileDescription(e.target.value)}
+                  placeholder="What this agent is for"
+                  className="mt-1 w-full resize-y rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                />
+              </label>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                loading={updateAgentProfile.isPending}
+                disabled={updateAgentProfile.isPending || profileAlias === (agent.profile?.alias ?? '') && profileDescription === (agent.profile?.description ?? '')}
+                onClick={() => updateAgentProfile.mutate({ name, profile: { alias: profileAlias, description: profileDescription } })}
+              >
+                Save profile
+              </Button>
+            </div>
+          </Card>
           <SchedulingFailureBanner agent={agent} />
           {agent.runtime === 'codex' && agent.authType === 'oauth' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (

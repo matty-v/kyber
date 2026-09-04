@@ -33,6 +33,12 @@ export interface AgentResources {
   disk: string
 }
 
+export interface AgentProfile {
+  alias?: string
+  description?: string
+  avatarUrl?: string
+}
+
 export type AgentIdentityRepoPhase = 'Pending' | 'Ready' | 'Failed'
 
 // Mirrors agentIdentityRepoResponse from pkg/api/routes_agents.go.
@@ -112,6 +118,7 @@ export interface Agent {
   a2aPeers?: AgentA2APeer[]
   publicCapabilities?: PublicCapabilitiesManifest
   publicCapabilitiesStatus?: PublicCapabilitiesStatus
+  profile?: AgentProfile
   // Concrete model observed from the running agent. This is populated after
   // the first response when model is empty and the harness chose its default.
   currentModel?: string
@@ -505,6 +512,10 @@ export interface CodexDeviceAuthStatus {
 }
 
 export interface PatchAgentRequest {
+  profile?: {
+    alias?: string
+    description?: string
+  }
   startupPrompt?: string
   sessionResume?: boolean
   requestReplyEnabled?: boolean
