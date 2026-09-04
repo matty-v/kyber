@@ -1,10 +1,12 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -28,6 +30,7 @@ import (
 	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/oauth"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 )
 
@@ -284,6 +287,7 @@ type AgentResponse struct {
 type agentProfileResponse struct {
 	Alias       string `json:"alias,omitempty"`
 	Description string `json:"description,omitempty"`
+	AvatarURL   string `json:"avatarUrl,omitempty"`
 }
 
 // agentActivityStatusResponse mirrors AgentStatus.Activity on the wire.
@@ -450,6 +454,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		Profile: agentProfileResponse{
 			Alias:       a.Spec.Profile.Alias,
 			Description: a.Spec.Profile.Description,
+			AvatarURL:   profileAvatarURL(a.Name, a.Spec.Profile.AvatarKey),
 		},
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
@@ -714,6 +719,9 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	case "capabilities":
 		s.handleAgentCapabilities(w, r, name)
 		return
+	case "profile/avatar":
+		s.handleAgentAvatar(w, r, name)
+		return
 	}
 
 	// Bounded request/reply API. The handler owns only the authenticated text
@@ -802,6 +810,112 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.handleRepairRuntime(w, r, name)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "unknown action")
+	}
+}
+
+const maxAgentAvatarBytes int64 = 1 << 20
+
+func profileAvatarURL(name, key string) string {
+	if key == "" {
+		return ""
+	}
+	return "/api/v1/agents/" + url.PathEscape(name) + "/profile/avatar"
+}
+
+func avatarContentType(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(strings.Split(value, ";")[0])) {
+	case "image/png", "image/jpeg", "image/webp":
+		return true
+	default:
+		return false
+	}
+}
+
+// handleAgentAvatar stores private avatar bytes in the configured object store
+// and serves them only through the authenticated API. The CRD stores only an
+// opaque key and validated content type, never image bytes or a public URL.
+func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name string) {
+	if s.TaskObjectStore == nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "avatar_unavailable", "avatar storage is not configured")
+		return
+	}
+	agent := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: s.Namespace}, agent); err != nil {
+		if k8serrors.IsNotFound(err) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "agent '"+name+"' not found")
+			return
+		}
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
+		return
+	}
+	key := "agent-avatars/" + name
+	switch r.Method {
+	case http.MethodGet:
+		if agent.Spec.Profile.AvatarKey == "" {
+			writeJSONError(w, http.StatusNotFound, "not_found", "agent has no avatar")
+			return
+		}
+		obj, err := s.TaskObjectStore.Open(r.Context(), agent.Spec.Profile.AvatarKey, nil)
+		if err != nil {
+			if errors.Is(err, taskobject.ErrNotFound) {
+				writeJSONError(w, http.StatusNotFound, "not_found", "agent avatar not found")
+				return
+			}
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to read avatar")
+			return
+		}
+		defer obj.Body.Close()
+		w.Header().Set("Content-Type", agent.Spec.Profile.AvatarContentType)
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		_, _ = io.Copy(w, obj.Body)
+	case http.MethodPut:
+		contentType := r.Header.Get("Content-Type")
+		if !avatarContentType(contentType) {
+			writeJSONError(w, http.StatusUnsupportedMediaType, "invalid_avatar_type", "avatar must be PNG, JPEG, or WebP")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, maxAgentAvatarBytes+1)
+		data, err := io.ReadAll(r.Body)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_avatar", "failed to read avatar")
+			return
+		}
+		if int64(len(data)) > maxAgentAvatarBytes {
+			writeJSONError(w, http.StatusRequestEntityTooLarge, "avatar_too_large", "avatar must be at most 1 MiB")
+			return
+		}
+		if err := s.TaskObjectStore.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), taskobject.PutOptions{Filename: name + "-avatar", ContentType: contentType}); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store avatar")
+			return
+		}
+		patch := client.MergeFrom(agent.DeepCopy())
+		agent.Spec.Profile.AvatarKey = key
+		agent.Spec.Profile.AvatarContentType = strings.ToLower(strings.Split(contentType, ";")[0])
+		if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to save avatar metadata")
+			return
+		}
+		writeJSON(w, http.StatusOK, agentToResponse(agent))
+	case http.MethodDelete:
+		if agent.Spec.Profile.AvatarKey == "" {
+			writeJSON(w, http.StatusNoContent, nil)
+			return
+		}
+		oldKey := agent.Spec.Profile.AvatarKey
+		patch := client.MergeFrom(agent.DeepCopy())
+		agent.Spec.Profile.AvatarKey = ""
+		agent.Spec.Profile.AvatarContentType = ""
+		if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to clear avatar metadata")
+			return
+		}
+		if err := s.TaskObjectStore.Delete(r.Context(), oldKey); err != nil && !errors.Is(err, taskobject.ErrNotFound) {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to delete avatar")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	}
 }
 

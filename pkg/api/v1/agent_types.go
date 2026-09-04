@@ -177,6 +177,13 @@ type AgentProfile struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=500
 	Description string `json:"description,omitempty"`
+	// AvatarKey is an opaque private object-store key. It is never returned to
+	// API callers; the public avatar endpoint serves the bytes after authz.
+	// +optional
+	AvatarKey string `json:"avatarKey,omitempty"`
+	// AvatarContentType is the validated image media type for the avatar.
+	// +optional
+	AvatarContentType string `json:"avatarContentType,omitempty"`
 }
 
 // AgentIdentityRepo configures a GitHub identity repo for the agent. When set,

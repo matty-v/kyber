@@ -2064,6 +2064,9 @@ components:
         description:
           type: string
           maxLength: 500
+        avatarUrl:
+          type: string
+          description: Authenticated API URL for the private avatar bytes.
 
     PublicCapabilityIdentity:
       type: object
