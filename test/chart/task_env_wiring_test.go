@@ -150,6 +150,10 @@ func controlPlaneConfigMapName(t *testing.T, rendered string) string {
 		if kind, _ := doc["kind"].(string); kind != "ConfigMap" || !isControlPlaneComponent(doc) {
 			return
 		}
+		data, _ := doc["data"].(map[string]any)
+		if _, hasDurableTaskSettings := data["KYBER_TASKS_ENABLED"]; !hasDurableTaskSettings {
+			return
+		}
 		metadata, _ := doc["metadata"].(map[string]any)
 		name, _ = metadata["name"].(string)
 	})
