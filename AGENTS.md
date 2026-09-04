@@ -485,13 +485,23 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
    return `(emptySlice, true)`, not `(nil, false)`, or callers fall through to
    Prometheus and resurrect all-time data (`pkg/api/routes_metrics.go`;
    `activityFromMetricsStore` predates this rule — do NOT copy it).
-10. **GitGuardian flags `AuthType: "oauth"` struct literals** as a secret.
+10. **A key in the control-plane ConfigMap is NOT an env var.** The container
+    names its env explicitly; nothing does `envFrom` on that ConfigMap. Adding
+    a setting to `control-plane/configmap.yaml` without a matching
+    `configMapKeyRef` in `control-plane/deployment.yaml` renders a value the
+    process can never read — `helm get values` shows it set, the operator sees
+    it applied, and `os.Getenv` returns "". This shipped: every
+    `api.durableTasks.*` value was inert on every cluster, invisible because
+    each chart default equalled the compiled default in
+    `taskstore.DefaultLimits()`. `test/chart/task_env_wiring_test.go` guards
+    the task keys; extend it when a new settings family lands.
+11. **GitGuardian flags `AuthType: "oauth"` struct literals** as a secret.
     Confirmed false positive (recurring); check the flagged line is an enum,
     then proceed.
-11. **`fireAndForget` (node-agent dispatch) skips result POST and pushStatus**
+12. **`fireAndForget` (node-agent dispatch) skips result POST and pushStatus**
     by design — terminal verbs only (delete, logout). Non-terminal verbs on it
     silently lose status.
-12. Looks-wrong-but-intentional: hand-rolled HTTP routing (no mux lib); no
+13. Looks-wrong-but-intentional: hand-rolled HTTP routing (no mux lib); no
     testify; no ESLint; `make lint` = `go vet` only (documented placeholder —
     golangci-lint is NOT wired); runtime imports in `cmd/control-plane/main.go`
     (named Claude Code + blank Codex registration are deliberate);
