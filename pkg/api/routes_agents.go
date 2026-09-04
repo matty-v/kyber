@@ -124,11 +124,17 @@ type PatchAgentRequest struct {
 	// unchanged) from explicit null (unpublish) and an object (validate/update).
 	PublicCapabilities json.RawMessage        `json:"publicCapabilities,omitempty"`
 	Resources          *agentResourcesRequest `json:"resources,omitempty"`
+	Profile             *agentProfileRequest    `json:"profile,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
 	// PUT-list semantics — callers that want additive semantics can fetch
 	// current jobs via GET, mutate, and PATCH back.
 	Jobs *[]AgentJobRequest `json:"jobs,omitempty"`
+}
+
+type agentProfileRequest struct {
+	Alias       *string `json:"alias,omitempty"`
+	Description *string `json:"description,omitempty"`
 }
 
 // AgentJobRequest mirrors kyberv1.AgentJob for the API surface.
@@ -185,6 +191,7 @@ type AgentResponse struct {
 	PublicCapabilities       *kyberv1.AgentPublicCapabilities       `json:"publicCapabilities,omitempty"`
 	A2APeers                 []kyberv1.AgentA2APeer                 `json:"a2aPeers,omitempty"`
 	PublicCapabilitiesStatus *kyberv1.AgentPublicCapabilitiesStatus `json:"publicCapabilitiesStatus,omitempty"`
+	Profile             agentProfileResponse  `json:"profile"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
@@ -272,6 +279,11 @@ type AgentResponse struct {
 	// of being re-derived in TypeScript. kyber#674.
 	BlockedReason string `json:"blockedReason,omitempty"`
 	CreatedAt     string `json:"createdAt"`
+}
+
+type agentProfileResponse struct {
+	Alias       string `json:"alias,omitempty"`
+	Description string `json:"description,omitempty"`
 }
 
 // agentActivityStatusResponse mirrors AgentStatus.Activity on the wire.
@@ -435,6 +447,10 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		PublicCapabilitiesStatus: a.Status.PublicCapabilities,
 		A2APeers:                 a.Spec.A2APeers,
 		CurrentModel:             a.Status.CurrentModel,
+		Profile: agentProfileResponse{
+			Alias:       a.Spec.Profile.Alias,
+			Description: a.Spec.Profile.Description,
+		},
 		Resources: agentResourcesResponse{
 			CPU:    a.Spec.Resources.CPU.String(),
 			Memory: a.Spec.Resources.Memory.String(),
@@ -1190,6 +1206,23 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 				return
 			}
 			agent.Spec.PublicCapabilities = &declaration
+		}
+	}
+
+	if req.Profile != nil {
+		if req.Profile.Alias != nil {
+			if utf8.RuneCountInString(*req.Profile.Alias) > 80 {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "profile.alias must be at most 80 characters", "profile.alias")
+				return
+			}
+			agent.Spec.Profile.Alias = *req.Profile.Alias
+		}
+		if req.Profile.Description != nil {
+			if utf8.RuneCountInString(*req.Profile.Description) > 500 {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "profile.description must be at most 500 characters", "profile.description")
+				return
+			}
+			agent.Spec.Profile.Description = *req.Profile.Description
 		}
 	}
 

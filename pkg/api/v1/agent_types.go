@@ -164,6 +164,21 @@ type AgentIdentity struct {
 	SoulDescription string `json:"soulDescription,omitempty"`
 }
 
+// AgentProfile is the operator-facing, cosmetic identity of an Agent.
+// It is deliberately separate from AgentIdentity: soulDescription is
+// boot-time scaffolding, while Profile may be edited without restarting the
+// agent pod.
+type AgentProfile struct {
+	// Alias is the human-friendly display name.
+	// +optional
+	// +kubebuilder:validation:MaxLength=80
+	Alias string `json:"alias,omitempty"`
+	// Description is a short operator-facing summary.
+	// +optional
+	// +kubebuilder:validation:MaxLength=500
+	Description string `json:"description,omitempty"`
+}
+
 // AgentIdentityRepo configures a GitHub identity repo for the agent. When set,
 // the control plane mints a short-lived installation token via the Kyber
 // GitHub App and exposes it to the pod so start-claude.sh can clone (or pull)
@@ -648,6 +663,10 @@ type AgentPublicCapabilityAvailability struct {
 
 // AgentSpec defines the desired state of an Agent.
 type AgentSpec struct {
+	// Profile is operator-editable presentation metadata. Profile-only edits
+	// must not restart the agent pod.
+	// +optional
+	Profile AgentProfile `json:"profile,omitempty"`
 	// Machine is the name of the Machine CRD this agent should run on.
 	Machine string `json:"machine"`
 

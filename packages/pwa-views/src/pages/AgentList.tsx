@@ -111,9 +111,16 @@ export function AgentList() {
         accessorKey: 'id',
         header: 'Agent',
         cell: ({ row }) => (
-          <span className="font-mono text-sm font-medium text-text-primary">
-            {row.original.id}
-          </span>
+          <div className="min-w-0">
+            <span className="block truncate text-sm font-medium text-text-primary">
+              {row.original.profile?.alias || row.original.id}
+            </span>
+            {row.original.profile?.alias && (
+              <span className="block truncate font-mono text-[10px] text-text-muted">
+                {row.original.id}
+              </span>
+            )}
+          </div>
         ),
       },
       {
@@ -284,7 +291,7 @@ export function AgentList() {
                 <div className="flex items-start justify-between gap-4">
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="font-medium text-text-primary truncate">{a.id}</span>
+                      <span className="font-medium text-text-primary truncate">{a.profile?.alias || a.id}</span>
                       <StatusBadge phase={a.phase} />
                       <SchedulingFailureBadge agent={a} />
                       <AgentDiskPressureBadge usage={a.activity?.resources} />
@@ -300,6 +307,7 @@ export function AgentList() {
                         <AgentActivityBadge agent={a} showDot={false} />
                       </div>
                     )}
+                    {a.profile?.alias && <p className="mt-0.5 font-mono text-[10px] text-text-muted">{a.id}</p>}
                     <p className="mt-1 text-xs text-text-muted">
                       {a.currentModel || a.model || '—'} &middot; {a.machine}
                     </p>
