@@ -7,6 +7,13 @@
 
 ## Unreleased
 
+- Fix (chart): **v1.4.0 could not start on any cluster.** The two task
+  file-size limits rendered into the control-plane ConfigMap in exponent form
+  (`2.62144e+07` instead of `26214400`) because Helm parses YAML numbers as
+  floats. The control plane parses them as integers at startup and exits before
+  it checks whether durable tasks are enabled, so every cluster crash-looped its
+  new control plane whether or not tasks or A2A were switched on. All numeric
+  request and task limits now render as integers.
 - Add a managed outbound A2A client to Claude Code and Codex agents. Operators
   allowlist named HTTPS peers and Secret-backed credentials; runtimes receive
   bounded discovery, delegation, task follow-up, continuation, cancellation,

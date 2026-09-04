@@ -26,32 +26,32 @@ data:
   KYBER_METRICS_PROMETHEUS_URL: {{ .Values.metrics.prometheusURL | quote }}
   KYBER_METRICS_PROMETHEUS_INSECURE: {{ .Values.metrics.prometheusInsecureSkipVerify | quote }}
   # Bounded agent request/reply defensive limits. Exposure is gated per Agent.
-  KYBER_AGENT_REQUESTS_LIFETIME_SECONDS: {{ .Values.api.agentRequests.lifetimeSeconds | quote }}
-  KYBER_AGENT_REQUESTS_MAX_PROMPT_BYTES: {{ .Values.api.agentRequests.maxPromptBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_CORRELATION_BYTES: {{ .Values.api.agentRequests.maxCorrelationBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_RESPONSE_BYTES: {{ .Values.api.agentRequests.maxResponseBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ .Values.api.agentRequests.maxOutstanding | quote }}
-  KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ .Values.api.agentRequests.maxTerminal | quote }}
+  KYBER_AGENT_REQUESTS_LIFETIME_SECONDS: {{ .Values.api.agentRequests.lifetimeSeconds | int64 | quote }}
+  KYBER_AGENT_REQUESTS_MAX_PROMPT_BYTES: {{ .Values.api.agentRequests.maxPromptBytes | int64 | quote }}
+  KYBER_AGENT_REQUESTS_MAX_CORRELATION_BYTES: {{ .Values.api.agentRequests.maxCorrelationBytes | int64 | quote }}
+  KYBER_AGENT_REQUESTS_MAX_RESPONSE_BYTES: {{ .Values.api.agentRequests.maxResponseBytes | int64 | quote }}
+  KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ .Values.api.agentRequests.maxOutstanding | int64 | quote }}
+  KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ .Values.api.agentRequests.maxTerminal | int64 | quote }}
   KYBER_TASKS_ENABLED: {{ .Values.api.durableTasks.enabled | quote }}
   KYBER_A2A_ENABLED: {{ .Values.api.a2a.enabled | quote }}
-  KYBER_TASKS_MAX_PROMPT_BYTES: {{ .Values.api.durableTasks.maxPromptBytes | quote }}
-  KYBER_TASKS_MAX_CORRELATION_BYTES: {{ .Values.api.durableTasks.maxCorrelationBytes | quote }}
-  KYBER_TASKS_MAX_RESPONSE_BYTES: {{ .Values.api.durableTasks.maxResponseBytes | quote }}
-  KYBER_TASKS_MAX_OUTSTANDING: {{ .Values.api.durableTasks.maxOutstanding | quote }}
-  KYBER_TASKS_MAX_RETAINED: {{ .Values.api.durableTasks.maxRetained | quote }}
-  KYBER_TASKS_MAX_DISPATCH_ATTEMPTS: {{ .Values.api.durableTasks.maxDispatchAttempts | quote }}
-  KYBER_TASKS_MAX_PROGRESS_BYTES: {{ .Values.api.durableTasks.maxProgressBytes | quote }}
-  KYBER_TASKS_MAX_PROGRESS_UPDATES: {{ .Values.api.durableTasks.maxProgressUpdates | quote }}
-  KYBER_TASKS_MAX_RESULTS: {{ .Values.api.durableTasks.maxResults | quote }}
-  KYBER_TASKS_MAX_RESULT_PARTS: {{ .Values.api.durableTasks.maxResultParts | quote }}
-  KYBER_TASKS_MAX_TEXT_PART_BYTES: {{ .Values.api.durableTasks.maxTextPartBytes | quote }}
-  KYBER_TASKS_MAX_JSON_PART_BYTES: {{ .Values.api.durableTasks.maxJSONPartBytes | quote }}
-  KYBER_TASKS_MAX_FILE_BYTES: {{ .Values.api.durableTasks.maxFileBytes | quote }}
-  KYBER_TASKS_MAX_TASK_FILE_BYTES: {{ .Values.api.durableTasks.maxTaskFileBytes | quote }}
-  KYBER_TASKS_MAX_RESULT_NAME_BYTES: {{ .Values.api.durableTasks.maxResultNameBytes | quote }}
-  KYBER_TASKS_MAX_DESCRIPTION_BYTES: {{ .Values.api.durableTasks.maxDescriptionBytes | quote }}
-  KYBER_TASKS_MAX_FILENAME_BYTES: {{ .Values.api.durableTasks.maxFilenameBytes | quote }}
+  KYBER_TASKS_MAX_PROMPT_BYTES: {{ .Values.api.durableTasks.maxPromptBytes | int64 | quote }}
+  KYBER_TASKS_MAX_CORRELATION_BYTES: {{ .Values.api.durableTasks.maxCorrelationBytes | int64 | quote }}
+  KYBER_TASKS_MAX_RESPONSE_BYTES: {{ .Values.api.durableTasks.maxResponseBytes | int64 | quote }}
+  KYBER_TASKS_MAX_OUTSTANDING: {{ .Values.api.durableTasks.maxOutstanding | int64 | quote }}
+  KYBER_TASKS_MAX_RETAINED: {{ .Values.api.durableTasks.maxRetained | int64 | quote }}
+  KYBER_TASKS_MAX_DISPATCH_ATTEMPTS: {{ .Values.api.durableTasks.maxDispatchAttempts | int64 | quote }}
+  KYBER_TASKS_MAX_PROGRESS_BYTES: {{ .Values.api.durableTasks.maxProgressBytes | int64 | quote }}
+  KYBER_TASKS_MAX_PROGRESS_UPDATES: {{ .Values.api.durableTasks.maxProgressUpdates | int64 | quote }}
+  KYBER_TASKS_MAX_RESULTS: {{ .Values.api.durableTasks.maxResults | int64 | quote }}
+  KYBER_TASKS_MAX_RESULT_PARTS: {{ .Values.api.durableTasks.maxResultParts | int64 | quote }}
+  KYBER_TASKS_MAX_TEXT_PART_BYTES: {{ .Values.api.durableTasks.maxTextPartBytes | int64 | quote }}
+  KYBER_TASKS_MAX_JSON_PART_BYTES: {{ .Values.api.durableTasks.maxJSONPartBytes | int64 | quote }}
+  KYBER_TASKS_MAX_FILE_BYTES: {{ .Values.api.durableTasks.maxFileBytes | int64 | quote }}
+  KYBER_TASKS_MAX_TASK_FILE_BYTES: {{ .Values.api.durableTasks.maxTaskFileBytes | int64 | quote }}
+  KYBER_TASKS_MAX_RESULT_NAME_BYTES: {{ .Values.api.durableTasks.maxResultNameBytes | int64 | quote }}
+  KYBER_TASKS_MAX_DESCRIPTION_BYTES: {{ .Values.api.durableTasks.maxDescriptionBytes | int64 | quote }}
+  KYBER_TASKS_MAX_FILENAME_BYTES: {{ .Values.api.durableTasks.maxFilenameBytes | int64 | quote }}
   KYBER_TASK_RESULTS_ROOT: {{ .Values.api.durableTasks.resultsRoot | quote }}
-  KYBER_TASKS_DEFAULT_DEADLINE_HOURS: {{ .Values.api.durableTasks.defaultDeadlineHours | quote }}
-  KYBER_TASKS_MAX_DEADLINE_HOURS: {{ .Values.api.durableTasks.maxDeadlineHours | quote }}
-  KYBER_TASKS_RETENTION_HOURS: {{ .Values.api.durableTasks.retentionHours | quote }}
+  KYBER_TASKS_DEFAULT_DEADLINE_HOURS: {{ .Values.api.durableTasks.defaultDeadlineHours | int64 | quote }}
+  KYBER_TASKS_MAX_DEADLINE_HOURS: {{ .Values.api.durableTasks.maxDeadlineHours | int64 | quote }}
+  KYBER_TASKS_RETENTION_HOURS: {{ .Values.api.durableTasks.retentionHours | int64 | quote }}
