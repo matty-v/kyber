@@ -38,4 +38,3 @@ No. You can manage agents from the web console, the API, or two-way Telegram and
 
 New versions land on the [releases page](https://github.com/matty-v/kyber/releases), with changes described in the [CHANGELOG](../../../CHANGELOG.md). The fleet console also shows when a newer version is available and can install it; note that only the latest minor release receives security fixes.
 
-
