@@ -22,36 +22,36 @@ data:
   OTEL_EXPORTER_OTLP_ENDPOINT: {{ .Values.telemetry.otlpEndpoint | quote }}
   # Metrics tab — Redis-backed always-on metrics store.
   KYBER_METRICS_REDIS_STORE_ENABLED: {{ .Values.metrics.redisStoreEnabled | quote }}
-  KYBER_METRICS_RETENTION_SECONDS: {{ .Values.metrics.redisRetentionSeconds | quote }}
+  KYBER_METRICS_RETENTION_SECONDS: {{ include "kyber.numericValue" .Values.metrics.redisRetentionSeconds }}
   KYBER_METRICS_PROMETHEUS_URL: {{ .Values.metrics.prometheusURL | quote }}
   KYBER_METRICS_PROMETHEUS_INSECURE: {{ .Values.metrics.prometheusInsecureSkipVerify | quote }}
   # Bounded agent request/reply defensive limits. Exposure is gated per Agent.
-  KYBER_AGENT_REQUESTS_LIFETIME_SECONDS: {{ .Values.api.agentRequests.lifetimeSeconds | quote }}
-  KYBER_AGENT_REQUESTS_MAX_PROMPT_BYTES: {{ .Values.api.agentRequests.maxPromptBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_CORRELATION_BYTES: {{ .Values.api.agentRequests.maxCorrelationBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_RESPONSE_BYTES: {{ .Values.api.agentRequests.maxResponseBytes | quote }}
-  KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ .Values.api.agentRequests.maxOutstanding | quote }}
-  KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ .Values.api.agentRequests.maxTerminal | quote }}
+  KYBER_AGENT_REQUESTS_LIFETIME_SECONDS: {{ include "kyber.numericValue" .Values.api.agentRequests.lifetimeSeconds }}
+  KYBER_AGENT_REQUESTS_MAX_PROMPT_BYTES: {{ include "kyber.numericValue" .Values.api.agentRequests.maxPromptBytes }}
+  KYBER_AGENT_REQUESTS_MAX_CORRELATION_BYTES: {{ include "kyber.numericValue" .Values.api.agentRequests.maxCorrelationBytes }}
+  KYBER_AGENT_REQUESTS_MAX_RESPONSE_BYTES: {{ include "kyber.numericValue" .Values.api.agentRequests.maxResponseBytes }}
+  KYBER_AGENT_REQUESTS_MAX_OUTSTANDING: {{ include "kyber.numericValue" .Values.api.agentRequests.maxOutstanding }}
+  KYBER_AGENT_REQUESTS_MAX_TERMINAL: {{ include "kyber.numericValue" .Values.api.agentRequests.maxTerminal }}
   KYBER_TASKS_ENABLED: {{ .Values.api.durableTasks.enabled | quote }}
   KYBER_A2A_ENABLED: {{ .Values.api.a2a.enabled | quote }}
-  KYBER_TASKS_MAX_PROMPT_BYTES: {{ .Values.api.durableTasks.maxPromptBytes | quote }}
-  KYBER_TASKS_MAX_CORRELATION_BYTES: {{ .Values.api.durableTasks.maxCorrelationBytes | quote }}
-  KYBER_TASKS_MAX_RESPONSE_BYTES: {{ .Values.api.durableTasks.maxResponseBytes | quote }}
-  KYBER_TASKS_MAX_OUTSTANDING: {{ .Values.api.durableTasks.maxOutstanding | quote }}
-  KYBER_TASKS_MAX_RETAINED: {{ .Values.api.durableTasks.maxRetained | quote }}
-  KYBER_TASKS_MAX_DISPATCH_ATTEMPTS: {{ .Values.api.durableTasks.maxDispatchAttempts | quote }}
-  KYBER_TASKS_MAX_PROGRESS_BYTES: {{ .Values.api.durableTasks.maxProgressBytes | quote }}
-  KYBER_TASKS_MAX_PROGRESS_UPDATES: {{ .Values.api.durableTasks.maxProgressUpdates | quote }}
-  KYBER_TASKS_MAX_RESULTS: {{ .Values.api.durableTasks.maxResults | quote }}
-  KYBER_TASKS_MAX_RESULT_PARTS: {{ .Values.api.durableTasks.maxResultParts | quote }}
-  KYBER_TASKS_MAX_TEXT_PART_BYTES: {{ .Values.api.durableTasks.maxTextPartBytes | quote }}
-  KYBER_TASKS_MAX_JSON_PART_BYTES: {{ .Values.api.durableTasks.maxJSONPartBytes | quote }}
-  KYBER_TASKS_MAX_FILE_BYTES: {{ .Values.api.durableTasks.maxFileBytes | quote }}
-  KYBER_TASKS_MAX_TASK_FILE_BYTES: {{ .Values.api.durableTasks.maxTaskFileBytes | quote }}
-  KYBER_TASKS_MAX_RESULT_NAME_BYTES: {{ .Values.api.durableTasks.maxResultNameBytes | quote }}
-  KYBER_TASKS_MAX_DESCRIPTION_BYTES: {{ .Values.api.durableTasks.maxDescriptionBytes | quote }}
-  KYBER_TASKS_MAX_FILENAME_BYTES: {{ .Values.api.durableTasks.maxFilenameBytes | quote }}
+  KYBER_TASKS_MAX_PROMPT_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxPromptBytes }}
+  KYBER_TASKS_MAX_CORRELATION_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxCorrelationBytes }}
+  KYBER_TASKS_MAX_RESPONSE_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxResponseBytes }}
+  KYBER_TASKS_MAX_OUTSTANDING: {{ include "kyber.numericValue" .Values.api.durableTasks.maxOutstanding }}
+  KYBER_TASKS_MAX_RETAINED: {{ include "kyber.numericValue" .Values.api.durableTasks.maxRetained }}
+  KYBER_TASKS_MAX_DISPATCH_ATTEMPTS: {{ include "kyber.numericValue" .Values.api.durableTasks.maxDispatchAttempts }}
+  KYBER_TASKS_MAX_PROGRESS_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxProgressBytes }}
+  KYBER_TASKS_MAX_PROGRESS_UPDATES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxProgressUpdates }}
+  KYBER_TASKS_MAX_RESULTS: {{ include "kyber.numericValue" .Values.api.durableTasks.maxResults }}
+  KYBER_TASKS_MAX_RESULT_PARTS: {{ include "kyber.numericValue" .Values.api.durableTasks.maxResultParts }}
+  KYBER_TASKS_MAX_TEXT_PART_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxTextPartBytes }}
+  KYBER_TASKS_MAX_JSON_PART_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxJSONPartBytes }}
+  KYBER_TASKS_MAX_FILE_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxFileBytes }}
+  KYBER_TASKS_MAX_TASK_FILE_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxTaskFileBytes }}
+  KYBER_TASKS_MAX_RESULT_NAME_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxResultNameBytes }}
+  KYBER_TASKS_MAX_DESCRIPTION_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxDescriptionBytes }}
+  KYBER_TASKS_MAX_FILENAME_BYTES: {{ include "kyber.numericValue" .Values.api.durableTasks.maxFilenameBytes }}
   KYBER_TASK_RESULTS_ROOT: {{ .Values.api.durableTasks.resultsRoot | quote }}
-  KYBER_TASKS_DEFAULT_DEADLINE_HOURS: {{ .Values.api.durableTasks.defaultDeadlineHours | quote }}
-  KYBER_TASKS_MAX_DEADLINE_HOURS: {{ .Values.api.durableTasks.maxDeadlineHours | quote }}
-  KYBER_TASKS_RETENTION_HOURS: {{ .Values.api.durableTasks.retentionHours | quote }}
+  KYBER_TASKS_DEFAULT_DEADLINE_HOURS: {{ include "kyber.numericValue" .Values.api.durableTasks.defaultDeadlineHours }}
+  KYBER_TASKS_MAX_DEADLINE_HOURS: {{ include "kyber.numericValue" .Values.api.durableTasks.maxDeadlineHours }}
+  KYBER_TASKS_RETENTION_HOURS: {{ include "kyber.numericValue" .Values.api.durableTasks.retentionHours }}

@@ -25,14 +25,15 @@ func chartDir(t *testing.T) string {
 	return filepath.Join(filepath.Dir(thisFile), "..", "..", "deploy", "helm", "kyber")
 }
 
-// helmTemplate runs `helm template` with the given extra --set args and returns the rendered YAML.
-// Skips the test if helm is unavailable.
-func helmTemplate(t *testing.T, extraSet ...string) string {
+// helmTemplateArgs returns the `helm template` invocation every chart test
+// shares: the chart path plus the values that are required at render time.
+// Callers append their own flags. Kept separate from helmTemplate so a caller
+// that needs a values file (helmTemplateWithValues) reuses these pins instead
+// of copying them — the last time a required value was added (kyber#358) every
+// copy had to be found and updated.
+func helmTemplateArgs(t *testing.T) []string {
 	t.Helper()
-	if _, err := exec.LookPath("helm"); err != nil {
-		t.Skipf("helm not on PATH: %v", err)
-	}
-	args := []string{
+	return []string{
 		"template", "kyber", chartDir(t),
 		"--set", "api.apiKey=test123",
 		"--set", "api.webhookSecret=webhook123",
@@ -47,6 +48,16 @@ func helmTemplate(t *testing.T, extraSet ...string) string {
 		"--set", "image.statusSidecar.tag=test",
 		"--set", "image.claudeCode.tag=test",
 	}
+}
+
+// helmTemplate runs `helm template` with the given extra --set args and returns the rendered YAML.
+// Skips the test if helm is unavailable.
+func helmTemplate(t *testing.T, extraSet ...string) string {
+	t.Helper()
+	if _, err := exec.LookPath("helm"); err != nil {
+		t.Skipf("helm not on PATH: %v", err)
+	}
+	args := helmTemplateArgs(t)
 	for _, s := range extraSet {
 		args = append(args, "--set", s)
 	}
