@@ -201,17 +201,16 @@ The matrix was completed on 2026-09-04 against the guarded
 `datawire-dev/us-central1-a/kyber-dev` cluster in namespace `kyber-system`.
 All four components used the same worktree image tag
 `worktree-20260904154423-7d16514`. The control plane reported a PostgreSQL task
-store. Tests used only purpose-built `sol-test-mat28-prod-*` agents; the
-pre-existing `echo` agent was not modified.
+store. Tests used only purpose-built `sol-test-mat28-*` agents; the pre-existing
+`echo` agent was not modified.
 
-The destructive production rerun used Claude as the representative harness
-because the loopback forwarder, PostgreSQL receipt repository, dispatcher
-lease, and reconciler are shared by both runtimes. Codex-specific evidence
-remains the exact-session-and-turn live run above plus the managed-config boot
-tests. The rerun recorded the deployed image but did not recapture the
-dynamically selected Claude CLI version before cleanup; version-specific hook
-claims therefore remain anchored to the 2026-08-30 Claude Code 2.1.251 and
-Codex 0.151.0 observations rather than an inferred version from the image.
+The destructive matrix ran first on Claude and was then repeated on Codex at
+Matt's request. The fresh Codex agent dynamically selected Codex CLI 0.153.2
+inside the deployed image whose default remains 0.146.0. The rerun recorded
+the deployed Claude image but did not recapture its dynamically selected CLI
+version before cleanup; version-specific Claude claims therefore remain
+anchored to the 2026-08-30 Claude Code 2.1.251 observation rather than an
+inferred version from the image.
 
 MAT-29 had by then implemented the protocol proposed by this spike:
 
@@ -228,13 +227,15 @@ MAT-29 had by then implemented the protocol proposed by this spike:
 | Case | Observed result |
 | --- | --- |
 | Positive Claude task | `task_f15eb542bbee25d216604579b7f76563` moved `queued -> dispatched -> completed`; attempt `attempt_27baea7138eb20642470f5d627378dc7` stored Claude session `874c9509-d00c-4dad-be96-0a9da3763885`; response was exactly `RECEIPT_OK` |
+| Positive Codex task | on Codex CLI 0.153.2, `task_d53763316ae06a64853fb12c4c9a5c30` moved `queued -> dispatched -> completed`; attempt `attempt_c6483e16ca42341d3f057e3a6b9648c6` stored session `01a06d70-40c4-70d1-8a4f-85d56b29aaa0` and turn `01a06d71-e2b6-77b0-8cbd-4299fa72928c`; response was exactly `CODEX_RECEIPT_OK` |
 | Idempotent POST | replaying the identical persisted receipt returned HTTP 200 and did not create a second receipt |
-| Conflicting POST | reusing the attempt token with a different session ID returned HTTP 409 |
+| Conflicting POST | reusing the attempt token with a different session or turn ID returned HTTP 409 |
 | Ordinary prompt | the managed receipt command returned 0, created no receipt, and emitted no prompt content into pod logs |
 | Receipt service unavailable | the managed receipt command returned 2 |
 | Real Claude fail-closed turn | `task_b61b0a3110274ea6c1bf022270e2c4ce` produced a local hook receipt but no database receipt, no task user turn, no assistant execution, and no response; after the two-minute ambiguity lease it terminated as `failed/delivery_unknown` |
-| Control-plane replacement after commit | the completed task stayed at version 3 and its exact receipt remained queryable through a newly started control-plane process |
-| Agent pod replacement after commit | the same task and receipt survived the new pod; the attempt was not redelivered and no second completion/event appeared |
+| Real Codex fail-closed turn | `task_8992f095f5e10ed6170e8fdfd12c400b` produced a local receipt with native session and turn IDs but no database receipt, no task record in the Codex session transcript, no assistant output, and no response; after the two-minute ambiguity lease it terminated as `failed/delivery_unknown` |
+| Control-plane replacement after commit | the completed Claude and Codex tasks stayed at version 3 and their exact receipts remained queryable through newly started control-plane processes |
+| Agent pod replacement after commit | both completed tasks and receipts survived new runtime pods; neither attempt was redelivered and no second completion appeared |
 
 The fail-closed Claude transcript contained only an informational hook record
 for the rejected task envelope. It contained no corresponding user turn and no
@@ -242,6 +243,8 @@ assistant output, confirming the documented exit-code-2 behavior in Kyber's
 long-lived TUI integration rather than inferring acceptance from a transcript.
 The database event sequence was `task.created`, then
 `task.terminal(failed, delivery_unknown)` with no intervening dispatched event.
+The Codex fail-closed session likewise contained no record of the rejected task
+envelope and no assistant output containing its sentinel response.
 
 The earlier executable prototype remains the deliberately reproducible test
 for a response lost *after* commit: an exact GET recovers the immutable receipt.
