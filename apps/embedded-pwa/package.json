@@ -17,7 +17,7 @@
     "@matty-v/kyber-pwa-views": "*",
     "@tanstack/react-query": "^5.102.8",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
+    "react-dom": "^19.2.8",
     "react-router-dom": "^7.18.2",
     "sonner": "^2.0.8"
   },
@@ -25,7 +25,7 @@
     "@playwright/test": "^1.62.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
+    "@types/react-dom": "^19.2.5",
     "@vitejs/plugin-react": "6.1.1",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.6.3",
