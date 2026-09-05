@@ -360,6 +360,12 @@ spec:
                     description: Description is a short operator-facing summary.
                     maxLength: 500
                     type: string
+                  avatarContentType:
+                    description: Validated avatar media type.
+                    type: string
+                  avatarKey:
+                    description: Private object-store key for the avatar.
+                    type: string
                 type: object
               jobs:
                 description: |-
