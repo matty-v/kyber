@@ -3,9 +3,13 @@ package api
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"io"
 	"log/slog"
 	"net/http"
@@ -831,6 +835,26 @@ func avatarContentType(value string) bool {
 	}
 }
 
+func validatedAvatarType(data []byte, declared string) bool {
+	declared = strings.ToLower(strings.TrimSpace(strings.Split(declared, ";")[0]))
+	if !avatarContentType(declared) {
+		return false
+	}
+	if declared == "image/webp" {
+		if len(data) < 20 || string(data[:4]) != "RIFF" || string(data[8:12]) != "WEBP" {
+			return false
+		}
+		riffSize := int64(binary.LittleEndian.Uint32(data[4:8]))
+		chunk := string(data[12:16])
+		return riffSize == int64(len(data)-8) && (chunk == "VP8 " || chunk == "VP8L" || chunk == "VP8X")
+	}
+	config, format, err := image.DecodeConfig(bytes.NewReader(data))
+	if err != nil || config.Width <= 0 || config.Height <= 0 {
+		return false
+	}
+	return (declared == "image/png" && format == "png") || (declared == "image/jpeg" && format == "jpeg")
+}
+
 // handleAgentAvatar stores private avatar bytes in the configured object store
 // and serves them only through the authenticated API. The CRD stores only an
 // opaque key and validated content type, never image bytes or a public URL.
@@ -884,6 +908,10 @@ func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name 
 			writeJSONError(w, http.StatusRequestEntityTooLarge, "avatar_too_large", "avatar must be at most 1 MiB")
 			return
 		}
+		if !validatedAvatarType(data, contentType) {
+			writeJSONError(w, http.StatusUnsupportedMediaType, "invalid_avatar", "avatar bytes do not match the declared PNG, JPEG, or WebP type")
+			return
+		}
 		if err := s.TaskObjectStore.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), taskobject.PutOptions{Filename: name + "-avatar", ContentType: contentType}); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store avatar")
 			return
@@ -892,6 +920,7 @@ func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name 
 		agent.Spec.Profile.AvatarKey = key
 		agent.Spec.Profile.AvatarContentType = strings.ToLower(strings.Split(contentType, ";")[0])
 		if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
+			_ = s.TaskObjectStore.Delete(r.Context(), key)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to save avatar metadata")
 			return
 		}
