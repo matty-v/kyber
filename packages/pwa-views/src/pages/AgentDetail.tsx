@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench, Menu, X } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -60,7 +60,6 @@ import {
   lifecycleItemsInMore,
   sessionItemsInMore,
 } from '../lib/design/agent-actions'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
 import type { Agent, AgentPhase, AgentIdentityRepoStatus, AgentIdentityRepoPhase, AgentStatus, SetResourcesRequest } from '../lib/types'
@@ -102,13 +101,68 @@ type ActionKind =
   | 'set-model'
   | 'set-runtime-version'
   | 'set-resources'
-// Tab order per #125 refinement: Overview | Secrets | Jobs | Webhooks | Activity | Shell.
-// Activity replaces the old top-level "logs" (Pod Boot Log) tab and absorbs
-// the read-only tmux attach that used to live under Shell. Shell itself is
-// now interactive-only (root-in-chroot default). Webhooks (#208) sits between
-// Jobs and Activity — both are inbound-prompt surfaces (cron-driven vs
-// webhook-driven respectively).
-type Tab = 'overview' | 'comms' | 'skills' | 'secrets' | 'jobs' | 'webhooks' | 'activity' | 'shell'
+type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'capabilities'
+
+type AgentNavItem = {
+  id: AgentSection
+  label: string
+  description: string
+}
+
+const agentNavigation: { label: string; items: AgentNavItem[] }[] = [
+  { label: 'Observe', items: [
+    { id: 'overview', label: 'Overview', description: 'Health and live resources' },
+    { id: 'activity', label: 'Activity', description: 'Conversation and tool history' },
+    { id: 'shell', label: 'Shell', description: 'Interactive terminal' },
+  ] },
+  { label: 'Automate', items: [
+    { id: 'jobs', label: 'Jobs', description: 'Scheduled prompts' },
+    { id: 'webhooks', label: 'Webhooks', description: 'External triggers' },
+  ] },
+  { label: 'Configure', items: [
+    { id: 'general', label: 'General', description: 'Identity and runtime' },
+    { id: 'comms', label: 'Comms', description: 'Connected channels' },
+    { id: 'secrets', label: 'Secrets', description: 'Injected credentials' },
+    { id: 'capabilities', label: 'Capabilities', description: 'Published and detected' },
+  ] },
+]
+
+const agentSectionIds = new Set(agentNavigation.flatMap((group) => group.items.map((item) => item.id)))
+
+function AgentNavigation({
+  value,
+  onChange,
+}: {
+  value: AgentSection
+  onChange: (value: AgentSection) => void
+}) {
+  return (
+    <nav aria-label="Agent pages" className="space-y-5">
+      {agentNavigation.map((group) => (
+        <div key={group.label}>
+          <h2 className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{group.label}</h2>
+          <div className="space-y-1">
+            {group.items.map((item) => {
+              const active = item.id === value
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  aria-current={active ? 'page' : undefined}
+                  onClick={() => onChange(item.id)}
+                  className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-accent-muted text-accent' : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary'}`}
+                >
+                  <span className="block text-sm font-medium">{item.label}</span>
+                  <span className={`mt-0.5 block text-xs leading-snug ${active ? 'text-accent' : 'text-text-muted'}`}>{item.description}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      ))}
+    </nav>
+  )
+}
 
 function identityRepoPhaseBadgeClass(phase: AgentIdentityRepoPhase | undefined): string {
   switch (phase) {
@@ -497,9 +551,10 @@ export { LifecycleMenuItems } from '../components/AgentActionMenuItems'
 import { LifecycleMenuItems as LifecycleItems, SessionMenuItems } from '../components/AgentActionMenuItems'
 
 export function AgentDetail() {
-  const { name = '' } = useParams<{ name: string }>()
+  const { name = '', section } = useParams<{ name: string; section?: string }>()
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
+  const activeSection: AgentSection = section && agentSectionIds.has(section as AgentSection) ? section as AgentSection : 'overview'
   const { data: agent, isLoading, error } = useAgent(name)
   const tokenUsage = useTokenUsage(name, agent?.phase === 'Running')
   const { data: computeConfig } = useComputeConfig()
@@ -507,7 +562,7 @@ export function AgentDetail() {
   // come separately from this agent's authenticated provider catalog.
   const effective = useEffectiveModelList(agent?.runtime)
   const [pending, setPending] = useState<ActionKind | null>(null)
-  const [activeTab, setActiveTab] = useState<Tab>('overview')
+  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newModel, setNewModel] = useState('')
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
   const [newCPU, setNewCPU] = useState('')
@@ -632,16 +687,12 @@ export function AgentDetail() {
     )
   }
 
-  const tabs: { id: Tab; label: string }[] = [
-    { id: 'overview', label: 'Overview' },
-    { id: 'comms', label: 'Comms' },
-    { id: 'skills', label: 'Skills' },
-    { id: 'secrets', label: 'Secrets' },
-    { id: 'jobs', label: 'Jobs' },
-    { id: 'webhooks', label: 'Webhooks' },
-    { id: 'activity', label: 'Activity' },
-    { id: 'shell', label: 'Shell' },
-  ]
+  const activeNavItem = agentNavigation.flatMap((group) => group.items).find((item) => item.id === activeSection)!
+
+  function selectSection(nextSection: AgentSection) {
+    setMobileNavOpen(false)
+    navigate(prefixed(nextSection === 'overview' ? `/agents/${name}` : `/agents/${name}/${nextSection}`))
+  }
 
   // Per #128 amendment: Restart session is the primary header action when
   // the agent is live. Other lifecycle actions (Start/Stop/Restart
@@ -659,17 +710,19 @@ export function AgentDetail() {
 
   return (
     <div>
-      <div className="flex items-center gap-3 mb-4">
+      <div className="mb-4 flex flex-wrap items-center gap-2 sm:gap-3">
         <Button variant="ghost" size="sm" onClick={() => navigate(prefixed('/agents'))}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
         <h1 className="min-w-0 truncate text-xl font-bold text-text-primary">{agent.id}</h1>
-        <StatusBadge phase={agent.phase} />
-        <SchedulingFailureBadge agent={agent} />
-        <AgentActivityBadge agent={agent} />
+        <div className="order-3 flex w-full flex-wrap items-center gap-2 pl-10 sm:order-none sm:w-auto sm:pl-0">
+          <StatusBadge phase={agent.phase} />
+          <SchedulingFailureBadge agent={agent} />
+          <AgentActivityBadge agent={agent} />
+        </div>
         <div className="ml-auto flex items-center gap-2">
           <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/logs?agent=${encodeURIComponent(name)}`))}>
-            <ScrollText className="h-4 w-4" /> Logs
+            <ScrollText className="h-4 w-4" /> <span className="hidden sm:inline">Logs</span>
           </Button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -702,36 +755,6 @@ export function AgentDetail() {
                   <LifecycleItems phase={agent.phase} onSelect={setPending} />
                 </>
               )}
-              {(hasAgentActions || hasPodActions) && <DropdownMenuSeparator />}
-              <DropdownMenuLabel>Agent configuration</DropdownMenuLabel>
-              <DropdownMenuItem
-                onSelect={() => {
-                  setNewModel(agent.currentModel || agent.model)
-                  setPending('set-model')
-                }}
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                Set Model
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? '')
-                  setPending('set-runtime-version')
-                }}
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                Set Harness Version
-              </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  setNewCPU(agent.resources.cpu)
-                  setNewMemory(agent.resources.memory)
-                  setPending('set-resources')
-                }}
-              >
-                <Cpu className="h-3.5 w-3.5" />
-                Set Resources
-              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="danger" onSelect={() => setPending('delete')}>
                 <Trash2 className="h-3.5 w-3.5" />
@@ -742,57 +765,26 @@ export function AgentDetail() {
         </div>
       </div>
 
-      {/* Actions */}
+      <button
+        type="button"
+        onClick={() => setMobileNavOpen(true)}
+        className="mb-4 flex w-full items-center justify-between rounded-lg border border-border-default bg-surface-raised px-4 py-3 text-left sm:hidden"
+        aria-haspopup="dialog"
+      >
+        <span>
+          <span className="block text-sm font-semibold text-text-primary">{activeNavItem.label}</span>
+          <span className="block text-xs text-text-muted">{activeNavItem.description}</span>
+        </span>
+        <Menu className="h-5 w-5 text-text-secondary" />
+      </button>
 
-      {/* Tabs */}
-      <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as Tab)}>
-        <TabsList className="mb-4 w-full overflow-x-auto">
-          {tabs.map((tab) => (
-            <TabsTrigger key={tab.id} value={tab.id}>
-              {tab.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
-
-        <TabsContent value="overview">
+      <div className="sm:grid sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-start sm:gap-6">
+        <aside className="hidden sm:sticky sm:top-4 sm:block">
+          <AgentNavigation value={activeSection} onChange={selectSection} />
+        </aside>
+        <main className="min-w-0">
+        {activeSection === 'overview' && (
           <div className="space-y-4">
-          <Card>
-            <h2 className="mb-1 text-sm font-semibold text-text-primary">Agent profile</h2>
-            <p className="mb-3 text-xs text-text-muted">An operator-facing identity. Changes do not restart the agent.</p>
-            <div className="space-y-3">
-              <label className="block text-xs font-medium text-text-muted">
-                Alias
-                <input
-                  value={profileAlias}
-                  maxLength={80}
-                  onChange={(e) => setProfileAlias(e.target.value)}
-                  placeholder={name}
-                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
-                />
-              </label>
-              <label className="block text-xs font-medium text-text-muted">
-                Description
-                <textarea
-                  value={profileDescription}
-                  maxLength={500}
-                  rows={3}
-                  onChange={(e) => setProfileDescription(e.target.value)}
-                  placeholder="What this agent is for"
-                  className="mt-1 w-full resize-y rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
-                />
-              </label>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                loading={updateAgentProfile.isPending}
-                disabled={updateAgentProfile.isPending || profileAlias === (agent.profile?.alias ?? '') && profileDescription === (agent.profile?.description ?? '')}
-                onClick={() => updateAgentProfile.mutate({ name, profile: { alias: profileAlias, description: profileDescription } })}
-              >
-                Save profile
-              </Button>
-            </div>
-          </Card>
           <SchedulingFailureBanner agent={agent} />
           {agent.runtime === 'codex' && agent.authType === 'oauth' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
@@ -893,125 +885,171 @@ export function AgentDetail() {
               )}
             </Card>
           )}
-          <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} />
-          <Card>
-            <h2 className="text-sm font-medium text-text-primary mb-2">Startup prompt</h2>
-            <p className="text-xs text-text-muted mb-3">
-              Sent as the first user turn on every new session. Saving marks this agent for restart; it does not interrupt the live session.
-            </p>
-            <textarea
-              value={startupPrompt}
-              onChange={(e) => setStartupPrompt(e.target.value)}
-              maxLength={32768}
-              rows={6}
-              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text-primary"
-              placeholder="No startup prompt configured"
-            />
-            <div className="mt-2 flex items-center justify-between gap-3">
-              <span className="text-xs text-text-muted">{startupPrompt.length.toLocaleString()} / 32,768</span>
-              <Button
-                size="sm"
-                loading={patchAgent.isPending}
-                disabled={patchAgent.isPending || startupPrompt === (agent.startupPrompt ?? '')}
-                onClick={() => patchAgent.mutate({ name, startupPrompt })}
-              >
-                Save prompt
-              </Button>
-            </div>
-          </Card>
-          <SessionResumeCard
-            enabled={agent.sessionResume ?? false}
-            pending={setSessionResume.isPending}
-            onChange={(enabled) => setSessionResume.mutate({ name, sessionResume: enabled })}
-          />
-          <RequestReplyCard
-            enabled={agent.requestReplyEnabled ?? false}
-            pending={setRequestReplyEnabled.isPending}
-            onChange={(enabled) => setRequestReplyEnabled.mutate({ name, requestReplyEnabled: enabled })}
-          />
-          <PublicCapabilitiesEditor agent={agent} />
-          <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
-          {agent.identityRepo && <IdentityRepoCard data={agent.identityRepo} />}
           <MismatchBadges agent={agent} />
-          <div className="grid gap-4 sm:grid-cols-2">
+          <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} />
+          <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           <Card>
-            <h2 className="text-sm font-medium text-text-muted mb-3">Spec</h2>
-            <dl className="space-y-2 text-sm">
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Model</dt>
-                <dd className="text-right text-text-primary font-mono text-xs">
-                  {agent.currentModel || agent.model || 'Harness default'}
-                  {!agent.model && agent.currentModel && <span className="block font-sans text-[10px] text-text-muted">harness default</span>}
-                </dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Machine</dt>
-                <dd className="text-text-primary">{agent.machine}</dd>
-              </div>
-              <div className="flex justify-between">
-                <dt className="text-text-muted">Runtime</dt>
-                <dd className="text-text-primary">
-                  {agent.runtime}
-                  {agent.runtimeVersion?.installedVersion && (
-                    <span className="text-text-muted font-mono text-xs ml-2">
-                      {agent.runtimeVersion.installedVersion}
-                    </span>
-                  )}
-                </dd>
-              </div>
-            </dl>
-            <h3 className="mb-2 mt-4 border-t border-border-subtle pt-3 text-xs font-medium text-text-muted">Resources</h3>
+            <h2 className="mb-3 text-sm font-semibold text-text-primary">Live pod resources</h2>
             {agent.activity?.resources ? (
               <AgentResourceUsage usage={agent.activity.resources} />
             ) : (
-              <div className="space-y-1 text-xs text-text-muted">
-                <div>CPU {agent.resources.cpu}</div>
-                <div>Memory {agent.resources.memory}</div>
-                <div>Disk {agent.resources.disk}</div>
-                <div className="text-text-disabled">Current usage not yet reported</div>
-              </div>
+              <p className="text-sm text-text-muted">Usage will appear when the running pod reports metrics.</p>
             )}
           </Card>
-          <Card>
-            <h2 className="text-sm font-medium text-text-muted mb-3">Status</h2>
-            <StatusCardBody status={agent.status} />
-          </Card>
+          <details className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-3">
+            <summary className="cursor-pointer text-sm font-medium text-text-secondary">Technical details</summary>
+            <div className="mt-4 grid gap-4 sm:grid-cols-2">
+              <div>
+                <h2 className="mb-3 text-xs font-medium text-text-muted">Pod status</h2>
+                <StatusCardBody status={agent.status} />
+              </div>
+              <dl className="space-y-2 text-sm">
+                <div className="flex justify-between gap-3">
+                  <dt className="text-text-muted">Model</dt>
+                  <dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd>
+                </div>
+                <div className="flex justify-between gap-3">
+                  <dt className="text-text-muted">Runtime</dt>
+                  <dd className="text-text-primary">{agent.runtime}{agent.runtimeVersion?.installedVersion ? ` ${agent.runtimeVersion.installedVersion}` : ''}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-text-muted">Machine</dt>
+                  <dd className="text-text-primary">{agent.machine}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-text-muted">CPU / memory</dt>
+                  <dd className="text-text-primary">{agent.resources.cpu} / {agent.resources.memory}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-text-muted">Disk</dt>
+                  <dd className="text-text-primary">{agent.resources.disk}</dd>
+                </div>
+                <div className="flex justify-between">
+                  <dt className="text-text-muted">Auth</dt>
+                  <dd className="text-text-primary">{agent.authType || 'Default'}</dd>
+                </div>
+              </dl>
+            </div>
+          </details>
+          {agent.identityRepo && (
+            <details className="group">
+              <summary className="cursor-pointer text-sm font-medium text-text-secondary">Identity repository</summary>
+              <div className="mt-3"><IdentityRepoCard data={agent.identityRepo} /></div>
+            </details>
+          )}
+          </div>
+        )}
+
+        {activeSection === 'activity' && <ActivityTab agentName={name} />}
+        {activeSection === 'jobs' && <JobsTab agentName={name} />}
+        {activeSection === 'webhooks' && <WebhooksTab agentName={name} />}
+
+        {activeSection === 'general' && (
+                <div className="space-y-4">
+                  <Card>
+                    <h2 className="mb-1 text-sm font-semibold text-text-primary">Agent profile</h2>
+                    <p className="mb-3 text-xs text-text-muted">An operator-facing identity. Changes do not restart the agent.</p>
+                    <div className="space-y-3">
+                      <label className="block text-xs font-medium text-text-muted">
+                        Alias
+                        <input
+                          value={profileAlias}
+                          maxLength={80}
+                          onChange={(event) => setProfileAlias(event.target.value)}
+                          placeholder={name}
+                          className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                        />
+                      </label>
+                      <label className="block text-xs font-medium text-text-muted">
+                        Description
+                        <textarea
+                          value={profileDescription}
+                          maxLength={500}
+                          rows={3}
+                          onChange={(event) => setProfileDescription(event.target.value)}
+                          placeholder="What this agent is for"
+                          className="mt-1 w-full resize-y rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
+                        />
+                      </label>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        loading={updateAgentProfile.isPending}
+                        disabled={updateAgentProfile.isPending || profileAlias === (agent.profile?.alias ?? '') && profileDescription === (agent.profile?.description ?? '')}
+                        onClick={() => updateAgentProfile.mutate({ name, profile: { alias: profileAlias, description: profileDescription } })}
+                      >
+                        Save profile
+                      </Button>
+                    </div>
+                  </Card>
+                  <Card>
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <h2 className="text-sm font-semibold text-text-primary">Runtime</h2>
+                        <p className="mt-1 text-xs text-text-muted">Model, harness version, and compute allocation.</p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>
+                        <Button size="sm" variant="secondary" onClick={() => { setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? ''); setPending('set-runtime-version') }}>Harness</Button>
+                        <Button size="sm" variant="secondary" onClick={() => { setNewCPU(agent.resources.cpu); setNewMemory(agent.resources.memory); setPending('set-resources') }}>Resources</Button>
+                      </div>
+                    </div>
+                    <dl className="mt-4 grid gap-x-8 gap-y-2 border-t border-border-subtle pt-3 text-sm sm:grid-cols-2">
+                      <div className="flex justify-between gap-3"><dt className="text-text-muted">Model</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-text-muted">Harness</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.runtimeVersion?.installedVersion || agent.runtime}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
+                      <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
+                    </dl>
+                  </Card>
+                  <Card>
+                    <h2 className="mb-2 text-sm font-semibold text-text-primary">Startup prompt</h2>
+                    <p className="mb-3 text-xs text-text-muted">Sent as the first user turn on every new session. Saving marks this agent for restart without interrupting the live session.</p>
+                    <textarea
+                      value={startupPrompt}
+                      onChange={(event) => setStartupPrompt(event.target.value)}
+                      maxLength={32768}
+                      rows={6}
+                      className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                      placeholder="No startup prompt configured"
+                    />
+                    <div className="mt-2 flex items-center justify-between gap-3">
+                      <span className="text-xs text-text-muted">{startupPrompt.length.toLocaleString()} / 32,768</span>
+                      <Button size="sm" loading={patchAgent.isPending} disabled={patchAgent.isPending || startupPrompt === (agent.startupPrompt ?? '')} onClick={() => patchAgent.mutate({ name, startupPrompt })}>Save prompt</Button>
+                    </div>
+                  </Card>
+                  <SessionResumeCard enabled={agent.sessionResume ?? false} pending={setSessionResume.isPending} onChange={(enabled) => setSessionResume.mutate({ name, sessionResume: enabled })} />
+                  <RequestReplyCard enabled={agent.requestReplyEnabled ?? false} pending={setRequestReplyEnabled.isPending} onChange={(enabled) => setRequestReplyEnabled.mutate({ name, requestReplyEnabled: enabled })} />
+                </div>
+        )}
+        {activeSection === 'comms' && <CommsTab agentName={name} onRestartPod={() => setPending('restart')} />}
+        {activeSection === 'secrets' && <SecretsTab agentName={name} />}
+        {activeSection === 'capabilities' && (
+          <div className="space-y-4">
+            <PublicCapabilitiesEditor agent={agent} />
+            <SkillsTab agentName={name} />
+          </div>
+        )}
+        {activeSection === 'shell' && <ShellTab agentName={name} />}
+        </main>
+      </div>
+
+      {mobileNavOpen && (
+        <div className="fixed inset-0 z-50 bg-surface-base sm:hidden" role="dialog" aria-modal="true" aria-label="Agent navigation">
+          <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-text-primary">{agent.id}</p>
+              <p className="text-xs text-text-muted">Agent navigation</p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation">
+              <X className="h-5 w-5" />
+            </Button>
+          </div>
+          <div className="h-[calc(100dvh-4rem)] overflow-y-auto p-4 pb-24">
+            <AgentNavigation value={activeSection} onChange={selectSection} />
           </div>
         </div>
-        </TabsContent>
-
-        <TabsContent value="comms">
-          {/* Restart pod is routed through the existing confirm flow so the
-              "apply this change" path is the same one the More menu uses —
-              including its warning that the live session ends. */}
-          <CommsTab agentName={name} onRestartPod={() => setPending('restart')} />
-        </TabsContent>
-
-        <TabsContent value="skills">
-          {/* Read-only: skills are managed by talking to the agent. */}
-          <SkillsTab agentName={name} />
-        </TabsContent>
-
-        <TabsContent value="secrets">
-          <SecretsTab agentName={name} />
-        </TabsContent>
-
-        <TabsContent value="jobs">
-          <JobsTab agentName={name} />
-        </TabsContent>
-
-        <TabsContent value="webhooks">
-          <WebhooksTab agentName={name} />
-        </TabsContent>
-
-        <TabsContent value="activity">
-          <ActivityTab agentName={name} />
-        </TabsContent>
-
-        <TabsContent value="shell">
-          <ShellTab agentName={name} />
-        </TabsContent>
-      </Tabs>
+      )}
 
       {/* Set model dialog — custom modal because we need an input field inside */}
       {pending === 'set-model' && (

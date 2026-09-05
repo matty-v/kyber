@@ -10,7 +10,7 @@ The console is organized into surfaces, each for one job:
 
 - **Dashboard**: the cluster at a glance. Agent status counts, the recently active agents, which agents are running low on context budget, and a live read-only peek into any agent's terminal.
 - **Machines**: create and manage the machines agents run on.
-- **Agents**: create and manage agents, stream logs, open a shell into an agent, and drive lifecycle actions such as stop, start, restart, re-authorize, and delete. An agent's detail view carries its own tabs: Overview, Comms, Secrets, Jobs, Webhooks, Activity, and Shell.
+- **Agents**: create and manage agents, stream logs, open a shell into an agent, and drive lifecycle actions such as stop, start, restart, re-authorize, and delete. An agent's detail view uses grouped local navigation: Observe contains Overview, Activity, and Shell; Automate contains Jobs and Webhooks; Configure contains General, Comms, Secrets, and Capabilities. The navigation is a persistent rail on desktop and a full-screen menu on mobile.
 - **Metrics**: per-agent working time, token usage, cost, and live node resource gauges. See [Metrics](#metrics) below.
 - **Settings**: manage the API key, choose the update channel and install cluster updates, see the full version breakdown (build, chart version, and the substrate the cluster runs on), and set fleet-wide harness defaults.
 

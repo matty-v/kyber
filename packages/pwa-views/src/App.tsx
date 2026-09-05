@@ -42,6 +42,7 @@ function AppRoutes() {
           <Route path="agents" element={<AgentList />} />
           <Route path="agents/new" element={<CreateAgent />} />
           <Route path="agents/:name" element={<AgentDetail />} />
+          <Route path="agents/:name/:section" element={<AgentDetail />} />
           <Route path="metrics" element={<MetricsTab />} />
           <Route path="logs" element={<Logs />} />
           <Route path="settings" element={<Settings />} />
