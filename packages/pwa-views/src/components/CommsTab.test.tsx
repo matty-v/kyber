@@ -10,6 +10,7 @@ vi.mock('../hooks/useAPI', () => ({
   useAgentComms: vi.fn(),
   usePutTelegramComms: vi.fn(),
   usePutDiscordComms: vi.fn(),
+  usePutSlackComms: vi.fn(),
   useDeleteAgentComms: vi.fn(),
 }))
 
@@ -29,11 +30,13 @@ function newMutationMock() {
 const OFF: CommsChannel[] = [
   { channel: 'telegram', configured: false, podRestartRequired: false, botTokenSet: false },
   { channel: 'discord', configured: false, podRestartRequired: false, botTokenSet: false },
+  { channel: 'slack', configured: false, podRestartRequired: false, botTokenSet: false },
 ]
 
 function setupMocks(channels: CommsChannel[] = OFF) {
   const telegram = newMutationMock()
   const discord = newMutationMock()
+  const slack = newMutationMock()
   const del = newMutationMock()
 
   vi.mocked(useAPIModule.useAgentComms).mockReturnValue({
@@ -48,10 +51,13 @@ function setupMocks(channels: CommsChannel[] = OFF) {
   vi.mocked(useAPIModule.usePutDiscordComms).mockReturnValue(
     discord as unknown as ReturnType<typeof useAPIModule.usePutDiscordComms>,
   )
+  vi.mocked(useAPIModule.usePutSlackComms).mockReturnValue(
+    slack as unknown as ReturnType<typeof useAPIModule.usePutSlackComms>,
+  )
   vi.mocked(useAPIModule.useDeleteAgentComms).mockReturnValue(
     del as unknown as ReturnType<typeof useAPIModule.useDeleteAgentComms>,
   )
-  return { telegram, discord, del }
+  return { telegram, discord, slack, del }
 }
 
 beforeEach(() => {
@@ -80,7 +86,7 @@ describe('CommsTab', () => {
 
     expect(screen.getByText('Telegram')).toBeInTheDocument()
     expect(screen.getByText('Discord')).toBeInTheDocument()
-    expect(screen.getAllByText('Off')).toHaveLength(2)
+    expect(screen.getAllByText('Off')).toHaveLength(3)
     // Nothing to turn off yet.
     expect(screen.queryByRole('button', { name: /turn off/i })).not.toBeInTheDocument()
   })
@@ -198,6 +204,20 @@ describe('CommsTab', () => {
     expect(screen.getByLabelText(/servers/i)).toHaveValue('234567890123456789')
     expect(screen.getByLabelText(/only when mentioned/i)).toBeChecked()
     expect(screen.getByText('On')).toBeInTheDocument()
+  })
+
+  it('saves Slack tokens and both fail-closed allowlists', async () => {
+    const user = userEvent.setup()
+    const { slack } = setupMocks()
+    renderWithQuery(<CommsTab agentName="dave" />)
+    await user.type(screen.getByLabelText('Bot token', { selector: '#comms-slack-bot-token' }), 'xoxb-token')
+    await user.type(screen.getByLabelText('App-level token', { selector: '#comms-slack-app-token' }), 'xapp-token')
+    await user.type(screen.getByLabelText(/allowed user ids/i), 'U123ABC')
+    await user.type(screen.getByLabelText(/allowed channel ids/i), 'C123ABC')
+    await user.click(screen.getByRole('button', { name: /enable slack/i }))
+    expect(slack.mutate).toHaveBeenCalledWith({
+      name: 'dave', body: { botToken: 'xoxb-token', appToken: 'xapp-token', allowedUserIds: ['U123ABC'], allowedChannelIds: ['C123ABC'] },
+    }, expect.anything())
   })
 
   it('warns that a saved change is not live until the pod restarts', async () => {

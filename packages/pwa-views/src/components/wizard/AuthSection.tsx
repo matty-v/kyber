@@ -41,6 +41,10 @@ function buildAuthorizeUrl(challenge: string, state: string): string {
 type ChannelTextKey =
   | 'telegramBotToken'
   | 'telegramAllowedUserIds'
+  | 'slackBotToken'
+  | 'slackAppToken'
+  | 'slackAllowedUserIds'
+  | 'slackAllowedChannelIds'
   | 'discordBotToken'
   | 'discordGuildIds'
   | 'discordChannelIds'
@@ -67,10 +71,10 @@ interface ChannelToggleField {
 type ChannelField = ChannelTextField | ChannelToggleField
 
 interface ChannelDef {
-  id: 'telegram' | 'discord'
+  id: 'telegram' | 'discord' | 'slack'
   label: string
   /** Maps to a boolean key on WizardState. */
-  enabledKey: 'telegramEnabled' | 'discordEnabled'
+  enabledKey: 'telegramEnabled' | 'discordEnabled' | 'slackEnabled'
   /** Channels require OAuth. The auth-step gate enforces this. */
   requiresOAuth: boolean
   /** Rendered under the checkbox before the fields — sets expectations. */
@@ -151,6 +155,19 @@ const CHANNELS: ChannelDef[] = [
         helperText:
           'Turn this on for a channel where people also talk to each other — otherwise every side conversation costs the agent a turn.',
       },
+    ],
+  },
+  {
+    id: 'slack',
+    label: 'Slack',
+    enabledKey: 'slackEnabled',
+    requiresOAuth: false,
+    blurb: 'Needs a Slack app with Socket Mode enabled. You can also set this up later from the agent’s Comms tab.',
+    fields: [
+      { kind: 'secret', name: 'slackBotToken', required: true, label: 'Slack bot token', placeholder: 'xoxb-…', helperText: 'OAuth token from your Slack app. Stored as a k8s Secret.' },
+      { kind: 'secret', name: 'slackAppToken', required: true, label: 'Slack app-level token', placeholder: 'xapp-…', helperText: 'Requires Socket Mode and connections:write.' },
+      { kind: 'text', name: 'slackAllowedUserIds', required: true, label: 'Allowed user IDs', placeholder: 'U012ABC, …', helperText: 'Slack user IDs, comma-separated.' },
+      { kind: 'text', name: 'slackAllowedChannelIds', required: true, label: 'Allowed channel IDs', placeholder: 'C012ABC, …', helperText: 'Slack channel IDs, comma-separated. Required for fail-closed replies.' },
     ],
   },
 ]
@@ -241,7 +258,7 @@ export function AuthSection({ state, set }: AuthSectionProps) {
         </select>
       </div>
 
-      {state.authType === 'oauth' && (
+      {(
         <div className="space-y-3">
           <Button type="button" variant="secondary" size="md" onClick={() => void startOAuth()}>
             {state.pkceVerifier ? 'Re-authorize' : 'Open Anthropic login'}
@@ -295,9 +312,9 @@ export function AuthSection({ state, set }: AuthSectionProps) {
           off by default — most agents want neither, and Discord in particular
           needs a bot that already exists, so its fields stay collapsed until
           asked for. Both can also be configured later from the Comms tab. */}
-      {state.authType === 'oauth' && (
+      {(
         <div className="space-y-3">
-          {CHANNELS.map((ch) => {
+          {CHANNELS.filter((ch) => state.authType === 'oauth' || !ch.requiresOAuth).map((ch) => {
             const enabled = state[ch.enabledKey]
             return (
               <div key={ch.id}>

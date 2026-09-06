@@ -33,6 +33,11 @@ export interface WizardState {
   openaiApiKey: string
   telegramBotToken: string
   telegramAllowedUserIds: string
+  slackEnabled: boolean
+  slackBotToken: string
+  slackAppToken: string
+  slackAllowedUserIds: string
+  slackAllowedChannelIds: string
   // Discord (kyber#664) is optional at create time and needs a bot that already
   // exists, so it defaults off and collapsed. When enabled, CreateAgent wires it
   // through PUT /comms/discord AFTER the agent exists — the same code path the
@@ -87,6 +92,11 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     openaiApiKey: '',
     telegramBotToken: '',
     telegramAllowedUserIds: '',
+    slackEnabled: false,
+    slackBotToken: '',
+    slackAppToken: '',
+    slackAllowedUserIds: '',
+    slackAllowedChannelIds: '',
     discordEnabled: false,
     discordBotToken: '',
     discordGuildIds: '',
