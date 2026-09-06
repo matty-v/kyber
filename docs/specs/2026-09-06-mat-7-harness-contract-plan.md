@@ -229,3 +229,20 @@ session lock. The fixture explicitly isolates the host A2A environment. The
 focused regression and complete Claude integration suite pass. A rebuilt
 Claude image and live restart recheck are next; other runtime/control-plane
 production code is unchanged.
+
+### Corrected Claude live evidence
+
+The corrected image `worktree-20260906-5cfe84a-restart` passed native task
+completion and fresh-session restart on Claude Code `2.1.263`. API latency was
+1.06 seconds; two delivered task receipts have distinct native session IDs.
+The missing-hook gate/recovery test also passed before the image correction.
+The conformance matrix preserves the initial timeout and `delivery_unknown`
+result alongside the corrected evidence; no blind redelivery occurred.
+Both disposable subscription agents are cleaned up. PWA creation was also
+verified in Chromium for both subscription flows and masked provider-key fields.
+
+Outstanding: scoped Anthropic/OpenAI API-key live tests (Matt was asked to
+create the two named disposable agents through the dev PWA), then final review
+and publication. No API-key values were requested through Telegram. The runtime
+contract remains an approved draft, not full native certification. CI integration
+and agent-base integration pass on `5cfe84a`; the full Go gate is still running.

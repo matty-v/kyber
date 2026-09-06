@@ -28,9 +28,9 @@ from fixture execution; a source implementation alone is not certification.
 | HC-01 registration/pod assembly | Implemented | Implemented | `pkg/runtimes/contracttest`, existing adapter tests; image boot needs live evidence |
 | HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Adapter and startup fixtures, `credential_failure_test.go`; clearer normalized failure taxonomy is a gap |
 | HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
-| HC-04 prompt/session commands | Shared tmux delivery, fresh restart, `/compact` | Startup delivery + fresh restart live verified; compaction fixture | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
+| HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
 | HC-05 API-key mode | Anthropic Secret | OpenAI Secret | Shared checks cover mode separation and two Agent names; startup fixtures; live mode checks outstanding |
-| HC-05 subscription mode | PKCE OAuth; refresh-token sync | Device login live verified; legacy auth JSON and sync fixtures | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
+| HC-05 subscription mode | PKCE login live verified; refresh-token sync fixtures | Device login live verified; legacy auth JSON and sync fixtures | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
 | HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Boot fixtures, cron correlation and dispatch marker tests; runtime version behavior needs live evidence |
 | HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | New `TestHarnessContractReceiptRecovery` plus task worker/store/API suites; historical MAT-28 live evidence is version-specific |
 | HC-08 cancellation | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
@@ -92,8 +92,54 @@ operator consent completed successfully. The first native turn answered
 
 Cleanup: the disposable Codex agent was deleted after evidence capture.
 
-Claude subscription consent and both valid live API-key checks remain pending.
+Claude PKCE checks are recorded below. Both valid live API-key checks remain pending.
 API-key fixtures do not substitute for successful live API-key authentication.
+
+## Claude and browser checkpoint — 2026-09-06
+
+Disposable `sol-test-mat7-claude`, PKCE/OAuth mode, installed Claude Code
+`2.1.263`, initial worktree image `worktree-20260906223108-a97298f`:
+startup answered `MAT7_READY`; task
+`task_e8665a6e0d006d3d03939565bc6d24e8` explicitly completed via the native
+MCP task tool with `MAT7_CLAUDE_TASK_OK`. PostgreSQL records a delivered
+`claude-code` receipt with native session identity.
+
+The initial restart created a new session and repeated the startup prompt,
+but the API returned 500 after its timeout. The generated A2A skill-repair
+background loop retained the exec streams and session-lock descriptor. Task
+`task_68164c0d13d3cfbbe9aaae570d76103d` ended `delivery_unknown`; it was not
+blindly redelivered. Commit `5cfe84a` closes the inherited lock descriptor and
+redirects the repair loop's standard streams. Its focused regression and the
+complete Claude integration suite pass; corrected-image live evidence follows.
+
+Claude's missing-hook case also passed on the initial image: task
+`task_dd7530266b42db5324c009647ca3ff02` remained queued with a leased dispatch
+and no receipt while the hook was nonexecutable. After mode 0755 and positive
+capability evidence returned, the task explicitly completed with
+`MAT7_CLAUDE_RECOVERED`.
+
+The corrected Claude image was built by Cloud Build
+`1091bcf3-8dec-40ff-8445-6d889ea7cd1b` and deployed as
+`worktree-20260906-5cfe84a-restart`, digest
+`sha256:36fb011ac2d261d72d166631e81e8bcd02581672bba2b646a53de3dad054141c`.
+The control plane/Codex/sidecar remain on the original worktree tag. A transient
+GKE network-sandbox failure occurred during the rollout; the normal start/retry
+path recovered the disposable agent. This is not a claim of node-recovery
+certification.
+
+On the corrected image, with Claude Code still `2.1.263`, baseline task
+`task_bfe3ef468dfd781241160fcead338113` explicitly completed with
+`MAT7_CLAUDE_FIXED_BASELINE`. The restart API returned success in 1.06 seconds.
+Post-restart task `task_9e6606eca0a7f30d6fb01e9772074fde` explicitly completed
+with `MAT7_CLAUDE_RESTART_OK`; the two delivered receipts have distinct native
+session identities. The disposable Claude agent was deleted after evidence
+capture. Its pending PKCE state had already been removed after exchange.
+
+A real Chromium smoke check against the dev PWA traversed creation for both
+runtime IDs, verified the descriptor-specific subscription choices and login
+instructions, and switched to the correctly labelled masked API-key inputs.
+Screenshots were visually inspected. No agent was created and no provider key
+was entered during that UI check. This is UI evidence, not live API-key auth.
 
 ## Run contract checks
 
