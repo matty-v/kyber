@@ -168,3 +168,31 @@ Full-suite review found and fixed a duplicate OpenAPI config path, registry
 test cleanup that erased init-time providers, and lifecycle fixtures assuming
 Claude transcript/default behavior for unknown adapters. The new behavior is
 intentional: only a declared integration receives those facilities.
+
+### Full implementation validation — 2026-09-06 22:47 UTC
+
+All implementation CI gates on `aa26d5c` pass, including the complete Go
+lint/test gate, PWA build, native/bootable integration suites, contract/TCK,
+CodeQL and secret scanning. Local final `go vet -p 2 ./...` and
+`go build -p 2 ./...` pass. The duplicate local full Go suite remains running
+through its long transcript stress fixtures. Local PWA tests (783), affected
+consumer/action tests, embedded build/lint and embedded tests (8) pass.
+
+The complete worktree was built and deployed to the dedicated dev cluster,
+including a rebuilt runtime base, CRD, both harnesses and status sidecar.
+Tag: `worktree-20260906223108-a97298f`; Cloud Build
+`d94d9cfc-0302-4b7b-8bad-9b46f66296e9`. The amendment to `aa26d5c` only fixes
+OpenAPI fixture registration and a secret-scanner false positive in test struct
+formatting; production source is identical to the deployed tag.
+
+Live read-only Claude observations confirm unknown-to-available transition
+through native setup and the authenticated sidecar. Codex's canonical auth
+status route progresses from starting to a device-login challenge on the new
+image. Dedicated agents: `sol-test-mat7-codex` (created, request/reply enabled)
+and `sol-test-mat7-claude` (pending PKCE creation). Operator login consent is
+pending; no credentials were reused from existing agents. Keep disposable test
+state until login/behavior evidence is captured, then clean up with the dev
+agent helper. Valid live API-key credentials are not available in this session.
+
+PR #231 now describes the complete implementation. It remains a draft pending
+native behavior evidence and final publication review. MAT-7 remains in progress.
