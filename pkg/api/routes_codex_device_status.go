@@ -14,7 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/codexauth"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // GET /api/v1/agents/{name}/codex-device-auth — what the in-pod device login is
@@ -76,7 +76,11 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 	}
 	// Same guard and wording as the POST — asking a Claude Code agent about a
 	// Codex device login is a caller bug, not an empty result.
-	if agent.Spec.Runtime != "codex" || agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeOAuth {
+	descriptor, _ := runtimes.Describe(agent.Spec.Runtime)
+	mode, _ := descriptor.Auth(agent.Spec.Secrets.AuthType)
+	strategy, _ := runtimes.AuthenticationFor(agent.Spec.Runtime)
+	_, canRead := strategy.(runtimes.DeviceAuthReader)
+	if mode.Flow != "device-code" || !canRead {
 		writeJSONErrorWithField(w, http.StatusConflict, "invalid_auth_mode",
 			"device auth is available only for Codex agents using a ChatGPT subscription", "secrets.authType")
 		return
@@ -94,11 +98,11 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 	podName := "agent-" + name
 	pod := &corev1.Pod{}
 	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: podName, Namespace: s.Namespace}, pod); err != nil {
-		writeJSON(w, http.StatusOK, codexauth.Result{State: codexauth.StateStarting})
+		writeJSON(w, http.StatusOK, runtimes.AuthObservation{State: runtimes.AuthStarting})
 		return
 	}
 	if pod.Status.Phase != corev1.PodRunning {
-		writeJSON(w, http.StatusOK, codexauth.Result{State: codexauth.StateStarting})
+		writeJSON(w, http.StatusOK, runtimes.AuthObservation{State: runtimes.AuthStarting})
 		return
 	}
 
@@ -121,26 +125,26 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 		if probeCouldNotRun(stderr) {
 			slog.Error("codex device auth probe could not run",
 				"agent", name, "error", err, "stderr", firstLine(stderr))
-			writeJSON(w, http.StatusOK, codexauth.Result{
-				State:  codexauth.StateFailed,
+			writeJSON(w, http.StatusOK, runtimes.AuthObservation{
+				State:  runtimes.AuthFailed,
 				Detail: truncateForOperator(stderr),
 			})
 			return
 		}
 		slog.Warn("codex device auth probe failed",
 			"agent", name, "error", err, "stderr", firstLine(stderr))
-		writeJSON(w, http.StatusOK, codexauth.Result{State: codexauth.StateStarting})
+		writeJSON(w, http.StatusOK, runtimes.AuthObservation{State: runtimes.AuthStarting})
 		return
 	}
 
-	writeJSON(w, http.StatusOK, parseDeviceAuthProbe(stdout, time.Now()))
+	writeJSON(w, http.StatusOK, parseDeviceAuthProbe(agent.Spec.Runtime, stdout, time.Now()))
 }
 
 // parseDeviceAuthProbe turns the probe script's stdout into a Result. Split out
 // from the handler so the marker handling is unit-testable without a cluster.
-func parseDeviceAuthProbe(stdout string, now time.Time) codexauth.Result {
+func parseDeviceAuthProbe(runtimeID, stdout string, now time.Time) runtimes.AuthObservation {
 	if strings.Contains(stdout, deviceAuthNoSession) {
-		return codexauth.Result{State: codexauth.StateAbsent}
+		return runtimes.AuthObservation{State: runtimes.AuthAbsent}
 	}
 
 	var startedAt time.Time
@@ -162,7 +166,11 @@ func parseDeviceAuthProbe(stdout string, now time.Time) codexauth.Result {
 	if _, after, found := strings.Cut(stdout, deviceAuthPaneMarker); found {
 		pane = after
 	}
-	return codexauth.Parse(pane, startedAt, now)
+	strategy, _ := runtimes.AuthenticationFor(runtimeID)
+	if reader, ok := strategy.(runtimes.DeviceAuthReader); ok {
+		return reader.ParseDeviceAuth(pane, startedAt, now)
+	}
+	return runtimes.AuthObservation{State: runtimes.AuthFailed, Detail: "This harness cannot report device login status."}
 }
 
 // deviceAuthProbeArgv becomes the agent user and runs the probe script.

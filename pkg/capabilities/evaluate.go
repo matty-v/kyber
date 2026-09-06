@@ -8,6 +8,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/skillscan"
 )
 
@@ -27,11 +28,6 @@ type PlatformState struct {
 // public capability claim: it only limits which operator declarations current
 // Kyber runtime adapters can mark available.
 const AdapterMatrixVersion = "v1"
-
-var adapterFeatureMatrix = map[string]map[string]bool{
-	"claude-code": {"durable": true, "progress": true, "typed-results": true, "files": true, "cancellation": true, "multi-turn": true, "authorization-request": true},
-	"codex":       {"durable": true, "progress": true, "typed-results": true, "files": true, "cancellation": true, "multi-turn": true, "authorization-request": true},
-}
 
 // Evaluate joins an explicit declaration with bounded private observations.
 // Observations may narrow availability but can never create a capability.
@@ -85,7 +81,7 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 	if !*agent.Status.Runtime.Usable {
 		return "unavailable", "runtime-adapter-unusable"
 	}
-	supportedFeatures, runtimeSupported := adapterFeatureMatrix[runtime]
+	descriptor, runtimeSupported := runtimes.Describe(runtime)
 	if !runtimeSupported {
 		return "unavailable", "runtime-adapter-unsupported"
 	}
@@ -96,7 +92,7 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 		if feature == "event-replay" {
 			return "unavailable", "platform-feature-disabled"
 		}
-		if !supportedFeatures[feature] {
+		if !descriptor.Supports(runtimes.TaskReceipts) || !descriptor.Supports(runtimes.TaskTools) || !knownFeatures[feature] {
 			return "unavailable", "runtime-feature-unsupported"
 		}
 		if available, reason := platformFeatureAvailable(feature, platform); !available {
@@ -105,6 +101,14 @@ func evaluateCapability(declared kyberv1.AgentPublicCapability, agent *kyberv1.A
 	}
 	if len(declared.TaskFeatures) > 0 && !agent.Spec.RequestReplyEnabled {
 		return "unavailable", "task-interface-disabled"
+	}
+	if len(declared.TaskFeatures) > 0 {
+		for _, feature := range []runtimes.Feature{runtimes.TaskReceipts, runtimes.TaskTools} {
+			availability := runtimes.AvailabilityFor(agent, feature, now)
+			if availability.State != "available" {
+				return availability.State, "runtime-task-evidence-unavailable"
+			}
+		}
 	}
 	evidence := declared.Evidence
 	if evidence == nil {

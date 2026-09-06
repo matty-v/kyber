@@ -1170,7 +1170,7 @@ func (r *AgentReconciler) classifyEvent(
 		// Check startup timeout.
 		if agent.Status.LastTransition != nil {
 			if time.Since(agent.Status.LastTransition.Time) > startupTimeoutSeconds {
-				pending, err := r.codexDeviceAuthPending(ctx, agent)
+				pending, err := r.runtimeAuthenticationPending(ctx, agent)
 				if err != nil {
 					return "", err
 				}
@@ -1335,12 +1335,9 @@ func (r *AgentReconciler) classifyEvent(
 	return "", nil
 }
 
-// codexDeviceAuthPending reports whether a Codex subscription agent is
-// intentionally waiting for the human-driven device flow. The API writes {}
-// before starting that flow; the in-pod credential syncer replaces it with the
-// real auth.json immediately after login. This precise marker keeps the normal
-// startup timeout active for every other kind of stuck pod.
-func (r *AgentReconciler) codexDeviceAuthPending(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+// runtimeAuthenticationPending delegates intentional interactive-login waits to
+// the integration owning the credential. Such waits do not spend crash retries.
+func (r *AgentReconciler) runtimeAuthenticationPending(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
 	if agent == nil {
 		return false, nil
 	}
@@ -1359,7 +1356,7 @@ func (r *AgentReconciler) codexDeviceAuthPending(ctx context.Context, agent *kyb
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("reading Codex device-auth secret: %w", err)
+		return false, fmt.Errorf("reading runtime authentication secret: %w", err)
 	}
 	return strategy.Pending(agent.Spec.Secrets.AuthType, secret.Data), nil
 }

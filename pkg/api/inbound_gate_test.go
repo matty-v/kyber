@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"github.com/matty-v/kyber/pkg/runtimes"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"testing"
 	"time"
@@ -17,6 +18,7 @@ import (
 func gateServer(t *testing.T, phase kyberv1.AgentPhase) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
 	if err := kyberv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
@@ -98,12 +100,17 @@ func TestTaskGateRequiresBothFreshCapabilities(t *testing.T) {
 			if err := s.K8sClient.Update(ctx, a); err != nil {
 				t.Fatal(err)
 			}
+			a.Status.PodName = "agent-wedge"
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: a.Status.PodName, Namespace: fdNS, UID: "current"}}
+			if err := s.K8sClient.Create(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
 			a.Status.Runtime.InstalledVersion = "fixture"
 			observed := time.Now()
 			if tc.stale {
 				observed = observed.Add(-2 * time.Minute)
 			}
-			a.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{ContractVersion: runtimes.ContractVersion, InstalledVersion: "fixture", ObservedAt: metav1.NewTime(observed), Features: map[string]bool{string(runtimes.TaskReceipts): tc.receipt, string(runtimes.TaskTools): tc.tools}}
+			a.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{PodUID: "current", ContractVersion: runtimes.ContractVersion, InstalledVersion: "fixture", ObservedAt: metav1.NewTime(observed), Features: map[string]bool{string(runtimes.TaskReceipts): tc.receipt, string(runtimes.TaskTools): tc.tools}}
 			if err := s.K8sClient.Status().Update(ctx, a); err != nil {
 				t.Fatal(err)
 			}

@@ -3,6 +3,8 @@ package capabilities
 import (
 	"encoding/json"
 	"errors"
+	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	"strings"
 	"testing"
 	"time"
@@ -82,7 +84,7 @@ func TestNormalizeAndValidateRejectsUnsafeDeclarations(t *testing.T) {
 func TestEvaluateRequiresInstallationTaskBackends(t *testing.T) {
 	now := time.Date(2026, 9, 1, 22, 0, 0, 0, time.UTC)
 	usable := true
-	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Spec: kyberv1.AgentSpec{Runtime: "codex", RequestReplyEnabled: true, PublicCapabilities: validDeclaration()}, Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning, Runtime: kyberv1.AgentRuntimeStatus{Runtime: "codex", Usable: &usable}}}
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Spec: kyberv1.AgentSpec{Runtime: "codex", RequestReplyEnabled: true, PublicCapabilities: validDeclaration()}, Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning, Runtime: kyberv1.AgentRuntimeStatus{Runtime: "codex", Usable: &usable, InstalledVersion: "fixture", Capabilities: &kyberv1.RuntimeCapabilitiesObservation{ContractVersion: "1.0", InstalledVersion: "fixture", ObservedAt: metav1.NewTime(now), Features: map[string]bool{"task-receipts": true, "task-tools": true}}}}}
 	agent.Spec.PublicCapabilities.Capabilities[0].TaskFeatures = append(agent.Spec.PublicCapabilities.Capabilities[0].TaskFeatures, "files")
 	report := &skillscan.Report{ReportedAt: now.Format(time.RFC3339), Skills: []skillscan.Skill{{Name: "internal-skill-42", Linked: []string{"codex"}}}}
 
@@ -112,7 +114,7 @@ func TestEvaluateRequiresInstallationTaskBackends(t *testing.T) {
 func TestEvaluateFailsClosedAndRecovers(t *testing.T) {
 	now := time.Date(2026, 9, 1, 22, 0, 0, 0, time.UTC)
 	usable := true
-	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Spec: kyberv1.AgentSpec{Runtime: "codex", RequestReplyEnabled: true, PublicCapabilities: validDeclaration()}, Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning, Runtime: kyberv1.AgentRuntimeStatus{Runtime: "codex", Usable: &usable}}}
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Generation: 7}, Spec: kyberv1.AgentSpec{Runtime: "codex", RequestReplyEnabled: true, PublicCapabilities: validDeclaration()}, Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning, Runtime: kyberv1.AgentRuntimeStatus{Runtime: "codex", Usable: &usable, InstalledVersion: "fixture", Capabilities: &kyberv1.RuntimeCapabilitiesObservation{ContractVersion: "1.0", InstalledVersion: "fixture", ObservedAt: metav1.NewTime(now), Features: map[string]bool{"task-receipts": true, "task-tools": true}}}}}
 	platform := PlatformState{TasksEnabled: true, DurableTaskStore: true, TaskObjectStore: true}
 	status := Evaluate(agent, nil, errors.New("down"), platform, now)
 	if got := status.Capabilities[0]; got.Availability != "unknown" || got.Reason != "skill-evidence-unavailable" {

@@ -15,27 +15,6 @@ security:
   - BearerAuth: []
 
 paths:
-  /api/v1/config:
-    get:
-      operationId: getConfig
-      summary: Discover installed harnesses and public installation settings
-      responses:
-        '200':
-          description: Public configuration
-          content:
-            application/json:
-              schema:
-                type: object
-                required: [runtimes, compute, models, identity]
-                properties:
-                  runtimes:
-                    type: array
-                    items: {$ref: '#/components/schemas/RuntimeDescriptor'}
-                  compute: {type: object}
-                  models: {type: array, items: {type: object}}
-                  identity: {type: object}
-                  publicUrl: {type: string}
-        '401': {$ref: '#/components/responses/Unauthorized'}
   /api/v1/agents/{name}/tasks:
     parameters:
       - name: name
@@ -982,6 +961,44 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/agents/{name}/auth:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getRuntimeAuthStatus
+      summary: Observe the registered harness device-login flow
+      responses:
+        '200':
+          description: Device-login observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CodexDeviceAuthStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {description: Pod inspection unavailable}
+    post:
+      operationId: reauthorizeRuntime
+      summary: Start the registered harness subscription reauthorization flow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Required only for authorization-code flows.
+              properties:
+                oauthCode: {type: string, writeOnly: true}
+                pkceVerifier: {type: string, writeOnly: true}
+                state: {type: string, writeOnly: true}
+      responses:
+        '204': {description: Credentials updated or device login scheduled}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '502': {description: Provider exchange failed}
+
   /api/v1/agents/{name}/codex-device-auth:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1574,8 +1591,11 @@ components:
 
     ConfigResponse:
       type: object
-      required: [compute, models, identity]
+      required: [runtimes, compute, models, identity]
       properties:
+        runtimes:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeDescriptor'}
         compute:
           type: object
           required: [provider]

@@ -15,7 +15,7 @@ import (
 // HC-07: run the production receipt hook against a controllable sidecar.
 // This verifies transport evidence, not whether an upstream CLI honors exit 2.
 func TestHarnessContractReceiptRecovery(t *testing.T) {
-	for _, runtime := range []string{"claude-code", "codex"} {
+	for _, runtime := range []string{"claude-code", "codex", "contract-process-fixture"} {
 		for _, scenario := range []string{"accepted", "response-lost", "unavailable", "mismatched", "ordinary", "wrong-event", "missing-session"} {
 			t.Run(runtime+"/"+scenario, func(t *testing.T) {
 				task := "task_11111111111111111111111111111111"

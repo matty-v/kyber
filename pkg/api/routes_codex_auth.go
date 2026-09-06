@@ -11,6 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // handleCodexDeviceAuth discards a Codex subscription credential and starts a
@@ -34,7 +35,9 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
-	if agent.Spec.Runtime != "codex" || agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeOAuth {
+	descriptor, _ := runtimes.Describe(agent.Spec.Runtime)
+	mode, _ := descriptor.Auth(agent.Spec.Secrets.AuthType)
+	if mode.Flow != "device-code" {
 		writeJSONErrorWithField(w, http.StatusConflict, "invalid_auth_mode",
 			"device auth is available only for Codex agents using a ChatGPT subscription", "secrets.authType")
 		return
@@ -43,14 +46,24 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
+	strategy, ok := runtimes.AuthenticationFor(agent.Spec.Runtime)
+	if !ok {
+		writeJSONError(w, 501, "auth_unsupported", "runtime authentication unavailable")
+		return
+	}
+	credentials, prepareErr := strategy.Prepare(r.Context(), agent.Spec.Secrets.AuthType, runtimes.AuthInput{}, runtimes.AuthOptions{})
+	if prepareErr != nil || len(credentials) != 1 || credentials[0].Suffix != mode.SecretSuffix {
+		writeJSONError(w, 502, "auth_reset_failed", "runtime could not prepare device authentication")
+		return
+	}
 	secret := &corev1.Secret{}
-	secretKey := types.NamespacedName{Name: name + "-codex-auth", Namespace: s.Namespace}
+	secretKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
 	err := s.K8sClient.Get(r.Context(), secretKey, secret)
 	switch {
 	case k8serrors.IsNotFound(err):
 		secret = &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{Name: secretKey.Name, Namespace: secretKey.Namespace},
-			Data:       map[string][]byte{"auth.json": []byte("{}")},
+			Data:       credentials[0].Data,
 		}
 		if err := s.K8sClient.Create(r.Context(), secret); err != nil {
 			slog.Error("failed to create codex auth secret", "name", name, "error", err)
@@ -61,7 +74,7 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to read Codex auth secret")
 		return
 	default:
-		secret.Data = map[string][]byte{"auth.json": []byte("{}")}
+		secret.Data = credentials[0].Data
 		if err := s.K8sClient.Update(r.Context(), secret); err != nil {
 			slog.Error("failed to reset codex auth secret", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start Codex device auth")

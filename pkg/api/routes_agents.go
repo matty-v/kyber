@@ -787,7 +787,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	// same path: GET reports what the in-pod flow is showing (link, code,
 	// expiry) so the PWA can render it natively; POST starts a fresh flow.
 	// Intercepted ahead of the POST-only guard below.
-	if action == "codex-device-auth" && r.Method == http.MethodGet {
+	if (action == "codex-device-auth" || action == "auth") && r.Method == http.MethodGet {
 		s.handleCodexDeviceAuthStatus(w, r, name)
 		return
 	}
@@ -817,6 +817,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.setAgentRuntimeVersion(w, r, name)
 	case "set-resources":
 		s.setAgentResources(w, r, name)
+	case "auth":
+		s.handleRuntimeReauthorize(w, r, name)
 	case "oauth":
 		s.handleReauthorize(w, r, name)
 	case "codex-device-auth":

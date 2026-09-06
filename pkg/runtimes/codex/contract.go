@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/pkg/codexauth"
 	"strings"
+	"time"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/runtimes"
@@ -66,4 +68,8 @@ func (authentication) Validate(mode kyberv1.AgentAuthType, in runtimes.AuthInput
 		return fmt.Errorf("authType must be oauth or api-key")
 	}
 	return nil
+}
+
+func (authentication) ParseDeviceAuth(pane string, startedAt, now time.Time) runtimes.AuthObservation {
+	return codexauth.Parse(pane, startedAt, now)
 }

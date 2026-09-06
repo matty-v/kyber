@@ -21,6 +21,8 @@ import { Card } from './Card'
  */
 
 interface Props {
+  runtimeName?: string
+  useContract?: boolean
   name: string
   phase: AgentPhase
 }
@@ -39,14 +41,14 @@ function formatCountdown(seconds: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
-export function CodexDeviceAuthPanel({ name, phase }: Props) {
-  const startLogin = useStartCodexDeviceAuth()
+export function CodexDeviceAuthPanel({ name, phase, runtimeName = 'Codex', useContract = false }: Props) {
+  const startLogin = useStartCodexDeviceAuth(useContract)
 
   // Only poll while a login could plausibly be running. Each poll execs into
   // the agent pod, so an always-on query here would be a steady stream of
   // execs against every Codex agent in the fleet.
   const polling = phase === 'Starting' || phase === 'NeedsAuth'
-  const { data, isLoading } = useCodexDeviceAuthStatus(name, polling)
+  const { data, isLoading } = useCodexDeviceAuthStatus(name, polling, useContract)
 
   // Drives the countdown only. The server hands back an absolute deadline, so
   // this never decides whether a code is valid — it just re-renders the clock.
@@ -112,7 +114,7 @@ export function CodexDeviceAuthPanel({ name, phase }: Props) {
   return (
     <Card className="border-accent/40 bg-accent/10">
       <h2 className="mb-1 text-sm font-semibold text-text-primary">
-        {phase === 'NeedsAuth' ? 'Codex login required' : 'Finish Codex device login'}
+        {phase === 'NeedsAuth' ? `${runtimeName} login required` : `Finish ${runtimeName} device login`}
       </h2>
 
       {idle && (

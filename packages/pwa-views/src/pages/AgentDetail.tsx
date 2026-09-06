@@ -1,3 +1,4 @@
+import { agentAuth, agentContract, authorizationUrl } from '../lib/runtime-contract'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
@@ -64,30 +65,6 @@ import {
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
 import type { Agent, AgentPhase, AgentIdentityRepoStatus, AgentIdentityRepoPhase, AgentStatus, SetResourcesRequest } from '../lib/types'
-
-const CLAUDE_CODE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
-const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback'
-const OAUTH_SCOPES = [
-  'org:create_api_key',
-  'user:profile',
-  'user:inference',
-  'user:sessions:claude_code',
-  'user:mcp_servers',
-  'user:file_upload',
-].join(' ')
-
-function buildAuthorizeUrl(challenge: string, state: string): string {
-  const u = new URL('https://claude.ai/oauth/authorize')
-  u.searchParams.set('code', 'true')
-  u.searchParams.set('client_id', CLAUDE_CODE_CLIENT_ID)
-  u.searchParams.set('response_type', 'code')
-  u.searchParams.set('redirect_uri', OAUTH_REDIRECT_URI)
-  u.searchParams.set('scope', OAUTH_SCOPES)
-  u.searchParams.set('code_challenge', challenge)
-  u.searchParams.set('code_challenge_method', 'S256')
-  u.searchParams.set('state', state)
-  return u.toString()
-}
 
 type ActionKind =
   | 'start'
@@ -561,7 +538,7 @@ export function AgentDetail() {
   const setSessionResume = useSetSessionResume()
   const setRequestReplyEnabled = useSetRequestReplyEnabled()
   const deleteAgent = useDeleteAgent()
-  const reauthorizeAgent = useReauthorizeAgent()
+  const reauthorizeAgent = useReauthorizeAgent(Boolean(agent?.runtimeContract))
 
   useEffect(() => {
     setStartupPrompt(agent?.startupPrompt ?? '')
@@ -661,7 +638,7 @@ export function AgentDetail() {
   // non-Running phases the agent-actions section is legitimately empty.
   // Both per-phase sets are owned by lib/design/agent-actions so they can be
   // tested without mounting this page.
-  const sessionActions = sessionItemsInMore(agent.phase)
+  const sessionActions = sessionItemsInMore(agent.phase, agent.runtimeCapabilities)
   const hasAgentActions = sessionActions.length > 0
   const hasPodActions = lifecycleItemsInMore(agent.phase).length > 0
 
@@ -726,11 +703,11 @@ export function AgentDetail() {
         {activeSection === 'overview' && (
           <div className="space-y-4">
           <SchedulingFailureBanner agent={agent} />
-          {agent.runtime === 'codex' && agent.authType === 'oauth' &&
+          {agentAuth(agent)?.flow === 'device-code' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
-            <CodexDeviceAuthPanel name={name} phase={agent.phase} />
+            <CodexDeviceAuthPanel name={name} phase={agent.phase} runtimeName={agentContract(agent)?.name} useContract={Boolean(agent.runtimeContract)} />
           )}
-          {agent.phase === 'NeedsAuth' && !(agent.runtime === 'codex' && agent.authType === 'oauth') && (
+          {agent.phase === 'NeedsAuth' && agentAuth(agent)?.flow === 'authorization-code' && (
             <Card className="border-warn/40 bg-warn-muted">
               <h2 className="text-sm font-semibold text-warn mb-1">Re-authorization required</h2>
               <p className="text-xs text-warn/80 mb-3">
@@ -751,7 +728,8 @@ export function AgentDetail() {
                         setReauthState(state)
                         setReauthCode('')
                         setReauthError(null)
-                        window.open(buildAuthorizeUrl(challenge, state), '_blank', 'noopener')
+                        const url = authorizationUrl(agentAuth(agent), challenge, state)
+                        if (url) window.open(url, '_blank', 'noopener')
                       }}
                     >
                       {reauthVerifier ? 'Re-authorize again' : 'Re-authorize'}
@@ -1042,8 +1020,8 @@ export function AgentDetail() {
           <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
             <h2 className="text-base font-semibold text-text-primary mb-4">Change Harness Version</h2>
             {(() => {
-              const isClaudeCode = agent.runtime === 'claude-code'
-              const versions = isClaudeCode ? effective.claudeCodeVersions : effective.codexVersions
+              const versionCatalogs: Record<string, string[]> = { claudeCodeVersions: effective.claudeCodeVersions, codexVersions: effective.codexVersions }
+              const versions = versionCatalogs[agentContract(agent)?.legacyVersionsKey ?? ''] ?? []
               const inList = versions.includes(newRuntimeVersion)
               return (
                 <>
@@ -1052,7 +1030,7 @@ export function AgentDetail() {
                     onChange={(e) => setNewRuntimeVersion(e.target.value)}
                     className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
                   >
-                    <option value="">{isClaudeCode ? '(use fleet default)' : '(use baked-in version)'}</option>
+                    <option value="">(use fleet or harness default)</option>
                     {!inList && newRuntimeVersion && (
                       <option value={newRuntimeVersion}>{newRuntimeVersion} (manual)</option>
                     )}
@@ -1064,7 +1042,7 @@ export function AgentDetail() {
                   </select>
                   <input
                     type="text"
-                    placeholder={isClaudeCode ? 'Manual override: e.g. 2.1.200' : 'Manual harness version'}
+                    placeholder="Manual harness version"
                     value={!inList ? newRuntimeVersion : ''}
                     onChange={(e) => setNewRuntimeVersion(e.target.value.trim())}
                     className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
@@ -1074,7 +1052,7 @@ export function AgentDetail() {
                   />
                   <p className="mt-2 text-[11px] text-text-disabled">
                     Charset: <code>{`[0-9A-Za-z.\\-]`}</code>, max 64 chars. Empty
-                    clears spec.runtimeVersion and falls back to the {isClaudeCode ? 'fleet default' : 'baked-in version'}.
+                    clears spec.runtimeVersion and falls back to the fleet or harness default.
                     Apply rolls the agent pod when Running.
                   </p>
                 </>

@@ -145,3 +145,26 @@ live dev validation for both real harnesses and auth modes where credentials
 permit, update the conformance evidence matrix, then publish the official
 contract through the reviewed PR. The contract remains an approved draft until
 that evidence and publication step are complete.
+
+### Recovery and consumer checkpoint
+
+Subscription recovery now uses the registered credential strategy. `/auth` is
+the canonical subscription recovery/status route; existing `/oauth` and
+`/codex-device-auth` remain compatible aliases. Provider CLI device-login
+parsing returns a neutral observation through an optional auth interface.
+Public task capability evaluation uses descriptor support and fresh receipt/tool
+evidence. Session actions consume server capability availability; task dispatch
+also checks the current pod UID. Advanced scheduled dispatch rechecks native
+configuration when the adapter probe is present, catching stale sentinels.
+
+The bootable process fixture traverses real tmux paste, the production receipt
+script, authenticated internal HTTP, and PostgreSQL. It asserts receipt leaves
+a task dispatched until explicit completion, records the delivered transcript,
+and flushes on shutdown. Kubernetes state is a fixture; this is not a claim of
+upstream CLI or live Kubernetes conformance. Compilation passes; execution is
+part of the integration CI gate, which now installs its tmux/jq prerequisites.
+
+Full-suite review found and fixed a duplicate OpenAPI config path, registry
+test cleanup that erased init-time providers, and lifecycle fixtures assuming
+Claude transcript/default behavior for unknown adapters. The new behavior is
+intentional: only a declared integration receives those facilities.

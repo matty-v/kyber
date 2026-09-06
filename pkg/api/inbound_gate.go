@@ -6,6 +6,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimes"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -55,6 +56,13 @@ func (s *Server) WaitAgentCapabilities(ctx context.Context, name string, timeout
 					return fmt.Errorf("inbound gate: runtime does not support %s", feature)
 				}
 				if availability.State != "available" {
+					ready = false
+				}
+			}
+			if ready && len(features) > 0 {
+				pod := &corev1.Pod{}
+				evidence := agent.Status.Runtime.Capabilities
+				if evidence == nil || agent.Status.PodName == "" || s.K8sClient.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: agent.Status.PodName}, pod) != nil || string(pod.UID) != evidence.PodUID || pod.DeletionTimestamp != nil {
 					ready = false
 				}
 			}

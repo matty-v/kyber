@@ -12,6 +12,7 @@ RUN for i in 1 2 3; do apt-get update && break || { echo "apt-get update failed 
     sudo \
     ca-certificates \
     jq \
+    python3 \
     tmux \
     dbus \
     gnome-keyring \

@@ -79,6 +79,9 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Install harness conformance tools
+        run: sudo apt-get update && sudo apt-get install -y tmux jq
+
       - name: Run integration tests
         run: go test -tags integration -v -timeout 15m ./test/integration/... ./test/contract/... ./images/claude-code/... ./images/codex/... ./images/shared/...
         env:

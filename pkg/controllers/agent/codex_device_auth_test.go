@@ -39,12 +39,12 @@ func TestCodexDeviceAuthPending(t *testing.T) {
 				Data:       map[string][]byte{"auth.json": []byte(tc.auth)},
 			}
 			r := &AgentReconciler{Client: fake.NewClientBuilder().WithScheme(scheme).WithObjects(secret).Build()}
-			got, err := r.codexDeviceAuthPending(context.Background(), agent)
+			got, err := r.runtimeAuthenticationPending(context.Background(), agent)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if got != tc.want {
-				t.Fatalf("codexDeviceAuthPending()=%v, want %v", got, tc.want)
+				t.Fatalf("runtimeAuthenticationPending()=%v, want %v", got, tc.want)
 			}
 		})
 	}

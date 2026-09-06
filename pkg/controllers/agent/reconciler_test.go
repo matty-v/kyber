@@ -218,6 +218,7 @@ func TestReconciler_NewAgent_CreatingPhase(t *testing.T) {
 	}
 
 	agent := newTestAgent("dave", "test-creating")
+	agent.Spec.Runtime = "claude-code" // explicit harness with a transcript/offsets contract
 	if err := k8sClient.Create(context.Background(), agent); err != nil {
 		t.Fatalf("creating agent: %v", err)
 	}
@@ -389,6 +390,7 @@ func TestCreatePod_EnsuresOffsetsPVC_PreExistingAgent(t *testing.T) {
 		t.Fatalf("creating namespace: %v", err)
 	}
 	agent := newTestAgent("dave", "test-preexisting-recreate")
+	agent.Spec.Runtime = "claude-code" // explicit harness with a transcript/offsets contract
 	if err := k8sClient.Create(ctx, agent); err != nil {
 		t.Fatalf("creating agent: %v", err)
 	}

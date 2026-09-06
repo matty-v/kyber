@@ -11,13 +11,14 @@ import (
 // fakeRuntime is a minimal Runtime impl used to exercise the registry.
 type fakeRuntime struct{ t string }
 
-func (f *fakeRuntime) Type() string     { return f.t }
-func (f *fakeRuntime) Adapter() Adapter { return NewStubAdapter("", nil, nil, nil, nil, nil, 0, "", "", "") }
-func (f *fakeRuntime) Probe() Probe     { return nil }
+func (f *fakeRuntime) Type() string { return f.t }
+func (f *fakeRuntime) Adapter() Adapter {
+	return NewStubAdapter("", nil, nil, nil, nil, nil, 0, "", "", "")
+}
+func (f *fakeRuntime) Probe() Probe { return nil }
 
 func TestRegistry_RegisterAndGet(t *testing.T) {
-	t.Cleanup(reset)
-	reset()
+	isolateRegistry(t)
 
 	rt := &fakeRuntime{t: "test-runtime"}
 	Register(rt)
@@ -32,8 +33,7 @@ func TestRegistry_RegisterAndGet(t *testing.T) {
 }
 
 func TestRegistry_GetUnknown(t *testing.T) {
-	t.Cleanup(reset)
-	reset()
+	isolateRegistry(t)
 
 	if _, ok := Get("nope"); ok {
 		t.Error("Get returned true for unregistered runtime")
@@ -41,8 +41,7 @@ func TestRegistry_GetUnknown(t *testing.T) {
 }
 
 func TestRegistry_All(t *testing.T) {
-	t.Cleanup(reset)
-	reset()
+	isolateRegistry(t)
 
 	Register(&fakeRuntime{t: "a"})
 	Register(&fakeRuntime{t: "b"})
@@ -61,8 +60,7 @@ func TestRegistry_All(t *testing.T) {
 }
 
 func TestRegistry_RegisterDuplicate_Panics(t *testing.T) {
-	t.Cleanup(reset)
-	reset()
+	isolateRegistry(t)
 
 	Register(&fakeRuntime{t: "dupe"})
 
@@ -75,8 +73,7 @@ func TestRegistry_RegisterDuplicate_Panics(t *testing.T) {
 }
 
 func TestRegistry_RegisterEmptyType_Panics(t *testing.T) {
-	t.Cleanup(reset)
-	reset()
+	isolateRegistry(t)
 
 	defer func() {
 		if r := recover(); r == nil {
@@ -110,4 +107,15 @@ func TestNewStubAdapter_ImplementsAdapter(t *testing.T) {
 	if a.RestartSessionCommand() != nil {
 		t.Errorf("RestartSessionCommand should be nil; got %v", a.RestartSessionCommand())
 	}
+}
+
+// Restore init-time registrations so full-suite ordering cannot erase providers
+// needed by external conformance tests in this same test binary.
+func isolateRegistry(t *testing.T) {
+	t.Helper()
+	registryMu.Lock()
+	previous := registry
+	registry = map[string]Runtime{}
+	registryMu.Unlock()
+	t.Cleanup(func() { registryMu.Lock(); registry = previous; registryMu.Unlock() })
 }

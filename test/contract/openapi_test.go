@@ -15,6 +15,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	"io"
 	"net/http"
 	"net/http/httptest"

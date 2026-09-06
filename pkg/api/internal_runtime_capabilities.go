@@ -33,7 +33,7 @@ func (s *InternalServer) handleRuntimeCapabilities(w http.ResponseWriter, r *htt
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096))
 	dec.DisallowUnknownFields()
-	if dec.Decode(&body) != nil || dec.Decode(&struct{}{}) != io.EOF || len(body.Features) > 16 || len(body.InstalledVersion) > 128 || body.PodUID == "" || body.ContractVersion != runtimes.ContractVersion {
+	if dec.Decode(&body) != nil || dec.Decode(&struct{}{}) != io.EOF || len(body.Features) > 16 || body.InstalledVersion == "" || len(body.InstalledVersion) > 128 || body.AgentGeneration < 0 || body.PodUID == "" || body.ContractVersion != runtimes.ContractVersion {
 		http.Error(w, "invalid capabilities", 400)
 		return
 	}

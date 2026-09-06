@@ -30,3 +30,16 @@ export function wizardApiKey(state: WizardState) {
 export function agentAuth(agent: Agent) {
   return (agent.runtimeContract ?? legacyRuntimeContracts.find(d => d.id === agent.runtime))?.authModes.find(m => m.id === agent.authType)
 }
+
+export function agentContract(agent: Agent) {
+  return agent.runtimeContract ?? legacyRuntimeContracts.find(d => d.id === agent.runtime)
+}
+export function authorizationUrl(mode: RuntimeDescriptor['authModes'][number] | undefined, challenge: string, state: string) {
+  if (!mode?.authorizationUrl) return undefined
+  const url = new URL(mode.authorizationUrl)
+  for (const [key, value] of Object.entries(mode.authorizationParams ?? {})) url.searchParams.set(key, value)
+  url.searchParams.set('code_challenge', challenge)
+  url.searchParams.set('code_challenge_method', 'S256')
+  url.searchParams.set('state', state)
+  return url.toString()
+}

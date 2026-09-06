@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strconv"
-	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -15,6 +13,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/oauth"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 type reauthorizeRequest struct {
@@ -65,9 +64,15 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	// Exchange the authorization code for tokens.
-	oauthClient := oauth.NewClient(s.anthropicTokenURL())
-	tok, err := oauthClient.ExchangeAuthorizationCode(r.Context(), body.OAuthCode, body.PkceVerifier, body.State)
+	descriptor, _ := runtimes.Describe(agent.Spec.Runtime)
+	mode, _ := descriptor.Auth(agent.Spec.Secrets.AuthType)
+	strategy, ok := runtimes.AuthenticationFor(agent.Spec.Runtime)
+	if !ok || mode.Flow != "authorization-code" {
+		writeJSONError(w, 409, "invalid_auth_mode", "authorization code flow is not supported for this agent")
+		return
+	}
+	input := runtimes.AuthInput{mode.InputField: body.OAuthCode, "pkceVerifier": body.PkceVerifier, "pkceState": body.State}
+	credentials, err := strategy.Prepare(r.Context(), agent.Spec.Secrets.AuthType, input, runtimes.AuthOptions{TokenURL: s.anthropicTokenURL()})
 	if err != nil {
 		if oauth.IsInvalidGrant(err) {
 			writeJSONError(w, http.StatusBadRequest, "oauth_exchange_failed",
@@ -79,9 +84,13 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	// Patch the existing <name>-oauth Secret with new credentials.
+	if len(credentials) != 1 || credentials[0].Suffix != mode.SecretSuffix {
+		writeJSONError(w, 502, "oauth_exchange_failed", "runtime returned invalid credentials")
+		return
+	}
+	// Patch the existing provider-owned credential Secret.
 	sec := &corev1.Secret{}
-	secKey := types.NamespacedName{Name: name + "-oauth", Namespace: s.Namespace}
+	secKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), secKey, sec); err != nil {
 		if k8serrors.IsNotFound(err) {
 			writeJSONError(w, http.StatusNotFound, "not_found",
@@ -95,10 +104,9 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 	if sec.Data == nil {
 		sec.Data = map[string][]byte{}
 	}
-	sec.Data["access_token"] = []byte(tok.AccessToken)
-	sec.Data["refresh_token"] = []byte(tok.RefreshToken)
-	expiresAt := time.Now().Add(time.Duration(tok.ExpiresIn) * time.Second).UnixMilli()
-	sec.Data["expires_at"] = []byte(strconv.FormatInt(expiresAt, 10))
+	for k, v := range credentials[0].Data {
+		sec.Data[k] = v
+	}
 	if err := s.K8sClient.Update(r.Context(), sec); err != nil {
 		slog.Error("failed to update oauth secret", "name", name, "secret", name+"-oauth", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update oauth secret")

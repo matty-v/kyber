@@ -179,6 +179,7 @@ func (h *dispatchHarness) run(args []string, extraEnv ...string) (string, int) {
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "missing-probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
@@ -213,6 +214,7 @@ func (h *dispatchHarness) runStdin(args []string, stdin string, extraEnv ...stri
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "missing-probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = strings.NewReader(stdin)
@@ -637,7 +639,7 @@ func TestKyberJobDispatch_NoSentinelWritesNoPendingMarker(t *testing.T) {
 		t.Errorf("no sentinel means no pending marker (err=%v)", err)
 	}
 	if !strings.Contains(h.logContents(), "runtime_capability_unavailable") {
-		t.Errorf("dispatch must still succeed without the hook, log: %s", h.logContents())
+		t.Errorf("dispatch must report the missing hook, log: %s", h.logContents())
 	}
 }
 
@@ -652,5 +654,18 @@ func TestKyberJobDispatch_InboundWritesNoPendingMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.pendDir, "inbound-req9")); !os.IsNotExist(err) {
 		t.Errorf("inbound dispatch must not write a pending marker (err=%v)", err)
+	}
+}
+
+func TestKyberJobDispatch_RejectsStaleHookSentinel(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "do work")
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf '%s\\n' '{\"job-turn-hooks\":false}'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := h.run([]string{"--exclusive", "work-tick"}, "KYBER_CAPABILITY_PROBE="+probe); code != 4 {
+		t.Fatalf("stale hook sentinel allowed dispatch: %d", code)
 	}
 }
