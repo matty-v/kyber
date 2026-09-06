@@ -117,7 +117,7 @@ test('settings tab - general', async ({ page }) => {
 })
 
 test('agent navigation', async ({ page }) => {
-  const navigationButton = page.getByRole('button', { name: /Overview Health and live resources/i })
+  const navigationButton = page.getByRole('button', { name: /Overview: Health and live resources/i })
   if (await navigationButton.isVisible()) await navigationButton.click()
   await expect(page.getByRole('navigation', { name: 'Section pages' })).toBeVisible()
   await shot(page, '15-agent-navigation')

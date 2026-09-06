@@ -34,7 +34,7 @@ test('Settings — Rotate API key card visible', async ({ page }) => {
 })
 
 test('Settings — responsive navigation', async ({ page }) => {
-  const navigationButton = page.getByRole('button', { name: /API access Connection and keys/i })
+  const navigationButton = page.getByRole('button', { name: /API access: Connection and keys/i })
   if (await navigationButton.isVisible()) await navigationButton.click()
   await expect(page.getByRole('navigation', { name: 'Section pages' })).toBeVisible()
   await shot(page, '04-navigation')

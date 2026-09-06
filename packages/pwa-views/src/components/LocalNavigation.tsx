@@ -103,6 +103,7 @@ export function LocalNavigation<T extends string>({
         onClick={() => setMobileOpen(true)}
         className="mb-4 flex w-full items-center justify-between rounded-lg border border-border-default bg-surface-raised px-4 py-3 text-left sm:hidden"
         aria-haspopup="dialog"
+        aria-label={`${activeItem.label}: ${activeItem.description}`}
       >
         <span>
           <span className="block text-sm font-semibold text-text-primary">{activeItem.label}</span>

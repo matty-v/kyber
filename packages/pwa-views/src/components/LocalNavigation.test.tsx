@@ -24,7 +24,7 @@ describe('LocalNavigation', () => {
       </LocalNavigation>,
     )
 
-    const trigger = screen.getAllByRole('button', { name: /overview current state/i })[0]
+    const trigger = screen.getByRole('button', { name: /overview: current state/i })
     await user.click(trigger)
 
     expect(screen.getByRole('dialog', { name: /agent navigation/i })).toBeInTheDocument()
