@@ -636,12 +636,11 @@ if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
     A2A_CLAUDE_ARGS="--mcp-config $A2A_MCP_CONFIG"
 fi
 
-# API-key agents use --bare mode which accepts ANTHROPIC_API_KEY without the
-# interactive "Use this API key?" prompt that blocks headless startup.
-# --bare also disables OAuth/keychain, so --channels is not supported.
+# API-key agents use the full interactive profile so managed hooks, skills,
+# identity and MCP configuration load. Native key approval is seeded below.
+# The platform's existing channel/auth restriction still applies.
 if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_ACCESS_TOKEN:-}" ]; then
-    CLAUDE_ARGS="$CLAUDE_ARGS --bare"
-    echo "[kyber] api-key auth detected — using --bare mode"
+    echo "[kyber] api-key auth detected — using the interactive profile"
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
         echo "[kyber] WARNING: --channels not supported with api-key auth (requires OAuth). Telegram will not be available."
     fi
@@ -1051,6 +1050,13 @@ if ! jq empty "$CLAUDE_STATE" >/dev/null 2>&1; then
 fi
 if ! jq --arg launch_dir "$LAUNCH_DIR" '
     .hasCompletedOnboarding = true
+    | if (env.ANTHROPIC_API_KEY // "") != "" and (env.CLAUDE_ACCESS_TOKEN // "") == "" then
+        # Native Claude state records approval by the final 20 characters.
+        # The operator already selected this key for this Agent in Kyber.
+        (env.ANTHROPIC_API_KEY | .[-20:]) as $key_id
+        | .customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$key_id]) | unique)
+        | .customApiKeyResponses.rejected = ((.customApiKeyResponses.rejected // []) | map(select(. != $key_id)))
+      else . end
     | .projects = (.projects // {})
     | .projects[$launch_dir] = ((.projects[$launch_dir] // {}) + {
         hasTrustDialogAccepted: true,

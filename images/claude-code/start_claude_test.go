@@ -3012,3 +3012,80 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 		}
 	})
 }
+
+func TestClaudeAPIKeyApprovalPreservesInteractiveProfile(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, `CLAUDE_ARGS="$CLAUDE_ARGS --bare"`) {
+		t.Fatal("API-key profile must load native hooks and skills")
+	}
+	start := strings.Index(text, `CLAUDE_STATE="${HOME:-/home/kyber}/.claude.json"`)
+	if start < 0 {
+		t.Fatal("missing state merge")
+	}
+	end := strings.Index(text[start:], `chmod 600 "$CLAUDE_STATE"`)
+	if end < 0 {
+		t.Fatal("missing state merge")
+	}
+	block := text[start:start+end] + `chmod 600 "$CLAUDE_STATE"`
+	key := "fixture-key-prefix-12345678901234567890"
+	for _, oauth := range []bool{false, true} {
+		t.Run(fmt.Sprint("oauth=", oauth), func(t *testing.T) {
+			home := t.TempDir()
+			file := filepath.Join(home, ".claude.json")
+			original := `{"other":"preserved","customApiKeyResponses":{"approved":["other-key"],"rejected":["12345678901234567890","other-rejected"]}}`
+			if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			token := ""
+			if oauth {
+				token = "fixture-oauth"
+			}
+			for i := 0; i < 2; i++ {
+				cmd := exec.Command("bash", "-eu", "-c", block)
+				cmd.Env = append(os.Environ(), "HOME="+home, "LAUNCH_DIR="+home, "ANTHROPIC_API_KEY="+key, "CLAUDE_ACCESS_TOKEN="+token)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("state preparation: %v: %s", err, out)
+				}
+			}
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state struct {
+				Other                 string
+				CustomApiKeyResponses struct{ Approved, Rejected []string }
+			}
+			if err := json.Unmarshal(raw, &state); err != nil {
+				t.Fatal(err)
+			}
+			if state.Other != "preserved" {
+				t.Fatal("unrelated state was lost")
+			}
+			contains := func(xs []string, x string) bool {
+				for _, v := range xs {
+					if v == x {
+						return true
+					}
+				}
+				return false
+			}
+			if contains(state.CustomApiKeyResponses.Approved, key[len(key)-20:]) == oauth {
+				t.Fatal("approval did not follow selected auth mode")
+			}
+			if !oauth && (len(state.CustomApiKeyResponses.Approved) != 2 || contains(state.CustomApiKeyResponses.Rejected, key[len(key)-20:])) {
+				t.Fatal("approval was not idempotent or retained conflicting rejection")
+			}
+			if strings.Contains(string(raw), key) {
+				t.Fatal("state persisted the complete API key")
+			}
+			info, _ := os.Stat(file)
+			if info.Mode().Perm() != 0600 {
+				t.Fatal("state must remain private")
+			}
+		})
+	}
+}

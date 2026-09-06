@@ -285,14 +285,54 @@ esac
 }
 
 func TestStartCodexAPIKeySkipsSubscriptionLogin(t *testing.T) {
-	home := t.TempDir()
-	path, _, _ := stubDeviceAuthBin(t)
-	out, err := runBoot(t, home, "", path, "OPENAI_API_KEY=sk-test")
-	if err != nil {
-		t.Fatalf("API-key boot failed: %v\n%s", err, out)
-	}
-	if strings.Contains(string(out), "device authorization") {
-		t.Fatalf("API-key boot unexpectedly started device auth:\n%s", out)
+	for _, fail := range []bool{false, true} {
+		t.Run(fmt.Sprint("failure=", fail), func(t *testing.T) {
+			home := t.TempDir()
+			path := stubBin(t)
+			bin := t.TempDir()
+			marker := filepath.Join(home, "api-login")
+			stub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+if [ "$1" = login ] && [ "${2:-}" = --with-api-key ]; then
+  [ "$#" = 2 ] || exit 81
+  key="$(cat)"
+  [ "$key" = 'fixture-openai-api-key' ] || exit 82
+  [ -z "${CODEX_AUTH_JSON:-}" ] || exit 83
+  [ "${FAIL_LOGIN:-0}" = 0 ] || exit 84
+  printf configured > "$LOGIN_MARKER"
+  printf '{}' > "$CODEX_HOME/auth.json"
+  exit 0
+fi
+exit 85
+`
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			flag := "0"
+			if fail {
+				flag = "1"
+			}
+			out, err := runBoot(t, home, `{"tokens":{"refresh_token":"alternate-mode"}}`, bin+":"+path, "OPENAI_API_KEY=fixture-openai-api-key", "LOGIN_MARKER="+marker, "FAIL_LOGIN="+flag)
+			if fail {
+				if err == nil || !strings.Contains(string(out), "API-key login setup failed") {
+					t.Fatalf("failed login accepted: %v: %s", err, out)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("API-key boot failed: %v: %s", err, out)
+				}
+				if _, err := os.Stat(marker); err != nil {
+					t.Fatal("native API-key login not called")
+				}
+				info, err := os.Stat(filepath.Join(home, ".codex", "auth.json"))
+				if err != nil || info.Mode().Perm() != 0600 {
+					t.Fatal("native credentials must be private")
+				}
+			}
+			if strings.Contains(string(out), "device authorization") || strings.Contains(string(out), "fixture-openai-api-key") {
+				t.Fatal("auth mode fallback or credential logging")
+			}
+		})
 	}
 }
 

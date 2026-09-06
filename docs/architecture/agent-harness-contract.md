@@ -104,6 +104,13 @@ A changed Secret may permit a recovery attempt. Codex's `{}` device marker
 means human login is pending, not authenticated. Auth mode is not mutable via
 the current update request; v1 preserves recreation semantics.
 
+For API-key boot, Codex prepares its native login record with the CLI's stdin
+login flow. Claude records approval of the operator-selected key using its
+native 20-character key identifier in private state. Claude retains the full
+interactive profile so identity, hooks, skills and configured MCP servers load;
+`--bare` is not an equivalent integration profile. These native mechanisms
+require regression and versioned live checks on harness upgrades.
+
 Credential syncers forward runtime refreshes through the sidecar. **Existing
 exception:** Claude boot-time refresh directly calls the control plane using
 the self-scoped pod token, which the pod builder mounts. Do not broaden that

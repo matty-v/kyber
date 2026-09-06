@@ -246,3 +246,26 @@ create the two named disposable agents through the dev PWA), then final review
 and publication. No API-key values were requested through Telegram. The runtime
 contract remains an approved draft, not full native certification. CI integration
 and agent-base integration pass on `5cfe84a`; the full Go gate is still running.
+
+### API-key native onboarding findings
+
+Matt supplied the two scoped provider keys through the agent environment.
+Creation through `secrets.runtimeAuth` succeeded, but fresh native sessions
+exposed two existing gaps: Codex still displayed its login menu and Claude
+asked for key approval despite the old `--bare` flag. A one-time Claude pilot
+approval confirmed the native state identifier is the final 20 characters;
+those disposable pilot agents were then deleted to avoid masking fresh-boot
+verification.
+
+Codex boot now passes the selected key to `login --with-api-key` on stdin,
+keeps credentials private, and exits visibly without subscription fallback if
+login setup fails. Claude seeds only the operator-selected key's native
+approval, preserves unrelated state, and removes `--bare` so the interactive
+profile retains native hooks/skills/MCP. Focused regressions pass; full native
+startup suites and rebuilt-image checks follow.
+
+Primary references: [Codex login](https://developers.openai.com/codex/cli/reference#codex-login),
+[Claude authentication](https://code.claude.com/docs/en/authentication), and
+[Claude bare mode](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode).
+The CLI help and live native approval state were checked without exposing key
+values. No model turn under API-key auth is certified by the initial pilot.

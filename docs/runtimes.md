@@ -23,8 +23,9 @@ login** on the agent-detail page launches the same in-pod device flow and resume
 the agent after authorization.
 
 Codex also supports an explicit **OpenAI API key** mode at creation time. Kyber
-stores that key in `<agent>-openai`, injects it as `OPENAI_API_KEY`, and bypasses
-subscription login entirely. Auth mode is fixed at creation time; recreate the
+stores that key in `<agent>-openai`, injects it as `OPENAI_API_KEY`, and prepares
+the native login using `codex login --with-api-key` over stdin. Subscription
+login is bypassed entirely. Auth mode is fixed at creation time; recreate the
 agent to switch modes.
 
 Codex V1 models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Sol is

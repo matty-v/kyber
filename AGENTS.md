@@ -536,6 +536,12 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     relaunch regression fixture exercises this with A2A enabled.
 
 
+18. **API-key injection must prepare the native interactive login.** Codex
+    needs `login --with-api-key` with the key on stdin; an env var alone leaves
+    its TUI at the login menu. Claude records approval of the selected key in
+    its private state and must keep the full interactive profile: `--bare`
+    skips discovery of hooks/skills/MCP and is not a replacement for approval.
+
 ---
 
 ## 5. Do-not-touch zones

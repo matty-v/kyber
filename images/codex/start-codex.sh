@@ -261,7 +261,7 @@ fi
 # credential documents whose shape we do not control. The marker holds only a
 # hash, never the credential.
 _device_auth_pending=false
-if [ -n "${CODEX_AUTH_JSON:-}" ]; then
+if [ -n "${CODEX_AUTH_JSON:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     # `codex login status` currently treats an empty JSON object as ChatGPT
     # auth, so the CLI status alone cannot distinguish Kyber's device-login
     # marker from a usable credential. Preserve that distinction before the
@@ -320,7 +320,22 @@ if [ -n "${CODEX_AUTH_JSON:-}" ]; then
     unset CODEX_AUTH_JSON _secret_hash _seeded_hash _seed_marker _prev_umask
 fi
 
-if [ -z "${OPENAI_API_KEY:-}" ]; then
+if [ -n "${OPENAI_API_KEY:-}" ]; then
+    # The interactive CLI requires a native login record, not just an env var.
+    # Stdin keeps the selected key out of argv; never fall back to subscription.
+    unset CODEX_AUTH_JSON
+    _prev_umask="$(umask)"
+    umask 077
+    if ! printf '%s' "$OPENAI_API_KEY" | codex login --with-api-key >/dev/null 2>&1; then
+        umask "$_prev_umask"
+        echo "[kyber] Codex API-key login setup failed" >&2
+        exit 42
+    fi
+    chmod 0600 "$CODEX_HOME/auth.json" 2>/dev/null || true
+    umask "$_prev_umask"
+    unset _prev_umask
+    echo "[kyber] Codex API-key login configured"
+else
     if [ "$_device_auth_pending" = true ] || ! codex login status >/dev/null 2>&1; then
         echo "[kyber] Codex ChatGPT credentials are missing or invalid — starting device authorization"
         tmux kill-session -t auth 2>/dev/null || true
