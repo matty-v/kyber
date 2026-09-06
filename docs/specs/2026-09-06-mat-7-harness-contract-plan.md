@@ -174,8 +174,8 @@ intentional: only a declared integration receives those facilities.
 All implementation CI gates on `aa26d5c` pass, including the complete Go
 lint/test gate, PWA build, native/bootable integration suites, contract/TCK,
 CodeQL and secret scanning. Local final `go vet -p 2 ./...` and
-`go build -p 2 ./...` pass. The duplicate local full Go suite remains running
-through its long transcript stress fixtures. Local PWA tests (783), affected
+`go build -p 2 ./...` pass. The duplicate local full Go suite also passed, including the controller
+package (895.978 seconds) and its long transcript stress fixtures. Local PWA tests (783), affected
 consumer/action tests, embedded build/lint and embedded tests (8) pass.
 
 The complete worktree was built and deployed to the dedicated dev cluster,
@@ -196,3 +196,19 @@ agent helper. Valid live API-key credentials are not available in this session.
 
 PR #231 now describes the complete implementation. It remains a draft pending
 native behavior evidence and final publication review. MAT-7 remains in progress.
+
+### Codex native subscription evidence
+
+Matt completed device login (Telegram 951). On the deployed Codex `0.153.4`,
+startup prompt consumption, explicit task completion, and fresh session restart
+all passed. PostgreSQL shows two delivered receipts with distinct native session
+identities before/after restart. The restart also delivered the startup prompt
+again. Temporarily disabling the receipt executable made availability negative
+while Running; a new task remained queued without a receipt until the hook and
+its positive report returned, then completed successfully. Task IDs and exact
+responses are in the conformance matrix. No production files changed for these
+checks; the temporary executable mode was restored.
+
+The disposable Codex agent was deleted after evidence capture. Claude PKCE
+creation is still pending operator callback; retain that pending state for the
+next inbound response. All local Go tests completed successfully as well as CI.

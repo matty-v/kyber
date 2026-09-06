@@ -28,9 +28,9 @@ from fixture execution; a source implementation alone is not certification.
 | HC-01 registration/pod assembly | Implemented | Implemented | `pkg/runtimes/contracttest`, existing adapter tests; image boot needs live evidence |
 | HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Adapter and startup fixtures, `credential_failure_test.go`; clearer normalized failure taxonomy is a gap |
 | HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
-| HC-04 prompt/session commands | Shared tmux delivery, fresh restart, `/compact` | Same platform semantics | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
+| HC-04 prompt/session commands | Shared tmux delivery, fresh restart, `/compact` | Startup delivery + fresh restart live verified; compaction fixture | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
 | HC-05 API-key mode | Anthropic Secret | OpenAI Secret | Shared checks cover mode separation and two Agent names; startup fixtures; live mode checks outstanding |
-| HC-05 subscription mode | PKCE OAuth; refresh-token sync | Device login or legacy auth JSON; opaque sync | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
+| HC-05 subscription mode | PKCE OAuth; refresh-token sync | Device login live verified; legacy auth JSON and sync fixtures | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
 | HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Boot fixtures, cron correlation and dispatch marker tests; runtime version behavior needs live evidence |
 | HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | New `TestHarnessContractReceiptRecovery` plus task worker/store/API suites; historical MAT-28 live evidence is version-specific |
 | HC-08 cancellation | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
@@ -68,11 +68,32 @@ available after native configuration was installed and a fresh report arrived.
 This verifies the live report/sidecar/API path; no behavioral prompts or account
 changes were made to that agent. It does not prove task execution or auth refresh.
 
-The disposable Codex agent `sol-test-mat7-codex` exposes its registered contract
-and the canonical `/auth` endpoint reports `starting` while login is pending.
-Both subscription test logins require operator consent. Successful model turns,
-task completion and session restart remain pending; API-key fixtures are not
-substituted for a successful live API-key login.
+Codex subscription test: `sol-test-mat7-codex`, CLI `0.153.4`, same image tag.
+The canonical `/auth` route progressed from startup to device-login challenge;
+operator consent completed successfully. The first native turn answered
+`MAT7_READY`, and all declared hook/task features became available.
+
+- Task `task_792bb9ab4b693cf6d255aa3522124dcf` was observed dispatched with
+  no completion response, then explicitly completed through the installed task
+  tool with `MAT7_CODEX_TASK_OK`. PostgreSQL contains a delivered Codex receipt
+  and native session identity.
+- The session-restart API returned success. The new native session answered the
+  startup prompt again. Task `task_bc62e955394f66f807b57f9c78a4c4da` completed
+  with `MAT7_CODEX_RESTART_OK`; the two task receipts have two distinct native
+  session identities, confirming fresh-session behavior rather than resume.
+
+- Negative/recovery case: temporarily removing executable permission from the
+  receipt hook changed task-receipt availability to `integration_unavailable`
+  while the agent stayed Running. Task
+  `task_c8d8f827dff17f9e6ecbc04e5ec4d408` remained queued; its dispatch was
+  leased but had no receipt. Restoring the hook to mode 0755 restored capability
+  availability, then the same task explicitly completed with
+  `MAT7_CODEX_RECOVERED`. No manual redelivery was requested.
+
+Cleanup: the disposable Codex agent was deleted after evidence capture.
+
+Claude subscription consent and both valid live API-key checks remain pending.
+API-key fixtures do not substitute for successful live API-key authentication.
 
 ## Run contract checks
 
