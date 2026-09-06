@@ -21,8 +21,9 @@ Made to run with your existing Claude or ChatGPT subscription.
 - **Run teams of long-lived agents, each sandboxed.** An agent keeps its whole
   filesystem across restarts, upgrades and preemption: installed packages,
   cloned repos, credentials, memory.
-- **Run them anywhere.** Any Kubernetes cluster: a Windows laptop, a spare box,
-  or any cloud. On GCP, Kyber provisions the VMs for you, preemptible included.
+- **Run them anywhere.** A MacBook is the recommended local setup; Kyber also
+  runs on a Windows laptop, a spare box, or any cloud. On GCP, Kyber provisions
+  the VMs for you, preemptible included.
 - **Control agents from your phone.** Two-way Telegram and Discord chat with any
   agent. No terminal needed.
 - **Own the environment, not just the agent.** Choose each agent's machine, VM
@@ -70,7 +71,7 @@ required.
 |---|---|
 | Try it on a cluster I already have, or a local one | [Quickstart](docs/product/getting-started/quickstart.md) |
 | Have an AI assistant do the install for me | [Install with an AI assistant](docs/install-with-an-ai-assistant.md) |
-| Run it on my Mac | [macOS guide](docs/installation-macos.md) |
+| Run it on my MacBook (recommended) | [macOS guide](docs/installation-macos.md) |
 | Run it on my Windows laptop, no cloud account | [WSL2 guide](docs/installation-wsl2.md) |
 | Run it on GCP with managed VMs and HTTPS | [GCP guide](docs/installation.md) |
 
