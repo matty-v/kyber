@@ -60,6 +60,9 @@ image:
   telegramSidecar:
     repository: ghcr.io/matty-v/kyber-mcp-telegram
     tag: ""
+  slackSidecar:
+    repository: ghcr.io/matty-v/kyber-mcp-slack
+    tag: ""
 
 # telegram: install-wide Telegram settings.
 #

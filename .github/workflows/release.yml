@@ -135,7 +135,7 @@ jobs:
       - name: Check each kyber-* image
         run: |
           set -e
-          for image in kyber-control-plane kyber-node-agent kyber-status-sidecar kyber-mcp-discord kyber-mcp-telegram kyber-runtime-base kyber-claude-code kyber-codex; do
+          for image in kyber-control-plane kyber-node-agent kyber-status-sidecar kyber-mcp-discord kyber-mcp-telegram kyber-mcp-slack kyber-runtime-base kyber-claude-code kyber-codex; do
             ./scripts/preflight-tag-not-published.sh "${image}" "${KYBER_TAG}"
           done
 
@@ -281,6 +281,18 @@ jobs:
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
+  build-mcp-slack:
+    needs: [meta, preflight-check-tags]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-mcp-slack
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/mcp-slack/Dockerfile
+      cache-scope: mcp-slack
+      tags: ${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
   # --------------------------------------------------------------------
   # runtime-base must publish before claude-code so the latter can FROM it.
   # Its tag is a manifest list, so each architecture's claude-code build pulls
@@ -334,7 +346,7 @@ jobs:
   # Once all 8 images are pushed: create the GitHub Release.
   # --------------------------------------------------------------------
   release:
-    needs: [meta, a2a-conformance, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-runtime-base, build-claude-code, build-codex]
+    needs: [meta, a2a-conformance, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-mcp-slack, build-runtime-base, build-claude-code, build-codex]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

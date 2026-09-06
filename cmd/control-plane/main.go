@@ -467,6 +467,7 @@ func main() {
 	// Discord-sidecar injection; only agents with spec.channels.discord get it.
 	discordSidecarImage := os.Getenv("KYBER_DISCORD_SIDECAR_IMAGE")
 	telegramSidecarImage := os.Getenv("KYBER_TELEGRAM_SIDECAR_IMAGE")
+	slackSidecarImage := os.Getenv("KYBER_SLACK_SIDECAR_IMAGE")
 	// Telegram user IDs this install trusts by default (kyber#684). Used ONLY
 	// to seed the allowlist of an agent migrated off the retired in-process
 	// plugin, whose allowlist lived on its own PVC where we cannot read it.
@@ -634,6 +635,7 @@ func main() {
 		StatusSidecarImage:            statusSidecarImage,
 		DiscordSidecarImage:           discordSidecarImage,
 		TelegramSidecarImage:          telegramSidecarImage,
+		SlackSidecarImage:              slackSidecarImage,
 		TelegramDefaultAllowedUserIDs: telegramDefaultAllowedUserIDs,
 		SidecarOtelEndpoint:           sidecarOtelEndpoint,
 		SidecarLogLevel:               sidecarLogLevel,

@@ -236,6 +236,8 @@ type AgentReconciler struct {
 	// spec.secrets.telegramEnabled gets it, and the native Claude Code plugin
 	// was retired. Empty disables injection and raises TelegramUnavailable.
 	TelegramSidecarImage string
+	// SlackSidecarImage is the Slack Socket Mode MCP sidecar image.
+	SlackSidecarImage string
 
 	// TelegramDefaultAllowedUserIDs is a comma-separated list of Telegram user
 	// IDs an install trusts by default (chart value
@@ -2169,6 +2171,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			LogLevel:       r.TelegramLogLevel,
 		})
 	}
+	if agent.Spec.Secrets.SlackEnabled { AppendSlackSidecar(&podSpec, SlackSidecarConfig{AgentName:agent.Name,Image:r.SlackSidecarImage,ExistingSecret:agent.Name+"-slack",LogLevel:r.SidecarLogLevel}) }
 
 	// Inject the transcript-tailer sidecar (kyber#446): ships the agent's
 	// Claude Code session JSONL off the PVC on a clean, isolated stream for the

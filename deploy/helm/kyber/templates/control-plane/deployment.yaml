@@ -267,6 +267,12 @@ spec:
               value: "{{ .repository }}:{{ .tag }}"
             {{- end }}
             {{- end }}
+            {{- with .Values.image.slackSidecar }}
+            {{- if .tag }}
+            - name: KYBER_SLACK_SIDECAR_IMAGE
+              value: "{{ .repository }}:{{ .tag }}"
+            {{- end }}
+            {{- end }}
             {{- with .Values.telegram.defaultAllowedUserIds }}
             - name: KYBER_TELEGRAM_DEFAULT_ALLOWED_USER_IDS
               value: "{{ . }}"

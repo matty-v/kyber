@@ -688,6 +688,10 @@ spec:
                       post messages into a Discord channel; bidirectional comms wait on
                       kyber#138 (per-channel MCP sidecars) for Phase 2.
                     type: boolean
+                  slackEnabled:
+                    description: Slack Socket Mode MCP sidecar is enabled. Create the
+                      <agent-name>-slack Secret with bot-token and app-token keys.
+                    type: boolean
                   telegramEnabled:
                     description: |-
                       TelegramEnabled indicates whether this agent has a Telegram bot configured.
