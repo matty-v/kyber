@@ -94,6 +94,13 @@ func validDiscordPut() map[string]any {
 	}
 }
 
+func validSlackPut() map[string]any {
+	return map[string]any{
+		"botToken": "xoxb-token", "appToken": "xapp-token",
+		"allowedUserIds": []string{"U123ABC"}, "allowedChannelIds": []string{"C123ABC"},
+	}
+}
+
 // --- listing --------------------------------------------------------------
 
 // TestComms_List_UnconfiguredAgent: both channels report not-configured rather
@@ -110,8 +117,8 @@ func TestComms_List_UnconfiguredAgent(t *testing.T) {
 	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if len(got.Channels) != 2 {
-		t.Fatalf("want 2 channels, got %d: %s", len(got.Channels), rr.Body.String())
+	if len(got.Channels) != 3 {
+		t.Fatalf("want 3 channels, got %d: %s", len(got.Channels), rr.Body.String())
 	}
 	seen := map[string]bool{}
 	for _, c := range got.Channels {
@@ -120,19 +127,31 @@ func TestComms_List_UnconfiguredAgent(t *testing.T) {
 			t.Errorf("channel %v: want configured=false, got %v", c["channel"], c["configured"])
 		}
 	}
-	if !seen["telegram"] || !seen["discord"] {
-		t.Errorf("want telegram+discord, got %v", seen)
+	if !seen["telegram"] || !seen["discord"] || !seen["slack"] {
+		t.Errorf("want telegram+discord+slack, got %v", seen)
 	}
 }
 
-// TestComms_UnknownChannel_404: only the two supported channels route. Guards
+// TestComms_UnknownChannel_404: only supported channels route. Guards
 // against a typo silently creating garbage config.
 func TestComms_UnknownChannel_404(t *testing.T) {
 	h := buildCommsHarness(t, commsAgent("dave"))
-	rr := h.do(t, http.MethodPut, "/api/v1/agents/dave/comms/slack", map[string]any{})
+	rr := h.do(t, http.MethodPut, "/api/v1/agents/dave/comms/matrix", map[string]any{})
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("want 404, got %d: %s", rr.Code, rr.Body.String())
 	}
+}
+
+func TestComms_PutSlack_WiresEverythingInOneCall(t *testing.T) {
+	h := buildCommsHarness(t, commsAgent("barf"))
+	rr := h.do(t, http.MethodPut, "/api/v1/agents/barf/comms/slack", validSlackPut())
+	if rr.Code != http.StatusOK { t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String()) }
+	sec, err := h.secret(t, "barf-slack"); if err != nil { t.Fatalf("barf-slack secret: %v", err) }
+	if string(sec.Data[slackBotTokenKey]) != "xoxb-token" || string(sec.Data[slackAppTokenKey]) != "xapp-token" { t.Fatalf("Slack token keys not stored") }
+	if string(sec.Data[slackAllowedChannelIDsKey]) != "C123ABC" { t.Fatalf("channel allowlist not stored") }
+	ag := h.agent(t, "barf")
+	if !ag.Spec.Secrets.SlackEnabled { t.Fatal("SlackEnabled not set") }
+	if len(ag.Spec.InboundBindings) != 1 || ag.Spec.InboundBindings[0].Name != "slack" { t.Fatalf("Slack binding not created: %+v", ag.Spec.InboundBindings) }
 }
 
 // TestComms_UnknownAgent_404 for both list and single-channel reads.
