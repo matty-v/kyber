@@ -2885,6 +2885,7 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 		"SESSION_RESUME_ENABLED=1",
 		"CLAUDE_PROJECT_STORE='" + store + "'",
 		"USER_PRESERVE_SUFFIX=''",
+		`KYBER_A2A_MCP_URL="${TEST_A2A_MCP_URL:-}"`,
 		"KYBER_SYNC_SCRIPT='" + filepath.Join(work, "no-such-sync") + "'",
 		block,
 		"",
@@ -2963,4 +2964,51 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	if got := run("--fresh"); !strings.Contains(got, "new-session") {
 		t.Errorf("--fresh with live session must still relaunch, got:\n%s", got)
 	}
+
+	t.Run("background skill repair releases exec streams and lock", func(t *testing.T) {
+		finished := filepath.Join(work, "repair-finished")
+		for name, body := range map[string]string{
+			"seq":   "#!/bin/sh\necho 1\n",
+			"sleep": "#!/bin/sh\n/bin/sleep 2\n",
+			"chown": "#!/bin/sh\ntouch '" + finished + "'\n",
+		} {
+			if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Render the real heredoc with A2A enabled, confining its skill writes.
+		render := exec.Command("/bin/bash", wrapperPath)
+		render.Env = append(os.Environ(), "TEST_A2A_MCP_URL=http://127.0.0.1:1/mcp")
+		if out, err := render.CombinedOutput(); err != nil {
+			t.Fatalf("render: %v: %s", err, out)
+		}
+		raw, err := os.ReadFile(gen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		isolated := strings.ReplaceAll(string(raw), "/persist/var/lock", lockDir)
+		isolated = strings.ReplaceAll(isolated, "/home/kyber/.claude/skills", filepath.Join(work, "skills"))
+		if err := os.WriteFile(gen, []byte(isolated), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(finished); err == nil {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			t.Error("background repair did not finish")
+		})
+		cmd := exec.Command("/bin/bash", gen, "--fresh")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		cmd.WaitDelay = 250 * time.Millisecond
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("restart must release exec streams before repair finishes: %v: %s", err, out)
+		}
+		if out, err := exec.Command("flock", "-n", filepath.Join(lockDir, "session.lock"), "true").CombinedOutput(); err != nil {
+			t.Errorf("background repair retained session lock: %v: %s", err, out)
+		}
+	})
 }

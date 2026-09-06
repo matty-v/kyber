@@ -1219,7 +1219,9 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
                 ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" /home/kyber/.claude/skills/a2a-client
                 chown -h kyber:kyber /home/kyber/.claude/skills/a2a-client 2>/dev/null || true
             done
-        ) &
+        # This repair outlives the API exec. It must not retain the session
+        # lock or exec streams, or a successful restart appears to time out.
+        ) 200>&- </dev/null >/dev/null 2>&1 &
     fi
 
     echo "[kyber] restart-session: tmux 'agent' session restarted"

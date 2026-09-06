@@ -1,6 +1,6 @@
 # MAT-7 — agent harness contract execution plan
 
-Status: refactoring approved; implementation in progress.
+Status: implementation and automated validation complete; live evidence and publication in progress.
 Approval: Matt, Telegram messages 936 (contract) and 941 (refactoring), 2026-09-06.
 Issue: https://linear.app/matty-v/issue/MAT-7
 Baseline: 20b21f987402204b33944af9135db53d4cbf494b.
@@ -21,12 +21,12 @@ new execution transport, or production deployment is authorized by this plan.
   Final v1 publication remains gated on migration and live evidence.
 - [x] Establish reusable adapter conformance tests, negative fixtures, and a
   minimal registry adapter fixture; map behavioral coverage and gaps.
-  A fully bootable fake harness remains a migration acceptance requirement.
+  The bootable third-runtime fixture also passes in integration CI.
 - [x] Run appropriate checks and record exact results/limits. Live-harness
   verification requires the dedicated dev environment and disposable agents.
 - [x] Review registration, authentication, dispatch, lifecycle, sidecars,
   API/UI and packaging; produce the [refactoring proposal](../design/2026-09-06-mat-7-harness-extensibility-review.md).
-- [ ] Obtain approval for material architectural decisions, then implement
+- [x] Obtain approval for material architectural decisions, then implement
   capability discovery/enforcement and adapter migrations with tests.
 - [ ] Publish final conformance evidence and maintenance/release guidance.
 
@@ -212,3 +212,20 @@ checks; the temporary executable mode was restored.
 The disposable Codex agent was deleted after evidence capture. Claude PKCE
 creation is still pending operator callback; retain that pending state for the
 next inbound response. All local Go tests completed successfully as well as CI.
+
+### Claude live finding and correction
+
+Claude PKCE creation and native startup/task completion passed on `2.1.263`.
+The restart test exposed an existing generated-script bug: the A2A skill-repair
+background loop retained fd 200 (session lock) and exec streams for 60 seconds.
+The new native session started, but the API returned 500 on timeout and task
+delivery remained blocked/ambiguous. Do not classify that request as success
+or blindly redeliver the affected test task.
+
+The repair loop now closes the lock fd and redirects standard streams before
+backgrounding. A regression renders the production heredoc with A2A enabled,
+checks prompt return with a bounded pipe wait, and immediately reacquires the
+session lock. The fixture explicitly isolates the host A2A environment. The
+focused regression and complete Claude integration suite pass. A rebuilt
+Claude image and live restart recheck are next; other runtime/control-plane
+production code is unchanged.

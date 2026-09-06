@@ -529,6 +529,12 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     `desiredPhase=Restarting`; let the state machine own deletion, count that
     request in the shared rollout budget, and arm any image canary only after
     the request succeeds. See `docs/contributing/reviewing.md` #17.
+17. **Background relaunch helpers must release request streams and locks.**
+    Claude's generated skill-repair loop must close fd 200 and redirect all
+    standard streams before backgrounding. Otherwise native restart succeeds
+    while the API times out and task dispatch remains locked. The generated
+    relaunch regression fixture exercises this with A2A enabled.
+
 
 ---
 
