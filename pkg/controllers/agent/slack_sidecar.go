@@ -1,6 +1,7 @@
 package agent
 
 import (
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -11,6 +12,24 @@ const SlackSidecarContainerName = "kyber-mcp-slack"
 const SlackInboundBindingName = "slack"
 
 type SlackSidecarConfig struct { AgentName, Image, ExistingSecret, LogLevel string }
+
+// DefaultSlackAction is deliberately self-contained: the binding is also
+// synthesized by the reconciler for agents enabled directly through the CRD.
+func DefaultSlackAction() string {
+	return "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. Keep replies concise."
+}
+
+func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding {
+	return kyberv1.AgentInboundBinding{Name: SlackInboundBindingName, ExistingSecret: secretName,
+		SignatureHeader: "X-Kyber-Signature-256", SignaturePrefix: "sha256=", Action: action,
+		Fields: []kyberv1.AgentInboundField{
+			{Label: "event_type", JsonPath: "$.event_type"}, {Label: "from", JsonPath: "$.user"},
+			{Label: "user_id", JsonPath: "$.user_id"}, {Label: "channel_id", JsonPath: "$.channel_id"},
+			{Label: "message_id", JsonPath: "$.message_id"}, {Label: "message", JsonPath: "$.content"},
+			{Label: "thread_ts", JsonPath: "$.thread_id"},
+		},
+	}
+}
 
 func AppendSlackSidecar(spec *corev1.PodSpec, cfg SlackSidecarConfig) {
 	if cfg.Image == "" || cfg.ExistingSecret == "" { return }

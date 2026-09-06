@@ -429,6 +429,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err := r.migrateLegacyDiscordAction(ctx, agent); err != nil {
 		return ctrl.Result{}, err
 	}
+	if err := r.ensureSlackBinding(ctx, agent); err != nil {
+		return ctrl.Result{}, err
+	}
 
 	// 3a.0.05. Heal agents that had Telegram configured under the retired
 	// in-process plugin (kyber#684). Their Secret holds only a bot token and
