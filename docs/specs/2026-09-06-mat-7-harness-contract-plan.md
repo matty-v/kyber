@@ -102,3 +102,46 @@ status/sidecar observations and operator API projections; do not add CRD schema
 or new dependencies unless needed and explicitly covered by an implementation
 review. No further approval is needed for routine steps in the accepted approach.
 Telegram/API-key restriction and Claude bootstrap credential path stay unchanged.
+
+### Capability observation implementation
+
+Within the approved declared-versus-observed contract, add an optional bounded
+`status.runtime.capabilities` object containing contract version, installed
+version, pod UID, Agent generation, server observation time and a boolean feature
+map. The authenticated sidecar path validates the report against the current
+Agent/pod/registered descriptor. Clear it on pod creation; expire it after 90s.
+Expose an additive operator API projection; no credentials or public service
+promises enter the report. This additive status schema is necessary to keep
+observations shared and durable across control-plane replicas/restarts. Generate
+CRDs/deepcopy from Go types and preserve all existing API fields.
+
+### Refactor checkpoint — descriptor and observation boundary
+
+Implemented harness-owned descriptors, credential preparation/validation,
+transcript roots and recall parsers, model-validation metadata, and explicit
+legacy fleet-default projections. Unknown integrations inherit no Claude
+settings. Public discovery lists enabled images; creation accepts adapter-owned
+`secrets.runtimeAuth` while preserving legacy fields and PKCE validation. The
+PWA wizard consumes discovery and keeps old-server fallbacks in one module.
+
+Added bounded, pod-UID-bound capability observations with server timestamps and
+90-second expiry. Native-config probes independently observe job hooks, task
+receipts, and request/reply MCP wiring. This is evidence of configuration and
+executable presence, not proof of upstream native hook execution or valid
+provider authentication. Task delivery now waits for both receipt and task-tool
+evidence; advanced scheduled-job controls fail visibly without installed hooks.
+Catalog and receipt reports must match the actual Agent runtime.
+
+Validation: targeted API/auth/defaults/controller tests passed with envtest;
+all transcript/recall tests passed (including the bounded-many-files stress
+fixture); native-config positive/negative fixtures passed for both harnesses;
+56 focused PWA tests passed and TypeScript lint passed. A new registration
+fixture passes public discovery and generic credential creation without adding
+provider branches. It is not a bootable harness and is not claimed as one.
+
+Remaining before completing MAT-7: review/refine auth recovery and remaining
+operation/UI consumers, bootable fixture coverage, full build/lint/test gates,
+live dev validation for both real harnesses and auth modes where credentials
+permit, update the conformance evidence matrix, then publish the official
+contract through the reviewed PR. The contract remains an approved draft until
+that evidence and publication step are complete.

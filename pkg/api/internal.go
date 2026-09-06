@@ -33,6 +33,7 @@ import (
 	"github.com/matty-v/kyber/pkg/modelprobe"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskobject"
@@ -389,6 +390,8 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleTokenUsagePost(w, r, agentName)
 	case "job-events":
 		s.handleJobEvent(w, r, agentName)
+	case "runtime-capabilities":
+		s.handleRuntimeCapabilities(w, r, agentName)
 	case "runtime-version":
 		s.handleRuntimeVersion(w, r, agentName)
 	case "runtime-catalog":
@@ -445,7 +448,7 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		Models  []runtimedetect.Model `json:"models"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
-	if err := dec.Decode(&body); err != nil || (body.Runtime != "codex" && body.Runtime != "claude-code") || len(body.Models) == 0 || len(body.Models) > 100 {
+	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || len(body.Models) == 0 || len(body.Models) > 100 {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
@@ -465,11 +468,24 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 			http.Error(w, "missing or invalid context window", http.StatusBadRequest)
 			return
 		}
-		if body.Runtime == "claude-code" && !model.ContextWindowKnown {
+		if runtimeCatalogRequiresContext(body.Runtime) && !model.ContextWindowKnown {
 			http.Error(w, "missing authoritative context window", http.StatusBadRequest)
 			return
 		}
 		models = append(models, model)
+	}
+	if s.k8sClient == nil {
+		http.Error(w, "not configured", http.StatusServiceUnavailable)
+		return
+	}
+	agent := &kyberv1.Agent{}
+	if err := s.k8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agentName}, agent); err != nil {
+		http.Error(w, "agent unavailable", http.StatusNotFound)
+		return
+	}
+	if agent.Spec.Runtime != body.Runtime {
+		http.Error(w, "runtime does not match agent", http.StatusBadRequest)
+		return
 	}
 	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
 		if err := catalogs.PutAgentModels(r.Context(), agentName, models); err != nil {
@@ -1198,4 +1214,13 @@ func trimJobRunsTotal(runs []kyberv1.AgentJobRun) []kyberv1.AgentJobRun {
 		return runs
 	}
 	return runs[len(runs)-MaxJobRunsTotal:]
+}
+
+func runtimeCatalogSupported(id string) bool {
+	d, ok := runtimes.Describe(id)
+	return ok && d.Supports(runtimes.ModelCatalog)
+}
+func runtimeCatalogRequiresContext(id string) bool {
+	d, ok := runtimes.Describe(id)
+	return ok && d.RequireCatalogContext
 }

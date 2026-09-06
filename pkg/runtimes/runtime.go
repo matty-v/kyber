@@ -269,14 +269,10 @@ func All() []Runtime {
 // and until kyber#674 that combination produced an agent that could never
 // start and never said why.
 func HelmImageKey(runtime string) string {
-	switch runtime {
-	case "claude-code":
-		return "claudeCode"
-	default:
-		// codex → codex, openclaw → openclaw: the chart keys match the
-		// runtime identifier wherever it is already a single lowercase word.
-		return runtime
+	if descriptor, ok := Describe(runtime); ok {
+		return descriptor.HelmKey
 	}
+	return runtime
 }
 
 // reset is a test-only helper to clear the registry. Not exported. Tests

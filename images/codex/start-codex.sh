@@ -786,6 +786,11 @@ if [ -n "${SKIP_CODEX_LAUNCH:-}" ]; then
     exit 0
 fi
 
+# Report adapter-owned boot observations through the authenticated sidecar.
+if [ -x /usr/local/bin/kyber-runtime-capabilities ]; then
+    nohup /usr/local/bin/kyber-runtime-capabilities codex "${CODEX_VERSION}" /usr/local/bin/kyber-probe-capabilities >/dev/null 2>&1 &
+fi
+
 nohup /usr/local/bin/kyber-codex-reporter >> "$PERSIST_ROOT/var/log/kyber-codex-reporter.log" 2>&1 &
 
 cat > "$PERSIST_ROOT/last-codex-launch.sh" <<EOF

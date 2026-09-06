@@ -197,3 +197,19 @@ func TestApplyPodDerivedStatus_DoesNotTouchRestartCount(t *testing.T) {
 			agent.Status.RestartCount)
 	}
 }
+
+func TestPodDerivedCapabilitiesBelongToPodUID(t *testing.T) {
+	for _, same := range []bool{true, false} {
+		a := &kyberv1.Agent{}
+		a.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{PodUID: "old"}
+		p := &corev1.Pod{}
+		p.UID = "new"
+		if same {
+			p.UID = "old"
+		}
+		applyPodDerivedStatus(a, p)
+		if (a.Status.Runtime.Capabilities != nil) != same {
+			t.Fatalf("same=%v: observation=%+v", same, a.Status.Runtime.Capabilities)
+		}
+	}
+}

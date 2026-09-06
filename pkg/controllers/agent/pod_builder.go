@@ -405,6 +405,8 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	// directly to the control plane — that migration is a follow-up.
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
+		{Name: "KYBER_AGENT_GENERATION", Value: strconv.FormatInt(agent.Generation, 10)},
+		{Name: "KYBER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
 		// kyber#118: launch scripts read this to decide whether an
 		// unexpected session end relaunches with the harness's native

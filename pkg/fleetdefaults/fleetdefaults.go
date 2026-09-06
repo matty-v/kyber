@@ -138,3 +138,11 @@ func (r *Resolver) Invalidate() {
 	defer r.mu.Unlock()
 	r.hasCache = false
 }
+
+// ForLegacyKey confines compatibility with pre-contract ConfigMap fields here.
+// An undescribed/new runtime inherits no other provider's settings.
+func (d Defaults) ForLegacyKey(key string) (model, version string) {
+	values := map[string][2]string{"claude-code": {d.Model, d.RuntimeVersion}, "codex": {d.CodexModel, d.CodexRuntimeVersion}}
+	value := values[key]
+	return value[0], value[1]
+}

@@ -4,8 +4,12 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"net/http"
 	"net/http/httptest"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"testing"
 
 	"github.com/matty-v/kyber/pkg/api"
@@ -15,7 +19,7 @@ import (
 
 func TestInternalRuntimeCatalogAcceptsCodexModelsWithoutContextWindow(t *testing.T) {
 	cache := runtimedetect.NewMemoryCache()
-	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv := catalogTestServer(t)
 	srv.SetRuntimeDetectCache(cache)
 	req := httptest.NewRequest(http.MethodPost, "/internal/agents/codex-spike/runtime-catalog", bytes.NewBufferString(
 		`{"runtime":"codex","models":[{"id":"gpt-5.6-sol","displayName":"GPT-5.6-Sol"}]}`))
@@ -28,7 +32,7 @@ func TestInternalRuntimeCatalogAcceptsCodexModelsWithoutContextWindow(t *testing
 
 func TestInternalRuntimeCatalogRejectsClaudeModelWithoutContextWindow(t *testing.T) {
 	cache := runtimedetect.NewMemoryCache()
-	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv := catalogTestServer(t)
 	srv.SetRuntimeDetectCache(cache)
 	req := httptest.NewRequest(http.MethodPost, "/internal/agents/claude-spike/runtime-catalog", bytes.NewBufferString(
 		`{"runtime":"claude-code","models":[{"id":"claude-opus","displayName":"Claude Opus"}]}`))
@@ -40,7 +44,7 @@ func TestInternalRuntimeCatalogRejectsClaudeModelWithoutContextWindow(t *testing
 }
 
 func TestInternalRuntimeCatalogRejectsWrongRuntime(t *testing.T) {
-	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv := catalogTestServer(t)
 	srv.SetRuntimeDetectCache(runtimedetect.NewMemoryCache())
 	req := httptest.NewRequest(http.MethodPost, "/internal/agents/alice/runtime-catalog", bytes.NewBufferString(
 		`{"runtime":"other","models":[]}`))
@@ -53,7 +57,7 @@ func TestInternalRuntimeCatalogRejectsWrongRuntime(t *testing.T) {
 
 func TestInternalRuntimeCatalogStoresClaudeModelsPerAgent(t *testing.T) {
 	cache := runtimedetect.NewMemoryCache()
-	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv := catalogTestServer(t)
 	srv.SetRuntimeDetectCache(cache)
 	for _, tc := range []struct {
 		agent  string
@@ -82,7 +86,7 @@ func TestInternalRuntimeCatalogStoresClaudeModelsPerAgent(t *testing.T) {
 }
 
 func TestInternalRuntimeCatalogRejectsInvalidKnownContextWindow(t *testing.T) {
-	srv := api.NewInternalServer(briefstore.NewMemoryStore())
+	srv := catalogTestServer(t)
 	srv.SetRuntimeDetectCache(runtimedetect.NewMemoryCache())
 	req := httptest.NewRequest(http.MethodPost, "/internal/agents/alice/runtime-catalog", bytes.NewBufferString(
 		`{"runtime":"claude-code","models":[{"id":"claude","contextWindow":0,"contextWindowKnown":true}]}`))
@@ -90,5 +94,29 @@ func TestInternalRuntimeCatalogRejectsInvalidKnownContextWindow(t *testing.T) {
 	srv.Handler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400", rr.Code)
+	}
+}
+
+func catalogTestServer(t *testing.T) *api.InternalServer {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	_ = kyberv1.AddToScheme(scheme)
+	builder := fake.NewClientBuilder().WithScheme(scheme)
+	for name, rt := range map[string]string{"alice": "claude-code", "bob": "claude-code", "claude-spike": "claude-code", "codex-spike": "codex"} {
+		a := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "test"}}
+		a.Spec.Runtime = rt
+		builder.WithObjects(a)
+	}
+	return api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(builder.Build(), "test"))
+}
+
+func TestInternalRuntimeCatalogRejectsAnotherRegisteredRuntime(t *testing.T) {
+	srv := catalogTestServer(t)
+	srv.SetRuntimeDetectCache(runtimedetect.NewMemoryCache())
+	req := httptest.NewRequest("POST", "/internal/agents/alice/runtime-catalog", bytes.NewBufferString(`{"runtime":"codex","models":[{"id":"gpt-test"}]}`))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != 400 {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }

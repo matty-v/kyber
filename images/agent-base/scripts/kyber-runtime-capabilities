@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Report bounded, non-secret adapter observations; a process restart loses no
+# promises because declarations live in the control plane and evidence expires.
+set -euo pipefail
+runtime="${1:?runtime required}" version="${2:?version required}" probe="${3:?probe required}"
+[[ "$runtime" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || exit 2
+[[ -n "${KYBER_POD_UID:-}" && "${KYBER_AGENT_GENERATION:-}" =~ ^[0-9]+$ ]] || exit 2
+lock="${KYBER_CAPABILITY_LOCK:-/persist/var/lock/runtime-capabilities.lock}"
+mkdir -p "$(dirname "$lock")"
+exec 9>"$lock"
+flock -n 9 || exit 0
+while true; do
+    features="$("$probe" 2>/dev/null || printf '{}')"
+    if body="$(jq -nc --arg runtime "$runtime" --arg version "$version" --arg pod "$KYBER_POD_UID" --argjson generation "$KYBER_AGENT_GENERATION" --argjson features "$features" '{runtime:$runtime,contractVersion:"1.0",installedVersion:$version,podUID:$pod,agentGeneration:$generation,features:$features}')"; then
+        printf '%s' "$body" | curl -fsS --max-time 5 -H 'Content-Type: application/json' --data-binary @- "${KYBER_CAPABILITY_REPORT_URL:-http://127.0.0.1:8091/runtime-capabilities}" >/dev/null 2>&1 || true
+    fi
+    [[ "${KYBER_CAPABILITY_REPORT_ONCE:-0}" == 1 ]] && exit 0
+    sleep 30
+done

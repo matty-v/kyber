@@ -17,8 +17,11 @@ import (
 	"strings"
 	"time"
 
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 var taskIDPattern = regexp.MustCompile(`^task_[a-f0-9]{32}$`)
@@ -42,6 +45,21 @@ func (s *InternalServer) handleTaskReceiptPost(w http.ResponseWriter, r *http.Re
 	d.DisallowUnknownFields()
 	if d.Decode(&receipt) != nil || d.Decode(&struct{}{}) != io.EOF || !taskIDPattern.MatchString(receipt.TaskID) || !attemptIDPattern.MatchString(receipt.AttemptID) {
 		http.Error(w, "invalid task receipt", http.StatusBadRequest)
+		return
+	}
+	// A syntactically valid adapter ID is not authority to claim another runtime.
+	if s.k8sClient == nil {
+		http.Error(w, "runtime validation unavailable", 503)
+		return
+	}
+	owner := &kyberv1.Agent{}
+	if s.k8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agent}, owner) != nil {
+		http.Error(w, "agent unavailable", 404)
+		return
+	}
+	descriptor, registered := runtimes.Describe(receipt.Runtime)
+	if !registered || owner.Spec.Runtime != receipt.Runtime || !descriptor.Supports(runtimes.TaskReceipts) {
+		http.Error(w, "runtime receipt not supported for this agent", 400)
 		return
 	}
 	task, created, err := s.taskStore.AcceptReceipt(r.Context(), taskstore.AgentRef{Namespace: s.namespace, Name: agent}, receipt)

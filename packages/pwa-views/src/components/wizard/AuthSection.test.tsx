@@ -46,7 +46,7 @@ describe('AuthSection', () => {
         set={vi.fn()}
       />,
     )
-    expect(screen.getByText(/codex login --device-auth/i)).toBeInTheDocument()
+    expect(screen.getByText(/Kyber will show a device code/i)).toBeInTheDocument()
     expect(screen.queryByText(/auth\.json/i)).not.toBeInTheDocument()
   })
 

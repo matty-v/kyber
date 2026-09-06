@@ -997,6 +997,11 @@ fi
 # Code's built-in CLAUDE.md walk-up finds the agent's identity on session
 # start. Falls back to $HOME when there's no identity repo or the clone was
 # skipped — never to "/" (which is wherever entrypoint.sh left us).
+# Report adapter-owned boot observations through the authenticated sidecar.
+if [ -x /usr/local/bin/kyber-runtime-capabilities ]; then
+    nohup /usr/local/bin/kyber-runtime-capabilities claude-code "${CLAUDE_VERSION}" /usr/local/bin/kyber-probe-capabilities >/dev/null 2>&1 &
+fi
+
 LAUNCH_DIR="${HOME:-/home/kyber}"
 if [ -n "${REPO_DIR:-}" ] && [ -d "$REPO_DIR" ]; then
     LAUNCH_DIR="$REPO_DIR"

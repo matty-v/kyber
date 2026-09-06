@@ -1,3 +1,4 @@
+import { wizardAuth, wizardApiKey } from '../../lib/runtime-contract'
 import { IDENTITY_REPO_SLUG_RE } from './identity-utils'
 import type { WizardState } from './types'
 
@@ -69,25 +70,16 @@ export function isIdentityValid(state: WizardState): StepValidation {
  * fields are optional even if `telegramEnabled` is true.
  */
 export function isAuthValid(state: WizardState): StepValidation {
-  if (state.runtime === 'codex') {
-    if (state.authType === 'api-key' && state.openaiApiKey.trim().length === 0) {
-      return { ok: false, reason: 'Paste your OpenAI API key.' }
-    }
+  const auth = wizardAuth(state)
+  if (!auth) return { ok: false, reason: 'Authentication is unavailable for this harness.' }
+  if (auth.flow === 'device-code') return OK
+  if (auth.flow === 'api-key') return wizardApiKey(state).trim() ? OK : { ok: false, reason: `Paste your ${auth.name}.` }
+  if (auth.flow === 'authorization-code') {
+    if (!state.pkceVerifier) return { ok: false, reason: 'Open the login page to authorize.' }
+    if (!state.oauthCode) return { ok: false, reason: 'Paste the authorization code.' }
     return OK
   }
-  if (state.authType === 'oauth') {
-    if (state.pkceVerifier.length === 0) {
-      return { ok: false, reason: 'Click "Authorize with Claude" to start the OAuth flow.' }
-    }
-    if (state.oauthCode.length === 0) {
-      return { ok: false, reason: 'Paste the authorization code Anthropic showed you.' }
-    }
-    return OK
-  }
-  if (state.anthropicApiKey.length === 0) {
-    return { ok: false, reason: 'Paste your Anthropic API key.' }
-  }
-  return OK
+  return { ok: false, reason: 'This authentication flow is not supported by this client.' }
 }
 
 /** Step 5 — Review: read-only summary, always valid. */

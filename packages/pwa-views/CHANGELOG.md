@@ -1,5 +1,10 @@
 # @matty-v/kyber-pwa-views
 
+## 0.40.0
+
+- Discover installed harness contracts and render their authentication modes in agent creation.
+- Expose current runtime capability availability in the client API types.
+
 ## 0.39.3 — 2026-09-06
 
 ### Added

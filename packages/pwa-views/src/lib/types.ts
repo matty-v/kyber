@@ -101,6 +101,8 @@ export interface PublicCapabilitiesStatus {
 }
 
 export interface Agent {
+  runtimeContract?: RuntimeDescriptor
+  runtimeCapabilities?: Record<string, RuntimeFeatureAvailability>
   id: string
   phase: AgentPhase
   machine: string
@@ -461,6 +463,7 @@ export interface CreateAgentRequest {
     pkceVerifier?: string
     pkceState?: string
     anthropicApiKey?: string
+    runtimeAuth?: Record<string, string>
     openaiApiKey?: string
     /** Legacy import path; new subscription agents use in-pod device auth. */
     codexAuthJson?: string
@@ -837,6 +840,7 @@ export type ModelInfo = {
 }
 
 export type ComputeConfig = {
+  runtimes?: RuntimeDescriptor[]
   compute: {
     provider: ComputeProvider
     managed?: {
@@ -1225,4 +1229,24 @@ export interface AgentSkills {
   /** Problems belonging to no single skill — stray or dangling runtime state. */
   issues: AgentSkillIssue[]
   summary: AgentSkillsSummary
+}
+
+// Kyber harness contract metadata, separate from public service capabilities.
+export interface RuntimeDescriptor {
+  legacyCatalogKey?: string
+  legacyVersionsKey?: string
+  id: string
+  name: string
+  contractVersion: string
+  profile: string
+  cancellation: string
+  features: string[]
+  authModes: Array<{ id: AgentAuthType; name: string; flow: string; authorizationUrl?: string
+    authorizationParams?: Record<string,string>
+    inputField?: string; reauthorizePath?: string }>
+}
+export interface RuntimeFeatureAvailability {
+  supported: boolean
+  state: 'available' | 'unavailable' | 'unknown'
+  reason: string
 }

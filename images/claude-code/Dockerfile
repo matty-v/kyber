@@ -101,3 +101,5 @@ COPY --from=tokenreporter-builder /build/kyber-token-reporter /usr/local/bin/kyb
 COPY --from=tokenreporter-builder /build/kyber-skills /usr/local/bin/kyber-skills
 
 ENV KYBER_START_CMD="/usr/local/bin/start-claude.sh"
+
+COPY --chmod=0755 images/claude-code/probe-capabilities.py /usr/local/bin/kyber-probe-capabilities

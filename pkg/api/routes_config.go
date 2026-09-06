@@ -8,6 +8,7 @@ import (
 	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 )
 
@@ -16,9 +17,10 @@ import (
 // rendering. Add fields here when a consumer requires them; do not add for
 // speculative future needs.
 type ConfigResponse struct {
-	Compute  ConfigCompute       `json:"compute"`
-	Models   []tokenreport.Model `json:"models"`
-	Identity ConfigIdentity      `json:"identity"`
+	Runtimes []runtimes.Descriptor `json:"runtimes"`
+	Compute  ConfigCompute         `json:"compute"`
+	Models   []tokenreport.Model   `json:"models"`
+	Identity ConfigIdentity        `json:"identity"`
 	// PublicURL is the externally-reachable HTTPS URL of this Kyber
 	// instance — used by the PWA to render webhook URLs for inbound
 	// bindings (kyber#208). Empty/omitted when the server has no
@@ -107,6 +109,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := ConfigResponse{
+		Runtimes:  s.availableRuntimeDescriptors(),
 		Compute:   ConfigCompute{Provider: s.ComputeProvider},
 		Models:    modelsForConfig(r.Context(), s.RuntimeDetectCache),
 		Identity:  ConfigIdentity{RepoOwner: s.IdentityRepoOwner},
@@ -229,5 +232,20 @@ func activeGCEVMTypes(catalog map[string]kyberv1.MachineCapacity) []ConfigVMType
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Type < out[j].Type })
+	return out
+}
+
+// Discovery reflects adapters and images enabled on this installation.
+func (s *Server) availableRuntimeDescriptors() []runtimes.Descriptor {
+	out := []runtimes.Descriptor{}
+	for _, d := range runtimes.Descriptors() {
+		if len(s.ValidRuntimes) > 0 && !s.ValidRuntimes[d.ID] {
+			continue
+		}
+		if len(s.RuntimeImages) > 0 && s.RuntimeImages[d.ID] == "" {
+			continue
+		}
+		out = append(out, d)
+	}
 	return out
 }

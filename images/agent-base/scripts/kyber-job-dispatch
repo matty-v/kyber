@@ -213,6 +213,14 @@ emit_event() {
         -d "$body" >/dev/null 2>&1 || true
 }
 
+# Advanced controls are an explicit capability claim, not a best-effort hint.
+if [ "$STDIN_MODE" = false ] && { [ "$EXCLUSIVE" = true ] || [ "$CLEAR_CONTEXT_AFTER" = true ]; }; then
+    if [ ! -e "$POSTRUN_SENTINEL" ]; then
+        emit_event "failed" "runtime_capability_unavailable"
+        exit 4
+    fi
+fi
+
 # ---- Shared delivery helper ----
 # Sourced here, after emit_event is defined, so an absent or unreadable helper
 # records outcome=failed on the CR and in the job log like every other failure

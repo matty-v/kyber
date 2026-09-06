@@ -226,7 +226,22 @@ const (
 // (claude-code today, codex/other in the future) that is actually installed
 // in the running pod. Populated by the in-pod start script on boot via a
 // POST to /internal/agents/{name}/runtime-version. Resets on pod restart.
+// RuntimeCapabilitiesObservation is bounded non-secret evidence from the current pod.
+type RuntimeCapabilitiesObservation struct {
+	ContractVersion  string      `json:"contractVersion"`
+	InstalledVersion string      `json:"installedVersion"`
+	PodUID           string      `json:"podUID"`
+	AgentGeneration  int64       `json:"agentGeneration"`
+	ObservedAt       metav1.Time `json:"observedAt"`
+	// +kubebuilder:validation:MaxProperties=16
+	Features map[string]bool `json:"features"`
+}
+
 type AgentRuntimeStatus struct {
+	// Capabilities describes observed optional integration features, not public agent promises.
+	// +optional
+	Capabilities *RuntimeCapabilitiesObservation `json:"capabilities,omitempty"`
+
 	// Runtime names the adapter whose executable was probed (for example,
 	// "codex" or "claude-code").
 	// +optional

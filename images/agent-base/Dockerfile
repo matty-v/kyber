@@ -76,6 +76,7 @@ COPY --chmod=0755 scripts/kyber-cron-turn-start /usr/local/bin/kyber-cron-turn-s
 # Managed UserPromptSubmit hook that proves a task envelope crossed the
 # harness boundary before model processing begins.
 COPY --chmod=0755 scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
+COPY --chmod=0755 scripts/kyber-runtime-capabilities /usr/local/bin/kyber-runtime-capabilities
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Agent controller overrides CMD with args: [/usr/local/bin/start-claude.sh] on

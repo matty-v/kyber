@@ -3,29 +3,7 @@ import { generatePkcePair } from '../../lib/pkce'
 import { inputClass, labelClass } from './styles'
 import type { WizardSetter, WizardState } from './types'
 
-const CLAUDE_CODE_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e'
-const OAUTH_REDIRECT_URI = 'https://platform.claude.com/oauth/code/callback'
-const OAUTH_SCOPES = [
-  'org:create_api_key',
-  'user:profile',
-  'user:inference',
-  'user:sessions:claude_code',
-  'user:mcp_servers',
-  'user:file_upload',
-].join(' ')
-
-function buildAuthorizeUrl(challenge: string, state: string): string {
-  const u = new URL('https://claude.ai/oauth/authorize')
-  u.searchParams.set('code', 'true') // Anthropic-specific required param
-  u.searchParams.set('client_id', CLAUDE_CODE_CLIENT_ID)
-  u.searchParams.set('response_type', 'code')
-  u.searchParams.set('redirect_uri', OAUTH_REDIRECT_URI)
-  u.searchParams.set('scope', OAUTH_SCOPES)
-  u.searchParams.set('code_challenge', challenge)
-  u.searchParams.set('code_challenge_method', 'S256')
-  u.searchParams.set('state', state)
-  return u.toString()
-}
+import { wizardContract, wizardAuth, wizardApiKey } from '../../lib/runtime-contract'
 
 /**
  * ChannelDef — the wizard's auth-step channel picker. Each channel is a
@@ -178,135 +156,56 @@ export interface AuthSectionProps {
 }
 
 export function AuthSection({ state, set }: AuthSectionProps) {
+  const contract = wizardContract(state)
+  const auth = wizardAuth(state)
+  function setApiKey(value: string) {
+    if (auth?.inputField === 'anthropicApiKey') set('anthropicApiKey', value)
+    else if (auth?.inputField === 'openaiApiKey') set('openaiApiKey', value)
+    else set('runtimeApiKey', value)
+  }
   async function startOAuth() {
     const { verifier, challenge } = await generatePkcePair()
     const oauthState = crypto.randomUUID()
     set('pkceVerifier', verifier)
     set('pkceState', oauthState)
     set('oauthCode', '')
-    window.open(buildAuthorizeUrl(challenge, oauthState), '_blank', 'noopener')
+    if (!auth?.authorizationUrl) return
+    const url = new URL(auth.authorizationUrl)
+    for (const [key, value] of Object.entries(auth.authorizationParams ?? {})) url.searchParams.set(key, value)
+    url.searchParams.set('code_challenge', challenge)
+    url.searchParams.set('code_challenge_method', 'S256')
+    url.searchParams.set('state', oauthState)
+    window.open(url.toString(), '_blank', 'noopener')
   }
 
   return (
     <section className="space-y-5">
-      {state.runtime === 'codex' ? (
-        <div className="space-y-4">
-          <div>
-            <label htmlFor="agent-codex-auth-type" className={labelClass}>Authentication</label>
-            <select
-              id="agent-codex-auth-type"
-              value={state.authType}
-              onChange={(e) => {
-                const val = e.target.value as 'oauth' | 'api-key'
-                set('authType', val)
-                if (val === 'api-key') {
-                  set('telegramEnabled', false)
-                  set('discordEnabled', false)
-                }
-              }}
-              className={inputClass}
-            >
-              <option value="oauth">ChatGPT subscription (device login)</option>
-              <option value="api-key">OpenAI API key</option>
-            </select>
-          </div>
-          {state.authType === 'oauth' ? (
-            <p className="text-sm text-text-muted">
-              After creation, Kyber will show a device code from <code>codex login --device-auth</code>.
-              Open the displayed URL, enter the code, and the agent will start automatically.
-            </p>
-          ) : (
-            <div>
-              <label htmlFor="agent-openai-key" className={labelClass}>OpenAI API key</label>
-              <input
-                id="agent-openai-key"
-                type="password"
-                required
-                value={state.openaiApiKey}
-                onChange={(e) => set('openaiApiKey', e.target.value)}
-                placeholder="sk-…"
-                className={inputClass}
-              />
-              <p className="mt-1.5 text-xs text-text-muted">
-                Stored as a Kubernetes Secret and injected only into this agent.
-              </p>
-            </div>
-          )}
-        </div>
-      ) : (
-      <>
       <div>
-        <label htmlFor="agent-auth-type" className={labelClass}>
-          Authentication
-        </label>
-        <select
-          id="agent-auth-type"
-          value={state.authType}
-          onChange={(e) => {
-            const val = e.target.value as 'oauth' | 'api-key'
-            set('authType', val)
-            // Channels require OAuth — clear them when switching to api-key.
-            if (val === 'api-key') {
-              set('telegramEnabled', false)
-              set('discordEnabled', false)
-            }
-          }}
-          className={inputClass}
-        >
-          <option value="oauth">OAuth (Claude Code subscription)</option>
-          <option value="api-key">Anthropic API Key</option>
+        <label htmlFor="agent-auth-type" className={labelClass}>Authentication</label>
+        <select id="agent-auth-type" value={state.authType} className={inputClass} onChange={e => {
+          const mode = e.target.value as 'oauth' | 'api-key'
+          set('authType', mode)
+          if (mode === 'api-key') { set('telegramEnabled', false); set('discordEnabled', false) }
+        }}>
+          {contract?.authModes.map(mode => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
         </select>
       </div>
+      {!auth && <p role="alert">Authentication is unavailable for this harness.</p>}
+      {auth?.flow === 'device-code' && <p className="text-sm text-text-muted">After creation, Kyber will show a device code. Open the displayed URL, enter the code, and the agent will start automatically.</p>}
+      {auth?.flow === 'api-key' && <div>
+        <label htmlFor="agent-api-key" className={labelClass}>{auth.name}</label>
+        <input id="agent-api-key" type="password" required value={wizardApiKey(state)} onChange={e => setApiKey(e.target.value)} className={inputClass} />
+        <p className="mt-1.5 text-xs text-text-muted">Stored as a Secret and injected only into this agent.</p>
+      </div>}
+      {auth?.flow === 'authorization-code' && <div className="space-y-3">
+        <Button type="button" variant="secondary" size="md" disabled={!auth.authorizationUrl} onClick={() => void startOAuth()}>{state.pkceVerifier ? 'Re-authorize' : `Open ${contract?.name ?? 'provider'} login`}</Button>
+        <p className="text-xs text-text-muted">Open the login page, sign in and authorize, then paste the authorization code below.</p>
+        {state.pkceVerifier && <div>
+          <label htmlFor="agent-oauth-code" className={labelClass}>Paste authorization code</label>
+          <input id="agent-oauth-code" type="text" required value={state.oauthCode} onChange={e => set('oauthCode', e.target.value)} placeholder="code#state or full callback URL" className={inputClass} />
+        </div>}
+      </div>}
 
-      {(
-        <div className="space-y-3">
-          <Button type="button" variant="secondary" size="md" onClick={() => void startOAuth()}>
-            {state.pkceVerifier ? 'Re-authorize' : 'Open Anthropic login'}
-          </Button>
-          <p className="text-xs text-text-muted">
-            Opens Anthropic in a new tab. Sign in and Authorize. Anthropic
-            will show a page with your authorization code — copy that code
-            and paste below.
-          </p>
-          {state.pkceVerifier && (
-            <div>
-              <label htmlFor="agent-oauth-code" className={labelClass}>
-                Paste authorization code
-              </label>
-              <input
-                id="agent-oauth-code"
-                type="text"
-                required
-                value={state.oauthCode}
-                onChange={(e) => set('oauthCode', e.target.value)}
-                placeholder="code#state or full callback URL"
-                className={inputClass}
-              />
-            </div>
-          )}
-        </div>
-      )}
-
-      {state.authType === 'api-key' && (
-        <div>
-          <label htmlFor="agent-anthropic-key" className={labelClass}>
-            Anthropic API Key
-          </label>
-          <input
-            id="agent-anthropic-key"
-            type="password"
-            value={state.anthropicApiKey}
-            onChange={(e) => set('anthropicApiKey', e.target.value)}
-            placeholder="sk-ant-…"
-            className={inputClass}
-          />
-          <p className="mt-1.5 text-xs text-text-muted">
-            From console.anthropic.com. Stored as a k8s Secret.
-          </p>
-        </div>
-      )}
-      </>
-      )}
 
       {/* Channel picker: extensible per the CHANNELS table. Every channel is
           off by default — most agents want neither, and Discord in particular

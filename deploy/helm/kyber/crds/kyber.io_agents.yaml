@@ -349,24 +349,6 @@ spec:
                   - signatureHeader
                   type: object
                 type: array
-              profile:
-                description: Profile is operator-editable presentation metadata.
-                properties:
-                  alias:
-                    description: Alias is the human-friendly display name.
-                    maxLength: 80
-                    type: string
-                  description:
-                    description: Description is a short operator-facing summary.
-                    maxLength: 500
-                    type: string
-                  avatarContentType:
-                    description: Validated avatar media type.
-                    type: string
-                  avatarKey:
-                    description: Private object-store key for the avatar.
-                    type: string
-                type: object
               jobs:
                 description: |-
                   Jobs declares recurring scheduled prompts for this agent. Each entry is
@@ -455,6 +437,29 @@ spec:
                   If both spec.model and the fleet default are empty, the runtime harness
                   selects its own default model.
                 type: string
+              profile:
+                description: |-
+                  Profile is operator-editable presentation metadata. Profile-only edits
+                  must not restart the agent pod.
+                properties:
+                  alias:
+                    description: Alias is the human-friendly display name.
+                    maxLength: 80
+                    type: string
+                  avatarContentType:
+                    description: AvatarContentType is the validated image media type
+                      for the avatar.
+                    type: string
+                  avatarKey:
+                    description: |-
+                      AvatarKey is an opaque private object-store key. It is never returned to
+                      API callers; the public avatar endpoint serves the bytes after authz.
+                    type: string
+                  description:
+                    description: Description is a short operator-facing summary.
+                    maxLength: 500
+                    type: string
+                type: object
               publicCapabilities:
                 description: |-
                   PublicCapabilities is the operator-authored public contract for this
@@ -689,8 +694,9 @@ spec:
                       kyber#138 (per-channel MCP sidecars) for Phase 2.
                     type: boolean
                   slackEnabled:
-                    description: Slack Socket Mode MCP sidecar is enabled. Create the
-                      <agent-name>-slack Secret with bot-token and app-token keys.
+                    description: |-
+                      SlackEnabled enables the Slack Socket Mode MCP sidecar. The controller
+                      reads <agent-name>-slack (bot-token, app-token and optional allowlists).
                     type: boolean
                   telegramEnabled:
                     description: |-
@@ -1209,6 +1215,35 @@ spec:
                   in-pod start script via /internal/agents/{name}/runtime-version on
                   each pod start.
                 properties:
+                  capabilities:
+                    description: Capabilities describes observed optional integration
+                      features, not public agent promises.
+                    properties:
+                      agentGeneration:
+                        format: int64
+                        type: integer
+                      contractVersion:
+                        type: string
+                      features:
+                        additionalProperties:
+                          type: boolean
+                        maxProperties: 16
+                        type: object
+                      installedVersion:
+                        type: string
+                      observedAt:
+                        format: date-time
+                        type: string
+                      podUID:
+                        type: string
+                    required:
+                    - agentGeneration
+                    - contractVersion
+                    - features
+                    - installedVersion
+                    - observedAt
+                    - podUID
+                    type: object
                   installedAt:
                     description: |-
                       InstalledAt is when the controller last received a runtime-version

@@ -207,7 +207,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Discord' }))
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     // Deliberately leave "Who can talk to it" empty.
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -237,7 +237,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     await user.type(screen.getByLabelText(/who can talk to it/i), '123456789012345678')
     await user.click(screen.getByLabelText(/only when mentioned/i))
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -273,7 +273,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Discord' }))
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     await user.type(screen.getByLabelText(/who can talk to it/i), '123456789012345678')
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -313,7 +313,7 @@ describe('CreateAgent — OAuth state-mismatch error', () => {
 
       // Step 4 — OAuth: click Authorize, paste a wrong-state code
       await waitFor(() => expect(screen.getByLabelText(/^Authentication$/)).toBeInTheDocument())
-      await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+      await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
       await waitFor(() =>
         expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
       )

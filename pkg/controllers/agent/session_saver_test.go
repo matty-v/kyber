@@ -104,6 +104,11 @@ func requireSaverTools(t *testing.T) {
 // appended last so a test can override a default (e.g. SAVER_MAX_BYTES).
 func runSaver(t *testing.T, turns string, fixture string, extraEnv ...string) sessionState {
 	t.Helper()
+	return runSaverFor(t, "claude-code", turns, fixture, extraEnv...)
+}
+
+func runSaverFor(t *testing.T, runtimeID, turns, fixture string, extraEnv ...string) sessionState {
+	t.Helper()
 	requireSaverTools(t)
 	dir := t.TempDir()
 	overlay := filepath.Join(dir, "projects")
@@ -115,7 +120,7 @@ func runSaver(t *testing.T, turns string, fixture string, extraEnv ...string) se
 	}
 	out := filepath.Join(dir, "session-state.json")
 
-	cmd := exec.Command("bash", "-c", sessionSaverScript)
+	cmd := exec.Command("bash", "-c", sessionSaverScriptFor(runtimeID))
 	cmd.Env = append(os.Environ(),
 		"AGENT_NAME=k-2so",
 		"SAVER_OVERLAY_ROOT="+overlay,
@@ -192,7 +197,7 @@ const codexSaverFixture = `{"timestamp":"2026-08-06T14:00:00Z","type":"session_m
 `
 
 func TestSessionSaverScript_ExtractsCodexRecallSnapshot(t *testing.T) {
-	st := runSaver(t, "12", codexSaverFixture)
+	st := runSaverFor(t, "codex", "12", codexSaverFixture)
 	if len(st.RecentExchanges) != 2 {
 		t.Fatalf("got %d Codex exchanges, want 2: %+v", len(st.RecentExchanges), st.RecentExchanges)
 	}

@@ -31,6 +31,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -92,18 +93,18 @@ type SessionSaverConfig struct {
 // pod_builder) with a READ-WRITE mount, so no ensure*PVC call is needed — the
 // snapshot lands on the same durable PVC that survives pod recreation.
 func AppendSessionSaver(spec *corev1.PodSpec, cfg SessionSaverConfig) {
-	if cfg.RuntimeImage == "" {
+	if cfg.RuntimeImage == "" || runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home") == "" {
 		return
 	}
 
 	container := corev1.Container{
 		Name:    SessionSaverContainerName,
 		Image:   cfg.RuntimeImage,
-		Command: []string{"/bin/bash", "-c", sessionSaverScript},
+		Command: []string{"/bin/bash", "-c", sessionSaverScriptFor(legacyRuntimeID(cfg.Runtime))},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
-			{Name: "SAVER_OVERLAY_ROOT", Value: transcriptRoots(cfg.Runtime, saverProjectsOverlayRoot, "/persist/overlay/upper/home/kyber/.codex/sessions")},
-			{Name: "SAVER_BIND_ROOT", Value: transcriptRoots(cfg.Runtime, saverProjectsBindRoot, "/persist/home/.codex/sessions")},
+			{Name: "SAVER_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/overlay/upper/home/kyber")},
+			{Name: "SAVER_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home")},
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -175,7 +176,13 @@ func AppendSessionSaver(spec *corev1.PodSpec, cfg SessionSaverConfig) {
 // against a fixture in tests; SAVER_POLL_LIMIT (0 = run forever, the production
 // default) bounds the poll count for the same reason. None are set on the
 // production container, so its behavior is unchanged.
-var sessionSaverScript = fmt.Sprintf(`set -u
+func sessionSaverScriptFor(id string) string {
+	descriptor, ok := runtimes.Describe(id)
+	exchange := "empty"
+	if ok && descriptor.TranscriptExchange != "" {
+		exchange = descriptor.TranscriptExchange
+	}
+	return fmt.Sprintf(`set -u
 OVERLAY_ROOT="${SAVER_OVERLAY_ROOT:-%q}"
 BIND_ROOT="${SAVER_BIND_ROOT:-%q}"
 OUT="${SAVER_OUT:-%q}"
@@ -201,24 +208,10 @@ newest_transcript() {
 # trim. Emit briefstore-compatible field names (recent_exchanges / last_activity /
 # role / content / timestamp) so the snapshot can also feed BuildBrief later.
 JQ_PROG='
-  def claude_exchange:
-    select((.isSidechain // false) | not)
-    | select(.type == "user" or .type == "assistant")
-    | { role: .type,
-        timestamp: (.timestamp // ""),
-        content: ( .message.content as $c
-                   | if   ($c | type) == "string" then $c
-                     elif ($c | type) == "array"  then ([ $c[] | select(.type == "text") | .text ] | join("\n"))
-                     else "" end ) };
-  def codex_exchange:
-    select(.type == "event_msg")
-    | select(.payload.type == "user_message" or .payload.type == "agent_message")
-    | { role: (if .payload.type == "user_message" then "user" else "assistant" end),
-        timestamp: (.timestamp // ""),
-        content: ((.payload.message // "") | tostring) };
+  def harness_exchange: %s;
   [ inputs
     | (fromjson? // empty)
-    | (claude_exchange // codex_exchange)
+    | harness_exchange
     | select( (.content | gsub("^\\s+|\\s+$"; "")) != "" )
   ] as $all
   | ( if ($all | length) > $n then $all[-$n:] else $all end ) as $recent
@@ -261,4 +254,5 @@ while true; do
   fi
   sleep "$POLL_SECONDS"
 done
-`, saverProjectsOverlayRoot, saverProjectsBindRoot, saverStateFile, saverDefaultTurns)
+`, saverProjectsOverlayRoot, saverProjectsBindRoot, saverStateFile, saverDefaultTurns, exchange)
+}

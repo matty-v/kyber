@@ -190,6 +190,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// Codex's equivalent of /refresh-token. Separate endpoint because the
 	// payload is Codex's opaque auth.json document, not the Anthropic
 	// access/refresh/expires trio (kyber#681).
+	mux.HandleFunc("/runtime-capabilities", forwardHandler(client, cfg, metrics, logger, "runtime-capabilities", false))
 	mux.HandleFunc("/codex-auth", forwardHandler(client, cfg, metrics, logger, "codex-auth", false))
 	mux.HandleFunc("/mcp", (&requestMCPServer{client: client, cfg: cfg}).handle)
 	mux.HandleFunc("/a2a/mcp", (&outboundA2AMCPServer{peers: cfg.A2APeers}).handle)
