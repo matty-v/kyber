@@ -66,6 +66,7 @@ func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 			Value: runtimes.DiscordMCPURL(),
 		})
 	}
+	if agent.Spec.Secrets.SlackEnabled { vars = append(vars, corev1.EnvVar{Name:"KYBER_SLACK_MCP_URL",Value:runtimes.SlackMCPURL()}) }
 	return vars
 }
 func (a *Adapter) SecretMounts(*kyberv1.Agent) []runtimes.SecretMount { return nil }

@@ -560,6 +560,10 @@ type AgentInboundRun struct {
 
 // AgentSecrets holds references to secrets in GCP Secret Manager for this agent.
 type AgentSecrets struct {
+	// SlackEnabled enables the Slack Socket Mode MCP sidecar. The controller
+	// reads <agent-name>-slack (bot-token, app-token and optional allowlists).
+	// +optional
+	SlackEnabled bool `json:"slackEnabled,omitempty"`
 	// TelegramEnabled indicates whether this agent has a Telegram bot configured.
 	// When true, the runtime adapter injects the TELEGRAM_BOT_TOKEN env var from
 	// the k8s secret named "<agent-name>-telegram" (key "token"). Operators are

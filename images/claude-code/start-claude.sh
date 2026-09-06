@@ -230,6 +230,9 @@ if [ -n "${KYBER_DISCORD_MCP_URL:-}" ]; then
         echo "[kyber] WARNING: could not register the Discord MCP server — the agent will use the HTTP fallback" >&2
     fi
 fi
+if [ -n "${KYBER_SLACK_MCP_URL:-}" ]; then
+    claude mcp add kyber-slack --transport http "$KYBER_SLACK_MCP_URL" >/dev/null 2>&1 || true
+fi
 
 # ---- Platform request/reply MCP tool ----
 if [ -n "${KYBER_REQUEST_MCP_URL:-}" ]; then
