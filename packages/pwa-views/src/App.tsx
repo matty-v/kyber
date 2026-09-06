@@ -1,4 +1,4 @@
-import { Routes, Route, useLocation } from 'react-router-dom'
+import { Navigate, Routes, Route, useLocation } from 'react-router-dom'
 import { Layout } from './components/Layout'
 import { Dashboard } from './pages/Dashboard'
 import { MachineList } from './pages/MachineList'
@@ -10,6 +10,13 @@ import { CreateAgent } from './pages/CreateAgent'
 import { Settings } from './pages/Settings'
 import { DesignSpecimen } from './pages/DesignSpecimen'
 import { useWebSocket } from './hooks/useWebSocket'
+import { usePrefixedPath } from './lib/route-prefix'
+
+function LegacySettingsRedirect({ section }: { section: 'metrics' | 'logs' }) {
+  const location = useLocation()
+  const prefixed = usePrefixedPath()
+  return <Navigate replace to={`${prefixed(`/settings/${section}`)}${location.search}`} />
+}
 
 function AppRoutes() {
   // Attach the WebSocket event bus — invalidates React Query caches on CRD changes.
@@ -41,8 +48,8 @@ function AppRoutes() {
           <Route path="agents/new" element={<CreateAgent />} />
           <Route path="agents/:name" element={<AgentDetail />} />
           <Route path="agents/:name/:section" element={<AgentDetail />} />
-          <Route path="metrics" element={<Settings sectionOverride="metrics" />} />
-          <Route path="logs" element={<Settings sectionOverride="logs" />} />
+          <Route path="metrics" element={<LegacySettingsRedirect section="metrics" />} />
+          <Route path="logs" element={<LegacySettingsRedirect section="logs" />} />
           <Route path="settings" element={<Settings />} />
           <Route path="settings/:section" element={<Settings />} />
         </Routes>

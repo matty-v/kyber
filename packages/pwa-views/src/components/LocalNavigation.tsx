@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Menu, X } from 'lucide-react'
 import { Button } from './Button'
 
@@ -64,7 +64,31 @@ export function LocalNavigation<T extends string>({
   children: ReactNode
 }) {
   const [mobileOpen, setMobileOpen] = useState(false)
-  const activeItem = groups.flatMap((group) => group.items).find((item) => item.id === value)!
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const closeRef = useRef<HTMLButtonElement>(null)
+  const items = groups.flatMap((group) => group.items)
+  const activeItem = items.find((item) => item.id === value) ?? items[0]
+
+  useEffect(() => {
+    if (!mobileOpen) return
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    closeRef.current?.focus()
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setMobileOpen(false)
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+      triggerRef.current?.focus()
+    }
+  }, [mobileOpen])
+
+  if (!activeItem) return <main className="min-w-0">{children}</main>
 
   function select(nextValue: T) {
     setMobileOpen(false)
@@ -74,6 +98,7 @@ export function LocalNavigation<T extends string>({
   return (
     <>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setMobileOpen(true)}
         className="mb-4 flex w-full items-center justify-between rounded-lg border border-border-default bg-surface-raised px-4 py-3 text-left sm:hidden"
@@ -100,7 +125,7 @@ export function LocalNavigation<T extends string>({
               <p className="text-sm font-semibold text-text-primary">{title}</p>
               <p className="text-xs text-text-muted">Navigation</p>
             </div>
-            <Button variant="ghost" size="sm" onClick={() => setMobileOpen(false)} aria-label="Close navigation">
+            <Button ref={closeRef} variant="ghost" size="sm" onClick={() => setMobileOpen(false)} aria-label="Close navigation">
               <X className="h-5 w-5" />
             </Button>
           </div>

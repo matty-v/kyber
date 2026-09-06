@@ -39,14 +39,13 @@ const settingsNavigation: LocalNavigationGroup<SettingsSection>[] = [
 
 const settingsSectionIds = new Set(settingsNavigation.flatMap((group) => group.items.map((item) => item.id)))
 
-export function Settings({ sectionOverride }: { sectionOverride?: SettingsSection } = {}) {
+export function Settings() {
   const cluster = useCluster()
   const { section } = useParams<{ section?: string }>()
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
-  const requestedSection = sectionOverride ?? section
-  const activeSection: SettingsSection = requestedSection && settingsSectionIds.has(requestedSection as SettingsSection)
-    ? requestedSection as SettingsSection
+  const activeSection: SettingsSection = section && settingsSectionIds.has(section as SettingsSection)
+    ? section as SettingsSection
     : 'general'
 
   function selectSection(nextSection: SettingsSection) {

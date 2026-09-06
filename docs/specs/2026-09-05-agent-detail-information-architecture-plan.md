@@ -98,3 +98,12 @@ Follow-up verification:
   `apps/embedded-pwa`.
 - Follow-up dev image:
   `us-central1-docker.pkg.dev/datawire-dev/kyber-dev/control-plane:worktree-20260906042647-eabeacb`
+
+PR review follow-up:
+
+- Canonicalized legacy `/metrics` and `/logs` routes into Settings while
+  preserving query-string filters and cluster route prefixes.
+- Added Escape-to-close, initial/return focus management, and background scroll
+  locking to the mobile local-navigation dialog.
+- Added regression coverage for both fixes; the full PWA suite passes with 86
+  files and 779 tests.
