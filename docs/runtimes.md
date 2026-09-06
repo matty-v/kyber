@@ -59,3 +59,7 @@ Runtime adapters live under `pkg/runtimes/` and register themselves with the
 control-plane runtime registry. Runtime-specific image and boot logic live under
 `images/<runtime>/`; shared pod lifecycle, persistence, transcript, inbound, and
 status behavior stays in the controller and sidecars.
+
+Integration authors should start with the [Kyber Agent Harness Contract](architecture/agent-harness-contract.md)
+and its [conformance/onboarding guide](architecture/agent-harness-conformance.md).
+The v1 draft distinguishes current behavior from migration requirements.

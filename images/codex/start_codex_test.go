@@ -6,6 +6,7 @@
 package startcodexshell_test
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1225,31 +1226,52 @@ func TestStartCodex_CronHooks_PartialRegistrationLeavesSentinelAbsent(t *testing
 
 // Neither signal available: no hook tables are written at all and the sentinel
 // stays absent, so both flags stay accepted-but-inert rather than half-working.
+// HC-06/07: missing cron hooks must disable cron controls without suppressing
+// the independently installed task receipt hook. Never depend on host tools.
 func TestStartCodex_CronHooks_CommandsMissingLeavesSentinelAbsent(t *testing.T) {
-	home := t.TempDir()
-	sentinel, managed, env := cronHookEnv(t, false, false)
-
-	if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
-		t.Fatalf("mkdir sentinel dir: %v", err)
-	}
-	if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
-		t.Fatalf("seed stale sentinel: %v", err)
-	}
-
-	out, err := runBoot(t, home, "", stubBin(t), env...)
-	if err != nil {
-		t.Fatalf("boot failed: %v\n%s", err, out)
-	}
-
-	body, _ := os.ReadFile(managed)
-	if strings.Contains(string(body), "[[hooks.") {
-		t.Errorf("hook tables written with no hook commands installed:\n%s", body)
-	}
-	if _, statErr := os.Stat(sentinel); !os.IsNotExist(statErr) {
-		t.Errorf("sentinel survived with no hook commands installed (err=%v)\n%s", statErr, out)
-	}
-	if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
-		t.Errorf("boot did not warn that registration is incomplete:\n%s", out)
+	for _, receiptInstalled := range []bool{false, true} {
+		t.Run(fmt.Sprintf("receipt-installed-%t", receiptInstalled), func(t *testing.T) {
+			home := t.TempDir()
+			sentinel, managed, env := cronHookEnv(t, false, false)
+			receipt := filepath.Join(t.TempDir(), "receipt-hook")
+			if receiptInstalled {
+				if err := os.WriteFile(receipt, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			env = append(env, "KYBER_TASK_RECEIPT_CMD="+receipt)
+			if err := os.MkdirAll(filepath.Dir(sentinel), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(sentinel, nil, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runBoot(t, home, "", stubBin(t), env...)
+			if err != nil {
+				t.Fatalf("boot failed: %v\n%s", err, out)
+			}
+			body, err := os.ReadFile(managed)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, forbidden := range []string{"kyber-cron-turn-start", "kyber-cron-postrun", "[[hooks.Stop]]"} {
+				if strings.Contains(string(body), forbidden) {
+					t.Errorf("missing cron capability was registered: %s", forbidden)
+				}
+			}
+			if got := strings.Contains(string(body), receipt+" codex"); got != receiptInstalled {
+				t.Errorf("independent receipt hook registered=%t, want %t", got, receiptInstalled)
+			}
+			if !receiptInstalled && strings.Contains(string(body), "[[hooks.") {
+				t.Error("hook registered without installed command")
+			}
+			if _, err := os.Stat(sentinel); !os.IsNotExist(err) {
+				t.Errorf("stale cron sentinel survived: %v", err)
+			}
+			if !strings.Contains(string(out), "cron context hooks incomplete; feature disabled") {
+				t.Errorf("missing feature warning: %s", out)
+			}
+		})
 	}
 }
 

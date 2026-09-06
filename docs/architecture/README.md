@@ -89,3 +89,6 @@ in one pass): machine/capacity, API surface, runtime/pod build, inbound
    [`overview.md`](overview.md) § 8.
 5. Cross-link the sibling `docs/product/` page if one exists, so the WHAT/HOW
    boundary stays navigable from both sides.
+
+- [Agent harness contract](agent-harness-contract.md) — normative v1 draft and migration requirements.
+- [Harness conformance](agent-harness-conformance.md) — evidence levels, tests and onboarding.
