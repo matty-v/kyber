@@ -32,6 +32,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/capabilities"
+	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	"github.com/matty-v/kyber/pkg/oauth"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/taskobject"
@@ -1172,7 +1173,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Secrets.SlackEnabled {
 		agent.Spec.InboundBindings = append(agent.Spec.InboundBindings,
-			agent.SlackInboundBinding(req.Name+"-slack", agent.DefaultSlackAction()))
+			agentcontroller.SlackInboundBinding(req.Name+"-slack", agentcontroller.DefaultSlackAction()))
 	}
 
 	// Validate OAuth field combinations before attempting secret creation.
