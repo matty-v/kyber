@@ -1,6 +1,6 @@
 # Agent detail information architecture implementation plan
 
-Status: complete; approved in the dev environment
+Status: approved agent detail complete; Settings follow-up in progress
 
 ## Objective
 
@@ -12,7 +12,7 @@ tasks rather than one tab per implementation feature.
 
 - **Observe:** Overview, Activity, and Shell.
 - **Automate:** Jobs and Webhooks.
-- **Configure:** General, Comms, Secrets, and Capabilities.
+- **Configure:** General, Comms, Secrets, and A2A.
 
 Configuration moves out of Overview and the header action menu. Unhealthy or
 actionable states remain visible on Overview. Low-frequency diagnostics remain
@@ -73,4 +73,28 @@ URL so refresh, browser history, and deep links preserve location.
 
 ## Current next action
 
-Push the approved `ui/agent-detail-cleanup` branch and hand off its reference.
+The follow-up dev build was approved. Update the pushed branch and retain this
+document as the implementation record.
+
+## Follow-up refinement
+
+Matt approved extending the same information architecture to fleet Settings:
+
+- Name the agent capability publisher for its purpose: **A2A**.
+- Move Metrics and Logs from global navigation into Settings while preserving
+  direct URLs and agent-filtered log links.
+- Use the same shared desktop rail and mobile navigation sheet for agent-local
+  pages and Settings.
+
+Follow-up verification:
+
+- Shared Agent and Settings navigation lint and focused unit coverage passed.
+- Desktop/mobile Playwright capture passed: 38 scenarios across both projects.
+- The embedded PWA unit suite passed: 2 files and 8 tests.
+- The PWA suite passed 774 of 776 tests in the full concurrent run; the two
+  unrelated `AddWebhookWizard` timeouts passed together on an isolated rerun
+  (12 of 12).
+- Production builds passed for both `packages/pwa-views` and
+  `apps/embedded-pwa`.
+- Follow-up dev image:
+  `us-central1-docker.pkg.dev/datawire-dev/kyber-dev/control-plane:worktree-20260906042647-eabeacb`

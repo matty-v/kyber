@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench, Menu, X } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -46,6 +46,7 @@ import { CodexDeviceAuthPanel } from '../components/CodexDeviceAuthPanel'
 import { AgentTerminalPeek } from '../components/TerminalPeek'
 import { WebhooksTab } from '../components/WebhooksTab'
 import { PublicCapabilitiesEditor } from '../components/PublicCapabilitiesEditor'
+import { LocalNavigation, type LocalNavigationGroup } from '../components/LocalNavigation'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -101,15 +102,9 @@ type ActionKind =
   | 'set-model'
   | 'set-runtime-version'
   | 'set-resources'
-type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'capabilities'
+type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'a2a'
 
-type AgentNavItem = {
-  id: AgentSection
-  label: string
-  description: string
-}
-
-const agentNavigation: { label: string; items: AgentNavItem[] }[] = [
+const agentNavigation: LocalNavigationGroup<AgentSection>[] = [
   { label: 'Observe', items: [
     { id: 'overview', label: 'Overview', description: 'Health and live resources' },
     { id: 'activity', label: 'Activity', description: 'Conversation and tool history' },
@@ -123,46 +118,11 @@ const agentNavigation: { label: string; items: AgentNavItem[] }[] = [
     { id: 'general', label: 'General', description: 'Identity and runtime' },
     { id: 'comms', label: 'Comms', description: 'Connected channels' },
     { id: 'secrets', label: 'Secrets', description: 'Injected credentials' },
-    { id: 'capabilities', label: 'Capabilities', description: 'Published and detected' },
+    { id: 'a2a', label: 'A2A', description: 'Published capabilities' },
   ] },
 ]
 
 const agentSectionIds = new Set(agentNavigation.flatMap((group) => group.items.map((item) => item.id)))
-
-function AgentNavigation({
-  value,
-  onChange,
-}: {
-  value: AgentSection
-  onChange: (value: AgentSection) => void
-}) {
-  return (
-    <nav aria-label="Agent pages" className="space-y-5">
-      {agentNavigation.map((group) => (
-        <div key={group.label}>
-          <h2 className="mb-1 px-3 text-[11px] font-semibold uppercase tracking-wider text-text-muted">{group.label}</h2>
-          <div className="space-y-1">
-            {group.items.map((item) => {
-              const active = item.id === value
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  aria-current={active ? 'page' : undefined}
-                  onClick={() => onChange(item.id)}
-                  className={`w-full rounded-lg px-3 py-2 text-left transition-colors ${active ? 'bg-accent-muted text-accent' : 'text-text-secondary hover:bg-surface-overlay hover:text-text-primary'}`}
-                >
-                  <span className="block text-sm font-medium">{item.label}</span>
-                  <span className={`mt-0.5 block text-xs leading-snug ${active ? 'text-accent' : 'text-text-muted'}`}>{item.description}</span>
-                </button>
-              )
-            })}
-          </div>
-        </div>
-      ))}
-    </nav>
-  )
-}
 
 function identityRepoPhaseBadgeClass(phase: AgentIdentityRepoPhase | undefined): string {
   switch (phase) {
@@ -554,7 +514,8 @@ export function AgentDetail() {
   const { name = '', section } = useParams<{ name: string; section?: string }>()
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
-  const activeSection: AgentSection = section && agentSectionIds.has(section as AgentSection) ? section as AgentSection : 'overview'
+  const requestedSection = section === 'capabilities' ? 'a2a' : section
+  const activeSection: AgentSection = requestedSection && agentSectionIds.has(requestedSection as AgentSection) ? requestedSection as AgentSection : 'overview'
   const { data: agent, isLoading, error } = useAgent(name)
   const tokenUsage = useTokenUsage(name, agent?.phase === 'Running')
   const { data: computeConfig } = useComputeConfig()
@@ -562,7 +523,6 @@ export function AgentDetail() {
   // come separately from this agent's authenticated provider catalog.
   const effective = useEffectiveModelList(agent?.runtime)
   const [pending, setPending] = useState<ActionKind | null>(null)
-  const [mobileNavOpen, setMobileNavOpen] = useState(false)
   const [newModel, setNewModel] = useState('')
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
   const [newCPU, setNewCPU] = useState('')
@@ -687,10 +647,7 @@ export function AgentDetail() {
     )
   }
 
-  const activeNavItem = agentNavigation.flatMap((group) => group.items).find((item) => item.id === activeSection)!
-
   function selectSection(nextSection: AgentSection) {
-    setMobileNavOpen(false)
     navigate(prefixed(nextSection === 'overview' ? `/agents/${name}` : `/agents/${name}/${nextSection}`))
   }
 
@@ -721,7 +678,7 @@ export function AgentDetail() {
           <AgentActivityBadge agent={agent} />
         </div>
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/logs?agent=${encodeURIComponent(name)}`))}>
+          <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/settings/logs?agent=${encodeURIComponent(name)}`))}>
             <ScrollText className="h-4 w-4" /> <span className="hidden sm:inline">Logs</span>
           </Button>
           <DropdownMenu>
@@ -765,24 +722,7 @@ export function AgentDetail() {
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setMobileNavOpen(true)}
-        className="mb-4 flex w-full items-center justify-between rounded-lg border border-border-default bg-surface-raised px-4 py-3 text-left sm:hidden"
-        aria-haspopup="dialog"
-      >
-        <span>
-          <span className="block text-sm font-semibold text-text-primary">{activeNavItem.label}</span>
-          <span className="block text-xs text-text-muted">{activeNavItem.description}</span>
-        </span>
-        <Menu className="h-5 w-5 text-text-secondary" />
-      </button>
-
-      <div className="sm:grid sm:grid-cols-[12rem_minmax(0,1fr)] sm:items-start sm:gap-6">
-        <aside className="hidden sm:sticky sm:top-4 sm:block">
-          <AgentNavigation value={activeSection} onChange={selectSection} />
-        </aside>
-        <main className="min-w-0">
+      <LocalNavigation title={agent.id} value={activeSection} groups={agentNavigation} onChange={selectSection}>
         {activeSection === 'overview' && (
           <div className="space-y-4">
           <SchedulingFailureBanner agent={agent} />
@@ -1024,32 +964,18 @@ export function AgentDetail() {
         )}
         {activeSection === 'comms' && <CommsTab agentName={name} onRestartPod={() => setPending('restart')} />}
         {activeSection === 'secrets' && <SecretsTab agentName={name} />}
-        {activeSection === 'capabilities' && (
+        {activeSection === 'a2a' && (
           <div className="space-y-4">
+            <div>
+              <h2 className="text-base font-semibold text-text-primary">A2A</h2>
+              <p className="mt-1 text-sm text-text-muted">Control the capabilities this agent publishes for agent-to-agent discovery.</p>
+            </div>
             <PublicCapabilitiesEditor agent={agent} />
             <SkillsTab agentName={name} />
           </div>
         )}
         {activeSection === 'shell' && <ShellTab agentName={name} />}
-        </main>
-      </div>
-
-      {mobileNavOpen && (
-        <div className="fixed inset-0 z-50 bg-surface-base sm:hidden" role="dialog" aria-modal="true" aria-label="Agent navigation">
-          <div className="flex items-center justify-between border-b border-border-subtle px-4 py-3">
-            <div>
-              <p className="text-sm font-semibold text-text-primary">{agent.id}</p>
-              <p className="text-xs text-text-muted">Agent navigation</p>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation">
-              <X className="h-5 w-5" />
-            </Button>
-          </div>
-          <div className="h-[calc(100dvh-4rem)] overflow-y-auto p-4 pb-24">
-            <AgentNavigation value={activeSection} onChange={selectSection} />
-          </div>
-        </div>
-      )}
+      </LocalNavigation>
 
       {/* Set model dialog — custom modal because we need an input field inside */}
       {pending === 'set-model' && (

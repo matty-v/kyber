@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { useNavigate, useParams } from 'react-router-dom'
 import { Eye, EyeOff, Copy, Check, RefreshCw } from 'lucide-react'
 import { Card } from '../components/Card'
 import { Button } from '../components/Button'
@@ -7,6 +8,10 @@ import { Input } from '@/components/ui/input'
 import { establishEmbeddedBrowserSession } from '../lib/api'
 import { DiagnosticsCard } from '../components/DiagnosticsCard'
 import { UpdatesCard } from '../components/UpdatesCard'
+import { LocalNavigation, type LocalNavigationGroup } from '../components/LocalNavigation'
+import { MetricsTab } from './MetricsTab'
+import { Logs } from './Logs'
+import { usePrefixedPath } from '../lib/route-prefix'
 import { useCluster } from '../lib/cluster-context'
 import { useEffectiveModelList } from '../lib/models'
 import type { AvailableModel } from '../lib/types'
@@ -16,21 +21,58 @@ import {
   useUpdateFleetDefaults,
 } from '../hooks/useAPI'
 
-export function Settings() {
+type SettingsSection = 'general' | 'metrics' | 'logs' | 'health' | 'access'
+
+const settingsNavigation: LocalNavigationGroup<SettingsSection>[] = [
+  { label: 'Configure', items: [
+    { id: 'general', label: 'General', description: 'Fleet defaults' },
+  ] },
+  { label: 'Observe', items: [
+    { id: 'metrics', label: 'Metrics', description: 'Fleet performance' },
+    { id: 'logs', label: 'Logs', description: 'Fleet and agent logs' },
+  ] },
+  { label: 'System', items: [
+    { id: 'health', label: 'Health', description: 'Diagnostics and updates' },
+    { id: 'access', label: 'API access', description: 'Connection and keys' },
+  ] },
+]
+
+const settingsSectionIds = new Set(settingsNavigation.flatMap((group) => group.items.map((item) => item.id)))
+
+export function Settings({ sectionOverride }: { sectionOverride?: SettingsSection } = {}) {
   const cluster = useCluster()
+  const { section } = useParams<{ section?: string }>()
+  const navigate = useNavigate()
+  const prefixed = usePrefixedPath()
+  const requestedSection = sectionOverride ?? section
+  const activeSection: SettingsSection = requestedSection && settingsSectionIds.has(requestedSection as SettingsSection)
+    ? requestedSection as SettingsSection
+    : 'general'
+
+  function selectSection(nextSection: SettingsSection) {
+    navigate(prefixed(nextSection === 'general' ? '/settings' : `/settings/${nextSection}`))
+  }
 
   return (
     <div>
       <h1 className="text-xl font-bold text-text-primary mb-6">Settings</h1>
-
-      <DiagnosticsCard />
-
-      <UpdatesCard />
-
-      {cluster.id === 'local' && <APIConnectionCard />}
-      <RotateApiKeyCard />
-
-      <FleetDefaultsCard />
+      <LocalNavigation title="Settings" value={activeSection} groups={settingsNavigation} onChange={selectSection}>
+        {activeSection === 'general' && <FleetDefaultsCard />}
+        {activeSection === 'metrics' && <MetricsTab />}
+        {activeSection === 'logs' && <Logs />}
+        {activeSection === 'health' && (
+          <div className="space-y-4">
+            <DiagnosticsCard />
+            <UpdatesCard />
+          </div>
+        )}
+        {activeSection === 'access' && (
+          <div className="space-y-4">
+            {cluster.id === 'local' && <APIConnectionCard />}
+            <RotateApiKeyCard />
+          </div>
+        )}
+      </LocalNavigation>
     </div>
   )
 }

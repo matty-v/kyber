@@ -99,12 +99,13 @@ describe('Layout — NavLink/Link under react-router-dom', () => {
       [/dashboard/i, '/'],
       [/machines/i, '/machines'],
       [/agents/i, '/agents'],
-      [/metrics/i, '/metrics'],
       [/settings/i, '/settings'],
     ] as const) {
       const link = screen.getAllByRole('link', { name })[0]
       expect(link).toHaveAttribute('href', href)
     }
+    expect(screen.queryByRole('link', { name: /^metrics$/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /^logs$/i })).not.toBeInTheDocument()
   })
 
   it('marks the current route active via the isActive render-prop', () => {

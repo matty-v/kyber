@@ -106,7 +106,7 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
       </MemoryRouter>,
     )
 
-    const navigation = screen.getByRole('navigation', { name: 'Agent pages' })
+    const navigation = screen.getByRole('navigation', { name: 'Section pages' })
     expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual([
       'OverviewHealth and live resources',
       'ActivityConversation and tool history',
@@ -116,7 +116,7 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
       'GeneralIdentity and runtime',
       'CommsConnected channels',
       'SecretsInjected credentials',
-      'CapabilitiesPublished and detected',
+      'A2APublished capabilities',
     ])
     expect(screen.queryByRole('tab')).not.toBeInTheDocument()
   })
