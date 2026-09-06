@@ -32,6 +32,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/capabilities"
+	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	"github.com/matty-v/kyber/pkg/oauth"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/taskobject"
@@ -89,6 +90,7 @@ type agentIdentityRepoRequest struct {
 type agentSecretsRequest struct {
 	AuthType        string `json:"authType"`
 	TelegramEnabled bool   `json:"telegramEnabled"`
+	SlackEnabled bool `json:"slackEnabled,omitempty"`
 	// DiscordEnabled flips spec.secrets.discordEnabled (kyber#132 Phase 1).
 	// When true, the runtime adapter injects KYBER_DISCORD_WEBHOOK from
 	// the <agent-name>-discord Secret's webhook-url key. Outbound-only
@@ -108,6 +110,10 @@ type agentSecretsRequest struct {
 	CodexAuthJSON          string   `json:"codexAuthJson,omitempty"`
 	TelegramBotToken       string   `json:"telegramBotToken,omitempty"`
 	TelegramAllowedUserIDs []string `json:"telegramAllowedUserIds,omitempty"`
+	SlackBotToken string `json:"slackBotToken,omitempty"`
+	SlackAppToken string `json:"slackAppToken,omitempty"`
+	SlackAllowedUserIDs []string `json:"slackAllowedUserIds,omitempty"`
+	SlackAllowedChannelIDs []string `json:"slackAllowedChannelIds,omitempty"`
 	// DiscordWebhookUrl is a Discord channel webhook (the URL Discord
 	// returns from "Edit Channel → Integrations → Webhooks → Copy URL").
 	// Required when DiscordEnabled is true; ignored otherwise. Stored in
@@ -1071,6 +1077,14 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if req.Secrets.SlackEnabled {
+		if req.Secrets.SlackBotToken == "" || req.Secrets.SlackAppToken == "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "Slack bot and app tokens are required", "secrets.slackBotToken")
+			return
+		}
+		if err := validateSlackIDs(req.Secrets.SlackAllowedUserIDs, "slackAllowedUserIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedUserIds"); return }
+		if err := validateSlackIDs(req.Secrets.SlackAllowedChannelIDs, "slackAllowedChannelIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedChannelIds"); return }
+	}
 
 	// Parse resource quantities.
 	cpuQ, err := resource.ParseQuantity(defaultString(req.Resources.CPU, "1"))
@@ -1146,6 +1160,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			},
 			Secrets: kyberv1.AgentSecrets{
 				TelegramEnabled: req.Secrets.TelegramEnabled,
+				SlackEnabled: req.Secrets.SlackEnabled,
 				DiscordEnabled:  req.Secrets.DiscordEnabled,
 				AuthType:        authType,
 			},
@@ -1155,6 +1170,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Secrets.TelegramEnabled {
 		agent.Spec.InboundBindings = append(agent.Spec.InboundBindings,
 			telegramInboundBinding(req.Name+telegramSecretSuffix, defaultTelegramAction()))
+	}
+	if req.Secrets.SlackEnabled {
+		agent.Spec.InboundBindings = append(agent.Spec.InboundBindings,
+			agentcontroller.SlackInboundBinding(req.Name+"-slack", agentcontroller.DefaultSlackAction()))
 	}
 
 	// Validate OAuth field combinations before attempting secret creation.
@@ -1971,6 +1990,7 @@ func defaultString(s, fallback string) string {
 //	<agent-name>-codex-auth  key "auth.json" — Codex ChatGPT auth ({} starts device auth)
 //	<agent-name>-openai      key "token" — OpenAI API key
 //	<agent-name>-telegram    key "token"  — Telegram bot token
+//	<agent-name>-slack       keys "bot-token", "app-token", and allowlists
 //
 // secretConflictError signals that a Secret matching the agent's naming
 // convention already existed before this request — usually the residue of a
@@ -2050,6 +2070,16 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 			telegramTokenKey:          []byte(req.Secrets.TelegramBotToken),
 			telegramAllowedUserIDsKey: []byte(strings.Join(req.Secrets.TelegramAllowedUserIDs, ",")),
 			webhookSecretKey:          []byte(hmacSecret),
+		}})
+	}
+	if req.Secrets.SlackEnabled {
+		hmacSecret, err := generateCommsHMACSecret()
+		if err != nil { return nil, err }
+		defs = append(defs, secretDef{suffix: "slack", data: map[string][]byte{
+			"bot-token": []byte(req.Secrets.SlackBotToken), "app-token": []byte(req.Secrets.SlackAppToken),
+			"allowed-user-ids": []byte(strings.Join(req.Secrets.SlackAllowedUserIDs, ",")),
+			"allowed-channel-ids": []byte(strings.Join(req.Secrets.SlackAllowedChannelIDs, ",")),
+			webhookSecretKey: []byte(hmacSecret),
 		}})
 	}
 	// kyber#132 Phase 1 — Discord webhook for outbound notifications. The

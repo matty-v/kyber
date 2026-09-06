@@ -185,9 +185,15 @@ export function CreateAgent() {
         identityRepo = { repo: state.identityRepoExisting }
       }
 
-      // Validate Discord before creating anything: a bad ID here should be an
+      // Validate channel credentials before creating anything: a bad ID here should be an
       // inline fix, not an agent that exists with a half-configured channel.
       let discordBody: PutDiscordCommsRequest | undefined
+	  const slackAllowedUserIds = parseIdList(state.slackAllowedUserIds)
+	  const slackAllowedChannelIds = parseIdList(state.slackAllowedChannelIds)
+	  if (state.slackEnabled) {
+	    if (!state.slackBotToken || !state.slackAppToken) { setFieldError('Enter both Slack bot and app-level tokens, or uncheck Slack.'); return }
+	    if (!slackAllowedUserIds.length || !slackAllowedChannelIds.length) { setFieldError('Add at least one Slack user ID and channel ID — empty allowlists are rejected.'); return }
+	  }
 	  const telegramAllowedUserIds = parseIdList(state.telegramAllowedUserIds)
 	  if (state.telegramEnabled && telegramAllowedUserIds.length === 0) {
 		setFieldError('Add at least one Telegram user ID — otherwise nobody could talk to the agent.')
@@ -247,7 +253,12 @@ export function CreateAgent() {
           anthropicApiKey: state.anthropicApiKey || undefined,
           openaiApiKey: state.runtime === 'codex' ? state.openaiApiKey || undefined : undefined,
           telegramBotToken: state.telegramBotToken || undefined,
-		  telegramAllowedUserIds: state.telegramEnabled ? telegramAllowedUserIds : undefined,
+          telegramAllowedUserIds: state.telegramEnabled ? telegramAllowedUserIds : undefined,
+		  slackEnabled: state.slackEnabled,
+		  slackBotToken: state.slackEnabled ? state.slackBotToken : undefined,
+		  slackAppToken: state.slackEnabled ? state.slackAppToken : undefined,
+		  slackAllowedUserIds: state.slackEnabled ? slackAllowedUserIds : undefined,
+		  slackAllowedChannelIds: state.slackEnabled ? slackAllowedChannelIds : undefined,
         },
       })
 

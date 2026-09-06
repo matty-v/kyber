@@ -27,6 +27,7 @@ function fmtIdentity(state: WizardState): string {
 function fmtChannels(state: WizardState): string {
   const ch: string[] = []
   if (state.telegramEnabled) ch.push('Telegram')
+  if (state.slackEnabled) ch.push('Slack')
   return ch.length ? ch.join(', ') : 'none'
 }
 

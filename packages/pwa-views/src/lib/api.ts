@@ -15,6 +15,7 @@ import type {
   CommsListResponse,
   PutTelegramCommsRequest,
   PutDiscordCommsRequest,
+  PutSlackCommsRequest,
   CreateAgentRequest,
   AgentModelsResponse,
   InboundBindingWithStats,
@@ -489,6 +490,13 @@ export function createApiClient(cluster: Cluster) {
       request<CommsChannel>(
         'PUT',
         `/api/v1/agents/${encodeURIComponent(agentName)}/comms/discord`,
+        body,
+      ),
+
+    putSlackComms: (agentName: string, body: PutSlackCommsRequest): Promise<CommsChannel> =>
+      request<CommsChannel>(
+        'PUT',
+        `/api/v1/agents/${encodeURIComponent(agentName)}/comms/slack`,
         body,
       ),
 
