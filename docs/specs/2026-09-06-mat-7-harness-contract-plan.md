@@ -1,8 +1,7 @@
 # MAT-7 — agent harness contract execution plan
 
-Status: draft contract/test baseline and architecture review complete; awaiting
-approval of the material refactoring proposal. MAT-7 remains in progress.
-Approval: Matt, Telegram message 936, 2026-09-06.
+Status: refactoring approved; implementation in progress.
+Approval: Matt, Telegram messages 936 (contract) and 941 (refactoring), 2026-09-06.
 Issue: https://linear.app/matty-v/issue/MAT-7
 Baseline: 20b21f987402204b33944af9135db53d4cbf494b.
 
@@ -87,3 +86,19 @@ unrelated `scripts/__pycache__/` directory is preserved.
 This branch is a docs/tests checkpoint; no deployable behavior is changed.
 Final live certification follows the approved architectural migration; do not
 roll dev/prod pods merely to validate source/test additions.
+
+## Approved implementation sequence — Telegram 941
+
+- [ ] Runtime-owned descriptor and auth strategy, with immutable copies and validation.
+- [ ] Generic credential provisioning/recovery and catalog/receipt admission.
+- [ ] Generic transcript and packaging metadata consumers.
+- [ ] Additive operator capability/auth discovery and UI consumption; preserve existing endpoints and auth values.
+- [ ] Boot evidence for optional hook availability; shared feature gates fail visibly when unavailable.
+- [ ] Bootable fake integration and failure tests; both real harnesses/auth modes verified in dev.
+- [ ] Publish conformance evidence and complete migration documentation.
+
+The approved descriptor/API implementation will be additive. Prefer existing
+status/sidecar observations and operator API projections; do not add CRD schema
+or new dependencies unless needed and explicitly covered by an implementation
+review. No further approval is needed for routine steps in the accepted approach.
+Telegram/API-key restriction and Claude bootstrap credential path stay unchanged.

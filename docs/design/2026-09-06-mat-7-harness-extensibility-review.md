@@ -1,6 +1,6 @@
 # MAT-7 — harness extension boundary review
 
-Status: proposed refactoring; awaiting Matt's architectural decision.
+Status: approved by Matt, Telegram message 941, 2026-09-06.
 Date: 2026-09-06. Source baseline: 20b21f9.
 Contract: [v1 draft](../architecture/agent-harness-contract.md).
 
