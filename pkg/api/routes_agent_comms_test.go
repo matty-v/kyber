@@ -147,8 +147,8 @@ func TestComms_PutSlack_WiresEverythingInOneCall(t *testing.T) {
 	rr := h.do(t, http.MethodPut, "/api/v1/agents/barf/comms/slack", validSlackPut())
 	if rr.Code != http.StatusOK { t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String()) }
 	sec, err := h.secret(t, "barf-slack"); if err != nil { t.Fatalf("barf-slack secret: %v", err) }
-	if string(sec.Data[slackBotTokenKey]) != "xoxb-token" || string(sec.Data[slackAppTokenKey]) != "xapp-token" { t.Fatalf("Slack token keys not stored") }
-	if string(sec.Data[slackAllowedChannelIDsKey]) != "C123ABC" { t.Fatalf("channel allowlist not stored") }
+	if string(sec.Data["bot-token"]) != "xoxb-token" || string(sec.Data["app-token"]) != "xapp-token" { t.Fatalf("Slack token keys not stored") }
+	if string(sec.Data["allowed-channel-ids"]) != "C123ABC" { t.Fatalf("channel allowlist not stored") }
 	ag := h.agent(t, "barf")
 	if !ag.Spec.Secrets.SlackEnabled { t.Fatal("SlackEnabled not set") }
 	if len(ag.Spec.InboundBindings) != 1 || ag.Spec.InboundBindings[0].Name != "slack" { t.Fatalf("Slack binding not created: %+v", ag.Spec.InboundBindings) }
