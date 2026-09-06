@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.39.3 — 2026-09-06
+
+### Added
+- Slack comms configuration in the agent detail Comms tab and new-agent wizard,
+  including write-only bot/app tokens and fail-closed user/channel allowlists.
+
 ## 0.38.0 — 2026-09-03
 
 ### Fixed
