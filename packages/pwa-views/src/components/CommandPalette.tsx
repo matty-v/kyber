@@ -32,7 +32,7 @@ export function CommandPalette({ open, onOpenChange }: Props) {
     { id: 'route:fleet', label: 'Fleet', path: prefixed('/'), icon: LayoutDashboard },
     { id: 'route:machines', label: 'Machines', path: prefixed('/machines'), icon: Server },
     { id: 'route:agents', label: 'Agents', path: prefixed('/agents'), icon: Bot },
-    { id: 'route:logs', label: 'Logs', path: prefixed('/logs'), icon: ScrollText },
+    { id: 'route:logs', label: 'Logs', path: prefixed('/settings/logs'), icon: ScrollText },
     { id: 'route:settings', label: 'Settings', path: prefixed('/settings'), icon: Settings },
   ]
   const titleId = useId()

@@ -128,7 +128,7 @@ export function MachineDetail() {
         <h1 className="min-w-0 truncate text-xl font-bold text-text-primary">{machine.id}</h1>
         <StatusBadge phase={machine.phase} />
         <div className="ml-auto flex items-center gap-2">
-          <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/logs?machine=${encodeURIComponent(name)}`))}>
+          <Button variant="secondary" size="sm" onClick={() => navigate(prefixed(`/settings/logs?machine=${encodeURIComponent(name)}`))}>
             <ScrollText className="h-4 w-4" /> Logs
           </Button>
           {moreLifecycle.length > 0 && (

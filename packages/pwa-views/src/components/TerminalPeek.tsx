@@ -81,5 +81,5 @@ export function AgentTerminalPeek({ agentName, hasPod }: { agentName: string; ha
     )
   }
 
-  return <PeekFrame name={agentName} heightClassName="h-80" />
+  return <PeekFrame name={agentName} heightClassName="h-56 sm:h-80" />
 }

@@ -15,7 +15,7 @@ test.beforeAll(() => {
 })
 
 test.beforeEach(async ({ page }) => {
-  await page.goto('/settings')
+  await page.goto('/settings/access')
   await page.waitForFunction(
     () => document.documentElement.getAttribute('data-mocks') === 'ready',
   )
@@ -31,6 +31,22 @@ async function shot(page: import('@playwright/test').Page, name: string) {
 test('Settings — Rotate API key card visible', async ({ page }) => {
   await expect(page.getByRole('heading', { name: /rotate api key/i })).toBeVisible()
   await shot(page, '01-card')
+})
+
+test('Settings — responsive navigation', async ({ page }) => {
+  const navigationButton = page.getByRole('button', { name: /API access: Connection and keys/i })
+  if (await navigationButton.isVisible()) await navigationButton.click()
+  await expect(page.getByRole('navigation', { name: 'Section pages' })).toBeVisible()
+  await shot(page, '04-navigation')
+})
+
+test('Settings — Metrics destination', async ({ page }) => {
+  await page.goto('/settings/metrics')
+  await page.waitForFunction(
+    () => document.documentElement.getAttribute('data-mocks') === 'ready',
+  )
+  await expect(page.getByRole('heading', { name: /^metrics$/i })).toBeVisible()
+  await shot(page, '05-metrics')
 })
 
 test('Settings — confirm dialog open', async ({ page }) => {

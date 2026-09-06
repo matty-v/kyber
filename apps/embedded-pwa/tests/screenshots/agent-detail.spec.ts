@@ -39,8 +39,18 @@ async function shot(page: import('@playwright/test').Page, name: string) {
   await page.screenshot({ path: file, fullPage: true, animations: 'disabled' })
 }
 
+async function openSection(
+  page: import('@playwright/test').Page,
+  section: string,
+) {
+  await page.goto(`/agents/${AGENT}/${section}`)
+  await page.waitForFunction(
+    () => document.documentElement.getAttribute('data-mocks') === 'ready',
+  )
+  await expect(page.getByText(AGENT, { exact: false }).first()).toBeVisible()
+}
+
 test('overview tab', async ({ page }) => {
-  await page.getByRole('tab', { name: /overview/i }).click()
   await shot(page, '01-overview')
 })
 
@@ -77,7 +87,6 @@ test('overview tab — SchedulingFailureBanner (Capacity)', async ({ page }) => 
     'Capacity',
     "0/1 nodes are available: 1 Insufficient memory. preemption: 0/1 nodes are available: 1 No preemption victims found for incoming pod.",
   )
-  await page.getByRole('tab', { name: /overview/i }).click()
   await expect(page.getByTestId('scheduling-failure-banner')).toBeVisible()
   await shot(page, '11-overview-scheduling-capacity')
 })
@@ -88,23 +97,39 @@ test('overview tab — SchedulingFailureBanner (Image)', async ({ page }) => {
     'Image',
     'Failed to pull image "ghcr.io/matty-v/kyber-agent-claude-code:bogus-tag": rpc error: code = NotFound desc = manifest unknown',
   )
-  await page.getByRole('tab', { name: /overview/i }).click()
   await expect(page.getByTestId('scheduling-failure-banner')).toBeVisible()
   await shot(page, '12-overview-scheduling-image')
 })
 
 test('secrets tab', async ({ page }) => {
-  await page.getByRole('tab', { name: /secrets/i }).click()
+  await openSection(page, 'secrets')
   await shot(page, '02-secrets')
 })
 
 test('jobs tab', async ({ page }) => {
-  await page.getByRole('tab', { name: /jobs/i }).click()
+  await openSection(page, 'jobs')
   await shot(page, '03-jobs')
 })
 
+test('settings tab - general', async ({ page }) => {
+  await openSection(page, 'general')
+  await shot(page, '13-settings-general')
+})
+
+test('agent navigation', async ({ page }) => {
+  const navigationButton = page.getByRole('button', { name: /Overview: Health and live resources/i })
+  if (await navigationButton.isVisible()) await navigationButton.click()
+  await expect(page.getByRole('navigation', { name: 'Section pages' })).toBeVisible()
+  await shot(page, '15-agent-navigation')
+})
+
+test('automations tab - webhooks', async ({ page }) => {
+  await openSection(page, 'webhooks')
+  await shot(page, '14-automations-webhooks')
+})
+
 test('activity tab - structured history', async ({ page }) => {
-  await page.getByRole('tab', { name: /activity/i }).click()
+  await openSection(page, 'activity')
   // The Activity tab is now just the structured history (sub-tabs removed) —
   // wait for the Recent conversation section to render before capturing.
   await page.getByText(/recent conversation/i).waitFor()
@@ -112,13 +137,13 @@ test('activity tab - structured history', async ({ page }) => {
 })
 
 test('shell tab', async ({ page }) => {
-  await page.getByRole('tab', { name: /^shell$/i }).click()
+  await openSection(page, 'shell')
   await page.waitForTimeout(800)
   await shot(page, '06-shell')
 })
 
 test('shell tab with help popover open', async ({ page }) => {
-  await page.getByRole('tab', { name: /^shell$/i }).click()
+  await openSection(page, 'shell')
   // Popover trigger should be an aria-labeled button in the tab header.
   const helpTrigger = page.getByRole('button', { name: /help|aliases/i }).first()
   if (await helpTrigger.isVisible().catch(() => false)) {
@@ -129,21 +154,18 @@ test('shell tab with help popover open', async ({ page }) => {
 })
 
 test('header actions - single-row layout, More dropdown closed', async ({ page }) => {
-  await page.getByRole('tab', { name: /overview/i }).click()
   // Single-row header (#262): back arrow + title + status/scheduling/activity badges + ⋯
   // Restart session moved into the dropdown's Lifecycle section.
   await shot(page, '08-header-actions')
 })
 
 test('header actions - More dropdown open shows Restart session at top', async ({ page }) => {
-  await page.getByRole('tab', { name: /overview/i }).click()
   await page.getByRole('button', { name: /more actions/i }).click()
   await page.waitForTimeout(200)
   await shot(page, '09-header-more-open')
 })
 
 test('restart session confirmation dialog', async ({ page }) => {
-  await page.getByRole('tab', { name: /overview/i }).click()
   await page.getByRole('button', { name: /more actions/i }).click()
   await page.waitForTimeout(200)
   await page.getByRole('menuitem', { name: /restart session/i }).click()

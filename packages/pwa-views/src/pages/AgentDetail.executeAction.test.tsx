@@ -97,6 +97,30 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     } as ReturnType<typeof useAPIModule.useAgent>)
   })
 
+  it('groups agent pages into observe, automate, and configure navigation', () => {
+    render(
+      <MemoryRouter initialEntries={['/agents/lando']}>
+        <Routes>
+          <Route path="/agents/:name" element={<AgentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const navigation = screen.getByRole('navigation', { name: 'Section pages' })
+    expect(within(navigation).getAllByRole('button').map((button) => button.textContent)).toEqual([
+      'OverviewHealth and live resources',
+      'ActivityConversation and tool history',
+      'ShellInteractive terminal',
+      'JobsScheduled prompts',
+      'WebhooksExternal triggers',
+      'GeneralIdentity and runtime',
+      'CommsConnected channels',
+      'SecretsInjected credentials',
+      'A2APublished capabilities',
+    ])
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument()
+  })
+
   it('confirming Restart pod calls the START mutation, never the restart one', async () => {
     const user = userEvent.setup()
     // Mounted under a real route so useParams supplies the agent name — the

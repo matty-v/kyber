@@ -10,6 +10,14 @@ vi.mock('./hooks/useWebSocket', () => ({
   useWebSocket: () => undefined,
 }))
 
+vi.mock('./pages/MetricsTab', () => ({
+  MetricsTab: () => <h1>Metrics</h1>,
+}))
+
+vi.mock('./pages/Logs', () => ({
+  Logs: () => <h1>Logs</h1>,
+}))
+
 // Mock the data-fetching hooks the views call on mount. Returning empty
 // data + non-loading is the "everything renders, nothing is selected"
 // default state. Match the existing CommandPalette.test.tsx pattern —
@@ -103,7 +111,12 @@ const mockCluster: Cluster = {
 
 function LocationProbe() {
   const location = useLocation()
-  return <span data-testid="loc">{location.pathname}</span>
+  return (
+    <>
+      <span data-testid="loc">{location.pathname}</span>
+      <span data-testid="search">{location.search}</span>
+    </>
+  )
 }
 
 // Polyfill ResizeObserver for jsdom — data-table / cmdk reads it.
@@ -161,6 +174,17 @@ describe('App under /c/:clusterId/* prefix', () => {
   it('renders the agents page at /c/abc/agents', () => {
     renderUnderPrefix('/c/abc/agents')
     expect(screen.getByTestId('loc').textContent).toBe('/c/abc/agents')
+  })
+
+  it('redirects legacy logs URLs into Settings and preserves filters', () => {
+    renderUnderPrefix('/c/abc/logs?agent=sol')
+    expect(screen.getByTestId('loc').textContent).toBe('/c/abc/settings/logs')
+    expect(screen.getByTestId('search').textContent).toBe('?agent=sol')
+  })
+
+  it('redirects legacy metrics URLs into Settings', () => {
+    renderUnderPrefix('/c/abc/metrics')
+    expect(screen.getByTestId('loc').textContent).toBe('/c/abc/settings/metrics')
   })
 
   it('keeps cluster context when the user clicks the Machines nav link', async () => {

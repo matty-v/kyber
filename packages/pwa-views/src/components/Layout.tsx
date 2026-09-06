@@ -5,8 +5,6 @@ import {
   LayoutDashboard,
   Server,
   Bot,
-  BarChart3,
-  ScrollText,
   Settings,
   Gem,
 } from 'lucide-react'
@@ -67,8 +65,6 @@ export function Layout({ children }: Props) {
     { to: prefixed('/'), label: 'Dashboard', icon: LayoutDashboard, exact: true },
     { to: prefixed('/machines'), label: 'Machines', icon: Server, exact: false },
     { to: prefixed('/agents'), label: 'Agents', icon: Bot, exact: false },
-    { to: prefixed('/metrics'), label: 'Metrics', icon: BarChart3, exact: false },
-    { to: prefixed('/logs'), label: 'Logs', icon: ScrollText, exact: false },
     { to: prefixed('/settings'), label: 'Settings', icon: Settings, exact: false },
   ]
 
