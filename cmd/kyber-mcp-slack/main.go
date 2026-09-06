@@ -43,7 +43,7 @@ type eventEnvelope struct { EnvelopeID string `json:"envelope_id"`; Type string 
 
 func sign(secret []byte, body []byte) string { h:=hmac.New(sha256.New,secret); _,_=h.Write(body); return "sha256="+hex.EncodeToString(h.Sum(nil)) }
 func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
-	ev:=e.Payload.Event; if ev.Type!="message" || ev.User=="" || ev.Text=="" || ev.Channel=="" { return nil }; if len(c.users)==0 || !c.users[ev.User] || (len(c.channels)>0 && !c.channels[ev.Channel]) { return nil }
+	ev:=e.Payload.Event; if ev.Type!="message" || ev.User=="" || ev.Text=="" || ev.Channel=="" { return nil }; if len(c.users)==0 || !c.users[ev.User] || len(c.channels)==0 || !c.channels[ev.Channel] { return nil }
 	b,_:=json.Marshal(map[string]any{"source":"slack","user":ev.User,"user_id":ev.User,"channel_id":ev.Channel,"message_id":ev.TS,"content":ev.Text,"thread_id":ev.ThreadTS})
 	req,_:=http.NewRequestWithContext(ctx,http.MethodPost,strings.TrimRight(c.inboundURL,"/")+"/webhooks/inbound/"+c.agentName+"/"+c.binding,bytes.NewReader(b)); req.Header.Set("Content-Type","application/json"); if c.hmacSecret!="" { req.Header.Set("X-Kyber-Signature-256",sign([]byte(c.hmacSecret),b)) }
 	r,err:=client.Do(req); if err!=nil{return err}; defer r.Body.Close(); io.Copy(io.Discard,r.Body); if r.StatusCode>=300{return fmt.Errorf("inbound returned %s",r.Status)}; return nil
