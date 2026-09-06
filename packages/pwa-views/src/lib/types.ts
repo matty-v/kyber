@@ -456,6 +456,7 @@ export interface CreateAgentRequest {
   secrets?: {
     authType?: AgentAuthType
     telegramEnabled?: boolean
+    slackEnabled?: boolean
     oauthCode?: string
     pkceVerifier?: string
     pkceState?: string
@@ -465,6 +466,10 @@ export interface CreateAgentRequest {
     codexAuthJson?: string
     telegramBotToken?: string
     telegramAllowedUserIds?: string[]
+    slackBotToken?: string
+    slackAppToken?: string
+    slackAllowedUserIds?: string[]
+    slackAllowedChannelIds?: string[]
   }
 }
 
@@ -1030,7 +1035,7 @@ export interface AgentModelsResponse {
 // are write-only on the backend: `botTokenSet` reports presence, and no
 // endpoint ever returns a token.
 
-export type CommsChannelId = 'telegram' | 'discord'
+export type CommsChannelId = 'telegram' | 'discord' | 'slack'
 
 export interface CommsChannel {
   channel: CommsChannelId
@@ -1042,6 +1047,7 @@ export interface CommsChannel {
    */
   podRestartRequired: boolean
   botTokenSet: boolean
+  appTokenSet?: boolean
 
   // Discord only. Empty guild/channel lists mean "any"; the user allowlist is
   // never empty because the API rejects that (it would be fail-closed).
@@ -1055,6 +1061,7 @@ export interface CommsChannel {
     restartCount: number
     detail?: string
   }
+  allowedChannelIds?: string[]
 }
 
 export interface CommsListResponse {
@@ -1075,6 +1082,14 @@ export interface PutDiscordCommsRequest {
   mentionOnly?: boolean
   /** Overrides the inbound binding's instruction text. Omit to keep whatever
    *  is already there, or to accept Kyber's working default on first setup. */
+  action?: string
+}
+
+export interface PutSlackCommsRequest {
+  botToken?: string
+  appToken?: string
+  allowedUserIds: string[]
+  allowedChannelIds: string[]
   action?: string
 }
 

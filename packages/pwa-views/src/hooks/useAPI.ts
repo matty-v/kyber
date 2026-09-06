@@ -13,6 +13,7 @@ import type {
   InboundDebugRequest,
   PutDiscordCommsRequest,
   PutTelegramCommsRequest,
+  PutSlackCommsRequest,
   SetResourcesRequest,
   UpdatePolicyPatch,
 } from '../lib/types'
@@ -780,6 +781,17 @@ export function usePutDiscordComms() {
       successMessage: () => 'Discord saved — restart the pod to apply',
       errorPrefix: 'Failed to save Discord',
     },
+  })
+}
+
+export function usePutSlackComms() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, body }: { name: string; body: PutSlackCommsRequest }) => api.putSlackComms(name, body),
+    onSuccess: (_data, { name }) => { void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agentComms', name] }) },
+    meta: { successMessage: () => 'Slack saved — restart the pod to apply', errorPrefix: 'Failed to save Slack' },
   })
 }
 

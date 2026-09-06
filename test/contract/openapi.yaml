@@ -913,7 +913,7 @@ paths:
         required: true
         schema:
           type: string
-          enum: [telegram, discord]
+          enum: [telegram, discord, slack]
     get:
       operationId: getAgentCommsChannel
       tags: [agents]
@@ -1354,13 +1354,18 @@ components:
       properties:
         channel:
           type: string
-          enum: [telegram, discord]
+          enum: [telegram, discord, slack]
         configured:
           type: boolean
         podRestartRequired:
           type: boolean
         botTokenSet:
           type: boolean
+        appTokenSet:
+          type: boolean
+        allowedChannelIds:
+          type: array
+          items: {type: string}
         guildIds:
           type: array
           items: {type: string}
@@ -1390,6 +1395,12 @@ components:
         botToken:
           type: string
           writeOnly: true
+        appToken:
+          type: string
+          writeOnly: true
+        allowedChannelIds:
+          type: array
+          items: {type: string}
         guildIds:
           type: array
           items: {type: string}
@@ -2257,6 +2268,21 @@ components:
             telegramEnabled:
               type: boolean
               default: false
+            slackEnabled:
+              type: boolean
+              default: false
+            slackBotToken:
+              type: string
+              writeOnly: true
+            slackAppToken:
+              type: string
+              writeOnly: true
+            slackAllowedUserIds:
+              type: array
+              items: {type: string}
+            slackAllowedChannelIds:
+              type: array
+              items: {type: string}
             telegramBotToken:
               type: string
               writeOnly: true

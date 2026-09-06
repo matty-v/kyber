@@ -15,6 +15,7 @@ import {
   useAgentComms,
   useDeleteAgentComms,
   usePutDiscordComms,
+  usePutSlackComms,
   usePutTelegramComms,
 } from '../hooks/useAPI'
 import type { CommsChannel } from '../lib/types'
@@ -59,6 +60,7 @@ export function CommsTab({ agentName, onRestartPod }: Props) {
 
   const telegram = channels?.find((c) => c.channel === 'telegram')
   const discord = channels?.find((c) => c.channel === 'discord')
+  const slack = channels?.find((c) => c.channel === 'slack')
 
   return (
     <div className="space-y-3">
@@ -79,10 +81,45 @@ export function CommsTab({ agentName, onRestartPod }: Props) {
         <>
           <TelegramCard agentName={agentName} channel={telegram} onRestartPod={onRestartPod} />
           <DiscordCard agentName={agentName} channel={discord} onRestartPod={onRestartPod} />
+          <SlackCard agentName={agentName} channel={slack} onRestartPod={onRestartPod} />
         </>
       )}
     </div>
   )
+}
+
+function SlackCard({ agentName, channel, onRestartPod }: { agentName: string; channel?: CommsChannel; onRestartPod?: () => void }) {
+  const put = usePutSlackComms()
+  const del = useDeleteAgentComms()
+  const [botToken, setBotToken] = useState('')
+  const [appToken, setAppToken] = useState('')
+  const [users, setUsers] = useState('')
+  const [channels, setChannels] = useState('')
+  const [localError, setLocalError] = useState<string | null>(null)
+  const [confirmOff, setConfirmOff] = useState(false)
+  const configured = channel?.configured ?? false
+  const tokenStored = channel?.botTokenSet ?? false
+  const appStored = channel?.appTokenSet ?? false
+  useEffect(() => { if (channel) { setUsers((channel.allowedUserIds ?? []).join(', ')); setChannels((channel.allowedChannelIds ?? channel.channelIds ?? []).join(', ')) } }, [channel])
+  function save() {
+    const allowedUserIds = parseIdList(users), allowedChannelIds = parseIdList(channels)
+    if (!allowedUserIds.length || !allowedChannelIds.length) { setLocalError('Add at least one Slack user ID and channel ID — empty allowlists are rejected.'); return }
+    setLocalError(null)
+    put.mutate({ name: agentName, body: { ...(botToken ? { botToken } : {}), ...(appToken ? { appToken } : {}), allowedUserIds, allowedChannelIds } }, { onSuccess: () => { setBotToken(''); setAppToken('') } })
+  }
+  return <Card>
+    <ChannelHeader icon={<MessageSquare className="h-4 w-4" strokeWidth={1.5} />} title="Slack" configured={configured} description="Two-way. The agent reads and replies through Slack Socket Mode." />
+    <div className="space-y-3">
+      <div><label htmlFor="comms-slack-bot-token" className={labelClass}>Bot token</label><input id="comms-slack-bot-token" type="password" value={botToken} onChange={(e) => setBotToken(e.target.value)} placeholder={tokenStored ? '•••••••• (stored — type to replace)' : 'xoxb-…'} className={inputClass} autoComplete="off" /><p className="mt-1 text-xs text-text-muted">Slack app OAuth token. Stored as a Kubernetes Secret.</p></div>
+      <div><label htmlFor="comms-slack-app-token" className={labelClass}>App-level token</label><input id="comms-slack-app-token" type="password" value={appToken} onChange={(e) => setAppToken(e.target.value)} placeholder={appStored ? '•••••••• (stored — type to replace)' : 'xapp-…'} className={inputClass} autoComplete="off" /><p className="mt-1 text-xs text-text-muted">Enable Socket Mode and grant connections:write.</p></div>
+      <div><label htmlFor="comms-slack-users" className={labelClass}>Allowed user IDs</label><input id="comms-slack-users" value={users} onChange={(e) => setUsers(e.target.value)} placeholder="U012ABC, …" className={inputClass} /><p className="mt-1 text-xs text-text-muted">Slack user IDs, comma-separated.</p></div>
+      <div><label htmlFor="comms-slack-channels" className={labelClass}>Allowed channel IDs</label><input id="comms-slack-channels" value={channels} onChange={(e) => setChannels(e.target.value)} placeholder="C012ABC, …" className={inputClass} /><p className="mt-1 text-xs text-text-muted">Slack channel IDs, comma-separated. Required for fail-closed replies.</p></div>
+      {(localError || put.error) && <p className="text-xs text-danger">{localError ?? errorMessage(put.error)}</p>}
+      <div className="flex items-center gap-2"><Button variant="primary" size="sm" disabled={put.isPending || (!botToken && !tokenStored) || (!appToken && !appStored)} onClick={save}>{put.isPending ? 'Saving…' : configured ? 'Save' : 'Enable Slack'}</Button>{configured && <Button variant="ghost" size="sm" disabled={del.isPending} onClick={() => setConfirmOff(true)}><Trash2 className="h-3.5 w-3.5" /> Turn off</Button>}</div>
+      {channel?.podRestartRequired && <RestartNotice onRestartPod={onRestartPod} />}
+    </div>
+    <ConfirmDialog open={confirmOff} title="Turn off Slack?" message="The agent stops listening in Slack and its stored tokens are deleted." confirmLabel="Turn off" dangerous loading={del.isPending} onCancel={() => setConfirmOff(false)} onConfirm={() => { del.mutate({ name: agentName, channel: 'slack' }, { onSuccess: () => setConfirmOff(false) }) }} />
+  </Card>
 }
 
 /**
