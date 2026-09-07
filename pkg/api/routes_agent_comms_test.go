@@ -145,13 +145,26 @@ func TestComms_UnknownChannel_404(t *testing.T) {
 func TestComms_PutSlack_WiresEverythingInOneCall(t *testing.T) {
 	h := buildCommsHarness(t, commsAgent("barf"))
 	rr := h.do(t, http.MethodPut, "/api/v1/agents/barf/comms/slack", validSlackPut())
-	if rr.Code != http.StatusOK { t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String()) }
-	sec, err := h.secret(t, "barf-slack"); if err != nil { t.Fatalf("barf-slack secret: %v", err) }
-	if string(sec.Data["bot-token"]) != "xoxb-token" || string(sec.Data["app-token"]) != "xapp-token" { t.Fatalf("Slack token keys not stored") }
-	if string(sec.Data["allowed-channel-ids"]) != "C123ABC" { t.Fatalf("channel allowlist not stored") }
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	sec, err := h.secret(t, "barf-slack")
+	if err != nil {
+		t.Fatalf("barf-slack secret: %v", err)
+	}
+	if string(sec.Data["bot-token"]) != "xoxb-token" || string(sec.Data["app-token"]) != "xapp-token" {
+		t.Fatalf("Slack token keys not stored")
+	}
+	if string(sec.Data["allowed-channel-ids"]) != "C123ABC" {
+		t.Fatalf("channel allowlist not stored")
+	}
 	ag := h.agent(t, "barf")
-	if !ag.Spec.Secrets.SlackEnabled { t.Fatal("SlackEnabled not set") }
-	if len(ag.Spec.InboundBindings) != 1 || ag.Spec.InboundBindings[0].Name != "slack" { t.Fatalf("Slack binding not created: %+v", ag.Spec.InboundBindings) }
+	if !ag.Spec.Secrets.SlackEnabled {
+		t.Fatal("SlackEnabled not set")
+	}
+	if len(ag.Spec.InboundBindings) != 1 || ag.Spec.InboundBindings[0].Name != "slack" {
+		t.Fatalf("Slack binding not created: %+v", ag.Spec.InboundBindings)
+	}
 }
 
 // TestComms_UnknownAgent_404 for both list and single-channel reads.
@@ -578,8 +591,8 @@ func TestComms_PutTelegram_RequiresTokenWhenNoneStored(t *testing.T) {
 	}
 }
 
-// TestComms_PutTelegram_RejectsAPIKeyAgent: the same rule createAgent enforces.
-// Both paths share validateTelegramAuth so they cannot drift.
+// TestComms_PutTelegram_RejectsUnsupportedAuthMode: the runtime descriptor is
+// shared with agent creation, so the two channel entry points cannot drift.
 func TestComms_PutTelegram_RejectsAPIKeyAgent(t *testing.T) {
 	ag := commsAgent("apikey-agent")
 	ag.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
@@ -590,11 +603,27 @@ func TestComms_PutTelegram_RejectsAPIKeyAgent(t *testing.T) {
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("want 400, got %d: %s", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "OAuth") {
-		t.Errorf("error should explain the OAuth requirement, got %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "does not support telegram with api-key") {
+		t.Errorf("error should explain the unsupported combination, got %s", rr.Body.String())
 	}
 	if _, err := h.secret(t, "apikey-agent-telegram"); err == nil {
 		t.Error("rejected request must not store a token")
+	}
+}
+
+func TestComms_PutTelegram_AllowsHermesAPIKeyAgent(t *testing.T) {
+	ag := commsAgent("hermes-agent")
+	ag.Spec.Runtime = "hermes"
+	ag.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
+	h := buildCommsHarness(t, ag)
+
+	rr := h.do(t, http.MethodPut, "/api/v1/agents/hermes-agent/comms/telegram",
+		map[string]any{"botToken": "123:abc", "allowedUserIds": []string{"1000000001"}})
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if !h.agent(t, "hermes-agent").Spec.Secrets.TelegramEnabled {
+		t.Error("telegram not enabled")
 	}
 }
 

@@ -2078,6 +2078,9 @@ components:
               authorizationParams: {type: object, additionalProperties: {type: string}}
               inputField: {type: string}
               reauthorizePath: {type: string}
+              channels:
+                type: array
+                items: {type: string, enum: [telegram, discord, slack]}
     RuntimeFeatureAvailability:
       type: object
       required: [supported, state, reason]

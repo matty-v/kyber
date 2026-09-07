@@ -27,23 +27,26 @@ while [ $# -gt 0 ]; do
 done
 
 if [ -z "$SKIP_BUILD" ]; then
-  echo ">> [1/8] control-plane"
+  echo ">> [1/9] control-plane"
   docker build -t kyber/control-plane:local -f images/control-plane/Dockerfile .
-  echo ">> [2/8] node-agent"
+  echo ">> [2/9] node-agent"
   docker build -t kyber/node-agent:local -f images/node-agent/Dockerfile .
-  echo ">> [3/8] status-sidecar"
+  echo ">> [3/9] status-sidecar"
   docker build -t kyber/status-sidecar:local -f images/status-sidecar/Dockerfile .
-  echo ">> [4/8] runtime-base (base for agent runtimes; not deployed directly)"
+  echo ">> [4/9] runtime-base (base for agent runtimes; not deployed directly)"
   docker build -t kyber/runtime-base:local images/agent-base
-  echo ">> [5/8] claude-code"
+  echo ">> [5/9] claude-code"
   docker build --build-arg BASE_IMAGE=kyber/runtime-base:local \
     -t kyber/claude-code:local -f images/claude-code/Dockerfile .
-  echo ">> [6/8] codex"
+  echo ">> [6/9] codex"
   docker build --build-arg BASE_IMAGE=kyber/runtime-base:local \
     -t kyber/codex:local -f images/codex/Dockerfile .
-  echo ">> [7/8] mcp-telegram"
+  echo ">> [7/9] hermes"
+  docker build --build-arg BASE_IMAGE=kyber/runtime-base:local \
+    -t kyber/hermes:local -f images/hermes/Dockerfile .
+  echo ">> [8/9] mcp-telegram"
   docker build -t kyber/mcp-telegram:local -f images/mcp-telegram/Dockerfile .
-  echo ">> [8/8] mcp-discord"
+  echo ">> [9/9] mcp-discord"
   docker build -t kyber/mcp-discord:local -f images/mcp-discord/Dockerfile .
 else
   echo ">> --skip-build: importing existing :local images"
@@ -57,7 +60,8 @@ k3d image import -c "$CLUSTER" \
   kyber/mcp-telegram:local \
   kyber/mcp-discord:local \
   kyber/claude-code:local \
-  kyber/codex:local
+  kyber/codex:local \
+  kyber/hermes:local
 
 echo ">> done:"
-docker images | grep -E "kyber/(control-plane|node-agent|status-sidecar|runtime-base|claude-code|codex|mcp-telegram|mcp-discord)" | awk '{print "   "$1":"$2}' | sort -u
+docker images | grep -E "kyber/(control-plane|node-agent|status-sidecar|runtime-base|claude-code|codex|hermes|mcp-telegram|mcp-discord)" | awk '{print "   "$1":"$2}' | sort -u

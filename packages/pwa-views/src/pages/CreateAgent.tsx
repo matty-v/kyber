@@ -218,7 +218,7 @@ export function CreateAgent() {
 		setFieldError(`"${badTelegramID}" isn't a Telegram user ID. Ask @userinfobot for your numeric ID.`)
 		return
 	  }
-      if (state.discordEnabled && state.authType === 'oauth') {
+      if (state.discordEnabled) {
         const allowedUserIds = parseIdList(state.discordAllowedUserIds)
         const guildIds = parseIdList(state.discordGuildIds)
         const channelIds = parseIdList(state.discordChannelIds)

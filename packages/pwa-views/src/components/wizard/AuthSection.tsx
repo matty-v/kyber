@@ -53,8 +53,6 @@ interface ChannelDef {
   label: string
   /** Maps to a boolean key on WizardState. */
   enabledKey: 'telegramEnabled' | 'discordEnabled' | 'slackEnabled'
-  /** Channels require OAuth. The auth-step gate enforces this. */
-  requiresOAuth: boolean
   /** Rendered under the checkbox before the fields — sets expectations. */
   blurb?: string
   fields: ChannelField[]
@@ -65,7 +63,6 @@ const CHANNELS: ChannelDef[] = [
     id: 'telegram',
     label: 'Telegram',
     enabledKey: 'telegramEnabled',
-    requiresOAuth: true,
     fields: [
       {
         kind: 'secret',
@@ -89,7 +86,6 @@ const CHANNELS: ChannelDef[] = [
     id: 'discord',
     label: 'Discord',
     enabledKey: 'discordEnabled',
-    requiresOAuth: true,
     blurb:
       'Needs a Discord bot you have already created, with Message Content Intent turned on. You can also set this up later from the agent’s Comms tab.',
     fields: [
@@ -139,7 +135,6 @@ const CHANNELS: ChannelDef[] = [
     id: 'slack',
     label: 'Slack',
     enabledKey: 'slackEnabled',
-    requiresOAuth: false,
     blurb: 'Needs a Slack app with Socket Mode enabled. You can also set this up later from the agent’s Comms tab.',
     fields: [
       { kind: 'secret', name: 'slackBotToken', required: true, label: 'Slack bot token', placeholder: 'xoxb-…', helperText: 'OAuth token from your Slack app. Stored as a k8s Secret.' },
@@ -185,7 +180,10 @@ export function AuthSection({ state, set }: AuthSectionProps) {
         <select id="agent-auth-type" value={state.authType} className={inputClass} onChange={e => {
           const mode = e.target.value as 'oauth' | 'api-key'
           set('authType', mode)
-          if (mode === 'api-key') { set('telegramEnabled', false); set('discordEnabled', false) }
+          const channels = contract?.authModes.find(candidate => candidate.id === mode)?.channels ?? (mode === 'oauth' ? ['telegram', 'discord', 'slack'] : ['slack'])
+          for (const channel of CHANNELS) {
+            if (!channels.includes(channel.id)) set(channel.enabledKey, false)
+          }
         }}>
           {contract?.authModes.map(mode => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
         </select>
@@ -213,7 +211,7 @@ export function AuthSection({ state, set }: AuthSectionProps) {
           asked for. Both can also be configured later from the Comms tab. */}
       {(
         <div className="space-y-3">
-          {CHANNELS.filter((ch) => state.authType === 'oauth' || !ch.requiresOAuth).map((ch) => {
+          {CHANNELS.filter((ch) => (auth?.channels ?? (state.authType === 'oauth' ? ['telegram', 'discord', 'slack'] : ['slack'])).includes(ch.id)).map((ch) => {
             const enabled = state[ch.enabledKey]
             return (
               <div key={ch.id}>

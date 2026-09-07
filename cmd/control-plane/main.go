@@ -59,6 +59,7 @@ import (
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
+	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"

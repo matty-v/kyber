@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.41.0
+
+- Add runtime-declared channel support so API-key Hermes agents can configure Telegram, Discord, and Slack in the creation wizard.
+
 ## 0.40.0
 
 - Select a supported authentication mode when runtime discovery restricts the default harness to one mode.

@@ -1243,7 +1243,7 @@ export interface RuntimeDescriptor {
   features: string[]
   authModes: Array<{ id: AgentAuthType; name: string; flow: string; authorizationUrl?: string
     authorizationParams?: Record<string,string>
-    inputField?: string; reauthorizePath?: string }>
+    inputField?: string; reauthorizePath?: string; channels?: Array<'telegram' | 'discord' | 'slack'> }>
 }
 export interface RuntimeFeatureAvailability {
   supported: boolean

@@ -4,7 +4,7 @@
 // Every Kyber agent keeps its skills in one predictable place — the identity
 // repo, as skills/<name>/SKILL.md — and the boot/sync linker
 // (images/shared/kyber-identity-repo.sh) symlinks each package into BOTH
-// runtime homes, ~/.claude/skills and ~/.codex/skills. That layout is the
+// runtime homes, ~/.claude/skills, ~/.codex/skills, and ~/.hermes/skills. That layout is the
 // contract this package verifies.
 //
 // Two other sources of skills exist and are reported too: packages vendored
@@ -53,10 +53,11 @@ const (
 const DefaultPlatformDir = "/opt/kyber/skills"
 
 // Runtime identifiers used in Skill.Linked and in NotLinked issue details.
-// These are the two runtime homes the linker maintains.
+// These are the runtime homes the linker maintains.
 const (
 	RuntimeClaudeCode = "claude-code"
 	RuntimeCodex      = "codex"
+	RuntimeHermes     = "hermes"
 )
 
 // runtimeHomes maps a runtime identifier to the skills directory, relative to
@@ -67,6 +68,7 @@ var runtimeHomes = []struct {
 }{
 	{RuntimeClaudeCode, filepath.Join(".claude", "skills")},
 	{RuntimeCodex, filepath.Join(".codex", "skills")},
+	{RuntimeHermes, filepath.Join(".hermes", "skills")},
 }
 
 // Issue codes. Each names a concrete way a skill fails to be loadable, or a
@@ -186,7 +188,7 @@ type Options struct {
 	// configuration: such an agent still has the image's platform skills, and
 	// anything written into a runtime home by hand.
 	RepoDir string
-	// HomeDir is the agent's home, holding .claude/skills and .codex/skills.
+	// HomeDir is the agent's home, holding each runtime's skills directory.
 	HomeDir string
 	// PlatformDir holds the image-bundled capability skills. Defaults to
 	// DefaultPlatformDir when empty. Links into this directory are expected
@@ -200,7 +202,7 @@ type Options struct {
 	UnpushedPaths []string
 }
 
-// Scan walks the identity repo and both runtime homes and returns what the
+// Scan walks the identity repo and runtime homes and returns what the
 // agent actually has. It never fails on a malformed skill: a skill that cannot
 // be read becomes a skill carrying an issue, because "we could not tell" and
 // "there is nothing wrong" must not look the same in the UI.
@@ -519,7 +521,7 @@ func extractFrontmatter(body string) (string, bool) {
 	return "", false
 }
 
-// scanRuntimeHomes walks both runtime skill homes and accounts for everything
+// scanRuntimeHomes walks the runtime skill homes and accounts for everything
 // that is NOT a link into the identity repo.
 //
 // Three outcomes are possible. A link into the image's platform skills

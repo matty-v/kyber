@@ -292,6 +292,10 @@ spec:
             - name: KYBER_CODEX_RUNTIME_IMAGE
               value: "{{ .Values.image.codex.repository }}:{{ .Values.image.codex.tag }}"
             {{ end }}
+            {{ if .Values.image.hermes.tag }}
+            - name: KYBER_HERMES_RUNTIME_IMAGE
+              value: "{{ .Values.image.hermes.repository }}:{{ .Values.image.hermes.tag }}"
+            {{ end }}
             # Sidecar OTLP endpoint (kyber#256). The reconciler forwards this
             # to each agent pod's status-sidecar container as KYBER_OTEL_ENDPOINT
             # so the sidecar can push per-agent metrics. Default empty (opt-in)

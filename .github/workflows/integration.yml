@@ -18,6 +18,7 @@ on:
       # Codex has the same runtime boot-contract suite. Keep its requested
       # version, device-auth, and credential persistence guards in the gate.
       - 'images/codex/**'
+      - 'images/hermes/**'
       # kyber#676: the identity-repo half of that boot suite now lives in a
       # shared script. Editing it without this entry would leave the 54-test
       # suite unrun against the change — precisely the gap the comment above
@@ -83,7 +84,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tmux jq
 
       - name: Run integration tests
-        run: go test -tags integration -v -timeout 15m ./test/integration/... ./test/contract/... ./images/claude-code/... ./images/codex/... ./images/shared/...
+        run: go test -tags integration -v -timeout 15m ./test/integration/... ./test/contract/... ./images/claude-code/... ./images/codex/... ./images/hermes/... ./images/shared/...
         env:
           KYBER_PG_DSN: postgres://kyber:test@localhost:5433/kyber?sslmode=disable
           KYBER_REDIS_ADDR: localhost:6380

@@ -12,6 +12,8 @@ CONTROL_PLANE_IMAGE  ?= $(IMAGE_PREFIX)/control-plane
 NODE_AGENT_IMAGE     ?= $(IMAGE_PREFIX)/node-agent
 AGENT_BASE_IMAGE     ?= $(IMAGE_PREFIX)/runtime-base
 CLAUDE_CODE_IMAGE    ?= $(IMAGE_PREFIX)/claude-code
+CODEX_IMAGE          ?= $(IMAGE_PREFIX)/codex
+HERMES_IMAGE         ?= $(IMAGE_PREFIX)/hermes
 STATUS_SIDECAR_IMAGE ?= $(IMAGE_PREFIX)/status-sidecar
 
 HELM_CHART_DIR ?= deploy/helm/kyber
@@ -66,14 +68,16 @@ build-node-agent-image:
 build-status-sidecar-image:
 	docker build -t kyber/status-sidecar:local -f images/status-sidecar/Dockerfile .
 
-## build-images: build all container images locally (control-plane, node-agent, status-sidecar, runtime-base, claude-code)
+## build-images: build all container images locally
 build-images: build-control-plane-image build-node-agent-image build-status-sidecar-image
 	docker build -t kyber/runtime-base:local images/agent-base
 	docker build --build-arg BASE_IMAGE=kyber/runtime-base:local -t kyber/claude-code:local -f images/claude-code/Dockerfile .
+	docker build --build-arg BASE_IMAGE=kyber/runtime-base:local -t kyber/codex:local -f images/codex/Dockerfile .
+	docker build --build-arg BASE_IMAGE=kyber/runtime-base:local -t kyber/hermes:local -f images/hermes/Dockerfile .
 
 ## image-list: print all managed image names
 image-list:
-	@echo $(CONTROL_PLANE_IMAGE) $(NODE_AGENT_IMAGE) $(STATUS_SIDECAR_IMAGE) $(AGENT_BASE_IMAGE) $(CLAUDE_CODE_IMAGE)
+	@echo $(CONTROL_PLANE_IMAGE) $(NODE_AGENT_IMAGE) $(STATUS_SIDECAR_IMAGE) $(AGENT_BASE_IMAGE) $(CLAUDE_CODE_IMAGE) $(CODEX_IMAGE) $(HERMES_IMAGE)
 
 ## helm-lint: lint the Helm chart (requires helm CLI)
 helm-lint:
@@ -85,7 +89,8 @@ helm-lint:
 		--set image.nodeAgent.tag=local \
 		--set image.statusSidecar.tag=local \
 		--set image.claudeCode.tag=local \
-		--set image.codex.tag=local
+		--set image.codex.tag=local \
+		--set image.hermes.tag=local
 
 ## helm-template: render chart templates to stdout (useful for inspection/dry-run)
 ## Image tags are required at render time (no Chart.AppVersion fallback; kyber#358),
@@ -99,7 +104,8 @@ helm-template:
 		--set image.nodeAgent.tag=local \
 		--set image.statusSidecar.tag=local \
 		--set image.claudeCode.tag=local \
-		--set image.codex.tag=local
+		--set image.codex.tag=local \
+		--set image.hermes.tag=local
 
 ## helm-install-k3d: install the chart on a local k3d cluster (requires k3d + kubectl).
 ## The control-plane image must exist or be skipped via imagePullPolicy=Never + local load.

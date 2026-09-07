@@ -57,7 +57,7 @@ func TestSharedScript_ExistsAndGuardsOnIdentityRepoEnv(t *testing.T) {
 	if !strings.Contains(body, "git-credential-kyber-github") {
 		t.Error("shared script does not install the git credential helper")
 	}
-	for _, skillsHome := range []string{`$HOME_DIR/.claude/skills`, `$HOME_DIR/.codex/skills`} {
+	for _, skillsHome := range []string{`$HOME_DIR/.claude/skills`, `$HOME_DIR/.codex/skills`, `$HOME_DIR/.hermes/skills`} {
 		if !strings.Contains(body, skillsHome) {
 			t.Errorf("shared script does not link identity skills into %s", skillsHome)
 		}
@@ -71,6 +71,7 @@ func TestEveryRuntimeStartScript_SourcesTheSharedScript(t *testing.T) {
 	for _, rt := range []struct{ name, script string }{
 		{"claude-code", filepath.Join("images", "claude-code", "start-claude.sh")},
 		{"codex", filepath.Join("images", "codex", "start-codex.sh")},
+		{"hermes", filepath.Join("images", "hermes", "start-hermes.sh")},
 	} {
 		t.Run(rt.name, func(t *testing.T) {
 			body := readFile(t, root, rt.script)

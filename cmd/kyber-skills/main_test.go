@@ -41,7 +41,7 @@ func runGit(t *testing.T, home, dir string, args ...string) string {
 }
 
 // repoFixture builds a home, an identity repo clone with a bare remote behind
-// it, and both runtime skill homes.
+// it, and every runtime skill home.
 type repoFixture struct {
 	home    string
 	repoDir string
@@ -70,7 +70,7 @@ func newRepoFixture(t *testing.T) *repoFixture {
 	}
 	runGit(t, home, work, "clone", remote, repoDir)
 
-	for _, d := range []string{".claude/skills", ".codex/skills"} {
+	for _, d := range []string{".claude/skills", ".codex/skills", ".hermes/skills"} {
 		if err := os.MkdirAll(filepath.Join(home, d), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -141,7 +141,7 @@ func TestInstall_LinksIntoBothRuntimesAndPushes(t *testing.T) {
 		t.Fatalf("install exit code = %d, want 0", code)
 	}
 
-	for _, home := range []string{".claude", ".codex"} {
+	for _, home := range []string{".claude", ".codex", ".hermes"} {
 		link := filepath.Join(f.home, home, "skills", "deploy")
 		target, err := filepath.EvalSymlinks(link)
 		if err != nil {
@@ -168,8 +168,8 @@ func TestInstall_LinksIntoBothRuntimesAndPushes(t *testing.T) {
 	if len(rep.Skills) != 1 || rep.Skills[0].Name != "deploy" {
 		t.Fatalf("reported skills = %+v", rep.Skills)
 	}
-	if len(rep.Skills[0].Linked) != 2 {
-		t.Errorf("reported as linked in %v, want both runtimes", rep.Skills[0].Linked)
+	if len(rep.Skills[0].Linked) != 3 {
+		t.Errorf("reported as linked in %v, want every runtime", rep.Skills[0].Linked)
 	}
 }
 
@@ -437,10 +437,10 @@ func TestConverge_PicksUpASkillWrittenAfterBoot(t *testing.T) {
 		t.Fatalf("reported skills = %+v", rep.Skills)
 	}
 	// Loadable, not just listed: the convergence has to actually link it.
-	if len(rep.Skills[0].Linked) != 2 {
-		t.Errorf("linked = %v, want both runtimes", rep.Skills[0].Linked)
+	if len(rep.Skills[0].Linked) != 3 {
+		t.Errorf("linked = %v, want every runtime", rep.Skills[0].Linked)
 	}
-	for _, home := range []string{".claude", ".codex"} {
+	for _, home := range []string{".claude", ".codex", ".hermes"} {
 		if _, err := os.Lstat(filepath.Join(f.home, home, "skills", "cowsay")); err != nil {
 			t.Errorf("~/%s/skills/cowsay was not linked: %v", home, err)
 		}
@@ -453,7 +453,7 @@ func TestConverge_PicksUpASkillWrittenAfterBoot(t *testing.T) {
 func TestConverge_LegacyFlatSkillIsManagedAndStaleLinksAreRemoved(t *testing.T) {
 	f := newRepoFixture(t)
 	f.writeFlatSkill(t, "approve", "---\nname: approve\ndescription: Approve a plan.\n---\nbody\n")
-	for _, runtime := range []string{".claude", ".codex"} {
+	for _, runtime := range []string{".claude", ".codex", ".hermes"} {
 		stale := filepath.Join(f.home, runtime, "skills", "approve.md")
 		if err := os.Symlink(filepath.Join(f.repoDir, "skills", "deleted.md"), stale); err != nil {
 			t.Fatal(err)
@@ -468,13 +468,13 @@ func TestConverge_LegacyFlatSkillIsManagedAndStaleLinksAreRemoved(t *testing.T) 
 	if err := json.Unmarshal(repJSON, &rep); err != nil {
 		t.Fatal(err)
 	}
-	if len(rep.Skills) != 1 || rep.Skills[0].Name != "approve" || len(rep.Skills[0].Linked) != 2 {
+	if len(rep.Skills) != 1 || rep.Skills[0].Name != "approve" || len(rep.Skills[0].Linked) != 3 {
 		t.Fatalf("flat skill report = %+v", rep.Skills)
 	}
 	if len(rep.Issues) != 0 {
 		t.Fatalf("flat compatibility wrappers must be managed; issues = %+v", rep.Issues)
 	}
-	for _, runtime := range []string{".claude", ".codex"} {
+	for _, runtime := range []string{".claude", ".codex", ".hermes"} {
 		wrapper := filepath.Join(f.home, runtime, "skills", "approve")
 		if !compatWrapperPointsAt(wrapper, filepath.Join(f.repoDir, "skills", "approve.md")) {
 			t.Errorf("%s is not a managed compatibility wrapper", wrapper)
@@ -505,7 +505,7 @@ func TestConverge_CanonicalPackageWinsOverLegacyFlatSkill(t *testing.T) {
 			legacy = &rep.Skills[i]
 		}
 	}
-	if canonical == nil || len(canonical.Linked) != 2 || canonical.Description != "Canonical package." {
+	if canonical == nil || len(canonical.Linked) != 3 || canonical.Description != "Canonical package." {
 		t.Fatalf("canonical package was not linked/won: %+v", canonical)
 	}
 	if legacy != nil && len(legacy.Linked) != 0 {

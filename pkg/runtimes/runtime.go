@@ -1,5 +1,5 @@
 // Package runtimes is the per-runtime knowledge registry. Each supported
-// runtime (currently claude-code and codex) lives in its own
+// runtime (currently claude-code, codex, and hermes) lives in its own
 // subpackage that self-registers via init() against the global registry.
 // The control-plane and status-sidecar binaries
 // blank-import the runtime packages they want enabled.

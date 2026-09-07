@@ -48,6 +48,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/controllers/agent"
+	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 )
 
 const (
@@ -283,15 +284,8 @@ func (s *Server) telegramCommsState(ctx context.Context, ag *kyberv1.Agent, pod 
 		AllowedUserIDs: splitCSV(string(data[telegramAllowedUserIDsKey])),
 	}
 
-	// The runtime container only gets TELEGRAM_BOT_TOKEN when the flag was set
-	// at pod-build time (adapter.go), so its presence is what the live pod
-	// actually believes — independent of what the spec now says.
 	if pod != nil {
-		if ag.Spec.Runtime == "codex" {
-			resp.PodRestartRequired = enabled != podHasContainer(pod, agent.TelegramSidecarContainerName)
-		} else {
-			resp.PodRestartRequired = enabled != containerHasEnv(pod, agent.AgentContainerName, "TELEGRAM_BOT_TOKEN")
-		}
+		resp.PodRestartRequired = enabled != podHasContainer(pod, agent.TelegramSidecarContainerName)
 	}
 	return resp
 }
@@ -302,9 +296,7 @@ func (s *Server) putTelegramComms(w http.ResponseWriter, r *http.Request, ag *ky
 		return
 	}
 
-	// Telegram's plugin needs a Max-subscription OAuth session; an api-key agent
-	// cannot run it. Same rule createAgent enforces — see validateTelegramAuth.
-	if err := validateTelegramAuth(ag.Spec.Secrets.AuthType); err != nil {
+	if err := validateChannelAuth(ag.Spec.Runtime, ag.Spec.Secrets.AuthType, commsChannelTelegram); err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "authType")
 		return
 	}
@@ -402,12 +394,14 @@ func (s *Server) deleteTelegramComms(w http.ResponseWriter, r *http.Request, ag 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// validateTelegramAuth enforces the one rule Telegram has: it needs an OAuth
-// (Max-subscription) session, so api-key agents cannot use it. Shared by
-// createAgent and PUT /comms/telegram so the two cannot drift apart.
-func validateTelegramAuth(authType kyberv1.AgentAuthType) error {
-	if authType == kyberv1.AgentAuthTypeAPIKey {
-		return errors.New("Telegram requires OAuth authentication — api-key agents cannot use Telegram channels")
+func validateChannelAuth(runtimeID string, authType kyberv1.AgentAuthType, channel string) error {
+	descriptor, ok := pkgruntimes.Describe(runtimeID)
+	if !ok {
+		return fmt.Errorf("runtime %q is not registered", runtimeID)
+	}
+	mode, ok := descriptor.Auth(authType)
+	if !ok || !mode.SupportsChannel(channel) {
+		return fmt.Errorf("%s does not support %s with %s authentication", descriptor.Name, channel, authType)
 	}
 	return nil
 }
@@ -459,6 +453,10 @@ func (s *Server) slackCommsState(ctx context.Context, ag *kyberv1.Agent, pod *co
 func (s *Server) putSlackComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
 	var req putSlackCommsRequest
 	if !decodeCommsBody(w, r, &req) { return }
+	if err := validateChannelAuth(ag.Spec.Runtime, ag.Spec.Secrets.AuthType, commsChannelSlack); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "authType")
+		return
+	}
 	secretName := ag.Name + slackSecretSuffix
 	existing := s.secretData(r.Context(), secretName)
 	if req.BotToken == "" && len(existing[slackBotTokenKey]) == 0 {
@@ -580,6 +578,10 @@ func discordConnectionState(configured, restartRequired bool, pod *corev1.Pod) *
 func (s *Server) putDiscordComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
 	var req putDiscordCommsRequest
 	if !decodeCommsBody(w, r, &req) {
+		return
+	}
+	if err := validateChannelAuth(ag.Spec.Runtime, ag.Spec.Secrets.AuthType, commsChannelDiscord); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "authType")
 		return
 	}
 

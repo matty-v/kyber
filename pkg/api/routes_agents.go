@@ -1066,12 +1066,8 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Telegram channels require Max-subscription OAuth. API-key auth cannot
-	// support channels, so reject the combination upfront. Shares its rule with
-	// PUT /comms/telegram (routes_agent_comms.go) so the two entry points into
-	// "enable Telegram" cannot drift apart.
 	if req.Secrets.TelegramEnabled {
-		if err := validateTelegramAuth(kyberv1.AgentAuthType(req.Secrets.AuthType)); err != nil {
+		if err := validateChannelAuth(req.Runtime, kyberv1.AgentAuthType(req.Secrets.AuthType), commsChannelTelegram); err != nil {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "telegramEnabled")
 			return
 		}
@@ -1081,6 +1077,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Secrets.SlackEnabled {
+		if err := validateChannelAuth(req.Runtime, kyberv1.AgentAuthType(req.Secrets.AuthType), commsChannelSlack); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "slackEnabled")
+			return
+		}
 		if req.Secrets.SlackBotToken == "" || req.Secrets.SlackAppToken == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "Slack bot and app tokens are required", "secrets.slackBotToken")
 			return

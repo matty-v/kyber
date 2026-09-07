@@ -2,7 +2,8 @@
 //
 // Every Kyber agent keeps its skills in one predictable place — the identity
 // repo, as skills/<name>/SKILL.md — and the boot/sync linker symlinks each
-// package into both runtime homes (~/.claude/skills, ~/.codex/skills) so either
+// package into every runtime home (~/.claude/skills, ~/.codex/skills, and
+// ~/.hermes/skills) so each
 // runtime can load it. This binary is what keeps that contract true between
 // boots and what makes it visible outside the pod.
 //
@@ -50,13 +51,14 @@ const (
 	gitTimeout        = 60 * time.Second
 )
 
-// runtimeSkillDirs are the two runtime homes the linker maintains, relative to
+// runtimeSkillDirs are the runtime homes the linker maintains, relative to
 // the agent's home. Kept in lockstep with images/shared/kyber-identity-repo.sh:
 // if a runtime is added there, add it here or newly-installed skills will be
 // live in one runtime and dead in the other.
 var runtimeSkillDirs = []string{
 	filepath.Join(".claude", "skills"),
 	filepath.Join(".codex", "skills"),
+	filepath.Join(".hermes", "skills"),
 }
 
 func main() {
@@ -88,7 +90,7 @@ func usage() {
 	fmt.Fprint(os.Stderr, `kyber-skills — manage and report this agent's skills
 
   kyber-skills install [--from PATH] [--name NAME] [--no-push]
-        Link every skill in the identity repo into both runtime homes, commit
+        Link every skill in the identity repo into every runtime home, commit
         and push anything new under skills/, then report to the control plane.
         With --from, first copy a skill directory (or a single SKILL.md /
         <name>.md file) into the identity repo at skills/<name>/SKILL.md.
@@ -106,7 +108,7 @@ func usage() {
 
 Common flags:
   --repo-dir PATH   identity repo clone (default: $HOME/dev/<KYBER_IDENTITY_REPO name>)
-  --home PATH       agent home holding .claude/skills and .codex/skills (default: $HOME)
+  --home PATH       agent home holding runtime skill directories (default: $HOME)
 `)
 }
 

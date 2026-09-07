@@ -58,6 +58,16 @@ type AuthMode struct {
 	AuthorizationParams map[string]string     `json:"authorizationParams,omitempty"`
 	SecretSuffix        string                `json:"-"`
 	ReauthorizePath     string                `json:"reauthorizePath,omitempty"`
+	Channels            []string              `json:"channels,omitempty"`
+}
+
+func (m AuthMode) SupportsChannel(channel string) bool {
+	for _, supported := range m.Channels {
+		if supported == channel {
+			return true
+		}
+	}
+	return false
 }
 
 func (d Descriptor) Supports(f Feature) bool {
@@ -122,6 +132,7 @@ func Describe(id string) (Descriptor, bool) {
 			}
 			d.AuthModes[i].AuthorizationParams = params
 		}
+		d.AuthModes[i].Channels = append([]string(nil), m.Channels...)
 	}
 	d.Features = append([]Feature{}, d.Features...)
 	return d, true
