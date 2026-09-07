@@ -519,3 +519,20 @@ describe('CreateAgent — per-step validation reason', () => {
     expect(screen.queryByTestId('wizard-step-reason')).not.toBeInTheDocument()
   })
 })
+
+
+describe('CreateAgent — discovered auth modes', () => {
+  it('selects the supported mode when the initial runtime offers API-key auth only', async () => {
+    const user = userEvent.setup()
+    setupHooks({configData: {...config, runtimes: [{id:'claude-code', name:'Claude Code', contractVersion:'1.0', profile:'interactive-tmux-v1', cancellation:'notify_only', features:[], authModes:[{id:'api-key', name:'Anthropic API key', flow:'api-key', inputField:'anthropicApiKey'}]}]}})
+    renderAt()
+    await user.type(screen.getByLabelText(/name/i), 'api-only')
+    await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await waitFor(() => expect(screen.getByLabelText(/^Authentication$/)).toHaveValue('api-key'))
+    expect(screen.getByLabelText(/anthropic api key/i)).toBeInTheDocument()
+    expect(screen.queryByText('Authentication is unavailable for this harness.')).not.toBeInTheDocument()
+  })
+})

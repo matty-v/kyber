@@ -61,11 +61,12 @@ export function CreateAgent() {
   const state: WizardState = { ...form, runtimes: runtimeOptions, runtimeContract: runtimeOptions.find(d => d.id === form.runtime) }
   const selectedAuth = wizardAuth(state)
   useEffect(() => {
-    if (config?.runtimes?.length && !config.runtimes.some(d => d.id === form.runtime)) {
-      const next = config.runtimes[0]
+    if (!config?.runtimes?.length) return
+    const next = config.runtimes.find(d => d.id === form.runtime) ?? config.runtimes[0]
+    if (next.id !== form.runtime || !next.authModes.some(mode => mode.id === form.authType)) {
       setState(prev => ({ ...prev, runtime: next.id, authType: next.authModes[0]?.id ?? 'oauth', oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '' }))
     }
-  }, [config?.runtimes, form.runtime])
+  }, [config?.runtimes, form.runtime, form.authType])
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)

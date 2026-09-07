@@ -2586,6 +2586,8 @@ func TestClassifyEvent_ExitCode2_ReturnsOAuthRefreshFailed(t *testing.T) {
 
 	ctx := context.Background()
 	agentObj := getAgent(t, k8sClient, agentKey)
+	// This fixture represents a Claude process; exit codes are adapter-scoped.
+	agentObj.Spec.Runtime = "claude-code"
 	event, err := r.classifyEvent(ctx, agentObj, exitCode2Pod)
 	if err != nil {
 		t.Fatalf("classifyEvent: %v", err)
@@ -2997,6 +2999,8 @@ func TestClassifyEvent_StartingExitCode2_ReturnsOAuthRefreshFailed(t *testing.T)
 
 	ctx := context.Background()
 	agentObj := getAgent(t, k8sClient, agentKey)
+	// This fixture represents a Claude process; exit codes are adapter-scoped.
+	agentObj.Spec.Runtime = "claude-code"
 	event, err := r.classifyEvent(ctx, agentObj, oauthFailPod)
 	if err != nil {
 		t.Fatalf("classifyEvent: %v", err)
@@ -3082,6 +3086,8 @@ func TestClassifyEvent_RunningExitCode2_SidecarStillUp_ReturnsOAuthRefreshFailed
 
 	ctx := context.Background()
 	agentObj := getAgent(t, k8sClient, agentKey)
+	// This fixture represents a Claude process; exit codes are adapter-scoped.
+	agentObj.Spec.Runtime = "claude-code"
 	event, err := r.classifyEvent(ctx, agentObj, pod)
 	if err != nil {
 		t.Fatalf("classifyEvent: %v", err)
@@ -3162,6 +3168,8 @@ func TestClassifyEvent_StartingExitCode2_SidecarStillUp_ReturnsOAuthRefreshFaile
 
 	ctx := context.Background()
 	agentObj := getAgent(t, k8sClient, agentKey)
+	// This fixture represents a Claude process; exit codes are adapter-scoped.
+	agentObj.Spec.Runtime = "claude-code"
 	event, err := r.classifyEvent(ctx, agentObj, pod)
 	if err != nil {
 		t.Fatalf("classifyEvent: %v", err)

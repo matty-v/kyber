@@ -242,3 +242,16 @@ exceptions rather than inferring complete conformance from those checks.
 This checklist identifies the current extra work; it does not claim third-party
 onboarding is already a four-file exercise. The registered descriptors, credential strategies and provider-owned scripts
 make those extension points explicit; release review must preserve their tests.
+
+## PR review corrections — 2026-09-07
+
+The review found and corrected six gaps: public task availability now schedules
+runtime-evidence expiry independently of skill reports; advanced jobs reject a
+missing/non-executable native probe; receipt probes require the exact
+runtime-specific command; undeclared transcript roots suppress the pruner; and
+authentication exit codes are scoped to the runtime that actually launched;
+and the creation wizard selects a supported mode when discovery restricts the
+initial runtime to API-key authentication.
+Regression checks include API-server-backed public availability persistence,
+job delivery rejection and native-config probes. These are deterministic
+checks; the earlier native live matrix remains pinned to its recorded images.

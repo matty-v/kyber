@@ -67,6 +67,10 @@ func setupDispatchHarness(t *testing.T) *dispatchHarness {
 		}
 	}
 
+	if err := os.MkdirAll(filepath.Join(persist, "var", "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeStub(t, filepath.Join(persist, "var", "run", "probe"), "#!/bin/sh\nprintf '%s\\n' '{\"job-turn-hooks\":true}'\n")
 	tmuxLog := filepath.Join(root, "tmux.log")
 	curlLog := filepath.Join(root, "curl.log")
 
@@ -179,7 +183,7 @@ func (h *dispatchHarness) run(args []string, extraEnv ...string) (string, int) {
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
-		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "missing-probe"),
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
@@ -214,7 +218,7 @@ func (h *dispatchHarness) runStdin(args []string, stdin string, extraEnv ...stri
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
-		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "missing-probe"),
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = strings.NewReader(stdin)
@@ -667,5 +671,17 @@ func TestKyberJobDispatch_RejectsStaleHookSentinel(t *testing.T) {
 	}
 	if _, code := h.run([]string{"--exclusive", "work-tick"}, "KYBER_CAPABILITY_PROBE="+probe); code != 4 {
 		t.Fatalf("stale hook sentinel allowed dispatch: %d", code)
+	}
+}
+
+func TestKyberJobDispatch_RejectsMissingCapabilityProbe(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "do work")
+	if _, code := h.run([]string{"--exclusive", "work-tick"}, "KYBER_CAPABILITY_PROBE="+filepath.Join(t.TempDir(), "missing")); code != 4 {
+		t.Fatalf("missing native probe allowed advanced dispatch: %d", code)
+	}
+	if raw, _ := os.ReadFile(h.tmuxLog); strings.Contains(string(raw), "paste-buffer") {
+		t.Fatal("unverified job was delivered")
 	}
 }

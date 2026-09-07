@@ -20,6 +20,7 @@ func TestAppendTranscriptPruner_NoOpWhenDisabledOrUnconfigured(t *testing.T) {
 		cfg  TranscriptPrunerConfig
 	}{
 		{"disabled", TranscriptPrunerConfig{RuntimeImage: "img:v1", Enabled: false, MaxAgeDays: 7}},
+		{"unknown runtime", TranscriptPrunerConfig{Runtime: "unregistered", RuntimeImage: "img:v1", Enabled: true, MaxAgeDays: 7}},
 		{"empty image", TranscriptPrunerConfig{RuntimeImage: "", Enabled: true, MaxAgeDays: 7}},
 		{"non-positive age fails closed", TranscriptPrunerConfig{RuntimeImage: "img:v1", Enabled: true, MaxAgeDays: 0}},
 	}

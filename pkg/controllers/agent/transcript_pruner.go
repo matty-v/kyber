@@ -91,7 +91,7 @@ type TranscriptPrunerConfig struct {
 // fail closed (no destructive sidecar injected) so a half-configured retention
 // block can never prune.
 func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
-	if !cfg.Enabled || cfg.RuntimeImage == "" || cfg.MaxAgeDays <= 0 {
+	if !cfg.Enabled || cfg.RuntimeImage == "" || cfg.MaxAgeDays <= 0 || runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home") == "" {
 		return
 	}
 

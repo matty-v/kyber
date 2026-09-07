@@ -53,6 +53,14 @@ class NativeCapabilityContract(unittest.TestCase):
                     config = root / '.claude.json'
                     config.write_text(json.dumps({'mcpServers': {'kyber-request-reply': {'type': 'http', 'url': env['KYBER_REQUEST_MCP_URL']}}}))
                 self.assertEqual(probe(), {'job-turn-hooks': True, 'task-receipts': True, 'task-tools': True})
+                hooks['UserPromptSubmit'][0]['hooks'][1]['command'] = str(root / 'receipt') + ' wrong-runtime'
+                write_hooks()
+                self.assertFalse(probe()['task-receipts'], 'receipt must identify the installed runtime')
+                hooks['UserPromptSubmit'][0]['hooks'][1]['command'] = str(root / 'receipt') + ' ' + runtime + ' || true'
+                write_hooks()
+                self.assertFalse(probe()['task-receipts'], 'receipt failure must not be swallowed')
+                hooks['UserPromptSubmit'][0]['hooks'][1]['command'] = str(root / 'receipt') + ' ' + runtime
+                write_hooks()
                 sentinel.unlink()
                 self.assertFalse(probe()['job-turn-hooks'])
                 self.assertTrue(probe()['task-receipts'])

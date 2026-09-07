@@ -1137,7 +1137,7 @@ func (r *AgentReconciler) classifyEvent(
 			if isRuntimeProbeFailure(pod) {
 				return EventRuntimeProbeFailed, nil
 			}
-			if isOAuthRefreshFailure(pod) {
+			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
 				return EventOAuthRefreshFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
@@ -1200,7 +1200,7 @@ func (r *AgentReconciler) classifyEvent(
 				return EventRuntimeProbeFailed, nil
 			}
 			// Check for OAuth refresh failure (exit code 2 from start-claude.sh).
-			if isOAuthRefreshFailure(pod) {
+			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
 				return EventOAuthRefreshFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
@@ -2379,28 +2379,32 @@ func (r *AgentReconciler) reconcilePublicCapabilities(ctx context.Context, agent
 }
 
 func capabilityEvidenceRequeue(agent *kyberv1.Agent, report *skillscan.Report) time.Duration {
-	if agent.Spec.PublicCapabilities == nil || report == nil {
+	if agent.Spec.PublicCapabilities == nil {
 		return 0
 	}
-	requiresSkills := false
+	requiresSkills, requiresTasks := false, false
 	for _, capability := range agent.Spec.PublicCapabilities.Capabilities {
-		if capability.Evidence != nil && len(capability.Evidence.RequiredSkills) > 0 {
-			requiresSkills = true
-			break
+		requiresSkills = requiresSkills || (capability.Evidence != nil && len(capability.Evidence.RequiredSkills) > 0)
+		requiresTasks = requiresTasks || len(capability.TaskFeatures) > 0
+	}
+	var next time.Duration
+	now := time.Now()
+	schedule := func(expires time.Time) {
+		if remaining := expires.Sub(now); remaining > 0 {
+			next = minNonZero(next, remaining+time.Second)
 		}
 	}
-	if !requiresSkills {
-		return 0
+	// Runtime evidence expires independently of skill evidence. A reporter that
+	// stops must not leave an operator's public task promise available forever.
+	if observation := agent.Status.Runtime.Capabilities; requiresTasks && observation != nil {
+		schedule(observation.ObservedAt.Add(pkgruntimes.ObservationTTL))
 	}
-	reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt)
-	if err != nil {
-		return 0
+	if requiresSkills && report != nil {
+		if reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt); err == nil {
+			schedule(reportedAt.Add(capabilities.SkillEvidenceMaxAge))
+		}
 	}
-	remaining := reportedAt.Add(capabilities.SkillEvidenceMaxAge).Sub(time.Now())
-	if remaining <= 0 {
-		return 0
-	}
-	return remaining + time.Second
+	return next
 }
 
 func publicCapabilityStatusEqual(a, b *kyberv1.AgentPublicCapabilitiesStatus) bool {
@@ -3125,11 +3129,17 @@ func isRuntimeProbeFailure(pod *corev1.Pod) bool {
 // State.Terminated (not LastTerminationState) — a previous auth failure
 // followed by a non-auth crash must not be misclassified as NeedsAuth.
 //
-// The code is matched regardless of spec.runtime: the two values don't collide,
-// and reading the code the container actually exited with is more robust than
-// trusting the spec to describe the binary that ran.
-func isOAuthRefreshFailure(pod *corev1.Pod) bool {
+// Exit codes are provider-specific. Prefer the platform-owned pod runtime label
+// (the actual launched integration), falling back to spec for legacy pods.
+func isOAuthRefreshFailure(pod *corev1.Pod, runtimeID string) bool {
 	if pod == nil {
+		return false
+	}
+	if id := pod.Labels["kyber.io/runtime"]; id != "" {
+		runtimeID = id
+	}
+	descriptor, ok := pkgruntimes.Describe(runtimeID)
+	if !ok || descriptor.AuthFailureExitCode == 0 {
 		return false
 	}
 	for _, cs := range pod.Status.ContainerStatuses {
@@ -3139,10 +3149,8 @@ func isOAuthRefreshFailure(pod *corev1.Pod) bool {
 		if cs.State.Terminated == nil {
 			continue
 		}
-		for _, descriptor := range pkgruntimes.Descriptors() {
-			if descriptor.AuthFailureExitCode != 0 && cs.State.Terminated.ExitCode == descriptor.AuthFailureExitCode {
-				return true
-			}
+		if cs.State.Terminated.ExitCode == descriptor.AuthFailureExitCode {
+			return true
 		}
 	}
 	return false

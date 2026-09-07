@@ -141,8 +141,9 @@ runtime is a subpackage (`pkg/runtimes/claudecode/`, `pkg/runtimes/codex/`) that
 provides the fixed runtime-repair package/binary/path contract used by the
 same-node maintenance pod; request input never supplies repair commands or paths.
 `Probe` is the sidecar-side hook (mostly reserved — see status-pipeline doc).
-Adding a runtime = new subpackage + blank import. See the package doc comment
-in `runtime.go` for the exact file layout.
+A new runtime requires the package/registration skeleton plus the harness
+contract onboarding checklist; registration alone is not a complete integration.
+See `runtime.go` for the file layout and the conformance guide for other wiring.
 
 Codex subscription auth is performed in-pod with `codex login --device-auth`;
 the PWA attaches read-only to tmux session `auth`. The exact `{}` payload in
@@ -541,6 +542,16 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     its TUI at the login menu. Claude records approval of the selected key in
     its private state and must keep the full interactive profile: `--bare`
     skips discovery of hooks/skills/MCP and is not a replacement for approval.
+
+19. **Runtime evidence has its own expiry deadline.** Public task declarations
+    must requeue when runtime capability evidence expires, even without a skill
+    report. Advanced job controls require an executable native probe; a sentinel
+    alone is insufficient. Receipt probes verify the full runtime-specific argv.
+20. **Provider exit codes and transcript paths are runtime-scoped.** Classify
+    auth failures using the pod's runtime label (legacy fallback: Agent spec),
+    never every registered provider's codes. Do not inject a transcript pruner
+    when the runtime has no declared transcript root; empty env paths fall back
+    to the script's historical Claude defaults.
 
 ---
 
