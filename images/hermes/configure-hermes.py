@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/python3
 """Converge the Kyber-owned portion of Hermes config.yaml."""
 
 from __future__ import annotations

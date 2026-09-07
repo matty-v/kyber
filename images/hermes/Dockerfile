@@ -42,24 +42,31 @@ RUN ln -sf libsqlite3.so.3.53.4 /usr/local/lib/libsqlite3.so.0 && \
     ln -sf libsqlite3.so.3.53.4 /usr/local/lib/libsqlite3.so && \
     printf '/usr/local/lib\n' > /etc/ld.so.conf.d/000-sqlite-fixed.conf && ldconfig
 
-COPY --chmod=0755 --from=uv-source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/
+# Use the source image's distro-linked Python 3.13 instead of `uv python
+# install`. The latter downloads a standalone build with SQLite embedded, so
+# it cannot pick up the WAL-reset fix installed in /usr/local/lib above.
+COPY --chmod=0755 --from=uv-source /usr/local/bin/uv /usr/local/bin/uvx /usr/local/bin/python3.13 /usr/local/bin/
+COPY --from=uv-source /usr/local/lib/libpython3.13.so.1.0 /usr/local/lib/
+COPY --from=uv-source /usr/local/lib/python3.13 /usr/local/lib/python3.13
+RUN ln -sf libpython3.13.so.1.0 /usr/local/lib/libpython3.13.so && \
+    ldconfig && \
+    python3.13 -c "import sqlite3, sys; sys.exit(f'linked SQLite {sqlite3.sqlite_version} still has the WAL-reset bug') if sqlite3.sqlite_version_info < (3, 51, 3) else None"
 
 ARG HERMES_VERSION=0.21.0
 ARG HERMES_COMMIT=29112bef099274229cadff79cdff7bf7b99c4b77
-ENV UV_PYTHON_INSTALL_DIR=/opt/uv/python
 RUN git init /opt/hermes && \
     git -C /opt/hermes remote add origin https://github.com/NousResearch/hermes-agent.git && \
     git -C /opt/hermes fetch --depth 1 origin "${HERMES_COMMIT}" && \
     test "$(git -C /opt/hermes rev-parse FETCH_HEAD)" = "${HERMES_COMMIT}" && \
     git -C /opt/hermes checkout --detach FETCH_HEAD && \
     cd /opt/hermes && \
-    uv python install 3.13 && \
-    uv sync --frozen --python 3.13 --extra all && \
+    uv sync --frozen --python /usr/local/bin/python3.13 --extra all && \
     test "$(.venv/bin/python -c 'from importlib.metadata import version; print(version("hermes-agent"))')" = "${HERMES_VERSION}" && \
     .venv/bin/python -c 'import sqlite3, sys; sys.exit(0 if sqlite3.sqlite_version_info >= (3, 51, 3) else 1)' && \
+    printf 'docker\n' > /opt/hermes/.install_method && \
     ln -s /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes && \
     rm -rf /opt/hermes/.git && \
-    chmod -R a+rX,go-w /opt/hermes /opt/uv
+    chmod -R a+rX,go-w /opt/hermes
 
 ENV KYBER_RUNTIME_DEFAULT_VERSION=${HERMES_VERSION}
 ENV HERMES_HOME=/home/kyber/.hermes

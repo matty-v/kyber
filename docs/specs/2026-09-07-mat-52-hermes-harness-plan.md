@@ -1,7 +1,7 @@
 # MAT-52 — Hermes harness implementation plan
 
-**Issue:** [MAT-52](https://linear.app/matty-v/issue/MAT-52/add-hermes-as-a-supported-kyber-agent-harness)  
-**Dependency:** [MAT-7](https://linear.app/matty-v/issue/MAT-7), merged in PR #231  
+**Issue:** [MAT-52](https://linear.app/matty-v/issue/MAT-52/add-hermes-as-a-supported-kyber-agent-harness)
+**Dependency:** [MAT-7](https://linear.app/matty-v/issue/MAT-7), merged in PR #231
 **Status:** implementation started 2026-09-07
 
 ## Outcome

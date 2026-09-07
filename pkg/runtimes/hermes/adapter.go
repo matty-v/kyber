@@ -64,7 +64,7 @@ func (a *Adapter) LivenessProbe() *corev1.Probe {
 func (a *Adapter) ReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
-			"/bin/bash", "-c", `[ -n "${OPENROUTER_API_KEY:-}" ] && pgrep -f "hermes.*chat" >/dev/null`,
+			"/bin/bash", "-c", `[ -n "${OPENROUTER_API_KEY:-}" ] && pgrep -f '[h]ermes.*chat' >/dev/null`,
 		}}},
 		InitialDelaySeconds: 5,
 		PeriodSeconds:       5,
@@ -74,7 +74,7 @@ func (a *Adapter) ReadinessProbe() *corev1.Probe {
 
 func processProbe(delay, period int32) *corev1.Probe {
 	return &corev1.Probe{
-		ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"pgrep", "-f", "hermes.*chat"}}},
+		ProbeHandler:        corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"pgrep", "-f", "[h]ermes.*chat"}}},
 		InitialDelaySeconds: delay,
 		PeriodSeconds:       period,
 		FailureThreshold:    3,

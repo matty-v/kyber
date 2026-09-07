@@ -83,8 +83,11 @@ func TestSessionCommands(t *testing.T) {
 	if got := strings.Join(a.CompactSessionCommand(), " "); !strings.Contains(got, "/compress") {
 		t.Fatalf("CompactSessionCommand() = %q", got)
 	}
-	if got := strings.Join(a.ReadinessProbe().Exec.Command, " "); !strings.Contains(got, "OPENROUTER_API_KEY") || !strings.Contains(got, "hermes.*chat") {
+	if got := strings.Join(a.ReadinessProbe().Exec.Command, " "); !strings.Contains(got, "OPENROUTER_API_KEY") || !strings.Contains(got, "[h]ermes.*chat") {
 		t.Fatalf("ReadinessProbe() = %q", got)
+	}
+	if got := strings.Join(a.LivenessProbe().Exec.Command, " "); !strings.Contains(got, "[h]ermes.*chat") {
+		t.Fatalf("LivenessProbe() can match its own probe process: %q", got)
 	}
 }
 

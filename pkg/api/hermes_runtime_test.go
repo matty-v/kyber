@@ -12,6 +12,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 func TestHermesCreationUsesGenericRuntimeCredential(t *testing.T) {
@@ -23,7 +24,7 @@ func TestHermesCreationUsesGenericRuntimeCredential(t *testing.T) {
 		ValidRuntimes: map[string]bool{"hermes": true},
 		RuntimeImages: map[string]string{"hermes": "test.invalid/hermes:pinned"},
 	}
-	body := `{"name":"hermes-preview","machine":"worker-1","runtime":"hermes","model":"anthropic/claude-sonnet-4.6","secrets":{"authType":"api-key","runtimeAuth":{"openrouterApiKey":"test-openrouter-value"},"telegramEnabled":true,"telegramBotToken":"123:abc","telegramAllowedUserIds":["1000000001"]}}`
+	body := `{"name":"hermes-preview","machine":"worker-1","runtime":"hermes","model":"anthropic/claude-sonnet-4.6","secrets":{"runtimeAuth":{"openrouterApiKey":"test-openrouter-value"},"telegramEnabled":true,"telegramBotToken":"123:abc","telegramAllowedUserIds":["1000000001"]}}`
 	rr := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents", strings.NewReader(body))
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
@@ -33,6 +34,13 @@ func TestHermesCreationUsesGenericRuntimeCredential(t *testing.T) {
 	}
 	if strings.Contains(rr.Body.String(), "test-openrouter-value") {
 		t.Fatal("credential echoed in response")
+	}
+	agent := &kyberv1.Agent{}
+	if err := client.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "hermes-preview"}, agent); err != nil {
+		t.Fatal(err)
+	}
+	if agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeAPIKey {
+		t.Fatalf("default auth type = %q, want api-key", agent.Spec.Secrets.AuthType)
 	}
 	secret := &corev1.Secret{}
 	if err := client.Get(context.Background(), types.NamespacedName{Namespace: "kyber-system", Name: "hermes-preview-openrouter"}, secret); err != nil {

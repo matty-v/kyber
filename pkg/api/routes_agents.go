@@ -978,7 +978,13 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Secrets.AuthType == "" {
+		// Preserve the historical OAuth default for legacy/unknown runtimes, but
+		// let a registered runtime choose its own first supported mode. This is
+		// required for API-key-only harnesses such as Hermes.
 		req.Secrets.AuthType = string(kyberv1.AgentAuthTypeOAuth)
+		if descriptor, ok := pkgruntimes.Describe(req.Runtime); ok && len(descriptor.AuthModes) > 0 {
+			req.Secrets.AuthType = string(descriptor.AuthModes[0].ID)
+		}
 	}
 	if utf8.RuneCountInString(req.StartupPrompt) > 32768 {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "startupPrompt must be at most 32768 characters", "startupPrompt")

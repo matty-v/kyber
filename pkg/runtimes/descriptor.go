@@ -99,6 +99,16 @@ func (d Descriptor) Validate() error {
 			return fmt.Errorf("runtime %s has invalid auth modes", d.ID)
 		}
 		seen[m.ID] = true
+		channels := map[string]bool{}
+		for _, channel := range m.Channels {
+			if channel != "telegram" && channel != "discord" && channel != "slack" {
+				return fmt.Errorf("runtime %s auth mode %s has invalid channel %q", d.ID, m.ID, channel)
+			}
+			if channels[channel] {
+				return fmt.Errorf("runtime %s auth mode %s repeats channel %q", d.ID, m.ID, channel)
+			}
+			channels[channel] = true
+		}
 	}
 	return nil
 }

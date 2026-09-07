@@ -78,7 +78,7 @@ describe('AuthSection', () => {
     expect(screen.getByText('Slack')).toBeInTheDocument()
   })
 
-  it('renders the Telegram bot-token input only when telegramEnabled and authType === "oauth"', () => {
+  it('renders the Telegram bot-token input when the selected mode supports Telegram and it is enabled', () => {
     const { rerender } = render(
       <AuthSection
         state={{ ...initialWizardState([]), telegramEnabled: false }}
