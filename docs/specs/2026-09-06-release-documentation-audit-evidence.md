@@ -28,8 +28,12 @@ Dated design/spec/ADR documents remain historical evidence, not install guides.
   intervening pwa-views tag exercising the workflow's previous-tag expression.
 - Focused skills and chart tests passed, including a regression check comparing
   release-built images, chart image catalog, and packaged tag coverage.
-- Full Go build, vet, and tests: in progress; final outcome belongs in the plan.
-- No live deployment or release dispatch performed by this audit.
+- Full local Go build passed; full lint/test, integration and A2A passed in CI
+  at 99ae991. Duplicate local vet/full-suite execution stopped after CI coverage.
+- Helm lint/render and 16 PWA tag-decision tests passed.
+- Cleanup merged as PR #232; Matt approved v1.5.0 and preparation run
+  34074770319 opened PR #233. Publication is tracked by that workflow.
+- No live deployment performed. Release dispatch followed the explicit approval.
 
 ## Scope boundaries
 

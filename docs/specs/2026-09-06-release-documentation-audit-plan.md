@@ -14,9 +14,9 @@ Baseline: origin/main b8c47b9; latest release v1.4.1. Work branch:
   with API, controllers, runtimes, UI, chart, scripts, and CI.
 - [x] Correct stale claims and links; preserve dated design history as history.
 - [x] Remove proven unused code; record evidence and verify affected behavior.
-- [ ] Run documentation, release, build, and affected code verification; review diff.
-- [ ] Push consolidated cleanup PR and check CI.
-- [ ] Prepare version recommendation, release notes, and precise release gates.
+- [x] Run documentation, release, build, and affected code verification; review diff.
+- [x] Push consolidated cleanup PR and check CI.
+- [x] Prepare version recommendation, release notes, and precise release gates.
 - [ ] Follow prepare-release workflow after required release approval, then verify
   image/chart publication and report operator-controlled rollout status.
 
@@ -43,3 +43,17 @@ checks, push cleanup PR and inspect CI before the concrete pre-tag approval.
 
 PR: https://github.com/matty-v/kyber/pull/232. Final source review confirmed
 avatars are API-only; notes and docs explicitly exclude a console upload control.
+
+## Approved release checkpoint — 2026-09-07
+
+Cleanup merged as PR #232 / 10fb298. Local full Go build, focused chart/skills,
+Helm rendering/lint, product docs (81), release guards (15), and PWA tag tests
+(16) passed. Full Go lint/test, integration, A2A and analyses passed in CI at
+99ae991. The node-agent image was confirmed published at that SHA while its
+non-required build job finished after publication. Duplicate local vet/full-suite
+execution was stopped after CI covered those checks.
+
+Matt approved v1.5.0 on Telegram message 992. Standard prepare-release run
+34074770319 opened PR #233; final approved notes/changelog are included in that
+preparation commit. Next: verify its merge/tag, release images/chart and final
+GitHub Release notes. No live cluster upgrade is authorized by this release cut.

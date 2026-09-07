@@ -5,12 +5,12 @@
 > tags, and changelog live in a private archive repository. This changelog
 > covers the open-source line only.
 
-## Unreleased
+## v1.5.0 — 2026-09-07
 
-Release preparation for **v1.5.0**: [reviewed scope and upgrade notes](docs/releases/v1.5.0.md).
+[Release notes and upgrade guidance](docs/releases/v1.5.0.md).
 Changes since v1.4.1 include Slack configuration and text/thread chat, private
 agent avatars, grouped console navigation, the versioned harness integration
-contract, and release/documentation cleanup. Publication is pending approval.
+contract, and release/documentation cleanup.
 
 ## Earlier public-release history
 
