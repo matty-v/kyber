@@ -21,7 +21,7 @@ Version pinning is deliberate. Codex's startup self-update check is disabled bec
 
 ## Runtime capabilities
 
-Both runtimes implement Kyber’s versioned harness contract. Kyber reports observed support for receipt-backed task dispatch, fresh sessions, cancellation, and scheduled-job controls. A supported runtime name alone does not prove a feature is available: missing or stale observations make dependent capabilities unavailable until the integration is healthy again.
+Both runtimes integrate through Kyber’s versioned harness contract; the conformance guide records verified behavior and remaining exceptions. Kyber reports observed support for receipt-backed task dispatch, fresh sessions, cancellation, and scheduled-job controls. A supported runtime name alone does not prove a feature is available: missing or stale observations make dependent capabilities unavailable until the integration is healthy again.
 
 ## Learn more
 

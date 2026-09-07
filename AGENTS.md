@@ -14,9 +14,9 @@ editing them.
 
 Kyber runs long-lived Claude Code and Codex agents as Kubernetes pods with
 whole-disk persistence, declared via CRDs and reconciled by a Go control plane.
-Deployed via Helm + ArgoCD from a separate private deploy repo (referred to as
-"the deploy repo" / `kyber-deploy` below: ArgoCD Applications + per-environment
-values).
+Installed from a versioned Helm chart. Standalone installations update through
+Kyber’s supervised Helm workflow; GitOps installations use their own deployment
+repository and controller. Never let both mechanisms own the same release.
 
 ---
 
@@ -402,7 +402,7 @@ debug/replay/rotation surfaces are `pkg/api/routes_inbound_{debug,replay,...}.go
 
 ### Build → deploy (code → cluster)
 Push to `main` → `.github/workflows/build.yml` (path-filtered, per-image jobs)
-→ GHCR `:latest` + `:<sha>` → ArgoCD Image Updater rolls dev/canary clusters.
+→ GHCR `:latest` + `:<sha>` for explicitly configured development consumers.
 Releases: dispatch `prepare-release.yml` with the approved version. It merges
 chart/install-doc version updates before tagging. `release.yml` builds nine
 images, gates the GitHub Release on A2A conformance, publishes the OCI chart,
@@ -445,7 +445,8 @@ Cross-cutting:
 - Helm namespace: always `{{ include "kyber.namespace" . }}`, never
   `{{ .Values.namespace.name }}` (past prod incident).
 - One consolidated PR per logical change set (CI is expensive). `main`
-  requires PRs; never bypass CI; deploy only via ArgoCD.
+  requires PRs; never bypass CI; use the target installation’s declared update
+  mechanism (GitOps or supervised Helm), never a competing manual deploy.
 
 ---
 

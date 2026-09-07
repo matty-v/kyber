@@ -55,8 +55,7 @@ jobs:
       is_test: ${{ steps.chainmeta.outputs.is_test }}
       has_deploy_app: ${{ steps.opsecrets.outputs.has_deploy_app }}
     steps:
-      # Optional-integration detection: the post-release chain (pwa-views tag
-      # push, deploy-repo bump PRs) is maintainer infrastructure driven by a
+      # Optional-integration detection: the post-release chain (pwa-views tag push) is maintainer infrastructure driven by a
       # GitHub App. Forks and fresh clones don't have those secrets — the
       # dependent jobs skip cleanly instead of failing the release. (Secrets
       # are not readable in job-level `if:`, hence this step-level output.)
@@ -64,7 +63,7 @@ jobs:
         run: |
           echo "has_deploy_app=${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
           if [ "${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" = "false" ]; then
-            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — the post-release chain jobs (pwa-views publish, deploy bump PRs) will be skipped. The GitHub Release and image pushes are unaffected."
+            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — the pwa-views publish chain will be skipped. The GitHub Release and image pushes are unaffected."
           fi
       - uses: actions/checkout@v7
         with:
@@ -92,7 +91,7 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Outputs for post-release chain jobs (B1 pwa-views publish + B2 deploy bump PR).
+      # Outputs for post-release chain jobs (pwa-views publication).
       # tag_message: annotated tag body, checked for [skip-publish] opt-out marker.
       # pwa_version: read from packages/pwa-views/package.json.
       # is_test: true when tag contains "-test" — chain jobs dry-run instead of side-effecting.
@@ -625,14 +624,6 @@ jobs:
             echo "::error::Failed to push ${PVT} — @matty-v/kyber-pwa-views@${PWA_VERSION} will NOT publish and consumers (holocron) will lag. Investigate the App token / push permission immediately." >&2
             exit 1
           fi
-
-      - name: Test mode — tag push skipped
-        if: needs.meta.outputs.is_test == 'true'
-        env:
-          PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
-        run: |
-          echo "Test release ${RELEASE_TAG}: not pushing pwa-views/v${PWA_VERSION}."
 
   # --------------------------------------------------------------------
   # B2a/B2b (resolve-digests + deploy-bump-pr) REMOVED 2026-08-13.
