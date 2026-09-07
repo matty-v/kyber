@@ -127,7 +127,7 @@ jobs:
       # the same GHCR repository under different tags (the arch probe did), and
       # an artifact namespace keyed on the image alone would let one call's
       # digests satisfy another call's merge.
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: digests-${{ inputs.cache-scope }}-${{ matrix.arch }}
           path: /tmp/digests/*
