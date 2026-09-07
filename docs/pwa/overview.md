@@ -21,8 +21,7 @@ Agent detail groups Observe (Overview, Activity, Shell), Automate (Jobs,
 Webhooks), and Configure (General, Comms, Secrets, A2A). Settings groups
 Configure (General), Observe (Metrics, Logs), and System (Health, API access).
 Both use a persistent desktop rail and a full-screen mobile menu. Legacy direct
-Metrics and Logs routes remain supported. General includes profile/avatar and
-runtime settings; Comms configures Telegram, Discord, and Slack.
+Metrics and Logs routes remain supported. General includes alias/description and runtime settings; Comms configures Telegram, Discord, and Slack.
 
 ## Package
 

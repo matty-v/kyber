@@ -23,6 +23,7 @@ a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 |---|---|
 | [product/](product/README.md) | What Kyber does, in operator-observable terms |
 | [agent-manual.md](agent-manual.md) | The manual each agent reads about the platform it lives on |
+| [agents-profiles.md](agents-profiles.md) | Profile editing and the private avatar API |
 | [agents-comms.md](agents-comms.md) | Telegram, Discord, and Slack channels for two-way chat |
 | [agents-identity-repos.md](agents-identity-repos.md) | Git-backed agent memory, persona, and skills |
 | [agents-scheduled-jobs.md](agents-scheduled-jobs.md) | Cron jobs that persist inside an agent |

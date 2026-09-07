@@ -17,7 +17,7 @@ Every screen shows a cluster identifier with the cluster's name and version, so 
 
 ## Agent profiles
 
-An agent’s General settings let you set its display name, description, and avatar. Avatars accept PNG, JPEG, or WebP files up to 1 MiB. Images are stored privately and served through authenticated API requests; the cluster currently needs durable tasks enabled and their object storage configured for uploads. You can replace or remove an avatar without restarting the agent.
+An agent’s General settings let you set its alias and description. Private avatar storage is currently available through the API; the console does not yet provide an avatar upload control. The API accepts PNG, JPEG, or WebP files up to 1 MiB, requires authenticated access, and currently needs durable tasks enabled with object storage configured. Replacing or removing an avatar does not restart the agent.
 
 ## Agent status and activity
 
@@ -57,6 +57,7 @@ The whole surface follows one rule: never show a confident number Kyber cannot s
 
 ## Learn more
 
+- [Agent profiles and avatars](../../agents-profiles.md): API setup and limits.
 - [Agents and persistence](agents-and-persistence.md): the lifecycle actions the console drives, and what each agent state means.
 - [Multi-cluster and the API](multi-cluster-and-api.md): running several clusters from one place, and the API behind the console.
 - [Metrics tab reference](../../metrics-tab.md): every panel in detail.

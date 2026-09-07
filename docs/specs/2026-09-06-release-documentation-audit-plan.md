@@ -40,3 +40,6 @@ Slack, avatars, navigation, and harness integration since v1.4.1. Focused chart
 and skills tests, 81 product-doc checks, and 15 release guards passed. Full Go
 build/vet/test pass is running. Next: final consistency review, record final
 checks, push cleanup PR and inspect CI before the concrete pre-tag approval.
+
+PR: https://github.com/matty-v/kyber/pull/232. Final source review confirmed
+avatars are API-only; notes and docs explicitly exclude a console upload control.
