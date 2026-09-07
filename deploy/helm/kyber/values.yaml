@@ -1057,10 +1057,9 @@ runtimeDetect:
   cadenceSeconds: 3600
   # Cap on the number of recent CC versions surfaced through /available.
   versionLimit: 20
-  # Operator-supplied Anthropic API key, used only for the read-only
-  # Models API call. Empty leaves the Secret blank; the PWA Settings panel
-  # is the canonical write-only path. Stored in the
-  # {release}-anthropic-key Secret in this namespace.
+  # Legacy platform Anthropic key configuration. Current production model
+  # discovery uses each authenticated agent; the npm poller does not wire
+  # this key into an Anthropic Models API client. Retained for compatibility.
   anthropicApiKey: ""
   # Name of an existing Secret holding the api-key field. When set, the
   # chart does NOT render the anthropic-key Secret — the operator is
@@ -1097,8 +1096,8 @@ runtimeDetect:
 # 2026-08-10-kyber-owns-its-deployment.md).
 #
 # The control plane polls the release feed and reports what is available via
-# GET /api/v1/updates. In this build it ONLY reports — there is no apply path,
-# and the status contract says so explicitly (applySupported: false).
+# GET /api/v1/updates. Applying an update is an explicit operator action via
+# the supervised self-upgrade Job; availability depends on install eligibility.
 #
 # The operator's policy (channel / mode / pin / window) is NOT configured here.
 # It lives in a ConfigMap the control plane owns and this chart deliberately

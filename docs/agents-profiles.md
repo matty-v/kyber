@@ -1,7 +1,7 @@
 # Agent profiles and private avatars
 
 General settings in Agent Detail edit an agent's alias and description through
-`PATCH /api/v1/agents/{name}/profile`. Avatar storage is currently an API feature;
+`PATCH /api/v1/agents/{name}` with a `profile` object. Avatar storage is currently an API feature;
 the console has no avatar upload control.
 
 ## Avatar API

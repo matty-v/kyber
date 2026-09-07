@@ -50,7 +50,7 @@ observed concrete model is recorded in status without turning it into a spec pin
 
 The authenticated catalog and active-session observations above describe current
 picker/usage behavior. The Claude pod-construction path also has an operator
-context-window override map (`runtimeDetect.modelContextWindows`) and a cached
+context-window override map (`runtimeDetect.contextWindows`) and a cached
 snapshot resolver. These support the explicit large-context launch option.
 Compatibility resolvers retain legacy known-model/floor behavior; do not copy
 that fallback into authenticated Codex catalog reporting.
@@ -76,7 +76,7 @@ platform Anthropic key is not required for this path.
 | `runtimeDetect.enabled` | `true` | register public version polling/cache integration |
 | `runtimeDetect.cadenceSeconds` | `3600` | polling interval |
 | `runtimeDetect.versionLimit` | `20` | recent stable versions per harness |
-| `runtimeDetect.modelContextWindows` | map | explicit context-window overrides |
+| `runtimeDetect.contextWindows` | map | explicit context-window overrides |
 | `runtimeDetect.anthropicApiKey` / `existingSecret` | empty | retained platform key configuration; not wired into production polling |
 
 ## Multi-replica installs

@@ -55,7 +55,8 @@ jobs:
       is_test: ${{ steps.chainmeta.outputs.is_test }}
       has_deploy_app: ${{ steps.opsecrets.outputs.has_deploy_app }}
     steps:
-      # Optional-integration detection: the post-release chain (pwa-views tag push) is maintainer infrastructure driven by a
+      # Optional-integration detection: the pwa-views tag push is maintainer
+      # infrastructure driven by a
       # GitHub App. Forks and fresh clones don't have those secrets — the
       # dependent jobs skip cleanly instead of failing the release. (Secrets
       # are not readable in job-level `if:`, hence this step-level output.)
@@ -94,7 +95,7 @@ jobs:
       # Outputs for post-release chain jobs (pwa-views publication).
       # tag_message: annotated tag body, checked for [skip-publish] opt-out marker.
       # pwa_version: read from packages/pwa-views/package.json.
-      # is_test: true when tag contains "-test" — chain jobs dry-run instead of side-effecting.
+      # is_test: true when tag contains "-test"; skipped preflight blocks builds.
       - id: chainmeta
         env:
           TAG: ${{ steps.meta.outputs.tag }}
