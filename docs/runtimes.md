@@ -63,4 +63,4 @@ status behavior stays in the controller and sidecars.
 
 Integration authors should start with the [Kyber Agent Harness Contract](architecture/agent-harness-contract.md)
 and its [conformance/onboarding guide](architecture/agent-harness-conformance.md).
-The v1 draft distinguishes current behavior from migration requirements.
+The v1 contract distinguishes current behavior from migration requirements.

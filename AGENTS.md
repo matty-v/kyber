@@ -683,8 +683,8 @@ If docs/contributing/code-quality.md's table and `test.yml` disagree, the workfl
 
 ### F. Add a new runtime type
 Read `docs/architecture/agent-harness-contract.md` and its conformance guide first.
-The v1 contract is a draft with explicit migration gaps, not a claim of complete
-conformance. Reuse `pkg/runtimes/contracttest` for adapter checks and run the
+The v1 contract separates normative requirements from versioned evidence and
+explicit conformance exceptions. Reuse `pkg/runtimes/contracttest` for adapter checks and run the
 receipt/behavior suites listed in the guide; source inspection is not live proof.
 Follow `pkg/runtimes/runtime.go` package doc: subpackage with `init()`
 registration + Adapter + Probe + paths, blank import in `cmd/control-plane`

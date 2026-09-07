@@ -1,6 +1,6 @@
 # MAT-7 — agent harness contract execution plan
 
-Status: implementation and automated validation complete; live evidence and publication in progress.
+Status: implementation, automated validation and live auth matrix complete; ready for publication review.
 Approval: Matt, Telegram messages 936 (contract) and 941 (refactoring), 2026-09-06.
 Issue: https://linear.app/matty-v/issue/MAT-7
 Baseline: 20b21f987402204b33944af9135db53d4cbf494b.
@@ -18,7 +18,7 @@ new execution transport, or production deployment is authorized by this plan.
 
 - [x] Direction and corrected source-grounded scope approved by Matt.
 - [x] Draft normative requirements, evidence matrix, and onboarding checklist.
-  Final v1 publication remains gated on migration and live evidence.
+  Approved migration and the four-way native auth matrix are now verified.
 - [x] Establish reusable adapter conformance tests, negative fixtures, and a
   minimal registry adapter fixture; map behavioral coverage and gaps.
   The bootable third-runtime fixture also passes in integration CI.
@@ -28,7 +28,8 @@ new execution transport, or production deployment is authorized by this plan.
   API/UI and packaging; produce the [refactoring proposal](../design/2026-09-06-mat-7-harness-extensibility-review.md).
 - [x] Obtain approval for material architectural decisions, then implement
   capability discovery/enforcement and adapter migrations with tests.
-- [ ] Publish final conformance evidence and maintenance/release guidance.
+- [x] Record final conformance evidence and maintenance/release guidance.
+- [ ] Merge/publish through the reviewed repository PR.
 
 ## Current evidence and next action
 
@@ -269,3 +270,21 @@ Primary references: [Codex login](https://developers.openai.com/codex/cli/refere
 [Claude bare mode](https://code.claude.com/docs/en/headless#start-faster-with-bare-mode).
 The CLI help and live native approval state were checked without exposing key
 values. No model turn under API-key auth is certified by the initial pilot.
+
+### Final implementation checkpoint — 2026-09-07
+
+All code CI gates pass on `4510172`, including Go, integration, PWA, image builds,
+contract/TCK and security checks. The final auth image tag is
+`worktree-20260906-4510172-key-auth`. Fresh API-key agents reached native first
+turns without manual confirmation, explicitly completed tasks, restarted in
+1.07s (Claude) / 0.73s (Codex), repeated their startup prompts and completed new
+tasks with distinct native session identities. Both API-key agents and their
+associated test resources were deleted. Subscription evidence remains recorded
+against its exact earlier tags; the final auth changes are API-key-specific and
+both full startup suites pass.
+
+PR #231 is ready for review/publication. MAT-7 moves to review, not Done while
+the PR is open. The contract is normative v1.0; the evidence guide explicitly
+retains known failure-taxonomy/credential-sync exceptions and unverified optional
+behaviors. No production deployment, forced interruption, lossless credential
+rotation, or blanket native conformance is claimed.

@@ -1,7 +1,7 @@
 # Kyber Agent Harness Contract — v1 interactive profile
 
-Status: approved direction; implementation and conformance migration in progress.
-Contract version: 1.0 draft. Owner: Kyber maintainers. Tracker: MAT-7.
+Status: approved contract and implementation; ready for reviewed publication.
+Contract version: 1.0. Owner: Kyber maintainers. Tracker: MAT-7.
 Read this before adding a runtime or changing its integration boundary.
 
 ## 1. Purpose & scope
@@ -11,7 +11,7 @@ behavior into Kyber interfaces. A **runtime** is the registered, packaged
 integration deployed for an Agent. MUST/MUST NOT are requirements; SHOULD is
 a recommendation requiring an explained exception; MAY denotes optional support.
 These are normative target requirements. The evidence matrix explicitly records
-which portions are implemented or verified; this draft does not certify either
+which portions are implemented or verified; this contract does not certify either
 existing runtime as fully conformant.
 
 V1 supports the existing Linux, persistent, long-lived interactive profile:
@@ -163,7 +163,7 @@ records which native behaviors have actually been verified.
 
 ## 6. Source of truth
 
-Implementation references establish **current behavior**; this normative draft
+Implementation references establish **current behavior**; this normative contract
 establishes the approved target. Differences are migration findings, not grounds
 to silently weaken the contract or claim the implementation already conforms.
 
@@ -174,10 +174,12 @@ to silently weaken the contract or claim the implementation already conforms.
 - [Evidence and onboarding](agent-harness-conformance.md).
 
 The canonical publication is this repository document. Maintainers review it
-alongside integration changes. Final v1 publication requires completed migration
-and evidence; an approved draft is not a release certification. Record changes
+alongside integration changes. The approved migration and versioned native auth matrix are recorded in the
+conformance guide. Publication follows repository review; the contract version
+alone is not a certification of every native feature. Record changes
 here by contract version and reference the implementation release. Initial
-history: 2026-09-06 — 1.0 draft, Matt-approved scope and test-first migration.
+history: 2026-09-06 — approved v1 scope and test-first migration; 2026-09-07 —
+1.0 implementation and four-way native auth evidence ready for publication.
 
 ## 7. Cross-references
 

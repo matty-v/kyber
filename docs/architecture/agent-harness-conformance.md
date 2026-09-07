@@ -1,6 +1,6 @@
 # Harness conformance — evidence and onboarding
 
-Companion to the [normative v1 draft](agent-harness-contract.md). This is a
+Companion to the [normative v1 contract](agent-harness-contract.md). This is a
 migration baseline, not a certification that every requirement is satisfied.
 
 ## Evidence rules
@@ -29,7 +29,7 @@ from fixture execution; a source implementation alone is not certification.
 | HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Adapter and startup fixtures, `credential_failure_test.go`; clearer normalized failure taxonomy is a gap |
 | HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
 | HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
-| HC-05 API-key mode | Anthropic Secret | OpenAI Secret | Shared checks cover mode separation and two Agent names; startup fixtures; live mode checks outstanding |
+| HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
 | HC-05 subscription mode | PKCE login live verified; refresh-token sync fixtures | Device login live verified; legacy auth JSON and sync fixtures | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
 | HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Boot fixtures, cron correlation and dispatch marker tests; runtime version behavior needs live evidence |
 | HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | New `TestHarnessContractReceiptRecovery` plus task worker/store/API suites; historical MAT-28 live evidence is version-specific |
@@ -92,8 +92,8 @@ operator consent completed successfully. The first native turn answered
 
 Cleanup: the disposable Codex agent was deleted after evidence capture.
 
-Claude PKCE checks are recorded below. Both valid live API-key checks remain pending.
-API-key fixtures do not substitute for successful live API-key authentication.
+Claude PKCE and API-key checks are recorded below. Fixture evidence remains
+distinct from successful live provider authentication.
 
 ## Claude and browser checkpoint — 2026-09-06
 
@@ -141,6 +141,38 @@ instructions, and switched to the correctly labelled masked API-key inputs.
 Screenshots were visually inspected. No agent was created and no provider key
 was entered during that UI check. This is UI evidence, not live API-key auth.
 
+## Fresh API-key matrix — 2026-09-07
+
+The initial clean API-key pods exposed native onboarding gaps despite receiving
+the selected per-agent Secret: Claude waited for key approval, and Codex stayed
+at its login menu. `4510172` corrects those integrations and passes both complete
+startup suites plus all code CI gates. The pilot pods and PVCs were deleted.
+The following evidence comes from recreated agents with no manual TUI input.
+
+Cloud Build `76e59598-723d-435d-8c28-45fc5050295d` produced tag
+`worktree-20260906-4510172-key-auth` for both runtimes:
+
+- Claude image digest: `sha256:657e328d3d36804f8aa4156ca765c0eb3ca7c05f735e01ff6139d0ff8670d7f7`.
+- Codex image digest: `sha256:99d4c846a92eb59d7eaaca6b70712dda272c3303d17e5689e3fdc29b96374526`.
+
+| Case | Claude Code | Codex |
+|---|---|---|
+| Agent / installed CLI | `sol-test-mat7-claude-key` / `2.1.263` | `sol-test-mat7-codex-key` / `0.153.4` |
+| Fresh native startup | `MAT7_KEY_READY`, API Usage Billing | `MAT7_KEY_READY`, native record matches selected API key; mode 0600 |
+| Explicit task completion | `task_53edb9eec62b05f281145f0e9746355f` → `MAT7_CLAUDE_API_OK` | `task_410ad180563b7f2331c8597d475bbe44` → `MAT7_CODEX_API_OK` |
+| Restart API | Success in 1.07s | Success in 0.73s |
+| New session startup | Repeated `MAT7_KEY_READY` | Repeated `MAT7_KEY_READY` |
+| Post-restart completion | `task_662863aea630dd456417dfb40223dede` → `MAT7_CLAUDE_API_RESTART_OK` | `task_1960124622b0c9a5867e3e6665981e94` → `MAT7_CODEX_API_RESTART_OK` |
+| Receipt/session check | Two delivered receipts, two distinct native session IDs | Two delivered receipts, two distinct native session IDs |
+| Cleanup | Agent and associated test resources deleted | Agent and associated test resources deleted |
+
+Both authentication modes now have live startup/task/fresh-restart evidence for
+both runtimes. The earlier subscription checks retain their exact image tags;
+the API-key fixes change API-key startup branches, with subscription regression
+coverage in the full startup suites. This does not certify untested refresh,
+provider-failure classification, forced interruption, native compaction, repair,
+or node/storage recovery behavior. Those limits remain in the matrix.
+
 ## Run contract checks
 
 Go version comes from `go.mod`; scripts need bash, jq, curl, Python and git.
@@ -173,9 +205,9 @@ request correlation, private file permissions, and absence of prompt persistence
 They do not prove the real harness obeys a hook's exit code or runs a model turn.
 
 Declared/observed gates, unknown/stale reports and the bootable process fixture
-now have automated coverage. Final native conformance still requires versioned
-evidence for both real harnesses in dev; the matrix retains their documented
-limitations rather than inferring behavior from the fake.
+now have automated coverage. Both real harnesses/auth modes also have versioned
+dev evidence above. The matrix retains unverified behaviors and documented
+exceptions rather than inferring complete conformance from those checks.
 
 ## Onboarding checklist
 
@@ -208,5 +240,5 @@ limitations rather than inferring behavior from the fake.
     harness features into public service manifests.
 
 This checklist identifies the current extra work; it does not claim third-party
-onboarding is already a four-file exercise. The approved architecture migration
-must make those extension points explicit before final v1 publication.
+onboarding is already a four-file exercise. The registered descriptors, credential strategies and provider-owned scripts
+make those extension points explicit; release review must preserve their tests.
