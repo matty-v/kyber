@@ -43,6 +43,8 @@ Phases you can be in, and what each means for you:
 | `Draining` → `WaitingForMachine` | your spot machine is being preempted; you're waiting for a replacement |
 | `NeedsAuth` | your OAuth credential is missing, expired, or invalid — a **human** must re-authorize |
 | `MemoryExhausted` | you were OOM-killed. **No auto-restart.** The operator must raise the memory limit first |
+| `DiskExhausted` | harness paused for disk reserve; Shell remains available for cleanup |
+| `BrokenRuntime` | harness executable failed validation; use the runtime repair action |
 | `Failed` | restart retries exhausted; alerts the operator |
 
 Two different ways you vanish, and they need different fixes:
@@ -126,6 +128,9 @@ Your skills appear in the Kyber UI on your agent's **Skills** tab. That view is 
   Both send endpoints are scoped to the conversations you actually serve — a
   `403` means the chat or channel you targeted is outside your allowlist, so
   reply into the one the prompt came from rather than retrying elsewhere.
+- **Slack** uses the `kyber-slack` MCP `reply` tool with the inbound channel
+  and optional thread timestamp. Its current surface supports text replies
+  only; the sidecar owns the Socket Mode connection and both Slack tokens.
 - **Inbound webhooks** deliver HMAC-signed messages via bindings. Per-field truncation is binding config, so a message that arrives cut off mid-sentence is a config limit, not your reading comprehension.
 - **Scheduled jobs** fire prompts at you on a cron.
 - **The PWA shell** is a human typing straight into your live session.

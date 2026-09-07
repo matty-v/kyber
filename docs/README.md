@@ -10,6 +10,8 @@ a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 |---|---|
 | [the quickstart](product/getting-started/quickstart.md) | Any cluster (or a local k3d one-liner), the short path |
 | [install-with-an-ai-assistant.md](install-with-an-ai-assistant.md) | Let an AI assistant drive the install for you |
+| [installation-gke.md](installation-gke.md) | GKE with managed node pools and portable storage |
+| [installation-eks.md](installation-eks.md) | EKS with managed capacity and EBS storage |
 | [installation.md](installation.md) | GCP: production multi-VM install, Terraform, HTTPS |
 | [installation-macos.md](installation-macos.md) | A Mac, via a Linux VM with Kubernetes |
 | [installation-wsl2.md](installation-wsl2.md) | A Windows laptop, no cloud account |
@@ -21,7 +23,8 @@ a developer? [Install with an AI assistant](install-with-an-ai-assistant.md).
 |---|---|
 | [product/](product/README.md) | What Kyber does, in operator-observable terms |
 | [agent-manual.md](agent-manual.md) | The manual each agent reads about the platform it lives on |
-| [agents-comms.md](agents-comms.md) | Telegram and Discord channels for two-way chat |
+| [agents-profiles.md](agents-profiles.md) | Profile editing and the private avatar API |
+| [agents-comms.md](agents-comms.md) | Telegram, Discord, and Slack channels for two-way chat |
 | [agents-identity-repos.md](agents-identity-repos.md) | Git-backed agent memory, persona, and skills |
 | [agents-scheduled-jobs.md](agents-scheduled-jobs.md) | Cron jobs that persist inside an agent |
 | [runtimes.md](runtimes.md) · [runtime-detection.md](runtime-detection.md) | Claude Code and Codex: sign-in, models, adopting new versions |

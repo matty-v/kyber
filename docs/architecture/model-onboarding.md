@@ -1,10 +1,11 @@
 # Data-driven model onboarding — auto-detected windows + feed-derived pricing
 
-> Read this before changing how kyber discovers a model's **context window** or
-> its **pricing**, or before touching the LiteLLM pricing feed. It is the
-> architecture home for the model-onboarding epic ([kyber#489](https://github.com/matty-v/kyber/issues/489)):
-> how a newly-released Claude model becomes fully usable with **0–1 manual
-> steps** instead of a multi-config scavenger hunt.
+Current production discovery is per-agent: authenticated runtimes report model
+catalogs through the status sidecar. The public poller is wired for npm harness
+versions only. See [runtime discovery](../runtime-detection.md) for the current
+API/error contract. The legacy platform-key poller described in the historical
+context-window path below remains implemented but is not wired in production.
+Pricing remains a separate build-time dataset.
 
 > [!IMPORTANT]
 > **LiteLLM is a build-time DATA source only — it is NOT a runtime proxy or
@@ -46,7 +47,8 @@ This page covers how the two metadata sources are *produced and wired*.
 
 | Component | File(s) | Responsibility |
 |---|---|---|
-| Detection poller | `pkg/runtimedetect/poller.go`, `anthropic.go` | Hourly fetch of the Anthropic Models API; decodes `max_input_tokens`; enriches with the override map; writes the `Snapshot`. |
+| Public version poller | `pkg/runtimedetect/poller.go` | Production wiring fetches npm harness versions; legacy Anthropic polling is not configured. |
+| Authenticated model reports | `pkg/api/internal.go`, `pkg/api/routes_agent_models.go` | Validate runtime-owned model metadata and serve only the requesting agent’s catalog. |
 | Snapshot cache | `pkg/runtimedetect/cache.go` | Redis (prod) / in-memory (dev) store of the latest `Snapshot`. Shared by `/available` **and** the pod path. |
 | Override map resolver | `pkg/contextwindowmap/contextwindowmap.go` | Reads the operator `kyber-model-context-windows` ConfigMap (30s TTL). Authoritative manual override. |
 | `/available` handler | `pkg/api/routes_available.go` | Serves the snapshot to the PWA harness-version pickers, the fleet-defaults model list, and the token-budget gauge. **Not** the per-agent change-model picker — that reads the agent's authenticated catalog (`GET /api/v1/agents/{name}/models`, `409` until the runtime has reported it). |
@@ -63,7 +65,7 @@ This page covers how the two metadata sources are *produced and wired*.
 
 Two independent paths, joined only where the PWA reads them.
 
-### Path A — context window (auto-detect)
+### Path A — legacy platform context-window detection
 
 ```mermaid
 flowchart TD

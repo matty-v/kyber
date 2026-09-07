@@ -1,227 +1,180 @@
-# Kyber Release Runbook
+# Kyber release runbook
 
-This document describes the release process for Kyber, including which steps are automated by CI and which require the operator to act. The upstream project drives several steps through a private team of release-automation agents; where a step depends on that private setup it is marked operator-specific — a fork can perform the same step by hand.
+The release entry point is `.github/workflows/prepare-release.yml`. It updates
+chart and installation-document versions on a PR, waits for that PR to merge,
+and tags the resulting main commit. The tag triggers `release.yml` to build and
+publish release artifacts. Publishing a release does not install it on a cluster.
 
-> **⚠️ Upstream status (2026-08-10): the canary role is currently VACANT.**
->
-> This runbook describes a canary cluster in several places — the pre-release smoke test (step 1), the `:latest` refresh (step 5), and the `git describe` version labelling. Those mechanics are unchanged and still correct, but **upstream has no cluster filling the role right now.** The cluster that did (`kyber-razer`) was moved onto the gated release lane because it hosts the operator's own working agents, and continuous delivery there meant an ungated merge could roll a live agent's pod out from under it.
->
-> What this changes until a replacement canary exists:
-> - **Step 1's smoke test has nothing to run against.** No cluster tracks head-of-main, so a merge is not exercised anywhere before it is tagged.
-> - **A soak/readiness check that reports "canary green" is reporting on a *released* cluster**, not on the commits being proposed. Do not read it as evidence the tag is safe.
-> - **Operator approval is the only real gate** on a release reaching production.
-> - Step 5 (`:latest` refresh) still runs and is still correct; it simply has no consumer at the moment.
->
-> A forked or self-hosted setup that *does* keep a canary should read this runbook as written and ignore this note.
+This procedure is grounded in those workflows, `publish-pwa-views.yml`,
+`auto-publish-pwa-views.yml`, and the update implementation in `pkg/updates` and
+`pkg/selfupgrade`. Dated notes about upstream cluster placement are not release
+readiness evidence; verify the actual target and commit before claiming a smoke
+check or rollout passed.
 
-> **⚠️ Upstream status (2026-08-13): a release no longer reaches every cluster.**
->
-> Clusters now advance by one of **two** models, and the runbook's promotion step
-> only describes the first:
->
-> - **Push (`kyber-falcon`)** — `deploy-bump-pr` opens and auto-merges a
->   digest-pinned bump on the deploy repo, and ArgoCD syncs it. Unchanged.
-> - **Pull (`kyber-razer`)** — a self-updating Helm release with no ArgoCD. The
->   control plane checks the stable channel and reports what it finds; **an
->   operator chooses when to install**, from the PWA or
->   `POST /api/v1/updates/apply`. Nothing applies on its own.
->
-> `release.yml`'s `deploy-bump-pr` matrix is therefore **`[falcon]`**. Cutting a
-> tag does **not** deploy to razer — it publishes a chart that razer can then be
-> told to install. **Do not treat a green release as meaning razer is running it.**
-> Check the cluster's reported `currentVersion`.
->
-> Why razer moved: on 2026-08-13 the auto-merged bump reached it within seconds of
-> the tag and rolled the operator's own agents out from under a live session, with
-> no human and no Kyber in the loop.
+## Before cutting the tag
 
----
+1. Fetch main and tags. Identify the latest **Kyber** release (`vX.Y.Z`), keeping
+   the independently versioned `pwa-views/vX.Y.Z` tags out of the comparison.
+2. Review all commits since that release against code, migration requirements,
+   chart defaults, and documentation. Prepare operator-facing release notes and
+   a version recommendation. Features normally justify a minor version; fixes
+   alone normally justify a patch. Call out incompatible changes explicitly.
+3. Merge the cleanup and release-note PRs through normal required checks. Check
+   the candidate's CI and relevant dev acceptance evidence. A healthy cluster
+   running an older release does not validate this candidate. See
+   [dev verification](kyber-dev-verification.md) and the
+   [harness conformance guide](../architecture/agent-harness-conformance.md).
+4. Obtain the operator's approval of the concrete version and notes before
+   dispatching the preparation workflow. It creates and auto-merges a real PR
+   and publishes an immutable release tag; it has no dry-run input.
 
-## Overview
-
-The full release flow is **merge-triggered, not tag-triggered**. A kyber PR merge produces these steps:
-
-1. **The canary cluster is smoke-tested** *(operator-specific automation)*. The smoke-test agent polls the canary instance's `/api/v1/version` until it is running the merge SHA, then runs three smoke checks (`/api/v1/version`, `/api/v1/agents`, `/api/v1/metrics/summary`).
-2. **On green-light: a release is proposed to the operator** (e.g. via a chat channel). The proposal includes the bump (computed from Conventional Commits) and the commits since the last tag.
-3. **The operator approves with `release approve`.** The release-automation agent then:
-   - **Dispatches `prepare-release.yml`** (`workflow_dispatch`, `version=X.Y.Z`) on `matty-v/kyber`. This workflow — **not** an ad-hoc `git tag` push — owns the tag-cut now (kyber#591): it folds the `Chart.yaml` `version`/`appVersion` bump **into the commit that gets tagged**, then pushes the annotated tag `vX.Y.Z` on that merged commit (see [Cutting a release](#cutting-a-release-manually) below).
-   - Watches `release.yml` in CI
-   - Watches Image Updater on falcon for the bump
-
-`prepare-release.yml` performs the **pre-tag** chart bump, in order:
-
-- **P1 — Bumps `deploy/helm/kyber/Chart.yaml`** `version` + `appVersion` to `X.Y.Z` (bare, leading `v` stripped, kept in lockstep) on a branch, opens a PR on `matty-v/kyber`, and auto-merges it with `gh pr merge --auto` (waits for `main`'s required `[test, pwa-build, changes, integration]`, ~15min — a `Chart.yaml`-only PR satisfies all four). Idempotent: if `main` is already at `X.Y.Z`, no PR is opened and the current HEAD is tagged. *(This relocates the retired post-tag `chart-version-bump-pr` job — folding the bump into the tagged commit is what gives the canary a clean `git describe`; kyber#591.)*
-- **P2 — Pushes the annotated tag `vX.Y.Z`** on the merged commit, after verifying the chart version at that commit matches `X.Y.Z` (fail-loud otherwise).
-
-When the tag push reaches `release.yml`, CI then:
-
-4. **Builds all 8 images** in parallel (control-plane, node-agent, status-sidecar, mcp-discord, mcp-telegram, runtime-base, claude-code, codex) and pushes them to GHCR as `:vX.Y.Z`. (`claude-code` and `codex` build `FROM` runtime-base, so they wait on it.)
-5. **Refreshes the control-plane `:latest` tag** to this release's image (kyber#591) so **the canary cluster** (which tracks `:latest` via ArgoCD Image Updater) reports the clean release label immediately instead of a stale pre-tag `git describe` string. Re-points `:latest` to the just-pushed `:vX.Y.Z` digest — no rebuild. **Guarded:** only moves `:latest` when the release commit is still `origin/main` HEAD, so a `main` merge racing the ~10-min build can never move the canary backward. Skipped for `-test` tags.
-6. **Creates a GitHub Release** with an auto-generated changelog.
-7. **Fires the release notification webhook** via the `release-notify` inbound binding (HMAC-signed) *(operator-specific — the upstream setup uses it to log the release, clear `pending-release.json`, and kick off release-notes drafting; safe to leave unconfigured)*.
-8. **Chains pwa-views publish** — pushes a `pwa-views/vX.Y.Z` tag which triggers `publish-pwa-views.yml` to build and publish `@matty-v/kyber-pwa-views` to GitHub Packages. *(Automated — the build + Release must succeed first.)*
-9. **Resolves all 8 GHCR manifest digests once** (`resolve-digests`), then **opens AND auto-merges a deploy-repo bump PR per production cluster** on `matty-v/kyber-deploy` — a `matrix: cluster: [falcon]` as of 2026-08-13 (it has been `[falcon, gcp]` and `[falcon, razer]` at different times — gcp is parked, razer now pulls). *(Automated — falcon promotes automatically once the release is cut. The PR is opened for the audit trail, then squash-merged immediately.)* `fail-fast: false` keeps the legs atomic when there is more than one. Each leg emits `cluster-promoted` / `cluster-promote-failed` to the release-notification inbound so per-cluster progress shows up in chat without opening CI *(operator-specific)*.
-
-Steps 8 and 9 run in parallel after the GitHub Release is created. **The chart-version bump no longer runs here** — it now precedes the tag in `prepare-release.yml` (P1 above), which is what makes the canary's `git describe` resolve to the clean tag (kyber#591).
-
-**Where the human gate actually is:** it's **the operator's `release approve`, before the tag is cut** — not a second promotion step afterwards. Once the tag exists, both production clusters take the release automatically.
-
-> **Superseded:** GCP used to be manual-promote — an intentional second blast-radius checkpoint, where an operator copied the bump from falcon's PR into GCP's `values.yaml` by hand. In practice it just rotted: GCP sat on v1.0.0 while falcon tracked v1.7.x. kyber#449 folded GCP into the same matrix. To hold a cluster back now, pin its `environments/<cluster>/values.yaml` digests by hand and revert the bump PR — there is no hold workflow.
-
-**Why both Image Updater AND the bump PR:** Image Updater (faster, write-back to Application spec) is the immediate fast path. The bump PR (slower, git audit trail) lands the same value with an auditable diff. They produce the same value in steady state; the PR is for "what version was running on falcon last Tuesday" archaeology.
-
----
-
-## How the displayed version is derived
-
-The version users see — the `chartVersion` field of `GET /api/v1/version`, surfaced in the app nav menu, Settings → Diagnostics, and Holocron — is **baked into the control-plane image at build time** (kyber#482), exactly like the `sha` and `buildDate` fields. It is injected via `-ldflags "-X main.Version=…"` and read once at boot by `resolveDisplayVersion` (`cmd/control-plane/version.go`):
-
-- **Release images (`:vX.Y.Z`, run by falcon + gcp):** `release.yml`'s `meta` job sets `BUILD_VERSION` to the release tag with its leading `v` stripped — a bare `X.Y.Z`.
-- **Canary image (`:latest`, run by the canary cluster):** `build.yml`'s `push-control-plane` job sets `BUILD_VERSION` from `git describe --tags` (leading `v` stripped). **At a release commit this is the clean tag** — e.g. `2.2.0` — because the chart bump is folded into the tagged commit (kyber#591), so a build there describes to the bare tag. **For genuine dev commits past the release** it is `2.2.0-3-gabc1234`: the canary runs *ahead* of releases, and that `-N-gsha` suffix is the canary's honest commit offset past the last tag, not a bug. The canary picks up the clean release label immediately because `release.yml` refreshes the `:latest` tag to the release image at tag time (see step 5 in [Overview](#overview)); before kyber#591 the canary could sit indefinitely on a stale pre-tag describe (`2.1.1-7-gd64fbbd` after v2.2.0) because no canary build had run since the tag.
-- **Local / dev / preview builds (no ldflag):** `resolveDisplayVersion` falls back to the chart-rendered `/etc/kyber/chart-version` file (`readChartVersion`), or `""` if that isn't mounted (the PWA renders `—`).
-
-**Convergence timing (expected, bounded).** Because the version rides inside the image alongside `sha`, the displayed version converges **exactly when the new image rolls out — one deploy/sync cycle**, the same instant `sha` changes. There is no separate clock and no second source: a cluster can never sit in a steady state where `sha` reflects release `vX.Y.Z` but the displayed version still reads `X.Y.(Z-1)`. The only transient window is the image rollout itself (image pull + pod restart, typically a couple of minutes); once the new pod is `Ready`, the new version is live. "Deployed but version not yet updated" is therefore bounded to that rollout window, not an indefinite trailing state.
-
-This replaced the earlier chart-rendered derivation, which lagged by exactly one release: the image deploy (the ArgoCD sync trigger) always beat the ~15-min-gated chart-version bump merge to `main`, so each cluster re-rendered the version that was on `main` one release ago. The `Chart.yaml` `version`/`appVersion` advance is **retained for Helm/ArgoCD operator metadata only** (`helm list`, the ArgoCD UI) and is off the user-facing path — but since kyber#591 it happens **before** the tag (in `prepare-release.yml`, folded into the tagged commit), not in a separate post-tag PR. Cutting the tag on the bumped commit is also what makes the canary's `git describe` resolve to the clean tag.
-
-**`git describe` requires tags at build time.** The `:latest` (canary) version depends on `git describe --tags` resolving in CI, which requires the `push-control-plane` checkout to fetch tags (`fetch-depth: 0`). If a future change reverts that to a shallow checkout, `git describe` returns empty and the build **fails loudly** (by design) rather than silently falling back to the lagging chart version — a guard against re-introducing kyber#482 on the canary.
-
----
-
-## Cutting a release manually
-
-The normal path is driven by the release automation (per Overview above). The **preferred manual path** — also the right one when that automation is down or absent — is the same workflow it dispatches — run `prepare-release.yml` yourself, so the chart bump still lands inside the tagged commit (kyber#591):
+## Prepare the release
 
 ```bash
-gh workflow run prepare-release.yml -R matty-v/kyber -f version=1.2.3
+gh workflow run prepare-release.yml -R matty-v/kyber -f version=X.Y.Z
 ```
 
-This bumps `Chart.yaml` to `1.2.3`, auto-merges the bump PR, and pushes `v1.2.3` on the merged commit (which then triggers `release.yml`).
+Use bare numeric semver without `v` or a suffix. The workflow:
 
-**Raw tag push (last resort only — Actions outage, etc.).** If you must push the tag by hand, you are responsible for ensuring `Chart.yaml` `version`/`appVersion` is already at the release version **on the commit you tag** — otherwise the canary's `git describe` will resolve to a stale pre-tag string and `chartVersion` will be wrong on the canary (the exact kyber#591 bug). The CI guard `scripts/release-version-guard_test.sh` documents the invariant; it does not enforce it on a raw push.
+- Mints a fresh GitHub App token scoped to the repository.
+- Updates `deploy/helm/kyber/Chart.yaml` version and appVersion together.
+- Stamps the known version patterns in `README.md`, the product quickstart,
+  `docs/installation.md`, and `docs/installation-wsl2.md`.
+- Opens `chore/prepare-release-vX.Y.Z`, enables normal squash auto-merge, and
+  waits for required checks. If all stamped files already match, it skips the PR.
+- Fetches main, checks the chart version at that HEAD, and pushes annotated tag
+  `vX.Y.Z` there. Inspect any main commits that arrive during preparation: the
+  workflow tags the current main HEAD, not a separately supplied candidate SHA.
+
+Do not push a raw tag for a normal release. The preparation workflow ensures
+that the chart version is present in the tagged commit. Its version check does
+not make retries universally idempotent: an existing preparation branch or tag
+can still require investigation.
+
+## What release CI publishes
+
+`release.yml` runs on `v*.*.*` tag pushes. Its manual recovery entry point uses
+an existing tag as the ref:
 
 ```bash
-# Only after confirming deploy/helm/kyber/Chart.yaml is at 1.2.3 on this commit:
-git tag -a v1.2.3 -m "Release v1.2.3 — brief description"
-git push origin v1.2.3
+gh workflow run release.yml -R matty-v/kyber --ref vX.Y.Z
 ```
 
-The annotated tag message is used for the `[skip-publish]` opt-out check (see below). For a normal release, the message is free-form.
+Inspect a failed run before retrying. Prefer retrying failed jobs where possible;
+starting the entire workflow again can hit the immutable-image preflight after
+some images were already published.
 
----
+The workflow builds nine images at the release SHA as linux/amd64 and
+linux/arm64 manifest lists:
 
-## Tag immutability
+| Chart image key | GHCR image |
+|---|---|
+| `controlPlane` | `kyber-control-plane` |
+| `nodeAgent` | `kyber-node-agent` |
+| `statusSidecar` | `kyber-status-sidecar` |
+| `discordSidecar` | `kyber-mcp-discord` |
+| `telegramSidecar` | `kyber-mcp-telegram` |
+| `slackSidecar` | `kyber-mcp-slack` |
+| `agentBase` | `kyber-runtime-base` |
+| `claudeCode` | `kyber-claude-code` |
+| `codex` | `kyber-codex` |
 
-**Published semver tags are immutable.** Once `release.yml` has built and pushed the 8 kyber-* images at `vX.Y.Z`, that tag must never be re-pushed under a different digest. If a release is broken, cut a new patch (`vX.Y.(Z+1)`) — never re-publish the same tag.
+The Claude Code and Codex images depend on runtime-base. Before normal image
+builds, `preflight-check-tags` rejects any already-published target image tag.
+The GitHub Release requires every image build and the reusable A2A conformance
+workflow to pass. That conformance gate checks the pinned contract, official
+TCK, and independent-client evidence; see
+[the support matrix](../../conformance/a2a/1.0/SUPPORT.md).
 
-**Why:** kubelet's `IfNotPresent` cache keys on `(repo, tag)`. When a tag is deleted and re-pushed with a new digest, long-lived nodes that already pulled the original blob stay pinned to it forever — the cache entry never expires by itself, and ArgoCD's manifest-only sync check compares spec strings (which still match), so the drift is invisible. kyber#364 documents the failure mode: `kyber-falcon-node-agent` ran the `v1.2.0` digest under a `v1.3.3` spec for hours because the `v1.3.3` tag had been deleted and re-pushed at some point.
+After the GitHub Release:
 
-**Enforcement:** `release.yml` runs a `preflight-check-tags` job before any image build. For each of the 8 kyber-* images, it queries GHCR and fails the workflow if the target tag is already published. Re-push attempts get a fail-fast error with a pointer to this section. The guard is bypassed for `-test` tags so dev iteration can continue re-pushing.
+- `publish-chart` checks chart version parity, stamps all nine release image
+  tags into the packaged values, verifies Helm rendering, and publishes
+  `oci://ghcr.io/matty-v/charts/kyber` at `X.Y.Z`. The source values keep their
+  deliberate empty-image guards. An already-published chart version is skipped.
+- `publish-pwa-views-chain` can push `pwa-views/v<package-version>` using a fresh
+  App token. The version comes from `packages/pwa-views/package.json`, **not**
+  the Kyber release number. It only publishes a version newer than the registry
+  latest. Missing App credentials or `[skip-publish]` in the tag message skips
+  this optional chain. Normal main-branch package bumps already trigger
+  `auto-publish-pwa-views.yml`, so this step often has nothing to publish.
 
-**If you actually need to overwrite a release** (e.g., a leaked secret in the published artifact): yank both the GHCR tag and the GitHub Release manually, then cut the next patch. Don't try to re-occupy the same semver.
+The control-plane `:latest` refresh is a separate image-build-dependent job.
+It only moves the tag when the release commit still equals main HEAD and is
+not a test tag. Its success does not prove the GitHub Release, A2A gate, chart,
+or any cluster deployment succeeded.
 
----
+The GitHub Release body is initially generated from commit subjects since the
+previous stable Kyber tag, excluding package and prerelease tags. Replace that
+commit list with the reviewed operator-facing notes after publication.
 
-## Post-release manual checklist (operator-driven)
+There are no `resolve-digests`, `deploy-bump-pr`, post-tag chart-bump, or
+release-notification webhook jobs in the current workflow.
 
-These steps require cluster credentials and/or are intentionally gated on human review. Do them after CI confirms steps 7 and 8 above have completed.
+## Verify publication and installation separately
 
-- [ ] **M1.** The falcon bump PR now **auto-merges** (falcon promotes automatically on release). No merge action needed; just confirm it landed: the `matty-v/kyber-deploy` PR opened by step 8 should already be merged, with each image `tag@sha256:...` matching the GitHub release page (matty-v/kyber Releases → `vX.Y.Z` → image manifests). To roll falcon back, revert the bump commit on `main`.
-- [ ] **M2.** ArgoCD reconciles automatically once the PR merges; verify the kyber-falcon Application is `Synced + Healthy` (`argocd app get kyber-falcon` or check Holocron). NEVER `helm upgrade` directly — that would conflict with ArgoCD's reconciliation loop.
-- [ ] **M3.** Verify deployment: `kubectl logs` on a control-plane pod should show startup messages consistent with the new version (e.g., Redis store enabled, feature flags applied).
-- [ ] **M4.** (If you run a Holocron hub) confirm the cluster's Metrics tab panels populate within ~30 seconds.
-- [ ] **M5.** (Optional) Promote to GCP: copy the image tag values from the merged falcon bump PR into `environments/gcp/values.yaml` on `matty-v/kyber-deploy` and open + merge a separate PR. Apply via `kubectl apply -f environments/gcp/application.yaml` on the gcp cluster if the Application annotations also need to be refreshed (see kyber-deploy README "footgun" section).
+1. Confirm the preparation tag SHA, chart version/appVersion, and approved
+   changes agree. Check all required release jobs, including `publish-chart`.
+2. Confirm all nine image tags resolve for both architectures and the published
+   chart's image defaults name the release. A GitHub Release page alone is
+   insufficient evidence of chart publication.
+3. Apply the reviewed notes to the GitHub Release using a file, for example:
+   `gh release edit vX.Y.Z -R matty-v/kyber --notes-file <reviewed-notes.md>`.
+4. Check the independent pwa-views publish outcome when relevant; downstream
+   hosts need their package dependency updated before they consume the new UI.
+5. Report artifacts as published. Report a cluster as upgraded only after its
+   operator applies the release and its version/health checks pass.
 
----
+Self-updating Helm installations check for updates but apply only when requested
+through Settings → Updates or `POST /api/v1/updates/apply`. The supervised Job
+preflights, applies CRDs, performs the Helm upgrade, and verifies the rollout.
+Pinned image overrides prevent this path from safely selecting a coherent image
+set. See [upgrading](../upgrading.md) for guards, recovery, and rollback limits.
+For a GitOps-managed installation, change its declared release through that
+installation's GitOps process; do not run a competing Helm upgrade.
 
-## Security-config rollout (internal-auth cutover — kyber#578)
+## Immutability and test limitations
 
-A release that changes the internal-API auth posture (`internalAuth.graceMode`,
-or first delivery of the `kyber-internal-signing-key` Secret) is **not** a normal
-deploy — a missed key delivery on an enforce cutover fail-closes the whole
-internal API (the v2.1.0 fleet outage). It is **grace-first + key-gated**:
+Published semver tags and charts are immutable. Repair a broken release with a
+new patch version; never delete and reuse the same semver with different bytes.
+Kubelet image caching and existing Helm artifacts make such replacements unsafe.
 
-- A new internal-auth rollout defaults to **grace** (`graceMode: true`); enforce
-  is an **explicit, key-verified flip**, never an auto-flip.
-- Before applying, run the deploy gate — it **aborts a keyless enforce cutover**:
-  ```bash
-  scripts/preflight-internal-auth-key.sh <namespace> <graceMode:true|false>
-  # after apply, confirm the control plane enabled auth:
-  scripts/preflight-internal-auth-key.sh <namespace> <graceMode:true|false> \
-    --post-apply kyber-control-plane
-  ```
-- A keyless startup **pages** (`InternalAuthFailClosed` / `InternalAuthGraceNoKey`)
-  — respond by delivering the Secret + restarting the control plane.
+`[skip-publish]` only skips the pwa-views chain. It does **not** skip image
+builds, the GitHub Release, chart publication, or the guarded `:latest` refresh.
+It is not a docs-only or side-effect-free mode.
 
-Full procedure + alert response:
-[`internal-api-auth-rollout.md`](internal-api-auth-rollout.md). The per-cluster
-key-presence verification is also a step in **the deploy-review checklist**
-for any auth/signing-key rollout.
+Tags containing `-test` are **not a working end-to-end dry run**. They skip
+`preflight-check-tags`; image jobs require that job without an `always()`
+override, so the build/release/chart dependency chain is skipped too. Use local
+workflow/Helm checks and approved dev acceptance instead. Do not dispatch
+`prepare-release.yml` with a throwaway version on main to test it: it creates
+real branches, PRs, and tags.
 
----
+## Credentials and recovery
 
-## Opt-out: `[skip-publish]`
+| Credential | Current use |
+|---|---|
+| `GHCR_PAT` | image builds, chart registry login, npm registry checks |
+| `KYBER_APP_ID` + `KYBER_APP_PRIVATE_KEY` | fresh installation tokens for preparation PR/tag writes and optional pwa-views tag writes |
+| `GITHUB_TOKEN` | repository-local GitHub Release creation with workflow permissions |
 
-If a tag should **not** trigger steps 4 or 5 (e.g., a docs-only patch that doesn't change images or the PWA bundle), include `[skip-publish]` anywhere in the annotated tag message:
+The App must be installed on Kyber with contents and pull-request write access.
+A static `KYBER_APP_TOKEN` is not used by the current release chain. Never print
+or embed secret values in notes or troubleshooting output.
 
-```bash
-git tag -a v1.2.4 -m "[skip-publish] docs: fix typo in README"
-git push origin v1.2.4
-```
+- Preparation PR stalled: inspect its actual required checks and merge state.
+  Do not bypass branch protection.
+- Existing branch/tag: inspect the earlier preparation run before retrying.
+  Preserve a published tag and use a new version for changed artifacts.
+- Image preflight fails: determine which artifacts already exist and whether
+  this is partial publication; do not disable the immutability guard.
+- Chart publication fails: inspect version parity, all image pins, rendering,
+  and registry access. Images may already be published even if the chart failed.
+- PWA tag exists but package did not publish: inspect the tag workflow, then use
+  `auto-publish-pwa-views.yml`'s documented recovery dispatch on main.
+- A cluster still reports the old version: check whether an update was applied
+  there, then inspect the upgrade Job and rollout. Publication alone does not
+  start an update.
 
-The `publish-pwa-views-chain` and `deploy-bump-pr` jobs both check the tag message and skip entirely when `[skip-publish]` is present. *(The retired `chart-version-bump-pr` job honored this too; its replacement, `prepare-release.yml`, runs **before** the tag exists and is operator-dispatched, so `[skip-publish]` does not apply to it — bump `Chart.yaml` directly or skip running `prepare-release.yml` for a no-image patch.)*
-
----
-
-## Test releases (B5)
-
-To test the release chain without side effects, push a tag whose name contains `-test`:
-
-```bash
-git tag -a v0.0.0-test1 -m "Testing release chain"
-git push origin v0.0.0-test1
-```
-
-When `is_test=true` (tag name contains `-test`):
-- `publish-pwa-views-chain` logs what it *would* do but does not push the `pwa-views/v*` tag.
-- `deploy-bump-pr` shows the `environments/falcon/values.yaml` diff but does not commit, push, or open a PR.
-- The control-plane `:latest` refresh (step 5) is **skipped** — a test tag must never move the live canary tag.
-
-This exercises the full dependency graph (all build jobs must pass, `release` job runs, chain jobs run) without publishing to npm, filing a PR on kyber-deploy, or moving the canary `:latest` tag. *(The chart bump is no longer part of `release.yml` — to dry-run it, run `prepare-release.yml` against a throwaway version on a scratch branch; it opens a real PR, so prefer reviewing its logic over executing it on `main`.)*
-
----
-
-## Idempotency
-
-If `@matty-v/kyber-pwa-views@<version>` is already published on GitHub Packages (e.g., from a manual `publish-pwa-views.yml` run), `publish-pwa-views-chain` detects this via `npm view` and skips the tag push. Re-running the release or re-tagging will not double-publish.
-
----
-
-## Credentials / secrets surface
-
-| Secret | Used by | Scope |
-|---|---|---|
-| `GHCR_PAT` | All 5 build jobs + `publish-pwa-views-chain` (npm view check) | `packages:write` on `matty-v/*` |
-| `KYBER_APP_TOKEN` | `publish-pwa-views-chain` (tag push), `deploy-bump-pr` (gh pr create) | `contents:write` on `matty-v/kyber`; `contents:write` + `pull_requests:write` on `matty-v/kyber-deploy` |
-| `KYBER_APP_ID` + `KYBER_APP_PRIVATE_KEY` | `deploy-bump-pr` (mints a `kyber-deploy` token), `prepare-release.yml` (mints a `kyber` token for the pre-tag chart bump + tag push) | The App's installation must grant `contents:write` + `pull_requests:write` on **`matty-v/kyber`** for the chart-version bump + tag push (kyber#457 delivery gate) — and on `matty-v/kyber-deploy` for the image bump |
-| `LANDO_RELEASE_NOTIFY_URL` + `LANDO_RELEASE_HMAC` | `release` (release-notification webhook) | Webhook endpoint + HMAC key (optional — see step 7) |
-
-`KYBER_APP_TOKEN` is the identity used for cross-workflow-triggering operations: pushing the `pwa-views/v*` tag (must trigger `publish-pwa-views.yml` — GITHUB_TOKEN-driven pushes do NOT trigger other workflows) and opening the kyber-deploy bump PR. Currently provisioned as a personal access token with `repo` scope (covers `contents:write` on both `matty-v/kyber` and `matty-v/kyber-deploy`, plus `pull_requests:write` on kyber-deploy). A dedicated GitHub App (`kyber-app`) with scoped install permissions would be a cleaner long-term identity; the PAT works today.
-
----
-
-## Troubleshooting
-
-**`publish-pwa-views-chain` fails with 403 on tag push:** `KYBER_APP_TOKEN` is missing or lacks `contents:write` on `matty-v/kyber`. Re-provision with a PAT that has `repo` scope (or App install with `contents:write`).
-
-**`deploy-bump-pr` fails with 403 on `gh pr create`:** `KYBER_APP_TOKEN` is missing or lacks `contents:write` + `pull_requests:write` on `matty-v/kyber-deploy`. Same fix as above — PAT with `repo` scope covers both.
-
-**`deploy-bump-pr` fails: branch already exists:** A previous run's branch was not deleted. Delete `chore/bump-kyber-<tag>` from kyber-deploy and re-run the job.
-
-**`prepare-release.yml` fails on push/`gh pr create` (403/empty token):** the release GitHub App's installation on `matty-v/kyber` lacks `contents:write` + `pull_requests:write` (kyber#457 delivery gate). Grant the App those permissions on kyber, then re-run. The chart-bump PR uses `gh pr merge --auto` and waits for `main`'s required checks `[test, pwa-build, changes, integration]` — if `prepare-release.yml` times out waiting for the merge, check those checks rather than the workflow. To advance `chartVersion` manually meanwhile, bump `deploy/helm/kyber/Chart.yaml` `version`/`appVersion` to the release and merge a one-off PR (then push the tag on that commit).
-
-**`prepare-release.yml` aborts with "Chart.yaml at <sha> is '<x>', expected '<ver>'":** the commit it was about to tag does not carry the matching chart version — usually a `main` merge raced the bump merge. Re-run `prepare-release.yml` for the same version; it is idempotent and will re-bump if needed before tagging.
-
-**The canary reports a stale `vX.Y.Z-N-gSHA` after a release (the kyber#591 bug):** the `:latest` refresh in `release.yml` was skipped because the release commit was no longer `origin/main` HEAD (a `main` merge landed during the ~10-min build, so the guard correctly declined to move the canary backward). The canary will self-correct on the next `:latest` build from `build.yml`. To force it sooner, merge a no-op/real commit so a fresh `:latest` builds, or re-run the release at the new HEAD.
-
-**pwa-views tag pushed but `publish-pwa-views.yml` did not trigger:** The `KYBER_APP_TOKEN` was replaced with `GITHUB_TOKEN` — pushes via `GITHUB_TOKEN` do not trigger downstream workflows. Ensure `KYBER_APP_TOKEN` is set to a PAT or App token.
+A release changing internal signing-key or auth enforcement configuration must
+also follow [the internal-auth rollout procedure](internal-api-auth-rollout.md).

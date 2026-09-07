@@ -370,7 +370,7 @@ EOF
 
 Then substitute your own project ID and tailnet name.
 
-> **You do not pin image tags.** The published chart carries all eight image
+> **You do not pin image tags.** The published chart carries all nine image
 > tags, stamped at release time, so it installs pin-free. That is the difference
 > between the published chart and `deploy/helm/kyber` in the git tree: the git
 > chart deliberately ships empty tags and refuses to render until you supply

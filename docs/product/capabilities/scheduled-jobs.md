@@ -12,6 +12,8 @@ A job can also clear the agent's context once it finishes the turn that job star
 
 Exclusive and clearing are independent, and both are worth having on a job that pulls its own work: exclusive stops a second fire landing on an agent that is still working the first, and clearing keeps each fire's context to just that piece of work.
 
+Advanced job controls depend on healthy runtime capability evidence. Kyber rejects exclusive or clearing controls when the native integration needed to verify them is unavailable.
+
 ## Cron that persists
 
 For plain scripts, any cron job installed at the user or system level survives pod restarts and is picked up by a fresh daemon on the next boot. The supported surfaces are the standard ones:
@@ -31,7 +33,15 @@ Schedules get more interesting when agents cooperate. Agents send each other sig
 
 Put the two together and you get pipelines with no orchestrator to run: a scheduled job in one agent kicks off its work, and its result becomes the next prompt for the next running agent in the chain.
 
+## Durable tasks and A2A
+
+For work that needs a tracked outcome, Kyber also supports opt-in durable tasks with progress, results, cancellation requests, continuation, and replayable events. Accepted tasks are stored persistently; dispatch waits for an available agent and a verified runtime receipt. An uncertain delivery is reported explicitly instead of automatically replayed.
+
+Operators can configure outbound A2A peers on an agent and publish curated capabilities for authenticated callers. Kyber’s A2A 1.0 HTTP+JSON surface maps supported protocol operations to the durable task contract. Available features depend on the installation’s task storage, configured authorization, and runtime evidence; signed webhook handoffs remain a separate delivery option.
+
 ## Learn more
 
+- [Durable task architecture](../../architecture/durable-tasks.md): storage, delivery guarantees, results, and events.
+- [A2A support matrix](../../../conformance/a2a/1.0/SUPPORT.md): supported protocol operations and verification evidence.
 - [Scheduled jobs on agents](../../agents-scheduled-jobs.md): the cron surfaces, a worked example, and debugging.
 - [Configuring an agent's comms channels](../../agents-comms.md): the inbound rail handoffs travel on.

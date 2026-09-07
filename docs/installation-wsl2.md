@@ -247,7 +247,7 @@ helm show chart oci://ghcr.io/matty-v/charts/kyber --version 1.4.1 \
 helm show values oci://ghcr.io/matty-v/charts/kyber --version 1.4.1 \
   | grep -c 'tag: "v1.4.1"'
 ```
-Expected output: `name: kyber` and `version: 1.4.1`, then `8` — the eight container images the chart pins for you.
+Expected output: `name: kyber` and `version: 1.4.1`, then `9` — the nine container images the chart pins for you.
 
 **If it fails:** → § Troubleshooting / "published chart unreachable".
 
@@ -594,7 +594,7 @@ The second command is a dry run against the real chart. If it prints `renders OK
 
 ### 6.2 Install the chart
 
-**What this does:** Installs Kyber from the published Helm chart on GHCR. The chart carries all eight of its image tags, stamped at release time, so nothing has to be pinned by hand and no registry credentials are needed — the chart and every image pull anonymously.
+**What this does:** Installs Kyber from the published Helm chart on GHCR. The chart carries all nine of its image tags, stamped at release time, so nothing has to be pinned by hand and no registry credentials are needed — the chart and every image pull anonymously.
 
 **Preconditions:** § 6.1 complete.
 

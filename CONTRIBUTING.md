@@ -123,20 +123,24 @@ by external hosts via the published version. Two consequences:
 2. Publishing happens only when a `pwa-views/vX.Y.Z` tag is pushed (triggers
    `publish-pwa-views.yml`). Changes that only affect `apps/embedded-pwa` (the
    in-binary PWA) don't need the publish step — it consumes the local
-   workspace directly. External hosts keep consuming the stale published
-   version until the tag is pushed and their dependency is bumped; in May 2026
+   workspace directly. Main-branch version bumps automatically trigger the tag workflow when App
+   credentials are configured. External hosts consume the new version only
+   after publication and a dependency bump; in May 2026
    a UI tab went missing downstream (kyber#335) precisely because a PR changed
    `pwa-views` without a bump or tag.
 
 Maintainer publish checklist:
 
-```bash
-git checkout main && git pull        # after the PR merges
-git tag pwa-views/vX.Y.Z
-git push origin pwa-views/vX.Y.Z     # triggers publish-pwa-views.yml
-```
+1. Merge the version bump through normal checks.
+2. Confirm `auto-publish-pwa-views.yml` tags the new package version, then
+   confirm `publish-pwa-views.yml` builds, tests, and publishes it.
+3. For a failed automatic run, inspect its failure and use the auto-publish
+   workflow's manual dispatch on main to recover. Do not blindly recreate tags.
+4. Update the dependency in external hosts that pin the package.
 
-Then bump the dependency in any external host that pins the published package.
+The release workflow also chains publication when needed. Both paths require
+configured GitHub App credentials and skip versions that would move the registry
+latest backward. See [the publish boundary](docs/architecture/pwa-views-publish-boundary.md).
 
 ## Security issues
 

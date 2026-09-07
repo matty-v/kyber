@@ -1,13 +1,13 @@
 name: release
 
-# Fires on git tag push matching v*.*.*. Builds ALL 8 Kyber images from
+# Fires on git tag push matching v*.*.*. Builds ALL 9 Kyber images from
 # source at the tagged commit (full rebuild — not a manifest copy), pushes
 # them as :vX.Y.Z, then creates the GitHub Release.
 #
 # Why full rebuild instead of re-tagging :<sha> manifests: build.yml uses
 # path filters (per kyber CI cost optimization), so not every commit on
-# main has all 8 :<sha> manifests in GHCR. Releases need a coherent set
-# of 8 images at the tagged commit; that means rebuild-on-tag.
+# main has all 9 :<sha> manifests in GHCR. Releases need a coherent set
+# of 9 images at the tagged commit; that means rebuild-on-tag.
 #
 # Slower than the manifest-copy approach (~10 min per release vs ~1 min)
 # but releases are infrequent — a release is cut deliberately by Dave via
@@ -55,8 +55,8 @@ jobs:
       is_test: ${{ steps.chainmeta.outputs.is_test }}
       has_deploy_app: ${{ steps.opsecrets.outputs.has_deploy_app }}
     steps:
-      # Optional-integration detection: the post-release chain (pwa-views tag
-      # push, deploy-repo bump PRs) is maintainer infrastructure driven by a
+      # Optional-integration detection: the pwa-views tag push is maintainer
+      # infrastructure driven by a
       # GitHub App. Forks and fresh clones don't have those secrets — the
       # dependent jobs skip cleanly instead of failing the release. (Secrets
       # are not readable in job-level `if:`, hence this step-level output.)
@@ -64,7 +64,7 @@ jobs:
         run: |
           echo "has_deploy_app=${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
           if [ "${{ secrets.KYBER_APP_ID != '' && secrets.KYBER_APP_PRIVATE_KEY != '' }}" = "false" ]; then
-            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — the post-release chain jobs (pwa-views publish, deploy bump PRs) will be skipped. The GitHub Release and image pushes are unaffected."
+            echo "::notice::KYBER_APP_ID / KYBER_APP_PRIVATE_KEY not configured — the pwa-views publish chain will be skipped. The GitHub Release and image pushes are unaffected."
           fi
       - uses: actions/checkout@v7
         with:
@@ -92,10 +92,10 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      # Outputs for post-release chain jobs (B1 pwa-views publish + B2 deploy bump PR).
+      # Outputs for post-release chain jobs (pwa-views publication).
       # tag_message: annotated tag body, checked for [skip-publish] opt-out marker.
       # pwa_version: read from packages/pwa-views/package.json.
-      # is_test: true when tag contains "-test" — chain jobs dry-run instead of side-effecting.
+      # is_test: true when tag contains "-test"; skipped preflight blocks builds.
       - id: chainmeta
         env:
           TAG: ${{ steps.meta.outputs.tag }}
@@ -114,7 +114,7 @@ jobs:
           fi
 
   # --------------------------------------------------------------------
-  # preflight-check-tags: error fast if any of the 8 kyber-* images
+  # preflight-check-tags: error fast if any of the 9 kyber-* images
   # already has the target semver tag published on GHCR. Closes the
   # tag-mutability cache-poisoning class of bug (kyber#364) — a
   # re-pushed tag can leave long-lived nodes pinned to the old blob.
@@ -357,7 +357,7 @@ jobs:
       - name: Build changelog
         id: changelog
         run: |
-          PREV=$(git describe --tags --abbrev=0 "${{ needs.meta.outputs.tag }}^" 2>/dev/null || echo "")
+          PREV=$(git describe --tags --match 'v[0-9]*.[0-9]*.[0-9]*' --exclude '*-*' --abbrev=0 "${{ needs.meta.outputs.tag }}^" 2>/dev/null || echo "")
           if [ -n "$PREV" ]; then
             BODY=$(git log --pretty=format:"- %s (%h)" "${PREV}..${{ needs.meta.outputs.tag }}")
           else
@@ -475,8 +475,8 @@ jobs:
       # those values would override the new chart and the upgrade would rewrite
       # templates while leaving the old images running.
       #
-      # All eight, including the ones the source chart leaves empty on purpose
-      # (codex, discordSidecar, telegramSidecar). The release built those
+      # All nine, including the ones the source chart leaves empty on purpose
+      # (codex, discordSidecar, telegramSidecar, slackSidecar). The release built those
       # images, so the artifact should name them; they stay inert until an
       # agent actually enables that runtime or channel. An operator who wants
       # them off overrides the tag back to "" in their own values.
@@ -485,7 +485,7 @@ jobs:
       - name: Stamp release image tags into the chart
         run: |
           set -euo pipefail
-          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar; do
+          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar slackSidecar; do
             yq -i ".image.${c}.tag = \"v${KYBER_VERSION}\"" deploy/helm/kyber/values.yaml
           done
           echo "Stamped image tags:"
@@ -573,17 +573,7 @@ jobs:
           # move the registry's latest dist-tag BACKWARDS — which bump-holocron
           # would then auto-merge as a downgrade.
           LATEST="$(npm view @matty-v/kyber-pwa-views version 2>/dev/null || echo '')"
-          if [ -f scripts/pwa-views-should-tag.sh ]; then
-            DECISION="$(bash scripts/pwa-views-should-tag.sh "$PWA_VERSION" "$LATEST")"
-          else
-            # Release SHA predates the shared script — fall back to the old
-            # version-exact check.
-            if npm view "@matty-v/kyber-pwa-views@${PWA_VERSION}" version >/dev/null 2>&1; then
-              DECISION="skip: ${PWA_VERSION} already published"
-            else
-              DECISION="tag"
-            fi
-          fi
+          DECISION="$(bash scripts/pwa-views-should-tag.sh "$PWA_VERSION" "$LATEST")"
           echo "pwa=${PWA_VERSION} published-latest=${LATEST:-<none>} decision=${DECISION}"
           if [ "${DECISION%%[: ]*}" = "tag" ]; then
             echo "already=false" >> "$GITHUB_OUTPUT"
@@ -635,14 +625,6 @@ jobs:
             echo "::error::Failed to push ${PVT} — @matty-v/kyber-pwa-views@${PWA_VERSION} will NOT publish and consumers (holocron) will lag. Investigate the App token / push permission immediately." >&2
             exit 1
           fi
-
-      - name: Test mode — tag push skipped
-        if: needs.meta.outputs.is_test == 'true'
-        env:
-          PWA_VERSION: ${{ needs.meta.outputs.pwa_version }}
-          RELEASE_TAG: ${{ needs.meta.outputs.tag }}
-        run: |
-          echo "Test release ${RELEASE_TAG}: not pushing pwa-views/v${PWA_VERSION}."
 
   # --------------------------------------------------------------------
   # B2a/B2b (resolve-digests + deploy-bump-pr) REMOVED 2026-08-13.

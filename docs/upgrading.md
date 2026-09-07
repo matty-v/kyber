@@ -46,21 +46,17 @@ layer into it. The old upper layer is left in place, so
 
 ## Two delivery models
 
-A cluster gets a new version by exactly one of two routes, and which one applies
-is a property of **how the cluster was deployed**, not a setting:
+Choose one update owner per installation:
 
-| | **Push** (repo-driven) | **Pull** (self-updating) |
+| | GitOps-managed | Self-updating Helm |
 |---|---|---|
-| Who decides | A release, automatically | **An operator, per cluster** |
-| Mechanism | `deploy-bump-pr` writes pinned digests → ArgoCD syncs | Control plane runs `helm upgrade` on itself |
-| Image versions | Pinned in the deploy repo's `values.yaml` | **Carried by the chart version** |
-| Clusters today | `kyber-falcon` | `kyber-razer` (since 2026-08-13) |
+| Who decides | Operator changes the declared chart version | Operator selects Install in Kyber |
+| Mechanism | The installation's GitOps controller reconciles its declaration | Kyber runs a supervised upgrade Job |
+| Image versions | Prefer the coherent release chart defaults | Carried by the released chart |
 
-The rest of this section documents the **pull** model — what actually happens when
-an operator clicks *Install* in the Kyber UI. The push model is documented under
-[Release lanes](#release-lanes) below.
-
----
+Current release CI publishes artifacts; it does not open deployment PRs or
+install on any cluster. Do not run Kyber self-upgrades against a GitOps-managed
+release, because its controller can revert the change.
 
 ## Upgrading from the Kyber UI
 
@@ -220,36 +216,14 @@ that decides what runs.
 
 ## Release lanes
 
-> **Superseded model — read this if you remember the old one.** Kyber used to run
-> a `latest`/`stable` two-track scheme: a `stable` branch, `:stable` image tags,
-> and a `promote-stable.yml` workflow. **None of that exists anymore.** There is no
-> `stable` branch, no `:stable` tag, and no promote workflow. Release promotion is
-> now semver-tag driven (kyber#591, kyber#449). If you find a doc or script still
-> referencing them, it is stale — fix it.
+Stable releases are versioned chart and image artifacts (`X.Y.Z` / `vX.Y.Z`).
+Main-branch builds use SHA and `latest` tags for development. No `stable` image
+tag or `promote-stable` workflow exists. A development deployment is acceptance
+evidence only for the SHA it actually runs; check its version before testing.
 
-> **Also superseded (2026-08-10): the canary lane.** `kyber-razer` (called
-> `kyber-laptop` in older docs) tracked `:latest` and ran head-of-main
-> continuously. It moved to the gated release lane
-> (kyber#39 / kyber-deploy#139), and `sync-razer-latest.yml` — the */30 cron that
-> chased `:latest` digests — is **deleted**. **As of 2026-08-13 it has moved again**,
-> off ArgoCD entirely and onto the pull model documented above. `kyber-gcp` is parked with its VM
-> terminated and is **out of the release matrix**. There is currently **no cluster
-> running head-of-main**; a replacement canary is planned.
-
-Every environment runs a **released chart** and **released images**:
-
-| Lane | Chart source | Image pins | Used by | Advances when |
-|---|---|---|---|---|
-| **release (push)** | chart version `X.Y.Z` | `vX.Y.Z@sha256:…` | `kyber-falcon` | a semver tag is cut |
-| **release (pull)** | chart version `X.Y.Z` | none — the chart version carries them | `kyber-razer` | **an operator installs it** |
-| *(parked)* | — | frozen at last release | `kyber-gcp` | not advanced — VM terminated |
-
-Advanced by `release.yml`, which opens and auto-merges a digest-pinned bump PR
-against kyber-deploy for each cluster in the matrix. The full merge-to-release
-sequence (release proposal → operator approval → `prepare-release.yml` cuts the
-tag → `release.yml` builds and promotes) is documented in
-[`operator/release-runbook.md`](operator/release-runbook.md) — that doc is the
-authority on the release pipeline; this one covers what an operator does around it.
+The [release runbook](operator/release-runbook.md) owns preparation, approval,
+publishing, and verification. Cluster inventory belongs to the operator's
+installation configuration, not this runbook.
 
 ### The chart is a versioned artifact
 
@@ -283,7 +257,7 @@ Consequences to know:
   half-works and fails later somewhere else. The self-upgrade path below does
   this step for you and refuses to continue if it fails.
 - **The published chart carries its own image tags.** `release.yml` stamps the
-  release version into all eight `image.*.tag` values before packaging, so the
+  release version into all nine `image.*.tag` values before packaging, so the
   artifact installs as-is. The chart *source* still requires tags explicitly and
   refuses to guess from `Chart.AppVersion` (kyber#358/#457) — that guard is for
   people rendering from this repo, and it is why a bare `helm template
@@ -295,72 +269,21 @@ Consequences to know:
 
 ## Release flow
 
-Kyber uses GitOps via ArgoCD. No manual `helm upgrade` is required for normal code changes.
+Merge verified changes, approve the version and notes, then dispatch
+`prepare-release.yml`. It merges chart/install-doc version updates and tags
+main. `release.yml` builds nine images, gates release creation on A2A conformance,
+and publishes the versioned Helm chart. Package publication is independently
+versioned. An operator then installs the chosen release per cluster.
 
-```
-feature branch → PR → test workflow green → merge to main
-                                              │
-                                              ▼
-                           build.yml builds + pushes images to GHCR
-                           (ghcr.io/matty-v/kyber-*:latest + :<sha>)
-                                              │
-                                              ▼
-                    a release is proposed to the operator
-                                         │
-                                         ▼  (operator: "release approve")
-                    prepare-release.yml — folds the Chart.yaml
-                    version bump into the commit, pushes tag vX.Y.Z
-                                         │
-                                         ▼
-                    release.yml — rebuilds all 8 images at :vX.Y.Z,
-                    cuts the GitHub Release, publishes pwa-views,
-                    publishes the chart to oci://…/charts/kyber:X.Y.Z
-                                         │
-                                         ▼
-                    deploy-bump-pr matrix [falcon] — digest-pinned
-                    bump PR on kyber-deploy, auto-merged
-                                         │
-                                         ▼
-                    ArgoCD syncs falcon to vX.Y.Z
+There is no release-time `deploy-bump-pr` matrix and no automatic promotion to
+falcon or any other installation.
 
-                    (razer is NOT here — it pulls; see above)
-```
+## GitOps installation procedure
 
-> No cluster sits between "merge to main" and "cut a tag" today. The canary that
-> used to smoke-test the merge SHA was retired on 2026-08-10; until a replacement
-> is stood up, a release is proposed off CI signal alone.
-
-**CI does not deploy.** The `build.yml` workflow (`.github/workflows/build.yml`) only builds and pushes images. The deploy job was removed in commit `0a1958b` by design: CI builds, ArgoCD deploys.
-
-The Helm chart (`deploy/helm/kyber/`) is the contract ArgoCD renders. Per-environment values and Application manifests live in [matty-v/kyber-deploy](https://github.com/matty-v/kyber-deploy).
-
-## Promoting a release to falcon
-
-Promotion is **automatic for every cluster in the matrix** once a tag is cut —
-`release.yml`'s `deploy-bump-pr` job runs a `matrix: cluster: [falcon]`, and
-each leg opens and squash-merges a digest-pinned bump PR against kyber-deploy.
-**razer is deliberately not in the matrix**: it pulls its own updates, so a tag
-publishes a chart it can be told to install rather than pushing one at it.
-`fail-fast: false` keeps the legs independent, so one cluster failing doesn't
-strand the other. Per-cluster `cluster-promoted` / `cluster-promote-failed` signals
-can be sent to an inbound webhook (e.g. a release-automation agent) so progress
-shows up in chat without opening CI — optional, operator-specific wiring.
-
-GCP was manual-promote for a while — an intentional blast-radius gate — but it
-drifted to v1.0.0 while falcon tracked v1.7.x, so kyber#449 folded it into the
-same matrix. It was then dropped from the matrix entirely on 2026-08-10: the VM is
-terminated, so every release was auto-merging a bump PR against a cluster that
-could not sync it. `environments/gcp/` stays in kyber-deploy and stays valid,
-frozen at its last release; re-bootstrapping gcp means adding it back to the
-matrix. razer took its place there when it left the canary lane.
-
-The human gate is **the operator's `release approve`** before the tag is cut, not
-a second promotion step afterwards.
-
-To hold a cluster back, pin its `environments/<cluster>/values.yaml` digests by
-hand and revert the bump PR — there is no promote/hold workflow.
-
-The remainder of this doc applies to every lane unless explicitly called out — the post-merge verification steps and rolling-restart procedures are the same.
+The numbered steps below apply only to installations already managed by ArgoCD.
+Create the chart-version change in that installation's deployment repository;
+release CI does not create it. For self-updating Helm installations, use the
+UI procedure above instead.
 
 ## 1. Verify CI is green on `main`
 
@@ -532,6 +455,12 @@ want it.
 
 ## Rolling back
 
+For self-updating installations, inspect the upgrade Job’s recorded rollback
+outcome. Helm rollback does not restore database contents, CRDs, or agent disks.
+Review schema compatibility and backups before a deliberate downgrade; do not
+introduce image pins into a self-updating installation.
+
+For GitOps installations, revert the declared release in the deployment repo.
 ArgoCD tracks history. Roll back via the UI (Application → History → select a previous revision → Rollback), or via the CLI:
 
 ```bash
@@ -558,11 +487,17 @@ kubectl -n kyber-system exec -i deploy/${CLUSTER}-postgres -- \
   < ~/kyber-backups/kyber-<timestamp>.sql
 ```
 
-Restoring the database will lose any session briefs written since the snapshot. Agents in the middle of a restart may boot with a stale brief — they'll log the inconsistency via the `shutdown_type` field and continue.
+Restoring the database loses newer session briefs, skill reports, and durable
+task state/results/events. Coordinate task object storage and in-flight work
+with the snapshot; a database restore is not a harmless application rollback. Agents in the middle of a restart may boot with a stale brief — they'll log the inconsistency via the `shutdown_type` field and continue.
 
 ## Rolling agent pods to a new agent image
 
-Kyber's GitOps flow rolls the **control plane** and **node-agent** pods to new images automatically. It does **not** roll existing agent pods — those are created by the controller from the Agent CRD, and each pod pins whatever image tag the controller was using when the pod was created.
+The installation upgrade rolls the control-plane and node-agent workloads.
+Agent pods are controller-owned. Runtime and sidecar convergence use readiness,
+activity, canary, and concurrency guards before requesting lifecycle restarts.
+Inspect Agent conditions and events for a held rollout; an explicit restart
+applies the configured images immediately through the normal lifecycle.
 
 So when a change lands that affects the `claude-code` image (new plugins, new boot-script behavior, a new binary like `kyber-token-reporter`, new default env vars, etc.), existing agents keep running the old image until restarted. New agents created after the upgrade get the new image automatically.
 
@@ -593,7 +528,7 @@ The restart:
 1. Tells the controller to delete the current pod
 2. Controller reconciles, spawns a fresh pod using the current image tag
 3. The new pod pulls the latest `claude-code` image (or whatever tag the controller has configured)
-4. `start-claude.sh` boots, keychain credentials + whole-disk overlay restore the session state
+4. the selected runtime boots into its persistent chroot and applies its configured session-resume behavior
 5. Agent returns to Running
 
 Expected downtime per agent: 30-90 seconds depending on image cache state.
@@ -618,18 +553,17 @@ Stagger restarts by a few seconds so the cluster's image pull quota isn't hammer
 
 ## CRD migrations
 
-Kyber CRDs live in `deploy/helm/kyber/crds/` (not under `templates/`). ArgoCD applies CRDs via `ServerSideApply=true` on every sync — no manual `kubectl apply -f crds/` step is needed.
+Kyber CRDs are generated under `deploy/helm/kyber/crds/`. Edit Go type markers
+in `pkg/api/v1/` and run `make generate`; never hand-edit generated manifests.
 
-**Adding a new CRD:** add the YAML to `deploy/helm/kyber/crds/`. ArgoCD will apply it on next sync.
+Helm installs CRDs initially but does not update them during a plain upgrade.
+Kyber's self-upgrade Job applies the chosen chart's CRDs before Helm. A manual
+upgrade must do the same; a GitOps installation must configure CRD reconciliation.
+Merging main alone does not apply a schema to a released installation.
 
-**Adding a new field to an existing CRD (additive):** safe. The new field is `omitempty`, so old objects continue to validate. `make generate` regenerates `deploy/helm/kyber/crds/kyber.io_agents.yaml` and `kyber.io_machines.yaml`. Merge to main; ArgoCD picks it up automatically.
-
-**Removing or renaming a field:** do not do this as part of a normal upgrade. Plan a migration:
-
-1. Deploy a version that reads both the old and new fields
-2. Backfill the data (manual or via a one-shot job)
-3. Deploy a version that stops writing the old field
-4. After all objects are migrated, deploy a version that drops the old field
+Review compatibility for new required fields, validation changes, removals, and
+stored objects. An optional additive field still needs the newer CRD before a
+client can persist it. Rollback does not automatically undo schema changes.
 
 ## Image publishing
 
@@ -647,6 +581,7 @@ ghcr.io/matty-v/kyber-node-agent:<sha>      + :latest
 ghcr.io/matty-v/kyber-status-sidecar:<sha>  + :latest
 ghcr.io/matty-v/kyber-mcp-discord:<sha>     + :latest
 ghcr.io/matty-v/kyber-mcp-telegram:<sha>    + :latest
+ghcr.io/matty-v/kyber-mcp-slack:<sha>       + :latest
 ghcr.io/matty-v/kyber-runtime-base:<sha>    + :latest
 ghcr.io/matty-v/kyber-claude-code:<sha>     + :latest   (FROM kyber-runtime-base)
 ghcr.io/matty-v/kyber-codex:<sha>           + :latest   (FROM kyber-runtime-base)
@@ -679,11 +614,15 @@ Before the first ArgoCD sync, the images must already be in GHCR. The install do
 
 ## Database schema changes
 
-Kyber uses a trivial Postgres schema (`session_briefs` table — a single JSON blob per agent). Schema evolution is handled in `pkg/briefstore/postgres.go` via the `Migrate()` method, which runs `CREATE TABLE IF NOT EXISTS` at control-plane startup.
+PostgreSQL now stores session briefs, skill reports, and durable task state,
+dispatch intents, progress/results, and events. Startup migrations are owned by
+`pkg/briefstore`, `pkg/skillstore`, and `pkg/taskstore`; inspect all affected
+migrations when preparing a release. Durable tasks require PostgreSQL rather
+than a production in-memory fallback.
 
-For **additive changes** (new columns): add them to `Migrate()` as `ALTER TABLE ADD COLUMN IF NOT EXISTS`. Safe to run on every startup.
-
-For **destructive changes** (dropping columns, changing types): write a one-shot migration job as a Helm `post-upgrade` hook, or run the SQL manually via `kubectl exec`. Do not put destructive migrations in `Migrate()` — that runs on every pod restart.
+Back up before an incompatible migration. Review forward/backward compatibility,
+transaction boundaries, task-object consistency, and recovery explicitly; a
+Helm rollback does not restore PostgreSQL or private object storage.
 
 ## Upgrading Terraform infrastructure
 
@@ -808,6 +747,10 @@ The normal delete flow (delete individual Machine CRs while the namespace stays 
 
 ## Downgrading to a specific version
 
+The image-pin example below is only for GitOps-managed installations. For a
+self-updating installation, use a reviewed chart/Helm rollback procedure and
+check schema compatibility; image overrides block future Kyber self-upgrades.
+
 Pin a specific SHA in `environments/${ENV}/values.yaml` in kyber-deploy:
 
 ```yaml
@@ -829,6 +772,8 @@ image:
     tag: "<older-tag-or-sha>"
   discordSidecar:
     tag: "<older-tag-or-sha>"
+  slackSidecar:
+    tag: "<older-tag-or-sha>"
 ```
 
 Commit and push. ArgoCD syncs automatically.
@@ -838,7 +783,7 @@ Two cautions:
 - **Verify the images actually exist at that reference first.** `build.yml` uses
   path filters, so not every commit SHA has every image. Downgrading to a
   **semver tag** (`vX.Y.Z@sha256:…`) is safer — `release.yml` guarantees a coherent
-  set of all 8 at a tag.
+  set of all 9 at a tag.
 - **(Retired 2026-08-10)** A hand-edited runtime-image pin on the canary cluster used to be
   overwritten within 30 minutes by `sync-razer-latest.yml`, so a downgrade silently reverted
   unless you disabled that workflow first. The cron is deleted and no cluster chases `:latest`,

@@ -15,11 +15,12 @@ There are two model levers, and they source differently:
   any agent with no explicit `spec.model`) inherit. Agent creation has no
   model picker: a new agent starts on the fleet default.
 
-The detection poller (`runtimeDetect`, fed by the `kyber-anthropic-key`
-Secret / `PUT /api/v1/settings/anthropic-key`) still matters, but for
-**context windows and harness-version pickers** (`GET /api/v1/available`),
-not for the per-agent model dropdown — see
-`docs/architecture/model-onboarding.md`.
+The public detection poller currently discovers npm harness versions only.
+Production model discovery uses each agent’s authenticated catalog; saving a
+platform Anthropic key does not enable a separate global Models API poll. See
+[runtime discovery](../runtime-detection.md). The legacy override/fallback
+instructions below concern Claude’s launch context-window resolution, not the
+per-agent catalog’s authoritative evidence.
 
 ## I want a new model in the picker
 
@@ -160,7 +161,7 @@ explicitly before bumping the default.
 | Condition | What you see |
 |---|---|
 | Agent runtime hasn't reported a catalog yet | Set Model dialog says no authenticated catalog is available (the models endpoint returns `409`). Wait for the agent to boot and report, then reopen the dialog. |
-| Anthropic API key not entered | The Set Model dropdown is unaffected (it reads the agent's catalog). Context-window *detection* is off, so windows for models the catalog doesn't cover fall back to the override map. |
+| Platform Anthropic key not entered | Per-agent discovery is unaffected; authenticate the agent and inspect its own catalog report. |
 | Detection upstream down | `/available` serves last-good cache; version pickers and detected windows are stale, not broken. The per-agent model catalog is unaffected. |
 | Model window in neither catalog, override map, nor detection | "context unknown" indicator; budget card under-reports; `[1m]` not applied. Fix by editing the ConfigMap. |
 | API-set model not recognized by installed CC | Boot fails; the `ModelUnsupported` badge lights up; apply a newer CC version (see `adopting-cc-version.md`). |

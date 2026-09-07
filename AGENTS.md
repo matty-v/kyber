@@ -14,9 +14,9 @@ editing them.
 
 Kyber runs long-lived Claude Code and Codex agents as Kubernetes pods with
 whole-disk persistence, declared via CRDs and reconciled by a Go control plane.
-Deployed via Helm + ArgoCD from a separate private deploy repo (referred to as
-"the deploy repo" / `kyber-deploy` below: ArgoCD Applications + per-environment
-values).
+Installed from a versioned Helm chart. Standalone installations update through
+Kyber’s supervised Helm workflow; GitOps installations use their own deployment
+repository and controller. Never let both mechanisms own the same release.
 
 ---
 
@@ -43,7 +43,7 @@ manifests with `make generate` — NEVER hand-edit `deploy/helm/kyber/crds/`.
 - Deletion is OUT-OF-BAND: `handleDeletion()` in the reconciler, driven by
   `DeletionTimestamp` — it does not go through the state machine.
 
-WHY: lifecycle logic (12 phases: Creating, Starting, Running,
+WHY: lifecycle logic (14 phases: Creating, Starting, Running,
 NeedsAuth, MemoryExhausted, Failed, Draining, WaitingForMachine, …) is the
 highest-blast-radius code in the repo; the pure split makes every transition
 testable without a cluster. Authoritative transition table:
@@ -348,8 +348,9 @@ Other binaries: `cmd/node-agent` (DaemonSet, node metrics + machine actions),
 token-usage events), `cmd/transcript-compact`, `cmd/fetch-provider-rates`
 (generates `deploy/helm/kyber/files/provider-rates.generated.{yaml,meta}`).
 
-Backing stores: k8s API (state), Redis (events/token budgets/metrics), Postgres
-(session briefs/fleet metadata). All have in-memory fallbacks (used by devenv).
+Backing stores: k8s API (resource state), Redis (events/token budgets/metrics),
+Postgres (session briefs, skills, durable tasks). Briefs and telemetry have
+in-memory fallbacks; production durable tasks require PostgreSQL and fail closed.
 
 ---
 
@@ -401,10 +402,14 @@ debug/replay/rotation surfaces are `pkg/api/routes_inbound_{debug,replay,...}.go
 
 ### Build → deploy (code → cluster)
 Push to `main` → `.github/workflows/build.yml` (path-filtered, per-image jobs)
-→ GHCR `:latest` + `:<sha>` → ArgoCD Image Updater rolls dev/canary clusters.
-Releases: push tag `vX.Y.Z` → `release.yml` rebuilds all release images at the tag,
-opens digest-pinned bump PRs on kyber-deploy (falcon + gcp matrix) + an
-auto-merged `Chart.yaml` bump PR on main. CI never deploys; ArgoCD does.
+→ GHCR `:latest` + `:<sha>` for explicitly configured development consumers.
+Releases: dispatch `prepare-release.yml` with the approved version. It merges
+chart/install-doc version updates before tagging. `release.yml` builds nine
+images, gates the GitHub Release on A2A conformance, publishes the OCI chart,
+and optionally tags the independently versioned pwa-views package. Chart
+packaging must stamp every built image, including `slackSidecar`. There are no
+release-time deploy-repo bump jobs; installation updates require an operator
+apply through the updates API. See `docs/operator/release-runbook.md`.
 Displayed version is BUILD-INJECTED via `-ldflags "-X main.Version=…"`
 (`cmd/control-plane/version.go`), not chart-rendered (kyber#482).
 
@@ -440,7 +445,8 @@ Cross-cutting:
 - Helm namespace: always `{{ include "kyber.namespace" . }}`, never
   `{{ .Values.namespace.name }}` (past prod incident).
 - One consolidated PR per logical change set (CI is expensive). `main`
-  requires PRs; never bypass CI; deploy only via ArgoCD.
+  requires PRs; never bypass CI; use the target installation’s declared update
+  mechanism (GitOps or supervised Helm), never a competing manual deploy.
 
 ---
 
@@ -508,12 +514,10 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
     (named Claude Code + blank Codex registration are deliberate);
     `helm template` requiring explicit image tags (kyber#358 — no AppVersion
     fallback, intentional fail-loud).
-13. **User namespaces can break whole-disk package installs.** In local k3d,
-    `hostUsers:false` prevents opening `/dev/fuse` (`EPERM`), forcing kernel
-    overlayfs; dpkg directory replacement can then fail with `EXDEV` (verified
-    with `figlet`). Keep `agent.security.userNamespaces` opt-in until the target
-    validates FUSE plus representative apt installs. Do not make it default-on
-    without changing the persistence/runtime boundary.
+13. **Whole-disk persistence uses chroot, not overlayfs.** User namespaces
+    are enabled by default. Keep Kubernetes/runtime compatibility requirements
+    and the `agent.security.*` break-glass controls aligned with the chart.
+    The old overlay mode exists only as an explicit rollback option.
 14. **Empty fleet model defaults are intentional.** They mean "let the runtime
     choose its default model," while the fresh harness-version default is the
     literal `latest`. The live ConfigMap wins for all four runtime-scoped keys
@@ -687,9 +691,10 @@ If docs/contributing/code-quality.md's table and `test.yml` disagree, the workfl
 ### E. PWA change
 1. Shared views/hooks/types: `packages/pwa-views/src/`; embedded-app-only glue:
    `apps/embedded-pwa/`. pwa-views diff ⇒ version bump (CI-enforced).
-2. Reaching Holocron requires the publish tag flow — `CONTRIBUTING.md`
-   checklist (merge, then `git tag pwa-views/vX.Y.Z && git push origin <tag>`,
-   then a Holocron dep-bump PR).
+2. Reaching Holocron requires successful package publication and a host
+   dependency bump. Main-branch version changes trigger auto-publish; inspect
+   both auto-publish and tag-publish runs before using the recovery dispatch.
+   See `CONTRIBUTING.md` and the publish-boundary architecture document.
 3. Verify in a browser (`make pwa-dev` or devenv), not just type-check.
 
 ### F. Add a new runtime type

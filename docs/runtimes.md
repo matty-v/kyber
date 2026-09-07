@@ -28,8 +28,9 @@ the native login using `codex login --with-api-key` over stdin. Subscription
 login is bypassed entirely. Auth mode is fixed at creation time; recreate the
 agent to switch modes.
 
-Codex V1 models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Sol is
-the default. Kyber runs Codex with non-interactive approvals and its unrestricted
+Available models come from the agent’s authenticated runtime catalog. An empty
+model setting lets the harness select its native default; the reported current
+model is observation, not a persistent pin. Kyber runs Codex with non-interactive approvals and its unrestricted
 sandbox because the Kubernetes pod is the agent's host-isolation boundary.
 Agent containers are de-privileged by default, run in a Linux user namespace so
 in-pod root maps to an unprivileged host uid, retain only the mount capability
@@ -41,7 +42,7 @@ startup update check is disabled because Kyber centrally manages the pinned
 harness: use **Set harness version** in the agent action menu to upgrade or
 downgrade explicitly.
 
-## Telegram and Discord
+## Telegram, Discord, and Slack
 
 Telegram and Discord may be enabled in the Create Agent wizard for either
 runtime. The runtime-neutral `kyber-mcp-telegram` sidecar long-polls the Telegram Bot
@@ -53,6 +54,10 @@ the bot token. No public inbound tunnel is required.
 Claude Code's former in-process Telegram plugin is retired. Discord uses its
 gateway-backed `kyber-mcp-discord` sidecar for either runtime. See
 [`agents-comms.md`](agents-comms.md#telegram) for Telegram setup and features.
+
+Slack uses a Socket Mode sidecar and supports text/thread replies through
+`kyber-slack`. Configure it through Comms and restart the pod to apply changes;
+see [channel configuration](agents-comms.md#slack).
 
 ## Runtime implementation
 

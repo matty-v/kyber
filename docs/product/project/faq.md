@@ -28,11 +28,11 @@ Inside its own pod an agent is deliberately unrestricted: root, packages, servic
 
 ## What happens when a machine is restarted or reclaimed?
 
-The agent keeps its whole filesystem: installed packages, cloned repos, credentials, and memory all survive restarts, upgrades, and preemption. When a spot machine is reclaimed, Kyber parks the agent and brings it back once a replacement machine is ready. See [agents and persistence](../capabilities/agents-and-persistence.md).
+The agent keeps its filesystem across pod restarts and upgrades. Recovery after node loss requires portable storage; node-local storage cannot follow the agent onto a replacement machine. When a spot machine is reclaimed, Kyber parks the agent and brings it back once a replacement machine is ready. See [agents and persistence](../capabilities/agents-and-persistence.md).
 
 ## Do I need a terminal to manage the fleet?
 
-No. You can manage agents from the web console, the API, or two-way Telegram and Discord chat on your phone. See [chat channels](../capabilities/chat-channels.md) and the [fleet console](../capabilities/fleet-console.md).
+No. You can manage agents from the web console, the API, or two-way Telegram, Discord, and Slack chat on your phone. See [chat channels](../capabilities/chat-channels.md) and the [fleet console](../capabilities/fleet-console.md).
 
 ## How do I get updates?
 

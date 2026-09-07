@@ -5,11 +5,12 @@
 > created and Discord could only be set up with `kubectl`.
 
 An agent's *comms channels* are the ways a human reaches it and it answers
-back. Kyber supports two:
+back. Kyber supports three:
 
 | Channel | Direction | What it needs |
 | --- | --- | --- |
 | **Telegram** | two-way | a bot token and numeric user allowlist |
+| **Slack** | two-way text | a Socket Mode app token, bot token, user and channel allowlists, and a running pod |
 | **Discord** | two-way | a bot, an allowlist, and a running pod — see [agents-discord-two-way.md](agents-discord-two-way.md) |
 
 The older **outbound-only Discord webhook** (`spec.secrets.discordEnabled`) is
@@ -26,7 +27,7 @@ PUT    /api/v1/agents/{name}/comms/{channel}    configure (idempotent)
 DELETE /api/v1/agents/{name}/comms/{channel}    disable and clean up
 ```
 
-`{channel}` is `telegram` or `discord`. `PUT` is idempotent because a channel
+`{channel}` is `telegram`, `discord`, or `slack`. `PUT` is idempotent because a channel
 is a singleton per agent — configure and update are the same call, so a
 retried request is harmless.
 
@@ -183,6 +184,44 @@ The `reply` tool also accepts files under `/persist`, and
 `edit_message` updates bot-authored text and `react` adds or removes the bot's
 emoji reaction; both enforce the configured channel scope.
 
+## Slack
+
+Configure Slack in the agent's Comms section or with `PUT .../comms/slack`:
+
+```json
+{
+  "botToken": "<Slack bot token>",
+  "appToken": "<Slack Socket Mode app token>",
+  "allowedUserIds": ["U123ABC"],
+  "allowedChannelIds": ["C123ABC"]
+}
+```
+
+The API requires both tokens on first configuration and non-empty user and
+channel allowlists on every save. Omitted tokens reuse stored values. `GET`
+returns `botTokenSet` and `appTokenSet`, never the tokens. `action` can customize
+the inbound instruction; omitting it on an update preserves the existing text.
+The Secret is `<agent>-slack`; configuration sets `spec.secrets.slackEnabled`
+and manages the signed `slack` inbound binding. Deleting configuration removes
+the binding and Secret.
+
+The runtime-neutral `kyber-mcp-slack` sidecar connects through Socket Mode;
+both runtimes register its loopback `kyber-slack` MCP endpoint (port 14008).
+The runtime never receives the Slack tokens. The current tool surface is only
+`reply(channel_id, text, thread_ts?)`. Replies require an allowed channel.
+Inbound message text includes user/channel/message IDs and `thread_id`; use
+that thread value for `thread_ts` when continuing a thread. Attachments,
+reactions, buttons, and message editing are not implemented by this bridge.
+Only non-empty message events from allowed users in allowed channels are
+forwarded. A live pod is required; this is not a durable offline inbox.
+
+Pin `image.slackSidecar` when rendering the source chart; released charts
+supply its release tag. **Restart the agent pod after enabling, changing, or
+disabling Slack**, including token and allowlist changes. Slack has no automatic
+idle-time configuration convergence yet. A save reports `podRestartRequired`,
+but a subsequent GET only compares container presence; it does not detect a
+stale token or allowlist on an already-present sidecar.
+
 ## Restarting the pod
 
 Every response carries `podRestartRequired`. Channel sidecars are injected when a
@@ -219,11 +258,7 @@ rolls a stale pod once the runtime reports Idle. Working and unknown agents are
 held so an active session is not interrupted; all automatic rolls share the
 one-pod deletion budget. To apply immediately instead of waiting:
 
-```bash
-kubectl -n kyber-system delete pod agent-<name>
-```
-
-or use **Restart pod** in the UI.
+use **Restart pod** in the UI so the normal lifecycle transition owns deletion.
 
 On a `GET`, `podRestartRequired` is answered from the pod itself — sidecar
 presence plus the applied Discord revision — so it stays true until the change

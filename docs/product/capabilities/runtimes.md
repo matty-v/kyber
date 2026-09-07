@@ -12,11 +12,16 @@ Codex also supports an explicit OpenAI API key mode, chosen at creation time.
 
 ## Adopting new versions and models
 
-The control plane runs a detection poller that periodically queries the npm registry for newly released Claude Code and Codex versions, and the Anthropic Models API for new Claude models. The console's harness version pickers read from that feed, so you can adopt a new version with no Kyber code change and no rebuild. Model choices work differently: the change-model picker on an agent's page reads the model catalog that agent's own authenticated runtime reports, for both runtimes, so it shows what your subscription actually offers; a freshly created agent's list fills in once its runtime has reported. Detection failures are handled softly: the last known list keeps serving, and agents are never disrupted by a detection outage.
+The control plane runs a detection poller that periodically queries the npm registry for newly released Claude Code and Codex versions, for new public harness versions. The console's harness version pickers read from that feed, so you can adopt a new version with no Kyber code change and no rebuild. Model choices work differently: the change-model picker on an agent's page reads the model catalog that agent's own authenticated runtime reports, for both runtimes, so it shows what your subscription actually offers; a freshly created agent's list fills in once its runtime has reported. Detection failures are handled softly: the last known list keeps serving, and agents are never disrupted by a detection outage.
 
-The same detection feed reports each Claude model's real context window, which is what keeps the console's token-budget gauges honest for brand-new models.
+Claude’s authenticated model catalog reports authoritative context windows.
+Codex’s active session reports its context window separately from the catalog.
 
 Version pinning is deliberate. Codex's startup self-update check is disabled because Kyber centrally manages the pinned harness; a **Set harness version** action upgrades or downgrades explicitly, and the Settings surface sets the fleet-wide defaults new agents inherit. Agents keep their identity, memory, and disk across a runtime change, because those live in [whole-pod persistence](agents-and-persistence.md) and [identity repos](memory-and-identity.md).
+
+## Runtime capabilities
+
+Both runtimes integrate through Kyber’s versioned harness contract; the conformance guide records verified behavior and remaining exceptions. Kyber reports observed support for receipt-backed task dispatch, fresh sessions, cancellation, and scheduled-job controls. A supported runtime name alone does not prove a feature is available: missing or stale observations make dependent capabilities unavailable until the integration is healthy again.
 
 ## Learn more
 

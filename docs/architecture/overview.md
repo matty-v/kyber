@@ -291,10 +291,10 @@ Kyber tracks **semver `:vX.Y.Z`**. A release is cut by
 with a `version` input, kyber#591): it folds the `Chart.yaml`
 `version`/`appVersion` bump (kyber#457) **into the commit that gets tagged**,
 then pushes the tag `vX.Y.Z` on that merged commit. The tag push triggers
-`.github/workflows/release.yml`, which does a full rebuild of all **eight**
+`.github/workflows/release.yml`, which does a full rebuild of all **nine**
 kyber images from source at the tagged commit (`kyber-control-plane`,
 `kyber-node-agent`, `kyber-status-sidecar`, `kyber-mcp-discord`,
-`kyber-mcp-telegram`, `kyber-runtime-base`, `kyber-claude-code`, `kyber-codex`)
+`kyber-mcp-telegram`, `kyber-mcp-slack`, `kyber-runtime-base`, `kyber-claude-code`, `kyber-codex`)
 as amd64+arm64 manifest lists, pushes them as `:vX.Y.Z`, cuts a GitHub Release,
 publishes the pwa-views npm package, and publishes the Helm chart to
 `oci://ghcr.io/matty-v/charts/kyber:X.Y.Z` with the release image tags stamped

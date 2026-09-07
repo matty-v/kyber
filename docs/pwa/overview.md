@@ -6,17 +6,22 @@ The Kyber PWA (Fleet Command Console) is the browser-based control surface for a
 
 The sidebar (desktop) and the mobile header show the cluster identifier — `<cluster-name> <version>` (e.g., `kyber-falcon v1.2.0`). Use it as a quick health-check signal: confirm you are on the right cluster and the right build before taking any action. If the identifier shows `version unavailable`, the control-plane API is unreachable. If a new version has been deployed since you opened the tab, a refresh icon appears next to the version — click it to reload.
 
-The full version breakdown (SHA, build date, chart version, substrate) is on the **Settings** page under **Version**.
+The full version breakdown (SHA, build date, chart version, substrate) is under **Settings → Health**.
 
 ## Navigation
 
-| Tab | Purpose |
+| Destination | Purpose |
 |---|---|
-| Fleet | Overview of all machines and agents in the cluster |
-| Machines | CRUD for machine CRDs; terminal access |
-| Agents | CRUD for agent CRDs; log streaming |
-| Metrics | Token usage, cost, and rate metrics per agent |
-| Settings | API key management, cluster version info |
+| Dashboard | Fleet overview and recent activity |
+| Machines | Machine management and terminal access |
+| Agents | Agent lifecycle and detail views |
+| Settings | Fleet defaults, observability, diagnostics/updates, and API access |
+
+Agent detail groups Observe (Overview, Activity, Shell), Automate (Jobs,
+Webhooks), and Configure (General, Comms, Secrets, A2A). Settings groups
+Configure (General), Observe (Metrics, Logs), and System (Health, API access).
+Both use a persistent desktop rail and a full-screen mobile menu. Legacy direct
+Metrics and Logs routes remain supported. General includes alias/description and runtime settings; Comms configures Telegram, Discord, and Slack.
 
 ## Package
 
