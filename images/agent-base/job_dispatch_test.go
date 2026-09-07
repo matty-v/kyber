@@ -67,6 +67,10 @@ func setupDispatchHarness(t *testing.T) *dispatchHarness {
 		}
 	}
 
+	if err := os.MkdirAll(filepath.Join(persist, "var", "run"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	writeStub(t, filepath.Join(persist, "var", "run", "probe"), "#!/bin/sh\nprintf '%s\\n' '{\"job-turn-hooks\":true}'\n")
 	tmuxLog := filepath.Join(root, "tmux.log")
 	curlLog := filepath.Join(root, "curl.log")
 
@@ -109,15 +113,15 @@ exit 0
 	pathEnv := stubBin + ":" + os.Getenv("PATH")
 
 	return &dispatchHarness{
-		t:       t,
-		root:    root,
-		persist: persist,
-		jobsSrc: jobsSrc,
-		stubBin: stubBin,
-		logFile: filepath.Join(persist, "var", "log", "kyber-jobs.log"),
-		lockDir: filepath.Join(persist, "var", "lock"),
-		tmuxLog: tmuxLog,
-		curlLog: curlLog,
+		t:        t,
+		root:     root,
+		persist:  persist,
+		jobsSrc:  jobsSrc,
+		stubBin:  stubBin,
+		logFile:  filepath.Join(persist, "var", "log", "kyber-jobs.log"),
+		lockDir:  filepath.Join(persist, "var", "lock"),
+		tmuxLog:  tmuxLog,
+		curlLog:  curlLog,
 		cronDir:  filepath.Join(persist, "var", "run", "kyber-cron-complete"),
 		pendDir:  filepath.Join(persist, "var", "run", "kyber-cron-pending"),
 		sentinel: filepath.Join(persist, "var", "run", "kyber-cron-postrun-enabled"),
@@ -179,6 +183,7 @@ func (h *dispatchHarness) run(args []string, extraEnv ...string) (string, int) {
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	out, err := cmd.CombinedOutput()
@@ -213,6 +218,7 @@ func (h *dispatchHarness) runStdin(args []string, stdin string, extraEnv ...stri
 		"KYBER_CRON_COMPLETE_DIR="+h.cronDir,
 		"KYBER_CRON_PENDING_DIR="+h.pendDir,
 		"KYBER_CRON_POSTRUN_SENTINEL="+h.sentinel,
+		"KYBER_CAPABILITY_PROBE="+filepath.Join(filepath.Dir(h.sentinel), "probe"),
 	)
 	cmd.Env = append(cmd.Env, extraEnv...)
 	cmd.Stdin = strings.NewReader(stdin)
@@ -630,14 +636,14 @@ func TestKyberJobDispatch_NoSentinelWritesNoPendingMarker(t *testing.T) {
 	// deliberately no h.enablePostrun()
 	h.writePrompt("work-tick", "run your work tick\n")
 
-	if _, code := h.run([]string{"--exclusive", "--clear-context-after", "work-tick"}); code != 0 {
-		t.Fatalf("exit code: got %d, want 0", code)
+	if _, code := h.run([]string{"--exclusive", "--clear-context-after", "work-tick"}); code != 4 {
+		t.Fatalf("exit code: got %d, want 4", code)
 	}
 	if _, err := os.Stat(filepath.Join(h.pendDir, "work-tick")); !os.IsNotExist(err) {
 		t.Errorf("no sentinel means no pending marker (err=%v)", err)
 	}
-	if !strings.Contains(h.logContents(), "event=success") {
-		t.Errorf("dispatch must still succeed without the hook, log: %s", h.logContents())
+	if !strings.Contains(h.logContents(), "runtime_capability_unavailable") {
+		t.Errorf("dispatch must report the missing hook, log: %s", h.logContents())
 	}
 }
 
@@ -652,5 +658,30 @@ func TestKyberJobDispatch_InboundWritesNoPendingMarker(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(h.pendDir, "inbound-req9")); !os.IsNotExist(err) {
 		t.Errorf("inbound dispatch must not write a pending marker (err=%v)", err)
+	}
+}
+
+func TestKyberJobDispatch_RejectsStaleHookSentinel(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "do work")
+	probe := filepath.Join(t.TempDir(), "probe")
+	if err := os.WriteFile(probe, []byte("#!/bin/sh\nprintf '%s\\n' '{\"job-turn-hooks\":false}'\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, code := h.run([]string{"--exclusive", "work-tick"}, "KYBER_CAPABILITY_PROBE="+probe); code != 4 {
+		t.Fatalf("stale hook sentinel allowed dispatch: %d", code)
+	}
+}
+
+func TestKyberJobDispatch_RejectsMissingCapabilityProbe(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePrompt("work-tick", "do work")
+	if _, code := h.run([]string{"--exclusive", "work-tick"}, "KYBER_CAPABILITY_PROBE="+filepath.Join(t.TempDir(), "missing")); code != 4 {
+		t.Fatalf("missing native probe allowed advanced dispatch: %d", code)
+	}
+	if raw, _ := os.ReadFile(h.tmuxLog); strings.Contains(string(raw), "paste-buffer") {
+		t.Fatal("unverified job was delivered")
 	}
 }

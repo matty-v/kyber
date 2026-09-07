@@ -273,3 +273,16 @@ _Added 2026-06-14 — surfaced reviewing #567 (kyber#564)._
   applicable check. **Look harder at:** authorization conditions containing
   `&&` between “request includes class A” and “request includes class B”; that
   usually means single-class requests bypass one of the checks.
+
+### Harness contract: stale observations and provider fallbacks
+
+_Added 2026-09-07 — MAT-7 / PR #231 review._
+
+Runtime reports expire independently of skill reports. Public capability
+reconciliation must schedule that boundary even when no skills are required.
+Scheduled-job controls must reject a missing native probe despite an existing
+sentinel, and receipt probes must check the complete runtime-specific command.
+A missing transcript declaration must suppress the destructive pruner rather
+than pass empty paths to shell defaults. Authentication exit codes belong to
+the integration identified by the pod runtime label; registering another
+harness must never change how an existing harness's crash is classified.

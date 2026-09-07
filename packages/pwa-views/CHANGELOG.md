@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.40.0
+
+- Select a supported authentication mode when runtime discovery restricts the default harness to one mode.
+
+- Discover installed harness contracts and render their authentication modes in agent creation.
+- Expose current runtime capability availability in the client API types.
+
 ## 0.39.3 — 2026-09-06
 
 ### Added

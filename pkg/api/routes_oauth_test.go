@@ -24,6 +24,12 @@ func pkceChallenge(verifier string) string {
 }
 
 func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
+	for _, route := range []string{"oauth", "auth"} {
+		t.Run(route, func(t *testing.T) { testReauthorizeExchange(t, route) })
+	}
+}
+func testReauthorizeExchange(t *testing.T, route string) {
+	t.Helper()
 	mock := mockserver.New()
 	mockSrv := httptest.NewServer(mock)
 	defer mockSrv.Close()
@@ -41,6 +47,7 @@ func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
 		},
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseNeedsAuth},
 	}
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "needy-oauth", Namespace: "kyber-system"},
 		Data:       map[string][]byte{"refresh_token": []byte("old-token")},
@@ -62,7 +69,7 @@ func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
 	handler := s.BuildHandler()
 
 	// POST the reauthorize request.
-	req := authedRequest(t, http.MethodPost, "/api/v1/agents/needy/oauth", map[string]string{
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/needy/"+route, map[string]string{
 		"oauthCode":    code,
 		"pkceVerifier": verifier,
 		"state":        "some-state",

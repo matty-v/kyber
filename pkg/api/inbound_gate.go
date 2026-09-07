@@ -3,8 +3,10 @@ package api
 import (
 	"context"
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -33,6 +35,11 @@ const inboundGatePollInterval = 3 * time.Second
 // pre-gate behavior for phases that never return to Running; the exec
 // itself fails cleanly when there is no pod).
 func (s *Server) WaitAgentRunning(ctx context.Context, name string, timeout time.Duration) error {
+	return s.WaitAgentCapabilities(ctx, name, timeout)
+}
+
+// WaitAgentCapabilities requires fresh evidence for capability-dependent delivery.
+func (s *Server) WaitAgentCapabilities(ctx context.Context, name string, timeout time.Duration, features ...runtimes.Feature) error {
 	deadline := time.Now().Add(timeout)
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	for {
@@ -42,7 +49,26 @@ func (s *Server) WaitAgentRunning(ctx context.Context, name string, timeout time
 		}
 		switch agent.Status.Phase {
 		case kyberv1.AgentPhaseRunning:
-			return nil
+			ready := true
+			for _, feature := range features {
+				availability := runtimes.AvailabilityFor(agent, feature, time.Now())
+				if !availability.Supported {
+					return fmt.Errorf("inbound gate: runtime does not support %s", feature)
+				}
+				if availability.State != "available" {
+					ready = false
+				}
+			}
+			if ready && len(features) > 0 {
+				pod := &corev1.Pod{}
+				evidence := agent.Status.Runtime.Capabilities
+				if evidence == nil || agent.Status.PodName == "" || s.K8sClient.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: agent.Status.PodName}, pod) != nil || string(pod.UID) != evidence.PodUID || pod.DeletionTimestamp != nil {
+					ready = false
+				}
+			}
+			if ready {
+				return nil
+			}
 		case kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed,
 			kyberv1.AgentPhaseNeedsAuth, kyberv1.AgentPhaseMemoryExhausted,
 			kyberv1.AgentPhaseDiskExhausted, kyberv1.AgentPhaseDeleted:

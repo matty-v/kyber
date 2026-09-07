@@ -635,7 +635,7 @@ func main() {
 		StatusSidecarImage:            statusSidecarImage,
 		DiscordSidecarImage:           discordSidecarImage,
 		TelegramSidecarImage:          telegramSidecarImage,
-		SlackSidecarImage:              slackSidecarImage,
+		SlackSidecarImage:             slackSidecarImage,
 		TelegramDefaultAllowedUserIDs: telegramDefaultAllowedUserIDs,
 		SidecarOtelEndpoint:           sidecarOtelEndpoint,
 		SidecarLogLevel:               sidecarLogLevel,
@@ -1252,7 +1252,12 @@ func main() {
 			if publicAPI == nil {
 				return errors.New("public API not yet initialized")
 			}
-			err := publicAPI.WaitAgentRunning(ctx, job.Agent, timeout)
+			var err error
+			if job.Kind == inbound.JobKindTask {
+				err = publicAPI.WaitAgentCapabilities(ctx, job.Agent, timeout, pkgruntimes.TaskReceipts, pkgruntimes.TaskTools)
+			} else {
+				err = publicAPI.WaitAgentRunning(ctx, job.Agent, timeout)
+			}
 			if err != nil {
 				setupLog.Info("inbound dispatch: agent not Running after wait",
 					"agent", job.Agent, "binding", job.Binding,

@@ -1,10 +1,10 @@
 // Package runtimes is the per-runtime knowledge registry. Each supported
-// runtime (claude-code, codex, openclaw, hermes, ...) lives in its own
+// runtime (currently claude-code and codex) lives in its own
 // subpackage that self-registers via init() against the global registry.
-// Both the control-plane binary and the future status-sidecar binary
+// The control-plane and status-sidecar binaries
 // blank-import the runtime packages they want enabled.
 //
-// Adding a runtime is mechanically:
+// The package skeleton for adding a runtime is:
 //
 //	pkg/runtimes/<newtype>/
 //	    runtime.go     // package init() calls runtimes.Register(...)
@@ -15,7 +15,10 @@
 // ...plus a `_ "github.com/matty-v/kyber/pkg/runtimes/<newtype>"` blank
 // import in any binary that should accept the new runtime.
 //
-// Spec: kyber#250.
+// This skeleton is not the full integration contract. See
+// docs/architecture/agent-harness-contract.md and agent-harness-conformance.md
+// for lifecycle, authentication, dispatch, capability and test obligations.
+// Registry origin: kyber#250; contract migration: MAT-7.
 package runtimes
 
 import (
@@ -266,14 +269,10 @@ func All() []Runtime {
 // and until kyber#674 that combination produced an agent that could never
 // start and never said why.
 func HelmImageKey(runtime string) string {
-	switch runtime {
-	case "claude-code":
-		return "claudeCode"
-	default:
-		// codex → codex, openclaw → openclaw: the chart keys match the
-		// runtime identifier wherever it is already a single lowercase word.
-		return runtime
+	if descriptor, ok := Describe(runtime); ok {
+		return descriptor.HelmKey
 	}
+	return runtime
 }
 
 // reset is a test-only helper to clear the registry. Not exported. Tests

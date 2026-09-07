@@ -2885,6 +2885,7 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 		"SESSION_RESUME_ENABLED=1",
 		"CLAUDE_PROJECT_STORE='" + store + "'",
 		"USER_PRESERVE_SUFFIX=''",
+		`KYBER_A2A_MCP_URL="${TEST_A2A_MCP_URL:-}"`,
 		"KYBER_SYNC_SCRIPT='" + filepath.Join(work, "no-such-sync") + "'",
 		block,
 		"",
@@ -2962,5 +2963,129 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	}
 	if got := run("--fresh"); !strings.Contains(got, "new-session") {
 		t.Errorf("--fresh with live session must still relaunch, got:\n%s", got)
+	}
+
+	t.Run("background skill repair releases exec streams and lock", func(t *testing.T) {
+		finished := filepath.Join(work, "repair-finished")
+		for name, body := range map[string]string{
+			"seq":   "#!/bin/sh\necho 1\n",
+			"sleep": "#!/bin/sh\n/bin/sleep 2\n",
+			"chown": "#!/bin/sh\ntouch '" + finished + "'\n",
+		} {
+			if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Render the real heredoc with A2A enabled, confining its skill writes.
+		render := exec.Command("/bin/bash", wrapperPath)
+		render.Env = append(os.Environ(), "TEST_A2A_MCP_URL=http://127.0.0.1:1/mcp")
+		if out, err := render.CombinedOutput(); err != nil {
+			t.Fatalf("render: %v: %s", err, out)
+		}
+		raw, err := os.ReadFile(gen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		isolated := strings.ReplaceAll(string(raw), "/persist/var/lock", lockDir)
+		isolated = strings.ReplaceAll(isolated, "/home/kyber/.claude/skills", filepath.Join(work, "skills"))
+		if err := os.WriteFile(gen, []byte(isolated), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			deadline := time.Now().Add(5 * time.Second)
+			for time.Now().Before(deadline) {
+				if _, err := os.Stat(finished); err == nil {
+					return
+				}
+				time.Sleep(20 * time.Millisecond)
+			}
+			t.Error("background repair did not finish")
+		})
+		cmd := exec.Command("/bin/bash", gen, "--fresh")
+		cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"))
+		cmd.WaitDelay = 250 * time.Millisecond
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Errorf("restart must release exec streams before repair finishes: %v: %s", err, out)
+		}
+		if out, err := exec.Command("flock", "-n", filepath.Join(lockDir, "session.lock"), "true").CombinedOutput(); err != nil {
+			t.Errorf("background repair retained session lock: %v: %s", err, out)
+		}
+	})
+}
+
+func TestClaudeAPIKeyApprovalPreservesInteractiveProfile(t *testing.T) {
+	src, err := os.ReadFile(scriptPath(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(src)
+	if strings.Contains(text, `CLAUDE_ARGS="$CLAUDE_ARGS --bare"`) {
+		t.Fatal("API-key profile must load native hooks and skills")
+	}
+	start := strings.Index(text, `CLAUDE_STATE="${HOME:-/home/kyber}/.claude.json"`)
+	if start < 0 {
+		t.Fatal("missing state merge")
+	}
+	end := strings.Index(text[start:], `chmod 600 "$CLAUDE_STATE"`)
+	if end < 0 {
+		t.Fatal("missing state merge")
+	}
+	block := text[start:start+end] + `chmod 600 "$CLAUDE_STATE"`
+	key := "fixture-key-prefix-12345678901234567890"
+	for _, oauth := range []bool{false, true} {
+		t.Run(fmt.Sprint("oauth=", oauth), func(t *testing.T) {
+			home := t.TempDir()
+			file := filepath.Join(home, ".claude.json")
+			original := `{"other":"preserved","customApiKeyResponses":{"approved":["other-key"],"rejected":["12345678901234567890","other-rejected"]}}`
+			if err := os.WriteFile(file, []byte(original), 0600); err != nil {
+				t.Fatal(err)
+			}
+			token := ""
+			if oauth {
+				token = "fixture-oauth"
+			}
+			for i := 0; i < 2; i++ {
+				cmd := exec.Command("bash", "-eu", "-c", block)
+				cmd.Env = append(os.Environ(), "HOME="+home, "LAUNCH_DIR="+home, "ANTHROPIC_API_KEY="+key, "CLAUDE_ACCESS_TOKEN="+token)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("state preparation: %v: %s", err, out)
+				}
+			}
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state struct {
+				Other                 string
+				CustomApiKeyResponses struct{ Approved, Rejected []string }
+			}
+			if err := json.Unmarshal(raw, &state); err != nil {
+				t.Fatal(err)
+			}
+			if state.Other != "preserved" {
+				t.Fatal("unrelated state was lost")
+			}
+			contains := func(xs []string, x string) bool {
+				for _, v := range xs {
+					if v == x {
+						return true
+					}
+				}
+				return false
+			}
+			if contains(state.CustomApiKeyResponses.Approved, key[len(key)-20:]) == oauth {
+				t.Fatal("approval did not follow selected auth mode")
+			}
+			if !oauth && (len(state.CustomApiKeyResponses.Approved) != 2 || contains(state.CustomApiKeyResponses.Rejected, key[len(key)-20:])) {
+				t.Fatal("approval was not idempotent or retained conflicting rejection")
+			}
+			if strings.Contains(string(raw), key) {
+				t.Fatal("state persisted the complete API key")
+			}
+			info, _ := os.Stat(file)
+			if info.Mode().Perm() != 0600 {
+				t.Fatal("state must remain private")
+			}
+		})
 	}
 }

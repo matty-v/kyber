@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -40,7 +41,11 @@ func TestIsOAuthRefreshFailure_ExitCodes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := isOAuthRefreshFailure(tc.pod); got != tc.want {
+			runtimeID := "codex"
+			if strings.HasPrefix(tc.name, "claude-code") {
+				runtimeID = "claude-code"
+			}
+			if got := isOAuthRefreshFailure(tc.pod, runtimeID); got != tc.want {
 				t.Fatalf("isOAuthRefreshFailure = %v, want %v", got, tc.want)
 			}
 		})
@@ -55,7 +60,7 @@ func TestIsOAuthRefreshFailure_IgnoresLastTerminationState(t *testing.T) {
 		State:                corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 1}},
 		LastTerminationState: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 42}},
 	}}}}
-	if isOAuthRefreshFailure(pod) {
+	if isOAuthRefreshFailure(pod, "codex") {
 		t.Fatal("a prior exit-42 must not classify a current exit-1 crash as a credential failure")
 	}
 }
@@ -68,7 +73,7 @@ func TestRuntimeProbeFailureIsDistinctFromAuthentication(t *testing.T) {
 	if !isRuntimeProbeFailure(pod) {
 		t.Fatal("exit 43 must classify as a runtime probe failure")
 	}
-	if isOAuthRefreshFailure(pod) {
+	if isOAuthRefreshFailure(pod, "codex") {
 		t.Fatal("exit 43 must not classify as an authentication failure")
 	}
 }
@@ -80,5 +85,22 @@ func TestBrokenRuntimeSuppressesForcedAuthenticationTransition(t *testing.T) {
 	event, err := (&AgentReconciler{}).classifyEvent(context.Background(), agent, nil)
 	if err != nil || event != "" {
 		t.Fatalf("BrokenRuntime force-auth classification = %q, err=%v; want stable", event, err)
+	}
+}
+
+func TestAuthFailureClassificationIsRuntimeScoped(t *testing.T) {
+	pod := &corev1.Pod{Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "agent", State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 2}}}}}}
+	for _, runtimeID := range []string{"codex", "unregistered"} {
+		if isOAuthRefreshFailure(pod, runtimeID) {
+			t.Fatalf("%s inherited Claude auth exit code", runtimeID)
+		}
+	}
+	pod.Labels = map[string]string{"kyber.io/runtime": "claude-code"}
+	if !isOAuthRefreshFailure(pod, "codex") {
+		t.Fatal("actual pod runtime must take precedence over changed spec")
+	}
+	pod.Labels["kyber.io/runtime"] = "unregistered"
+	if isOAuthRefreshFailure(pod, "claude-code") {
+		t.Fatal("unknown pod runtime inherited spec provider")
 	}
 }

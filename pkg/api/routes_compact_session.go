@@ -17,6 +17,7 @@ import (
 	k8sexec "k8s.io/client-go/util/exec"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // CompactSessionCooldown is the minimum gap between successive
@@ -106,6 +107,11 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 	if !ok || len(cmd) == 0 {
 		writeJSONError(w, http.StatusNotImplemented, "not_implemented",
 			fmt.Sprintf("compact-session is not supported on runtime '%s' — use restart-session to clear the context instead", agent.Spec.Runtime))
+		return
+	}
+
+	if availability := runtimes.AvailabilityFor(agent, runtimes.Compaction, time.Now()); availability.State != "available" {
+		writeJSONError(w, http.StatusConflict, "runtime_capability_unavailable", availability.Reason)
 		return
 	}
 

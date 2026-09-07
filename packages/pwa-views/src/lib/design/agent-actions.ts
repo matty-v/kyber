@@ -8,7 +8,7 @@
  * single-primary-button layout.
  */
 
-import type { AgentPhase } from '../types'
+import type { AgentPhase, RuntimeFeatureAvailability } from '../types'
 
 // Actions that operate on the agent's live session and leave the pod alone.
 // The "Agent actions" section of the More menu.
@@ -23,11 +23,13 @@ export type AgentSessionKind = 'compact-session' | 'restart-session'
 // reach for first. Restart session is the escalation when compaction isn't
 // enough.
 //
-// Runtime capability is NOT decided here — a runtime without compaction
-// answers 501 from the API. Hiding the item per-runtime would mean teaching
-// the PWA the runtime registry, which the server deliberately owns.
-export function sessionItemsInMore(phase: AgentPhase): AgentSessionKind[] {
-  return phase === 'Running' ? ['compact-session', 'restart-session'] : []
+// New servers provide capability availability. Missing discovery preserves
+// old-server behavior; an explicit unknown or unavailable feature is hidden.
+export function sessionItemsInMore(phase: AgentPhase, capabilities?: Record<string, RuntimeFeatureAvailability>): AgentSessionKind[] {
+  if (phase !== 'Running') return []
+  const items: AgentSessionKind[] = ['compact-session', 'restart-session']
+  const features = { 'compact-session': 'compaction', 'restart-session': 'session-restart' }
+  return capabilities ? items.filter(item => capabilities[features[item]]?.state === 'available') : items
 }
 
 export type AgentLifecycleKind =

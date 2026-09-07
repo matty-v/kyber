@@ -116,11 +116,21 @@ func TestStartClaude_SkillReport_FiresAtBootAndCannotBreakIt(t *testing.T) {
 // The block is guarded on the binary existing, so an older image (or a runtime
 // built before this shipped) boots exactly as before.
 func TestStartClaude_SkillReport_AbsentBinaryIsHarmless(t *testing.T) {
-	// A PATH with no kyber-skills on it: t.TempDir() is empty.
+	// A private utility PATH actually excludes kyber-skills even on an agent
+	// host. Prepending an empty directory to the host PATH did not exclude it.
 	emptyBin := t.TempDir()
+	for _, name := range []string{"bash", "cat", "chmod", "curl", "date", "dirname", "env", "git", "jq", "mkdir", "python3", "rm", "sed", "tr", "basename", "readlink", "ln", "find", "grep", "uname", "touch", "install", "mv", "mktemp", "stat", "sort", "head", "awk", "tail", "cut", "cp", "id", "sleep", "timeout", "nohup"} {
+		source, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		if err := os.Symlink(source, filepath.Join(emptyBin, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
 	tmpHome := t.TempDir()
 	out, err := bootWithSkillEnv(t, tmpHome,
-		"PATH="+emptyBin+":"+testPATH(),
+		"PATH="+emptyBin,
 		"KYBER_SKILLS_LOG="+filepath.Join(t.TempDir(), "kyber-skills.log"),
 	)
 	if err != nil {

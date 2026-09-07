@@ -1,3 +1,4 @@
+import { legacyRuntimeContracts, wizardAuth, wizardApiKey } from '../lib/runtime-contract'
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
@@ -55,7 +56,17 @@ export function CreateAgent() {
   const { data: machines } = useMachines()
   const { data: agents } = useAgents()
   const { data: config } = useComputeConfig()
-  const [state, setState] = useState<WizardState>(() => initialWizardState([]))
+  const [form, setState] = useState<WizardState>(() => initialWizardState([]))
+  const runtimeOptions = config?.runtimes ?? legacyRuntimeContracts
+  const state: WizardState = { ...form, runtimes: runtimeOptions, runtimeContract: runtimeOptions.find(d => d.id === form.runtime) }
+  const selectedAuth = wizardAuth(state)
+  useEffect(() => {
+    if (!config?.runtimes?.length) return
+    const next = config.runtimes.find(d => d.id === form.runtime) ?? config.runtimes[0]
+    if (next.id !== form.runtime || !next.authModes.some(mode => mode.id === form.authType)) {
+      setState(prev => ({ ...prev, runtime: next.id, authType: next.authModes[0]?.id ?? 'oauth', oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '' }))
+    }
+  }, [config?.runtimes, form.runtime, form.authType])
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -80,7 +91,10 @@ export function CreateAgent() {
   }, [requestedStep])
 
   const set: WizardSetter = function<K extends keyof WizardState>(key: K, value: WizardState[K]) {
-    setState((prev) => ({ ...prev, [key]: value }))
+    setState((prev) => key === 'runtime' ? { ...prev, runtime: value as string,
+      authType: runtimeOptions.find(d => d.id === value)?.authModes[0]?.id ?? 'oauth',
+      oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '',
+    } : ({ ...prev, [key]: value }))
     setFieldError(null)
     setDirty(true)
   }
@@ -160,7 +174,7 @@ export function CreateAgent() {
       let oauthCodeFinal: string | undefined
       let pkceVerifierFinal: string | undefined
 
-      if (state.runtime !== 'codex' && state.authType === 'oauth') {
+      if (selectedAuth?.flow === 'authorization-code') {
         const parsed = parseAuthorizationInput(state.oauthCode)
         if (!parsed) {
           setFieldError('Paste the authorization code Anthropic showed you')
@@ -204,7 +218,7 @@ export function CreateAgent() {
 		setFieldError(`"${badTelegramID}" isn't a Telegram user ID. Ask @userinfobot for your numeric ID.`)
 		return
 	  }
-      if (state.discordEnabled && (state.authType === 'oauth' || state.runtime === 'codex')) {
+      if (state.discordEnabled && state.authType === 'oauth') {
         const allowedUserIds = parseIdList(state.discordAllowedUserIds)
         const guildIds = parseIdList(state.discordGuildIds)
         const channelIds = parseIdList(state.discordChannelIds)
@@ -246,12 +260,16 @@ export function CreateAgent() {
         identityRepo,
         secrets: {
           authType: state.authType,
+          runtimeAuth: config?.runtimes && selectedAuth?.inputField ? {
+            [selectedAuth.inputField]: selectedAuth.flow === 'api-key' ? wizardApiKey(state) : (oauthCodeFinal ?? ''),
+            pkceVerifier: pkceVerifierFinal ?? '', pkceState: state.pkceState,
+          } : undefined,
           telegramEnabled: state.telegramEnabled,
           oauthCode: oauthCodeFinal,
           pkceVerifier: pkceVerifierFinal,
           pkceState: state.pkceState || undefined,
           anthropicApiKey: state.anthropicApiKey || undefined,
-          openaiApiKey: state.runtime === 'codex' ? state.openaiApiKey || undefined : undefined,
+          openaiApiKey: state.openaiApiKey || undefined,
           telegramBotToken: state.telegramBotToken || undefined,
           telegramAllowedUserIds: state.telegramEnabled ? telegramAllowedUserIds : undefined,
 		  slackEnabled: state.slackEnabled,
@@ -278,7 +296,7 @@ export function CreateAgent() {
         }
       }
 
-      navigate(prefixed(state.runtime === 'codex' && state.authType === 'oauth'
+      navigate(prefixed(selectedAuth?.flow === 'device-code'
         ? `/agents/${toKebabCase(state.name)}`
         : '/agents'))
     } catch (err) {

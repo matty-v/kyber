@@ -21,6 +21,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -98,7 +99,7 @@ type TranscriptTailerConfig struct {
 // mirroring AppendStatusSidecar's image guard so older deployments and unit
 // tests keep their existing pod-spec shape.
 func AppendTranscriptTailer(spec *corev1.PodSpec, cfg TranscriptTailerConfig) {
-	if cfg.RuntimeImage == "" {
+	if cfg.RuntimeImage == "" || runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home") == "" {
 		return
 	}
 
@@ -108,8 +109,8 @@ func AppendTranscriptTailer(spec *corev1.PodSpec, cfg TranscriptTailerConfig) {
 		Command: []string{"/bin/bash", "-c", transcriptTailScript},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
-			{Name: "TRANSCRIPT_OVERLAY_ROOT", Value: transcriptRoots(cfg.Runtime, transcriptProjectsOverlayRoot, transcriptCodexOverlayRoot)},
-			{Name: "TRANSCRIPT_BIND_ROOT", Value: transcriptRoots(cfg.Runtime, transcriptProjectsBindRoot, transcriptCodexBindRoot)},
+			{Name: "TRANSCRIPT_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/overlay/upper/home/kyber")},
+			{Name: "TRANSCRIPT_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/home")},
 		},
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -213,11 +214,13 @@ func AppendTranscriptTailer(spec *corev1.PodSpec, cfg TranscriptTailerConfig) {
 	})
 }
 
-func transcriptRoots(runtime, claudeRoot, codexRoot string) string {
-	if runtime == "codex" {
-		return codexRoot
+// Empty runtime is only the legacy sidecar config default. An explicit unknown
+// integration never inherits another harness's transcript layout.
+func legacyRuntimeID(id string) string {
+	if id == "" {
+		return "claude-code"
 	}
-	return claudeRoot
+	return id
 }
 
 // transcriptTailScript is the sidecar's discover-and-ship loop. kyber#584

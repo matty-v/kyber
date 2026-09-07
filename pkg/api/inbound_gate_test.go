@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"github.com/matty-v/kyber/pkg/runtimes"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 func gateServer(t *testing.T, phase kyberv1.AgentPhase) *Server {
 	t.Helper()
 	scheme := runtime.NewScheme()
+	_ = corev1.AddToScheme(scheme)
 	if err := kyberv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
 	}
@@ -72,5 +76,48 @@ func TestWaitAgentRunning_MissingAgentErrors(t *testing.T) {
 	s := gateServer(t, kyberv1.AgentPhaseRunning)
 	if err := s.WaitAgentRunning(context.Background(), "nobody", time.Minute); err == nil {
 		t.Fatal("expected lookup error for a missing agent")
+	}
+}
+
+func TestTaskGateRequiresBothFreshCapabilities(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		receipt, tools bool
+		stale          bool
+		want           bool
+	}{
+		{"ready", true, true, false, true}, {"missing receipt", false, true, false, false}, {"missing tools", true, false, false, false}, {"stale", true, true, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := gateServer(t, kyberv1.AgentPhaseRunning)
+			ctx := context.Background()
+			a := &kyberv1.Agent{}
+			key := types.NamespacedName{Name: "wedge", Namespace: fdNS}
+			if err := s.K8sClient.Get(ctx, key, a); err != nil {
+				t.Fatal(err)
+			}
+			a.Spec.Runtime = "codex"
+			if err := s.K8sClient.Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			a.Status.PodName = "agent-wedge"
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: a.Status.PodName, Namespace: fdNS, UID: "current"}}
+			if err := s.K8sClient.Create(ctx, pod); err != nil {
+				t.Fatal(err)
+			}
+			a.Status.Runtime.InstalledVersion = "fixture"
+			observed := time.Now()
+			if tc.stale {
+				observed = observed.Add(-2 * time.Minute)
+			}
+			a.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{PodUID: "current", ContractVersion: runtimes.ContractVersion, InstalledVersion: "fixture", ObservedAt: metav1.NewTime(observed), Features: map[string]bool{string(runtimes.TaskReceipts): tc.receipt, string(runtimes.TaskTools): tc.tools}}
+			if err := s.K8sClient.Status().Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			err := s.WaitAgentCapabilities(ctx, "wedge", 0, runtimes.TaskReceipts, runtimes.TaskTools)
+			if (err == nil) != tc.want {
+				t.Fatalf("ready=%v err=%v", tc.want, err)
+			}
+		})
 	}
 }

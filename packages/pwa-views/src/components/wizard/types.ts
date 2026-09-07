@@ -1,3 +1,4 @@
+import type { RuntimeDescriptor } from '../../lib/types'
 import type { ModelInfo } from '../../lib/types'
 
 /**
@@ -15,6 +16,9 @@ export type IdentityRepoMode = 'template' | 'existing' | 'none'
  * in isolation.
  */
 export interface WizardState {
+  runtimeContract?: RuntimeDescriptor
+  runtimes?: RuntimeDescriptor[]
+  runtimeApiKey?: string
   name: string
   machine: string
   runtime: string

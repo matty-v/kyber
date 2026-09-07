@@ -16,7 +16,6 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -88,9 +87,11 @@ type agentIdentityRepoRequest struct {
 // that the runtime adapter references via SecretKeyRef. This avoids requiring
 // the operator to `kubectl create secret` before creating an agent from the UI.
 type agentSecretsRequest struct {
-	AuthType        string `json:"authType"`
-	TelegramEnabled bool   `json:"telegramEnabled"`
-	SlackEnabled bool `json:"slackEnabled,omitempty"`
+	// RuntimeAuth holds adapter-owned credential input. Legacy fields remain accepted.
+	RuntimeAuth     map[string]string `json:"runtimeAuth,omitempty"`
+	AuthType        string            `json:"authType"`
+	TelegramEnabled bool              `json:"telegramEnabled"`
+	SlackEnabled    bool              `json:"slackEnabled,omitempty"`
 	// DiscordEnabled flips spec.secrets.discordEnabled (kyber#132 Phase 1).
 	// When true, the runtime adapter injects KYBER_DISCORD_WEBHOOK from
 	// the <agent-name>-discord Secret's webhook-url key. Outbound-only
@@ -110,9 +111,9 @@ type agentSecretsRequest struct {
 	CodexAuthJSON          string   `json:"codexAuthJson,omitempty"`
 	TelegramBotToken       string   `json:"telegramBotToken,omitempty"`
 	TelegramAllowedUserIDs []string `json:"telegramAllowedUserIds,omitempty"`
-	SlackBotToken string `json:"slackBotToken,omitempty"`
-	SlackAppToken string `json:"slackAppToken,omitempty"`
-	SlackAllowedUserIDs []string `json:"slackAllowedUserIds,omitempty"`
+	SlackBotToken          string   `json:"slackBotToken,omitempty"`
+	SlackAppToken          string   `json:"slackAppToken,omitempty"`
+	SlackAllowedUserIDs    []string `json:"slackAllowedUserIds,omitempty"`
 	SlackAllowedChannelIDs []string `json:"slackAllowedChannelIds,omitempty"`
 	// DiscordWebhookUrl is a Discord channel webhook (the URL Discord
 	// returns from "Edit Channel → Integrations → Webhooks → Copy URL").
@@ -137,7 +138,7 @@ type PatchAgentRequest struct {
 	// unchanged) from explicit null (unpublish) and an object (validate/update).
 	PublicCapabilities json.RawMessage        `json:"publicCapabilities,omitempty"`
 	Resources          *agentResourcesRequest `json:"resources,omitempty"`
-	Profile             *agentProfileRequest    `json:"profile,omitempty"`
+	Profile            *agentProfileRequest   `json:"profile,omitempty"`
 	// Jobs, when non-nil, replaces spec.jobs wholesale. Empty slice clears
 	// all scheduled jobs; nil leaves them untouched. Matches the common
 	// PUT-list semantics — callers that want additive semantics can fetch
@@ -192,6 +193,9 @@ var (
 
 // AgentResponse is the JSON representation of an Agent returned by the API.
 type AgentResponse struct {
+	RuntimeContract     *pkgruntimes.Descriptor                          `json:"runtimeContract,omitempty"`
+	RuntimeCapabilities map[pkgruntimes.Feature]pkgruntimes.Availability `json:"runtimeCapabilities,omitempty"`
+
 	ID                       string                                 `json:"id"`
 	Phase                    kyberv1.AgentPhase                     `json:"phase"`
 	Machine                  string                                 `json:"machine"`
@@ -204,7 +208,7 @@ type AgentResponse struct {
 	PublicCapabilities       *kyberv1.AgentPublicCapabilities       `json:"publicCapabilities,omitempty"`
 	A2APeers                 []kyberv1.AgentA2APeer                 `json:"a2aPeers,omitempty"`
 	PublicCapabilitiesStatus *kyberv1.AgentPublicCapabilitiesStatus `json:"publicCapabilitiesStatus,omitempty"`
-	Profile             agentProfileResponse  `json:"profile"`
+	Profile                  agentProfileResponse                   `json:"profile"`
 	// CurrentModel is the concrete model observed from the running runtime.
 	// It differs from Model when spec.model is empty (harness default).
 	CurrentModel string                     `json:"currentModel,omitempty"`
@@ -667,6 +671,11 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		}
 		resp.Activity = act
 	}
+	if descriptor, ok := pkgruntimes.Describe(a.Spec.Runtime); ok {
+		resp.RuntimeContract = &descriptor
+		resp.RuntimeCapabilities = pkgruntimes.AvailabilityMap(a, time.Now())
+	}
+
 	return resp
 }
 
@@ -778,7 +787,7 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 	// same path: GET reports what the in-pod flow is showing (link, code,
 	// expiry) so the PWA can render it natively; POST starts a fresh flow.
 	// Intercepted ahead of the POST-only guard below.
-	if action == "codex-device-auth" && r.Method == http.MethodGet {
+	if (action == "codex-device-auth" || action == "auth") && r.Method == http.MethodGet {
 		s.handleCodexDeviceAuthStatus(w, r, name)
 		return
 	}
@@ -808,6 +817,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.setAgentRuntimeVersion(w, r, name)
 	case "set-resources":
 		s.setAgentResources(w, r, name)
+	case "auth":
+		s.handleRuntimeReauthorize(w, r, name)
 	case "oauth":
 		s.handleReauthorize(w, r, name)
 	case "codex-device-auth":
@@ -1040,29 +1051,21 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if req.Runtime == "codex" {
-		switch kyberv1.AgentAuthType(req.Secrets.AuthType) {
-		case kyberv1.AgentAuthTypeOAuth:
-			// Empty is the normal device-auth path. A non-empty document remains
-			// accepted for backward compatibility with older API clients.
-			if req.Secrets.CodexAuthJSON != "" &&
-				(len(req.Secrets.CodexAuthJSON) > 256*1024 || !json.Valid([]byte(req.Secrets.CodexAuthJSON))) {
-				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-					"Codex auth.json must be valid JSON no larger than 256 KiB", "secrets.codexAuthJson")
-				return
-			}
-		case kyberv1.AgentAuthTypeAPIKey:
-			if req.Secrets.OpenAIAPIKey == "" {
-				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-					"OpenAI API key is required for a Codex API-key agent", "secrets.openaiApiKey")
-				return
-			}
-		default:
-			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"authType must be oauth or api-key", "secrets.authType")
-			return
-		}
+	strategy, supported := pkgruntimes.AuthenticationFor(req.Runtime)
+	if !supported {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtime authentication is not registered", "runtime")
+		return
 	}
+	if err := strategy.Validate(kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput()); err != nil {
+		field := "secrets.authType"
+		var validation *pkgruntimes.AuthValidationError
+		if errors.As(err, &validation) {
+			field = validation.Field
+		}
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), field)
+		return
+	}
+
 	// Telegram channels require Max-subscription OAuth. API-key auth cannot
 	// support channels, so reject the combination upfront. Shares its rule with
 	// PUT /comms/telegram (routes_agent_comms.go) so the two entry points into
@@ -1082,8 +1085,14 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "Slack bot and app tokens are required", "secrets.slackBotToken")
 			return
 		}
-		if err := validateSlackIDs(req.Secrets.SlackAllowedUserIDs, "slackAllowedUserIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedUserIds"); return }
-		if err := validateSlackIDs(req.Secrets.SlackAllowedChannelIDs, "slackAllowedChannelIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedChannelIds"); return }
+		if err := validateSlackIDs(req.Secrets.SlackAllowedUserIDs, "slackAllowedUserIds"); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedUserIds")
+			return
+		}
+		if err := validateSlackIDs(req.Secrets.SlackAllowedChannelIDs, "slackAllowedChannelIds"); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "secrets.slackAllowedChannelIds")
+			return
+		}
 	}
 
 	// Parse resource quantities.
@@ -1160,7 +1169,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			},
 			Secrets: kyberv1.AgentSecrets{
 				TelegramEnabled: req.Secrets.TelegramEnabled,
-				SlackEnabled: req.Secrets.SlackEnabled,
+				SlackEnabled:    req.Secrets.SlackEnabled,
 				DiscordEnabled:  req.Secrets.DiscordEnabled,
 				AuthType:        authType,
 			},
@@ -1174,20 +1183,6 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if req.Secrets.SlackEnabled {
 		agent.Spec.InboundBindings = append(agent.Spec.InboundBindings,
 			agentcontroller.SlackInboundBinding(req.Name+"-slack", agentcontroller.DefaultSlackAction()))
-	}
-
-	// Validate OAuth field combinations before attempting secret creation.
-	if req.Secrets.OAuthCode != "" && req.Secrets.PkceVerifier == "" {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"pkceVerifier is required when oauthCode is provided",
-			"secrets.pkceVerifier")
-		return
-	}
-	if req.Secrets.OAuthCode != "" && req.Secrets.PkceState == "" {
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"pkceState is required when oauthCode is provided",
-			"secrets.pkceState")
-		return
 	}
 
 	// Create k8s Secrets BEFORE the Agent CRD so that a failure (e.g. invalid
@@ -2026,41 +2021,18 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 		data   map[string][]byte // used when non-nil (multi-key, e.g. access_token+refresh_token)
 	}
 	defs := []secretDef{}
-	if req.Runtime == "codex" && kyberv1.AgentAuthType(req.Secrets.AuthType) == kyberv1.AgentAuthTypeOAuth {
-		authJSON := req.Secrets.CodexAuthJSON
-		if authJSON == "" {
-			authJSON = "{}"
-		}
-		defs = append(defs, secretDef{suffix: "codex-auth", data: map[string][]byte{
-			"auth.json": []byte(authJSON),
-		}})
+	strategy, ok := pkgruntimes.AuthenticationFor(req.Runtime)
+	if !ok {
+		return nil, fmt.Errorf("runtime authentication is not registered")
+	}
+	credentials, err := strategy.Prepare(ctx, kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput(), pkgruntimes.AuthOptions{TokenURL: s.anthropicTokenURL()})
+	if err != nil {
+		return nil, err
+	}
+	for _, credential := range credentials {
+		defs = append(defs, secretDef{suffix: credential.Suffix, data: credential.Data})
 	}
 
-	switch kyberv1.AgentAuthType(req.Secrets.AuthType) {
-	case kyberv1.AgentAuthTypeOAuth:
-		if req.Runtime != "codex" && req.Secrets.OAuthCode != "" && req.Secrets.PkceVerifier != "" {
-			tok, err := oauth.NewClient(s.anthropicTokenURL()).
-				ExchangeAuthorizationCode(ctx, req.Secrets.OAuthCode, req.Secrets.PkceVerifier, req.Secrets.PkceState)
-			if err != nil {
-				return nil, fmt.Errorf("oauth exchange: %w", err)
-			}
-			expiresAtMs := time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000
-			defs = append(defs, secretDef{
-				suffix: "oauth",
-				data: map[string][]byte{
-					"access_token":  []byte(tok.AccessToken),
-					"refresh_token": []byte(tok.RefreshToken),
-					"expires_at":    []byte(strconv.FormatInt(expiresAtMs, 10)),
-				},
-			})
-		}
-	case kyberv1.AgentAuthTypeAPIKey:
-		if req.Runtime == "codex" && req.Secrets.OpenAIAPIKey != "" {
-			defs = append(defs, secretDef{suffix: "openai", value: req.Secrets.OpenAIAPIKey})
-		} else if req.Secrets.AnthropicAPIKey != "" {
-			defs = append(defs, secretDef{suffix: "anthropic", value: req.Secrets.AnthropicAPIKey})
-		}
-	}
 	if req.Secrets.TelegramEnabled && req.Secrets.TelegramBotToken != "" {
 		hmacSecret, err := generateCommsHMACSecret()
 		if err != nil {
@@ -2074,12 +2046,14 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 	}
 	if req.Secrets.SlackEnabled {
 		hmacSecret, err := generateCommsHMACSecret()
-		if err != nil { return nil, err }
+		if err != nil {
+			return nil, err
+		}
 		defs = append(defs, secretDef{suffix: "slack", data: map[string][]byte{
 			"bot-token": []byte(req.Secrets.SlackBotToken), "app-token": []byte(req.Secrets.SlackAppToken),
-			"allowed-user-ids": []byte(strings.Join(req.Secrets.SlackAllowedUserIDs, ",")),
+			"allowed-user-ids":    []byte(strings.Join(req.Secrets.SlackAllowedUserIDs, ",")),
 			"allowed-channel-ids": []byte(strings.Join(req.Secrets.SlackAllowedChannelIDs, ",")),
-			webhookSecretKey: []byte(hmacSecret),
+			webhookSecretKey:      []byte(hmacSecret),
 		}})
 	}
 	// kyber#132 Phase 1 — Discord webhook for outbound notifications. The
@@ -2128,4 +2102,20 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 		created = append(created, secret.Name)
 	}
 	return created, nil
+}
+
+// runtimeAuthInput is the compatibility boundary for the existing wire fields.
+// Provider interpretation and credential preparation live in each runtime.
+func (s agentSecretsRequest) runtimeAuthInput() pkgruntimes.AuthInput {
+	input := pkgruntimes.AuthInput{}
+	for k, v := range s.RuntimeAuth {
+		input[k] = v
+	}
+	// Explicit legacy values retain precedence for mixed-version callers.
+	for k, v := range map[string]string{"anthropicApiKey": s.AnthropicAPIKey, "openaiApiKey": s.OpenAIAPIKey, "codexAuthJson": s.CodexAuthJSON, "oauthCode": s.OAuthCode, "pkceVerifier": s.PkceVerifier, "pkceState": s.PkceState} {
+		if v != "" {
+			input[k] = v
+		}
+	}
+	return input
 }

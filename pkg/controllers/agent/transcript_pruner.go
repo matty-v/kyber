@@ -31,6 +31,7 @@ package agent
 
 import (
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimes"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -90,7 +91,7 @@ type TranscriptPrunerConfig struct {
 // fail closed (no destructive sidecar injected) so a half-configured retention
 // block can never prune.
 func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
-	if !cfg.Enabled || cfg.RuntimeImage == "" || cfg.MaxAgeDays <= 0 {
+	if !cfg.Enabled || cfg.RuntimeImage == "" || cfg.MaxAgeDays <= 0 || runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home") == "" {
 		return
 	}
 
@@ -135,8 +136,8 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 		Command: []string{"/bin/bash", "-c", transcriptPruneLoopScript},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
-			{Name: "PRUNE_OVERLAY_ROOT", Value: transcriptRoots(cfg.Runtime, transcriptProjectsOverlayRoot, transcriptCodexOverlayRoot)},
-			{Name: "PRUNE_BIND_ROOT", Value: transcriptRoots(cfg.Runtime, transcriptProjectsBindRoot, transcriptCodexBindRoot)},
+			{Name: "PRUNE_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/overlay/upper/home/kyber")},
+			{Name: "PRUNE_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/home")},
 			{Name: "PRUNE_MAX_AGE_DAYS", Value: fmt.Sprintf("%d", cfg.MaxAgeDays)},
 			{Name: "PRUNE_MAX_BYTES", Value: fmt.Sprintf("%d", cfg.MaxBytesPerAgent)},
 			{Name: "PRUNE_INTERVAL_SECONDS", Value: fmt.Sprintf("%d", interval*60)},

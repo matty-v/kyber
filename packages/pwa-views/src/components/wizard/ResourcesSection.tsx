@@ -1,3 +1,4 @@
+import { legacyRuntimeContracts } from '../../lib/runtime-contract'
 import type { Machine } from '../../lib/types'
 import { parseCpu, parseMemoryGi, type MachineAvailability } from '../../lib/machineTypes'
 import { bandFor } from './capacity'
@@ -56,8 +57,7 @@ export function ResourcesSection({
           onChange={(e) => set('runtime', e.target.value)}
           className={inputClass}
         >
-          <option value="claude-code">Claude Code</option>
-          <option value="codex">Codex (ChatGPT)</option>
+          {(state.runtimes ?? legacyRuntimeContracts).map(runtime => <option key={runtime.id} value={runtime.id}>{runtime.name}</option>)}
         </select>
       </div>
 

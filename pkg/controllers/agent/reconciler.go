@@ -1137,7 +1137,7 @@ func (r *AgentReconciler) classifyEvent(
 			if isRuntimeProbeFailure(pod) {
 				return EventRuntimeProbeFailed, nil
 			}
-			if isOAuthRefreshFailure(pod) {
+			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
 				return EventOAuthRefreshFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
@@ -1170,7 +1170,7 @@ func (r *AgentReconciler) classifyEvent(
 		// Check startup timeout.
 		if agent.Status.LastTransition != nil {
 			if time.Since(agent.Status.LastTransition.Time) > startupTimeoutSeconds {
-				pending, err := r.codexDeviceAuthPending(ctx, agent)
+				pending, err := r.runtimeAuthenticationPending(ctx, agent)
 				if err != nil {
 					return "", err
 				}
@@ -1200,7 +1200,7 @@ func (r *AgentReconciler) classifyEvent(
 				return EventRuntimeProbeFailed, nil
 			}
 			// Check for OAuth refresh failure (exit code 2 from start-claude.sh).
-			if isOAuthRefreshFailure(pod) {
+			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
 				return EventOAuthRefreshFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
@@ -1335,24 +1335,30 @@ func (r *AgentReconciler) classifyEvent(
 	return "", nil
 }
 
-// codexDeviceAuthPending reports whether a Codex subscription agent is
-// intentionally waiting for the human-driven device flow. The API writes {}
-// before starting that flow; the in-pod credential syncer replaces it with the
-// real auth.json immediately after login. This precise marker keeps the normal
-// startup timeout active for every other kind of stuck pod.
-func (r *AgentReconciler) codexDeviceAuthPending(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
-	if agent == nil || agent.Spec.Runtime != "codex" || agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeOAuth {
+// runtimeAuthenticationPending delegates intentional interactive-login waits to
+// the integration owning the credential. Such waits do not spend crash retries.
+func (r *AgentReconciler) runtimeAuthenticationPending(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	if agent == nil {
 		return false, nil
 	}
+	strategy, ok := pkgruntimes.AuthenticationFor(agent.Spec.Runtime)
+	if !ok {
+		return false, nil
+	}
+	name := pkgruntimes.CredentialName(agent.Spec.Runtime, agent.Name, agent.Spec.Secrets.AuthType)
+	if name == "" {
+		return false, nil
+	}
+
 	var secret corev1.Secret
-	key := client.ObjectKey{Namespace: agent.Namespace, Name: agent.Name + "-codex-auth"}
+	key := client.ObjectKey{Namespace: agent.Namespace, Name: name}
 	if err := r.Get(ctx, key, &secret); err != nil {
 		if errors.IsNotFound(err) {
 			return false, nil
 		}
-		return false, fmt.Errorf("reading Codex device-auth secret: %w", err)
+		return false, fmt.Errorf("reading runtime authentication secret: %w", err)
 	}
-	return strings.TrimSpace(string(secret.Data["auth.json"])) == "{}", nil
+	return strategy.Pending(agent.Spec.Secrets.AuthType, secret.Data), nil
 }
 
 // executeAction performs the k8s operations required by the transition action.
@@ -2174,7 +2180,9 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			LogLevel:       r.TelegramLogLevel,
 		})
 	}
-	if agent.Spec.Secrets.SlackEnabled { AppendSlackSidecar(&podSpec, SlackSidecarConfig{AgentName:agent.Name,Image:r.SlackSidecarImage,ExistingSecret:agent.Name+"-slack",LogLevel:r.SidecarLogLevel}) }
+	if agent.Spec.Secrets.SlackEnabled {
+		AppendSlackSidecar(&podSpec, SlackSidecarConfig{AgentName: agent.Name, Image: r.SlackSidecarImage, ExistingSecret: agent.Name + "-slack", LogLevel: r.SidecarLogLevel})
+	}
 
 	// Inject the transcript-tailer sidecar (kyber#446): ships the agent's
 	// Claude Code session JSONL off the PVC on a clean, isolated stream for the
@@ -2371,28 +2379,32 @@ func (r *AgentReconciler) reconcilePublicCapabilities(ctx context.Context, agent
 }
 
 func capabilityEvidenceRequeue(agent *kyberv1.Agent, report *skillscan.Report) time.Duration {
-	if agent.Spec.PublicCapabilities == nil || report == nil {
+	if agent.Spec.PublicCapabilities == nil {
 		return 0
 	}
-	requiresSkills := false
+	requiresSkills, requiresTasks := false, false
 	for _, capability := range agent.Spec.PublicCapabilities.Capabilities {
-		if capability.Evidence != nil && len(capability.Evidence.RequiredSkills) > 0 {
-			requiresSkills = true
-			break
+		requiresSkills = requiresSkills || (capability.Evidence != nil && len(capability.Evidence.RequiredSkills) > 0)
+		requiresTasks = requiresTasks || len(capability.TaskFeatures) > 0
+	}
+	var next time.Duration
+	now := time.Now()
+	schedule := func(expires time.Time) {
+		if remaining := expires.Sub(now); remaining > 0 {
+			next = minNonZero(next, remaining+time.Second)
 		}
 	}
-	if !requiresSkills {
-		return 0
+	// Runtime evidence expires independently of skill evidence. A reporter that
+	// stops must not leave an operator's public task promise available forever.
+	if observation := agent.Status.Runtime.Capabilities; requiresTasks && observation != nil {
+		schedule(observation.ObservedAt.Add(pkgruntimes.ObservationTTL))
 	}
-	reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt)
-	if err != nil {
-		return 0
+	if requiresSkills && report != nil {
+		if reportedAt, err := time.Parse(time.RFC3339, report.ReportedAt); err == nil {
+			schedule(reportedAt.Add(capabilities.SkillEvidenceMaxAge))
+		}
 	}
-	remaining := reportedAt.Add(capabilities.SkillEvidenceMaxAge).Sub(time.Now())
-	if remaining <= 0 {
-		return 0
-	}
-	return remaining + time.Second
+	return next
 }
 
 func publicCapabilityStatusEqual(a, b *kyberv1.AgentPublicCapabilitiesStatus) bool {
@@ -2558,26 +2570,13 @@ func (r *AgentReconciler) resolveAgentForPod(ctx context.Context, agent *kyberv1
 		defaults = d
 	}
 
+	descriptor, _ := pkgruntimes.Describe(resolved.Spec.Runtime)
+	model, version := defaults.ForLegacyKey(descriptor.LegacyDefaultsKey)
 	if resolved.Spec.Model == "" {
-		switch resolved.Spec.Runtime {
-		case "codex":
-			resolved.Spec.Model = defaults.CodexModel
-		default:
-			resolved.Spec.Model = defaults.Model
-		}
+		resolved.Spec.Model = model
 	}
 	if resolved.Spec.RuntimeVersion == "" {
-		switch resolved.Spec.Runtime {
-		case "codex":
-			resolved.Spec.RuntimeVersion = defaults.CodexRuntimeVersion
-		default:
-			// Mirrors the model switch above: anything that is not Codex falls
-			// back to the legacy (Claude Code) fleet default. Listing
-			// "claude-code" alone would silently drop fleet-default version
-			// resolution for any runtime added later — a failure that surfaces
-			// only as an agent quietly running the image's baked-in version.
-			resolved.Spec.RuntimeVersion = defaults.RuntimeVersion
-		}
+		resolved.Spec.RuntimeVersion = version
 	}
 
 	// Empty now means runtime-selected default. Clear a condition left by an
@@ -3130,11 +3129,17 @@ func isRuntimeProbeFailure(pod *corev1.Pod) bool {
 // State.Terminated (not LastTerminationState) — a previous auth failure
 // followed by a non-auth crash must not be misclassified as NeedsAuth.
 //
-// The code is matched regardless of spec.runtime: the two values don't collide,
-// and reading the code the container actually exited with is more robust than
-// trusting the spec to describe the binary that ran.
-func isOAuthRefreshFailure(pod *corev1.Pod) bool {
+// Exit codes are provider-specific. Prefer the platform-owned pod runtime label
+// (the actual launched integration), falling back to spec for legacy pods.
+func isOAuthRefreshFailure(pod *corev1.Pod, runtimeID string) bool {
 	if pod == nil {
+		return false
+	}
+	if id := pod.Labels["kyber.io/runtime"]; id != "" {
+		runtimeID = id
+	}
+	descriptor, ok := pkgruntimes.Describe(runtimeID)
+	if !ok || descriptor.AuthFailureExitCode == 0 {
 		return false
 	}
 	for _, cs := range pod.Status.ContainerStatuses {
@@ -3144,8 +3149,7 @@ func isOAuthRefreshFailure(pod *corev1.Pod) bool {
 		if cs.State.Terminated == nil {
 			continue
 		}
-		switch cs.State.Terminated.ExitCode {
-		case claudeCodeAuthFailureExitCode, codexAuthFailureExitCode:
+		if cs.State.Terminated.ExitCode == descriptor.AuthFailureExitCode {
 			return true
 		}
 	}
@@ -4090,6 +4094,9 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 // won't trigger a diff against an already-empty agent.Status.PodIP — we
 // only mirror the value, not write zero-values unconditionally.
 func podDerivedStatusDiffers(agent *kyberv1.Agent, pod *corev1.Pod) bool {
+	if observation := agent.Status.Runtime.Capabilities; observation != nil && observation.PodUID != string(pod.UID) {
+		return true
+	}
 	if agent.Status.PodName != pod.Name {
 		return true
 	}
@@ -4126,6 +4133,9 @@ func podDerivedStatusDiffers(agent *kyberv1.Agent, pod *corev1.Pod) bool {
 // regression.
 func applyPodDerivedStatus(agent *kyberv1.Agent, pod *corev1.Pod) {
 	agent.Status.PodName = pod.Name
+	if observation := agent.Status.Runtime.Capabilities; observation != nil && observation.PodUID != string(pod.UID) {
+		agent.Status.Runtime.Capabilities = nil
+	}
 	agent.Status.PodIP = pod.Status.PodIP
 	agent.Status.NodeName = pod.Spec.NodeName
 	if pod.Status.StartTime != nil {

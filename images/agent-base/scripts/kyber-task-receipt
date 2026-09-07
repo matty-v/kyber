@@ -14,7 +14,7 @@ attempt_id="${BASH_REMATCH[2]}"
 session_id="$(jq -r '.session_id // empty' <<<"$payload")"
 turn_id="$(jq -r '.turn_id // empty' <<<"$payload")"
 event="$(jq -r '.hook_event_name // empty' <<<"$payload")"
-[[ "$runtime" =~ ^(claude-code|codex)$ ]] || exit 2
+[[ "$runtime" =~ ^[a-z][a-z0-9-]{0,63}$ ]] || exit 2
 [[ "$session_id" =~ ^[A-Za-z0-9._:-]{1,256}$ ]] || exit 2
 [[ -z "$turn_id" || "$turn_id" =~ ^[A-Za-z0-9._:-]{1,256}$ ]] || exit 2
 [[ "$event" == "UserPromptSubmit" ]] || exit 2

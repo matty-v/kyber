@@ -16,6 +16,7 @@ import (
 	"k8s.io/client-go/tools/remotecommand"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // RestartSessionCooldown is the minimum gap between successive
@@ -92,6 +93,11 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request, ag
 	if !ok || len(cmd) == 0 {
 		writeJSONError(w, http.StatusNotImplemented, "not_implemented",
 			fmt.Sprintf("restart-session is not supported on runtime '%s' yet — use restart-pod instead", agent.Spec.Runtime))
+		return
+	}
+
+	if availability := runtimes.AvailabilityFor(agent, runtimes.SessionRestart, time.Now()); availability.State != "available" {
+		writeJSONError(w, http.StatusConflict, "runtime_capability_unavailable", availability.Reason)
 		return
 	}
 

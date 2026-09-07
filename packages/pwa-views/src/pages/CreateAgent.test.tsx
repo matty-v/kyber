@@ -207,7 +207,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Discord' }))
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     // Deliberately leave "Who can talk to it" empty.
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -237,7 +237,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     await user.type(screen.getByLabelText(/who can talk to it/i), '123456789012345678')
     await user.click(screen.getByLabelText(/only when mentioned/i))
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -273,7 +273,7 @@ describe('CreateAgent — Discord wiring (kyber#664)', () => {
     await user.click(screen.getByRole('checkbox', { name: 'Discord' }))
     await user.type(screen.getByLabelText(/discord bot token/i), 'bot-tok')
     await user.type(screen.getByLabelText(/who can talk to it/i), '123456789012345678')
-    await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+    await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
     await waitFor(() =>
       expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
     )
@@ -313,7 +313,7 @@ describe('CreateAgent — OAuth state-mismatch error', () => {
 
       // Step 4 — OAuth: click Authorize, paste a wrong-state code
       await waitFor(() => expect(screen.getByLabelText(/^Authentication$/)).toBeInTheDocument())
-      await user.click(screen.getByRole('button', { name: /open anthropic login/i }))
+      await user.click(screen.getByRole('button', { name: /open Claude Code login/i }))
       await waitFor(() =>
         expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument(),
       )
@@ -517,5 +517,22 @@ describe('CreateAgent — per-step validation reason', () => {
     // After picking a machine, the step is valid and the reason disappears.
     await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
     expect(screen.queryByTestId('wizard-step-reason')).not.toBeInTheDocument()
+  })
+})
+
+
+describe('CreateAgent — discovered auth modes', () => {
+  it('selects the supported mode when the initial runtime offers API-key auth only', async () => {
+    const user = userEvent.setup()
+    setupHooks({configData: {...config, runtimes: [{id:'claude-code', name:'Claude Code', contractVersion:'1.0', profile:'interactive-tmux-v1', cancellation:'notify_only', features:[], authModes:[{id:'api-key', name:'Anthropic API key', flow:'api-key', inputField:'anthropicApiKey'}]}]}})
+    renderAt()
+    await user.type(screen.getByLabelText(/name/i), 'api-only')
+    await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await user.click(screen.getByRole('button', {name:/next/i}))
+    await waitFor(() => expect(screen.getByLabelText(/^Authentication$/)).toHaveValue('api-key'))
+    expect(screen.getByLabelText(/anthropic api key/i)).toBeInTheDocument()
+    expect(screen.queryByText('Authentication is unavailable for this harness.')).not.toBeInTheDocument()
   })
 })

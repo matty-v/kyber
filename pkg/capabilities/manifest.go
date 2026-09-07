@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"net"
 	"net/url"
 	"regexp"
@@ -147,7 +148,7 @@ func validateEvidence(evidence *kyberv1.AgentPublicCapabilityEvidence) error {
 		}
 	}
 	for _, runtime := range evidence.RuntimeAdapters {
-		if runtime != "claude-code" && runtime != "codex" {
+		if _, ok := runtimes.Describe(runtime); !ok {
 			return fmt.Errorf("runtimeAdapters contains unsupported runtime %q", runtime)
 		}
 	}

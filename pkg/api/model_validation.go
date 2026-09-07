@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // validateModelValue checks a model id an operator is about to write
@@ -40,13 +41,12 @@ func (s *Server) validateModelValue(ctx context.Context, runtime, model, agentNa
 	}
 	base := strings.TrimSuffix(model, "[1m]")
 
-	var prefix string
-	switch runtime {
-	case "codex":
-		prefix = "gpt-"
-	default:
-		prefix = "claude-"
+	descriptor, ok := runtimes.Describe(runtime)
+	if !ok || descriptor.ModelPrefix == "" {
+		return ""
 	}
+	prefix := descriptor.ModelPrefix
+
 	if !strings.HasPrefix(base, prefix) {
 		return ""
 	}
@@ -54,10 +54,7 @@ func (s *Server) validateModelValue(ctx context.Context, runtime, model, agentNa
 	known := make(map[string]bool)
 	if s.RuntimeDetectCache != nil {
 		if snap, err := s.RuntimeDetectCache.Get(ctx); err == nil && snap != nil {
-			models := snap.Models
-			if runtime == "codex" {
-				models = snap.CodexModels
-			}
+			models := map[string][]runtimedetect.Model{"models": snap.Models, "codexModels": snap.CodexModels}[descriptor.LegacyCatalogKey]
 			for _, m := range models {
 				known[m.ID] = true
 			}

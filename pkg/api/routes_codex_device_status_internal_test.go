@@ -37,7 +37,7 @@ Follow these steps to sign in with ChatGPT using device code authorization:
 2. Enter this one-time code (expires in 15 minutes)
    E7OV-KG840
 `
-	got := parseDeviceAuthProbe(stdout, start.Add(time.Minute))
+	got := parseDeviceAuthProbe("codex", stdout, start.Add(time.Minute))
 	if got.State != codexauth.StateReady {
 		t.Fatalf("state=%q, want ready", got.State)
 	}
@@ -53,7 +53,7 @@ Follow these steps to sign in with ChatGPT using device code authorization:
 // No login running. Distinct from `starting`: nothing is going to appear until
 // somebody clicks, so the panel offers the button rather than a spinner.
 func TestParseDeviceAuthProbe_NoSessionIsAbsent(t *testing.T) {
-	got := parseDeviceAuthProbe(probeBanner+deviceAuthNoSession+"\n", time.Now())
+	got := parseDeviceAuthProbe("codex", probeBanner+deviceAuthNoSession+"\n", time.Now())
 	if got.State != codexauth.StateAbsent {
 		t.Fatalf("state=%q, want absent", got.State)
 	}
@@ -63,7 +63,7 @@ func TestParseDeviceAuthProbe_NoSessionIsAbsent(t *testing.T) {
 // two of every login.
 func TestParseDeviceAuthProbe_SessionWithoutPromptIsStarting(t *testing.T) {
 	stdout := probeBanner + deviceAuthStartPrefix + "1787774400\n" + deviceAuthPaneMarker + "\n" + probeBanner
-	if got := parseDeviceAuthProbe(stdout, time.Now()); got.State != codexauth.StateStarting {
+	if got := parseDeviceAuthProbe("codex", stdout, time.Now()); got.State != codexauth.StateStarting {
 		t.Fatalf("state=%q, want starting", got.State)
 	}
 }
@@ -78,7 +78,7 @@ func TestParseDeviceAuthProbe_MissingStartStillServesTheCode(t *testing.T) {
 2. Enter this one-time code (expires in 15 minutes)
    E7OV-KG840
 `
-	got := parseDeviceAuthProbe(stdout, time.Now())
+	got := parseDeviceAuthProbe("codex", stdout, time.Now())
 	if got.State != codexauth.StateReady {
 		t.Fatalf("state=%q, want ready", got.State)
 	}
@@ -93,7 +93,7 @@ func TestParseDeviceAuthProbe_OnlyLooksAfterThePaneMarker(t *testing.T) {
 	stdout := "SOME-BANNER https://auth.openai.com/x\n" +
 		deviceAuthStartPrefix + "1787774400\n" +
 		deviceAuthPaneMarker + "\nnothing useful here\n"
-	if got := parseDeviceAuthProbe(stdout, time.Now()); got.State != codexauth.StateStarting {
+	if got := parseDeviceAuthProbe("codex", stdout, time.Now()); got.State != codexauth.StateStarting {
 		t.Fatalf("state=%q, want starting — text before the marker is not the pane", got.State)
 	}
 }

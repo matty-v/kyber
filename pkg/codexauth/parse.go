@@ -17,6 +17,7 @@
 package codexauth
 
 import (
+	"github.com/matty-v/kyber/pkg/runtimes"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ import (
 )
 
 // State is what the device flow is doing, from the platform's point of view.
-type State string
+type State = runtimes.AuthState
 
 const (
 	// StateAbsent means no device-login session is running.
@@ -42,27 +43,7 @@ const (
 )
 
 // Result is the parsed state of one device-login attempt.
-type Result struct {
-	State State `json:"state"`
-	// VerificationURL is the page the operator opens. Empty unless State is
-	// StateReady or StateExpired.
-	VerificationURL string `json:"verificationUrl,omitempty"`
-	// UserCode is the one-time code typed into that page.
-	UserCode string `json:"userCode,omitempty"`
-	// Detail carries a short operator-facing reason when State is StateFailed.
-	// Empty otherwise.
-	Detail string `json:"detail,omitempty"`
-	// ExpiresAt is when the code stops working, derived from the flow's own
-	// "expires in N minutes" anchored to startedAt. Zero when unknown.
-	//
-	// omitZERO, not omitempty: omitempty has no effect on a struct field, so
-	// the obvious tag would ship "0001-01-01T00:00:00Z" for the case Parse
-	// deliberately leaves zero. A client reading that as an absolute deadline
-	// sees a code that expired two millennia ago and reports a perfectly good
-	// code as expired. The API contract says the field is absent here, and
-	// omitzero (Go 1.24+) is what actually makes it absent.
-	ExpiresAt time.Time `json:"expiresAt,omitzero"`
-}
+type Result = runtimes.AuthObservation
 
 var (
 	// The flow prints its link on its own line. Matching the host rather than

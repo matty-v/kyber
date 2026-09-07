@@ -206,3 +206,11 @@ describe('sessionItemsInMore', () => {
     expect(sessionItemsInMore('MemoryExhausted')).toHaveLength(0)
   })
 })
+
+it('uses server capability availability for session controls', () => {
+  expect(sessionItemsInMore('Running', {
+    compaction: { supported: true, state: 'unknown', reason: 'evidence_missing_or_stale' },
+    'session-restart': { supported: true, state: 'available', reason: 'supported' },
+  })).toEqual(['restart-session'])
+  expect(sessionItemsInMore('Running', {})).toEqual([])
+})

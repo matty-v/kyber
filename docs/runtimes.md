@@ -23,8 +23,9 @@ login** on the agent-detail page launches the same in-pod device flow and resume
 the agent after authorization.
 
 Codex also supports an explicit **OpenAI API key** mode at creation time. Kyber
-stores that key in `<agent>-openai`, injects it as `OPENAI_API_KEY`, and bypasses
-subscription login entirely. Auth mode is fixed at creation time; recreate the
+stores that key in `<agent>-openai`, injects it as `OPENAI_API_KEY`, and prepares
+the native login using `codex login --with-api-key` over stdin. Subscription
+login is bypassed entirely. Auth mode is fixed at creation time; recreate the
 agent to switch modes.
 
 Codex V1 models are `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`. Sol is
@@ -59,3 +60,7 @@ Runtime adapters live under `pkg/runtimes/` and register themselves with the
 control-plane runtime registry. Runtime-specific image and boot logic live under
 `images/<runtime>/`; shared pod lifecycle, persistence, transcript, inbound, and
 status behavior stays in the controller and sidecars.
+
+Integration authors should start with the [Kyber Agent Harness Contract](architecture/agent-harness-contract.md)
+and its [conformance/onboarding guide](architecture/agent-harness-conformance.md).
+The v1 contract distinguishes current behavior from migration requirements.

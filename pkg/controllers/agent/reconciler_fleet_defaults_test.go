@@ -375,11 +375,8 @@ func (e *errReader) List(_ context.Context, _ client.ObjectList, _ ...client.Lis
 	return e.err
 }
 
-// The model switch has a default: branch; the runtimeVersion switch must too.
-// Listing only "codex" and "claude-code" would silently drop fleet-default
-// version resolution for any runtime added later — a failure that surfaces
-// only as an agent quietly running its image's baked-in harness version.
-func TestResolveAgentForPod_RuntimeVersionFallsBackForNonCodexRuntimes(t *testing.T) {
+// Provider defaults apply only to the descriptor owning their legacy keys.
+func TestResolveAgentForPod_DefaultsBelongToTheirRuntime(t *testing.T) {
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{Name: rfdConfigMap, Namespace: rfdNS},
 		Data: map[string]string{
@@ -397,9 +394,8 @@ func TestResolveAgentForPod_RuntimeVersionFallsBackForNonCodexRuntimes(t *testin
 	}{
 		{"claude-code", "claude-sonnet-4", "2.1.119"},
 		{"codex", "gpt-5.6-sol", "0.146.0"},
-		// A hypothetical future runtime: it must still pick up the legacy
-		// defaults rather than silently resolving to empty.
-		{"some-future-runtime", "claude-sonnet-4", "2.1.119"},
+		// A new runtime chooses its own defaults; never inject a Claude model/version.
+		{"some-future-runtime", "", ""},
 	} {
 		t.Run(tc.runtime, func(t *testing.T) {
 			agent := newResolverAgent("")

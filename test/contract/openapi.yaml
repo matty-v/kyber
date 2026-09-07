@@ -961,6 +961,44 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/agents/{name}/auth:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getRuntimeAuthStatus
+      summary: Observe the registered harness device-login flow
+      responses:
+        '200':
+          description: Device-login observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/CodexDeviceAuthStatus'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {description: Pod inspection unavailable}
+    post:
+      operationId: reauthorizeRuntime
+      summary: Start the registered harness subscription reauthorization flow
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Required only for authorization-code flows.
+              properties:
+                oauthCode: {type: string, writeOnly: true}
+                pkceVerifier: {type: string, writeOnly: true}
+                state: {type: string, writeOnly: true}
+      responses:
+        '204': {description: Credentials updated or device login scheduled}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '502': {description: Provider exchange failed}
+
   /api/v1/agents/{name}/codex-device-auth:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1553,8 +1591,11 @@ components:
 
     ConfigResponse:
       type: object
-      required: [compute, models, identity]
+      required: [runtimes, compute, models, identity]
       properties:
+        runtimes:
+          type: array
+          items: {$ref: '#/components/schemas/RuntimeDescriptor'}
         compute:
           type: object
           required: [provider]
@@ -2010,10 +2051,51 @@ components:
         resources:
           $ref: '#/components/schemas/AgentResourceUsage'
 
+    RuntimeDescriptor:
+      type: object
+      required: [id, name, contractVersion, profile, authModes, features, cancellation]
+      properties:
+        id: {type: string}
+        name: {type: string}
+        contractVersion: {type: string}
+        profile: {type: string}
+        cancellation: {type: string}
+        legacyCatalogKey: {type: string}
+        legacyVersionsKey: {type: string}
+        features:
+          type: array
+          items: {type: string}
+        authModes:
+          type: array
+          items:
+            type: object
+            required: [id, name, flow]
+            properties:
+              id: {type: string}
+              name: {type: string}
+              flow: {type: string}
+              authorizationUrl: {type: string, format: uri}
+              authorizationParams: {type: object, additionalProperties: {type: string}}
+              inputField: {type: string}
+              reauthorizePath: {type: string}
+    RuntimeFeatureAvailability:
+      type: object
+      required: [supported, state, reason]
+      properties:
+        supported: {type: boolean}
+        state: {type: string, enum: [available, unavailable, unknown]}
+        reason: {type: string}
+
     Agent:
       type: object
       required: [id, phase, machine, runtime, authType, model, resources, createdAt]
       properties:
+        runtimeContract:
+          $ref: '#/components/schemas/RuntimeDescriptor'
+        runtimeCapabilities:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/RuntimeFeatureAvailability'
         id:
           type: string
           example: dave
@@ -2292,6 +2374,11 @@ components:
                 type: string
             anthropicKey:
               type: string
+            runtimeAuth:
+              type: object
+              writeOnly: true
+              description: Harness-owned authentication input; nonempty legacy fields take precedence.
+              additionalProperties: {type: string}
             openaiApiKey:
               type: string
               writeOnly: true

@@ -636,12 +636,11 @@ if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
     A2A_CLAUDE_ARGS="--mcp-config $A2A_MCP_CONFIG"
 fi
 
-# API-key agents use --bare mode which accepts ANTHROPIC_API_KEY without the
-# interactive "Use this API key?" prompt that blocks headless startup.
-# --bare also disables OAuth/keychain, so --channels is not supported.
+# API-key agents use the full interactive profile so managed hooks, skills,
+# identity and MCP configuration load. Native key approval is seeded below.
+# The platform's existing channel/auth restriction still applies.
 if [ -n "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_ACCESS_TOKEN:-}" ]; then
-    CLAUDE_ARGS="$CLAUDE_ARGS --bare"
-    echo "[kyber] api-key auth detected — using --bare mode"
+    echo "[kyber] api-key auth detected — using the interactive profile"
     if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
         echo "[kyber] WARNING: --channels not supported with api-key auth (requires OAuth). Telegram will not be available."
     fi
@@ -997,6 +996,11 @@ fi
 # Code's built-in CLAUDE.md walk-up finds the agent's identity on session
 # start. Falls back to $HOME when there's no identity repo or the clone was
 # skipped — never to "/" (which is wherever entrypoint.sh left us).
+# Report adapter-owned boot observations through the authenticated sidecar.
+if [ -x /usr/local/bin/kyber-runtime-capabilities ]; then
+    nohup /usr/local/bin/kyber-runtime-capabilities claude-code "${CLAUDE_VERSION}" /usr/local/bin/kyber-probe-capabilities >/dev/null 2>&1 &
+fi
+
 LAUNCH_DIR="${HOME:-/home/kyber}"
 if [ -n "${REPO_DIR:-}" ] && [ -d "$REPO_DIR" ]; then
     LAUNCH_DIR="$REPO_DIR"
@@ -1046,6 +1050,13 @@ if ! jq empty "$CLAUDE_STATE" >/dev/null 2>&1; then
 fi
 if ! jq --arg launch_dir "$LAUNCH_DIR" '
     .hasCompletedOnboarding = true
+    | if (env.ANTHROPIC_API_KEY // "") != "" and (env.CLAUDE_ACCESS_TOKEN // "") == "" then
+        # Native Claude state records approval by the final 20 characters.
+        # The operator already selected this key for this Agent in Kyber.
+        (env.ANTHROPIC_API_KEY | .[-20:]) as $key_id
+        | .customApiKeyResponses.approved = (((.customApiKeyResponses.approved // []) + [$key_id]) | unique)
+        | .customApiKeyResponses.rejected = ((.customApiKeyResponses.rejected // []) | map(select(. != $key_id)))
+      else . end
     | .projects = (.projects // {})
     | .projects[$launch_dir] = ((.projects[$launch_dir] // {}) + {
         hasTrustDialogAccepted: true,
@@ -1214,7 +1225,9 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
                 ln -sfn "${KYBER_PLATFORM_SKILLS_DIR:-/opt/kyber/skills}/a2a-client" /home/kyber/.claude/skills/a2a-client
                 chown -h kyber:kyber /home/kyber/.claude/skills/a2a-client 2>/dev/null || true
             done
-        ) &
+        # This repair outlives the API exec. It must not retain the session
+        # lock or exec streams, or a successful restart appears to time out.
+        ) 200>&- </dev/null >/dev/null 2>&1 &
     fi
 
     echo "[kyber] restart-session: tmux 'agent' session restarted"

@@ -106,7 +106,7 @@ describe('isAuthValid', () => {
       isAuthValid({ ...base, authType: 'oauth', pkceVerifier: '', oauthCode: 'abc' }),
     ).toEqual({
       ok: false,
-      reason: 'Click "Authorize with Claude" to start the OAuth flow.',
+      reason: 'Open the login page to authorize.',
     })
   })
   it('not ok with reason for oauth without oauthCode', () => {
@@ -114,7 +114,7 @@ describe('isAuthValid', () => {
       isAuthValid({ ...base, authType: 'oauth', pkceVerifier: 'v', oauthCode: '' }),
     ).toEqual({
       ok: false,
-      reason: 'Paste the authorization code Anthropic showed you.',
+      reason: 'Paste the authorization code.',
     })
   })
   it('ok for oauth with both verifier and code', () => {
@@ -125,7 +125,7 @@ describe('isAuthValid', () => {
   it('not ok with reason for api-key with empty key', () => {
     expect(isAuthValid({ ...base, authType: 'api-key', anthropicApiKey: '' })).toEqual({
       ok: false,
-      reason: 'Paste your Anthropic API key.',
+      reason: 'Paste your Anthropic API Key.',
     })
   })
   it('ok for api-key with non-empty key', () => {

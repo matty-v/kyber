@@ -450,13 +450,13 @@ export function useDeleteAgent() {
   })
 }
 
-export function useReauthorizeAgent() {
+export function useReauthorizeAgent(useContract = false) {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ name, body }: { name: string; body: { oauthCode: string; pkceVerifier: string; state: string } }) =>
-      api.reauthorizeAgent(name, body),
+      useContract ? api.reauthorizeRuntime(name, body) : api.reauthorizeAgent(name, body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
     },
@@ -468,19 +468,19 @@ export function useReauthorizeAgent() {
   })
 }
 
-export function useStartCodexDeviceAuth() {
+export function useStartCodexDeviceAuth(useContract = false) {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: (name: string) => api.startCodexDeviceAuth(name),
+    mutationFn: (name: string) => useContract ? api.reauthorizeRuntime(name) : api.startCodexDeviceAuth(name),
     onSuccess: (_data, name) => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
     },
     meta: {
-      successMessage: 'Codex device login started',
-      errorPrefix: 'Failed to start Codex device login',
+      successMessage: 'Device login started',
+      errorPrefix: 'Failed to start device login',
     },
   })
 }
@@ -508,12 +508,12 @@ export function useStartCodexDeviceAuth() {
  * `ready` we could not date keeps polling: without a deadline nothing else
  * would ever re-arm it.
  */
-export function useCodexDeviceAuthStatus(name: string, enabled: boolean) {
+export function useCodexDeviceAuthStatus(name: string, enabled: boolean, useContract = false) {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   return useQuery({
     queryKey: ['cluster', cluster.id, 'agents', name, 'codex-device-auth'],
-    queryFn: () => api.getCodexDeviceAuthStatus(name),
+    queryFn: () => useContract ? api.getRuntimeAuthStatus(name) : api.getCodexDeviceAuthStatus(name),
     enabled: Boolean(name) && enabled,
     refetchInterval: (query) => {
       const d = query.state.data

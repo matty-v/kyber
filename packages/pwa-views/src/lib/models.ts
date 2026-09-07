@@ -1,3 +1,4 @@
+import { legacyRuntimeContracts } from './runtime-contract'
 // Effective model list for PWA pickers — kyber#378 PR-D.
 //
 // Source ordering:
@@ -30,7 +31,9 @@ export function useEffectiveModelList(runtime = 'claude-code'): EffectiveModelLi
   const config = useComputeConfig()
 
   const availableData: AvailableResponse | undefined = available.data
-  const detectedModels = runtime === 'codex' ? (availableData?.codexModels ?? []) : (availableData?.models ?? [])
+  const descriptor = (config.data?.runtimes ?? legacyRuntimeContracts).find(d => d.id === runtime)
+  const catalogs: Record<string, AvailableModel[]> = { models: availableData?.models ?? [], codexModels: availableData?.codexModels ?? [] }
+  const detectedModels = catalogs[descriptor?.legacyCatalogKey ?? ''] ?? []
   if (availableData && detectedModels.length > 0) {
     return {
       models: detectedModels,
@@ -41,7 +44,7 @@ export function useEffectiveModelList(runtime = 'claude-code'): EffectiveModelLi
     }
   }
   const cfgModels = config.data?.models ?? []
-  if (runtime !== 'codex' && cfgModels.length > 0) {
+  if (descriptor?.legacyCatalogKey === 'models' && cfgModels.length > 0) {
     return {
       models: cfgModels.map((m): AvailableModel => ({
         id: m.id,
