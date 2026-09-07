@@ -18,7 +18,7 @@ session. Startup prompts are operator-visible configuration, not secrets.
 
 ## Whole-filesystem persistence
 
-An agent keeps its entire filesystem across restarts, upgrades, and preemption: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. This is the defining difference from a throwaway container: the agent picks up where it left off instead of starting from a blank disk.
+An agent keeps its entire filesystem on its persistent volume across pod restarts and upgrades: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. Recovery on a replacement machine depends on storage: portable cloud volumes can reattach, while node-local storage cannot survive loss of its node. Pushed identity-repo content survives either case.
 
 ## Curate what an agent promises publicly
 
@@ -52,10 +52,12 @@ An agent moves through named phases. Most transitions are automatic: Kyber drive
 | `WaitingForMachine` | Waiting for a replacement machine after preemption. It resumes when capacity returns. |
 | `NeedsAuth` | Its stored authorization is no longer valid. Re-authorize it to bring it back. |
 | `MemoryExhausted` | Killed for exceeding its memory limit. Give it more memory, then restart it. |
+| `DiskExhausted` | Disk reserve reached; the harness pauses while Shell remains available for cleanup. Free space or expand supported storage. |
+| `BrokenRuntime` | The harness executable is missing or unusable. Use runtime repair before resuming work. |
 | `Failed` | An unrecoverable error, or automatic restart attempts used up. Investigate, then restart. |
 | `Deleted` | Fully removed, including storage. An identity repo, if the agent has one, is preserved. |
 
-Two of those states are deliberately human-required, because a silent retry would only hide the real problem: an agent whose stored authorization has expired (`NeedsAuth`), and an agent killed for running out of memory (`MemoryExhausted`). Kyber stops and waits for you instead of retrying into a loop.
+Recovery states identify the action needed: renew authorization for `NeedsAuth`, increase memory for `MemoryExhausted`, restore disk headroom for `DiskExhausted`, or repair the harness for `BrokenRuntime`. Repeated restarts alone do not resolve these conditions.
 
 Deletion is guarded the other way: it requires an explicit confirmation matching the agent's name, so a stray click or script cannot destroy an identity, because a confirmed delete is irreversible and removes the agent's storage. If the agent has an [identity repo](memory-and-identity.md), that repo is preserved.
 

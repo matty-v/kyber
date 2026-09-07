@@ -4,7 +4,7 @@ The fleet console is the browser-based control surface for a Kyber cluster: a we
 
 ![The fleet console dashboard](../../assets/pwa-dashboard.png)
 
-## One console, five surfaces
+## Console navigation
 
 The console is organized into surfaces, each for one job:
 
@@ -12,10 +12,12 @@ The console is organized into surfaces, each for one job:
 - **Machines**: create and manage the machines agents run on.
 - **Agents**: create and manage agents, stream logs, open a shell into an agent, and drive lifecycle actions such as stop, start, restart, re-authorize, and delete. An agent's detail view uses grouped local navigation: Observe contains Overview, Activity, and Shell; Automate contains Jobs and Webhooks; Configure contains General, Comms, Secrets, and A2A. The navigation is a persistent rail on desktop and a full-screen menu on mobile.
 - **Settings**: manage fleet defaults, metrics, logs, system health, updates, and API access through the same responsive local-navigation pattern. Metrics and Logs remain directly linkable but do not compete with daily fleet destinations in the global navigation.
-- **Metrics**: per-agent working time, token usage, cost, and live node resource gauges. See [Metrics](#metrics) below.
-- **Settings**: manage the API key, choose the update channel and install cluster updates, see the full version breakdown (build, chart version, and the substrate the cluster runs on), and set fleet-wide harness defaults.
 
 Every screen shows a cluster identifier with the cluster's name and version, so you can confirm which cluster and which build you are about to act on before doing anything. The version shown is polled live: it reflects what the cluster is running now, not what the tab loaded with. If the cluster's API is unreachable, the identifier reads "version unavailable". When a newer Kyber release is available, an update indicator appears next to the version and opens the update details, and clusters configured for it can install the update from right there.
+
+## Agent profiles
+
+An agent’s General settings let you set its display name, description, and avatar. Avatars accept PNG, JPEG, or WebP files up to 1 MiB. Images are stored privately and served through authenticated API requests; the cluster currently needs durable tasks enabled and their object storage configured for uploads. You can replace or remove an avatar without restarting the agent.
 
 ## Agent status and activity
 
@@ -51,7 +53,7 @@ The Metrics surface is a read-only observability dashboard for the current clust
 - **Node resources**: live CPU, memory, and disk gauges per node, refreshed every 30 seconds.
 - **State change frequency**: how often each agent transitioned between states, for spotting reliability regressions.
 
-The whole surface follows one rule: never show a confident number Kyber cannot stand behind. Cost is computed from an open, community-maintained pricing dataset that is refreshed on a schedule and reviewed before it ships; a model with no known price shows "unpriced" rather than a believable $0.00. The usage numbers are still real in that case, only the cost is unavailable. Likewise, each model's context-window budget is measured against its real context window, auto-detected from the model provider, so a brand-new model gets a correct budget with no manual step; a window that cannot be confirmed is marked as an estimate rather than shown as a confidently wrong number.
+The whole surface follows one rule: never show a confident number Kyber cannot stand behind. Cost is computed from an open, community-maintained pricing dataset that is refreshed on a schedule and reviewed before it ships; a model with no known price shows "unpriced" rather than a believable $0.00. The usage numbers are still real in that case, only the cost is unavailable. Context budgets use authoritative runtime or provider evidence. Claude catalogs include the provider’s context window; Codex uses the active session’s reported context window. Missing evidence stays unknown.
 
 ## Learn more
 

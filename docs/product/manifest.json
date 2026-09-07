@@ -16,7 +16,7 @@
       "pages": [
         { "file": "fleet-console.md", "label": "The fleet console" },
         { "file": "agents-and-persistence.md", "label": "Agents and persistence" },
-        { "file": "chat-channels.md", "label": "Chat: Telegram and Discord" },
+        { "file": "chat-channels.md", "label": "Chat: Telegram, Discord, and Slack" },
         { "file": "memory-and-identity.md", "label": "Memory and identity" },
         { "file": "scheduled-jobs.md", "label": "Scheduled jobs and agent-to-agent" },
         { "file": "runtimes.md", "label": "Runtimes and subscriptions" },

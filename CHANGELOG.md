@@ -7,6 +7,18 @@
 
 ## Unreleased
 
+Release preparation for **v1.5.0**: [reviewed scope and upgrade notes](docs/releases/v1.5.0.md).
+Changes since v1.4.1 include Slack configuration and text/thread chat, private
+agent avatars, grouped console navigation, the versioned harness integration
+contract, and release/documentation cleanup. Publication is pending approval.
+
+## Earlier public-release history
+
+The entries below accumulated across earlier releases and were historically
+left under Unreleased. They are retained as history, not presented as new in
+v1.5.0. Use the versioned GitHub Releases and explicit tag comparisons for the
+scope of each previous release.
+
 - Fix (chart): **v1.4.0 could not start on any cluster.** The two task
   file-size limits rendered into the control-plane ConfigMap in exponent form
   (`2.62144e+07` instead of `26214400`) because Helm parses YAML numbers as

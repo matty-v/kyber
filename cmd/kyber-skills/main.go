@@ -801,16 +801,6 @@ func (e *responseError) Error() string {
 	return "sidecar returned " + e.status + ": " + e.body
 }
 
-func countBroken(rep *skillscan.Report) int {
-	var n int
-	for _, s := range rep.Skills {
-		if s.Broken() {
-			n++
-		}
-	}
-	return n
-}
-
 // printReport writes the human-readable view an agent reads when it wants to
 // know what it can actually do.
 func printReport(w io.Writer, rep *skillscan.Report, repoDir string) {

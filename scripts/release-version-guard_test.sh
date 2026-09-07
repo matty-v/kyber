@@ -148,6 +148,31 @@ else
     bad "release.yml guards the :latest refresh" "no origin/main HEAD guard found"
 fi
 
+# Release-note ranges must ignore independently versioned package tags.
+d=$(new_repo)
+(
+  cd "$d" || exit 1
+  echo seed > f
+  git add f && git commit -q -m seed
+  git tag -a v1.4.1 -m release
+  echo feature >> f
+  git commit -qam feature
+  git tag -a pwa-views/v0.40.0 -m package
+  echo candidate >> f
+  git commit -qam candidate
+  git tag -a v1.5.0 -m release
+)
+# Execute the workflow's actual previous-tag expression in the fixture.
+lookup=$(sed -n 's/.*PREV=$(\(git describe.*\) 2>\/dev\/null.*$/\1/p' "$RELEASE_YML")
+lookup=$(printf '%s' "$lookup" | sed 's/${{ needs.meta.outputs.tag }}/v1.5.0/g')
+previous=$(cd "$d" && bash -c "$lookup")
+if [ "$previous" = "v1.4.1" ]; then
+    ok "release-note range ignores intervening pwa-views tags"
+else
+    bad "release-note range ignores intervening pwa-views tags" "got '$previous'"
+fi
+rm -rf "$d"
+
 echo ""
 echo "Results: ${PASS} passed, ${FAIL} failed"
 if [ "${FAIL}" -gt 0 ]; then

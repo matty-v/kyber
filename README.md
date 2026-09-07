@@ -11,7 +11,7 @@
 
 Each agent gets full autonomous access to its own sandboxed pod, including disk,
 tools, repos and memory, and keeps all of it across restarts. You can manage the
-fleet from a web console, the API, or from Telegram and Discord on your phone.
+fleet from a web console, the API, or from Telegram, Discord, and Slack on your phone.
 Made to run with your existing Claude or ChatGPT subscription.
 
 ![The Kyber fleet console: dashboard with agent status, per-agent context pressure, and a live terminal peek](docs/assets/pwa-dashboard.png)
@@ -24,7 +24,7 @@ Made to run with your existing Claude or ChatGPT subscription.
 - **Run them anywhere.** A MacBook is the recommended local setup; Kyber also
   runs on a Windows laptop, a spare box, or any cloud. On GCP, Kyber provisions
   the VMs for you, preemptible included.
-- **Control agents from your phone.** Two-way Telegram and Discord chat with any
+- **Control agents from your phone.** Two-way Telegram, Discord, and Slack chat with any
   agent. No terminal needed.
 - **Own the environment, not just the agent.** Choose each agent's machine, VM
   type, disk, CPU and memory. Reboot it, stop it, or open a shell into the

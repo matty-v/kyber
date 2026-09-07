@@ -4,7 +4,7 @@ Kyber is a self-hosted platform for running and managing a fleet of long-lived
 AI agents on a Kubernetes cluster. Each agent gets full autonomous access to its
 own sandboxed pod, including disk, tools, repos, and memory, and keeps all of it
 across restarts. You manage the fleet from a web console, the API, or from
-Telegram and Discord on your phone. It is made to run with the Claude or ChatGPT
+Telegram, Discord, and Slack on your phone. It is made to run with the Claude or ChatGPT
 subscription you already pay for.
 
 ## The mental model
@@ -12,7 +12,9 @@ subscription you already pay for.
 An agent in Kyber is not a chat session. It is long-lived infrastructure: a
 worker with its own sandboxed pod, its own persistent filesystem, its own
 identity, and its own model. Installed packages, cloned repos, credentials, and
-memory all survive restarts, upgrades, and machine preemption.
+memory survive pod restarts and upgrades. Recovery after machine loss depends
+on the storage backend: portable volumes can reattach, while node-local
+volumes are tied to their node.
 
 You declare what you want, an agent of a certain shape on a certain kind of
 machine, and Kyber works to make reality match that intent and keep it there.
@@ -31,7 +33,8 @@ Two concepts an operator creates and manages:
   identity is versioned and survives even a full teardown. See
   [Memory and identity](../capabilities/memory-and-identity.md).
 - **Machine**: where agents run. A Machine can be a cloud VM that Kyber
-  provisions and manages for you (on GCP, cheaper spot capacity included), or
+  provisions and manages for you (including direct GCE, managed GKE pools,
+  and managed EKS node groups with installer-curated profiles), or
   it can stand for a node that already exists in your cluster, the shape used
   by single-box installs and by managed Kubernetes services where your own node
   pool provides the capacity. Kyber handles bringing machines up and recovering
@@ -47,7 +50,7 @@ Two concepts an operator creates and manages:
 - **Two agent runtimes**: Claude Code and Codex. Claude Code agents sign in
   with your Claude subscription, Codex agents with your ChatGPT subscription.
   API keys work too. See [Runtimes](../capabilities/runtimes.md).
-- **Telegram and Discord channels** for two-way chat with any agent, no
+- **Telegram, Discord, and Slack channels** for two-way chat with any agent, no
   terminal needed. See [Chat channels](../capabilities/chat-channels.md).
 
 ## Who it is for

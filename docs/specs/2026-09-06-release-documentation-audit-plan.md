@@ -10,10 +10,10 @@ Baseline: origin/main b8c47b9; latest release v1.4.1. Work branch:
 ## Checkpoints
 
 - [x] Fetch main, isolate worktree, inspect repository and release instructions.
-- [ ] Inventory current docs and compare product/architecture/operator guidance
+- [x] Inventory current docs and compare product/architecture/operator guidance
   with API, controllers, runtimes, UI, chart, scripts, and CI.
-- [ ] Correct stale claims and links; preserve dated design history as history.
-- [ ] Remove proven unused code; record evidence and verify affected behavior.
+- [x] Correct stale claims and links; preserve dated design history as history.
+- [x] Remove proven unused code; record evidence and verify affected behavior.
 - [ ] Run documentation, release, build, and affected code verification; review diff.
 - [ ] Push consolidated cleanup PR and check CI.
 - [ ] Prepare version recommendation, release notes, and precise release gates.
@@ -31,3 +31,12 @@ harness contract. No release dispatch has occurred.
 
 Release preparation must leave a concrete version/notes/checks proposal before
 requesting the operator's pre-tag approval described by the release workflow.
+
+## Cleanup checkpoint
+
+Evidence: [audit record](2026-09-06-release-documentation-audit-evidence.md).
+Release notes drafted at `docs/releases/v1.5.0.md`: minor recommendation for
+Slack, avatars, navigation, and harness integration since v1.4.1. Focused chart
+and skills tests, 81 product-doc checks, and 15 release guards passed. Full Go
+build/vet/test pass is running. Next: final consistency review, record final
+checks, push cleanup PR and inspect CI before the concrete pre-tag approval.
