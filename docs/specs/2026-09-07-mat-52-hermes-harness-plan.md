@@ -58,6 +58,45 @@ render it truthfully. Harness-version browsing should use the runtime registry
 and image/version metadata rather than extending the legacy Claude/Codex
 catalogs.
 
+## Slice C checkpoint — operator model, context, and version visibility
+
+The approved next checkpoint closes the four parity gaps with data native to
+the configured Hermes/OpenRouter runtime:
+
+- add a bounded in-image Hermes reporter that reads only strict finalized API
+  call records from Hermes's agent log, posts the observed provider/model and
+  prompt-token context usage through the existing token-usage sidecar route,
+  and never reads or forwards prompt/message text;
+- have that reporter publish the OpenRouter model list from Hermes's own
+  provider cache, enriched with Hermes's cached OpenRouter display names and
+  context lengths, through the existing per-agent runtime-catalog route;
+- declare Hermes model-catalog and usage-reporting support only after those
+  reports exist, enabling the existing validated model picker and set-model
+  pod-roll path without a Hermes-specific API;
+- add a GitHub Releases client to runtime detection and expose recent stable
+  Hermes package versions through an additive `hermesVersions` field and the
+  descriptor-driven harness-version picker; GitHub Releases is authoritative
+  here because Hermes 0.21.x is published there while PyPI remains at 0.19.0;
+  and
+- keep arbitrary Hermes source-version installation out of this checkpoint.
+  The image is commit-pinned and its native updater targets a branch rather
+  than a package version, so browsing must not be represented as proof that a
+  selected historical source release can be installed safely. That requires a
+  separate atomic source-install/rollback design.
+
+Acceptance for this checkpoint:
+
+- a live Hermes agent reports a non-empty, OpenRouter-scoped model catalog with
+  known positive context windows, and Kyber's Model action can select one;
+- after a model change and pod roll, the observed current model replaces the
+  requested fallback in the agent detail view;
+- after a completed Hermes API call, the agent detail context card shows the
+  native prompt-token count, resolved limit, and percentage;
+- the harness-version dialog lists current stable Hermes GitHub releases even
+  though PyPI is stale; and
+- focused Go, shell/image, OpenAPI contract, PWA type/lint, and component tests
+  pass before the worktree is deployed to `kyber-dev` for live verification.
+
 ## Live hardening checkpoint — Hermes native skill discovery
 
 Hermes reports 59 usable skills in the live Linux agent: five identity skills
@@ -108,9 +147,8 @@ budget. The corresponding control-plane image is
 `control-plane:worktree-20260908184524-f124030` (digest
 `sha256:e1c16e3d41c71a4d62553bd189c2c5ebb59fe8a8041376f7c914a302412becc5`).
 
-Exact next action: have the operator refresh the Hermes Skills tab and confirm
-the native and Kyber views both show 59; then resume Slice C with the recorded
-provider/model visibility and switching gaps.
+Exact next action: implement and unit-test the bounded Hermes reporter parser
+and native model-catalog conversion, then wire the reporter into the image.
 
 ## Outcome
 
