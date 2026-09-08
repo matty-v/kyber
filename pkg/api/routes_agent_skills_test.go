@@ -32,7 +32,7 @@ func postSkills(t *testing.T, srv *api.InternalServer, agent, body string) *http
 const oneHealthySkill = `{
   "version": 1,
   "skills": [
-    {"name":"restart","description":"Planned shutdown.","source":"identity","path":"skills/restart","linked":["claude-code","codex"]}
+    {"name":"restart","description":"Planned shutdown.","source":"identity","path":"skills/restart","linked":["claude-code","codex","hermes"]}
   ]
 }`
 

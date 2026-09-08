@@ -22,8 +22,15 @@ Acceptance for this checkpoint:
 - after a dev control-plane reload, the live Hermes agent's report is stored
   and served by `GET /api/v1/agents/hermes/skills`.
 
-Exact next action: extend the server allowlist and regression fixture, run the
-focused tests, then reload the dev control plane and verify the live endpoint.
+Implementation checkpoint:
+
+- extended the internal API allowlist with `skillscan.RuntimeHermes`;
+- updated the store-and-serve regression fixture to require all three runtime
+  identifiers;
+- `go test ./pkg/api ./pkg/skillscan` passes; and
+- `go test ./pkg/runtimes/hermes ./pkg/runtimes/... ./pkg/api/...` passes.
+
+Exact next action: reload the dev control plane and verify the live endpoint.
 
 ## Outcome
 

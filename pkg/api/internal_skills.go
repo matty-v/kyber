@@ -50,6 +50,7 @@ var validSkillSources = map[string]bool{
 var validLinkedRuntimes = map[string]bool{
 	skillscan.RuntimeClaudeCode: true,
 	skillscan.RuntimeCodex:      true,
+	skillscan.RuntimeHermes:     true,
 }
 
 // handleSkillsReport handles POST /internal/agents/{name}/skills.
