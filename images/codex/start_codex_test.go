@@ -442,6 +442,14 @@ func TestStartCodexRegistersDiscordMCP(t *testing.T) {
 	}
 }
 
+func TestStartCodexRegistersSlackMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil { t.Fatal(err) }
+	for _, want := range []string{"kyber_converge_mcp kyber_slack", `"${KYBER_SLACK_MCP_URL:-}"`} {
+		if !strings.Contains(string(script), want) { t.Fatalf("start-codex.sh missing Slack MCP registration %q", want) }
+	}
+}
+
 func TestStartCodexRegistersRequestReplyMCP(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
 	if err != nil {
