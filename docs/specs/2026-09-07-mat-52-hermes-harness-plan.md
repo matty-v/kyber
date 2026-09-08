@@ -79,17 +79,38 @@ Acceptance for this checkpoint:
 - a rebuilt Hermes dev image reports the same 59 skills visible inside the
   runtime, and Kyber serves them from the agent Skills endpoint.
 
-Exact next action: add focused scanner fixtures for the manifest-backed nested
-layout, implement the generic scan path, and verify it against the live Hermes
-agent.
+Implementation and live verification:
 
-Live rollout note: rebuilding the 512 MB Hermes image triggered the durable
-rootfs base-image merge, which exceeded Hermes's original 90-second effective
-liveness allowance. Kubernetes repeatedly terminated the agent before the
-merge could finish. The Hermes liveness probe must allow bounded first-boot
-migration time while readiness continues to hold the pod out of service, and
-the controller's Starting timeout must not preempt that declared liveness
-budget.
+- commit `1e63442` teaches the scanner to discover manifest-backed nested
+  Hermes skills, filters `platforms: [macos]` on Linux, suppresses false
+  unmanaged-category findings, and gives platform skills a runtime-neutral PWA
+  label;
+- focused scanner, API, runtime, PWA component, and TypeScript lint checks pass;
+- the rebuilt dev Hermes image is
+  `hermes:worktree-20260908180700-1e63442` (digest
+  `sha256:03edfab550ffa34b8e16b2fad563442c56633a0ab21f19d1852827696642a32f`);
+- that image's scanner reports exactly 59 usable skills: five identity skills,
+  54 image-provided Hermes skills, all linked to `hermes`, and zero findings;
+- the dev control plane stores that exact 59-skill report for the Skills tab;
+  and
+- the live agent is `Running` on Hermes 0.21.0 with both runtime containers
+  ready and zero restarts.
+
+Rebuilding the 512 MB Hermes image triggered the durable-root base-image
+merge, which exceeded Hermes's original 90-second effective liveness allowance.
+Kubernetes repeatedly terminated the agent before the merge could finish.
+Commit `e74dbac` gives Hermes a 300-second initial liveness grace period while
+readiness continues to hold it out of service. Commit `f124030` makes the
+controller's Starting timeout honor each pod's declared liveness budget instead
+of preempting it at a fixed 120 seconds. The final migration completed on one
+stable pod after roughly six and a half minutes, within its bounded probe
+budget. The corresponding control-plane image is
+`control-plane:worktree-20260908184524-f124030` (digest
+`sha256:e1c16e3d41c71a4d62553bd189c2c5ebb59fe8a8041376f7c914a302412becc5`).
+
+Exact next action: have the operator refresh the Hermes Skills tab and confirm
+the native and Kyber views both show 59; then resume Slice C with the recorded
+provider/model visibility and switching gaps.
 
 ## Outcome
 
