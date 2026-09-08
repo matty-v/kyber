@@ -231,7 +231,14 @@ if [ -n "${KYBER_DISCORD_MCP_URL:-}" ]; then
     fi
 fi
 if [ -n "${KYBER_SLACK_MCP_URL:-}" ]; then
-    claude mcp add kyber-slack --transport http "$KYBER_SLACK_MCP_URL" >/dev/null 2>&1 || true
+    claude mcp remove kyber-slack --scope user >/dev/null 2>&1 || true
+    if claude mcp add kyber-slack "$KYBER_SLACK_MCP_URL" --transport http --scope user >/dev/null 2>&1; then
+        echo "[kyber] Slack MCP sidecar registered at $KYBER_SLACK_MCP_URL"
+    else
+        echo "[kyber] WARNING: could not register the Slack MCP server 'kyber-slack'" >&2
+    fi
+else
+    claude mcp remove kyber-slack --scope user >/dev/null 2>&1 || true
 fi
 
 # ---- Platform request/reply MCP tool ----

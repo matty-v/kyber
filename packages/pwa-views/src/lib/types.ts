@@ -1096,6 +1096,7 @@ export interface PutSlackCommsRequest {
   appToken?: string
   allowedUserIds: string[]
   allowedChannelIds: string[]
+  mentionOnly?: boolean
   action?: string
 }
 
