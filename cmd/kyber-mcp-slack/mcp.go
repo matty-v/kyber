@@ -71,7 +71,7 @@ func toolDefs() []map[string]any {
 	schema := func(p map[string]any, req ...string) map[string]any {
 		return map[string]any{"type": "object", "properties": p, "required": req}
 	}
-	return []map[string]any{{"name": "reply", "description": "Reply in an allowlisted Slack conversation.", "inputSchema": schema(map[string]any{"channel_id": str, "text": str, "thread_ts": str}, "channel_id", "text")}, {"name": "edit_message", "description": "Edit a Slack message sent by this bot.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "text": str}, "channel_id", "message_id", "text")}, {"name": "react", "description": "Add or remove this bot's emoji reaction.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "emoji": str, "remove": map[string]any{"type": "boolean"}}, "channel_id", "message_id", "emoji")}}
+	return []map[string]any{{"name": "reply", "description": "Reply in an allowlisted Slack conversation.", "inputSchema": schema(map[string]any{"channel_id": str, "text": str, "thread_ts": str}, "channel_id", "text")}, {"name": "edit_message", "description": "Edit a Slack message sent by this bot.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "text": str}, "channel_id", "message_id", "text")}, {"name": "react", "description": "Add or remove this bot's emoji reaction.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "emoji": str, "remove": map[string]any{"type": "boolean"}}, "channel_id", "message_id", "emoji")}, {"name": "download_attachment", "description": "Download a file from an accepted inbound Slack message into /persist.", "inputSchema": schema(map[string]any{"file_id": str}, "file_id")}}
 }
 func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResult {
 	var p struct {
@@ -82,6 +82,24 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 		return toolError("could not decode tool arguments")
 	}
 	arg := func(k string) string { v, _ := p.Arguments[k].(string); return strings.TrimSpace(v) }
+	if p.Name == "download_attachment" {
+		fileID := arg("file_id")
+		if fileID == "" {
+			return toolError("file_id is required")
+		}
+		if s.cfg.attachments == nil {
+			return toolError("attachment downloads are unavailable")
+		}
+		item, ok := s.cfg.attachments.get(fileID)
+		if !ok {
+			return toolError("file_id is not in scope for this agent — only files from accepted inbound messages may be downloaded")
+		}
+		path, err := downloadSlackFile(ctx, newSlackFileClient(s.cfg.botToken), s.cfg.botToken, item, s.cfg.downloadDir)
+		if err != nil {
+			return toolError("could not download attachment: " + err.Error())
+		}
+		return result("downloaded to " + path)
+	}
 	ch := arg("channel_id")
 	if !s.channelAllowed(ch) {
 		return toolError("channel_id is not in scope for this agent")

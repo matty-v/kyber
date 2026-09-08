@@ -19,7 +19,7 @@ type SlackSidecarConfig struct {
 // DefaultSlackAction is deliberately self-contained: the binding is also
 // synthesized by the reconciler for agents enabled directly through the CRD.
 func DefaultSlackAction() string {
-	return "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. Keep replies concise."
+	return "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. If attachments are listed, use download_attachment with file_id; attach outbound files using absolute paths under /persist. Keep replies concise."
 }
 
 func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding {
@@ -30,6 +30,7 @@ func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding 
 			{Label: "user_id", JsonPath: "$.user_id"}, {Label: "channel_id", JsonPath: "$.channel_id"},
 			{Label: "message_id", JsonPath: "$.message_id"}, {Label: "message", JsonPath: "$.content"},
 			{Label: "thread_ts", JsonPath: "$.thread_id"},
+			{Label: "attachments", JsonPath: "$.attachments"},
 		},
 	}
 }

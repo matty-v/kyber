@@ -41,3 +41,12 @@ func TestSlackMCPAdvertisesAndCallsRichTools(t *testing.T) {
 		t.Fatalf("call = %+v", got)
 	}
 }
+
+func TestSlackMCPDownloadRejectsUnobservedFile(t *testing.T) {
+	s := newMCPServer(config{attachments: newSlackAttachmentStore(10)}, http.DefaultClient)
+	args, _ := json.Marshal(map[string]any{"name": "download_attachment", "arguments": map[string]any{"file_id": "unknown"}})
+	got := s.call(t.Context(), args)
+	if !got.IsError || !strings.Contains(got.Content[0]["text"], "not in scope") {
+		t.Fatalf("call = %+v", got)
+	}
+}

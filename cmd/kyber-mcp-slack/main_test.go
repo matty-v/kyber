@@ -1,11 +1,38 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+func TestForwardAllowsFileOnlyMessageAndSanitizesMetadata(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	store := newSlackAttachmentStore(10)
+	cfg := config{inboundURL: srv.URL, agentName: "boba", binding: "slack", users: map[string]bool{"U": true}, channels: map[string]bool{"C": true}, attachments: store}
+	var envelope eventEnvelope
+	envelope.Payload.Event = slackEvent{Type: "message", User: "U", Channel: "C", TS: "1.1", Files: []slackFile{{ID: "F1", Name: "note.txt", URL: "https://files.slack.com/private"}}}
+	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(body["attachments"])
+	if strings.Contains(string(encoded), "files.slack.com") {
+		t.Fatalf("private URL leaked in inbound payload: %s", encoded)
+	}
+	if _, ok := store.get("F1"); !ok {
+		t.Fatal("accepted attachment was not registered")
+	}
+}
 
 func TestForwardMentionOnly(t *testing.T) {
 	var deliveries atomic.Int32

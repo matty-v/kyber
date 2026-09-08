@@ -31,6 +31,8 @@ type config struct {
 	mcpAddr, healthAddr                                            string
 	mentionOnly                                                    bool
 	botID                                                          string
+	attachments                                                    *slackAttachmentStore
+	downloadDir                                                    string
 }
 
 func csv(s string) map[string]bool {
@@ -43,7 +45,7 @@ func csv(s string) map[string]bool {
 	return out
 }
 func loadConfig() (config, error) {
-	c := config{botToken: os.Getenv("SLACK_BOT_TOKEN"), appToken: os.Getenv("SLACK_APP_TOKEN"), inboundURL: os.Getenv("KYBER_INBOUND_URL"), agentName: os.Getenv("KYBER_AGENT_NAME"), binding: os.Getenv("KYBER_INBOUND_BINDING"), hmacSecret: os.Getenv("KYBER_INBOUND_HMAC_SECRET"), users: csv(os.Getenv("SLACK_ALLOWED_USER_IDS")), channels: csv(os.Getenv("SLACK_ALLOWED_CHANNEL_IDS")), mcpAddr: os.Getenv("KYBER_SLACK_MCP_ADDR"), healthAddr: os.Getenv("KYBER_SLACK_HEALTH_ADDR"), mentionOnly: strings.EqualFold(os.Getenv("SLACK_MENTION_ONLY"), "true")}
+	c := config{botToken: os.Getenv("SLACK_BOT_TOKEN"), appToken: os.Getenv("SLACK_APP_TOKEN"), inboundURL: os.Getenv("KYBER_INBOUND_URL"), agentName: os.Getenv("KYBER_AGENT_NAME"), binding: os.Getenv("KYBER_INBOUND_BINDING"), hmacSecret: os.Getenv("KYBER_INBOUND_HMAC_SECRET"), users: csv(os.Getenv("SLACK_ALLOWED_USER_IDS")), channels: csv(os.Getenv("SLACK_ALLOWED_CHANNEL_IDS")), mcpAddr: os.Getenv("KYBER_SLACK_MCP_ADDR"), healthAddr: os.Getenv("KYBER_SLACK_HEALTH_ADDR"), mentionOnly: strings.EqualFold(os.Getenv("SLACK_MENTION_ONLY"), "true"), downloadDir: os.Getenv("KYBER_SLACK_DOWNLOAD_DIR")}
 	if c.binding == "" {
 		c.binding = "slack"
 	}
@@ -53,6 +55,9 @@ func loadConfig() (config, error) {
 	if c.healthAddr == "" {
 		c.healthAddr = ":14009"
 	}
+	if c.downloadDir == "" {
+		c.downloadDir = runtimes.SlackAttachmentDir
+	}
 	if c.botToken == "" || c.appToken == "" || c.inboundURL == "" || c.agentName == "" {
 		return c, fmt.Errorf("SLACK_BOT_TOKEN, SLACK_APP_TOKEN, KYBER_INBOUND_URL and KYBER_AGENT_NAME are required")
 	}
@@ -60,16 +65,17 @@ func loadConfig() (config, error) {
 }
 
 type slackEvent struct {
-	Type         string `json:"type"`
-	User         string `json:"user"`
-	Channel      string `json:"channel"`
-	ChannelType  string `json:"channel_type"`
-	Text         string `json:"text"`
-	TS           string `json:"ts"`
-	ThreadTS     string `json:"thread_ts"`
-	ParentUserID string `json:"parent_user_id"`
-	Subtype      string `json:"subtype"`
-	BotID        string `json:"bot_id"`
+	Type         string      `json:"type"`
+	User         string      `json:"user"`
+	Channel      string      `json:"channel"`
+	ChannelType  string      `json:"channel_type"`
+	Text         string      `json:"text"`
+	TS           string      `json:"ts"`
+	ThreadTS     string      `json:"thread_ts"`
+	ParentUserID string      `json:"parent_user_id"`
+	Subtype      string      `json:"subtype"`
+	BotID        string      `json:"bot_id"`
+	Files        []slackFile `json:"files"`
 }
 type eventEnvelope struct {
 	EnvelopeID string `json:"envelope_id"`
@@ -86,7 +92,7 @@ func sign(secret []byte, body []byte) string {
 }
 func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
 	ev := e.Payload.Event
-	if ev.Type != "message" || ev.User == "" || ev.Text == "" || ev.Channel == "" || ev.BotID != "" || ev.Subtype != "" {
+	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || ev.Subtype != "" {
 		return nil
 	}
 	if len(c.users) == 0 || !c.users[ev.User] || len(c.channels) == 0 || !c.channels[ev.Channel] {
@@ -98,10 +104,13 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 	if c.botID != "" {
 		ev.Text = strings.TrimSpace(strings.ReplaceAll(ev.Text, "<@"+c.botID+">", ""))
 	}
-	if ev.Text == "" {
+	if c.attachments != nil {
+		c.attachments.observe(ev.Files)
+	}
+	if ev.Text == "" && len(ev.Files) == 0 {
 		return nil
 	}
-	b, _ := json.Marshal(map[string]any{"source": "slack", "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS})
+	b, _ := json.Marshal(map[string]any{"source": "slack", "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.inboundURL, "/")+"/webhooks/inbound/"+c.agentName+"/"+c.binding, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	if c.hmacSecret != "" {
@@ -206,6 +215,7 @@ func main() {
 		slog.Error("slack-sidecar: bot identity unavailable", "error", err)
 		os.Exit(2)
 	}
+	c.attachments = newSlackAttachmentStore(256)
 	slog.Info("slack-sidecar: starting", "agent", c.agentName, "allowed_users", len(c.users), "allowed_channels", len(c.channels), "mention_only", c.mentionOnly)
 	srv := newMCPServer(c, client)
 	var connected atomic.Bool
