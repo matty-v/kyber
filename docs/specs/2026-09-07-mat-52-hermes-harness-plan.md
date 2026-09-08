@@ -2,7 +2,7 @@
 
 **Issue:** [MAT-52](https://linear.app/matty-v/issue/MAT-52/add-hermes-as-a-supported-kyber-agent-harness)
 **Dependency:** [MAT-7](https://linear.app/matty-v/issue/MAT-7), merged in PR #231
-**Status:** Slice A implemented; live hardening in progress 2026-09-08
+**Status:** Slice A implemented; first live hardening checkpoint complete 2026-09-08
 
 ## Live hardening checkpoint — skill-report runtime contract
 
@@ -30,7 +30,33 @@ Implementation checkpoint:
 - `go test ./pkg/api ./pkg/skillscan` passes; and
 - `go test ./pkg/runtimes/hermes ./pkg/runtimes/... ./pkg/api/...` passes.
 
-Exact next action: reload the dev control plane and verify the live endpoint.
+Live verification:
+
+- commit `58ce671` was built and deployed to the dev control plane as
+  `control-plane:worktree-20260908173454-58ce671`;
+- the public health check recovered after the rollout;
+- a temporary link from the live Hermes runtime home to the bundled
+  `telegram-messaging` skill produced a report with `linked: ["hermes"]`;
+- `GET /api/v1/agents/hermes/skills` returned HTTP 200 and served that exact
+  runtime link, proving the previously rejected payload is now accepted; and
+- the temporary link was removed and the agent was returned to its original
+  state.
+
+## Live operator feedback backlog
+
+The first Hermes test also exposed four operator-facing parity gaps. Keep
+these explicit rather than implying support through generic runtime UI:
+
+- Kyber cannot switch the model used by an existing Hermes agent.
+- Kyber does not show the Hermes agent's active provider/model.
+- Kyber does not show Hermes context-window usage or remaining context budget.
+- Kyber cannot browse or select available Hermes harness versions.
+
+The first two gaps belong with provider/model discovery in Slice C. Context
+budget visibility requires native, bounded Hermes telemetry before Kyber can
+render it truthfully. Harness-version browsing should use the runtime registry
+and image/version metadata rather than extending the legacy Claude/Codex
+catalogs.
 
 ## Outcome
 
