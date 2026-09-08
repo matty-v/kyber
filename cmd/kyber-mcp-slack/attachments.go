@@ -17,6 +17,8 @@ import (
 const maxSlackFileBytes int64 = 10 << 20
 const maxSlackUploadBytes int64 = 20 << 20
 
+var slackPersistRoot = "/persist"
+
 type slackFile struct {
 	ID       string `json:"id"`
 	Name     string `json:"name"`
@@ -111,7 +113,7 @@ func downloadSlackFile(ctx context.Context, client *http.Client, token string, i
 	if err != nil {
 		return "", fmt.Errorf("resolving download directory: %w", err)
 	}
-	persist, err := filepath.EvalSymlinks("/persist")
+	persist, err := filepath.EvalSymlinks(slackPersistRoot)
 	if err != nil {
 		return "", fmt.Errorf("resolving /persist: %w", err)
 	}
@@ -165,13 +167,13 @@ func openSlackOutboundFile(path string) (*os.File, os.FileInfo, error) {
 	if !filepath.IsAbs(path) {
 		return nil, nil, fmt.Errorf("path must be absolute")
 	}
-	rel, err := filepath.Rel("/persist", filepath.Clean(path))
+	rel, err := filepath.Rel(slackPersistRoot, filepath.Clean(path))
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return nil, nil, fmt.Errorf("path is outside /persist")
 	}
 	// OpenInRoot performs the containment check and the open as one operation,
 	// so a symlink swap cannot race a validate-then-open sequence.
-	file, err := os.OpenInRoot("/persist", rel)
+	file, err := os.OpenInRoot(slackPersistRoot, rel)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening path beneath /persist: %w", err)
 	}

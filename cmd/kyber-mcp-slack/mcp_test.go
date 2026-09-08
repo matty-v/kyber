@@ -26,7 +26,8 @@ func TestSlackMCPChannelAllowlist(t *testing.T) {
 }
 
 func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
-	dir, err := os.MkdirTemp("/persist", "slack-upload-test-")
+	root := useSlackPersistRoot(t)
+	dir, err := os.MkdirTemp(root, "slack-upload-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +68,8 @@ func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
 }
 
 func TestSlackUploadAggregateLimitIsCheckedBeforeNetwork(t *testing.T) {
-	dir, err := os.MkdirTemp("/persist", "slack-upload-limit-test-")
+	root := useSlackPersistRoot(t)
+	dir, err := os.MkdirTemp(root, "slack-upload-limit-test-")
 	if err != nil {
 		t.Fatal(err)
 	}
