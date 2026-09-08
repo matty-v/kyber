@@ -121,24 +121,7 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 			}
 			return s.uploadFiles(ctx, ch, arg("thread_ts"), arg("text"), files)
 		}
-		method = "chat.postMessage"
-		body["text"] = arg("text")
-		if _, present := p.Arguments["buttons"]; present {
-			if s.cfg.callbacks == nil {
-				return toolError("interactive callbacks are unavailable")
-			}
-			blocks, tokens, err := s.cfg.callbacks.register(ch, p.Arguments["buttons"])
-			if err != nil {
-				return toolError("invalid buttons: " + err.Error())
-			}
-			callbackTokens = tokens
-			if len(blocks) > 0 {
-				body["blocks"] = append([]map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": arg("text")}}}, blocks...)
-			}
-		}
-		if arg("thread_ts") != "" {
-			body["thread_ts"] = arg("thread_ts")
-		}
+		return s.sendReply(ctx, ch, arg("thread_ts"), arg("text"), p.Arguments["buttons"])
 	case "edit_message":
 		if arg("message_id") == "" || arg("text") == "" {
 			return toolError("channel_id, message_id and text are required")
@@ -194,6 +177,78 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 		r.Content[0]["text"] = "sent (id: " + ts + ")"
 		r.StructuredContent = map[string]any{"message_id": ts}
 	}
+	return r
+}
+
+const slackMessageLimit = 4000
+
+func splitSlackText(text string) []string {
+	runes := []rune(text)
+	if len(runes) <= slackMessageLimit {
+		return []string{text}
+	}
+	parts := make([]string, 0, len(runes)/slackMessageLimit+1)
+	for len(runes) > 0 {
+		end := min(slackMessageLimit, len(runes))
+		if end < len(runes) {
+			for i := end; i > end-400 && i > 0; i-- {
+				if runes[i-1] == '\n' || runes[i-1] == ' ' {
+					end = i
+					break
+				}
+			}
+		}
+		parts = append(parts, strings.TrimSpace(string(runes[:end])))
+		runes = runes[end:]
+	}
+	return parts
+}
+
+func (s *mcpServer) sendReply(ctx context.Context, channel, threadTS, text string, buttons any) slackToolResult {
+	chunks := splitSlackText(text)
+	ids := make([]string, 0, len(chunks))
+	var tokens []string
+	for i, chunk := range chunks {
+		body := map[string]any{"channel": channel, "text": chunk}
+		if threadTS != "" {
+			body["thread_ts"] = threadTS
+		}
+		if i == len(chunks)-1 && buttons != nil {
+			if s.cfg.callbacks == nil {
+				return toolError("interactive callbacks are unavailable")
+			}
+			blocks, registered, err := s.cfg.callbacks.register(channel, buttons)
+			if err != nil {
+				return toolError("invalid buttons: " + err.Error())
+			}
+			tokens = registered
+			if len(blocks) > 0 {
+				section := map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": chunk}}
+				body["blocks"] = append([]map[string]any{section}, blocks...)
+			}
+		}
+		out, err := s.api(ctx, "chat.postMessage", body)
+		if err != nil {
+			if s.cfg.callbacks != nil {
+				s.cfg.callbacks.remove(tokens)
+			}
+			r := toolError(fmt.Sprintf("Slack rejected chunk %d of %d after %d successful sends: %v; do not resend the completed chunks", i+1, len(chunks), len(ids), err))
+			r.StructuredContent = map[string]any{"message_ids": ids, "partial": len(ids) > 0}
+			return r
+		}
+		ts, _ := out["ts"].(string)
+		if ts != "" {
+			ids = append(ids, ts)
+			if s.cfg.callbacks != nil {
+				s.cfg.callbacks.bind(tokens, ts)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return toolError("Slack accepted the reply but returned no message identifier")
+	}
+	r := result("sent (id: " + ids[len(ids)-1] + ")")
+	r.StructuredContent = map[string]any{"message_id": ids[len(ids)-1], "message_ids": ids}
 	return r
 }
 

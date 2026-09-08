@@ -95,6 +95,22 @@ func TestSlackMCPDownloadRejectsUnobservedFile(t *testing.T) {
 	}
 }
 
+func TestSplitSlackTextPreservesAllContentWithinLimit(t *testing.T) {
+	input := strings.Repeat("word ", 1200)
+	parts := splitSlackText(input)
+	if len(parts) < 2 {
+		t.Fatalf("parts = %d", len(parts))
+	}
+	for _, part := range parts {
+		if len([]rune(part)) > slackMessageLimit {
+			t.Fatalf("chunk has %d runes", len([]rune(part)))
+		}
+	}
+	if strings.Join(parts, " ") != strings.TrimSpace(input) {
+		t.Fatal("split changed content")
+	}
+}
+
 func TestSlackButtonCallbacksAreOpaque(t *testing.T) {
 	registry := newSlackCallbackRegistry()
 	blocks, tokens, err := registry.register("C123", []any{map[string]any{"text": "Approve", "value": "yes"}})
