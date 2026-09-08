@@ -75,9 +75,10 @@ Claude Code's former in-process Telegram plugin is retired. Discord uses its
 gateway-backed `kyber-mcp-discord` sidecar for either runtime. See
 [`agents-comms.md`](agents-comms.md#telegram) for Telegram setup and features.
 
-Slack uses a Socket Mode sidecar and supports text/thread replies through
-`kyber-slack`. Configure it through Comms and restart the pod to apply changes;
-see [channel configuration](agents-comms.md#slack).
+Slack uses a Socket Mode sidecar and supports threaded replies, edits,
+reactions, file transfer, and Block Kit buttons through `kyber-slack`.
+Configure it through Comms; changes converge when the agent is idle. See
+[channel configuration](agents-comms.md#slack).
 
 ## Runtime implementation
 

@@ -129,8 +129,9 @@ Your skills appear in the Kyber UI on your agent's **Skills** tab. That view is 
   `403` means the chat or channel you targeted is outside your allowlist, so
   reply into the one the prompt came from rather than retrying elsewhere.
 - **Slack** uses the `kyber-slack` MCP `reply` tool with the inbound channel
-  and optional thread timestamp. Its current surface supports text replies
-  only; the sidecar owns the Socket Mode connection and both Slack tokens.
+  and optional thread timestamp. It also supports message edits, reactions,
+  scoped attachment downloads, outbound files under `/persist`, and Block Kit
+  buttons. The sidecar owns the Socket Mode connection and both Slack tokens.
 - **Inbound webhooks** deliver HMAC-signed messages via bindings. Per-field truncation is binding config, so a message that arrives cut off mid-sentence is a config limit, not your reading comprehension.
 - **Scheduled jobs** fire prompts at you on a cron.
 - **The PWA shell** is a human typing straight into your live session.

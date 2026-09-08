@@ -71,7 +71,8 @@ func toolDefs() []map[string]any {
 	schema := func(p map[string]any, req ...string) map[string]any {
 		return map[string]any{"type": "object", "properties": p, "required": req}
 	}
-	return []map[string]any{{"name": "reply", "description": "Reply in an allowlisted Slack conversation.", "inputSchema": schema(map[string]any{"channel_id": str, "text": str, "thread_ts": str}, "channel_id", "text")}, {"name": "edit_message", "description": "Edit a Slack message sent by this bot.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "text": str}, "channel_id", "message_id", "text")}, {"name": "react", "description": "Add or remove this bot's emoji reaction.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "emoji": str, "remove": map[string]any{"type": "boolean"}}, "channel_id", "message_id", "emoji")}, {"name": "download_attachment", "description": "Download a file from an accepted inbound Slack message into /persist.", "inputSchema": schema(map[string]any{"file_id": str}, "file_id")}}
+	button := map[string]any{"type": "object", "properties": map[string]any{"text": str, "value": str, "action_id": str}, "required": []string{"text", "value"}}
+	return []map[string]any{{"name": "reply", "description": "Reply in an allowlisted Slack conversation.", "inputSchema": schema(map[string]any{"channel_id": str, "text": str, "thread_ts": str, "files": map[string]any{"type": "array", "items": str, "description": "Absolute file paths under /persist to attach."}, "buttons": map[string]any{"type": "array", "items": button, "description": "Interactive Block Kit buttons."}}, "channel_id", "text")}, {"name": "edit_message", "description": "Edit a Slack message sent by this bot.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "text": str}, "channel_id", "message_id", "text")}, {"name": "react", "description": "Add or remove this bot's emoji reaction.", "inputSchema": schema(map[string]any{"channel_id": str, "message_id": str, "emoji": str, "remove": map[string]any{"type": "boolean"}}, "channel_id", "message_id", "emoji")}, {"name": "download_attachment", "description": "Download a file from an accepted inbound Slack message into /persist.", "inputSchema": schema(map[string]any{"file_id": str}, "file_id")}}
 }
 func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResult {
 	var p struct {
@@ -111,8 +112,18 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 		if arg("text") == "" {
 			return toolError("channel_id and text are required")
 		}
+		files := stringArgs(p.Arguments["files"])
+		if len(files) > 0 {
+			if len(slackButtonBlocks(arg("text"), p.Arguments["buttons"])) > 0 {
+				return toolError("files and buttons cannot be sent in the same Slack reply")
+			}
+			return s.uploadFiles(ctx, ch, arg("thread_ts"), arg("text"), files)
+		}
 		method = "chat.postMessage"
 		body["text"] = arg("text")
+		if blocks := slackButtonBlocks(arg("text"), p.Arguments["buttons"]); len(blocks) > 0 {
+			body["blocks"] = blocks
+		}
 		if arg("thread_ts") != "" {
 			body["thread_ts"] = arg("thread_ts")
 		}
@@ -147,6 +158,73 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 		r.StructuredContent = map[string]any{"message_id": ts}
 	}
 	return r
+}
+
+func slackButtonBlocks(text string, value any) []map[string]any {
+	raw, _ := value.([]any)
+	if len(raw) == 0 {
+		return nil
+	}
+	elements := make([]map[string]any, 0, len(raw))
+	for i, item := range raw {
+		button, _ := item.(map[string]any)
+		label, _ := button["text"].(string)
+		buttonValue, _ := button["value"].(string)
+		actionID, _ := button["action_id"].(string)
+		if strings.TrimSpace(label) == "" || strings.TrimSpace(buttonValue) == "" {
+			continue
+		}
+		if strings.TrimSpace(actionID) == "" {
+			actionID = fmt.Sprintf("kyber_%d", i)
+		}
+		elements = append(elements, map[string]any{"type": "button", "text": map[string]any{"type": "plain_text", "text": label}, "value": buttonValue, "action_id": actionID})
+	}
+	if len(elements) == 0 {
+		return nil
+	}
+	return []map[string]any{{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": text}}, {"type": "actions", "elements": elements}}
+}
+
+func stringArgs(value any) []string {
+	raw, _ := value.([]any)
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if path, ok := item.(string); ok && strings.TrimSpace(path) != "" {
+			out = append(out, strings.TrimSpace(path))
+		}
+	}
+	return out
+}
+
+func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text string, paths []string) slackToolResult {
+	files := make([]map[string]string, 0, len(paths))
+	for _, path := range paths {
+		resolved, info, err := validateSlackOutboundFile(path)
+		if err != nil {
+			return toolError("could not upload file: " + err.Error())
+		}
+		start, err := s.api(ctx, "files.getUploadURLExternal", map[string]any{"filename": info.Name(), "length": info.Size()})
+		if err != nil {
+			return toolError("Slack rejected the upload: " + err.Error())
+		}
+		uploadURL, _ := start["upload_url"].(string)
+		fileID, _ := start["file_id"].(string)
+		if uploadURL == "" || fileID == "" {
+			return toolError("Slack returned an incomplete upload reservation")
+		}
+		if err := uploadSlackFile(ctx, s.client, uploadURL, resolved); err != nil {
+			return toolError("could not upload file: " + err.Error())
+		}
+		files = append(files, map[string]string{"id": fileID, "title": info.Name()})
+	}
+	body := map[string]any{"files": files, "channel_id": channel, "initial_comment": text}
+	if threadTS != "" {
+		body["thread_ts"] = threadTS
+	}
+	if _, err := s.api(ctx, "files.completeUploadExternal", body); err != nil {
+		return toolError("Slack rejected the upload: " + err.Error())
+	}
+	return result("uploaded " + fmt.Sprint(len(files)) + " file(s)")
 }
 func (s *mcpServer) api(ctx context.Context, method string, body map[string]any) (map[string]any, error) {
 	b, _ := json.Marshal(body)

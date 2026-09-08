@@ -81,8 +81,28 @@ type eventEnvelope struct {
 	EnvelopeID string `json:"envelope_id"`
 	Type       string `json:"type"`
 	Payload    struct {
-		Event slackEvent `json:"event"`
+		Event     slackEvent     `json:"event"`
+		Type      string         `json:"type"`
+		User      slackObjectID  `json:"user"`
+		Channel   slackObjectID  `json:"channel"`
+		Container slackContainer `json:"container"`
+		Actions   []slackAction  `json:"actions"`
 	} `json:"payload"`
+}
+
+type slackObjectID struct {
+	ID string `json:"id"`
+}
+type slackContainer struct {
+	MessageTS string `json:"message_ts"`
+	ThreadTS  string `json:"thread_ts"`
+}
+type slackAction struct {
+	ActionID       string `json:"action_id"`
+	Value          string `json:"value"`
+	SelectedOption *struct {
+		Value string `json:"value"`
+	} `json:"selected_option"`
 }
 
 func sign(secret []byte, body []byte) string {
@@ -91,6 +111,9 @@ func sign(secret []byte, body []byte) string {
 	return "sha256=" + hex.EncodeToString(h.Sum(nil))
 }
 func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
+	if e.Type == "interactive" {
+		return forwardInteraction(ctx, c, e, client)
+	}
 	ev := e.Payload.Event
 	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || ev.Subtype != "" {
 		return nil
@@ -110,7 +133,28 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 	if ev.Text == "" && len(ev.Files) == 0 {
 		return nil
 	}
-	b, _ := json.Marshal(map[string]any{"source": "slack", "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
+	return sendInbound(ctx, c, client, b)
+}
+
+func forwardInteraction(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
+	p := e.Payload
+	if p.Type != "block_actions" || p.User.ID == "" || p.Channel.ID == "" || len(p.Actions) == 0 {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[p.User.ID] || len(c.channels) == 0 || !c.channels[p.Channel.ID] {
+		return nil
+	}
+	action := p.Actions[0]
+	value := action.Value
+	if action.SelectedOption != nil {
+		value = action.SelectedOption.Value
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": p.Type, "user": p.User.ID, "user_id": p.User.ID, "channel_id": p.Channel.ID, "message_id": p.Container.MessageTS, "thread_id": p.Container.ThreadTS, "callback_label": action.ActionID, "callback_value": value})
+	return sendInbound(ctx, c, client, b)
+}
+
+func sendInbound(ctx context.Context, c config, client *http.Client, b []byte) error {
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.inboundURL, "/")+"/webhooks/inbound/"+c.agentName+"/"+c.binding, bytes.NewReader(b))
 	req.Header.Set("Content-Type", "application/json")
 	if c.hmacSecret != "" {

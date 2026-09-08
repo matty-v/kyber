@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/url"
 	"os"
@@ -140,4 +141,76 @@ func downloadSlackFile(ctx context.Context, client *http.Client, token string, i
 		return "", fmt.Errorf("saving file: %w", err)
 	}
 	return dest, nil
+}
+
+func validateSlackOutboundFile(path string) (string, os.FileInfo, error) {
+	if !filepath.IsAbs(path) {
+		return "", nil, fmt.Errorf("path must be absolute")
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving path: %w", err)
+	}
+	persist, err := filepath.EvalSymlinks("/persist")
+	if err != nil {
+		return "", nil, fmt.Errorf("resolving /persist: %w", err)
+	}
+	rel, err := filepath.Rel(persist, resolved)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", nil, fmt.Errorf("path is outside /persist")
+	}
+	info, err := os.Stat(resolved)
+	if err != nil {
+		return "", nil, fmt.Errorf("statting path: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return "", nil, fmt.Errorf("path is not a regular file")
+	}
+	if info.Size() > maxSlackFileBytes {
+		return "", nil, fmt.Errorf("file exceeds the %d byte limit", maxSlackFileBytes)
+	}
+	return resolved, info, nil
+}
+
+func uploadSlackFile(ctx context.Context, client *http.Client, uploadURL, path string) error {
+	if !allowedSlackFileURL(uploadURL) {
+		return fmt.Errorf("upload URL is not an allowed Slack host")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening file: %w", err)
+	}
+	defer file.Close()
+	reader, writer := io.Pipe()
+	multipartWriter := multipart.NewWriter(writer)
+	go func() {
+		part, partErr := multipartWriter.CreateFormFile("file", filepath.Base(path))
+		if partErr == nil {
+			_, partErr = io.Copy(part, file)
+		}
+		if closeErr := multipartWriter.Close(); partErr == nil {
+			partErr = closeErr
+		}
+		_ = writer.CloseWithError(partErr)
+	}()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, uploadURL, reader)
+	if err != nil {
+		return fmt.Errorf("creating upload request: %w", err)
+	}
+	req.Header.Set("Content-Type", multipartWriter.FormDataContentType())
+	uploadClient := &http.Client{Transport: client.Transport, Timeout: client.Timeout, CheckRedirect: func(req *http.Request, _ []*http.Request) error {
+		if !allowedSlackFileURL(req.URL.String()) {
+			return fmt.Errorf("upload redirect is not an allowed Slack host")
+		}
+		return nil
+	}}
+	res, err := uploadClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("uploading file: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode >= 300 {
+		return fmt.Errorf("Slack upload host returned %d", res.StatusCode)
+	}
+	return nil
 }

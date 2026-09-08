@@ -19,7 +19,11 @@ type SlackSidecarConfig struct {
 // DefaultSlackAction is deliberately self-contained: the binding is also
 // synthesized by the reconciler for agents enabled directly through the CRD.
 func DefaultSlackAction() string {
-	return "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. If attachments are listed, use download_attachment with file_id; attach outbound files using absolute paths under /persist. Keep replies concise."
+	return "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. If attachments are listed, use download_attachment with file_id; attach outbound files using absolute paths under /persist. For callbacks, use callback_label and callback_value and respond appropriately. The reply tool can send Block Kit buttons. Keep replies concise."
+}
+
+func IsLegacySlackDefaultAction(action string) bool {
+	return action == "Someone messaged you on Slack (details below). Reply conversationally using the kyber-slack MCP reply tool with channel_id and thread_ts. Keep replies concise."
 }
 
 func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding {
@@ -31,6 +35,8 @@ func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding 
 			{Label: "message_id", JsonPath: "$.message_id"}, {Label: "message", JsonPath: "$.content"},
 			{Label: "thread_ts", JsonPath: "$.thread_id"},
 			{Label: "attachments", JsonPath: "$.attachments"},
+			{Label: "callback_label", JsonPath: "$.callback_label"},
+			{Label: "callback_value", JsonPath: "$.callback_value"},
 		},
 	}
 }

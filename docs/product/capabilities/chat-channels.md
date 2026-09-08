@@ -6,7 +6,7 @@ You can talk to any Kyber agent over Telegram, Discord, or Slack, in both direct
 
 A comms channel connects one agent to one bot. You configure it from the agent's Comms tab in the [fleet console](fleet-console.md), or through the same API it calls. Each channel needs a bot token and an allowlist of user IDs; nobody outside the allowlist can drive the agent, and an empty allowlist is fail-closed rather than open. Credentials are write-only: tokens go in but are never returned by any endpoint, and the agent runtime itself never sees the bot token. The token lives in a sidecar that bridges the chat service to Kyber's signed inbound dispatcher, and a second save with a new token rotates it, which is the path to take when a token leaks.
 
-Telegram and Discord configuration converges when the agent is idle. Slack configuration changes require an explicit pod restart to apply, including token and allowlist updates.
+Telegram, Discord, and Slack configuration converges when the agent is idle.
 
 ## What conversations look like
 
@@ -14,7 +14,7 @@ Over Telegram, you can send text, edits, files, photo and video albums, inline-b
 
 Over Discord, an accepted message gets an eyes reaction and a typing indicator while the agent works, then a checkmark once it replies. Long replies split cleanly at Discord's message limit with code blocks preserved. A `mentionOnly` setting lets an agent share a channel with humans and respond only when tagged: the allowlist says who may drive the agent, `mentionOnly` says which of their messages count. Threads, reply references, and recent conversation context are forwarded so follow-ups make sense, and files flow in both directions.
 
-Slack currently supports text messages and threaded text replies. Both a user allowlist and a channel allowlist are required. It uses a live Socket Mode connection and does not provide the attachment, reaction, or button tools available on the other channels.
+Slack supports threaded replies, edits, reactions, files in both directions, and interactive Block Kit buttons. Both a user allowlist and a channel allowlist are required. Like Discord, it can be configured to accept only direct mentions, replies to the bot, and direct messages.
 
 Every accepted message, from these services, enters the same signed, rate-limited inbound dispatcher that all inbound work uses, so a chat message is verified the same way as any other sender.
 

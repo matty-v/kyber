@@ -3,6 +3,7 @@ package main
 import (
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 )
@@ -20,6 +21,16 @@ func TestSlackAttachmentStoreIsBounded(t *testing.T) {
 	}
 	if _, ok := store.get("new"); !ok {
 		t.Fatal("new file was not observed")
+	}
+}
+
+func TestValidateSlackOutboundFileRejectsOutsidePersist(t *testing.T) {
+	path := t.TempDir() + "/outside.txt"
+	if err := os.WriteFile(path, []byte("nope"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := validateSlackOutboundFile(path); err == nil || !strings.Contains(err.Error(), "outside /persist") {
+		t.Fatalf("error = %v", err)
 	}
 }
 

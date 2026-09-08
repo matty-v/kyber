@@ -193,7 +193,8 @@ Configure Slack in the agent's Comms section or with `PUT .../comms/slack`:
   "botToken": "<Slack bot token>",
   "appToken": "<Slack Socket Mode app token>",
   "allowedUserIds": ["U123ABC"],
-  "allowedChannelIds": ["C123ABC"]
+  "allowedChannelIds": ["C123ABC"],
+  "mentionOnly": true
 }
 ```
 
@@ -207,20 +208,24 @@ the binding and Secret.
 
 The runtime-neutral `kyber-mcp-slack` sidecar connects through Socket Mode;
 both runtimes register its loopback `kyber-slack` MCP endpoint (port 14008).
-The runtime never receives the Slack tokens. The current tool surface is only
-`reply(channel_id, text, thread_ts?)`. Replies require an allowed channel.
-Inbound message text includes user/channel/message IDs and `thread_id`; use
-that thread value for `thread_ts` when continuing a thread. Attachments,
-reactions, buttons, and message editing are not implemented by this bridge.
-Only non-empty message events from allowed users in allowed channels are
-forwarded. A live pod is required; this is not a durable offline inbox.
+The runtime never receives the Slack tokens. Its MCP tools support threaded
+replies, edits, reactions, Block Kit buttons, scoped inbound downloads, and
+outbound files under `/persist`. File transfers are capped at 10 MiB per file;
+private download URLs and tokens stay inside the sidecar. Replies require an
+allowed channel, and downloads require a file ID observed on an accepted
+inbound event. Block actions return `callback_label` and `callback_value`.
+
+The bot token needs history scopes for the conversation types you subscribe
+to, plus `chat:write`, `reactions:write`, `files:read`, and `files:write`.
+Subscribe to the message events for the channel types you use and enable
+Interactivity for Block Kit callbacks. The app-level token needs
+`connections:write`, and Socket Mode must be enabled. A live pod is required;
+this is not a durable offline inbox.
 
 Pin `image.slackSidecar` when rendering the source chart; released charts
-supply its release tag. **Restart the agent pod after enabling, changing, or
-disabling Slack**, including token and allowlist changes. Slack has no automatic
-idle-time configuration convergence yet. A save reports `podRestartRequired`,
-but a subsequent GET only compares container presence; it does not detect a
-stale token or allowlist on an already-present sidecar.
+supply its release tag. Slack configuration changes converge by rebuilding the
+pod once the agent is idle. `podRestartRequired` remains true until the running
+pod carries the saved Slack configuration revision.
 
 ## Restarting the pod
 

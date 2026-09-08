@@ -555,7 +555,7 @@ func (s *Server) putSlackComms(w http.ResponseWriter, r *http.Request, ag *kyber
 		binding := agent.SlackInboundBinding(secretName, firstNonEmpty(req.Action, agent.DefaultSlackAction()))
 		for i := range a.Spec.InboundBindings {
 			if a.Spec.InboundBindings[i].Name == agent.SlackInboundBindingName {
-				if req.Action == "" {
+				if req.Action == "" && !agent.IsLegacySlackDefaultAction(a.Spec.InboundBindings[i].Action) {
 					binding.Action = a.Spec.InboundBindings[i].Action
 				}
 				a.Spec.InboundBindings[i] = binding

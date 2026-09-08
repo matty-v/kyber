@@ -34,6 +34,31 @@ func TestForwardAllowsFileOnlyMessageAndSanitizesMetadata(t *testing.T) {
 	}
 }
 
+func TestForwardBlockAction(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	cfg := config{inboundURL: srv.URL, agentName: "boba", binding: "slack", users: map[string]bool{"U": true}, channels: map[string]bool{"C": true}}
+	var envelope eventEnvelope
+	envelope.Type = "interactive"
+	envelope.Payload.Type = "block_actions"
+	envelope.Payload.User.ID = "U"
+	envelope.Payload.Channel.ID = "C"
+	envelope.Payload.Container.MessageTS = "1.2"
+	envelope.Payload.Actions = []slackAction{{ActionID: "approve", Value: "yes"}}
+	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if body["callback_label"] != "approve" || body["callback_value"] != "yes" || body["message_id"] != "1.2" {
+		t.Fatalf("payload = %+v", body)
+	}
+}
+
 func TestForwardMentionOnly(t *testing.T) {
 	var deliveries atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
