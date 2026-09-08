@@ -1167,9 +1167,12 @@ func (r *AgentReconciler) classifyEvent(
 		if isPodReady(pod) {
 			return EventPodReady, nil
 		}
-		// Check startup timeout.
+		// Check startup timeout. Never preempt the container's declared
+		// liveness budget: large runtimes may be doing a bounded durable-root
+		// migration before their process can exist. Readiness still holds them
+		// out of service throughout that grace period.
 		if agent.Status.LastTransition != nil {
-			if time.Since(agent.Status.LastTransition.Time) > startupTimeoutSeconds {
+			if time.Since(agent.Status.LastTransition.Time) > startupTimeoutForPod(pod) {
 				pending, err := r.runtimeAuthenticationPending(ctx, agent)
 				if err != nil {
 					return "", err
@@ -2869,6 +2872,30 @@ func isPodReady(pod *corev1.Pod) bool {
 		}
 	}
 	return false
+}
+
+// startupTimeoutForPod keeps the controller's Starting timeout aligned with
+// the kubelet contract. A runtime with a longer liveness grace is explicitly
+// declaring that useful bounded boot work can happen before its process is
+// probeable; deleting the pod sooner guarantees a restart loop.
+func startupTimeoutForPod(pod *corev1.Pod) time.Duration {
+	timeout := startupTimeoutSeconds
+	if pod == nil {
+		return timeout
+	}
+	for i := range pod.Spec.Containers {
+		container := &pod.Spec.Containers[i]
+		if container.Name != AgentContainerName || container.LivenessProbe == nil {
+			continue
+		}
+		probe := container.LivenessProbe
+		budget := time.Duration(probe.InitialDelaySeconds+probe.PeriodSeconds*probe.FailureThreshold) * time.Second
+		if budget > timeout {
+			timeout = budget
+		}
+		break
+	}
+	return timeout
 }
 
 // shouldThrottleRestart returns the remaining backoff duration and true if the reconciler

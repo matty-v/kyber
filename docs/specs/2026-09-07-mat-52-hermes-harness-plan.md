@@ -87,7 +87,9 @@ Live rollout note: rebuilding the 512 MB Hermes image triggered the durable
 rootfs base-image merge, which exceeded Hermes's original 90-second effective
 liveness allowance. Kubernetes repeatedly terminated the agent before the
 merge could finish. The Hermes liveness probe must allow bounded first-boot
-migration time while readiness continues to hold the pod out of service.
+migration time while readiness continues to hold the pod out of service, and
+the controller's Starting timeout must not preempt that declared liveness
+budget.
 
 ## Outcome
 
