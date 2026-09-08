@@ -30,8 +30,27 @@ func TestValidateSlackOutboundFileRejectsOutsidePersist(t *testing.T) {
 	if err := os.WriteFile(path, []byte("nope"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := validateSlackOutboundFile(path); err == nil || !strings.Contains(err.Error(), "outside /persist") {
+	if _, _, err := openSlackOutboundFile(path); err == nil || !strings.Contains(err.Error(), "outside /persist") {
 		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestOpenSlackOutboundFileRejectsEscapingSymlink(t *testing.T) {
+	dir, err := os.MkdirTemp("/persist", "slack-upload-link-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	link := filepath.Join(dir, "escape")
+	outside := filepath.Join(t.TempDir(), "outside")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := openSlackOutboundFile(link); err == nil {
+		t.Fatal("escaping symlink was accepted")
 	}
 }
 

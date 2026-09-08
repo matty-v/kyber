@@ -278,24 +278,30 @@ func stringArgs(value any) ([]string, error) {
 func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text string, paths []string) slackToolResult {
 	files := make([]map[string]string, 0, len(paths))
 	type uploadCandidate struct {
-		path string
+		file *os.File
 		info os.FileInfo
 	}
 	candidates := make([]uploadCandidate, 0, len(paths))
+	defer func() {
+		for _, candidate := range candidates {
+			_ = candidate.file.Close()
+		}
+	}()
 	var total int64
 	for _, path := range paths {
-		resolved, info, err := validateSlackOutboundFile(path)
+		file, info, err := openSlackOutboundFile(path)
 		if err != nil {
 			return toolError("could not upload file: " + err.Error())
 		}
 		total += info.Size()
 		if total > maxSlackUploadBytes {
+			_ = file.Close()
 			return toolError(fmt.Sprintf("files exceed the %d byte aggregate upload limit", maxSlackUploadBytes))
 		}
-		candidates = append(candidates, uploadCandidate{path: resolved, info: info})
+		candidates = append(candidates, uploadCandidate{file: file, info: info})
 	}
 	for _, candidate := range candidates {
-		resolved, info := candidate.path, candidate.info
+		file, info := candidate.file, candidate.info
 		start, err := s.api(ctx, "files.getUploadURLExternal", map[string]any{"filename": info.Name(), "length": info.Size()})
 		if err != nil {
 			return toolError("Slack rejected the upload: " + err.Error())
@@ -305,7 +311,7 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 		if uploadURL == "" || fileID == "" {
 			return toolError("Slack returned an incomplete upload reservation")
 		}
-		if err := uploadSlackFile(ctx, s.client, uploadURL, resolved); err != nil {
+		if err := uploadSlackFile(ctx, s.client, uploadURL, file, info.Name()); err != nil {
 			return toolError("could not upload file: " + err.Error())
 		}
 		files = append(files, map[string]string{"id": fileID, "title": info.Name()})

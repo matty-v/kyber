@@ -161,48 +161,44 @@ func downloadSlackFile(ctx context.Context, client *http.Client, token string, i
 	return dest, nil
 }
 
-func validateSlackOutboundFile(path string) (string, os.FileInfo, error) {
+func openSlackOutboundFile(path string) (*os.File, os.FileInfo, error) {
 	if !filepath.IsAbs(path) {
-		return "", nil, fmt.Errorf("path must be absolute")
+		return nil, nil, fmt.Errorf("path must be absolute")
 	}
-	resolved, err := filepath.EvalSymlinks(filepath.Clean(path))
-	if err != nil {
-		return "", nil, fmt.Errorf("resolving path: %w", err)
-	}
-	persist, err := filepath.EvalSymlinks("/persist")
-	if err != nil {
-		return "", nil, fmt.Errorf("resolving /persist: %w", err)
-	}
-	rel, err := filepath.Rel(persist, resolved)
+	rel, err := filepath.Rel("/persist", filepath.Clean(path))
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", nil, fmt.Errorf("path is outside /persist")
+		return nil, nil, fmt.Errorf("path is outside /persist")
 	}
-	info, err := os.Stat(resolved)
+	// OpenInRoot performs the containment check and the open as one operation,
+	// so a symlink swap cannot race a validate-then-open sequence.
+	file, err := os.OpenInRoot("/persist", rel)
 	if err != nil {
-		return "", nil, fmt.Errorf("statting path: %w", err)
+		return nil, nil, fmt.Errorf("opening path beneath /persist: %w", err)
+	}
+	info, err := file.Stat()
+	if err != nil {
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("statting file: %w", err)
 	}
 	if !info.Mode().IsRegular() {
-		return "", nil, fmt.Errorf("path is not a regular file")
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("path is not a regular file")
 	}
 	if info.Size() > maxSlackFileBytes {
-		return "", nil, fmt.Errorf("file exceeds the %d byte limit", maxSlackFileBytes)
+		_ = file.Close()
+		return nil, nil, fmt.Errorf("file exceeds the %d byte limit", maxSlackFileBytes)
 	}
-	return resolved, info, nil
+	return file, info, nil
 }
 
-func uploadSlackFile(ctx context.Context, client *http.Client, uploadURL, path string) error {
+func uploadSlackFile(ctx context.Context, client *http.Client, uploadURL string, file *os.File, filename string) error {
 	if !allowedSlackFileURL(uploadURL) {
 		return fmt.Errorf("upload URL is not an allowed Slack host")
 	}
-	file, err := os.Open(path)
-	if err != nil {
-		return fmt.Errorf("opening file: %w", err)
-	}
-	defer file.Close()
 	reader, writer := io.Pipe()
 	multipartWriter := multipart.NewWriter(writer)
 	go func() {
-		part, partErr := multipartWriter.CreateFormFile("file", filepath.Base(path))
+		part, partErr := multipartWriter.CreateFormFile("file", filename)
 		if partErr == nil {
 			_, partErr = io.Copy(part, file)
 		}
