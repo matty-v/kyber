@@ -97,6 +97,23 @@ Acceptance for this checkpoint:
 - focused Go, shell/image, OpenAPI contract, PWA type/lint, and component tests
   pass before the worktree is deployed to `kyber-dev` for live verification.
 
+Implementation checkpoint:
+
+- added a bounded Hermes reporter with strict finalized-call parsing, native
+  OpenRouter catalog conversion, retry-until-present cache discovery, and
+  provider/model/context reporting through the existing sidecar endpoints;
+- enabled the Hermes model-catalog and usage-reporting contract features, so
+  the existing per-agent model validation and pod-roll action apply without a
+  runtime-specific API;
+- added stable Hermes GitHub release discovery and the additive
+  `hermesVersions` Go/OpenAPI/TypeScript contract;
+- made the Hermes version dialog explicitly browse-only, because the pinned
+  source runtime does not yet have an atomic historical-version installer;
+- bumped `@matty-v/kyber-pwa-views` to 0.42.0 and documented the UI change; and
+- verified the affected Go suites, image integration fixtures, OpenAPI
+  contract, TypeScript lint, 786-test PWA suite, and focused provider/version
+  component regressions.
+
 ## Live hardening checkpoint — Hermes native skill discovery
 
 Hermes reports 59 usable skills in the live Linux agent: five identity skills
@@ -147,8 +164,9 @@ budget. The corresponding control-plane image is
 `control-plane:worktree-20260908184524-f124030` (digest
 `sha256:e1c16e3d41c71a4d62553bd189c2c5ebb59fe8a8041376f7c914a302412becc5`).
 
-Exact next action: implement and unit-test the bounded Hermes reporter parser
-and native model-catalog conversion, then wire the reporter into the image.
+Exact next action: commit and push this checkpoint, deploy the control plane,
+PWA, and Hermes image to `kyber-dev`, then verify live model selection,
+observed provider/model, context budget, and release browsing.
 
 ## Outcome
 

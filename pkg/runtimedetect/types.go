@@ -1,7 +1,7 @@
-// Package runtimedetect polls the npm registry and the Anthropic Models API
-// to surface newly-released Claude Code versions and Claude models without
-// requiring a Kyber code change or rebuild. Results are cached (Redis in
-// production, in-memory in dev/test) and read by GET /api/v1/available.
+// Package runtimedetect polls public runtime registries and the legacy
+// Anthropic Models API to surface newly released harness versions and models
+// without requiring a Kyber code change or rebuild. Results are cached (Redis
+// in production, in-memory in dev/test) and read by GET /api/v1/available.
 //
 // See docs/design/2026-05-29-runtime-model-management-design.md §1 for design.
 package runtimedetect
@@ -20,6 +20,10 @@ type Snapshot struct {
 
 	// CodexVersions is the list of @openai/codex versions observed on npm.
 	CodexVersions []string `json:"codexVersions"`
+
+	// HermesVersions is the list of stable Hermes package versions observed
+	// from the project's public GitHub Releases metadata, newest first.
+	HermesVersions []string `json:"hermesVersions"`
 
 	// Models is the list of Claude models the poller observed on the
 	// Anthropic Models API, in the order the upstream returned them

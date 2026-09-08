@@ -1493,13 +1493,17 @@ components:
 
     AvailableResponse:
       type: object
-      required: [claudeCodeVersions, codexVersions, models, codexModels]
+      required: [claudeCodeVersions, codexVersions, hermesVersions, models, codexModels]
       properties:
         claudeCodeVersions:
           type: array
           items:
             type: string
         codexVersions:
+          type: array
+          items:
+            type: string
+        hermesVersions:
           type: array
           items:
             type: string

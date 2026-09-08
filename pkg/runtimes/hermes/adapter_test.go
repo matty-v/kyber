@@ -40,15 +40,18 @@ func TestDescriptorDeclaresOnlyPreviewFeatures(t *testing.T) {
 	if !ok {
 		t.Fatal("Hermes descriptor is not registered")
 	}
-	for _, feature := range []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction} {
+	for _, feature := range []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.ModelCatalog, runtimes.UsageReporting} {
 		if !d.Supports(feature) {
 			t.Errorf("descriptor does not support %q", feature)
 		}
 	}
-	for _, feature := range []runtimes.Feature{runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature} {
+	for _, feature := range []runtimes.Feature{runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.RuntimeRepairFeature} {
 		if d.Supports(feature) {
 			t.Errorf("descriptor advertises unimplemented feature %q", feature)
 		}
+	}
+	if d.LegacyVersionsKey != "hermesVersions" || !d.RequireCatalogContext {
+		t.Fatalf("version/catalog contract = %+v", d)
 	}
 	mode, ok := d.Auth(api.AgentAuthTypeAPIKey)
 	if !ok || mode.InputField != openRouterInputField || mode.SecretSuffix != "openrouter" {

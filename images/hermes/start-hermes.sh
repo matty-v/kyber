@@ -73,6 +73,11 @@ if command -v kyber-skills >/dev/null 2>&1; then
         >> "$PERSIST_ROOT/var/log/kyber-skills.log" 2>&1 &
 fi
 
+if command -v hermes-reporter >/dev/null 2>&1; then
+    nohup hermes-reporter >> "$PERSIST_ROOT/var/log/hermes-reporter.log" 2>&1 &
+    echo "[kyber] Hermes model/context reporter launched (pid=$!)"
+fi
+
 HERMES_ARGS=(--cli --yolo --accept-hooks chat --provider "$HERMES_PROVIDER")
 if [ -n "${HERMES_INFERENCE_MODEL:-}" ]; then
     HERMES_ARGS+=(--model "$HERMES_INFERENCE_MODEL")

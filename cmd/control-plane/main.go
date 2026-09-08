@@ -1055,6 +1055,7 @@ func main() {
 			Cache:          runtimeDetectCache,
 			Npm:            runtimedetect.NewNpmClient("", 15*time.Second),
 			CodexNpm:       runtimedetect.NewNpmClient(runtimedetect.DefaultCodexNpmRegistryURL, 15*time.Second),
+			HermesGitHub:   runtimedetect.NewGitHubReleasesClient("", 15*time.Second),
 			ContextWindows: contextWindowResolver,
 			Cadence:        runtimeDetectCadence,
 			VersionLimit:   runtimeDetectVersionLimit,

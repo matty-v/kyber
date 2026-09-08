@@ -1011,16 +1011,16 @@ export function AgentDetail() {
         </div>
       )}
 
-      {/* Set harness version dialog — kyber#378 PR-D. Claude Code agents can
-          pick from detected npm versions; other runtimes use manual entry.
-          Empty input clears spec.runtimeVersion. */}
+      {/* Harness version dialog — registry-backed for Claude Code, Codex, and
+          Hermes. Hermes is browse-only until source installs are atomic and
+          rollback-safe; mutable package runtimes retain manual apply. */}
       {pending === 'set-runtime-version' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
           <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
-            <h2 className="text-base font-semibold text-text-primary mb-4">Change Harness Version</h2>
+            <h2 className="text-base font-semibold text-text-primary mb-4">{agent.runtime === 'hermes' ? 'Browse Harness Versions' : 'Change Harness Version'}</h2>
             {(() => {
-              const versionCatalogs: Record<string, string[]> = { claudeCodeVersions: effective.claudeCodeVersions, codexVersions: effective.codexVersions }
+              const versionCatalogs: Record<string, string[]> = { claudeCodeVersions: effective.claudeCodeVersions, codexVersions: effective.codexVersions, hermesVersions: effective.hermesVersions }
               const versions = versionCatalogs[agentContract(agent)?.legacyVersionsKey ?? ''] ?? []
               const inList = versions.includes(newRuntimeVersion)
               return (
@@ -1040,36 +1040,47 @@ export function AgentDetail() {
                       </option>
                     ))}
                   </select>
-                  <input
-                    type="text"
-                    placeholder="Manual harness version"
-                    value={!inList ? newRuntimeVersion : ''}
-                    onChange={(e) => setNewRuntimeVersion(e.target.value.trim())}
-                    className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
-                    autoComplete="off"
-                    spellCheck={false}
-                    aria-label="Manual harness version override"
-                  />
-                  <p className="mt-2 text-[11px] text-text-disabled">
-                    Charset: <code>{`[0-9A-Za-z.\\-]`}</code>, max 64 chars. Empty
-                    clears spec.runtimeVersion and falls back to the fleet or harness default.
-                    Apply rolls the agent pod when Running.
-                  </p>
+                  {agent.runtime === 'hermes' ? (
+                    <p className="mt-2 text-[11px] text-text-disabled">
+                      Stable releases published by Hermes. This source-pinned runtime can browse
+                      releases here; installing a different release requires a Kyber image update.
+                    </p>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        placeholder="Manual harness version"
+                        value={!inList ? newRuntimeVersion : ''}
+                        onChange={(e) => setNewRuntimeVersion(e.target.value.trim())}
+                        className="mt-2 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
+                        autoComplete="off"
+                        spellCheck={false}
+                        aria-label="Manual harness version override"
+                      />
+                      <p className="mt-2 text-[11px] text-text-disabled">
+                        Charset: <code>{`[0-9A-Za-z.\\-]`}</code>, max 64 chars. Empty
+                        clears spec.runtimeVersion and falls back to the fleet or harness default.
+                        Apply rolls the agent pod when Running.
+                      </p>
+                    </>
+                  )}
                 </>
               )
             })()}
             <div className="mt-4 flex gap-3 justify-end">
               <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>
-                Cancel
+                {agent.runtime === 'hermes' ? 'Close' : 'Cancel'}
               </Button>
-              <Button
-                variant="primary"
-                size="sm"
-                onClick={() => void executeAction()}
-                loading={isActing}
-              >
-                Apply
-              </Button>
+              {agent.runtime !== 'hermes' && (
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => void executeAction()}
+                  loading={isActing}
+                >
+                  Apply
+                </Button>
+              )}
             </div>
           </div>
         </div>

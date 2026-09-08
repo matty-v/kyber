@@ -16,10 +16,14 @@ import type { Agent } from '../lib/types'
 
 // vi.hoisted: vi.mock's factory is lifted above the imports, so anything it
 // closes over has to be hoisted with it.
-const { startAgent, restartAgent, idleMutation } = vi.hoisted(() => ({
+const { startAgent, restartAgent, idleMutation, effectiveModelList } = vi.hoisted(() => ({
   startAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   restartAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   idleMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
+  effectiveModelList: {
+    models: [], claudeCodeVersions: [], codexVersions: [], hermesVersions: [],
+    source: 'empty' as const, isLoading: false,
+  },
 }))
 
 vi.mock('../hooks/useAPI', () => ({
@@ -47,7 +51,7 @@ vi.mock('../hooks/useAPI', () => ({
   useTokenUsage: () => ({ data: undefined }),
   useComputeConfig: () => ({ data: undefined }),
 }))
-vi.mock('../lib/models', () => ({ useEffectiveModelList: () => ({ data: undefined }) }))
+vi.mock('../lib/models', () => ({ useEffectiveModelList: () => effectiveModelList }))
 vi.mock('../components/TerminalPeek', () => ({
   AgentTerminalPeek: ({ agentName, hasPod }: { agentName: string; hasPod: boolean }) => (
     <div data-testid="agent-terminal-peek" data-agent-name={agentName} data-has-pod={String(hasPod)} />
@@ -90,11 +94,46 @@ const needsAuthAgent: Agent = {
 describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    effectiveModelList.hermesVersions = []
     vi.mocked(useAPIModule.useAgent).mockReturnValue({
       data: needsAuthAgent,
       isLoading: false,
       error: null,
     } as ReturnType<typeof useAPIModule.useAgent>)
+  })
+
+  it('browses Hermes releases without offering an unsafe source install', async () => {
+    const user = userEvent.setup()
+    effectiveModelList.hermesVersions = ['0.21.1', '0.21.0']
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: {
+        ...needsAuthAgent,
+        id: 'hermes',
+        phase: 'Running',
+        runtime: 'hermes',
+        runtimeContract: {
+          id: 'hermes', name: 'Hermes', contractVersion: '1.0',
+          profile: 'interactive-tmux-v1', cancellation: 'notify_only',
+          legacyVersionsKey: 'hermesVersions', features: [], authModes: [],
+        },
+      },
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    render(
+      <MemoryRouter initialEntries={['/agents/hermes/general']}>
+        <Routes>
+          <Route path="/agents/:name/:section" element={<AgentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Harness' }))
+    expect(screen.getByText('Browse Harness Versions')).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '0.21.1 (latest)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: '0.21.0' })).toBeInTheDocument()
+    expect(screen.getByText(/source-pinned runtime/i)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Apply' })).not.toBeInTheDocument()
   })
 
   it('groups agent pages into observe, automate, and configure navigation', () => {

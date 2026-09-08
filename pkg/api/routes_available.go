@@ -27,6 +27,7 @@ import (
 type AvailableResponse struct {
 	ClaudeCodeVersions []string         `json:"claudeCodeVersions"`
 	CodexVersions      []string         `json:"codexVersions"`
+	HermesVersions     []string         `json:"hermesVersions"`
 	Models             []AvailableModel `json:"models"`
 	CodexModels        []AvailableModel `json:"codexModels"`
 }
@@ -54,6 +55,7 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 	resp := AvailableResponse{
 		ClaudeCodeVersions: []string{},
 		CodexVersions:      []string{},
+		HermesVersions:     []string{},
 		Models:             []AvailableModel{},
 		CodexModels:        []AvailableModel{},
 	}
@@ -84,6 +86,9 @@ func (s *Server) handleAvailable(w http.ResponseWriter, r *http.Request) {
 	}
 	if snap.CodexVersions != nil {
 		resp.CodexVersions = snap.CodexVersions
+	}
+	if snap.HermesVersions != nil {
+		resp.HermesVersions = snap.HermesVersions
 	}
 	if snap.Models != nil {
 		resp.Models = make([]AvailableModel, 0, len(snap.Models))

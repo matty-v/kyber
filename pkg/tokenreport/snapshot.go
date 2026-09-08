@@ -7,6 +7,7 @@ import "time"
 // control plane's GET endpoint.
 type Snapshot struct {
 	Model       string    `json:"model"`
+	Provider    string    `json:"provider,omitempty"`
 	Tokens      Tokens    `json:"tokens"`
 	Percentage  float64   `json:"percentage"`
 	EffortLevel string    `json:"effortLevel"`

@@ -17,6 +17,12 @@ function usage(overrides: Partial<TokenUsage> = {}): TokenUsage {
 }
 
 describe('TokenUsageCard', () => {
+  it('shows an observed runtime provider when reported', () => {
+    render(<TokenUsageCard data={usage({ provider: 'openrouter', model: 'z-ai/glm-5.2' })} isLoading={false} />)
+    expect(screen.getByText('openrouter')).toBeInTheDocument()
+    expect(screen.getByText('z-ai/glm-5.2')).toBeInTheDocument()
+  })
+
   it('shows a precise percentage when the context window is known', () => {
     render(<TokenUsageCard data={usage({ contextWindowKnown: true, percentage: 30 })} isLoading={false} />)
     expect(screen.getByText(/30\.0%/)).toBeInTheDocument()

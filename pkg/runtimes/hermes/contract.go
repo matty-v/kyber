@@ -12,13 +12,15 @@ const openRouterInputField = "openrouterApiKey"
 
 func (*runtime) Descriptor() runtimes.Descriptor {
 	return runtimes.Descriptor{
-		ID:                  Type,
-		Name:                "Hermes",
-		ContractVersion:     runtimes.ContractVersion,
-		Profile:             runtimes.InteractiveProfile,
-		HelmKey:             Type,
-		Cancellation:        "notify_only",
-		AuthFailureExitCode: 42,
+		ID:                    Type,
+		Name:                  "Hermes",
+		ContractVersion:       runtimes.ContractVersion,
+		Profile:               runtimes.InteractiveProfile,
+		HelmKey:               Type,
+		Cancellation:          "notify_only",
+		LegacyVersionsKey:     "hermesVersions",
+		AuthFailureExitCode:   42,
+		RequireCatalogContext: true,
 		AuthModes: []runtimes.AuthMode{{
 			ID:           kyberv1.AgentAuthTypeAPIKey,
 			Name:         "OpenRouter API key",
@@ -31,6 +33,8 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			runtimes.SessionRestart,
 			runtimes.SessionResume,
 			runtimes.Compaction,
+			runtimes.ModelCatalog,
+			runtimes.UsageReporting,
 		},
 	}
 }

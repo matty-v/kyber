@@ -26,7 +26,7 @@ export function TokenUsageCard({ data, isLoading }: Props) {
     )
   }
 
-  const { tokens, percentage, model, effortLevel, speed } = data
+  const { tokens, percentage, model, provider, effortLevel, speed } = data
   // #396: when the context window is unknown (model absent from the operator
   // ConfigMap → 200K floor), the % is a guess against a placeholder limit, so
   // mark it as an estimate instead of a confident number / "over budget".
@@ -43,6 +43,11 @@ export function TokenUsageCard({ data, isLoading }: Props) {
     <Card>
       <h2 className="text-sm font-medium text-text-muted mb-3">Token budget</h2>
       <div className="flex gap-2 flex-wrap mb-3">
+        {provider && (
+          <span className="text-xs font-mono px-2 py-0.5 rounded bg-surface-overlay text-text-muted">
+            {provider}
+          </span>
+        )}
         <span className="text-xs font-mono px-2 py-0.5 rounded bg-accent-muted text-accent">
           {model}
         </span>

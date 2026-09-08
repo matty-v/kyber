@@ -35,6 +35,9 @@ type Poller struct {
 	// CodexNpm fetches @openai/codex versions. Nil keeps backward-compatible
 	// Claude-only behavior for tests and installs that have not configured it.
 	CodexNpm *NpmClient
+	// HermesGitHub fetches stable Hermes versions from GitHub Releases. Nil
+	// preserves the previous snapshot for installations that disable this leg.
+	HermesGitHub *GitHubReleasesClient
 	// Anthropic is the legacy platform-level Anthropic Models API client.
 	// Nil disables this leg; authenticated agent pods report their own catalogs.
 	Anthropic *AnthropicClient
@@ -64,9 +67,9 @@ type Poller struct {
 // Behavior:
 //   - First poll fires immediately so /available is populated within
 //     seconds of startup (rather than waiting a full cadence).
-//   - Each poll calls npm + Anthropic, merges with the last cached
-//     snapshot, and writes the merged result. Either leg failing keeps the
-//     last good value for that leg.
+//   - Each poll calls the configured public registries plus Anthropic, merges
+//     with the last cached snapshot, and writes the result. A failing leg keeps
+//     the last good value for that leg.
 //   - All errors are logged at WARN; the loop never exits on a poll error.
 func (p *Poller) Start(ctx context.Context) error {
 	if err := p.validate(); err != nil {
@@ -117,6 +120,18 @@ func (p *Poller) pollOnce(ctx context.Context, logger *slog.Logger) {
 		}
 	} else if previous != nil {
 		codexVersions = previous.CodexVersions
+	}
+	var hermesVersions []string
+	if p.HermesGitHub != nil {
+		hermesVersions, vErr = p.HermesGitHub.Fetch(ctx, p.versionLimit())
+		if vErr != nil {
+			logger.Warn("runtimedetect: Hermes GitHub releases fetch failed; preserving last good", "err", vErr)
+			if previous != nil {
+				hermesVersions = previous.HermesVersions
+			}
+		}
+	} else if previous != nil {
+		hermesVersions = previous.HermesVersions
 	}
 
 	var models []Model
@@ -171,16 +186,17 @@ func (p *Poller) pollOnce(ctx context.Context, logger *slog.Logger) {
 		}
 	}
 
-	// If both legs failed AND we had no previous snapshot, write nothing —
+	// If every configured leg failed AND we had no previous snapshot, write nothing —
 	// the cache stays in ErrCacheEmpty state and /available returns the
 	// empty fallback.
-	if versions == nil && models == nil {
+	if versions == nil && codexVersions == nil && hermesVersions == nil && models == nil {
 		return
 	}
 
 	snap := &Snapshot{
 		ClaudeCodeVersions: versions,
 		CodexVersions:      codexVersions,
+		HermesVersions:     hermesVersions,
 		Models:             models,
 		FetchedAt:          time.Now().UTC(),
 	}

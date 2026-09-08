@@ -16,12 +16,13 @@ RUN apt-get -o Acquire::Retries=3 update && \
         ./configure --prefix=/opt/sqlite-fixed --disable-static && \
     make -j"$(nproc)" && make install
 
-FROM golang:1.26-alpine AS skills-builder
+FROM golang:1.26-alpine AS tools-builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-skills ./cmd/kyber-skills
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-skills ./cmd/kyber-skills && \
+    CGO_ENABLED=0 GOOS=linux go build -o /build/hermes-reporter ./cmd/hermes-reporter
 
 FROM ghcr.io/astral-sh/uv:0.11.6-python3.13-trixie@sha256:b3c543b6c4f23a5f2df22866bd7857e5d304b67a564f4feab6ac22044dde719b AS uv-source
 
@@ -76,7 +77,8 @@ ENV KYBER_START_CMD=/usr/local/bin/start-hermes.sh
 COPY --chmod=0755 images/hermes/start-hermes.sh /usr/local/bin/start-hermes.sh
 COPY --chmod=0755 images/hermes/configure-hermes.py /usr/local/bin/kyber-configure-hermes
 COPY --chmod=0755 images/shared/kyber-identity-repo.sh /usr/local/bin/kyber-identity-repo.sh
-COPY --from=skills-builder /build/kyber-skills /usr/local/bin/kyber-skills
+COPY --from=tools-builder /build/kyber-skills /usr/local/bin/kyber-skills
+COPY --from=tools-builder /build/hermes-reporter /usr/local/bin/hermes-reporter
 RUN install -d -m 0755 /opt/kyber
 COPY --chmod=0644 docs/agent-manual.md /opt/kyber/KYBER.md
 COPY images/shared/skills/telegram-messaging /opt/kyber/skills/telegram-messaging

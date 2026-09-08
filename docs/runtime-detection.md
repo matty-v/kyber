@@ -2,15 +2,16 @@
 
 Kyber separates public harness-version discovery from authenticated per-agent
 model discovery. The production wiring is in `cmd/control-plane/main.go`;
-`pkg/runtimedetect` provides the caches and public npm poller.
+`pkg/runtimedetect` provides the caches and public registry poller.
 
 ## What the poller does
 
 When `runtimeDetect.enabled` is true, the control plane polls npm for stable
-Claude Code and Codex versions. `runtimeDetect.cadenceSeconds` defaults to 3600
-and `versionLimit` to 20. Failed upstream fetches preserve previously cached
-version lists. Redis shares the snapshot between replicas; the development
-fallback is process-local memory.
+Claude Code and Codex versions and the Hermes project's public GitHub Releases
+API for stable Hermes package versions. `runtimeDetect.cadenceSeconds` defaults
+to 3600 and `versionLimit` to 20. Failed upstream fetches preserve previously
+cached version lists. Redis shares the snapshot between replicas; the
+development fallback is process-local memory.
 
 Production does not wire the poller's legacy platform-level Anthropic client or
 key source. The legacy client, settings endpoint, and chart key configuration
@@ -19,7 +20,8 @@ activate model discovery in the current production wiring.
 
 ## API: `GET /api/v1/available`
 
-This authenticated route returns `claudeCodeVersions`, `codexVersions`, `models`,
+This authenticated route returns `claudeCodeVersions`, `codexVersions`,
+`hermesVersions`, `models`,
 and `codexModels`. The version lists support harness pickers. The model lists
 are compatibility projections of reported catalogs, not a replacement for the
 agent-specific endpoint. If detection is disabled or its cache is unavailable,
@@ -37,6 +39,9 @@ Provider credentials stay in the pod.
 - Codex discovery uses native app-server `model/list`. A model without an
   authoritative window remains unknown in that catalog; the active session's
   transcript-backed context window is authoritative for usage reporting.
+- Hermes discovery uses its native OpenRouter provider cache and enriches each
+  compatible model with Hermes's cached OpenRouter display name and context
+  length. Its token reporter reads only finalized API-call summary records.
 - A missing first report returns `409 authentication_required`. Missing or
   unavailable catalog storage returns `503 catalog_unavailable`. Neither case
   borrows another agent's model list.
@@ -65,7 +70,7 @@ resolved value to select the large-context suffix. Inspect
 
 ## Setup
 
-Keep runtime detection enabled for npm version discovery. Authenticate each
+Keep runtime detection enabled for public version discovery. Authenticate each
 agent and wait for its own model report before using its model picker. A
 platform Anthropic key is not required for this path.
 
@@ -90,7 +95,7 @@ another agent or fill its catalog.
 
 | Symptom | Check |
 |---|---|
-| Version lists empty | detection enabled, npm access, snapshot cache |
+| Version lists empty | detection enabled, npm/GitHub access, snapshot cache |
 | Agent model picker pending | that agent's authentication and runtime catalog report |
 | Catalog unavailable | runtime-detection cache configuration and backend health |
 | Codex context window unknown | active session token metadata; do not invent a catalog window |
