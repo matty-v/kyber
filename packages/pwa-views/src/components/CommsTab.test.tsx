@@ -216,7 +216,7 @@ describe('CommsTab', () => {
     await user.type(screen.getByLabelText(/allowed channel ids/i), 'C123ABC')
     await user.click(screen.getByRole('button', { name: /enable slack/i }))
     expect(slack.mutate).toHaveBeenCalledWith({
-      name: 'dave', body: { botToken: 'xoxb-token', appToken: 'xapp-token', allowedUserIds: ['U123ABC'], allowedChannelIds: ['C123ABC'] },
+      name: 'dave', body: { botToken: 'xoxb-token', appToken: 'xapp-token', allowedUserIds: ['U123ABC'], allowedChannelIds: ['C123ABC'], mentionOnly: false },
     }, expect.anything())
   })
 
