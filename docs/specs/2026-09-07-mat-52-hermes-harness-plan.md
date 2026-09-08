@@ -114,6 +114,19 @@ Implementation checkpoint:
   contract, TypeScript lint, 786-test PWA suite, and focused provider/version
   component regressions.
 
+First rollout finding:
+
+- the 517 MB Hermes image built successfully, but the controller deleted the
+  first dev pod after 387 seconds while its durable-root merge was still in
+  progress; the reporter and Hermes process had not started, so this was not a
+  reporter failure;
+- the deletion aligned with the 300-second Hermes liveness delay plus its
+  failure-period allowance, proving the previous budget remained marginal for
+  a cold image pull and full durable-root merge; and
+- Hermes now receives a 600-second initial liveness grace while readiness
+  remains strict, giving the bounded merge room to complete without exposing a
+  half-started runtime.
+
 ## Live hardening checkpoint — Hermes native skill discovery
 
 Hermes reports 59 usable skills in the live Linux agent: five identity skills
@@ -164,9 +177,10 @@ budget. The corresponding control-plane image is
 `control-plane:worktree-20260908184524-f124030` (digest
 `sha256:e1c16e3d41c71a4d62553bd189c2c5ebb59fe8a8041376f7c914a302412becc5`).
 
-Exact next action: commit and push this checkpoint, deploy the control plane,
-PWA, and Hermes image to `kyber-dev`, then verify live model selection,
-observed provider/model, context budget, and release browsing.
+Exact next action: deploy the extended Hermes startup budget to the dev control
+plane, restart the failed dev agent on the already-built Hermes image, and
+verify live model selection, observed provider/model, context budget, and
+release browsing.
 
 ## Outcome
 

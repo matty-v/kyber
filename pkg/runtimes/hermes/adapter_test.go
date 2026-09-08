@@ -92,7 +92,7 @@ func TestSessionCommands(t *testing.T) {
 	if got := strings.Join(a.LivenessProbe().Exec.Command, " "); !strings.Contains(got, "[h]ermes.*chat") {
 		t.Fatalf("LivenessProbe() can match its own probe process: %q", got)
 	}
-	if got := a.LivenessProbe().InitialDelaySeconds; got < 300 {
+	if got := a.LivenessProbe().InitialDelaySeconds; got < 600 {
 		t.Fatalf("LivenessProbe().InitialDelaySeconds = %d, want enough time for durable rootfs migration", got)
 	}
 }

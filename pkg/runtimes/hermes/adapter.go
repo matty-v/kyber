@@ -59,11 +59,12 @@ func (a *Adapter) SecretMounts(*kyberv1.Agent) []runtimes.SecretMount { return n
 
 func (a *Adapter) LivenessProbe() *corev1.Probe {
 	// A new runtime image first merges its immutable root into the durable
-	// filesystem. Hermes is a large Python image and that bounded migration can
-	// take more than 90 seconds; killing it mid-merge only repeats the work.
+	// filesystem. Hermes is a large Python image and a cold pull plus bounded
+	// migration can take more than six minutes; killing it mid-merge only
+	// repeats the work.
 	// Readiness remains strict throughout, so the extra liveness grace never
 	// exposes a half-started agent.
-	return processProbe(300, 30)
+	return processProbe(600, 30)
 }
 
 func (a *Adapter) ReadinessProbe() *corev1.Probe {
