@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -136,7 +137,7 @@ type Skill struct {
 	// Description comes from the SKILL.md frontmatter. Empty when the
 	// frontmatter is missing or has no description.
 	Description string `json:"description"`
-	// Source is SourceIdentity or SourceVendor.
+	// Source is SourceIdentity, SourceVendor, or SourcePlatform.
 	Source string `json:"source"`
 	// SourcePackage is the vendor package directory name; empty for
 	// identity-owned skills.
@@ -200,6 +201,10 @@ type Options struct {
 	// filesystem scan and stays testable without a repo. A skill is flagged
 	// when any unpushed path falls inside its directory.
 	UnpushedPaths []string
+	// RuntimePlatform is the platform name used by native skill frontmatter
+	// (linux, macos, or windows). It defaults to the current Go platform and
+	// exists as an option so filesystem fixtures stay deterministic.
+	RuntimePlatform string
 }
 
 // Scan walks the identity repo and runtime homes and returns what the
@@ -217,6 +222,9 @@ func Scan(opts Options) (*Report, error) {
 	}
 	if opts.PlatformDir == "" {
 		opts.PlatformDir = DefaultPlatformDir
+	}
+	if opts.RuntimePlatform == "" {
+		opts.RuntimePlatform = currentRuntimePlatform()
 	}
 	rep := &Report{Version: ReportVersion, Skills: []Skill{}}
 
@@ -439,8 +447,9 @@ func ignoredFlatSkill(name string) bool {
 // frontmatter is the subset of SKILL.md's YAML header the platform depends on.
 // Unknown keys are ignored — a skill may carry whatever else its runtime reads.
 type frontmatter struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description"`
+	Name        string   `yaml:"name"`
+	Description string   `yaml:"description"`
+	Platforms   []string `yaml:"platforms"`
 }
 
 // maxSkillMDBytes caps how much of a SKILL.md is read while looking for
@@ -450,7 +459,7 @@ const maxSkillMDBytes = 64 << 10
 
 // readSkillMD fills sk.Description and appends any content-level issues.
 func readSkillMD(path string, sk *Skill) {
-	f, err := os.Open(path)
+	body, err := readPrefix(path, maxSkillMDBytes)
 	if err != nil {
 		sk.Issues = append(sk.Issues, Issue{
 			Code:     IssueMissingSkillMD,
@@ -459,11 +468,6 @@ func readSkillMD(path string, sk *Skill) {
 		})
 		return
 	}
-	defer f.Close()
-
-	buf := make([]byte, maxSkillMDBytes)
-	n, _ := f.Read(buf)
-	body := string(buf[:n])
 
 	raw, ok := extractFrontmatter(body)
 	if !ok {
@@ -540,6 +544,18 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 
 	for _, rh := range runtimeHomes {
 		dir := filepath.Join(opts.HomeDir, rh.dir)
+		hermesManagedCategories := map[string]bool{}
+		if rh.runtime == RuntimeHermes {
+			var bundled []Skill
+			bundled, hermesManagedCategories = scanHermesBundledSkills(dir, opts.RuntimePlatform)
+			for i := range bundled {
+				sk := &bundled[i]
+				if _, exists := platform[sk.Name]; !exists {
+					order = append(order, sk.Name)
+				}
+				platform[sk.Name] = sk
+			}
+		}
 		entries, err := os.ReadDir(dir)
 		if err != nil {
 			continue
@@ -560,6 +576,9 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 			}
 			isLink := li.Mode()&os.ModeSymlink != 0
 			if !isLink {
+				if e.IsDir() && hermesManagedCategories[e.Name()] {
+					continue
+				}
 				if e.IsDir() && compatWrapperUnderRepo(full, opts.RepoDir) {
 					continue
 				}
@@ -598,7 +617,9 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 					platform[e.Name()] = sk
 					order = append(order, e.Name())
 				}
-				sk.Linked = append(sk.Linked, rh.runtime)
+				if !contains(sk.Linked, rh.runtime) {
+					sk.Linked = append(sk.Linked, rh.runtime)
+				}
 				continue
 			}
 			issues = append(issues, Issue{
@@ -622,6 +643,104 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 		return issues[i].Detail < issues[j].Detail
 	})
 	return out, issues
+}
+
+// scanHermesBundledSkills discovers the nested category/name/SKILL.md layout
+// Hermes manages in its native skills home. The manifest is the authority:
+// without it, an arbitrary nested directory remains unmanaged state rather
+// than being mislabeled as image-provided. Platform-incompatible packages are
+// managed by Hermes but are not loadable, so they suppress category warnings
+// without appearing as skills.
+func scanHermesBundledSkills(dir, platformName string) ([]Skill, map[string]bool) {
+	manifest, err := readPrefix(filepath.Join(dir, ".bundled_manifest"), maxSkillMDBytes)
+	if err != nil {
+		return nil, nil
+	}
+	bundledNames := map[string]bool{}
+	for _, line := range strings.Split(manifest, "\n") {
+		name, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if ok && name != "" {
+			bundledNames[name] = true
+		}
+	}
+
+	var out []Skill
+	managedCategories := map[string]bool{}
+	_ = filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if path != dir && entry.IsDir() && isHidden(entry.Name()) {
+			return filepath.SkipDir
+		}
+		if entry.IsDir() || entry.Name() != "SKILL.md" {
+			return nil
+		}
+		name := filepath.Base(filepath.Dir(path))
+		if !bundledNames[name] {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, filepath.Dir(path))
+		if err == nil {
+			category := strings.Split(rel, string(filepath.Separator))[0]
+			if category != "." && category != "" {
+				managedCategories[category] = true
+			}
+		}
+		if !skillMatchesPlatform(path, platformName) {
+			return nil
+		}
+		sk := Skill{
+			Name:   name,
+			Source: SourcePlatform,
+			Path:   filepath.Dir(path),
+			Linked: []string{RuntimeHermes},
+		}
+		readSkillMD(path, &sk)
+		out = append(out, sk)
+		return nil
+	})
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, managedCategories
+}
+
+func skillMatchesPlatform(path, platformName string) bool {
+	body, err := readPrefix(path, maxSkillMDBytes)
+	if err != nil {
+		return true
+	}
+	raw, ok := extractFrontmatter(body)
+	if !ok {
+		return true
+	}
+	var fm frontmatter
+	if err := yaml.Unmarshal([]byte(raw), &fm); err != nil || len(fm.Platforms) == 0 {
+		return true
+	}
+	for _, supported := range fm.Platforms {
+		if strings.EqualFold(strings.TrimSpace(supported), platformName) {
+			return true
+		}
+	}
+	return false
+}
+
+func readPrefix(path string, limit int) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	buf := make([]byte, limit)
+	n, _ := f.Read(buf)
+	return string(buf[:n]), nil
+}
+
+func currentRuntimePlatform() string {
+	if runtime.GOOS == "darwin" {
+		return "macos"
+	}
+	return runtime.GOOS
 }
 
 func compatWrapperUnderRepo(dir, repoDir string) bool {

@@ -121,14 +121,14 @@ describe('SkillsTab', () => {
     const user = userEvent.setup()
     mockSkills(
       report({
-        skills: [skill({ name: 'telegram-messaging', source: 'platform', linked: ['claude-code'] })],
+        skills: [skill({ name: 'telegram-messaging', source: 'platform', linked: ['claude-code', 'hermes'] })],
       }),
     )
     renderWithQuery(<SkillsTab agentName="dave" />)
     expect(screen.getByText('Platform')).toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: /telegram-messaging/ }))
-    expect(screen.getByText(/Loadable in Claude Code/)).toBeInTheDocument()
+    expect(screen.getByText(/Loadable in Claude Code, Hermes/)).toBeInTheDocument()
   })
 
   // State written straight into a runtime skills home works right now and is

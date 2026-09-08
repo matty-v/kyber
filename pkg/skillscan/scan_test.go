@@ -557,6 +557,72 @@ func TestScan_PlatformSkillLinkedInBothRuntimes(t *testing.T) {
 	}
 }
 
+func TestScan_HermesManifestBackedSkillsUseNestedNativeLayout(t *testing.T) {
+	f := newFixture(t)
+	hermesSkills := filepath.Join(f.home, ".hermes", "skills")
+	writeBundled := func(category, name, platforms string) {
+		t.Helper()
+		dir := filepath.Join(hermesSkills, category, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\ndescription: Native " + name + ".\n"
+		if platforms != "" {
+			body += "platforms: [" + platforms + "]\n"
+		}
+		body += "---\n"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundled("productivity", "notion", "linux, macos, windows")
+	writeBundled("research", "arxiv", "")
+	writeBundled("apple", "apple-notes", "macos")
+	if err := os.WriteFile(filepath.Join(hermesSkills, ".bundled_manifest"), []byte(
+		"notion:digest-one\narxiv:digest-two\napple-notes:digest-three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: f.repo, HomeDir: f.home, RuntimePlatform: "linux",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(rep); len(got) != 2 || got[0] != "arxiv" || got[1] != "notion" {
+		t.Fatalf("skills: got %v, want [arxiv notion]", got)
+	}
+	for _, name := range []string{"arxiv", "notion"} {
+		sk := findSkill(t, rep, name)
+		if sk.Source != skillscan.SourcePlatform || len(sk.Linked) != 1 || sk.Linked[0] != skillscan.RuntimeHermes {
+			t.Errorf("%s: got source=%q linked=%v", name, sk.Source, sk.Linked)
+		}
+	}
+	if len(rep.Issues) != 0 {
+		t.Fatalf("manifest-backed categories must not be unmanaged: %+v", rep.Issues)
+	}
+}
+
+func TestScan_HermesNestedDirectoryWithoutManifestRemainsUnmanaged(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.home, ".hermes", "skills", "research", "arxiv")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(
+		"---\nname: arxiv\ndescription: Native arxiv.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := f.scan()
+	if len(rep.Skills) != 0 {
+		t.Fatalf("unmanifested nested skill was trusted: %v", names(rep))
+	}
+	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
+		t.Fatalf("expected unmanaged warning, got %+v", rep.Issues)
+	}
+}
+
 func TestScan_OrdersIdentityThenVendorThenPlatform(t *testing.T) {
 	f := newFixture(t)
 	platform := filepath.Join(t.TempDir(), "opt-kyber-skills")
