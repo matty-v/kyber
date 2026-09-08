@@ -32,6 +32,7 @@ type config struct {
 	mentionOnly                                                    bool
 	botID                                                          string
 	attachments                                                    *slackAttachmentStore
+	callbacks                                                      *slackCallbackRegistry
 	downloadDir                                                    string
 }
 
@@ -146,11 +147,18 @@ func forwardInteraction(ctx context.Context, c config, e eventEnvelope, client *
 		return nil
 	}
 	action := p.Actions[0]
-	value := action.Value
+	token := action.Value
 	if action.SelectedOption != nil {
-		value = action.SelectedOption.Value
+		token = action.SelectedOption.Value
 	}
-	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": p.Type, "user": p.User.ID, "user_id": p.User.ID, "channel_id": p.Channel.ID, "message_id": p.Container.MessageTS, "thread_id": p.Container.ThreadTS, "callback_label": action.ActionID, "callback_value": value})
+	if c.callbacks == nil {
+		return nil
+	}
+	callback, ok := c.callbacks.consume(token, p.Channel.ID)
+	if !ok {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": p.Type, "user": p.User.ID, "user_id": p.User.ID, "channel_id": p.Channel.ID, "message_id": p.Container.MessageTS, "thread_id": p.Container.ThreadTS, "callback_label": callback.Label, "callback_value": callback.Value})
 	return sendInbound(ctx, c, client, b)
 }
 
@@ -260,6 +268,7 @@ func main() {
 		os.Exit(2)
 	}
 	c.attachments = newSlackAttachmentStore(256)
+	c.callbacks = newSlackCallbackRegistry()
 	slog.Info("slack-sidecar: starting", "agent", c.agentName, "allowed_users", len(c.users), "allowed_channels", len(c.channels), "mention_only", c.mentionOnly)
 	srv := newMCPServer(c, client)
 	var connected atomic.Bool

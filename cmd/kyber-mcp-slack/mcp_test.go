@@ -95,13 +95,17 @@ func TestSlackMCPDownloadRejectsUnobservedFile(t *testing.T) {
 	}
 }
 
-func TestSlackButtonBlocks(t *testing.T) {
-	blocks := slackButtonBlocks("Choose", []any{map[string]any{"text": "Approve", "value": "yes", "action_id": "approve"}})
-	if len(blocks) != 2 {
+func TestSlackButtonCallbacksAreOpaque(t *testing.T) {
+	registry := newSlackCallbackRegistry()
+	blocks, tokens, err := registry.register("C123", []any{map[string]any{"text": "Approve", "value": "yes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(blocks) != 1 || len(tokens) != 1 {
 		t.Fatalf("blocks = %+v", blocks)
 	}
-	elements := blocks[1]["elements"].([]map[string]any)
-	if elements[0]["action_id"] != "approve" || elements[0]["value"] != "yes" {
+	elements := blocks[0]["elements"].([]map[string]any)
+	if elements[0]["value"] == "yes" || elements[0]["value"] != tokens[0] {
 		t.Fatalf("button = %+v", elements[0])
 	}
 }

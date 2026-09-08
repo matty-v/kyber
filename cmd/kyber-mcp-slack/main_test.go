@@ -50,12 +50,21 @@ func TestForwardBlockAction(t *testing.T) {
 	envelope.Payload.User.ID = "U"
 	envelope.Payload.Channel.ID = "C"
 	envelope.Payload.Container.MessageTS = "1.2"
-	envelope.Payload.Actions = []slackAction{{ActionID: "approve", Value: "yes"}}
+	registry := newSlackCallbackRegistry()
+	_, tokens, err := registry.register("C", []any{map[string]any{"text": "Approve", "value": "yes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.callbacks = registry
+	envelope.Payload.Actions = []slackAction{{ActionID: tokens[0], Value: tokens[0]}}
 	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
 		t.Fatal(err)
 	}
-	if body["callback_label"] != "approve" || body["callback_value"] != "yes" || body["message_id"] != "1.2" {
+	if body["callback_label"] != "Approve" || body["callback_value"] != "yes" || body["message_id"] != "1.2" {
 		t.Fatalf("payload = %+v", body)
+	}
+	if _, ok := registry.consume(tokens[0], "C"); ok {
+		t.Fatal("callback token was not one-shot")
 	}
 }
 
