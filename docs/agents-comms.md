@@ -216,7 +216,7 @@ allowed channel, and downloads require a file ID observed on an accepted
 inbound event. Block actions return `callback_label` and `callback_value`.
 
 The bot token needs history scopes for the conversation types you subscribe
-to, plus `chat:write`, `reactions:write`, `files:read`, and `files:write`.
+to, plus `chat:write`, `reactions:read`, `reactions:write`, `files:read`, and `files:write`.
 Subscribe to the message events for the channel types you use and enable
 Interactivity for Block Kit callbacks. The app-level token needs
 `connections:write`, and Socket Mode must be enabled. A live pod is required;

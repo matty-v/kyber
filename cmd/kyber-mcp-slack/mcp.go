@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const slackMCPProtocolVersion = "2025-06-18"
@@ -294,6 +296,10 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 	return result("uploaded " + fmt.Sprint(len(files)) + " file(s)")
 }
 func (s *mcpServer) api(ctx context.Context, method string, body map[string]any) (map[string]any, error) {
+	return s.apiAttempt(ctx, method, body, true)
+}
+
+func (s *mcpServer) apiAttempt(ctx context.Context, method string, body map[string]any, retry bool) (map[string]any, error) {
 	b, _ := json.Marshal(body)
 	req, _ := http.NewRequestWithContext(ctx, "POST", slackAPIBaseURL+method, bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+s.cfg.botToken)
@@ -303,6 +309,24 @@ func (s *mcpServer) api(ctx context.Context, method string, body map[string]any)
 		return nil, fmt.Errorf("calling %s: %w", method, err)
 	}
 	defer res.Body.Close()
+	if res.StatusCode == http.StatusTooManyRequests {
+		if !retry {
+			return nil, fmt.Errorf("rate_limited")
+		}
+		seconds, _ := strconv.Atoi(res.Header.Get("Retry-After"))
+		if seconds < 1 {
+			seconds = 1
+		}
+		if seconds > 5 {
+			seconds = 5
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Duration(seconds) * time.Second):
+		}
+		return s.apiAttempt(ctx, method, body, false)
+	}
 	var out map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 		return nil, fmt.Errorf("decoding %s: %w", method, err)

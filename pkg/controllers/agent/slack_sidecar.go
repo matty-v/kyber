@@ -37,6 +37,8 @@ func SlackInboundBinding(secretName, action string) kyberv1.AgentInboundBinding 
 			{Label: "attachments", JsonPath: "$.attachments"},
 			{Label: "callback_label", JsonPath: "$.callback_label"},
 			{Label: "callback_value", JsonPath: "$.callback_value"},
+			{Label: "reaction_old", JsonPath: "$.reaction_old"},
+			{Label: "reaction_new", JsonPath: "$.reaction_new"},
 		},
 	}
 }

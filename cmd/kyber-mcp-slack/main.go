@@ -33,7 +33,14 @@ type config struct {
 	botID                                                          string
 	attachments                                                    *slackAttachmentStore
 	callbacks                                                      *slackCallbackRegistry
+	drops                                                          *slackDropCounters
 	downloadDir                                                    string
+}
+
+type slackDropCounters struct{ OutOfScope, NonAllowlistedUser, BotOrSystem, Unaddressed atomic.Uint64 }
+
+func (d *slackDropCounters) snapshot() map[string]uint64 {
+	return map[string]uint64{"out_of_scope": d.OutOfScope.Load(), "non_allowlisted_user": d.NonAllowlistedUser.Load(), "bot_or_system": d.BotOrSystem.Load(), "unaddressed_mention_only": d.Unaddressed.Load()}
 }
 
 func csv(s string) map[string]bool {
@@ -77,6 +84,11 @@ type slackEvent struct {
 	Subtype      string      `json:"subtype"`
 	BotID        string      `json:"bot_id"`
 	Files        []slackFile `json:"files"`
+	Reaction     string      `json:"reaction"`
+	Item         struct {
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	} `json:"item"`
 }
 type eventEnvelope struct {
 	EnvelopeID string `json:"envelope_id"`
@@ -116,13 +128,31 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 		return forwardInteraction(ctx, c, e, client)
 	}
 	ev := e.Payload.Event
+	if ev.Type == "reaction_added" || ev.Type == "reaction_removed" {
+		return forwardReaction(ctx, c, ev, client)
+	}
 	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || ev.Subtype != "" {
+		if c.drops != nil {
+			c.drops.BotOrSystem.Add(1)
+		}
 		return nil
 	}
-	if len(c.users) == 0 || !c.users[ev.User] || len(c.channels) == 0 || !c.channels[ev.Channel] {
+	if len(c.users) == 0 || !c.users[ev.User] {
+		if c.drops != nil {
+			c.drops.NonAllowlistedUser.Add(1)
+		}
+		return nil
+	}
+	if len(c.channels) == 0 || !c.channels[ev.Channel] {
+		if c.drops != nil {
+			c.drops.OutOfScope.Add(1)
+		}
 		return nil
 	}
 	if c.mentionOnly && ev.ChannelType != "im" && !strings.Contains(ev.Text, "<@"+c.botID+">") && ev.ParentUserID != c.botID {
+		if c.drops != nil {
+			c.drops.Unaddressed.Add(1)
+		}
 		return nil
 	}
 	if c.botID != "" {
@@ -135,6 +165,23 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 		return nil
 	}
 	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
+	return sendInbound(ctx, c, client, b)
+}
+
+func forwardReaction(ctx context.Context, c config, ev slackEvent, client *http.Client) error {
+	if ev.User == "" || ev.User == c.botID || ev.Item.Channel == "" || ev.Item.TS == "" || ev.Reaction == "" {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[ev.User] || len(c.channels) == 0 || !c.channels[ev.Item.Channel] {
+		return nil
+	}
+	oldReaction, newReaction := "", ""
+	if ev.Type == "reaction_removed" {
+		oldReaction = ev.Reaction
+	} else {
+		newReaction = ev.Reaction
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Item.Channel, "message_id": ev.Item.TS, "reaction_old": oldReaction, "reaction_new": newReaction})
 	return sendInbound(ctx, c, client, b)
 }
 
@@ -269,6 +316,7 @@ func main() {
 	}
 	c.attachments = newSlackAttachmentStore(256)
 	c.callbacks = newSlackCallbackRegistry()
+	c.drops = &slackDropCounters{}
 	slog.Info("slack-sidecar: starting", "agent", c.agentName, "allowed_users", len(c.users), "allowed_channels", len(c.channels), "mention_only", c.mentionOnly)
 	srv := newMCPServer(c, client)
 	var connected atomic.Bool
@@ -279,7 +327,8 @@ func main() {
 				http.Error(w, "Slack Socket Mode is not connected", http.StatusServiceUnavailable)
 				return
 			}
-			w.WriteHeader(http.StatusOK)
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"connected": true, "dropped_messages": c.drops.snapshot()})
 		})
 		_ = http.ListenAndServe(c.healthAddr, nil)
 	}()

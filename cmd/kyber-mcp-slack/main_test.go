@@ -68,6 +68,28 @@ func TestForwardBlockAction(t *testing.T) {
 	}
 }
 
+func TestForwardReaction(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	cfg := config{inboundURL: srv.URL, agentName: "boba", binding: "slack", botID: "BOT", users: map[string]bool{"U": true}, channels: map[string]bool{"C": true}}
+	var envelope eventEnvelope
+	envelope.Payload.Event.Type = "reaction_added"
+	envelope.Payload.Event.User = "U"
+	envelope.Payload.Event.Reaction = "eyes"
+	envelope.Payload.Event.Item.Channel = "C"
+	envelope.Payload.Event.Item.TS = "1.2"
+	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if body["reaction_new"] != "eyes" || body["message_id"] != "1.2" {
+		t.Fatalf("payload = %+v", body)
+	}
+}
+
 func TestForwardMentionOnly(t *testing.T) {
 	var deliveries atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
