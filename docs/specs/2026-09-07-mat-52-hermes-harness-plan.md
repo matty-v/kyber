@@ -2,7 +2,28 @@
 
 **Issue:** [MAT-52](https://linear.app/matty-v/issue/MAT-52/add-hermes-as-a-supported-kyber-agent-harness)
 **Dependency:** [MAT-7](https://linear.app/matty-v/issue/MAT-7), merged in PR #231
-**Status:** implementation started 2026-09-07
+**Status:** Slice A implemented; live hardening in progress 2026-09-08
+
+## Live hardening checkpoint — skill-report runtime contract
+
+The first live Hermes agent reached `Running` on `kyber-dev`, cloned its
+GitHub identity repo, and linked its skills into all three runtime homes. Its
+boot-time skill report was nevertheless rejected with HTTP 400 because the
+internal API's closed `linked` runtime allowlist still admitted only
+`claude-code` and `codex`, while the scanner now correctly emits `hermes`.
+
+Acceptance for this checkpoint:
+
+- the internal skills endpoint accepts `hermes` as a linked runtime while
+  continuing to reject unknown runtime identifiers;
+- a focused API regression test exercises one skill linked into Claude Code,
+  Codex, and Hermes;
+- the relevant API and scanner tests pass; and
+- after a dev control-plane reload, the live Hermes agent's report is stored
+  and served by `GET /api/v1/agents/hermes/skills`.
+
+Exact next action: extend the server allowlist and regression fixture, run the
+focused tests, then reload the dev control plane and verify the live endpoint.
 
 ## Outcome
 
