@@ -1,13 +1,13 @@
 name: release
 
-# Fires on git tag push matching v*.*.*. Builds ALL 9 Kyber images from
+# Fires on git tag push matching v*.*.*. Builds all Kyber images from
 # source at the tagged commit (full rebuild — not a manifest copy), pushes
 # them as :vX.Y.Z, then creates the GitHub Release.
 #
 # Why full rebuild instead of re-tagging :<sha> manifests: build.yml uses
 # path filters (per kyber CI cost optimization), so not every commit on
 # main has all 9 :<sha> manifests in GHCR. Releases need a coherent set
-# of 9 images at the tagged commit; that means rebuild-on-tag.
+# of images at the tagged commit; that means rebuild-on-tag.
 #
 # Slower than the manifest-copy approach (~10 min per release vs ~1 min)
 # but releases are infrequent — a release is cut deliberately by Dave via
@@ -114,7 +114,7 @@ jobs:
           fi
 
   # --------------------------------------------------------------------
-  # preflight-check-tags: error fast if any of the 9 kyber-* images
+  # preflight-check-tags: error fast if any of the 10 kyber-* images
   # already has the target semver tag published on GHCR. Closes the
   # tag-mutability cache-poisoning class of bug (kyber#364) — a
   # re-pushed tag can leave long-lived nodes pinned to the old blob.
@@ -135,7 +135,7 @@ jobs:
       - name: Check each kyber-* image
         run: |
           set -e
-          for image in kyber-control-plane kyber-node-agent kyber-status-sidecar kyber-mcp-discord kyber-mcp-telegram kyber-mcp-slack kyber-runtime-base kyber-claude-code kyber-codex; do
+          for image in kyber-control-plane kyber-node-agent kyber-status-sidecar kyber-mcp-discord kyber-mcp-telegram kyber-mcp-slack kyber-runtime-base kyber-claude-code kyber-codex kyber-hermes; do
             ./scripts/preflight-tag-not-published.sh "${image}" "${KYBER_TAG}"
           done
 
@@ -342,11 +342,25 @@ jobs:
     secrets:
       GHCR_PAT: ${{ secrets.GHCR_PAT }}
 
+  build-hermes:
+    needs: [meta, preflight-check-tags, build-runtime-base]
+    uses: ./.github/workflows/build-image.yml
+    with:
+      image: kyber-hermes
+      ref: ${{ needs.meta.outputs.sha }}
+      file: images/hermes/Dockerfile
+      cache-scope: hermes
+      tags: ${{ needs.meta.outputs.tag }}
+      build-args: |
+        BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ needs.meta.outputs.tag }}
+    secrets:
+      GHCR_PAT: ${{ secrets.GHCR_PAT }}
+
   # --------------------------------------------------------------------
-  # Once all 8 images are pushed: create the GitHub Release.
+  # Once all 10 images are pushed: create the GitHub Release.
   # --------------------------------------------------------------------
   release:
-    needs: [meta, a2a-conformance, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-mcp-slack, build-runtime-base, build-claude-code, build-codex]
+    needs: [meta, a2a-conformance, build-control-plane, build-node-agent, build-status-sidecar, build-mcp-discord, build-mcp-telegram, build-mcp-slack, build-runtime-base, build-claude-code, build-codex, build-hermes]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -475,8 +489,8 @@ jobs:
       # those values would override the new chart and the upgrade would rewrite
       # templates while leaving the old images running.
       #
-      # All nine, including the ones the source chart leaves empty on purpose
-      # (codex, discordSidecar, telegramSidecar, slackSidecar). The release built those
+      # All ten, including the ones the source chart leaves empty on purpose
+      # (codex, hermes, discordSidecar, telegramSidecar, slackSidecar). The release built those
       # images, so the artifact should name them; they stay inert until an
       # agent actually enables that runtime or channel. An operator who wants
       # them off overrides the tag back to "" in their own values.
@@ -485,7 +499,7 @@ jobs:
       - name: Stamp release image tags into the chart
         run: |
           set -euo pipefail
-          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar slackSidecar; do
+          for c in controlPlane nodeAgent agentBase claudeCode codex hermes statusSidecar discordSidecar telegramSidecar slackSidecar; do
             yq -i ".image.${c}.tag = \"v${KYBER_VERSION}\"" deploy/helm/kyber/values.yaml
           done
           echo "Stamped image tags:"

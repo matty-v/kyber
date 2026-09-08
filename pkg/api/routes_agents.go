@@ -978,7 +978,13 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.Secrets.AuthType == "" {
+		// Preserve the historical OAuth default for legacy/unknown runtimes, but
+		// let a registered runtime choose its own first supported mode. This is
+		// required for API-key-only harnesses such as Hermes.
 		req.Secrets.AuthType = string(kyberv1.AgentAuthTypeOAuth)
+		if descriptor, ok := pkgruntimes.Describe(req.Runtime); ok && len(descriptor.AuthModes) > 0 {
+			req.Secrets.AuthType = string(descriptor.AuthModes[0].ID)
+		}
 	}
 	if utf8.RuneCountInString(req.StartupPrompt) > 32768 {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "startupPrompt must be at most 32768 characters", "startupPrompt")
@@ -1066,12 +1072,8 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Telegram channels require Max-subscription OAuth. API-key auth cannot
-	// support channels, so reject the combination upfront. Shares its rule with
-	// PUT /comms/telegram (routes_agent_comms.go) so the two entry points into
-	// "enable Telegram" cannot drift apart.
 	if req.Secrets.TelegramEnabled {
-		if err := validateTelegramAuth(kyberv1.AgentAuthType(req.Secrets.AuthType)); err != nil {
+		if err := validateChannelAuth(req.Runtime, kyberv1.AgentAuthType(req.Secrets.AuthType), commsChannelTelegram); err != nil {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "telegramEnabled")
 			return
 		}
@@ -1081,6 +1083,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.Secrets.SlackEnabled {
+		if err := validateChannelAuth(req.Runtime, kyberv1.AgentAuthType(req.Secrets.AuthType), commsChannelSlack); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "slackEnabled")
+			return
+		}
 		if req.Secrets.SlackBotToken == "" || req.Secrets.SlackAppToken == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "Slack bot and app tokens are required", "secrets.slackBotToken")
 			return

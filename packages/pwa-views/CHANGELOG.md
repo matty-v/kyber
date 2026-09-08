@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.42.0
+
+- Show Hermes's observed provider, model, and context budget, enable its
+  reported model catalog in the model picker, and browse stable Hermes harness
+  releases in the version dialog.
+
+## 0.41.0
+
+- Add runtime-declared channel support so API-key Hermes agents can configure Telegram, Discord, and Slack in the creation wizard.
+
 ## 0.40.0
 
 - Select a supported authentication mode when runtime discovery restricts the default harness to one mode.

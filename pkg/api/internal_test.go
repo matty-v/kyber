@@ -509,7 +509,8 @@ func TestInternalServer_TokenUsagePost(t *testing.T) {
 	defer srv.Close()
 
 	snap := tokenreport.Snapshot{
-		Model: "claude-sonnet-4-5",
+		Model:    "claude-sonnet-4-5",
+		Provider: "openrouter",
 		Tokens: tokenreport.Tokens{
 			Used: 1000, Limit: 200000, Input: 500, CacheCreation: 300, CacheRead: 200,
 		},
@@ -530,7 +531,7 @@ func TestInternalServer_TokenUsagePost(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got == nil || got.Tokens.Used != 1000 {
+	if got == nil || got.Tokens.Used != 1000 || got.Provider != "openrouter" {
 		t.Errorf("stored snapshot = %+v", got)
 	}
 }

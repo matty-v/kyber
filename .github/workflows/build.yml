@@ -42,6 +42,7 @@ jobs:
       runtimeBase: ${{ steps.filter.outputs.runtimeBase }}
       claudeCode: ${{ steps.filter.outputs.claudeCode }}
       codex: ${{ steps.filter.outputs.codex }}
+      hermes: ${{ steps.filter.outputs.hermes }}
       controlPlaneImage: ${{ steps.filter.outputs.controlPlaneImage }}
       nodeAgentImage: ${{ steps.filter.outputs.nodeAgentImage }}
       # statusSidecarImage was referenced by push-status-sidecar (below) but
@@ -147,6 +148,20 @@ jobs:
               - 'go.sum'
               - 'docs/agent-manual.md'
               - 'deploy/helm/kyber/values.yaml'
+            hermes:
+              - 'images/hermes/**'
+              - 'images/shared/**'
+              # The Hermes image compiles its model/context reporter from the
+              # repo root. Keep these paths in lockstep with the Dockerfile so
+              # a reporter-only fix cannot pass CI without shipping an image.
+              - 'cmd/hermes-reporter/**'
+              - 'pkg/tokenreport/**'
+              - 'cmd/kyber-skills/**'
+              - 'pkg/skillscan/**'
+              - 'go.mod'
+              - 'go.sum'
+              - 'docs/agent-manual.md'
+              - 'deploy/helm/kyber/values.yaml'
             controlPlaneImage:
               - 'images/control-plane/**'
             nodeAgentImage:
@@ -178,6 +193,7 @@ jobs:
              [ "${{ steps.filter.outputs.runtimeBase }}" = "true" ] || \
              [ "${{ steps.filter.outputs.claudeCode }}" = "true" ] || \
              [ "${{ steps.filter.outputs.codex }}" = "true" ] || \
+             [ "${{ steps.filter.outputs.hermes }}" = "true" ] || \
              [ "${{ steps.filter.outputs.controlPlaneImage }}" = "true" ] || \
              [ "${{ steps.filter.outputs.nodeAgentImage }}" = "true" ] || \
              [ "${{ steps.filter.outputs.statusSidecarImage }}" = "true" ] || \
@@ -790,6 +806,65 @@ jobs:
           tags: ${{ steps.cxtags.outputs.tags }}
           cache-from: type=gha,scope=codex
           cache-to: type=gha,scope=codex,mode=max
+
+  push-hermes:
+    runs-on: ubuntu-latest
+    needs: [changes, push-runtime-base]
+    if: >-
+      always()
+      && (github.event_name == 'push' ||
+          (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+      && github.actor != 'dependabot[bot]'
+      && (needs.changes.outputs.runtimeBase == 'true' || needs.changes.outputs.hermes == 'true')
+      && (needs.push-runtime-base.result == 'success' || needs.push-runtime-base.result == 'skipped')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.head.sha || '' }}
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Determine BASE_IMAGE tag
+        id: base
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            SHA="${{ github.event.pull_request.head.sha }}"
+          else
+            SHA="${{ github.sha }}"
+          fi
+          if [ "${{ needs.changes.outputs.runtimeBase }}" = "true" ]; then
+            echo "tag=${SHA}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=latest" >> "$GITHUB_OUTPUT"
+          fi
+      - id: tags
+        name: Resolve Hermes image tags
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            TAGS="ghcr.io/matty-v/kyber-hermes:${{ github.event.pull_request.head.sha }}"
+          else
+            TAGS=$(printf 'ghcr.io/matty-v/kyber-hermes:latest\nghcr.io/matty-v/kyber-hermes:%s\nghcr.io/matty-v/kyber-hermes:0.21.0' \
+              "${{ github.sha }}")
+          fi
+          {
+            echo "tags<<TAGS_EOF"
+            echo "${TAGS}"
+            echo "TAGS_EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Build and push Hermes image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: images/hermes/Dockerfile
+          build-args: |
+            BASE_IMAGE=ghcr.io/matty-v/kyber-runtime-base:${{ steps.base.outputs.tag }}
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          cache-from: type=gha,scope=hermes
+          cache-to: type=gha,scope=hermes,mode=max
   # Deployment is managed by ArgoCD — see matty-v/kyber-deploy. The
   # Image Updater there polls GHCR every ~2 min, commits new image tags
   # into environments/*/values.yaml, and ArgoCD syncs the cluster.
@@ -833,6 +908,7 @@ jobs:
       - push-runtime-base
       - push-claude-code
       - push-codex
+      - push-hermes
     # always(): most of those jobs SKIP on a typical merge (path filters), and
     # a skipped dependency would otherwise skip this job too. Failures still
     # block — a chart must never be published from a build that broke.
@@ -907,7 +983,7 @@ jobs:
           set -euo pipefail
           for repo in kyber-control-plane kyber-node-agent kyber-status-sidecar \
                       kyber-mcp-discord kyber-mcp-telegram kyber-runtime-base \
-                      kyber-claude-code kyber-codex; do
+                      kyber-claude-code kyber-codex kyber-hermes; do
             echo "::group::ghcr.io/matty-v/${repo}:${VERSION}"
             docker buildx imagetools create \
               --tag "ghcr.io/matty-v/${repo}:${VERSION}" \
@@ -922,7 +998,7 @@ jobs:
         run: |
           set -euo pipefail
           yq -i ".version = \"${VERSION}\" | .appVersion = \"${VERSION}\"" deploy/helm/kyber/Chart.yaml
-          for c in controlPlane nodeAgent agentBase claudeCode codex statusSidecar discordSidecar telegramSidecar; do
+          for c in controlPlane nodeAgent agentBase claudeCode codex hermes statusSidecar discordSidecar telegramSidecar; do
             yq -i ".image.${c}.tag = \"${VERSION}\"" deploy/helm/kyber/values.yaml
           done
           echo "Chart:"; yq '{"version": .version, "appVersion": .appVersion}' deploy/helm/kyber/Chart.yaml

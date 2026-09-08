@@ -917,6 +917,7 @@ export interface AgentSecretListResponse {
 // Token budget — matches pkg/tokenreport.Snapshot on the backend.
 export type TokenUsage = {
   model: string
+  provider?: string
   tokens: {
     used: number
     limit: number
@@ -1025,6 +1026,7 @@ export interface AvailableModel {
 export interface AvailableResponse {
   claudeCodeVersions: string[]
   codexVersions?: string[]
+  hermesVersions?: string[]
   models: AvailableModel[]
   codexModels?: AvailableModel[]
 }
@@ -1243,7 +1245,7 @@ export interface RuntimeDescriptor {
   features: string[]
   authModes: Array<{ id: AgentAuthType; name: string; flow: string; authorizationUrl?: string
     authorizationParams?: Record<string,string>
-    inputField?: string; reauthorizePath?: string }>
+    inputField?: string; reauthorizePath?: string; channels?: Array<'telegram' | 'discord' | 'slack'> }>
 }
 export interface RuntimeFeatureAvailability {
   supported: boolean

@@ -57,13 +57,14 @@ const SOURCE_LABEL: Record<AgentSkillSource, string> = {
 const SOURCE_HINT: Record<AgentSkillSource, string> = {
   identity: "This agent's own skill, in its identity repo",
   vendor: 'Vendored into the identity repo from a shared package',
-  platform: 'Built into the Kyber runtime image and enabled by a sidecar',
+  platform: 'Built into the runtime image',
 }
 
 /** Runtime identifier → the name an operator recognises. */
 const RUNTIME_LABEL: Record<string, string> = {
   'claude-code': 'Claude Code',
   codex: 'Codex',
+  hermes: 'Hermes',
 }
 
 function SourceBadge({ skill }: { skill: AgentSkill }) {

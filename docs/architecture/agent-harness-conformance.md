@@ -23,21 +23,21 @@ checkpoint are recorded in the [execution plan](../specs/2026-09-06-mat-7-harnes
 Implementation checkpoints extend this baseline. Live evidence is recorded separately
 from fixture execution; a source implementation alone is not certification.
 
-| Requirement | Claude Code | Codex | Reusable or existing evidence |
-|---|---|---|---|
-| HC-01 registration/pod assembly | Implemented | Implemented | `pkg/runtimes/contracttest`, existing adapter tests; image boot needs live evidence |
-| HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Adapter and startup fixtures, `credential_failure_test.go`; clearer normalized failure taxonomy is a gap |
-| HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
-| HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
-| HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
-| HC-05 subscription mode | PKCE login live verified; refresh-token sync fixtures | Device login live verified; legacy auth JSON and sync fixtures | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
-| HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Boot fixtures, cron correlation and dispatch marker tests; runtime version behavior needs live evidence |
-| HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | New `TestHarnessContractReceiptRecovery` plus task worker/store/API suites; historical MAT-28 live evidence is version-specific |
-| HC-08 cancellation | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
-| HC-09 common discovery/availability | Descriptor + pod-specific observations | Descriptor + pod-specific observations | Availability expiry/negative tests, API pod/runtime mismatch tests, native-config probes, task/session gates and discovery-driven UI |
-| HC-10 model/usage reporting | Reporter/catalog paths | Reporter/catalog paths, unknown catalog context windows | `pkg/tokenreport`, runtime catalog tests; no guessed metric promises |
-| HC-10 tools/channels | Configured MCP sidecars | Configured MCP sidecars | Adapter/startup tests; Telegram + API-key rejected by current API |
-| HC-10 in-place repair | Adapter metadata | Adapter metadata | Existing adapter/installer/repair tests; real repair requires separate live evidence |
+| Requirement | Claude Code | Codex | Hermes 0.21.0 preview | Reusable or existing evidence |
+|---|---|---|---|---|
+| HC-01 registration/pod assembly | Implemented | Implemented | Live verified | `pkg/runtimes/contracttest`, adapter tests, and exact-image dev evidence |
+| HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Process + credential probes, live verified | Adapter/startup fixtures and stable two-container dev rollout; clearer normalized failure taxonomy is a gap |
+| HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Native SQLite resume + platform recall, fixture only | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
+| HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | Startup, fresh restart, `/compress`, fixture only | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
+| HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | OpenRouter creation and model roll live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
+| HC-05 subscription mode | PKCE login live verified; refresh-token sync fixtures | Device login live verified; legacy auth JSON and sync fixtures | Gap | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
+| HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Gap | Hermes `pre_llm_call` is context-only and fail-open in the pinned version |
+| HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | Gap | Hermes cannot satisfy the fail-closed pre-model receipt boundary in the pinned version |
+| HC-08 cancellation | notify_only | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
+| HC-09 common discovery/availability | Descriptor + pod-specific observations | Descriptor + pod-specific observations | Descriptor + pod observations, live verified | Availability expiry/negative tests, API pod/runtime mismatch tests, native-config probes, task/session gates and discovery-driven UI |
+| HC-10 model/usage reporting | Reporter/catalog paths | Reporter/catalog paths, unknown catalog context windows | OpenRouter catalog + native call-summary reporter, live verified | `pkg/tokenreport`, runtime catalog tests, and dev model/context evidence; no guessed metric promises |
+| HC-10 tools/channels | Configured MCP sidecars | Configured MCP sidecars | Descriptor-gated MCP sidecars; Telegram live verified | Adapter/startup and channel-auth tests; Discord and Slack live evidence outstanding |
+| HC-10 in-place repair | Adapter metadata | Adapter metadata | Gap | Existing adapter/installer/repair tests; real repair requires separate live evidence |
 
 The small adapter fixture in `pkg/runtimes/contracttest` checks optional-command
 absence and credential isolation. `pkg/api/runtime_extension_test.go` proves a
@@ -184,7 +184,7 @@ branch-protection permission is needed.
 go test ./pkg/runtimes/...
 go test ./images/agent-base -run TestHarnessContract -count=1
 go test ./pkg/tokenreport ./pkg/taskdispatch ./images/agent-base
-go test -tags=integration ./images/codex ./images/claude-code
+go test -tags=integration ./images/codex ./images/claude-code ./images/hermes
 # Requires PostgreSQL, Redis, tmux, Python, jq and curl:
 go test -tags=integration ./test/integration -run TestHarnessContractBootReceiptAndExplicitCompletion
 ```

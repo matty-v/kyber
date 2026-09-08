@@ -44,6 +44,12 @@ image:
     # Codex agent here succeeded and then failed invisibly forever — blank
     # status, reason only in the control-plane log.
     tag: ""
+  hermes:
+    repository: ghcr.io/matty-v/kyber-hermes
+    # OPTIONAL until Hermes agents are enabled. Agent creation fails visibly
+    # when this tag is empty, using the same registered-but-unpinned contract
+    # as Codex.
+    tag: ""
   # statusSidecar runs alongside every agent runtime container as a
   # platform-injected sidecar (kyber#248). Pushes heartbeats + (post-#249)
   # activity events to the control plane.

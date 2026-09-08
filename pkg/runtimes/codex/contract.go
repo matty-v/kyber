@@ -16,8 +16,8 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 	return runtimes.Descriptor{
 		ID: "codex", Name: "Codex", ContractVersion: runtimes.ContractVersion, Profile: runtimes.InteractiveProfile, HelmKey: "codex", Cancellation: "notify_only", ModelPrefix: "gpt-", LegacyDefaultsKey: "codex", LegacyCatalogKey: "codexModels", LegacyVersionsKey: "codexVersions", AuthFailureExitCode: 42,
 		AuthModes: []runtimes.AuthMode{
-			{ID: kyberv1.AgentAuthTypeOAuth, Name: "ChatGPT subscription", Flow: "device-code", InputField: "codexAuthJson", SecretSuffix: "codex-auth", ReauthorizePath: "codex-device-auth"},
-			{ID: kyberv1.AgentAuthTypeAPIKey, Name: "OpenAI API key", Flow: "api-key", InputField: "openaiApiKey", SecretSuffix: "openai"},
+			{ID: kyberv1.AgentAuthTypeOAuth, Name: "ChatGPT subscription", Flow: "device-code", InputField: "codexAuthJson", SecretSuffix: "codex-auth", ReauthorizePath: "codex-device-auth", Channels: []string{"telegram", "discord", "slack"}},
+			{ID: kyberv1.AgentAuthTypeAPIKey, Name: "OpenAI API key", Flow: "api-key", InputField: "openaiApiKey", SecretSuffix: "openai", Channels: []string{"slack"}},
 		},
 		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature},
 		TranscriptPath:     ".codex/sessions",

@@ -22,6 +22,7 @@ export interface EffectiveModelList {
   models: AvailableModel[]
   claudeCodeVersions: string[]
   codexVersions: string[]
+  hermesVersions: string[]
   source: 'available' | 'config-fallback' | 'empty'
   isLoading: boolean
 }
@@ -39,6 +40,7 @@ export function useEffectiveModelList(runtime = 'claude-code'): EffectiveModelLi
       models: detectedModels,
       claudeCodeVersions: availableData.claudeCodeVersions,
       codexVersions: availableData.codexVersions ?? [],
+      hermesVersions: availableData.hermesVersions ?? [],
       source: 'available',
       isLoading: false,
     }
@@ -61,6 +63,7 @@ export function useEffectiveModelList(runtime = 'claude-code'): EffectiveModelLi
       // only source; an empty cache means no version picker is shown.
       claudeCodeVersions: availableData?.claudeCodeVersions ?? [],
       codexVersions: availableData?.codexVersions ?? [],
+      hermesVersions: availableData?.hermesVersions ?? [],
       source: 'config-fallback',
       isLoading: false,
     }
@@ -69,6 +72,7 @@ export function useEffectiveModelList(runtime = 'claude-code'): EffectiveModelLi
     models: [],
     claudeCodeVersions: [],
     codexVersions: availableData?.codexVersions ?? [],
+    hermesVersions: availableData?.hermesVersions ?? [],
     source: 'empty',
     isLoading: available.isLoading || config.isLoading,
   }

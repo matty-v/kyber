@@ -59,6 +59,7 @@ import (
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
+	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"
@@ -1054,6 +1055,7 @@ func main() {
 			Cache:          runtimeDetectCache,
 			Npm:            runtimedetect.NewNpmClient("", 15*time.Second),
 			CodexNpm:       runtimedetect.NewNpmClient(runtimedetect.DefaultCodexNpmRegistryURL, 15*time.Second),
+			HermesGitHub:   runtimedetect.NewGitHubReleasesClient("", 15*time.Second),
 			ContextWindows: contextWindowResolver,
 			Cadence:        runtimeDetectCadence,
 			VersionLimit:   runtimeDetectVersionLimit,

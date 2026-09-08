@@ -29,6 +29,7 @@ func newFixture(t *testing.T) *fixture {
 		filepath.Join(f.repo, "skills"),
 		filepath.Join(f.home, ".claude", "skills"),
 		filepath.Join(f.home, ".codex", "skills"),
+		filepath.Join(f.home, ".hermes", "skills"),
 	} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
@@ -64,11 +65,11 @@ func (f *fixture) skillAt(rel, frontmatter string) string {
 }
 
 // link mimics exactly what images/shared/kyber-identity-repo.sh does: symlink
-// the skill directory into both runtime homes under its directory name.
+// the skill directory into every runtime home under its directory name.
 func (f *fixture) link(name, target string, runtimes ...string) {
 	f.t.Helper()
 	if len(runtimes) == 0 {
-		runtimes = []string{".claude", ".codex"}
+		runtimes = []string{".claude", ".codex", ".hermes"}
 	}
 	for _, rt := range runtimes {
 		dst := filepath.Join(f.home, rt, "skills", name)
@@ -132,7 +133,7 @@ description: Ship the thing to prod.
 Body text.
 `
 
-func TestScan_HealthySkillIsLinkedInBothRuntimes(t *testing.T) {
+func TestScan_HealthySkillIsLinkedInEveryRuntime(t *testing.T) {
 	f := newFixture(t)
 	dir := f.skill("deploy", goodFrontmatter)
 	f.link("deploy", dir)
@@ -144,8 +145,8 @@ func TestScan_HealthySkillIsLinkedInBothRuntimes(t *testing.T) {
 	if sk.Source != skillscan.SourceIdentity {
 		t.Errorf("source: got %q, want %q", sk.Source, skillscan.SourceIdentity)
 	}
-	if len(sk.Linked) != 2 {
-		t.Errorf("linked: got %v, want both runtimes", sk.Linked)
+	if len(sk.Linked) != 3 {
+		t.Errorf("linked: got %v, want every runtime", sk.Linked)
 	}
 	if !sk.Healthy() {
 		t.Errorf("expected healthy, got issues %v", codes(sk.Issues))
@@ -159,7 +160,7 @@ func TestScan_LegacyFlatSkillCompatibilityWrapperIsManaged(t *testing.T) {
 	if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	for _, runtime := range []string{".claude", ".codex"} {
+	for _, runtime := range []string{".claude", ".codex", ".hermes"} {
 		wrapper := filepath.Join(f.home, runtime, "skills", "approve")
 		if err := os.MkdirAll(wrapper, 0o755); err != nil {
 			t.Fatal(err)
@@ -171,7 +172,7 @@ func TestScan_LegacyFlatSkillCompatibilityWrapperIsManaged(t *testing.T) {
 
 	rep := f.scan()
 	sk := findSkill(t, rep, "approve")
-	if sk.Path != filepath.Join("skills", "approve.md") || len(sk.Linked) != 2 {
+	if sk.Path != filepath.Join("skills", "approve.md") || len(sk.Linked) != 3 {
 		t.Fatalf("flat skill = %+v", sk)
 	}
 	if !sk.Healthy() || len(rep.Issues) != 0 {
@@ -189,7 +190,7 @@ func TestScan_CanonicalPackageTakesPrecedenceOverFlatSkill(t *testing.T) {
 	f.link("approve", filepath.Join(f.repo, "skills", "approve"))
 	rep := f.scan()
 	canonical := findSkill(t, rep, "approve")
-	if canonical.Path != "skills/approve" || canonical.Description != "Canonical package." || len(canonical.Linked) != 2 {
+	if canonical.Path != "skills/approve" || canonical.Description != "Canonical package." || len(canonical.Linked) != 3 {
 		t.Fatalf("canonical package did not win: %+v", canonical)
 	}
 	for _, s := range rep.Skills {
@@ -213,15 +214,15 @@ func TestScan_InRepoButNotLinked(t *testing.T) {
 	if !hasCode(sk.Issues, skillscan.IssueNotLinked) {
 		t.Fatalf("expected %s, got %v", skillscan.IssueNotLinked, codes(sk.Issues))
 	}
-	// One issue per runtime, so the UI can say which half is broken.
+	// One issue per runtime, so the UI can say which integration is broken.
 	var n int
 	for _, i := range sk.Issues {
 		if i.Code == skillscan.IssueNotLinked {
 			n++
 		}
 	}
-	if n != 2 {
-		t.Errorf("not_linked count: got %d, want 2 (one per runtime)", n)
+	if n != 3 {
+		t.Errorf("not_linked count: got %d, want 3 (one per runtime)", n)
 	}
 }
 
@@ -234,14 +235,15 @@ func TestScan_LinkedInOneRuntimeOnly(t *testing.T) {
 	if len(sk.Linked) != 1 || sk.Linked[0] != skillscan.RuntimeClaudeCode {
 		t.Fatalf("linked: got %v, want [claude-code]", sk.Linked)
 	}
-	var detail string
+	var details []string
 	for _, i := range sk.Issues {
 		if i.Code == skillscan.IssueNotLinked {
-			detail = i.Detail
+			details = append(details, i.Detail)
 		}
 	}
-	if !strings.Contains(detail, skillscan.RuntimeCodex) {
-		t.Errorf("expected the codex gap named in the detail; got %q", detail)
+	detail := strings.Join(details, "\n")
+	if !strings.Contains(detail, skillscan.RuntimeCodex) || !strings.Contains(detail, skillscan.RuntimeHermes) {
+		t.Errorf("expected the codex and Hermes gaps named in the detail; got %q", detail)
 	}
 }
 
@@ -540,8 +542,8 @@ func TestScan_PlatformSkillLinkedInBothRuntimes(t *testing.T) {
 		t.Fatal(err)
 	}
 	sk := findSkill(t, rep, "discord-messaging")
-	if len(sk.Linked) != 2 {
-		t.Errorf("linked: got %v, want both runtimes", sk.Linked)
+	if len(sk.Linked) != 3 {
+		t.Errorf("linked: got %v, want every runtime", sk.Linked)
 	}
 	// One entry, not one per runtime home.
 	var n int
@@ -552,6 +554,72 @@ func TestScan_PlatformSkillLinkedInBothRuntimes(t *testing.T) {
 	}
 	if n != 1 {
 		t.Errorf("platform skill appeared %d times, want 1", n)
+	}
+}
+
+func TestScan_HermesManifestBackedSkillsUseNestedNativeLayout(t *testing.T) {
+	f := newFixture(t)
+	hermesSkills := filepath.Join(f.home, ".hermes", "skills")
+	writeBundled := func(category, name, platforms string) {
+		t.Helper()
+		dir := filepath.Join(hermesSkills, category, name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		body := "---\nname: " + name + "\ndescription: Native " + name + ".\n"
+		if platforms != "" {
+			body += "platforms: [" + platforms + "]\n"
+		}
+		body += "---\n"
+		if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeBundled("productivity", "notion", "linux, macos, windows")
+	writeBundled("research", "arxiv", "")
+	writeBundled("apple", "apple-notes", "macos")
+	if err := os.WriteFile(filepath.Join(hermesSkills, ".bundled_manifest"), []byte(
+		"notion:digest-one\narxiv:digest-two\napple-notes:digest-three\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := skillscan.Scan(skillscan.Options{
+		RepoDir: f.repo, HomeDir: f.home, RuntimePlatform: "linux",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := names(rep); len(got) != 2 || got[0] != "arxiv" || got[1] != "notion" {
+		t.Fatalf("skills: got %v, want [arxiv notion]", got)
+	}
+	for _, name := range []string{"arxiv", "notion"} {
+		sk := findSkill(t, rep, name)
+		if sk.Source != skillscan.SourcePlatform || len(sk.Linked) != 1 || sk.Linked[0] != skillscan.RuntimeHermes {
+			t.Errorf("%s: got source=%q linked=%v", name, sk.Source, sk.Linked)
+		}
+	}
+	if len(rep.Issues) != 0 {
+		t.Fatalf("manifest-backed categories must not be unmanaged: %+v", rep.Issues)
+	}
+}
+
+func TestScan_HermesNestedDirectoryWithoutManifestRemainsUnmanaged(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.home, ".hermes", "skills", "research", "arxiv")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(
+		"---\nname: arxiv\ndescription: Native arxiv.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	rep := f.scan()
+	if len(rep.Skills) != 0 {
+		t.Fatalf("unmanifested nested skill was trusted: %v", names(rep))
+	}
+	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
+		t.Fatalf("expected unmanaged warning, got %+v", rep.Issues)
 	}
 }
 
@@ -680,7 +748,7 @@ func TestScan_EveryIssueCarriesASeverity(t *testing.T) {
 // a real agent in the dev instance, not in review.
 func TestScan_RuntimeOwnedDotEntriesAreNotSkillsOrIssues(t *testing.T) {
 	f := newFixture(t)
-	for _, home := range []string{".claude", ".codex"} {
+	for _, home := range []string{".claude", ".codex", ".hermes"} {
 		if err := os.MkdirAll(filepath.Join(f.home, home, "skills", ".system"), 0o755); err != nil {
 			t.Fatal(err)
 		}

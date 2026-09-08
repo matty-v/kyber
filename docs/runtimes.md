@@ -1,8 +1,9 @@
 # Agent runtimes
 
-Kyber V1 supports Claude Code and Codex as long-lived agent harnesses. Both run
-inside the standard Kyber agent pod, use whole-disk persistence, receive inbound
-work through Kyber's signed dispatch path, and expose the same lifecycle actions.
+Kyber V1 supports Claude Code, Codex, and Hermes as long-lived agent harnesses.
+They run inside the standard Kyber agent pod and use whole-disk persistence.
+Each runtime descriptor declares the lifecycle, authentication, channel, and
+optional platform features that its pinned integration supports.
 
 ## Codex with a ChatGPT subscription
 
@@ -42,10 +43,29 @@ startup update check is disabled because Kyber centrally manages the pinned
 harness: use **Set harness version** in the agent action menu to upgrade or
 downgrade explicitly.
 
+## Hermes preview with OpenRouter
+
+Hermes 0.21.0 is available when the installation pins `image.hermes.tag`.
+Creation requires an OpenRouter API key, stored in `<agent>-openrouter` and
+injected only into that agent. The requested model is passed to Hermes as its
+OpenRouter model identifier.
+
+The preview supports fresh session restart, native resume from Hermes's
+persisted SQLite state, `/compress`, an authenticated OpenRouter model catalog,
+and native provider/model/context reporting. Kyber can validate and roll a
+model change through the shared model action. The harness dialog can browse
+stable Hermes GitHub releases, but installing a different source release still
+requires a new pinned runtime image.
+
+Hermes does not advertise durable tasks, job turn hooks, subscription login,
+or in-place runtime repair. Its pinned pre-model hook cannot enforce Kyber's
+fail-closed task receipt boundary, so durable task dispatch remains disabled
+for this runtime.
+
 ## Telegram, Discord, and Slack
 
-Telegram and Discord may be enabled in the Create Agent wizard for either
-runtime. The runtime-neutral `kyber-mcp-telegram` sidecar long-polls the Telegram Bot
+The Create Agent wizard offers only the channels declared by the selected
+runtime and authentication mode. The runtime-neutral `kyber-mcp-telegram` sidecar long-polls the Telegram Bot
 API, filters every update through the configured numeric-user allowlist, and
 HMAC-forwards accepted messages into Kyber's inbound dispatcher. Replies go
 through the sidecar's MCP server or localhost fallback, so the runtime never receives

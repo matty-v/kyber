@@ -30,8 +30,8 @@ func TestHandleAvailable_EmptyCache_ReturnsContractShape(t *testing.T) {
 	if got.ClaudeCodeVersions == nil {
 		t.Error("expected non-nil claudeCodeVersions array (contract: [] not null)")
 	}
-	if got.CodexVersions == nil || got.CodexModels == nil {
-		t.Error("expected non-nil Codex catalog arrays (contract: [] not null)")
+	if got.CodexVersions == nil || got.CodexModels == nil || got.HermesVersions == nil {
+		t.Error("expected non-nil runtime catalog arrays (contract: [] not null)")
 	}
 	if got.Models == nil {
 		t.Error("expected non-nil models array (contract: [] not null)")
@@ -59,8 +59,8 @@ func TestHandleAvailable_NilCache_ReturnsContractShape(t *testing.T) {
 	if got.ClaudeCodeVersions == nil || got.Models == nil {
 		t.Errorf("expected non-nil arrays even with nil cache, got %+v", got)
 	}
-	if got.CodexVersions == nil || got.CodexModels == nil {
-		t.Errorf("expected non-nil Codex arrays even with nil cache, got %+v", got)
+	if got.CodexVersions == nil || got.CodexModels == nil || got.HermesVersions == nil {
+		t.Errorf("expected non-nil runtime arrays even with nil cache, got %+v", got)
 	}
 }
 
@@ -74,6 +74,7 @@ func TestHandleAvailable_PinsResponseShape(t *testing.T) {
 	if err := cache.Put(context.Background(), &runtimedetect.Snapshot{
 		ClaudeCodeVersions: []string{"2.0.0", "1.5.0"},
 		CodexVersions:      []string{"0.146.0"},
+		HermesVersions:     []string{"0.21.1", "0.21.0"},
 		Models: []runtimedetect.Model{
 			{ID: "claude-opus-4-7", DisplayName: "Claude Opus 4.7", ContextWindow: runtimedetect.DefaultContextWindowFloor, ContextWindowKnown: false},
 			{ID: "claude-sonnet-4-6", DisplayName: "Claude Sonnet 4.6", ContextWindow: runtimedetect.DefaultContextWindowFloor, ContextWindowKnown: false},
@@ -98,6 +99,7 @@ func TestHandleAvailable_PinsResponseShape(t *testing.T) {
 	var raw struct {
 		ClaudeCodeVersions []string                 `json:"claudeCodeVersions"`
 		CodexVersions      []string                 `json:"codexVersions"`
+		HermesVersions     []string                 `json:"hermesVersions"`
 		Models             []map[string]interface{} `json:"models"`
 		CodexModels        []map[string]interface{} `json:"codexModels"`
 	}
@@ -112,6 +114,9 @@ func TestHandleAvailable_PinsResponseShape(t *testing.T) {
 	}
 	if len(raw.CodexVersions) != 1 || len(raw.CodexModels) != 1 || raw.CodexModels[0]["id"] != "gpt-5.6-sol" {
 		t.Errorf("Codex catalog not surfaced: versions=%v models=%v", raw.CodexVersions, raw.CodexModels)
+	}
+	if len(raw.HermesVersions) != 2 || raw.HermesVersions[0] != "0.21.1" {
+		t.Errorf("Hermes versions not surfaced: %v", raw.HermesVersions)
 	}
 	m := raw.Models[0]
 	for _, k := range []string{"id", "displayName", "contextWindow", "contextWindowKnown"} {

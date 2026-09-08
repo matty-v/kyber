@@ -135,7 +135,8 @@ testable without a cluster. Authoritative transition table:
 
 ### 1.3 Runtime registry (pluggable agent runtimes)
 `pkg/runtimes/runtime.go` defines `Runtime { Type, Adapter, Probe }`. Each
-runtime is a subpackage (`pkg/runtimes/claudecode/`, `pkg/runtimes/codex/`) that self-registers via
+runtime is a subpackage (`pkg/runtimes/claudecode/`, `pkg/runtimes/codex/`,
+`pkg/runtimes/hermes/`) that self-registers via
 `init()`; binaries enable runtimes by blank-importing the subpackage.
 `Adapter` answers pod-spec questions (image, env, secret mounts, probes) and
 provides the fixed runtime-repair package/binary/path contract used by the

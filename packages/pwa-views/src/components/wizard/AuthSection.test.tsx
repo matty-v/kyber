@@ -61,7 +61,24 @@ describe('AuthSection', () => {
     expect(screen.queryByLabelText(/anthropic api key/i)).not.toBeInTheDocument()
   })
 
-  it('renders the Telegram bot-token input only when telegramEnabled and authType === "oauth"', () => {
+  it('offers every declared channel to a Hermes api-key agent', () => {
+    const state = {
+      ...initialWizardState([]),
+      runtime: 'hermes',
+      authType: 'api-key' as const,
+      runtimes: [{
+        id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+        cancellation: 'notify_only', features: [],
+        authModes: [{ id: 'api-key' as const, name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey', channels: ['telegram', 'discord', 'slack'] as Array<'telegram' | 'discord' | 'slack'> }],
+      }],
+    }
+    render(<AuthSection state={state} set={vi.fn()} />)
+    expect(screen.getByText('Telegram')).toBeInTheDocument()
+    expect(screen.getByText('Discord')).toBeInTheDocument()
+    expect(screen.getByText('Slack')).toBeInTheDocument()
+  })
+
+  it('renders the Telegram bot-token input when the selected mode supports Telegram and it is enabled', () => {
     const { rerender } = render(
       <AuthSection
         state={{ ...initialWizardState([]), telegramEnabled: false }}

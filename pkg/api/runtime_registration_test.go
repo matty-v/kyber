@@ -4,4 +4,5 @@ package api_test
 import (
 	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
+	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
 )

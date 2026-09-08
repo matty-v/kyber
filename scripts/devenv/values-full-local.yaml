@@ -43,6 +43,10 @@ image:
     repository: kyber/codex
     tag: local
     pullPolicy: Never
+  hermes:
+    repository: kyber/hermes
+    tag: local
+    pullPolicy: Never
   statusSidecar:
     repository: kyber/status-sidecar
     tag: local

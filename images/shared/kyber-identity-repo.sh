@@ -341,11 +341,11 @@ RUN mkdir -p "$(dirname "$NATIVE_MEM")"
 RUN ln -sfn "$REPO_MEM" "$NATIVE_MEM"
 RUN chown -h kyber:kyber "$NATIVE_MEM" 2>/dev/null || true
 echo "[kyber] sync: memory wired → $REPO_MEM"
-mkdir -p "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"
+mkdir -p "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" "$HOME_DIR/.hermes/skills"
 # Remove obsolete direct links left by skills that were renamed or migrated.
 # Real directories are never pruned here: they may be user-authored state that
 # needs importing, while a dangling symlink cannot load anything.
-for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
+for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" "$HOME_DIR/.hermes/skills"; do
     for entry in "$runtime_skills"/*; do
         [ -L "$entry" ] || continue
         [ -e "$entry" ] || rm -f "$entry"
@@ -360,18 +360,18 @@ for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
     # skills/<name>/SKILL.md, optionally with bundled references/ or assets.
     # Symlink the whole directory so SKILL.md AND its siblings resolve. Both
     # supported runtimes use the same skill package shape, under their own
-    # homes: ~/.claude/skills and ~/.codex/skills.
+    # homes: ~/.claude/skills, ~/.codex/skills, and ~/.hermes/skills.
     for d in "$skills_src"/*/; do
         [ -f "${d}SKILL.md" ] || continue
         name=$(basename "$d")
-        for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
+        for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" "$HOME_DIR/.hermes/skills"; do
             rm -rf "$runtime_skills/$name"
             ln -sf "${d%/}" "$runtime_skills/$name"
         done
     done
     # Compat layout: flat skills/<name>.md (link just the file as SKILL.md).
     # A README in skills/ is documentation, not a skill — linking it would
-    # publish a junk "README" command to both runtimes.
+    # publish a junk "README" command to every runtime.
     for f in "$skills_src"/*.md; do
         [ -f "$f" ] || continue
         name=$(basename "$f" .md)
@@ -380,15 +380,15 @@ for skills_src in "$REPO_DIR/skills" "$REPO_DIR/vendor"/*/skills; do
         # old flat file may coexist with it; never let the compatibility pass
         # replace the canonical package link with stale instructions.
         [ -f "$skills_src/$name/SKILL.md" ] && continue
-        for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills"; do
+        for runtime_skills in "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" "$HOME_DIR/.hermes/skills"; do
             rm -rf "$runtime_skills/$name"
             mkdir -p "$runtime_skills/$name"
             ln -sf "$f" "$runtime_skills/$name/SKILL.md"
         done
     done
 done
-chown -R kyber:kyber "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" 2>/dev/null || true
-echo "[kyber] sync: skills re-linked for Claude Code and Codex"
+chown -R kyber:kyber "$HOME_DIR/.claude/skills" "$HOME_DIR/.codex/skills" "$HOME_DIR/.hermes/skills" 2>/dev/null || true
+echo "[kyber] sync: skills re-linked for Claude Code, Codex, and Hermes"
 # Push the resulting inventory to the control plane so the Kyber UI shows what
 # this agent can ACTUALLY invoke, not what its repo happens to contain — the two
 # were silently different for the whole of kyber#691. Paths are passed
