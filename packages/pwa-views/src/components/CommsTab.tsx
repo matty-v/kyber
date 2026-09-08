@@ -119,6 +119,7 @@ function SlackCard({ agentName, channel, onRestartPod }: { agentName: string; ch
       {(localError || put.error) && <p className="text-xs text-danger">{localError ?? errorMessage(put.error)}</p>}
       <div className="flex items-center gap-2"><Button variant="primary" size="sm" disabled={put.isPending || (!botToken && !tokenStored) || (!appToken && !appStored)} onClick={save}>{put.isPending ? 'Saving…' : configured ? 'Save' : 'Enable Slack'}</Button>{configured && <Button variant="ghost" size="sm" disabled={del.isPending} onClick={() => setConfirmOff(true)}><Trash2 className="h-3.5 w-3.5" /> Turn off</Button>}</div>
       {channel?.podRestartRequired && <RestartNotice onRestartPod={onRestartPod} />}
+      {configured && channel?.slackConnection && <ConnectionDiagnostics label="Slack" connection={channel.slackConnection} />}
     </div>
     <ConfirmDialog open={confirmOff} title="Turn off Slack?" message="The agent stops listening in Slack and its stored tokens are deleted." confirmLabel="Turn off" dangerous loading={del.isPending} onCancel={() => setConfirmOff(false)} onConfirm={() => { del.mutate({ name: agentName, channel: 'slack' }, { onSuccess: () => setConfirmOff(false) }) }} />
   </Card>
@@ -311,10 +312,12 @@ function TelegramCard({
   )
 }
 
-function DiscordConnectionDiagnostics({
+function ConnectionDiagnostics({
+  label,
   connection,
 }: {
-  connection: NonNullable<CommsChannel['discordConnection']>
+  label: string
+  connection: NonNullable<CommsChannel['discordConnection'] | CommsChannel['slackConnection']>
 }) {
   const labels: Record<typeof connection.status, string> = {
     'not-configured': 'Not configured',
@@ -328,7 +331,7 @@ function DiscordConnectionDiagnostics({
   return (
     <div className="rounded-md border border-border-subtle bg-surface-secondary px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-medium text-text-primary">Discord connection</span>
+        <span className="font-medium text-text-primary">{label} connection</span>
         <span className={healthy ? 'text-success' : 'text-text-muted'}>{labels[connection.status]}</span>
       </div>
       {connection.detail && <p className="mt-1 text-text-muted">{connection.detail}</p>}
@@ -534,7 +537,7 @@ function DiscordCard({
 
         {channel?.podRestartRequired && <RestartNotice onRestartPod={onRestartPod} />}
         {configured && channel?.discordConnection && (
-          <DiscordConnectionDiagnostics connection={channel.discordConnection} />
+          <ConnectionDiagnostics label="Discord" connection={channel.discordConnection} />
         )}
       </div>
 

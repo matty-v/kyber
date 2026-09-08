@@ -98,6 +98,7 @@ func validSlackPut() map[string]any {
 	return map[string]any{
 		"botToken": "xoxb-token", "appToken": "xapp-token",
 		"allowedUserIds": []string{"U123ABC"}, "allowedChannelIds": []string{"C123ABC"},
+		"mentionOnly": true,
 	}
 }
 
@@ -158,9 +159,15 @@ func TestComms_PutSlack_WiresEverythingInOneCall(t *testing.T) {
 	if string(sec.Data["allowed-channel-ids"]) != "C123ABC" {
 		t.Fatalf("channel allowlist not stored")
 	}
+	if string(sec.Data["mention-only"]) != "true" {
+		t.Fatalf("mention-only not stored")
+	}
 	ag := h.agent(t, "barf")
 	if !ag.Spec.Secrets.SlackEnabled {
 		t.Fatal("SlackEnabled not set")
+	}
+	if ag.Annotations[agent.SlackConfigRevisionAnnotation] == "" {
+		t.Fatal("Slack config revision not stamped")
 	}
 	if len(ag.Spec.InboundBindings) != 1 || ag.Spec.InboundBindings[0].Name != "slack" {
 		t.Fatalf("Slack binding not created: %+v", ag.Spec.InboundBindings)

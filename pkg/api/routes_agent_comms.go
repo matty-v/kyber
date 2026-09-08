@@ -120,6 +120,7 @@ type commsChannelResponse struct {
 	// state. It deliberately does not expose credentials or require the control
 	// plane to hold the Discord token.
 	DiscordConnection *discordConnectionResponse `json:"discordConnection,omitempty"`
+	SlackConnection   *discordConnectionResponse `json:"slackConnection,omitempty"`
 }
 
 type discordConnectionResponse struct {
@@ -293,6 +294,46 @@ func (s *Server) telegramCommsState(ctx context.Context, ag *kyberv1.Agent, pod 
 	return resp
 }
 
+func channelConnectionState(configured, restartRequired bool, pod *corev1.Pod, container, label string) *discordConnectionResponse {
+	state := &discordConnectionResponse{Status: "not-configured"}
+	if !configured {
+		return state
+	}
+	if restartRequired {
+		state.Status = "restart-required"
+		state.Detail = "waiting for the agent to become idle; Kyber will restart its pod to apply the saved " + label + " configuration"
+		return state
+	}
+	if pod == nil {
+		state.Status = "not-running"
+		state.Detail = "the agent pod is not running"
+		return state
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != container {
+			continue
+		}
+		state.Ready = cs.Ready
+		state.RestartCount = cs.RestartCount
+		if cs.Ready {
+			state.Status = "connected"
+			return state
+		}
+		state.Status = "starting"
+		if cs.State.Waiting != nil {
+			state.Status = "degraded"
+			state.Detail = cs.State.Waiting.Reason
+		} else if cs.State.Terminated != nil {
+			state.Status = "degraded"
+			state.Detail = cs.State.Terminated.Reason
+		}
+		return state
+	}
+	state.Status = "starting"
+	state.Detail = "waiting for " + label + " sidecar status"
+	return state
+}
+
 func (s *Server) putTelegramComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
 	var req putTelegramCommsRequest
 	if !decodeCommsBody(w, r, &req) {
@@ -454,6 +495,7 @@ func (s *Server) slackCommsState(ctx context.Context, ag *kyberv1.Agent, pod *co
 			resp.PodRestartRequired = true
 		}
 	}
+	resp.SlackConnection = channelConnectionState(enabled, resp.PodRestartRequired, pod, agent.SlackSidecarContainerName, "Slack")
 	return resp
 }
 

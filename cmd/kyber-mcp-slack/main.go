@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -207,9 +208,16 @@ func main() {
 	}
 	slog.Info("slack-sidecar: starting", "agent", c.agentName, "allowed_users", len(c.users), "allowed_channels", len(c.channels), "mention_only", c.mentionOnly)
 	srv := newMCPServer(c, client)
+	var connected atomic.Bool
 	go http.ListenAndServe(c.mcpAddr, srv)
 	go func() {
-		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			if !connected.Load() {
+				http.Error(w, "Slack Socket Mode is not connected", http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		})
 		_ = http.ListenAndServe(c.healthAddr, nil)
 	}()
 	for ctx.Err() == nil {
@@ -228,9 +236,13 @@ func main() {
 			slog.Warn("slack-sidecar: websocket failed", "error", err)
 			continue
 		}
+		connected.Store(true)
+		slog.Info("slack-sidecar: Socket Mode connected")
 		for {
 			var msg eventEnvelope
 			if err := conn.ReadJSON(&msg); err != nil {
+				connected.Store(false)
+				slog.Warn("slack-sidecar: Socket Mode disconnected", "error", err)
 				conn.Close()
 				break
 			}
