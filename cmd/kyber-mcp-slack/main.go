@@ -89,6 +89,7 @@ type slackEvent struct {
 		Channel string `json:"channel"`
 		TS      string `json:"ts"`
 	} `json:"item"`
+	Message *slackEvent `json:"message"`
 }
 type eventEnvelope struct {
 	EnvelopeID string `json:"envelope_id"`
@@ -131,7 +132,10 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 	if ev.Type == "reaction_added" || ev.Type == "reaction_removed" {
 		return forwardReaction(ctx, c, ev, client)
 	}
-	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || ev.Subtype != "" {
+	if ev.Type == "message" && ev.Subtype == "message_changed" && ev.Message != nil {
+		return forwardMessageChange(ctx, c, ev, client)
+	}
+	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || (ev.Subtype != "" && ev.Subtype != "file_share") {
 		if c.drops != nil {
 			c.drops.BotOrSystem.Add(1)
 		}
@@ -165,6 +169,41 @@ func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client
 		return nil
 	}
 	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
+	return sendInbound(ctx, c, client, b)
+}
+
+func forwardMessageChange(ctx context.Context, c config, outer slackEvent, client *http.Client) error {
+	ev := *outer.Message
+	ev.Channel = outer.Channel
+	ev.ChannelType = outer.ChannelType
+	if ev.User == "" || ev.Channel == "" || ev.BotID != "" || (ev.Text == "" && len(ev.Files) == 0) {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[ev.User] {
+		if c.drops != nil {
+			c.drops.NonAllowlistedUser.Add(1)
+		}
+		return nil
+	}
+	if len(c.channels) == 0 || !c.channels[ev.Channel] {
+		if c.drops != nil {
+			c.drops.OutOfScope.Add(1)
+		}
+		return nil
+	}
+	if c.mentionOnly && ev.ChannelType != "im" && !strings.Contains(ev.Text, "<@"+c.botID+">") && ev.ParentUserID != c.botID {
+		if c.drops != nil {
+			c.drops.Unaddressed.Add(1)
+		}
+		return nil
+	}
+	if c.botID != "" {
+		ev.Text = strings.TrimSpace(strings.ReplaceAll(ev.Text, "<@"+c.botID+">", ""))
+	}
+	if c.attachments != nil {
+		c.attachments.observe(ev.Files)
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": "message_changed", "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files), "edited": true})
 	return sendInbound(ctx, c, client, b)
 }
 

@@ -15,6 +15,7 @@ import (
 )
 
 const maxSlackFileBytes int64 = 10 << 20
+const maxSlackUploadBytes int64 = 20 << 20
 
 type slackFile struct {
 	ID       string `json:"id"`
@@ -99,9 +100,26 @@ func downloadSlackFile(ctx context.Context, client *http.Client, token string, i
 	if item.Size > maxSlackFileBytes {
 		return "", fmt.Errorf("file exceeds the %d byte limit", maxSlackFileBytes)
 	}
+	fileID := filepath.Base(strings.TrimSpace(item.ID))
+	if fileID == "" || fileID == "." || fileID != item.ID {
+		return "", fmt.Errorf("file ID is invalid")
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", fmt.Errorf("creating download directory: %w", err)
 	}
+	resolvedDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolving download directory: %w", err)
+	}
+	persist, err := filepath.EvalSymlinks("/persist")
+	if err != nil {
+		return "", fmt.Errorf("resolving /persist: %w", err)
+	}
+	rel, err := filepath.Rel(persist, resolvedDir)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("download directory is outside /persist")
+	}
+	dir = resolvedDir
 	req, err := http.NewRequestWithContext(ctx, "GET", item.URL, nil)
 	if err != nil {
 		return "", fmt.Errorf("creating file request: %w", err)
@@ -134,9 +152,9 @@ func downloadSlackFile(ctx context.Context, client *http.Client, token string, i
 	}
 	name := filepath.Base(strings.TrimSpace(item.Name))
 	if name == "" || name == "." {
-		name = item.ID
+		name = fileID
 	}
-	dest := filepath.Join(dir, item.ID+"-"+name)
+	dest := filepath.Join(dir, fileID+"-"+name)
 	if err := os.Rename(tmpName, dest); err != nil {
 		return "", fmt.Errorf("saving file: %w", err)
 	}

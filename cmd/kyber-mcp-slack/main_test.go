@@ -34,6 +34,21 @@ func TestForwardAllowsFileOnlyMessageAndSanitizesMetadata(t *testing.T) {
 	}
 }
 
+func TestForwardAllowsSlackFileShareSubtype(t *testing.T) {
+	var deliveries atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { deliveries.Add(1); w.WriteHeader(http.StatusAccepted) }))
+	defer srv.Close()
+	cfg := config{inboundURL: srv.URL, agentName: "boba", binding: "slack", users: map[string]bool{"U": true}, channels: map[string]bool{"C": true}}
+	var envelope eventEnvelope
+	envelope.Payload.Event = slackEvent{Type: "message", Subtype: "file_share", User: "U", Channel: "C", Files: []slackFile{{ID: "F1", Name: "note.txt", URL: "https://files.slack.com/private"}}}
+	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries.Load() != 1 {
+		t.Fatal("file_share event was dropped")
+	}
+}
+
 func TestForwardBlockAction(t *testing.T) {
 	var body map[string]any
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -86,6 +101,25 @@ func TestForwardReaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	if body["reaction_new"] != "eyes" || body["message_id"] != "1.2" {
+		t.Fatalf("payload = %+v", body)
+	}
+}
+
+func TestForwardMessageChange(t *testing.T) {
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	cfg := config{inboundURL: srv.URL, agentName: "boba", binding: "slack", users: map[string]bool{"U": true}, channels: map[string]bool{"C": true}}
+	var envelope eventEnvelope
+	changed := slackEvent{User: "U", Text: "corrected", TS: "1.2"}
+	envelope.Payload.Event = slackEvent{Type: "message", Subtype: "message_changed", Channel: "C", Message: &changed}
+	if err := forward(t.Context(), cfg, envelope, srv.Client()); err != nil {
+		t.Fatal(err)
+	}
+	if body["edited"] != true || body["content"] != "corrected" {
 		t.Fatalf("payload = %+v", body)
 	}
 }

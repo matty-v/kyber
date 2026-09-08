@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -116,7 +117,10 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 		if arg("text") == "" {
 			return toolError("channel_id and text are required")
 		}
-		files := stringArgs(p.Arguments["files"])
+		files, err := stringArgs(p.Arguments["files"])
+		if err != nil {
+			return toolError(err.Error())
+		}
 		if len(files) > 0 {
 			if buttons, _ := p.Arguments["buttons"].([]any); len(buttons) > 0 {
 				return toolError("files and buttons cannot be sent in the same Slack reply")
@@ -144,7 +148,8 @@ func (s *mcpServer) call(ctx context.Context, raw json.RawMessage) slackToolResu
 			if blocks == nil {
 				body["blocks"] = []any{}
 			} else {
-				body["blocks"] = blocks
+				section := map[string]any{"type": "section", "text": map[string]any{"type": "mrkdwn", "text": arg("text")}}
+				body["blocks"] = append([]map[string]any{section}, blocks...)
 			}
 		}
 	case "react":
@@ -254,24 +259,43 @@ func (s *mcpServer) sendReply(ctx context.Context, channel, threadTS, text strin
 	return r
 }
 
-func stringArgs(value any) []string {
+func stringArgs(value any) ([]string, error) {
 	raw, _ := value.([]any)
+	if value != nil && raw == nil {
+		return nil, fmt.Errorf("files must be an array of absolute paths")
+	}
 	out := make([]string, 0, len(raw))
 	for _, item := range raw {
-		if path, ok := item.(string); ok && strings.TrimSpace(path) != "" {
-			out = append(out, strings.TrimSpace(path))
+		path, ok := item.(string)
+		if !ok || strings.TrimSpace(path) == "" {
+			return nil, fmt.Errorf("files must contain non-empty path strings")
 		}
+		out = append(out, strings.TrimSpace(path))
 	}
-	return out
+	return out, nil
 }
 
 func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text string, paths []string) slackToolResult {
 	files := make([]map[string]string, 0, len(paths))
+	type uploadCandidate struct {
+		path string
+		info os.FileInfo
+	}
+	candidates := make([]uploadCandidate, 0, len(paths))
+	var total int64
 	for _, path := range paths {
 		resolved, info, err := validateSlackOutboundFile(path)
 		if err != nil {
 			return toolError("could not upload file: " + err.Error())
 		}
+		total += info.Size()
+		if total > maxSlackUploadBytes {
+			return toolError(fmt.Sprintf("files exceed the %d byte aggregate upload limit", maxSlackUploadBytes))
+		}
+		candidates = append(candidates, uploadCandidate{path: resolved, info: info})
+	}
+	for _, candidate := range candidates {
+		resolved, info := candidate.path, candidate.info
 		start, err := s.api(ctx, "files.getUploadURLExternal", map[string]any{"filename": info.Name(), "length": info.Size()})
 		if err != nil {
 			return toolError("Slack rejected the upload: " + err.Error())
@@ -293,7 +317,13 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 	if _, err := s.api(ctx, "files.completeUploadExternal", body); err != nil {
 		return toolError("Slack rejected the upload: " + err.Error())
 	}
-	return result("uploaded " + fmt.Sprint(len(files)) + " file(s)")
+	ids := make([]string, 0, len(files))
+	for _, file := range files {
+		ids = append(ids, file["id"])
+	}
+	r := result("uploaded " + fmt.Sprint(len(files)) + " file(s)")
+	r.StructuredContent = map[string]any{"file_ids": ids}
+	return r
 }
 func (s *mcpServer) api(ctx context.Context, method string, body map[string]any) (map[string]any, error) {
 	return s.apiAttempt(ctx, method, body, true)

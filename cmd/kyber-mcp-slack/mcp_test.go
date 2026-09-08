@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -62,6 +63,35 @@ func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
 	got := s.call(t.Context(), args)
 	if got.IsError || len(calls) != 3 {
 		t.Fatalf("call = %+v, paths = %v", got, calls)
+	}
+}
+
+func TestSlackUploadAggregateLimitIsCheckedBeforeNetwork(t *testing.T) {
+	dir, err := os.MkdirTemp("/persist", "slack-upload-limit-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
+	paths := make([]string, 3)
+	for i := range paths {
+		paths[i] = filepath.Join(dir, fmt.Sprintf("part-%d", i))
+		file, err := os.Create(paths[i])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := file.Truncate(8 << 20); err != nil {
+			t.Fatal(err)
+		}
+		_ = file.Close()
+	}
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		t.Fatal("network called before aggregate validation")
+		return nil, nil
+	})}
+	s := newMCPServer(config{channels: map[string]bool{"C": true}}, client)
+	got := s.uploadFiles(t.Context(), "C", "", "files", paths)
+	if !got.IsError || !strings.Contains(got.Content[0]["text"], "aggregate") {
+		t.Fatalf("result = %+v", got)
 	}
 }
 

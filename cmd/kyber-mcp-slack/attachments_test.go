@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -38,7 +39,11 @@ func TestDownloadSlackFileScopesHostAndAddsAuth(t *testing.T) {
 	if allowedSlackFileURL("https://example.com/file") {
 		t.Fatal("non-Slack host was allowed")
 	}
-	dir := t.TempDir()
+	dir, err := os.MkdirTemp("/persist", "slack-download-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(dir)
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		if got := r.Header.Get("Authorization"); got != "Bearer secret" {
 			t.Fatalf("authorization = %q", got)
@@ -58,5 +63,25 @@ func TestInboundSlackFilesDoNotExposePrivateURL(t *testing.T) {
 	got := inboundSlackFiles([]slackFile{{ID: "F1", Name: "note.txt", URL: "https://files.slack.com/private"}})
 	if len(got) != 1 || got[0].ID != "F1" {
 		t.Fatalf("files = %+v", got)
+	}
+}
+
+func TestDownloadSlackFileRejectsSymlinkedDirectoryOutsidePersist(t *testing.T) {
+	link := filepath.Join("/persist", "slack-download-link-test")
+	_ = os.Remove(link)
+	if err := os.Symlink(t.TempDir(), link); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(link)
+	_, err := downloadSlackFile(t.Context(), http.DefaultClient, "secret", observedSlackFile{ID: "F1", URL: "https://files.slack.com/file"}, link)
+	if err == nil || !strings.Contains(err.Error(), "outside /persist") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func TestDownloadSlackFileRejectsUnsafeFileID(t *testing.T) {
+	_, err := downloadSlackFile(t.Context(), http.DefaultClient, "secret", observedSlackFile{ID: "../../escape", URL: "https://files.slack.com/file"}, "/persist/slack-attachments")
+	if err == nil || !strings.Contains(err.Error(), "file ID") {
+		t.Fatalf("error = %v", err)
 	}
 }

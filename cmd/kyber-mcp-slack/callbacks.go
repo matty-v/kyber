@@ -9,7 +9,12 @@ import (
 
 const maxSlackCallbacks = 256
 
-type slackCallbackEntry struct{ ChannelID, MessageID, Label, Value string }
+type slackCallbackEntry struct {
+	ChannelID string
+	MessageID string
+	Label     string
+	Value     string
+}
 type slackCallbackRegistry struct {
 	mu    sync.Mutex
 	items map[string]slackCallbackEntry
@@ -22,6 +27,9 @@ func newSlackCallbackRegistry() *slackCallbackRegistry {
 
 func (r *slackCallbackRegistry) register(channelID string, value any) ([]map[string]any, []string, error) {
 	raw, _ := value.([]any)
+	if value != nil && raw == nil {
+		return nil, nil, fmt.Errorf("buttons must be an array")
+	}
 	if len(raw) > 100 {
 		return nil, nil, fmt.Errorf("at most 100 buttons are allowed")
 	}

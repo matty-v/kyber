@@ -210,7 +210,8 @@ The runtime-neutral `kyber-mcp-slack` sidecar connects through Socket Mode;
 both runtimes register its loopback `kyber-slack` MCP endpoint (port 14008).
 The runtime never receives the Slack tokens. Its MCP tools support threaded
 replies, edits, reactions, Block Kit buttons, scoped inbound downloads, and
-outbound files under `/persist`. File transfers are capped at 10 MiB per file;
+outbound files under `/persist`. File transfers are capped at 10 MiB per file
+and uploads at 20 MiB in aggregate;
 private download URLs and tokens stay inside the sidecar. Replies require an
 allowed channel, and downloads require a file ID observed on an accepted
 inbound event. Block actions return `callback_label` and `callback_value`.
@@ -220,7 +221,9 @@ to, plus `chat:write`, `reactions:read`, `reactions:write`, `files:read`, and `f
 Subscribe to the message events for the channel types you use and enable
 Interactivity for Block Kit callbacks. The app-level token needs
 `connections:write`, and Socket Mode must be enabled. A live pod is required;
-this is not a durable offline inbox.
+this is not a durable offline inbox. Reinstall the Slack app after changing
+OAuth scopes, invite the bot to every applicable channel, and remember that
+Kyber cannot verify Slack-side subscriptions, interactivity, or membership.
 
 Pin `image.slackSidecar` when rendering the source chart; released charts
 supply its release tag. Slack configuration changes converge by rebuilding the
