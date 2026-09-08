@@ -2,7 +2,7 @@
 
 **Issue:** [MAT-52](https://linear.app/matty-v/issue/MAT-52/add-hermes-as-a-supported-kyber-agent-harness)
 **Dependency:** [MAT-7](https://linear.app/matty-v/issue/MAT-7), merged in PR #231
-**Status:** Slice A implemented; first live hardening checkpoint complete 2026-09-08
+**Status:** Slice A and operator-visibility checkpoint implemented and live-verified 2026-09-08
 
 ## Live hardening checkpoint — skill-report runtime contract
 
@@ -126,6 +126,33 @@ First rollout finding:
 - Hermes now receives a 600-second initial liveness grace while readiness
   remains strict, giving the bounded merge room to complete without exposing a
   half-started runtime.
+
+Live verification:
+
+- the full dev build deployed Hermes image
+  `hermes:worktree-20260908200209-4528641` (digest
+  `sha256:e9e8d251d7ddee67518a2c4bb1c8acf0f4ae4932806ebe958b102afd50a1cab3`);
+- the extended startup budget deployed in control-plane image
+  `control-plane:worktree-20260908203901-6b7626a` (digest
+  `sha256:b0a3b10c0115d5be9736ca7d99e0cff7a5c07393b23814fc77f649317f952a8f`);
+- the existing `hermes` dev agent returned to `Running` with both containers
+  ready and zero restarts, and both Hermes and `hermes-reporter` were present;
+- `GET /api/v1/available` returned 20 stable Hermes releases headed by
+  `0.21.1`, while the installed pinned image truthfully reported `0.21.0`;
+- the agent model endpoint returned 48 native OpenRouter models, all with
+  known positive context windows, including the active `z-ai/glm-5.2` model;
+- token usage reported provider `openrouter`, model `z-ai/glm-5.2`, and 18,393
+  of 1,048,576 context tokens used (1.75%), including input, cache-read, and
+  output breakdowns; and
+- selecting the existing `z-ai/glm-5.2` model through Kyber returned HTTP 200,
+  persisted the desired model, completed the expected graceful pod roll, and
+  launched Hermes with `--model z-ai/glm-5.2`; the replacement pod again
+  reached `Running` with both containers ready and zero restarts.
+
+Exact next action: have the operator review the four surfaces in the dev PWA.
+Historical Hermes release installation remains intentionally separate from
+this browse-only checkpoint because it needs an atomic source install and
+rollback contract.
 
 ## Live hardening checkpoint — Hermes native skill discovery
 
