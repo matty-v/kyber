@@ -239,11 +239,13 @@ The preview declares:
 
 - session restart;
 - native session resume across pod restart; and
-- in-place context compaction.
+- in-place context compaction;
+- authenticated OpenRouter model catalog discovery; and
+- native provider, model, and context-usage reporting.
 
-The preview does not declare task receipts, task tools, job-turn hooks, model
-catalog, usage reporting, or in-place runtime repair. Those features remain
-absent until their native wiring and live evidence exist.
+The preview does not declare task receipts, task tools, job-turn hooks, or
+in-place runtime repair. Those features remain absent until their native wiring
+and live evidence exist.
 
 Hermes 0.21.0's `pre_llm_call` hook is context-only and fail-open. It cannot
 block a model turn when Kyber's receipt persistence fails, so it cannot satisfy

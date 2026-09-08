@@ -151,6 +151,11 @@ jobs:
             hermes:
               - 'images/hermes/**'
               - 'images/shared/**'
+              # The Hermes image compiles its model/context reporter from the
+              # repo root. Keep these paths in lockstep with the Dockerfile so
+              # a reporter-only fix cannot pass CI without shipping an image.
+              - 'cmd/hermes-reporter/**'
+              - 'pkg/tokenreport/**'
               - 'cmd/kyber-skills/**'
               - 'pkg/skillscan/**'
               - 'go.mod'

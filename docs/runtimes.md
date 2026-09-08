@@ -51,11 +51,16 @@ injected only into that agent. The requested model is passed to Hermes as its
 OpenRouter model identifier.
 
 The preview supports fresh session restart, native resume from Hermes's
-persisted SQLite state, and `/compress`. It does not advertise durable tasks,
-job turn hooks, usage reporting, model catalog discovery, subscription login,
-or in-place runtime repair. Hermes's pinned pre-model hook cannot enforce
-Kyber's fail-closed task receipt boundary, so durable task dispatch remains
-disabled for this runtime.
+persisted SQLite state, `/compress`, an authenticated OpenRouter model catalog,
+and native provider/model/context reporting. Kyber can validate and roll a
+model change through the shared model action. The harness dialog can browse
+stable Hermes GitHub releases, but installing a different source release still
+requires a new pinned runtime image.
+
+Hermes does not advertise durable tasks, job turn hooks, subscription login,
+or in-place runtime repair. Its pinned pre-model hook cannot enforce Kyber's
+fail-closed task receipt boundary, so durable task dispatch remains disabled
+for this runtime.
 
 ## Telegram, Discord, and Slack
 

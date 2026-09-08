@@ -34,6 +34,7 @@ func NewGitHubReleasesClient(url string, timeout time.Duration) *GitHubReleasesC
 
 type githubRelease struct {
 	Name        string    `json:"name"`
+	TagName     string    `json:"tag_name"`
 	Draft       bool      `json:"draft"`
 	Prerelease  bool      `json:"prerelease"`
 	PublishedAt time.Time `json:"published_at"`
@@ -70,6 +71,11 @@ func (c *GitHubReleasesClient) Fetch(ctx context.Context, limit int) ([]string, 
 			continue
 		}
 		match := stableVersionInReleaseName.FindStringSubmatch(release.Name)
+		if match == nil {
+			// GitHub permits an empty display name; tag_name is the canonical,
+			// always-present release identifier and must keep discovery working.
+			match = stableVersionInReleaseName.FindStringSubmatch(release.TagName)
+		}
 		if match == nil {
 			continue
 		}
