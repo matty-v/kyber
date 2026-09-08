@@ -15,8 +15,15 @@ func (r *AgentReconciler) ensureSlackBinding(ctx context.Context, agent *kyberv1
 	if !agent.Spec.Secrets.SlackEnabled {
 		return nil
 	}
-	for _, b := range agent.Spec.InboundBindings {
+	for i, b := range agent.Spec.InboundBindings {
 		if b.Name == SlackInboundBindingName {
+			if IsLegacySlackDefaultAction(b.Action) {
+				patch := client.MergeFrom(agent.DeepCopy())
+				agent.Spec.InboundBindings[i] = SlackInboundBinding(b.ExistingSecret, DefaultSlackAction())
+				if err := r.Patch(ctx, agent, patch); err != nil {
+					return fmt.Errorf("upgrading Slack inbound binding: %w", err)
+				}
+			}
 			return nil
 		}
 	}

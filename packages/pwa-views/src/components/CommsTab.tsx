@@ -95,17 +95,18 @@ function SlackCard({ agentName, channel, onRestartPod }: { agentName: string; ch
   const [appToken, setAppToken] = useState('')
   const [users, setUsers] = useState('')
   const [channels, setChannels] = useState('')
+  const [mentionOnly, setMentionOnly] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
   const [confirmOff, setConfirmOff] = useState(false)
   const configured = channel?.configured ?? false
   const tokenStored = channel?.botTokenSet ?? false
   const appStored = channel?.appTokenSet ?? false
-  useEffect(() => { if (channel) { setUsers((channel.allowedUserIds ?? []).join(', ')); setChannels((channel.allowedChannelIds ?? channel.channelIds ?? []).join(', ')) } }, [channel])
+  useEffect(() => { if (channel) { setUsers((channel.allowedUserIds ?? []).join(', ')); setChannels((channel.allowedChannelIds ?? channel.channelIds ?? []).join(', ')); setMentionOnly(channel.mentionOnly ?? false) } }, [channel])
   function save() {
     const allowedUserIds = parseIdList(users), allowedChannelIds = parseIdList(channels)
     if (!allowedUserIds.length || !allowedChannelIds.length) { setLocalError('Add at least one Slack user ID and channel ID — empty allowlists are rejected.'); return }
     setLocalError(null)
-    put.mutate({ name: agentName, body: { ...(botToken ? { botToken } : {}), ...(appToken ? { appToken } : {}), allowedUserIds, allowedChannelIds } }, { onSuccess: () => { setBotToken(''); setAppToken('') } })
+    put.mutate({ name: agentName, body: { ...(botToken ? { botToken } : {}), ...(appToken ? { appToken } : {}), allowedUserIds, allowedChannelIds, mentionOnly } }, { onSuccess: () => { setBotToken(''); setAppToken('') } })
   }
   return <Card>
     <ChannelHeader icon={<MessageSquare className="h-4 w-4" strokeWidth={1.5} />} title="Slack" configured={configured} description="Two-way. The agent reads and replies through Slack Socket Mode." />
@@ -114,9 +115,11 @@ function SlackCard({ agentName, channel, onRestartPod }: { agentName: string; ch
       <div><label htmlFor="comms-slack-app-token" className={labelClass}>App-level token</label><input id="comms-slack-app-token" type="password" value={appToken} onChange={(e) => setAppToken(e.target.value)} placeholder={appStored ? '•••••••• (stored — type to replace)' : 'xapp-…'} className={inputClass} autoComplete="off" /><p className="mt-1 text-xs text-text-muted">Enable Socket Mode and grant connections:write.</p></div>
       <div><label htmlFor="comms-slack-users" className={labelClass}>Allowed user IDs</label><input id="comms-slack-users" value={users} onChange={(e) => setUsers(e.target.value)} placeholder="U012ABC, …" className={inputClass} /><p className="mt-1 text-xs text-text-muted">Slack user IDs, comma-separated.</p></div>
       <div><label htmlFor="comms-slack-channels" className={labelClass}>Allowed channel IDs</label><input id="comms-slack-channels" value={channels} onChange={(e) => setChannels(e.target.value)} placeholder="C012ABC, …" className={inputClass} /><p className="mt-1 text-xs text-text-muted">Slack channel IDs, comma-separated. Required for fail-closed replies.</p></div>
+      <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={mentionOnly} onChange={(e) => setMentionOnly(e.target.checked)} /> Only respond when mentioned or replying to the bot</label>
       {(localError || put.error) && <p className="text-xs text-danger">{localError ?? errorMessage(put.error)}</p>}
       <div className="flex items-center gap-2"><Button variant="primary" size="sm" disabled={put.isPending || (!botToken && !tokenStored) || (!appToken && !appStored)} onClick={save}>{put.isPending ? 'Saving…' : configured ? 'Save' : 'Enable Slack'}</Button>{configured && <Button variant="ghost" size="sm" disabled={del.isPending} onClick={() => setConfirmOff(true)}><Trash2 className="h-3.5 w-3.5" /> Turn off</Button>}</div>
       {channel?.podRestartRequired && <RestartNotice onRestartPod={onRestartPod} />}
+      {configured && channel?.slackConnection && <ConnectionDiagnostics label="Slack" connection={channel.slackConnection} />}
     </div>
     <ConfirmDialog open={confirmOff} title="Turn off Slack?" message="The agent stops listening in Slack and its stored tokens are deleted." confirmLabel="Turn off" dangerous loading={del.isPending} onCancel={() => setConfirmOff(false)} onConfirm={() => { del.mutate({ name: agentName, channel: 'slack' }, { onSuccess: () => setConfirmOff(false) }) }} />
   </Card>
@@ -309,10 +312,12 @@ function TelegramCard({
   )
 }
 
-function DiscordConnectionDiagnostics({
+function ConnectionDiagnostics({
+  label,
   connection,
 }: {
-  connection: NonNullable<CommsChannel['discordConnection']>
+  label: string
+  connection: NonNullable<CommsChannel['discordConnection'] | CommsChannel['slackConnection']>
 }) {
   const labels: Record<typeof connection.status, string> = {
     'not-configured': 'Not configured',
@@ -326,7 +331,7 @@ function DiscordConnectionDiagnostics({
   return (
     <div className="rounded-md border border-border-subtle bg-surface-secondary px-3 py-2 text-xs">
       <div className="flex items-center justify-between gap-3">
-        <span className="font-medium text-text-primary">Discord connection</span>
+        <span className="font-medium text-text-primary">{label} connection</span>
         <span className={healthy ? 'text-success' : 'text-text-muted'}>{labels[connection.status]}</span>
       </div>
       {connection.detail && <p className="mt-1 text-text-muted">{connection.detail}</p>}
@@ -532,7 +537,7 @@ function DiscordCard({
 
         {channel?.podRestartRequired && <RestartNotice onRestartPod={onRestartPod} />}
         {configured && channel?.discordConnection && (
-          <DiscordConnectionDiagnostics connection={channel.discordConnection} />
+          <ConnectionDiagnostics label="Discord" connection={channel.discordConnection} />
         )}
       </div>
 

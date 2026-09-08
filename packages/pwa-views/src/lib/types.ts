@@ -1067,6 +1067,12 @@ export interface CommsChannel {
     restartCount: number
     detail?: string
   }
+  slackConnection?: {
+    status: 'not-configured' | 'restart-required' | 'not-running' | 'starting' | 'connected' | 'degraded'
+    ready: boolean
+    restartCount: number
+    detail?: string
+  }
   allowedChannelIds?: string[]
 }
 
@@ -1096,6 +1102,7 @@ export interface PutSlackCommsRequest {
   appToken?: string
   allowedUserIds: string[]
   allowedChannelIds: string[]
+  mentionOnly?: boolean
   action?: string
 }
 

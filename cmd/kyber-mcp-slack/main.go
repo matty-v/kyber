@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,33 +27,382 @@ import (
 
 type config struct {
 	botToken, appToken, inboundURL, agentName, binding, hmacSecret string
-	users, channels map[string]bool
-	mcpAddr, healthAddr string
+	users, channels                                                map[string]bool
+	mcpAddr, healthAddr                                            string
+	mentionOnly                                                    bool
+	botID                                                          string
+	attachments                                                    *slackAttachmentStore
+	callbacks                                                      *slackCallbackRegistry
+	drops                                                          *slackDropCounters
+	downloadDir                                                    string
 }
 
-func csv(s string) map[string]bool { out:=map[string]bool{}; for _, v:=range strings.Split(s, ",") { if v=strings.TrimSpace(v); v!="" { out[v]=true } }; return out }
-func loadConfig() (config,error) {
-	c:=config{botToken:os.Getenv("SLACK_BOT_TOKEN"), appToken:os.Getenv("SLACK_APP_TOKEN"), inboundURL:os.Getenv("KYBER_INBOUND_URL"), agentName:os.Getenv("KYBER_AGENT_NAME"), binding:os.Getenv("KYBER_INBOUND_BINDING"), hmacSecret:os.Getenv("KYBER_INBOUND_HMAC_SECRET"), users:csv(os.Getenv("SLACK_ALLOWED_USER_IDS")), channels:csv(os.Getenv("SLACK_ALLOWED_CHANNEL_IDS")), mcpAddr:os.Getenv("KYBER_SLACK_MCP_ADDR"), healthAddr:os.Getenv("KYBER_SLACK_HEALTH_ADDR")}
-	if c.binding=="" { c.binding="slack" }; if c.mcpAddr=="" { c.mcpAddr=runtimes.SlackMCPAddr() }; if c.healthAddr=="" { c.healthAddr=":14009" }
-	if c.botToken=="" || c.appToken=="" || c.inboundURL=="" || c.agentName=="" { return c,fmt.Errorf("SLACK_BOT_TOKEN, SLACK_APP_TOKEN, KYBER_INBOUND_URL and KYBER_AGENT_NAME are required") }
-	return c,nil
+type slackDropCounters struct{ OutOfScope, NonAllowlistedUser, BotOrSystem, Unaddressed atomic.Uint64 }
+
+func (d *slackDropCounters) snapshot() map[string]uint64 {
+	return map[string]uint64{"out_of_scope": d.OutOfScope.Load(), "non_allowlisted_user": d.NonAllowlistedUser.Load(), "bot_or_system": d.BotOrSystem.Load(), "unaddressed_mention_only": d.Unaddressed.Load()}
 }
 
-type slackEvent struct { Type string `json:"type"`; User string `json:"user"`; Channel string `json:"channel"`; Text string `json:"text"`; TS string `json:"ts"`; ThreadTS string `json:"thread_ts"`; Subtype string `json:"subtype"` }
-type eventEnvelope struct { EnvelopeID string `json:"envelope_id"`; Type string `json:"type"`; Payload struct { Event slackEvent `json:"event"` } `json:"payload"` }
+func csv(s string) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range strings.Split(s, ",") {
+		if v = strings.TrimSpace(v); v != "" {
+			out[v] = true
+		}
+	}
+	return out
+}
+func loadConfig() (config, error) {
+	c := config{botToken: os.Getenv("SLACK_BOT_TOKEN"), appToken: os.Getenv("SLACK_APP_TOKEN"), inboundURL: os.Getenv("KYBER_INBOUND_URL"), agentName: os.Getenv("KYBER_AGENT_NAME"), binding: os.Getenv("KYBER_INBOUND_BINDING"), hmacSecret: os.Getenv("KYBER_INBOUND_HMAC_SECRET"), users: csv(os.Getenv("SLACK_ALLOWED_USER_IDS")), channels: csv(os.Getenv("SLACK_ALLOWED_CHANNEL_IDS")), mcpAddr: os.Getenv("KYBER_SLACK_MCP_ADDR"), healthAddr: os.Getenv("KYBER_SLACK_HEALTH_ADDR"), mentionOnly: strings.EqualFold(os.Getenv("SLACK_MENTION_ONLY"), "true"), downloadDir: os.Getenv("KYBER_SLACK_DOWNLOAD_DIR")}
+	if c.binding == "" {
+		c.binding = "slack"
+	}
+	if c.mcpAddr == "" {
+		c.mcpAddr = runtimes.SlackMCPAddr()
+	}
+	if c.healthAddr == "" {
+		c.healthAddr = ":14009"
+	}
+	if c.downloadDir == "" {
+		c.downloadDir = runtimes.SlackAttachmentDir
+	}
+	if c.botToken == "" || c.appToken == "" || c.inboundURL == "" || c.agentName == "" {
+		return c, fmt.Errorf("SLACK_BOT_TOKEN, SLACK_APP_TOKEN, KYBER_INBOUND_URL and KYBER_AGENT_NAME are required")
+	}
+	return c, nil
+}
 
-func sign(secret []byte, body []byte) string { h:=hmac.New(sha256.New,secret); _,_=h.Write(body); return "sha256="+hex.EncodeToString(h.Sum(nil)) }
+type slackEvent struct {
+	Type         string      `json:"type"`
+	User         string      `json:"user"`
+	Channel      string      `json:"channel"`
+	ChannelType  string      `json:"channel_type"`
+	Text         string      `json:"text"`
+	TS           string      `json:"ts"`
+	ThreadTS     string      `json:"thread_ts"`
+	ParentUserID string      `json:"parent_user_id"`
+	Subtype      string      `json:"subtype"`
+	BotID        string      `json:"bot_id"`
+	Files        []slackFile `json:"files"`
+	Reaction     string      `json:"reaction"`
+	Item         struct {
+		Channel string `json:"channel"`
+		TS      string `json:"ts"`
+	} `json:"item"`
+	Message *slackEvent `json:"message"`
+}
+type eventEnvelope struct {
+	EnvelopeID string `json:"envelope_id"`
+	Type       string `json:"type"`
+	Payload    struct {
+		Event     slackEvent     `json:"event"`
+		Type      string         `json:"type"`
+		User      slackObjectID  `json:"user"`
+		Channel   slackObjectID  `json:"channel"`
+		Container slackContainer `json:"container"`
+		Actions   []slackAction  `json:"actions"`
+	} `json:"payload"`
+}
+
+type slackObjectID struct {
+	ID string `json:"id"`
+}
+type slackContainer struct {
+	MessageTS string `json:"message_ts"`
+	ThreadTS  string `json:"thread_ts"`
+}
+type slackAction struct {
+	ActionID       string `json:"action_id"`
+	Value          string `json:"value"`
+	SelectedOption *struct {
+		Value string `json:"value"`
+	} `json:"selected_option"`
+}
+
+func sign(secret []byte, body []byte) string {
+	h := hmac.New(sha256.New, secret)
+	_, _ = h.Write(body)
+	return "sha256=" + hex.EncodeToString(h.Sum(nil))
+}
 func forward(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
-	ev:=e.Payload.Event; if ev.Type!="message" || ev.User=="" || ev.Text=="" || ev.Channel=="" { return nil }; if len(c.users)==0 || !c.users[ev.User] || len(c.channels)==0 || !c.channels[ev.Channel] { return nil }
-	b,_:=json.Marshal(map[string]any{"source":"slack","user":ev.User,"user_id":ev.User,"channel_id":ev.Channel,"message_id":ev.TS,"content":ev.Text,"thread_id":ev.ThreadTS})
-	req,_:=http.NewRequestWithContext(ctx,http.MethodPost,strings.TrimRight(c.inboundURL,"/")+"/webhooks/inbound/"+c.agentName+"/"+c.binding,bytes.NewReader(b)); req.Header.Set("Content-Type","application/json"); if c.hmacSecret!="" { req.Header.Set("X-Kyber-Signature-256",sign([]byte(c.hmacSecret),b)) }
-	r,err:=client.Do(req); if err!=nil{return err}; defer r.Body.Close(); io.Copy(io.Discard,r.Body); if r.StatusCode>=300{return fmt.Errorf("inbound returned %s",r.Status)}; return nil
+	if e.Type == "interactive" {
+		return forwardInteraction(ctx, c, e, client)
+	}
+	ev := e.Payload.Event
+	if ev.Type == "reaction_added" || ev.Type == "reaction_removed" {
+		return forwardReaction(ctx, c, ev, client)
+	}
+	if ev.Type == "message" && ev.Subtype == "message_changed" && ev.Message != nil {
+		return forwardMessageChange(ctx, c, ev, client)
+	}
+	if ev.Type != "message" || ev.User == "" || (ev.Text == "" && len(ev.Files) == 0) || ev.Channel == "" || ev.BotID != "" || (ev.Subtype != "" && ev.Subtype != "file_share") {
+		if c.drops != nil {
+			c.drops.BotOrSystem.Add(1)
+		}
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[ev.User] {
+		if c.drops != nil {
+			c.drops.NonAllowlistedUser.Add(1)
+		}
+		return nil
+	}
+	if len(c.channels) == 0 || !c.channels[ev.Channel] {
+		if c.drops != nil {
+			c.drops.OutOfScope.Add(1)
+		}
+		return nil
+	}
+	if c.mentionOnly && ev.ChannelType != "im" && !strings.Contains(ev.Text, "<@"+c.botID+">") && ev.ParentUserID != c.botID {
+		if c.drops != nil {
+			c.drops.Unaddressed.Add(1)
+		}
+		return nil
+	}
+	if c.botID != "" {
+		ev.Text = strings.TrimSpace(strings.ReplaceAll(ev.Text, "<@"+c.botID+">", ""))
+	}
+	if c.attachments != nil {
+		c.attachments.observe(ev.Files)
+	}
+	if ev.Text == "" && len(ev.Files) == 0 {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files)})
+	return sendInbound(ctx, c, client, b)
 }
-func openSocket(ctx context.Context, token string) (string,error) { req,_:=http.NewRequestWithContext(ctx,http.MethodPost,"https://slack.com/api/apps.connections.open",nil); req.Header.Set("Authorization","Bearer "+token); req.Header.Set("Content-Type","application/x-www-form-urlencoded"); r,err:=http.DefaultClient.Do(req); if err!=nil{return "",err}; defer r.Body.Close(); var v struct{OK bool `json:"ok"`; URL string `json:"url"`; Error string `json:"error"`}; if err=json.NewDecoder(r.Body).Decode(&v); err!=nil{return "",err}; if !v.OK{return "",fmt.Errorf("Slack: %s",v.Error)}; return v.URL,nil }
-func postMessage(ctx context.Context, token, channel, text, thread string) error { body:=map[string]string{"channel":channel,"text":text}; if thread!=""{body["thread_ts"]=thread}; b,_:=json.Marshal(body); req,_:=http.NewRequestWithContext(ctx,http.MethodPost,"https://slack.com/api/chat.postMessage",bytes.NewReader(b)); req.Header.Set("Authorization","Bearer "+token); req.Header.Set("Content-Type","application/json"); r,err:=http.DefaultClient.Do(req); if err!=nil{return err}; defer r.Body.Close(); var v struct{OK bool `json:"ok"`; Error string `json:"error"`}; json.NewDecoder(r.Body).Decode(&v); if !v.OK{return fmt.Errorf("Slack: %s",v.Error)}; return nil }
+
+func forwardMessageChange(ctx context.Context, c config, outer slackEvent, client *http.Client) error {
+	ev := *outer.Message
+	ev.Channel = outer.Channel
+	ev.ChannelType = outer.ChannelType
+	if ev.User == "" || ev.Channel == "" || ev.BotID != "" || (ev.Text == "" && len(ev.Files) == 0) {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[ev.User] {
+		if c.drops != nil {
+			c.drops.NonAllowlistedUser.Add(1)
+		}
+		return nil
+	}
+	if len(c.channels) == 0 || !c.channels[ev.Channel] {
+		if c.drops != nil {
+			c.drops.OutOfScope.Add(1)
+		}
+		return nil
+	}
+	if c.mentionOnly && ev.ChannelType != "im" && !strings.Contains(ev.Text, "<@"+c.botID+">") && ev.ParentUserID != c.botID {
+		if c.drops != nil {
+			c.drops.Unaddressed.Add(1)
+		}
+		return nil
+	}
+	if c.botID != "" {
+		ev.Text = strings.TrimSpace(strings.ReplaceAll(ev.Text, "<@"+c.botID+">", ""))
+	}
+	if c.attachments != nil {
+		c.attachments.observe(ev.Files)
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": "message_changed", "user": ev.User, "user_id": ev.User, "channel_id": ev.Channel, "message_id": ev.TS, "content": ev.Text, "thread_id": ev.ThreadTS, "attachments": inboundSlackFiles(ev.Files), "edited": true})
+	return sendInbound(ctx, c, client, b)
+}
+
+func forwardReaction(ctx context.Context, c config, ev slackEvent, client *http.Client) error {
+	if ev.User == "" || ev.User == c.botID || ev.Item.Channel == "" || ev.Item.TS == "" || ev.Reaction == "" {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[ev.User] || len(c.channels) == 0 || !c.channels[ev.Item.Channel] {
+		return nil
+	}
+	oldReaction, newReaction := "", ""
+	if ev.Type == "reaction_removed" {
+		oldReaction = ev.Reaction
+	} else {
+		newReaction = ev.Reaction
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": ev.Type, "user": ev.User, "user_id": ev.User, "channel_id": ev.Item.Channel, "message_id": ev.Item.TS, "reaction_old": oldReaction, "reaction_new": newReaction})
+	return sendInbound(ctx, c, client, b)
+}
+
+func forwardInteraction(ctx context.Context, c config, e eventEnvelope, client *http.Client) error {
+	p := e.Payload
+	if p.Type != "block_actions" || p.User.ID == "" || p.Channel.ID == "" || len(p.Actions) == 0 {
+		return nil
+	}
+	if len(c.users) == 0 || !c.users[p.User.ID] || len(c.channels) == 0 || !c.channels[p.Channel.ID] {
+		return nil
+	}
+	action := p.Actions[0]
+	token := action.Value
+	if action.SelectedOption != nil {
+		token = action.SelectedOption.Value
+	}
+	if c.callbacks == nil {
+		return nil
+	}
+	callback, ok := c.callbacks.consume(token, p.Channel.ID)
+	if !ok {
+		return nil
+	}
+	b, _ := json.Marshal(map[string]any{"source": "slack", "event_type": p.Type, "user": p.User.ID, "user_id": p.User.ID, "channel_id": p.Channel.ID, "message_id": p.Container.MessageTS, "thread_id": p.Container.ThreadTS, "callback_label": callback.Label, "callback_value": callback.Value})
+	return sendInbound(ctx, c, client, b)
+}
+
+func sendInbound(ctx context.Context, c config, client *http.Client, b []byte) error {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(c.inboundURL, "/")+"/webhooks/inbound/"+c.agentName+"/"+c.binding, bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	if c.hmacSecret != "" {
+		req.Header.Set("X-Kyber-Signature-256", sign([]byte(c.hmacSecret), b))
+	}
+	r, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	io.Copy(io.Discard, r.Body)
+	if r.StatusCode >= 300 {
+		return fmt.Errorf("inbound returned %s", r.Status)
+	}
+	return nil
+}
+func resolveBotID(ctx context.Context, token string, client *http.Client) (string, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/auth.test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	r, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer r.Body.Close()
+	var v struct {
+		OK     bool   `json:"ok"`
+		UserID string `json:"user_id"`
+		Error  string `json:"error"`
+	}
+	if err = json.NewDecoder(r.Body).Decode(&v); err != nil {
+		return "", err
+	}
+	if !v.OK || v.UserID == "" {
+		return "", fmt.Errorf("Slack: %s", v.Error)
+	}
+	return v.UserID, nil
+}
+func openSocket(ctx context.Context, token string) (string, error) {
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/apps.connections.open", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer r.Body.Close()
+	var v struct {
+		OK    bool   `json:"ok"`
+		URL   string `json:"url"`
+		Error string `json:"error"`
+	}
+	if err = json.NewDecoder(r.Body).Decode(&v); err != nil {
+		return "", err
+	}
+	if !v.OK {
+		return "", fmt.Errorf("Slack: %s", v.Error)
+	}
+	return v.URL, nil
+}
+func postMessage(ctx context.Context, token, channel, text, thread string) error {
+	body := map[string]string{"channel": channel, "text": text}
+	if thread != "" {
+		body["thread_ts"] = thread
+	}
+	b, _ := json.Marshal(body)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/chat.postMessage", bytes.NewReader(b))
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	r, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return err
+	}
+	defer r.Body.Close()
+	var v struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	json.NewDecoder(r.Body).Decode(&v)
+	if !v.OK {
+		return fmt.Errorf("Slack: %s", v.Error)
+	}
+	return nil
+}
 
 func main() {
-	logger,err:=logging.New(logging.Config{Component:"slack-sidecar",Level:os.Getenv("KYBER_LOG_LEVEL")}); if err!=nil{fmt.Fprintln(os.Stderr,err);os.Exit(2)}; slog.SetDefault(logger); c,err:=loadConfig(); if err!=nil{slog.Error("slack-sidecar: bad config","error",err);os.Exit(2)}
-	ctx,stop:=signal.NotifyContext(context.Background(),syscall.SIGINT,syscall.SIGTERM); defer stop(); client:=&http.Client{Timeout:15*time.Second}; srv:=newMCPServer(c,client); go http.ListenAndServe(c.mcpAddr,srv); go func(){ http.HandleFunc("/healthz",func(w http.ResponseWriter,r *http.Request){w.WriteHeader(http.StatusOK)}); _=http.ListenAndServe(c.healthAddr,nil) }()
-	for ctx.Err()==nil { url,err:=openSocket(ctx,c.appToken); if err!=nil{slog.Warn("slack-sidecar: Socket Mode open failed","error",err); select{case <-ctx.Done():return;case <-time.After(5*time.Second):};continue}; conn,_,err:=websocket.DefaultDialer.Dial(url,nil); if err!=nil{slog.Warn("slack-sidecar: websocket failed","error",err);continue}; for { var msg eventEnvelope; if err:=conn.ReadJSON(&msg); err!=nil{conn.Close();break}; if msg.EnvelopeID!=""{_ = conn.WriteJSON(map[string]string{"envelope_id":msg.EnvelopeID})}; if err:=forward(ctx,c,msg,client); err!=nil{slog.Warn("slack-sidecar: forwarding failed","error",err)} }; }
+	logger, err := logging.New(logging.Config{Component: "slack-sidecar", Level: os.Getenv("KYBER_LOG_LEVEL")})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(2)
+	}
+	slog.SetDefault(logger)
+	c, err := loadConfig()
+	if err != nil {
+		slog.Error("slack-sidecar: bad config", "error", err)
+		os.Exit(2)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+	client := &http.Client{Timeout: 15 * time.Second}
+	c.botID, err = resolveBotID(ctx, c.botToken, client)
+	if err != nil {
+		slog.Error("slack-sidecar: bot identity unavailable", "error", err)
+		os.Exit(2)
+	}
+	c.attachments = newSlackAttachmentStore(256)
+	c.callbacks = newSlackCallbackRegistry()
+	c.drops = &slackDropCounters{}
+	slog.Info("slack-sidecar: starting", "agent", c.agentName, "allowed_users", len(c.users), "allowed_channels", len(c.channels), "mention_only", c.mentionOnly)
+	srv := newMCPServer(c, client)
+	var connected atomic.Bool
+	go http.ListenAndServe(c.mcpAddr, srv)
+	go func() {
+		http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
+			if !connected.Load() {
+				http.Error(w, "Slack Socket Mode is not connected", http.StatusServiceUnavailable)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]any{"connected": true, "dropped_messages": c.drops.snapshot()})
+		})
+		_ = http.ListenAndServe(c.healthAddr, nil)
+	}()
+	for ctx.Err() == nil {
+		url, err := openSocket(ctx, c.appToken)
+		if err != nil {
+			slog.Warn("slack-sidecar: Socket Mode open failed", "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+		conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+		if err != nil {
+			slog.Warn("slack-sidecar: websocket failed", "error", err)
+			continue
+		}
+		connected.Store(true)
+		slog.Info("slack-sidecar: Socket Mode connected")
+		for {
+			var msg eventEnvelope
+			if err := conn.ReadJSON(&msg); err != nil {
+				connected.Store(false)
+				slog.Warn("slack-sidecar: Socket Mode disconnected", "error", err)
+				conn.Close()
+				break
+			}
+			if msg.EnvelopeID != "" {
+				_ = conn.WriteJSON(map[string]string{"envelope_id": msg.EnvelopeID})
+			}
+			if err := forward(ctx, c, msg, client); err != nil {
+				slog.Warn("slack-sidecar: forwarding failed", "error", err)
+			}
+		}
+	}
 }

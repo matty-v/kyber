@@ -1417,6 +1417,8 @@ components:
           type: boolean
         discordConnection:
           $ref: '#/components/schemas/DiscordConnection'
+        slackConnection:
+          $ref: '#/components/schemas/DiscordConnection'
 
     CommsListResponse:
       type: object

@@ -121,6 +121,14 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 	}
 }
 
+func TestStartClaudeRegistersSlackMCP(t *testing.T) {
+	script, err := os.ReadFile(scriptPath(t))
+	if err != nil { t.Fatal(err) }
+	for _, want := range []string{`claude mcp remove kyber-slack --scope user`, `claude mcp add kyber-slack "$KYBER_SLACK_MCP_URL"`, `Slack MCP sidecar registered`} {
+		if !strings.Contains(string(script), want) { t.Fatalf("start-claude.sh missing Slack MCP registration %q", want) }
+	}
+}
+
 func TestStartClaudeBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 	dir := t.TempDir()
 	report := filepath.Join(dir, "report")

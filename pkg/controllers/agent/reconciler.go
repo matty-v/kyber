@@ -655,6 +655,11 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	} else if rolled {
 		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
 	}
+	if rolled, rollErr := r.convergeSlackSidecar(ctx, agent, pod); rollErr != nil {
+		logger.Info("Slack sidecar convergence failed (best-effort)", "agent", agent.Name, "err", rollErr)
+	} else if rolled {
+		return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	}
 	if rolled, rollErr := r.convergeA2AConfig(ctx, agent, pod); rollErr != nil {
 		logger.Info("A2A peer configuration convergence failed (best-effort)", "agent", agent.Name, "err", rollErr)
 	} else if rolled {
@@ -2236,6 +2241,7 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			Labels:    AgentPodLabels(agent, adapter),
 			Annotations: map[string]string{
 				DiscordConfigRevisionAnnotation: agent.Annotations[DiscordConfigRevisionAnnotation],
+				SlackConfigRevisionAnnotation:   agent.Annotations[SlackConfigRevisionAnnotation],
 				A2AConfigRevisionAnnotation:     a2aConfigRevision(agent.Spec.A2APeers),
 			},
 		},

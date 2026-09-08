@@ -37,6 +37,7 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -78,6 +79,7 @@ const (
 	slackAppTokenKey          = "app-token"
 	slackAllowedUserIDsKey    = "allowed-user-ids"
 	slackAllowedChannelIDsKey = "allowed-channel-ids"
+	slackMentionOnlyKey       = "mention-only"
 
 	// commsHMACRandomBytes matches the inbound-binding generator: 32 random
 	// bytes, hex-encoded, stored as the ASCII hex string (the hex string IS the
@@ -108,16 +110,17 @@ type commsChannelResponse struct {
 
 	// Discord-only. Empty guild/channel lists mean "any"; an empty user list is
 	// fail-closed (nobody can drive the agent), which is why PUT rejects it.
-	GuildIDs       []string `json:"guildIds,omitempty"`
-	ChannelIDs     []string `json:"channelIds,omitempty"`
+	GuildIDs          []string `json:"guildIds,omitempty"`
+	ChannelIDs        []string `json:"channelIds,omitempty"`
 	AllowedChannelIDs []string `json:"allowedChannelIds,omitempty"`
-	AllowedUserIDs []string `json:"allowedUserIds,omitempty"`
-	MentionOnly    bool     `json:"mentionOnly,omitempty"`
+	AllowedUserIDs    []string `json:"allowedUserIds,omitempty"`
+	MentionOnly       bool     `json:"mentionOnly,omitempty"`
 
 	// DiscordConnection summarizes the running sidecar's Kubernetes-observed
 	// state. It deliberately does not expose credentials or require the control
 	// plane to hold the Discord token.
 	DiscordConnection *discordConnectionResponse `json:"discordConnection,omitempty"`
+	SlackConnection   *discordConnectionResponse `json:"slackConnection,omitempty"`
 }
 
 type discordConnectionResponse struct {
@@ -152,11 +155,12 @@ type putDiscordCommsRequest struct {
 }
 
 type putSlackCommsRequest struct {
-	BotToken       string   `json:"botToken,omitempty"`
-	AppToken       string   `json:"appToken,omitempty"`
-	AllowedUserIDs []string `json:"allowedUserIds,omitempty"`
+	BotToken          string   `json:"botToken,omitempty"`
+	AppToken          string   `json:"appToken,omitempty"`
+	AllowedUserIDs    []string `json:"allowedUserIds,omitempty"`
 	AllowedChannelIDs []string `json:"allowedChannelIds,omitempty"`
-	Action         string   `json:"action,omitempty"`
+	MentionOnly       bool     `json:"mentionOnly,omitempty"`
+	Action            string   `json:"action,omitempty"`
 }
 
 // handleAgentComms dispatches the comms sub-tree under /api/v1/agents/{name}.
@@ -288,6 +292,46 @@ func (s *Server) telegramCommsState(ctx context.Context, ag *kyberv1.Agent, pod 
 		resp.PodRestartRequired = enabled != podHasContainer(pod, agent.TelegramSidecarContainerName)
 	}
 	return resp
+}
+
+func channelConnectionState(configured, restartRequired bool, pod *corev1.Pod, container, label string) *discordConnectionResponse {
+	state := &discordConnectionResponse{Status: "not-configured"}
+	if !configured {
+		return state
+	}
+	if restartRequired {
+		state.Status = "restart-required"
+		state.Detail = "waiting for the agent to become idle; Kyber will restart its pod to apply the saved " + label + " configuration"
+		return state
+	}
+	if pod == nil {
+		state.Status = "not-running"
+		state.Detail = "the agent pod is not running"
+		return state
+	}
+	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != container {
+			continue
+		}
+		state.Ready = cs.Ready
+		state.RestartCount = cs.RestartCount
+		if cs.Ready {
+			state.Status = "connected"
+			return state
+		}
+		state.Status = "starting"
+		if cs.State.Waiting != nil {
+			state.Status = "degraded"
+			state.Detail = cs.State.Waiting.Reason
+		} else if cs.State.Terminated != nil {
+			state.Status = "degraded"
+			state.Detail = cs.State.Terminated.Reason
+		}
+		return state
+	}
+	state.Status = "starting"
+	state.Detail = "waiting for " + label + " sidecar status"
+	return state
 }
 
 func (s *Server) putTelegramComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
@@ -442,17 +486,24 @@ func (s *Server) slackCommsState(ctx context.Context, ag *kyberv1.Agent, pod *co
 	data := s.secretData(ctx, ag.Name+slackSecretSuffix)
 	resp := commsChannelResponse{Channel: commsChannelSlack, Configured: enabled,
 		BotTokenSet: len(data[slackBotTokenKey]) > 0, AppTokenSet: len(data[slackAppTokenKey]) > 0,
-		AllowedUserIDs: splitCSV(string(data[slackAllowedUserIDsKey])),
+		AllowedUserIDs:    splitCSV(string(data[slackAllowedUserIDsKey])),
 		AllowedChannelIDs: splitCSV(string(data[slackAllowedChannelIDsKey]))}
+	resp.MentionOnly = strings.EqualFold(string(data[slackMentionOnlyKey]), "true")
 	if pod != nil {
 		resp.PodRestartRequired = enabled != podHasContainer(pod, agent.SlackSidecarContainerName)
+		if revision := ag.Annotations[agent.SlackConfigRevisionAnnotation]; revision != "" && pod.Annotations[agent.SlackConfigRevisionAnnotation] != revision {
+			resp.PodRestartRequired = true
+		}
 	}
+	resp.SlackConnection = channelConnectionState(enabled, resp.PodRestartRequired, pod, agent.SlackSidecarContainerName, "Slack")
 	return resp
 }
 
 func (s *Server) putSlackComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
 	var req putSlackCommsRequest
-	if !decodeCommsBody(w, r, &req) { return }
+	if !decodeCommsBody(w, r, &req) {
+		return
+	}
 	if err := validateChannelAuth(ag.Spec.Runtime, ag.Spec.Secrets.AuthType, commsChannelSlack); err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "authType")
 		return
@@ -467,39 +518,93 @@ func (s *Server) putSlackComms(w http.ResponseWriter, r *http.Request, ag *kyber
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "appToken is required — this agent has no stored Slack app token", "appToken")
 		return
 	}
-	if err := validateSlackIDs(req.AllowedUserIDs, "allowedUserIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "allowedUserIds"); return }
-	if err := validateSlackIDs(req.AllowedChannelIDs, "allowedChannelIds"); err != nil { writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "allowedChannelIds"); return }
+	if err := validateSlackIDs(req.AllowedUserIDs, "allowedUserIds"); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "allowedUserIds")
+		return
+	}
+	if err := validateSlackIDs(req.AllowedChannelIDs, "allowedChannelIds"); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "allowedChannelIds")
+		return
+	}
 	hmacSecret := string(existing[webhookSecretKey])
-	if hmacSecret == "" { var err error; hmacSecret, err = generateCommsHMACSecret(); if err != nil { writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to generate secret"); return } }
+	if hmacSecret == "" {
+		var err error
+		hmacSecret, err = generateCommsHMACSecret()
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to generate secret")
+			return
+		}
+	}
 	if err := s.upsertSecretKeys(r.Context(), secretName, ag.Name, map[string][]byte{
-		slackBotTokenKey: []byte(firstNonEmpty(req.BotToken, string(existing[slackBotTokenKey]))),
-		slackAppTokenKey: []byte(firstNonEmpty(req.AppToken, string(existing[slackAppTokenKey]))),
-		slackAllowedUserIDsKey: []byte(strings.Join(req.AllowedUserIDs, ",")),
+		slackBotTokenKey:          []byte(firstNonEmpty(req.BotToken, string(existing[slackBotTokenKey]))),
+		slackAppTokenKey:          []byte(firstNonEmpty(req.AppToken, string(existing[slackAppTokenKey]))),
+		slackAllowedUserIDsKey:    []byte(strings.Join(req.AllowedUserIDs, ",")),
 		slackAllowedChannelIDsKey: []byte(strings.Join(req.AllowedChannelIDs, ",")),
-		webhookSecretKey: []byte(hmacSecret),
-	}, nil); err != nil { writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store Slack credentials"); return }
+		slackMentionOnlyKey:       []byte(strconv.FormatBool(req.MentionOnly)),
+		webhookSecretKey:          []byte(hmacSecret),
+	}, nil); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store Slack credentials")
+		return
+	}
 	if err := s.patchAgentForComms(r.Context(), ag, func(a *kyberv1.Agent) {
+		if a.Annotations == nil {
+			a.Annotations = map[string]string{}
+		}
+		a.Annotations[agent.SlackConfigRevisionAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
 		a.Spec.Secrets.SlackEnabled = true
 		binding := agent.SlackInboundBinding(secretName, firstNonEmpty(req.Action, agent.DefaultSlackAction()))
-		for i := range a.Spec.InboundBindings { if a.Spec.InboundBindings[i].Name == agent.SlackInboundBindingName { if req.Action == "" { binding.Action = a.Spec.InboundBindings[i].Action }; a.Spec.InboundBindings[i] = binding; return } }
+		for i := range a.Spec.InboundBindings {
+			if a.Spec.InboundBindings[i].Name == agent.SlackInboundBindingName {
+				if req.Action == "" && !agent.IsLegacySlackDefaultAction(a.Spec.InboundBindings[i].Action) {
+					binding.Action = a.Spec.InboundBindings[i].Action
+				}
+				a.Spec.InboundBindings[i] = binding
+				return
+			}
+		}
 		a.Spec.InboundBindings = append(a.Spec.InboundBindings, binding)
-	}); err != nil { writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to enable Slack"); return }
-	resp := s.slackCommsState(r.Context(), ag, s.podForComms(r.Context(), ag.Name)); resp.PodRestartRequired = true; writeJSON(w, http.StatusOK, resp)
+	}); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to enable Slack")
+		return
+	}
+	resp := s.slackCommsState(r.Context(), ag, s.podForComms(r.Context(), ag.Name))
+	resp.PodRestartRequired = true
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) deleteSlackComms(w http.ResponseWriter, r *http.Request, ag *kyberv1.Agent) {
 	if err := s.patchAgentForComms(r.Context(), ag, func(a *kyberv1.Agent) {
+		if a.Annotations == nil {
+			a.Annotations = map[string]string{}
+		}
+		a.Annotations[agent.SlackConfigRevisionAnnotation] = time.Now().UTC().Format(time.RFC3339Nano)
 		a.Spec.Secrets.SlackEnabled = false
-		for i := range a.Spec.InboundBindings { if a.Spec.InboundBindings[i].Name == agent.SlackInboundBindingName { a.Spec.InboundBindings = append(a.Spec.InboundBindings[:i], a.Spec.InboundBindings[i+1:]...); break } }
-	}); err != nil { writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to disable Slack"); return }
+		for i := range a.Spec.InboundBindings {
+			if a.Spec.InboundBindings[i].Name == agent.SlackInboundBindingName {
+				a.Spec.InboundBindings = append(a.Spec.InboundBindings[:i], a.Spec.InboundBindings[i+1:]...)
+				break
+			}
+		}
+	}); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to disable Slack")
+		return
+	}
 	sec := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: ag.Name + slackSecretSuffix, Namespace: s.Namespace}}
-	if err := s.K8sClient.Delete(r.Context(), sec); err != nil && !k8serrors.IsNotFound(err) { slog.Warn("comms: failed to delete Slack secret", "agent", ag.Name, "error", err) }
+	if err := s.K8sClient.Delete(r.Context(), sec); err != nil && !k8serrors.IsNotFound(err) {
+		slog.Warn("comms: failed to delete Slack secret", "agent", ag.Name, "error", err)
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func validateSlackIDs(ids []string, field string) error {
-	if len(ids) == 0 { return fmt.Errorf("%s must list at least one Slack ID — an empty allowlist is fail-closed", field) }
-	for _, id := range ids { if !regexp.MustCompile(`^[A-Z][A-Z0-9]+$`).MatchString(id) { return fmt.Errorf("%s must contain Slack IDs (for example U123 or C123)", field) } }
+	if len(ids) == 0 {
+		return fmt.Errorf("%s must list at least one Slack ID — an empty allowlist is fail-closed", field)
+	}
+	for _, id := range ids {
+		if !regexp.MustCompile(`^[A-Z][A-Z0-9]+$`).MatchString(id) {
+			return fmt.Errorf("%s must contain Slack IDs (for example U123 or C123)", field)
+		}
+	}
 	return nil
 }
 
