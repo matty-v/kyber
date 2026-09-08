@@ -58,6 +58,31 @@ render it truthfully. Harness-version browsing should use the runtime registry
 and image/version metadata rather than extending the legacy Claude/Codex
 catalogs.
 
+## Live hardening checkpoint — Hermes native skill discovery
+
+Hermes reports 59 usable skills in the live Linux agent: five identity skills
+linked at the top level of `~/.hermes/skills`, plus 54 Linux-compatible skills
+from its manifest-backed nested category tree. Kyber currently reports only
+the five flat identity links and treats the category directories as unmanaged
+state, so its Skills tab cannot match the runtime's native view.
+
+Acceptance for this checkpoint:
+
+- the scanner recognizes Hermes's `.bundled_manifest` as the authority for
+  image-bundled native skills and recursively discovers their `SKILL.md`
+  packages;
+- platform gating excludes macOS-only bundled skills from a Linux report;
+- each included native skill is reported as image-provided and linked to
+  `hermes`, without false unmanaged-category warnings;
+- flat identity, vendor, and Kyber capability skill behavior remains
+  unchanged; and
+- a rebuilt Hermes dev image reports the same 59 skills visible inside the
+  runtime, and Kyber serves them from the agent Skills endpoint.
+
+Exact next action: add focused scanner fixtures for the manifest-backed nested
+layout, implement the generic scan path, and verify it against the live Hermes
+agent.
+
 ## Outcome
 
 Add `hermes` as a registry-driven Kyber runtime using the
