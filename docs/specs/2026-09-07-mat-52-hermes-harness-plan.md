@@ -83,6 +83,12 @@ Exact next action: add focused scanner fixtures for the manifest-backed nested
 layout, implement the generic scan path, and verify it against the live Hermes
 agent.
 
+Live rollout note: rebuilding the 512 MB Hermes image triggered the durable
+rootfs base-image merge, which exceeded Hermes's original 90-second effective
+liveness allowance. Kubernetes repeatedly terminated the agent before the
+merge could finish. The Hermes liveness probe must allow bounded first-boot
+migration time while readiness continues to hold the pod out of service.
+
 ## Outcome
 
 Add `hermes` as a registry-driven Kyber runtime using the
