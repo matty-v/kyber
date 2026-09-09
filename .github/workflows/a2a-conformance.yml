@@ -65,7 +65,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         if: needs.contract.outputs.adapter == 'true'
         with:
           version: "0.12.9"
@@ -129,7 +129,7 @@ jobs:
             --manifest .a2a-evidence-input/manifest.json \
             --tck-reports .a2a-tck/reports \
             --kyber-junit .a2a-evidence-input/kyber-junit.xml
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always() && needs.contract.outputs.adapter == 'true'
         with:
           name: a2a-conformance-evidence-${{ github.sha }}
