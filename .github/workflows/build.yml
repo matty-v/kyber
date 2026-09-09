@@ -982,7 +982,7 @@ jobs:
         run: |
           set -euo pipefail
           for repo in kyber-control-plane kyber-node-agent kyber-status-sidecar \
-                      kyber-mcp-discord kyber-mcp-telegram kyber-runtime-base \
+                      kyber-mcp-discord kyber-mcp-telegram kyber-mcp-slack kyber-runtime-base \
                       kyber-claude-code kyber-codex kyber-hermes; do
             echo "::group::ghcr.io/matty-v/${repo}:${VERSION}"
             docker buildx imagetools create \
@@ -998,7 +998,7 @@ jobs:
         run: |
           set -euo pipefail
           yq -i ".version = \"${VERSION}\" | .appVersion = \"${VERSION}\"" deploy/helm/kyber/Chart.yaml
-          for c in controlPlane nodeAgent agentBase claudeCode codex hermes statusSidecar discordSidecar telegramSidecar; do
+          for c in controlPlane nodeAgent agentBase claudeCode codex hermes statusSidecar discordSidecar telegramSidecar slackSidecar; do
             yq -i ".image.${c}.tag = \"${VERSION}\"" deploy/helm/kyber/values.yaml
           done
           echo "Chart:"; yq '{"version": .version, "appVersion": .appVersion}' deploy/helm/kyber/Chart.yaml
