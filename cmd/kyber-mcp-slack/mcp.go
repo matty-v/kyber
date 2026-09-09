@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
@@ -302,8 +303,16 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 	}
 	for _, candidate := range candidates {
 		file, info := candidate.file, candidate.info
-		start, err := s.api(ctx, "files.getUploadURLExternal", map[string]any{"filename": info.Name(), "length": info.Size()})
+		const method = "files.getUploadURLExternal"
+		request := map[string]any{"filename": info.Name(), "length": info.Size()}
+		// Log only the documented reservation fields. Never log the bearer
+		// token, signed upload URL, file ID, or file contents.
+		slog.Info("slack-sidecar: requesting file upload reservation",
+			"method", method, "filename", info.Name(), "length", info.Size())
+		start, err := s.api(ctx, method, request)
 		if err != nil {
+			slog.Warn("slack-sidecar: file upload reservation rejected",
+				"method", method, "filename", info.Name(), "length", info.Size(), "error", err)
 			return toolError("Slack rejected the upload: " + err.Error())
 		}
 		uploadURL, _ := start["upload_url"].(string)
@@ -369,7 +378,41 @@ func (s *mcpServer) apiAttempt(ctx context.Context, method string, body map[stri
 	}
 	if ok, _ := out["ok"].(bool); !ok {
 		reason, _ := out["error"].(string)
+		if reason == "" {
+			reason = "unknown_error"
+		}
+		if messages := slackResponseMessages(out); len(messages) > 0 {
+			return nil, fmt.Errorf("%s: %s", reason, strings.Join(messages, "; "))
+		}
 		return nil, fmt.Errorf("%s", reason)
 	}
 	return out, nil
+}
+
+// slackResponseMessages returns Slack's field-level validation details while
+// keeping the error surface bounded. Slack places these under
+// response_metadata.messages; without them invalid_arguments is not actionable.
+func slackResponseMessages(out map[string]any) []string {
+	metadata, _ := out["response_metadata"].(map[string]any)
+	raw, _ := metadata["messages"].([]any)
+	messages := make([]string, 0, min(len(raw), 3))
+	for _, item := range raw {
+		message, ok := item.(string)
+		if !ok {
+			continue
+		}
+		message = strings.Join(strings.Fields(message), " ")
+		if message == "" {
+			continue
+		}
+		runes := []rune(message)
+		if len(runes) > 256 {
+			message = string(runes[:256]) + "…"
+		}
+		messages = append(messages, message)
+		if len(messages) == 3 {
+			break
+		}
+	}
+	return messages
 }

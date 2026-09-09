@@ -42,6 +42,16 @@ func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
 		body := `{"ok":true}`
 		switch r.URL.Path {
 		case "/api/files.getUploadURLExternal":
+			if got := r.Header.Get("Content-Type"); got != "application/json" {
+				t.Fatalf("content type = %q, want application/json", got)
+			}
+			var request map[string]any
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatal(err)
+			}
+			if request["filename"] != "report.txt" || request["length"] != float64(5) {
+				t.Fatalf("upload reservation = %#v", request)
+			}
 			body = `{"ok":true,"upload_url":"https://files.slack.com/upload/v1/test","file_id":"F1"}`
 		case "/upload/v1/test":
 			if r.Header.Get("Authorization") != "" {
@@ -64,6 +74,39 @@ func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
 	got := s.call(t.Context(), args)
 	if got.IsError || len(calls) != 3 {
 		t.Fatalf("call = %+v, paths = %v", got, calls)
+	}
+}
+
+func TestSlackAPIErrorIncludesBoundedResponseMetadataMessages(t *testing.T) {
+	long := strings.Repeat("x", 300)
+	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"ok":    false,
+			"error": "invalid_arguments",
+			"response_metadata": map[string]any{"messages": []any{
+				"  [ERROR] missing required field: length\n",
+				long,
+				"third",
+				"fourth is omitted",
+			}},
+		})
+	}))
+	defer api.Close()
+	original := slackAPIBaseURL
+	slackAPIBaseURL = api.URL + "/"
+	defer func() { slackAPIBaseURL = original }()
+
+	s := newMCPServer(config{botToken: "secret"}, api.Client())
+	_, err := s.api(t.Context(), "files.getUploadURLExternal", map[string]any{"filename": "a.txt", "length": 1})
+	if err == nil {
+		t.Fatal("expected Slack API error")
+	}
+	got := err.Error()
+	if !strings.Contains(got, "invalid_arguments: [ERROR] missing required field: length") {
+		t.Fatalf("error = %q", got)
+	}
+	if strings.Contains(got, "fourth") || !strings.Contains(got, strings.Repeat("x", 256)+"…") {
+		t.Fatalf("error details were not bounded: %q", got)
 	}
 }
 
