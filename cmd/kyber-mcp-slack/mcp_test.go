@@ -42,15 +42,14 @@ func TestSlackMCPReplyUploadsPersistFile(t *testing.T) {
 		body := `{"ok":true}`
 		switch r.URL.Path {
 		case "/api/files.getUploadURLExternal":
-			if got := r.Header.Get("Content-Type"); got != "application/json" {
-				t.Fatalf("content type = %q, want application/json", got)
+			if got := r.Header.Get("Content-Type"); got != "application/x-www-form-urlencoded" {
+				t.Fatalf("content type = %q, want application/x-www-form-urlencoded", got)
 			}
-			var request map[string]any
-			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			if err := r.ParseForm(); err != nil {
 				t.Fatal(err)
 			}
-			if request["filename"] != "report.txt" || request["length"] != float64(5) {
-				t.Fatalf("upload reservation = %#v", request)
+			if r.Form.Get("filename") != "report.txt" || r.Form.Get("length") != "5" {
+				t.Fatalf("upload reservation = %#v", r.Form)
 			}
 			body = `{"ok":true,"upload_url":"https://files.slack.com/upload/v1/test","file_id":"F1"}`
 		case "/upload/v1/test":

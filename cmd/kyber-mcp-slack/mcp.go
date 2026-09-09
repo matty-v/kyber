@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -309,7 +310,7 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 		// token, signed upload URL, file ID, or file contents.
 		slog.Info("slack-sidecar: requesting file upload reservation",
 			"method", method, "filename", info.Name(), "length", info.Size())
-		start, err := s.api(ctx, method, request)
+		start, err := s.apiForm(ctx, method, request)
 		if err != nil {
 			slog.Warn("slack-sidecar: file upload reservation rejected",
 				"method", method, "filename", info.Name(), "length", info.Size(), "error", err)
@@ -341,14 +342,29 @@ func (s *mcpServer) uploadFiles(ctx context.Context, channel, threadTS, text str
 	return r
 }
 func (s *mcpServer) api(ctx context.Context, method string, body map[string]any) (map[string]any, error) {
-	return s.apiAttempt(ctx, method, body, true)
+	return s.apiAttempt(ctx, method, body, false, true)
 }
 
-func (s *mcpServer) apiAttempt(ctx context.Context, method string, body map[string]any, retry bool) (map[string]any, error) {
-	b, _ := json.Marshal(body)
+func (s *mcpServer) apiForm(ctx context.Context, method string, body map[string]any) (map[string]any, error) {
+	return s.apiAttempt(ctx, method, body, true, true)
+}
+
+func (s *mcpServer) apiAttempt(ctx context.Context, method string, body map[string]any, form, retry bool) (map[string]any, error) {
+	contentType := "application/json"
+	var b []byte
+	if form {
+		values := url.Values{}
+		for key, value := range body {
+			values.Set(key, fmt.Sprint(value))
+		}
+		b = []byte(values.Encode())
+		contentType = "application/x-www-form-urlencoded"
+	} else {
+		b, _ = json.Marshal(body)
+	}
 	req, _ := http.NewRequestWithContext(ctx, "POST", slackAPIBaseURL+method, bytes.NewReader(b))
 	req.Header.Set("Authorization", "Bearer "+s.cfg.botToken)
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	res, err := s.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("calling %s: %w", method, err)
@@ -370,7 +386,7 @@ func (s *mcpServer) apiAttempt(ctx context.Context, method string, body map[stri
 			return nil, ctx.Err()
 		case <-time.After(time.Duration(seconds) * time.Second):
 		}
-		return s.apiAttempt(ctx, method, body, false)
+		return s.apiAttempt(ctx, method, body, form, false)
 	}
 	var out map[string]any
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
