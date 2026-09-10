@@ -5,6 +5,13 @@
 > tags, and changelog live in a private archive repository. This changelog
 > covers the open-source line only.
 
+## v1.6.0 — 2026-09-10
+
+[Release notes and upgrade guidance](docs/releases/v1.6.0.md).
+Changes since v1.5.0 add Hermes as a supported agent harness and bring Slack
+to feature parity with Kyber's other rich chat channels, including mention-only
+routing, edits, reactions, interactive buttons, and file transfer.
+
 ## v1.5.0 — 2026-09-07
 
 [Release notes and upgrade guidance](docs/releases/v1.5.0.md).
