@@ -64,7 +64,7 @@ Inspect a failed run before retrying. Prefer retrying failed jobs where possible
 starting the entire workflow again can hit the immutable-image preflight after
 some images were already published.
 
-The workflow builds nine images at the release SHA as linux/amd64 and
+The workflow builds ten images at the release SHA as linux/amd64 and
 linux/arm64 manifest lists:
 
 | Chart image key | GHCR image |
@@ -78,6 +78,7 @@ linux/arm64 manifest lists:
 | `agentBase` | `kyber-runtime-base` |
 | `claudeCode` | `kyber-claude-code` |
 | `codex` | `kyber-codex` |
+| `hermes` | `kyber-hermes` |
 
 The Claude Code and Codex images depend on runtime-base. Before normal image
 builds, `preflight-check-tags` rejects any already-published target image tag.
@@ -115,7 +116,7 @@ release-notification webhook jobs in the current workflow.
 
 1. Confirm the preparation tag SHA, chart version/appVersion, and approved
    changes agree. Check all required release jobs, including `publish-chart`.
-2. Confirm all nine image tags resolve for both architectures and the published
+2. Confirm all ten image tags resolve for both architectures and the published
    chart's image defaults name the release. A GitHub Release page alone is
    insufficient evidence of chart publication.
 3. Apply the reviewed notes to the GitHub Release using a file, for example:
