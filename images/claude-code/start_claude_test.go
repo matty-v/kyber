@@ -123,9 +123,13 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 
 func TestStartClaudeRegistersSlackMCP(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{`claude mcp remove kyber-slack --scope user`, `claude mcp add kyber-slack "$KYBER_SLACK_MCP_URL"`, `Slack MCP sidecar registered`} {
-		if !strings.Contains(string(script), want) { t.Fatalf("start-claude.sh missing Slack MCP registration %q", want) }
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-claude.sh missing Slack MCP registration %q", want)
+		}
 	}
 }
 
@@ -385,6 +389,24 @@ func TestStartClaude_MissingOAuthCredential_ExitsTwo(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "OAuth credential is missing") {
 		t.Fatalf("missing credential must be explicit in boot output:\n%s", out)
+	}
+}
+
+func TestStartClaude_MissingCredentialSyncEndpoint_ExitsFortyFive(t *testing.T) {
+	out, err := runScript(t, []string{
+		"HOME=" + t.TempDir(),
+		"PATH=" + testPATH(),
+		"CLAUDE_ACCESS_TOKEN=cached-access",
+		"CLAUDE_REFRESH_TOKEN=cached-refresh",
+		"CLAUDE_ACCESS_TOKEN_EXPIRES_AT=" + strconv.FormatInt(time.Now().Add(time.Hour).UnixMilli(), 10),
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 45 {
+		t.Fatalf("missing credential-sync endpoint exit = %v, want 45\n%s", err, out)
+	}
+	if !strings.Contains(string(out), "KYBER_REFRESH_TOKEN_URL") || !strings.Contains(string(out), "MAT-77") {
+		t.Fatalf("missing endpoint diagnostic is not actionable:\n%s", out)
 	}
 }
 

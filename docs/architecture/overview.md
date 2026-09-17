@@ -164,13 +164,13 @@ stateDiagram-v2
     Creating --> Starting: PodScheduled
     Creating --> Failed: PodScheduleFailed
     Starting --> Running: PodReady
-    Starting --> Failed: StartupTimeout / PodDied
+    Starting --> Failed: StartupTimeout / PodDied / AuthServiceFailed / CredentialSyncFailed
     Starting --> NeedsAuth: OAuthRefreshFailed
     Starting --> MemoryExhausted: OOMKilled
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
-    Running --> Failed: PodDied
+    Running --> Failed: PodDied / AuthServiceFailed / CredentialSyncFailed
     Running --> NeedsAuth: OAuthRefreshFailed
     Running --> MemoryExhausted: OOMKilled
     Running --> Draining: PreemptionNotice

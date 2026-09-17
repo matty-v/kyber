@@ -120,7 +120,7 @@ for confirmed credential failure.
   controller translation without expanding the public API.
 - [ ] Run focused tests, full Claude integration tests, controller envtest,
   `make build`, `make lint`, and `make test` with the required envtest assets.
-- [ ] Update the harness contract/conformance matrix, lifecycle documentation,
+- [x] Update the harness contract/conformance matrix, lifecycle documentation,
   and this plan with exact evidence and remaining limits.
 - [ ] Commit and push each verified checkpoint, open one consolidated PR, and
   record the PR/CI evidence on MAT-76.
@@ -153,8 +153,8 @@ for confirmed credential failure.
 
 ## Current next action
 
-Run the broader regression suites, then update the public harness/lifecycle
-documentation with the verified contract and evidence.
+Commit and push the documentation/review checkpoint, open the consolidated PR,
+and use required CI to complete the whole-repository test gate.
 
 ## Implementation checkpoint — failure contract
 
@@ -174,3 +174,25 @@ documentation with the verified contract and evidence.
   failure still enters `NeedsAuth`.
 - Focused Go unit tests, the new envtest-backed reconciliation test using
   Kubernetes 1.31 assets, and focused Claude shell integration tests pass.
+
+## Verification checkpoint
+
+Passing locally:
+
+- `go test -tags=integration ./images/claude-code -count=1` (145.371s);
+- `KUBEBUILDER_ASSETS=... go test ./pkg/controllers/agent -run '^TestReconcilerAuthServiceFailureUsesBoundedRecovery$' -count=1`;
+- focused descriptor, classifier, state-machine, and Claude failure-matrix
+  tests, including timeout, 429/5xx, malformed success, missing sync endpoint,
+  write-back failure, and secret/redacted-response assertions;
+- `go test ./pkg/runtimes/... -count=1`;
+- `go build ./...` and `go vet ./...` (the runtime image lacks `make`, whose
+  repository targets wrap these exact commands);
+- `bash docs/product/product_docs_test.sh` (81 passed) plus `bash -n` and
+  `git diff --check`.
+
+The complete controller package starts a fresh envtest control plane for many
+fixtures. On this host it reached the default 10-minute package timeout without
+an assertion failure; a 20-minute rerun later stalled after its fixture child
+processes had exited and was stopped. The new MAT-76 envtest and all focused
+controller/runtime tests pass. Required PR CI remains the authoritative full
+`go test ./...` gate; do not merge if it is not green.

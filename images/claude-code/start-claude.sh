@@ -457,7 +457,7 @@ if [ "$USE_CACHED" = false ]; then
             oauth_error=$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null || true)
             if [ "$oauth_error" = "invalid_grant" ]; then
                 unset resp oauth_error
-                kyber_auth_failure "Claude Code OAuth refresh was rejected with invalid_grant"
+                kyber_auth_failure "Claude Code OAuth refresh failed because the provider rejected the credential with invalid_grant"
             fi
             unset resp oauth_error
             kyber_auth_service_failure "Claude Code OAuth refresh failed with HTTP $refresh_status"

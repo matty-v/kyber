@@ -3158,22 +3158,10 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
-// Credential-failure exit codes. Each runtime's start script exits with its own
-// code when the harness cannot authenticate, so the reconciler can tell
-// "bad/expired credentials" apart from a generic crash and route the agent to
-// NeedsAuth (which lights up the PWA's Re-authorize button) rather than to a
-// pointless auto-restart loop on the same broken credential.
-const (
-	// runtimeProbeFailureExitCode is emitted before authentication when the
-	// harness executable/version probe fails.
-	runtimeProbeFailureExitCode int32 = 43
-	// claudeCodeAuthFailureExitCode is start-claude.sh's signal that the
-	// Anthropic OAuth refresh failed.
-	claudeCodeAuthFailureExitCode int32 = 2
-	// codexAuthFailureExitCode is start-codex.sh's signal that `codex login
-	// status` failed — the ChatGPT auth.json is missing or no longer valid.
-	codexAuthFailureExitCode int32 = 42
-)
+// runtimeProbeFailureExitCode is the integration-neutral signal emitted before
+// authentication when the harness executable/version probe fails. Other
+// runtime failure codes are owned by each runtime descriptor below.
+const runtimeProbeFailureExitCode int32 = 43
 
 func isRuntimeProbeFailure(pod *corev1.Pod) bool {
 	if pod == nil {

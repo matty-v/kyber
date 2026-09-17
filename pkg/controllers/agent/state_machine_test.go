@@ -154,6 +154,20 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseFailed,
 		},
 		{
+			name:       "Running + AuthServiceFailed → Failed with bounded retry",
+			current:    kyberv1.AgentPhaseRunning,
+			event:      EventAuthServiceFailed,
+			wantAction: ActionEmitEventAutoRestart,
+			wantNext:   kyberv1.AgentPhaseFailed,
+		},
+		{
+			name:       "Starting + CredentialSyncFailed → Failed with bounded retry",
+			current:    kyberv1.AgentPhaseStarting,
+			event:      EventCredentialSyncFailed,
+			wantAction: ActionEmitEventAutoRestart,
+			wantNext:   kyberv1.AgentPhaseFailed,
+		},
+		{
 			name:       "Running + CredentialSyncFailed → Failed with bounded retry",
 			current:    kyberv1.AgentPhaseRunning,
 			event:      EventCredentialSyncFailed,
