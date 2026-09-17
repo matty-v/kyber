@@ -1,4 +1,5 @@
 import type { WizardState } from './types'
+import { supportsModelSelection, wizardContract } from '../../lib/runtime-contract'
 
 /** Step ids the user can jump back to from Review (Review itself is not editable). */
 type EditableStep = 1 | 2 | 3 | 4
@@ -45,12 +46,13 @@ interface ReviewRow {
 }
 
 export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
+  const canSelectModel = supportsModelSelection(wizardContract(state))
   const rows: ReviewRow[] = [
     { label: 'Name', value: state.name || '(unset)', editStep: 1 },
     { label: 'Machine', value: state.machine || '(unset)' },
     { label: 'Startup prompt', value: fmtStartupPrompt(state.startupPrompt) },
     { label: 'Runtime', value: state.runtime, editStep: 2 },
-    { label: 'Model', value: 'Fleet default' },
+    ...(canSelectModel ? [{ label: 'Model', value: 'Fleet default' }] : []),
     { label: 'Harness version', value: 'Fleet default' },
     { label: 'Resources', value: `${state.cpu} CPU / ${state.memory} / ${state.disk}` },
     { label: 'Identity', value: fmtIdentity(state), editStep: 3 },

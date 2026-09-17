@@ -40,9 +40,11 @@ from fixture execution; a source implementation alone is not certification.
 | HC-10 in-place repair | Adapter metadata | Adapter metadata | Gap | Success/failure/timeout cleanup and durable-file preservation fixtures; real repair remains staging-only |
 
 The small adapter fixture in `pkg/runtimes/contracttest` checks optional-command
-absence and credential isolation. `pkg/api/runtime_extension_test.go` proves a
-new descriptor and auth strategy can pass public discovery and credential
-creation without provider branches.
+absence, credential isolation, and a conforming adapter with no model discovery
+or selection. `pkg/api/runtime_extension_test.go` proves that the same
+descriptor and auth strategy can pass public discovery, credential creation,
+non-model feature availability, and the task dispatch gate without provider
+branches while every explicit model surface fails closed.
 
 The bootable process fixture in `test/integration/harness_contract_test.go`
 uses its own registered runtime ID, real tmux, production paste/receipt scripts,
@@ -212,13 +214,14 @@ go test -tags=integration ./images/codex ./images/claude-code ./images/hermes
 go test -tags=integration ./test/integration -run TestHarnessContractBootReceiptAndExplicitCompletion
 ```
 
-`pkg/runtimes/contracttest.CheckAdapter` takes provider-owned auth fixtures and
-never switches on a runtime name. Add each supported mode, its selected Secret
-suffix/keys, forbidden alternate-mode variables, and two Agent names. Current
-fixtures exercise explicit model selection. A future integration without that
-optional feature needs a fixture/checker extension that does not assert model
-support. Do not turn this test-only fixture format into the production capability
-schema without design review.
+`pkg/runtimes/contracttest.CheckAdapter` takes the trusted descriptor plus
+provider-owned auth fixtures and never switches on a runtime name. Add each
+supported mode, its selected Secret suffix/keys, forbidden alternate-mode
+variables, and two Agent names. A descriptor with `model-catalog` must expose a
+nonempty `ModelEnvVar` and pass the selected value; a descriptor without it must
+return an empty key and inject no model override. The no-model fixture exercises
+that baseline beside Claude Code, Codex, and Hermes. Do not turn this test-only
+fixture format into a second production capability schema.
 
 Receipt tests execute the production hook against a local HTTP server for both
 current runtime IDs and the fixture ID: acceptance, connection loss after POST followed by exact
@@ -231,6 +234,31 @@ Declared/observed gates, unknown/stale reports and the bootable process fixture
 now have automated coverage. Both real harnesses/auth modes also have versioned
 dev evidence above. The matrix retains unverified behaviors and documented
 exceptions rather than inferring complete conformance from those checks.
+
+## Minimal profile without model selection — MAT-79
+
+The tested `extension-fixture` is a third runtime descriptor with ordinary
+API-key authentication plus job/task declarations, but no `model-catalog`.
+Its adapter returns `""` from `ModelEnvVar` and never injects a model. This is
+the complete optional-capability path:
+
+1. Implement the standard `Runtime`, `Adapter`, `Probe`, `DescribedRuntime`,
+   and `Authentication` interfaces. Do not copy a production adapter.
+2. List only implemented optional features in `Descriptor.Features`. Omit
+   `model-catalog` when Kyber cannot authenticate a catalog and select a model.
+3. Return an empty `ModelEnvVar`; create Agents without `spec.model`. Kyber
+   then rejects explicit create/patch/set-model requests and catalog reads with
+   the shared unsupported reason, and the PWA omits the controls.
+4. Declare task receipts, task tools, or job hooks independently when they are
+   implemented. Their current-pod evidence and delivery gates do not depend on
+   model discovery.
+5. Supply the auth cases and descriptor to `contracttest.CheckAdapter`, add the
+   public creation/negative-operation fixture, and run the commands below.
+
+The fixture adds no `claude-code` or `codex` conditional to shared feature
+logic. Production runtime names remain only in compatibility projections such
+as historical fleet-default/catalog keys and provider-owned integrations.
+This is deterministic fixture evidence, not a live third-harness certification.
 
 ## Onboarding checklist
 
@@ -246,6 +274,8 @@ exceptions rather than inferring complete conformance from those checks.
    discovery-driven login UI and canonical `/auth` route for supported flows;
    new flow types require an explicit extension. Own native refresh/write-back,
    stale-seed protection and failure classification in the runtime integration.
+   If model selection is unsupported, omit `model-catalog`, return an empty
+   `ModelEnvVar`, and leave `spec.model` empty; do not invent a dummy model.
 5. Integrate persistent home/workspace, startup identity/instructions, platform
    recall and transcript adapters. Distinguish native resume from fresh restart.
 6. Register configured platform MCP services in native configuration; provide

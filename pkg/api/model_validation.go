@@ -10,6 +10,15 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimes"
 )
 
+func runtimeSupportsModelSelection(runtime string) bool {
+	descriptor, ok := runtimes.Describe(runtime)
+	return ok && descriptor.Supports(runtimes.ModelCatalog)
+}
+
+func unsupportedModelSelectionMessage(runtime string) string {
+	return fmt.Sprintf("runtime %q does not declare model-catalog support; model discovery and explicit selection are unavailable", runtime)
+}
+
 // validateModelValue checks a model id an operator is about to write
 // (fleet default, set-model, create) against the model catalogs the
 // platform can already see, and returns a non-empty human-readable

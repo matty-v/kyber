@@ -26,7 +26,7 @@ type AuthCase struct {
 // with two differently named Agents to detect accidental cross-agent wiring.
 // It deliberately does not invoke returned commands or infer authenticated
 // readiness from a probe. Returned errors contain identifiers, never secrets.
-func CheckAdapter(a runtimes.Adapter, agent *kyberv1.Agent, auth AuthCase) []error {
+func CheckAdapter(a runtimes.Adapter, descriptor runtimes.Descriptor, agent *kyberv1.Agent, auth AuthCase) []error {
 	var failures []error
 	check := func(ok bool, id, message string) {
 		if !ok {
@@ -34,6 +34,8 @@ func CheckAdapter(a runtimes.Adapter, agent *kyberv1.Agent, auth AuthCase) []err
 		}
 	}
 	check(a.Type() == agent.Spec.Runtime, "HC-01", "adapter type differs from runtime")
+	check(descriptor.Validate() == nil, "HC-01", "runtime descriptor is invalid")
+	check(descriptor.ID == a.Type(), "HC-01", "descriptor type differs from adapter")
 	check(a.Image() != "", "HC-01", "configured image is missing")
 	args := a.EntrypointArgs(agent)
 	check(len(args) > 0 && args[0] != "", "HC-01", "launch arguments missing")
@@ -50,8 +52,16 @@ func CheckAdapter(a runtimes.Adapter, agent *kyberv1.Agent, auth AuthCase) []err
 		check(!exists, "HC-04", "duplicate environment key")
 		vars[v.Name] = v
 	}
-	model, ok := vars[a.ModelEnvVar()]
-	check(ok && model.Value == agent.Spec.Model, "HC-04", "configured model was not passed through")
+	if descriptor.Supports(runtimes.ModelCatalog) {
+		modelEnv := strings.TrimSpace(a.ModelEnvVar())
+		check(modelEnv != "", "HC-04", "declared model selection has no environment key")
+		if modelEnv != "" {
+			model, ok := vars[modelEnv]
+			check(ok && model.Value == agent.Spec.Model, "HC-04", "configured model was not passed through")
+		}
+	} else {
+		check(a.ModelEnvVar() == "", "HC-04", "undeclared model selection exposes an environment key")
+	}
 	check(agent.Spec.Secrets.AuthType == auth.Mode, "HC-05", "auth fixture mode mismatch")
 	secret := agent.Name + auth.CredentialSuffix
 	check(a.CredentialSecretName(agent) == secret, "HC-05", "recovery credential belongs to wrong agent or mode")

@@ -16,7 +16,7 @@ import type { Agent } from '../lib/types'
 
 // vi.hoisted: vi.mock's factory is lifted above the imports, so anything it
 // closes over has to be hoisted with it.
-const { startAgent, restartAgent, idleMutation, effectiveModelList } = vi.hoisted(() => ({
+const { startAgent, restartAgent, idleMutation, effectiveModelList, agentModels } = vi.hoisted(() => ({
   startAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   restartAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   idleMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
@@ -24,6 +24,7 @@ const { startAgent, restartAgent, idleMutation, effectiveModelList } = vi.hoiste
     models: [], claudeCodeVersions: [], codexVersions: [], hermesVersions: [],
     source: 'empty' as const, isLoading: false,
   },
+  agentModels: vi.fn(() => ({ data: undefined, isLoading: false, isError: false })),
 }))
 
 vi.mock('../hooks/useAPI', () => ({
@@ -36,7 +37,7 @@ vi.mock('../hooks/useAPI', () => ({
   useForceNeedsAuthAgent: idleMutation,
   useRepairAgentRuntime: idleMutation,
   useSetAgentModel: idleMutation,
-  useAgentModels: () => ({ data: undefined, isLoading: false, isError: false }),
+  useAgentModels: agentModels,
   useSetAgentRuntimeVersion: idleMutation,
   useSetAgentResources: idleMutation,
   usePatchAgent: idleMutation,
@@ -100,6 +101,36 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
       isLoading: false,
       error: null,
     } as ReturnType<typeof useAPIModule.useAgent>)
+  })
+
+  it('does not advertise or query model selection for an unsupported runtime', () => {
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: {
+        ...needsAuthAgent,
+        id: 'fixed',
+        phase: 'Running',
+        runtime: 'fixed-harness',
+        model: '',
+        runtimeContract: {
+          id: 'fixed-harness', name: 'Fixed harness', contractVersion: '1.0',
+          profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [],
+        },
+      },
+      isLoading: false,
+      error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    render(
+      <MemoryRouter initialEntries={['/agents/fixed/general']}>
+        <Routes>
+          <Route path="/agents/:name/:section" element={<AgentDetail />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(screen.queryByRole('button', { name: 'Model' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Model')).not.toBeInTheDocument()
+    expect(screen.getByText('Harness version and compute allocation.')).toBeInTheDocument()
+    expect(agentModels).toHaveBeenCalledWith('fixed', false)
   })
 
   it('browses Hermes releases without offering an unsafe source install', async () => {

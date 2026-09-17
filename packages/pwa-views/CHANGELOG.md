@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.45.0
+
+- Hide model discovery and selection controls when a runtime omits the
+  descriptor's `model-catalog` feature, while retaining harness and resource
+  controls for that conforming baseline profile.
+
 ## 0.44.0
 
 - Show each agent's current one-line goal in the dashboard's recently active

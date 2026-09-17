@@ -28,17 +28,27 @@ func TestInteractiveAdapters(t *testing.T) {
 			{Mode: kyberv1.AgentAuthTypeOAuth, CredentialSuffix: "-codex-auth", RequiredEnvKeys: map[string]string{"CODEX_AUTH_JSON": "auth.json"}, ForbiddenEnv: []string{"OPENAI_API_KEY"}},
 			{Mode: kyberv1.AgentAuthTypeAPIKey, CredentialSuffix: "-openai", RequiredEnvKeys: map[string]string{"OPENAI_API_KEY": "token"}},
 		}},
-		{newFixture(), []contracttest.AuthCase{{Mode: kyberv1.AgentAuthTypeAPIKey, CredentialSuffix: "-fixture-key", RequiredEnvKeys: map[string]string{"FIXTURE_KEY": "token"}}}},
+		{newFixture(false), []contracttest.AuthCase{{Mode: kyberv1.AgentAuthTypeAPIKey, CredentialSuffix: "-fixture-key", RequiredEnvKeys: map[string]string{"FIXTURE_KEY": "token"}}}},
 	}
 	for _, tc := range cases {
+		descriptor, ok := runtimes.Describe(tc.adapter.Type())
+		if tc.adapter.Type() == "contract-fixture" {
+			descriptor = fixtureDescriptor(false)
+			ok = true
+		}
+		if !ok {
+			t.Fatalf("descriptor for %s is not registered", tc.adapter.Type())
+		}
 		for _, auth := range tc.auth {
 			for _, name := range []string{"contract-a", "contract-b"} {
 				t.Run(tc.adapter.Type()+"/"+string(auth.Mode)+"/"+name, func(t *testing.T) {
 					agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: name}}
 					agent.Spec.Runtime = tc.adapter.Type()
-					agent.Spec.Model = "contract-model"
+					if descriptor.Supports(runtimes.ModelCatalog) {
+						agent.Spec.Model = "contract-model"
+					}
 					agent.Spec.Secrets.AuthType = auth.Mode
-					for _, err := range contracttest.CheckAdapter(tc.adapter, agent, auth) {
+					for _, err := range contracttest.CheckAdapter(tc.adapter, descriptor, agent, auth) {
 						t.Error(err)
 					}
 				})
@@ -52,13 +62,24 @@ func TestInteractiveAdapters(t *testing.T) {
 type fixture struct {
 	runtimes.Adapter
 	wrongSecret, emptyCommand bool
+	modelSelection            bool
 }
 
-func newFixture() *fixture {
+func newFixture(modelSelection bool) *fixture {
 	probe := &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"true"}}}}
-	return &fixture{Adapter: runtimes.NewStubAdapter("test.invalid/fixture:pinned", []string{"/fixture/start"}, nil, nil, probe, probe, 30, "/persist/brief.json", "/persist/state.json", "FIXTURE_MODEL")}
+	modelEnv := ""
+	if modelSelection {
+		modelEnv = "FIXTURE_MODEL"
+	}
+	return &fixture{Adapter: runtimes.NewStubAdapter("test.invalid/fixture:pinned", []string{"/fixture/start"}, nil, nil, probe, probe, 30, "/persist/brief.json", "/persist/state.json", modelEnv), modelSelection: modelSelection}
 }
 func (f *fixture) Type() string { return "contract-fixture" }
+func (f *fixture) ModelEnvVar() string {
+	if f.modelSelection {
+		return "FIXTURE_MODEL"
+	}
+	return ""
+}
 func (f *fixture) CredentialSecretName(a *kyberv1.Agent) string {
 	if f.wrongSecret {
 		return "another-agent-fixture-key"
@@ -66,10 +87,13 @@ func (f *fixture) CredentialSecretName(a *kyberv1.Agent) string {
 	return a.Name + "-fixture-key"
 }
 func (f *fixture) EnvVars(a *kyberv1.Agent) []corev1.EnvVar {
-	return []corev1.EnvVar{
-		{Name: "FIXTURE_MODEL", Value: a.Spec.Model},
+	vars := []corev1.EnvVar{
 		{Name: "FIXTURE_KEY", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: f.CredentialSecretName(a)}, Key: "token"}}},
 	}
+	if f.modelSelection {
+		vars = append(vars, corev1.EnvVar{Name: "FIXTURE_MODEL", Value: a.Spec.Model})
+	}
+	return vars
 }
 func (f *fixture) CompactSessionCommand() []string {
 	if f.emptyCommand {
@@ -82,17 +106,20 @@ func TestCheckerRejectsContractViolations(t *testing.T) {
 	for _, tc := range []struct {
 		name, id string
 		breakIt  func(*fixture)
+		describe func() runtimes.Descriptor
 	}{
-		{"cross-agent credentials", "HC-05", func(f *fixture) { f.wrongSecret = true }},
-		{"ambiguous unsupported command", "HC-04", func(f *fixture) { f.emptyCommand = true }},
+		{"cross-agent credentials", "HC-05", func(f *fixture) { f.wrongSecret = true }, func() runtimes.Descriptor { return fixtureDescriptor(false) }},
+		{"ambiguous unsupported command", "HC-04", func(f *fixture) { f.emptyCommand = true }, func() runtimes.Descriptor { return fixtureDescriptor(false) }},
+		{"declared model selection missing adapter wiring", "HC-04", func(*fixture) {}, func() runtimes.Descriptor { return fixtureDescriptor(true) }},
+		{"undeclared model selection exposes adapter wiring", "HC-04", func(f *fixture) { f.modelSelection = true }, func() runtimes.Descriptor { return fixtureDescriptor(false) }},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			f := newFixture()
+			f := newFixture(false)
 			tc.breakIt(f)
 			a := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "contract-a"}}
 			a.Spec.Runtime = f.Type()
 			a.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
-			errs := contracttest.CheckAdapter(f, a, contracttest.AuthCase{Mode: kyberv1.AgentAuthTypeAPIKey, CredentialSuffix: "-fixture-key", RequiredEnvKeys: map[string]string{"FIXTURE_KEY": "token"}})
+			errs := contracttest.CheckAdapter(f, tc.describe(), a, contracttest.AuthCase{Mode: kyberv1.AgentAuthTypeAPIKey, CredentialSuffix: "-fixture-key", RequiredEnvKeys: map[string]string{"FIXTURE_KEY": "token"}})
 			for _, err := range errs {
 				if strings.HasPrefix(err.Error(), tc.id+":") {
 					return
@@ -114,8 +141,21 @@ func (f fixtureRuntime) Probe() runtimes.Probe     { return fixtureProbe{} }
 type fixtureProbe struct{}
 
 func (fixtureProbe) Type() string { return "contract-fixture" }
+
+func fixtureDescriptor(modelSelection bool) runtimes.Descriptor {
+	features := []runtimes.Feature{}
+	if modelSelection {
+		features = append(features, runtimes.ModelCatalog)
+	}
+	return runtimes.Descriptor{
+		ID: "contract-fixture", Name: "Contract fixture", ContractVersion: runtimes.ContractVersion,
+		Profile: runtimes.InteractiveProfile, Cancellation: "notify_only", Features: features,
+		AuthModes: []runtimes.AuthMode{{ID: kyberv1.AgentAuthTypeAPIKey, Name: "Fixture key", Flow: "api-key", SecretSuffix: "fixture-key"}},
+	}
+}
+
 func TestFixtureUsesRuntimeRegistry(t *testing.T) {
-	f := fixtureRuntime{newFixture()}
+	f := fixtureRuntime{newFixture(false)}
 	if _, exists := runtimes.Get(f.Type()); !exists {
 		runtimes.Register(f)
 	}

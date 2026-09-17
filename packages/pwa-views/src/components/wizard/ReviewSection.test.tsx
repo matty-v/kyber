@@ -43,6 +43,19 @@ describe('ReviewSection', () => {
     expect(screen.getByText(/API key/)).toBeInTheDocument()
   })
 
+  it('omits model selection for a runtime without model-catalog', () => {
+    render(<ReviewSection state={{
+      ...initialWizardState([]),
+      runtime: 'fixed-harness',
+      runtimeContract: {
+        id: 'fixed-harness', name: 'Fixed harness', contractVersion: '1.0',
+        profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [],
+      },
+    }} />)
+    expect(screen.queryByText('Model')).not.toBeInTheDocument()
+    expect(screen.getAllByText('Fleet default')).toHaveLength(1)
+  })
+
   it('shows a compact startup prompt preview', () => {
     render(<ReviewSection state={{ ...initialWizardState([]), startupPrompt: `First line\n${'x'.repeat(100)}` }} />)
     const preview = screen.getByText(/First line x+/)
