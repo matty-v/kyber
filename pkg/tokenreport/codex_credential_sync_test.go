@@ -10,23 +10,28 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/credentialsync"
 )
 
 // pushRecorder captures what the syncer POSTs to the sidecar.
 type pushRecorder struct {
-	mu     sync.Mutex
-	bodies []string
-	status int
+	mu       sync.Mutex
+	bodies   []string
+	expected []string
+	status   int
 }
 
 func (p *pushRecorder) handler() http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var body struct {
-			AuthJSON string `json:"auth_json"`
+			AuthJSON     string `json:"auth_json"`
+			ExpectedHash string `json:"expected_hash"`
 		}
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		p.mu.Lock()
 		p.bodies = append(p.bodies, body.AuthJSON)
+		p.expected = append(p.expected, body.ExpectedHash)
 		p.mu.Unlock()
 		code := p.status
 		if code == 0 {
@@ -34,6 +39,12 @@ func (p *pushRecorder) handler() http.HandlerFunc {
 		}
 		w.WriteHeader(code)
 	}
+}
+
+func (p *pushRecorder) gotExpected() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.expected...)
 }
 
 func (p *pushRecorder) got() []string {
@@ -81,7 +92,10 @@ func TestCodexCredentialSyncer_PushesRotatedCredential(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &CodexCredentialSyncer{AuthPath: authPath, SidecarURL: srv.URL, Interval: 50 * time.Millisecond}
+	s := &CodexCredentialSyncer{
+		AuthPath: authPath, SidecarURL: srv.URL, Interval: 50 * time.Millisecond,
+		InitialCredentialHash: credentialsync.HashOpaque([]byte(origCred)),
+	}
 	go s.Run(ctx)
 
 	// Give the syncer a moment to seed its baseline from the boot-time file,
@@ -95,6 +109,9 @@ func TestCodexCredentialSyncer_PushesRotatedCredential(t *testing.T) {
 	got := rec.got()
 	if got[len(got)-1] != rotatedCred {
 		t.Fatalf("pushed %q, want %q", got[len(got)-1], rotatedCred)
+	}
+	if got := rec.gotExpected(); got[len(got)-1] != credentialsync.HashOpaque([]byte(origCred)) {
+		t.Fatalf("expected_hash = %q, want bootstrap credential hash", got[len(got)-1])
 	}
 }
 
@@ -138,6 +155,7 @@ func TestCodexCredentialSyncer_PushesInitialDeviceCredential(t *testing.T) {
 	defer cancel()
 	s := &CodexCredentialSyncer{
 		AuthPath: authPath, SidecarURL: srv.URL, Interval: time.Hour, PushInitial: true,
+		InitialCredentialHash: credentialsync.HashOpaque([]byte(`{}`)),
 	}
 	go s.Run(ctx)
 
@@ -146,6 +164,9 @@ func TestCodexCredentialSyncer_PushesInitialDeviceCredential(t *testing.T) {
 	}
 	if got := rec.got()[0]; got != origCred {
 		t.Fatalf("pushed %q, want %q", got, origCred)
+	}
+	if got := rec.gotExpected()[0]; got != credentialsync.HashOpaque([]byte(`{}`)) {
+		t.Fatalf("expected_hash = %q, want device-marker hash", got)
 	}
 }
 
@@ -216,7 +237,10 @@ func TestCodexCredentialSyncer_RetriesAfterServerError(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	s := &CodexCredentialSyncer{AuthPath: authPath, SidecarURL: srv.URL, Interval: 30 * time.Millisecond}
+	s := &CodexCredentialSyncer{
+		AuthPath: authPath, SidecarURL: srv.URL, Interval: time.Minute,
+		RetryInitial: 20 * time.Millisecond, RetryMax: 40 * time.Millisecond,
+	}
 	go s.Run(ctx)
 
 	time.Sleep(100 * time.Millisecond)
@@ -231,5 +255,48 @@ func TestCodexCredentialSyncer_RetriesAfterServerError(t *testing.T) {
 		if b != rotatedCred {
 			t.Fatalf("retried with %q, want the rotated credential %q", b, rotatedCred)
 		}
+	}
+}
+
+func TestCodexCredentialSyncer_ConflictIsNotRetried(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	writeAuth(t, authPath, rotatedCred)
+	rec := &pushRecorder{status: http.StatusConflict}
+	srv := httptest.NewServer(rec.handler())
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &CodexCredentialSyncer{
+		AuthPath: authPath, SidecarURL: srv.URL, Interval: time.Minute,
+		PushInitial: true, InitialCredentialHash: credentialsync.HashOpaque([]byte(origCred)),
+		RetryInitial: 20 * time.Millisecond, RetryMax: 40 * time.Millisecond,
+	}
+	go s.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if got := len(rec.got()); got != 1 {
+		t.Fatalf("conflict attempts = %d, want exactly 1", got)
+	}
+}
+
+func TestCodexCredentialSyncer_PermanentRejectionIsNotRetried(t *testing.T) {
+	dir := t.TempDir()
+	authPath := filepath.Join(dir, "auth.json")
+	writeAuth(t, authPath, rotatedCred)
+	rec := &pushRecorder{status: http.StatusUnauthorized}
+	srv := httptest.NewServer(rec.handler())
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &CodexCredentialSyncer{
+		AuthPath: authPath, SidecarURL: srv.URL, Interval: time.Minute,
+		PushInitial: true, RetryInitial: 20 * time.Millisecond, RetryMax: 40 * time.Millisecond,
+	}
+	go s.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if got := len(rec.got()); got != 1 {
+		t.Fatalf("rejected credential attempts = %d, want exactly 1", got)
 	}
 }

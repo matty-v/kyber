@@ -119,7 +119,7 @@ func TestStartClaude_SkillReport_AbsentBinaryIsHarmless(t *testing.T) {
 	// A private utility PATH actually excludes kyber-skills even on an agent
 	// host. Prepending an empty directory to the host PATH did not exclude it.
 	emptyBin := t.TempDir()
-	for _, name := range []string{"bash", "cat", "chmod", "curl", "date", "dirname", "env", "git", "jq", "mkdir", "python3", "rm", "sed", "tr", "basename", "readlink", "ln", "find", "grep", "uname", "touch", "install", "mv", "mktemp", "stat", "sort", "head", "awk", "tail", "cut", "cp", "id", "sleep", "timeout", "nohup"} {
+	for _, name := range []string{"bash", "cat", "chmod", "curl", "date", "dirname", "env", "git", "jq", "mkdir", "python3", "rm", "sed", "tr", "basename", "readlink", "ln", "find", "grep", "uname", "touch", "install", "mv", "mktemp", "stat", "sort", "head", "awk", "tail", "cut", "cp", "id", "sleep", "timeout", "nohup", "sha256sum", "sync"} {
 		source, err := exec.LookPath(name)
 		if err != nil {
 			continue

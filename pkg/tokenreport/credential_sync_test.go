@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/credentialsync"
 )
 
 func writeCredentials(t *testing.T, path string, access, refresh string, expiresAt int64) {
@@ -69,10 +71,10 @@ func TestCredentialSyncer_PushesOnChange(t *testing.T) {
 	defer cancel()
 
 	syncer := &CredentialSyncer{
-		CredentialsPath:  credsPath,
-		SidecarURL:       srv.URL,
-		Interval:         50 * time.Millisecond,
-		InitialExpiresAt: 1000, // matches file — should NOT push
+		CredentialsPath:       credsPath,
+		SidecarURL:            srv.URL,
+		Interval:              50 * time.Millisecond,
+		InitialCredentialHash: credentialsync.HashClaude("at-initial", "rt-initial", 1000),
 	}
 
 	go syncer.Run(ctx)
@@ -108,6 +110,10 @@ func TestCredentialSyncer_PushesOnChange(t *testing.T) {
 	}
 	if lastBody["expires_at"] != float64(2000) {
 		t.Errorf("expected expires_at=2000, got %v", lastBody["expires_at"])
+	}
+	wantExpected := credentialsync.HashClaude("at-initial", "rt-initial", 1000)
+	if lastBody["expected_hash"] != wantExpected {
+		t.Errorf("expected_hash = %v, want bootstrap hash", lastBody["expected_hash"])
 	}
 }
 
@@ -191,13 +197,13 @@ func TestCredentialSyncer_FSNotifyTriggersBeforePoll(t *testing.T) {
 	defer cancel()
 
 	// Interval is long (1 minute) — if the test passes within ~1s, it must
-	// be fsnotify, not polling. InitialExpiresAt=1000 matches file so
+	// be fsnotify, not polling. InitialCredentialHash matches the file so
 	// startup tick is suppressed.
 	syncer := &CredentialSyncer{
-		CredentialsPath:  credsPath,
-		SidecarURL:       srv.URL,
-		Interval:         60 * time.Second,
-		InitialExpiresAt: 1000,
+		CredentialsPath:       credsPath,
+		SidecarURL:            srv.URL,
+		Interval:              60 * time.Second,
+		InitialCredentialHash: credentialsync.HashClaude("at-initial", "rt-initial", 1000),
 	}
 	go syncer.Run(ctx)
 
@@ -248,10 +254,10 @@ func TestCredentialSyncer_AtomicRenamePushesOnce(t *testing.T) {
 	defer cancel()
 
 	syncer := &CredentialSyncer{
-		CredentialsPath:  credsPath,
-		SidecarURL:       srv.URL,
-		Interval:         60 * time.Second,
-		InitialExpiresAt: 1000,
+		CredentialsPath:       credsPath,
+		SidecarURL:            srv.URL,
+		Interval:              60 * time.Second,
+		InitialCredentialHash: credentialsync.HashClaude("at-initial", "rt-initial", 1000),
 	}
 	go syncer.Run(ctx)
 
@@ -292,7 +298,7 @@ func TestCredentialSyncer_AtomicRenamePushesOnce(t *testing.T) {
 	}
 }
 
-func TestCredentialSyncer_NoPushWithoutInitialSeed(t *testing.T) {
+func TestCredentialSyncer_PushInitialWithoutSecretHash(t *testing.T) {
 	dir := t.TempDir()
 	credsPath := filepath.Join(dir, ".credentials.json")
 
@@ -308,13 +314,13 @@ func TestCredentialSyncer_NoPushWithoutInitialSeed(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// InitialExpiresAt=0 means "no boot-time seed" — first tick should push
-	// because 5000 != 0
+	// Compatibility flows without a boot-time hash can request one initial
+	// write-back explicitly.
 	syncer := &CredentialSyncer{
-		CredentialsPath:  credsPath,
-		SidecarURL:       srv.URL,
-		Interval:         50 * time.Millisecond,
-		InitialExpiresAt: 0,
+		CredentialsPath: credsPath,
+		SidecarURL:      srv.URL,
+		Interval:        50 * time.Millisecond,
+		PushInitial:     true,
 	}
 
 	go syncer.Run(ctx)
@@ -331,5 +337,98 @@ func TestCredentialSyncer_NoPushWithoutInitialSeed(t *testing.T) {
 
 	if pushCount.Load() != 1 {
 		t.Fatalf("expected 1 push, got %d", pushCount.Load())
+	}
+}
+
+func TestCredentialSyncer_RetriesBeforePollingBackstop(t *testing.T) {
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCredentials(t, credsPath, "at-old", "rt-old", 1000)
+
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &CredentialSyncer{
+		CredentialsPath:       credsPath,
+		SidecarURL:            srv.URL,
+		Interval:              time.Minute,
+		InitialCredentialHash: credentialsync.HashClaude("at-old", "rt-old", 1000),
+		RetryInitial:          20 * time.Millisecond,
+		RetryMax:              40 * time.Millisecond,
+	}
+	go s.Run(ctx)
+	time.Sleep(100 * time.Millisecond)
+	writeCredentials(t, credsPath, "at-new", "rt-new", 2000)
+
+	deadline := time.After(2 * time.Second)
+	for attempts.Load() < 2 {
+		select {
+		case <-deadline:
+			t.Fatalf("retry waited for polling backstop; got %d attempt(s)", attempts.Load())
+		default:
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+}
+
+func TestCredentialSyncer_ConflictIsNotRetried(t *testing.T) {
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCredentials(t, credsPath, "at-new", "rt-new", 2000)
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &CredentialSyncer{
+		CredentialsPath:       credsPath,
+		SidecarURL:            srv.URL,
+		Interval:              time.Minute,
+		InitialCredentialHash: credentialsync.HashClaude("at-old", "rt-old", 1000),
+		PushInitial:           true,
+		RetryInitial:          20 * time.Millisecond,
+		RetryMax:              40 * time.Millisecond,
+	}
+	go s.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("conflict attempts = %d, want exactly 1", got)
+	}
+}
+
+func TestCredentialSyncer_PermanentRejectionIsNotRetried(t *testing.T) {
+	dir := t.TempDir()
+	credsPath := filepath.Join(dir, ".credentials.json")
+	writeCredentials(t, credsPath, "at-new", "rt-new", 2000)
+	var attempts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempts.Add(1)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	s := &CredentialSyncer{
+		CredentialsPath: credsPath, SidecarURL: srv.URL, Interval: time.Minute,
+		PushInitial: true, RetryInitial: 20 * time.Millisecond, RetryMax: 40 * time.Millisecond,
+	}
+	go s.Run(ctx)
+	time.Sleep(200 * time.Millisecond)
+	if got := attempts.Load(); got != 1 {
+		t.Fatalf("rejected credential attempts = %d, want exactly 1", got)
 	}
 }

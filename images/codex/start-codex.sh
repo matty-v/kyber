@@ -283,6 +283,9 @@ if [ -n "${CODEX_AUTH_JSON:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     umask 077
     _seed_marker="$CODEX_HOME/.kyber-seeded-auth"
     _secret_hash="$(printf '%s' "$CODEX_AUTH_JSON" | sha256sum | cut -d' ' -f1)"
+    # The reporter uses this as a compare-and-set precondition. It advances
+    # the value in memory after every successful write-back.
+    export KYBER_CODEX_CREDENTIAL_HASH="$_secret_hash"
     _seeded_hash=""
     # Written as an if, not `[ -r … ] && x=…`: under `set -e` the exit status of
     # a short-circuited && list is the test's failure, and relying on bash's
@@ -313,11 +316,21 @@ if [ -n "${CODEX_AUTH_JSON:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
         printf '%s' "$_secret_hash" > "$_seed_marker"
         echo "[kyber] seeded Codex credentials (secret changed since last boot)"
     else
-        echo "[kyber] keeping locally refreshed Codex credentials (secret unchanged)"
+        _local_hash="$(sha256sum "$CODEX_HOME/auth.json" | cut -d' ' -f1)"
+        if [ "$_local_hash" != "$_secret_hash" ]; then
+            # The CLI rotated auth.json but the Secret still contains the
+            # credential originally seeded into this persistent home. Re-push
+            # immediately when the reporter starts; polling five minutes later
+            # is too late for a pod-replacement recovery path.
+            export KYBER_CODEX_PUSH_INITIAL=1
+            echo "[kyber] keeping locally refreshed Codex credentials and scheduling write-back (secret unchanged)"
+        else
+            echo "[kyber] keeping Codex credentials (local and secret copies match)"
+        fi
     fi
     chmod 0600 "$CODEX_HOME/auth.json" "$_seed_marker" 2>/dev/null || true
     umask "$_prev_umask"
-    unset CODEX_AUTH_JSON _secret_hash _seeded_hash _seed_marker _prev_umask
+    unset CODEX_AUTH_JSON _secret_hash _seeded_hash _local_hash _seed_marker _prev_umask
 fi
 
 if [ -n "${OPENAI_API_KEY:-}" ]; then

@@ -39,9 +39,10 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 	credSyncer := &tokenreport.CodexCredentialSyncer{
-		AuthPath:    filepath.Join(codexHome, "auth.json"),
-		SidecarURL:  os.Getenv("KYBER_SIDECAR_URL"),
-		PushInitial: os.Getenv("KYBER_CODEX_PUSH_INITIAL") == "1",
+		AuthPath:              filepath.Join(codexHome, "auth.json"),
+		SidecarURL:            os.Getenv("KYBER_SIDECAR_URL"),
+		PushInitial:           os.Getenv("KYBER_CODEX_PUSH_INITIAL") == "1",
+		InitialCredentialHash: os.Getenv("KYBER_CODEX_CREDENTIAL_HASH"),
 		// fsnotify is the primary trigger; this is the missed-event backstop.
 		Interval: 5 * time.Minute,
 	}

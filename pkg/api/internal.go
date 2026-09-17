@@ -5,6 +5,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,10 +25,12 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/credentialsync"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/modelprobe"
@@ -614,7 +617,8 @@ func (s *InternalServer) handleSessionBrief(w http.ResponseWriter, r *http.Reque
 // fields are present in the body (access_token, refresh_token, expires_at).
 // Fields not present in the body are preserved unchanged.
 //
-// Returns 204 on success, 400 on bad body, 503 when not configured, 500 on k8s errors.
+// Returns 204 on success, 400 on bad body, 409 when a newer credential won,
+// 503 when not configured, and 500 on Kubernetes errors.
 func (s *InternalServer) handleOAuthRotation(w http.ResponseWriter, r *http.Request, agent string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -628,8 +632,9 @@ func (s *InternalServer) handleOAuthRotation(w http.ResponseWriter, r *http.Requ
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresAt    int64  `json:"expires_at"`
+		ExpectedHash string `json:"expected_hash"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 512<<10)).Decode(&body); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
@@ -637,26 +642,65 @@ func (s *InternalServer) handleOAuthRotation(w http.ResponseWriter, r *http.Requ
 		http.Error(w, "body must contain at least one of access_token, refresh_token, expires_at", http.StatusBadRequest)
 		return
 	}
-
-	sec := &corev1.Secret{}
-	key := types.NamespacedName{Name: agent + "-oauth", Namespace: s.namespace}
-	if err := s.k8sClient.Get(r.Context(), key, sec); err != nil {
-		http.Error(w, "secret lookup failed", http.StatusInternalServerError)
+	if body.ExpiresAt < 0 {
+		http.Error(w, "expires_at must be positive", http.StatusBadRequest)
 		return
 	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
+	if body.ExpectedHash != "" && !credentialsync.ValidHash(body.ExpectedHash) {
+		http.Error(w, "expected_hash must be a lowercase SHA-256 digest", http.StatusBadRequest)
+		return
 	}
-	if body.AccessToken != "" {
-		sec.Data["access_token"] = []byte(body.AccessToken)
+
+	key := types.NamespacedName{Name: agent + "-oauth", Namespace: s.namespace}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sec := &corev1.Secret{}
+		if err := s.k8sClient.Get(r.Context(), key, sec); err != nil {
+			return err
+		}
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+
+		accessToken := string(sec.Data["access_token"])
+		refreshToken := string(sec.Data["refresh_token"])
+		expiresAt, _ := strconv.ParseInt(string(sec.Data["expires_at"]), 10, 64)
+		currentHash := credentialsync.HashClaude(accessToken, refreshToken, expiresAt)
+		if body.AccessToken != "" {
+			accessToken = body.AccessToken
+		}
+		if body.RefreshToken != "" {
+			refreshToken = body.RefreshToken
+		}
+		if body.ExpiresAt != 0 {
+			expiresAt = body.ExpiresAt
+		}
+		desiredHash := credentialsync.HashClaude(accessToken, refreshToken, expiresAt)
+
+		// Test idempotency before the precondition. If the first update landed
+		// but its HTTP response was lost, an exact retry is already complete.
+		if currentHash == desiredHash {
+			return nil
+		}
+		if body.ExpectedHash != "" && currentHash != body.ExpectedHash {
+			return errCredentialWriteSuperseded
+		}
+
+		if body.AccessToken != "" {
+			sec.Data["access_token"] = []byte(accessToken)
+		}
+		if body.RefreshToken != "" {
+			sec.Data["refresh_token"] = []byte(refreshToken)
+		}
+		if body.ExpiresAt != 0 {
+			sec.Data["expires_at"] = []byte(strconv.FormatInt(expiresAt, 10))
+		}
+		return s.k8sClient.Update(r.Context(), sec)
+	})
+	if errors.Is(err, errCredentialWriteSuperseded) {
+		http.Error(w, "credential state changed; restart with the current credential", http.StatusConflict)
+		return
 	}
-	if body.RefreshToken != "" {
-		sec.Data["refresh_token"] = []byte(body.RefreshToken)
-	}
-	if body.ExpiresAt != 0 {
-		sec.Data["expires_at"] = []byte(strconv.FormatInt(body.ExpiresAt, 10))
-	}
-	if err := s.k8sClient.Update(r.Context(), sec); err != nil {
+	if err != nil {
 		http.Error(w, "secret update failed", http.StatusInternalServerError)
 		return
 	}
@@ -677,8 +721,8 @@ func (s *InternalServer) handleOAuthRotation(w http.ResponseWriter, r *http.Requ
 // format. We validate that it is JSON and within the same ceiling the create
 // path enforces, then store it verbatim.
 //
-// Returns 204 on success, 400 on bad body, 503 when not configured,
-// 500 on k8s errors.
+// Returns 204 on success, 400 on bad body, 409 when a newer credential won,
+// 503 when not configured, and 500 on Kubernetes errors.
 func (s *InternalServer) handleCodexAuthRotation(w http.ResponseWriter, r *http.Request, agent string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -689,7 +733,8 @@ func (s *InternalServer) handleCodexAuthRotation(w http.ResponseWriter, r *http.
 		return
 	}
 	var body struct {
-		AuthJSON string `json:"auth_json"`
+		AuthJSON     string `json:"auth_json"`
+		ExpectedHash string `json:"expected_hash"`
 	}
 	// Bound the read: the create path caps codexAuthJson at 256KiB, and the
 	// JSON envelope adds a little overhead on top of that.
@@ -706,23 +751,44 @@ func (s *InternalServer) handleCodexAuthRotation(w http.ResponseWriter, r *http.
 		http.Error(w, "auth_json must be valid JSON under 256KiB", http.StatusBadRequest)
 		return
 	}
-
-	sec := &corev1.Secret{}
-	key := types.NamespacedName{Name: agent + "-codex-auth", Namespace: s.namespace}
-	if err := s.k8sClient.Get(r.Context(), key, sec); err != nil {
-		http.Error(w, "secret lookup failed", http.StatusInternalServerError)
+	if body.ExpectedHash != "" && !credentialsync.ValidHash(body.ExpectedHash) {
+		http.Error(w, "expected_hash must be a lowercase SHA-256 digest", http.StatusBadRequest)
 		return
 	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
+
+	key := types.NamespacedName{Name: agent + "-codex-auth", Namespace: s.namespace}
+	desired := []byte(body.AuthJSON)
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		sec := &corev1.Secret{}
+		if err := s.k8sClient.Get(r.Context(), key, sec); err != nil {
+			return err
+		}
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		current := sec.Data["auth.json"]
+		currentHash := credentialsync.HashOpaque(current)
+		if bytes.Equal(current, desired) {
+			return nil
+		}
+		if body.ExpectedHash != "" && currentHash != body.ExpectedHash {
+			return errCredentialWriteSuperseded
+		}
+		sec.Data["auth.json"] = desired
+		return s.k8sClient.Update(r.Context(), sec)
+	})
+	if errors.Is(err, errCredentialWriteSuperseded) {
+		http.Error(w, "credential state changed; restart with the current credential", http.StatusConflict)
+		return
 	}
-	sec.Data["auth.json"] = []byte(body.AuthJSON)
-	if err := s.k8sClient.Update(r.Context(), sec); err != nil {
+	if err != nil {
 		http.Error(w, "secret update failed", http.StatusInternalServerError)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+var errCredentialWriteSuperseded = errors.New("credential write superseded")
 
 // handleTokenUsagePost handles POST /internal/agents/{name}/token-usage.
 // It persists the provided Snapshot under agentName in the TokenStore and
