@@ -122,8 +122,10 @@ for confirmed credential failure.
   `make build`, `make lint`, and `make test` with the required envtest assets.
 - [x] Update the harness contract/conformance matrix, lifecycle documentation,
   and this plan with exact evidence and remaining limits.
-- [ ] Commit and push each verified checkpoint, open one consolidated PR, and
-  record the PR/CI evidence on MAT-76.
+- [x] Commit and push each verified checkpoint and open consolidated PR
+  [#249](https://github.com/matty-v/kyber/pull/249).
+- [ ] Require green PR CI and record the final PR/CI evidence on MAT-76 before
+  merge.
 - [ ] After merge, leave live staging validation to the combined MAT-7 closure
   matrix agreed for MAT-76 through MAT-79; do not cut a release from this issue.
 
@@ -153,8 +155,8 @@ for confirmed credential failure.
 
 ## Current next action
 
-Commit and push the documentation/review checkpoint, open the consolidated PR,
-and use required CI to complete the whole-repository test gate.
+Monitor required CI on PR #249, address any review or test findings, and record
+the final evidence on MAT-76 before merge.
 
 ## Implementation checkpoint — failure contract
 
