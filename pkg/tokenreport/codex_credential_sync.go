@@ -3,14 +3,15 @@ package tokenreport
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
+
+	"github.com/matty-v/kyber/pkg/credentialsync"
 )
 
 // CodexCredentialSyncer watches ~/.codex/auth.json and pushes the document to
@@ -47,6 +48,13 @@ type CodexCredentialSyncer struct {
 	// written once. Device-auth boots use this because the Secret contained only
 	// Kyber's {} marker, not the credential the CLI just created.
 	PushInitial bool
+	// InitialCredentialHash identifies the opaque auth.json stored in the
+	// bootstrap Secret and is sent as the write-back precondition.
+	InitialCredentialHash string
+
+	// Configurable for deterministic tests. Zero values use 1s -> 5m.
+	RetryInitial time.Duration
+	RetryMax     time.Duration
 
 	HTTPClient *http.Client
 }
@@ -73,16 +81,25 @@ func (s *CodexCredentialSyncer) Run(ctx context.Context) {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 
-	// Seed lastHash from what is already on disk so the first tick does not
-	// re-push the credential the pod just booted with. A push there would be
-	// harmless but pointless write traffic against the Secret on every boot.
+	expectedHash := s.InitialCredentialHash
 	lastHash := ""
-	if data, err := s.read(); err == nil && !s.PushInitial {
-		lastHash = hashCredential(data)
+	localHash := ""
+	if data, err := s.read(); err == nil {
+		localHash = hashCredential(data)
+		if !s.PushInitial {
+			lastHash = localHash
+		}
 	}
 
-	backoff := time.Second
-	maxBackoff := 5 * time.Minute
+	retryInitial := s.RetryInitial
+	if retryInitial <= 0 {
+		retryInitial = time.Second
+	}
+	retryMax := s.RetryMax
+	if retryMax <= 0 {
+		retryMax = 5 * time.Minute
+	}
+	backoff := retryInitial
 
 	interval := s.Interval
 	if interval <= 0 {
@@ -91,23 +108,54 @@ func (s *CodexCredentialSyncer) Run(ctx context.Context) {
 	tick := time.NewTicker(interval)
 	defer tick.Stop()
 
-	doTick := func() {
-		newHash, err := s.tick(ctx, client, lastHash)
-		if err != nil {
-			log.Printf("[codex-credential-sync] error: %v (backing off %s)", err, backoff)
+	var retryTimer *time.Timer
+	var retryC <-chan time.Time
+	stopRetry := func() {
+		if retryTimer != nil && !retryTimer.Stop() {
 			select {
-			case <-ctx.Done():
-			case <-time.After(backoff):
+			case <-retryTimer.C:
+			default:
 			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
+		}
+		retryC = nil
+	}
+	scheduleRetry := func() {
+		stopRetry()
+		retryTimer = time.NewTimer(backoff)
+		retryC = retryTimer.C
+		backoff *= 2
+		if backoff > retryMax {
+			backoff = retryMax
+		}
+	}
+	defer stopRetry()
+
+	doTick := func() {
+		newHash, pushed, err := s.tick(ctx, client, lastHash, expectedHash)
+		if err != nil {
+			if errors.Is(err, ErrCredentialSuperseded) {
+				lastHash = newHash
+				stopRetry()
+				backoff = retryInitial
+				log.Printf("[codex-credential-sync] local rotation superseded by newer Secret; restart required")
+				return
 			}
+			if errors.Is(err, ErrCredentialRejected) {
+				lastHash = newHash
+				stopRetry()
+				backoff = retryInitial
+				log.Printf("[codex-credential-sync] local credential was rejected; fix runtime authorization or credential format before retrying: %v", err)
+				return
+			}
+			log.Printf("[codex-credential-sync] error: %v (backing off %s)", err, backoff)
+			scheduleRetry()
 			return
 		}
-		backoff = time.Second
-		if newHash != "" {
+		stopRetry()
+		backoff = retryInitial
+		if pushed {
 			lastHash = newHash
+			expectedHash = newHash
 		}
 	}
 
@@ -131,6 +179,11 @@ func (s *CodexCredentialSyncer) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if retryC == nil {
+				doTick()
+			}
+		case <-retryC:
+			retryC = nil
 			doTick()
 		case <-fsTrigger:
 			// Debounce: an atomic write-then-rename emits Create+Write in
@@ -145,6 +198,7 @@ func (s *CodexCredentialSyncer) Run(ctx context.Context) {
 			case <-fsTrigger:
 			default:
 			}
+			stopRetry()
 			doTick()
 		}
 	}
@@ -169,20 +223,19 @@ func (s *CodexCredentialSyncer) read() ([]byte, error) {
 }
 
 func hashCredential(data []byte) string {
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:])
+	return credentialsync.HashOpaque(data)
 }
 
 // tick reads auth.json and pushes it when its content hash has changed.
 // Returns the new hash on a successful push, "" when no push was needed,
 // or an error to trigger backoff.
-func (s *CodexCredentialSyncer) tick(ctx context.Context, client *http.Client, lastHash string) (string, error) {
+func (s *CodexCredentialSyncer) tick(ctx context.Context, client *http.Client, lastHash, expectedHash string) (observedHash string, pushed bool, err error) {
 	data, err := s.read()
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", nil // pre-login or api-key agent — skip silently
+			return "", false, nil // pre-login or api-key agent — skip silently
 		}
-		return "", fmt.Errorf("read auth.json: %w", err)
+		return "", false, fmt.Errorf("read auth.json: %w", err)
 	}
 
 	// A partially-written file must never overwrite a good Secret. Codex
@@ -190,40 +243,49 @@ func (s *CodexCredentialSyncer) tick(ctx context.Context, client *http.Client, l
 	// filesystem that does not honour rename atomicity.
 	if !json.Valid(data) {
 		log.Printf("[codex-credential-sync] skipping malformed auth.json (%d bytes)", len(data))
-		return "", nil
+		return "", false, nil
 	}
 
 	hash := hashCredential(data)
 	if hash == lastHash {
-		return "", nil // unchanged
+		return "", false, nil // unchanged
 	}
 
-	body, err := json.Marshal(map[string]any{"auth_json": string(data)})
+	body, err := json.Marshal(struct {
+		AuthJSON     string `json:"auth_json"`
+		ExpectedHash string `json:"expected_hash,omitempty"`
+	}{AuthJSON: string(data), ExpectedHash: expectedHash})
 	if err != nil {
-		return "", fmt.Errorf("marshal: %w", err)
+		return hash, false, fmt.Errorf("marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.rotationURL(), bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return hash, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("post codex-auth: %w", err)
+		return hash, false, fmt.Errorf("post codex-auth: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return "", fmt.Errorf("codex-auth endpoint returned %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusConflict {
+		return hash, false, ErrCredentialSuperseded
+	}
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return hash, false, fmt.Errorf("%w: codex-auth endpoint returned %d", ErrCredentialRejected, resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return hash, false, fmt.Errorf("codex-auth endpoint returned %d", resp.StatusCode)
 	}
 
 	// Log the hash prefix only — enough to correlate a push with a Secret
 	// generation while never revealing the credential.
 	log.Printf("[codex-credential-sync] pushed refreshed credentials (%s… → %s…)",
 		firstN(lastHash, 8), firstN(hash, 8))
-	return hash, nil
+	return hash, true, nil
 }
 
 func firstN(s string, n int) string {

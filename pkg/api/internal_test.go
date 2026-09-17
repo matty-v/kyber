@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,14 +12,19 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/credentialsync"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
@@ -373,6 +379,7 @@ func TestInternalAPI_CodexAuthRotation_RejectsBadBody(t *testing.T) {
 		{"missing field", `{}`},
 		{"empty string", `{"auth_json":""}`},
 		{"not json", `{"auth_json":"this is not json"}`},
+		{"invalid expected hash", `{"auth_json":"{}","expected_hash":"not-a-hash"}`},
 	}
 
 	for _, tc := range cases {
@@ -414,6 +421,7 @@ func TestInternalAPI_OAuthRotation_MissingBody(t *testing.T) {
 		{"empty body", ""},
 		{"missing field", `{}`},
 		{"empty string", `{"refresh_token":""}`},
+		{"invalid expected hash", `{"refresh_token":"value","expected_hash":"not-a-hash"}`},
 	}
 
 	for _, tc := range cases {
@@ -496,6 +504,141 @@ func TestInternalAPI_OAuthRotation_WritesFullCredentialSet(t *testing.T) {
 	}
 	if string(updated.Data["expires_at"]) != "2000" {
 		t.Errorf("expires_at: got %q, want %q", updated.Data["expires_at"], "2000")
+	}
+}
+
+func TestInternalAPI_OAuthRotation_CompareAndSet(t *testing.T) {
+	scheme := newOAuthTestScheme(t)
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice-oauth", Namespace: "kyber-system"},
+		Data: map[string][]byte{
+			"access_token":  []byte("old-access"),
+			"refresh_token": []byte("old-refresh"),
+			"expires_at":    []byte("1000"),
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+
+	expected := credentialsync.HashClaude("old-access", "old-refresh", 1000)
+	newBody := fmt.Sprintf(`{"access_token":"new-access","refresh_token":"new-refresh","expires_at":2000,"expected_hash":%q}`, expected)
+	post := func(body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/internal/agents/alice/refresh-token", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		return rr
+	}
+
+	if rr := post(newBody); rr.Code != http.StatusNoContent {
+		t.Fatalf("first update status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+	// A lost response may replay the exact request with its old precondition.
+	// Equality wins before the precondition, so this remains successful.
+	if rr := post(newBody); rr.Code != http.StatusNoContent {
+		t.Fatalf("idempotent replay status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+
+	staleBody := fmt.Sprintf(`{"access_token":"stale-access","refresh_token":"stale-refresh","expires_at":3000,"expected_hash":%q}`, expected)
+	rr := post(staleBody)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("stale update status = %d, want %d", rr.Code, http.StatusConflict)
+	}
+	for _, secret := range []string{"old-access", "old-refresh", "new-access", "new-refresh", "stale-access", "stale-refresh"} {
+		if strings.Contains(rr.Body.String(), secret) {
+			t.Fatalf("conflict response leaked credential %q: %s", secret, rr.Body.String())
+		}
+	}
+
+	got := &corev1.Secret{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "alice-oauth", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data["refresh_token"]) != "new-refresh" {
+		t.Fatalf("stale writer changed Secret: refresh_token = %q", got.Data["refresh_token"])
+	}
+}
+
+func TestInternalAPI_CodexAuthRotation_CompareAndSet(t *testing.T) {
+	scheme := newOAuthTestScheme(t)
+	oldAuth := []byte(`{"tokens":{"refresh_token":"old"}}`)
+	newAuth := `{"tokens":{"refresh_token":"new"}}`
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice-codex-auth", Namespace: "kyber-system"},
+		Data:       map[string][]byte{"auth.json": oldAuth},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	expected := credentialsync.HashOpaque(oldAuth)
+
+	requestBody, err := json.Marshal(map[string]string{"auth_json": newAuth, "expected_hash": expected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(body []byte) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, "/internal/agents/alice/codex-auth", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rr := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := post(requestBody); rr.Code != http.StatusNoContent {
+		t.Fatalf("first update status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+	if rr := post(requestBody); rr.Code != http.StatusNoContent {
+		t.Fatalf("idempotent replay status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+
+	staleAuth := `{"tokens":{"refresh_token":"stale"}}`
+	staleBody, err := json.Marshal(map[string]string{"auth_json": staleAuth, "expected_hash": expected})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rr := post(staleBody); rr.Code != http.StatusConflict {
+		t.Fatalf("stale update status = %d, want %d", rr.Code, http.StatusConflict)
+	}
+
+	got := &corev1.Secret{}
+	if err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "alice-codex-auth", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if string(got.Data["auth.json"]) != newAuth {
+		t.Fatalf("stale writer changed Secret: auth.json = %q", got.Data["auth.json"])
+	}
+}
+
+func TestInternalAPI_OAuthRotation_RetriesKubernetesConflict(t *testing.T) {
+	scheme := newOAuthTestScheme(t)
+	existing := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice-oauth", Namespace: "kyber-system"},
+		Data: map[string][]byte{
+			"access_token": []byte("old-access"), "refresh_token": []byte("old-refresh"), "expires_at": []byte("1000"),
+		},
+	}
+	updateAttempts := 0
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(existing).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+				updateAttempts++
+				if updateAttempts == 1 {
+					return apierrors.NewConflict(schema.GroupResource{Resource: "secrets"}, obj.GetName(), fmt.Errorf("synthetic conflict"))
+				}
+				return c.Update(ctx, obj, opts...)
+			},
+		}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	body := fmt.Sprintf(`{"access_token":"new-access","refresh_token":"new-refresh","expires_at":2000,"expected_hash":%q}`,
+		credentialsync.HashClaude("old-access", "old-refresh", 1000))
+	req := httptest.NewRequest(http.MethodPost, "/internal/agents/alice/refresh-token", strings.NewReader(body))
+	rr := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d: %s", rr.Code, http.StatusNoContent, rr.Body.String())
+	}
+	if updateAttempts != 2 {
+		t.Fatalf("update attempts = %d, want 2", updateAttempts)
 	}
 }
 

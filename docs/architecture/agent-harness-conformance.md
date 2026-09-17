@@ -30,7 +30,7 @@ from fixture execution; a source implementation alone is not certification.
 | HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Native SQLite resume + platform recall, fixture only | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
 | HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | Startup, fresh restart, `/compress`, fixture only | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
 | HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | OpenRouter creation and model roll live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
-| HC-05 subscription mode | PKCE login live verified; refresh-token sync fixtures | Device login live verified; legacy auth JSON and sync fixtures | Gap | Shared checks, `*credential_sync_test.go`, boot/device/seed fixtures; no universal atomic durability guarantee |
+| HC-05 subscription mode | PKCE login live verified; ordered local recovery and compare-and-set write-back fixtures | Device login live verified; opaque auth JSON, stale-seed and compare-and-set fixtures | Gap | Shared checks, `*credential_sync_test.go`, API CAS tests, boot/device/seed/restart fixtures; persistent-volume loss before write-back remains outside the guarantee |
 | HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Gap | Hermes `pre_llm_call` is context-only and fail-open in the pinned version |
 | HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | Gap | Hermes cannot satisfy the fail-closed pre-model receipt boundary in the pinned version |
 | HC-08 cancellation | notify_only | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
@@ -269,3 +269,32 @@ A Kubernetes 1.31 envtest exercises confirmed-auth, provider/service, and
 credential-sync failures through the real CRD status subresource. This is
 fixture evidence only; the combined MAT-7 staging matrix remains the release
 gate after MAT-76 through MAT-79 are merged.
+
+## MAT-77 credential synchronization recovery — fixture checkpoint
+
+MAT-77 makes the Kubernetes Secret write-back idempotent and ordered for both
+supported subscription harnesses. The private write-back endpoints accept the
+hash of the bootstrap credential as a compare-and-set precondition, treat an
+already-applied credential as success, and reject a stale writer with `409`
+without returning credential data. Compatibility requests from an older image
+may omit the precondition during rollout; the new Claude and Codex images always
+send it.
+
+Claude startup fixtures prove that a rotated credential is atomically written
+and flushed to the persistent native file before a failed write-back exits with
+the credential-sync category. A second boot with the same disk and stale Secret
+recovers that exact local credential, skips replay of the consumed refresh
+token, and advances the seed marker only after write-back succeeds. Separate
+fixtures cover changed-Secret reauthorization and the first-upgrade local-first
+adoption rule. Codex fixtures cover cold seed, local rotation preservation,
+immediate pending write-back, operator reauthorization, first-upgrade adoption,
+device login, and corrupt/empty local files.
+
+Both reporter suites prove complete-credential deduplication, fsnotify and poll
+fallback, immediate exponential retry independent of the five-minute polling
+interval, and terminal handling of a superseded snapshot. API tests cover
+compare-and-set success, response-loss replay, stale-writer rejection, input
+bounds, and atomic full-field persistence. Fixture values are disposable and
+diagnostics/API errors are checked for credential redaction. These are
+deterministic fixture guarantees; final session restart and pod-replacement
+validation remains part of the combined MAT-7 staging pass before release.

@@ -1,6 +1,6 @@
 # MAT-77 — credential synchronization recovery plan
 
-Status: implementation in progress.
+Status: implementation complete; PR validation in progress.
 Issue: https://linear.app/matty-v/issue/MAT-77
 Parent: MAT-7.
 Baseline: `88ead00` (`origin/main`).
@@ -134,16 +134,23 @@ single-use token that no durable copy retains.
 - [x] Trace both startup scripts, both reporters, sidecar forwarding, Secret
   mutation endpoints, MAT-7 contract text, and existing recovery fixtures.
 - [x] Record the implementation plan and explicit residual guarantee.
-- [ ] Add failing API, reporter, and startup fixtures for ordering, retry,
+- [x] Add failing API, reporter, and startup fixtures for ordering, retry,
   restart, pod replacement, revocation, and redaction.
-- [ ] Implement compare-and-set write-back and provider-specific startup
+- [x] Implement compare-and-set write-back and provider-specific startup
   recovery without changing public API or CRDs.
-- [ ] Run focused runtime/API tests, full build/vet/test, integration suites,
+- [x] Run focused runtime/API tests, full build/vet, integration suites,
   and documentation checks.
-- [ ] Review the complete diff for single-use-token safety, `set -euo pipefail`,
+- [x] Review the complete diff for single-use-token safety, `set -euo pipefail`,
   Kubernetes conflicts, compatibility, and secret leakage; fix all findings.
 - [ ] Push a consolidated PR, require green CI, and record closure evidence on
   MAT-77.
 - [ ] After merge, leave live restart/pod-recovery validation to the combined
   MAT-7 staging pass for MAT-76 through MAT-79 before the next Kyber release.
 
+Local evidence: focused credential/API tests, the full Claude and Codex startup
+integration suites, `go build ./...`, `go vet ./...`, shell syntax checks, and
+all 81 product-documentation checks pass. The full Go aggregate was also run;
+its unrelated non-short 5,000-file transcript fixture exceeded the package's
+20-minute timeout locally. That fixture passes in short mode, and the machine
+controller's envtest suite passes with the repository's Kubernetes 1.31 assets.
+Required PR CI remains the authoritative aggregate gate.

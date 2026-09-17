@@ -20,9 +20,11 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/matty-v/kyber/pkg/credentialsync"
 	"github.com/matty-v/kyber/pkg/oauth/mockserver"
 )
 
@@ -301,6 +303,155 @@ func TestStartClaude_RefreshOnBoot_WritesCredentialsJSON(t *testing.T) {
 	}
 	if !containsScope(o.Scopes, "user:sessions:claude_code") {
 		t.Errorf("missing required scope user:sessions:claude_code; got: %v", o.Scopes)
+	}
+}
+
+func readClaudeCredential(t *testing.T, home string) (access, refresh string, expiresAt int64) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var doc struct {
+		ClaudeAiOauth struct {
+			AccessToken  string `json:"accessToken"`
+			RefreshToken string `json:"refreshToken"`
+			ExpiresAt    int64  `json:"expiresAt"`
+		} `json:"claudeAiOauth"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatal(err)
+	}
+	return doc.ClaudeAiOauth.AccessToken, doc.ClaudeAiOauth.RefreshToken, doc.ClaudeAiOauth.ExpiresAt
+}
+
+func TestStartClaude_FailedWriteBackRecoversFromPersistentCredential(t *testing.T) {
+	mock := mockserver.New()
+	mock.SetRotateRefresh(true)
+	tokenServer := httptest.NewServer(mock)
+	defer tokenServer.Close()
+	originalRefresh := seedRefreshToken(t, mock, tokenServer.URL)
+	home := t.TempDir()
+
+	failedPush := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"CLAUDE_REFRESH_TOKEN=" + originalRefresh,
+		"AGENT_NAME=unit-test",
+		"ANTHROPIC_TOKEN_URL=" + tokenServer.URL + "/v1/oauth/token",
+		"KYBER_REFRESH_TOKEN_URL=" + failedPush.URL + "/internal/agents/unit-test/refresh-token",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	failedPush.Close()
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok || exitErr.ExitCode() != 45 {
+		t.Fatalf("failed write-back exit = %v, want 45\n%s", err, out)
+	}
+	access, rotatedRefresh, expiresAt := readClaudeCredential(t, home)
+	if access == "" || rotatedRefresh == "" || rotatedRefresh == originalRefresh || expiresAt <= time.Now().UnixMilli() {
+		t.Fatalf("rotated credential was not durably staged before exit")
+	}
+	if strings.Contains(string(out), originalRefresh) || strings.Contains(string(out), rotatedRefresh) || strings.Contains(string(out), access) {
+		t.Fatalf("failed write-back output leaked credential material:\n%s", out)
+	}
+	markerPath := filepath.Join(home, ".claude", ".kyber-seeded-credential")
+	marker, err := os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bootstrapHash := credentialsync.HashClaude("", originalRefresh, 0)
+	if string(marker) != bootstrapHash {
+		t.Fatalf("failed push advanced marker to %q, want bootstrap hash", marker)
+	}
+
+	var recoveredBody struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresAt    int64  `json:"expires_at"`
+		ExpectedHash string `json:"expected_hash"`
+	}
+	recoveryPush := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&recoveredBody); err != nil {
+			t.Errorf("decode recovery body: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer recoveryPush.Close()
+	out, err = runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"CLAUDE_REFRESH_TOKEN=" + originalRefresh, // stale Secret copy
+		"AGENT_NAME=unit-test",
+		"ANTHROPIC_TOKEN_URL=" + tokenServer.URL + "/v1/oauth/token",
+		"KYBER_REFRESH_TOKEN_URL=" + recoveryPush.URL + "/internal/agents/unit-test/refresh-token",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	if err != nil {
+		t.Fatalf("restart recovery failed: %v\n%s", err, out)
+	}
+	if strings.Contains(string(out), "refreshing access token") {
+		t.Fatalf("restart spent the stale single-use token instead of recovering local state:\n%s", out)
+	}
+	if recoveredBody.AccessToken != access || recoveredBody.RefreshToken != rotatedRefresh || recoveredBody.ExpiresAt != expiresAt {
+		t.Fatal("restart did not write back the exact durable local credential")
+	}
+	if recoveredBody.ExpectedHash != bootstrapHash {
+		t.Fatalf("recovery expected_hash = %q, want bootstrap hash", recoveredBody.ExpectedHash)
+	}
+	marker, err = os.ReadFile(markerPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := credentialsync.HashClaude(access, rotatedRefresh, expiresAt); string(marker) != want {
+		t.Fatalf("successful recovery marker = %q, want %q", marker, want)
+	}
+}
+
+func TestStartClaude_ChangedSecretWinsOverOlderLocalCredential(t *testing.T) {
+	home := t.TempDir()
+	credentialsDir := filepath.Join(home, ".claude")
+	if err := os.MkdirAll(credentialsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	oldExpires := time.Now().Add(30 * time.Minute).UnixMilli()
+	oldDoc := fmt.Sprintf(`{"claudeAiOauth":{"accessToken":"old-access","refreshToken":"old-refresh","expiresAt":%d}}`, oldExpires)
+	if err := os.WriteFile(filepath.Join(credentialsDir, ".credentials.json"), []byte(oldDoc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldHash := credentialsync.HashClaude("old-access", "old-refresh", oldExpires)
+	if err := os.WriteFile(filepath.Join(credentialsDir, ".kyber-seeded-credential"), []byte(oldHash), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	newExpires := time.Now().Add(time.Hour).UnixMilli()
+	var pushes atomic.Int32
+	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pushes.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer cpServer.Close()
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"CLAUDE_ACCESS_TOKEN=new-access",
+		"CLAUDE_REFRESH_TOKEN=new-refresh",
+		"CLAUDE_ACCESS_TOKEN_EXPIRES_AT=" + strconv.FormatInt(newExpires, 10),
+		"AGENT_NAME=unit-test",
+		"KYBER_REFRESH_TOKEN_URL=" + cpServer.URL + "/internal/agents/unit-test/refresh-token",
+		"SKIP_CLAUDE_LAUNCH=1",
+	})
+	if err != nil {
+		t.Fatalf("reauthorization boot failed: %v\n%s", err, out)
+	}
+	access, refresh, expiresAt := readClaudeCredential(t, home)
+	if access != "new-access" || refresh != "new-refresh" || expiresAt != newExpires {
+		t.Fatalf("local credential did not adopt changed Secret: %q %q %d", access, refresh, expiresAt)
+	}
+	if pushes.Load() != 0 {
+		t.Fatalf("already-durable reauthorization was redundantly pushed %d time(s)", pushes.Load())
 	}
 }
 

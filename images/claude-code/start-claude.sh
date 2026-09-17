@@ -378,6 +378,45 @@ kyber_credential_sync_failure() {
     exit 45
 }
 
+kyber_claude_credential_hash() {
+    # Must match pkg/credentialsync.HashClaude. NUL-separated fields avoid
+    # ambiguous concatenation without serializing provider-owned values.
+    printf '%s\0%s\0%s\0' "$1" "$2" "$3" | sha256sum | cut -d' ' -f1
+}
+
+kyber_write_claude_credentials() {
+    local access_token="$1" refresh_token="$2" expires_at="$3"
+    local credentials_dir="$HOME/.claude"
+    local credentials_path="$credentials_dir/.credentials.json"
+    local temp_path
+    mkdir -p "$credentials_dir"
+    temp_path=$(mktemp "$credentials_dir/.credentials.json.tmp.XXXXXX") || \
+        kyber_credential_sync_failure "could not create a durable credential staging file"
+    if ! jq -n --arg at "$access_token" --arg rt "$refresh_token" --argjson ex "$expires_at" '
+      {claudeAiOauth:{accessToken:$at,refreshToken:$rt,expiresAt:$ex,
+       scopes:["org:create_api_key","user:profile","user:inference","user:sessions:claude_code","user:mcp_servers","user:file_upload"]}}
+    ' > "$temp_path"; then
+        rm -f "$temp_path"
+        kyber_credential_sync_failure "could not serialize the durable Claude Code credential"
+    fi
+    chmod 0600 "$temp_path"
+    mv -f "$temp_path" "$credentials_path"
+    if ! sync -f "$credentials_path" || ! sync -f "$credentials_dir"; then
+        kyber_credential_sync_failure "could not flush the rotated credential to persistent storage"
+    fi
+}
+
+kyber_write_claude_seed_marker() {
+    local marker_path="$1" hash="$2" temp_path
+    mkdir -p "$(dirname "$marker_path")"
+    temp_path=$(mktemp "${marker_path}.tmp.XXXXXX") || \
+        kyber_credential_sync_failure "could not create a credential marker staging file"
+    printf '%s' "$hash" > "$temp_path"
+    chmod 0600 "$temp_path"
+    mv -f "$temp_path" "$marker_path"
+    sync -f "$marker_path" 2>/dev/null || true
+}
+
 # ---- Credential handling ----
 # On every boot we reach this block with three potentially-set env vars from
 # the <agent>-oauth Secret:
@@ -406,24 +445,92 @@ fi
 NOW_MS=$(($(date +%s) * 1000))
 BUFFER_MS=$((5 * 60 * 1000))
 USE_CACHED=false
+SYNC_PENDING=false
+REFRESHED=false
+CLAUDE_CREDENTIALS_PATH="$HOME/.claude/.credentials.json"
+CLAUDE_SEED_MARKER="$HOME/.claude/.kyber-seeded-credential"
 
-# A complete credential persisted by Claude may be newer than (or the only
-# copy available from) the Secret. Load the whole trio into the same bounded
-# validation/refresh path as injected credentials. Merely finding non-empty
-# JSON fields is not enough: an expired access token must be refreshed here,
-# before the TUI can turn an auth failure into a false Running state.
-if [ -z "${CLAUDE_REFRESH_TOKEN:-}" ] && [ -r "$HOME/.claude/.credentials.json" ]; then
+# Capture the bootstrap Secret state before choosing between it and the
+# persistent local copy. A refresh-token-only Secret is a valid bootstrap
+# source even though it cannot use the cached-access path.
+secret_access="${CLAUDE_ACCESS_TOKEN:-}"
+secret_refresh="${CLAUDE_REFRESH_TOKEN:-}"
+secret_expires="${CLAUDE_ACCESS_TOKEN_EXPIRES_AT:-0}"
+if ! [[ "$secret_expires" =~ ^[0-9]+$ ]]; then
+    secret_expires=0
+fi
+secret_hash=""
+if [ -n "$secret_refresh" ]; then
+    secret_hash=$(kyber_claude_credential_hash "$secret_access" "$secret_refresh" "$secret_expires")
+fi
+
+seeded_hash=""
+if [ -r "$CLAUDE_SEED_MARKER" ]; then
+    seeded_hash=$(cat "$CLAUDE_SEED_MARKER" 2>/dev/null || true)
+    [[ "$seeded_hash" =~ ^[0-9a-f]{64}$ ]] || seeded_hash=""
+fi
+
+local_access=""
+local_refresh=""
+local_expires="0"
+local_hash=""
+if [ -r "$CLAUDE_CREDENTIALS_PATH" ]; then
     if persisted_oauth=$(jq -er '
         .claudeAiOauth as $o
         | select(($o.accessToken | type == "string" and length > 0)
               and ($o.refreshToken | type == "string" and length > 0)
-              and ($o.expiresAt | type == "number" and . > 0))
+              and ($o.expiresAt | type == "number" and . > 0 and (. == floor)))
         | [$o.accessToken, $o.refreshToken, ($o.expiresAt | tostring)] | @tsv
-    ' "$HOME/.claude/.credentials.json" 2>/dev/null); then
-        IFS=$'\t' read -r CLAUDE_ACCESS_TOKEN CLAUDE_REFRESH_TOKEN CLAUDE_ACCESS_TOKEN_EXPIRES_AT <<< "$persisted_oauth"
-        echo "[kyber] loaded persisted Claude Code OAuth credential for validation"
+    ' "$CLAUDE_CREDENTIALS_PATH" 2>/dev/null); then
+        IFS=$'\t' read -r local_access local_refresh local_expires <<< "$persisted_oauth"
+        local_hash=$(kyber_claude_credential_hash "$local_access" "$local_refresh" "$local_expires")
     fi
     unset persisted_oauth
+fi
+
+expected_hash="$secret_hash"
+if [ -n "$local_hash" ]; then
+    if [ -n "$secret_hash" ] && [ -z "$seeded_hash" ]; then
+        # Upgrade adoption is deliberately local-first. Without a historical
+        # marker Kyber cannot tell a refreshed local credential from an
+        # operator credential that arrived immediately before upgrade. Never
+        # destroy the local single-use token; defer write-back until the next
+        # proven native refresh.
+        CLAUDE_ACCESS_TOKEN="$local_access"
+        CLAUDE_REFRESH_TOKEN="$local_refresh"
+        CLAUDE_ACCESS_TOKEN_EXPIRES_AT="$local_expires"
+        kyber_write_claude_seed_marker "$CLAUDE_SEED_MARKER" "$secret_hash"
+        echo "[kyber] adopted existing Claude Code credentials (first boot with seed tracking)"
+    elif [ -n "$secret_hash" ] && [ "$secret_hash" != "$seeded_hash" ]; then
+        # The Secret moved independently of the last seeded copy: explicit
+        # reauthorization wins over the old local file.
+        CLAUDE_ACCESS_TOKEN="$secret_access"
+        CLAUDE_REFRESH_TOKEN="$secret_refresh"
+        CLAUDE_ACCESS_TOKEN_EXPIRES_AT="$secret_expires"
+        kyber_write_claude_seed_marker "$CLAUDE_SEED_MARKER" "$secret_hash"
+        echo "[kyber] selected newly supplied Claude Code credentials"
+    else
+        CLAUDE_ACCESS_TOKEN="$local_access"
+        CLAUDE_REFRESH_TOKEN="$local_refresh"
+        CLAUDE_ACCESS_TOKEN_EXPIRES_AT="$local_expires"
+        if [ -n "$seeded_hash" ]; then
+            expected_hash="$seeded_hash"
+            if [ "$local_hash" != "$seeded_hash" ]; then
+                SYNC_PENDING=true
+                echo "[kyber] recovered a locally rotated Claude Code credential pending write-back"
+            fi
+        fi
+    fi
+elif [ -n "$secret_hash" ]; then
+    CLAUDE_ACCESS_TOKEN="$secret_access"
+    CLAUDE_REFRESH_TOKEN="$secret_refresh"
+    CLAUDE_ACCESS_TOKEN_EXPIRES_AT="$secret_expires"
+    kyber_write_claude_seed_marker "$CLAUDE_SEED_MARKER" "$secret_hash"
+    echo "[kyber] seeded Claude Code credentials from the Secret"
+fi
+
+if [ -n "$expected_hash" ]; then
+    export KYBER_CLAUDE_CREDENTIAL_HASH="$expected_hash"
 fi
 
 # Reuse requires the complete trio. In particular, a future-dated access token
@@ -497,50 +604,51 @@ if [ "$USE_CACHED" = false ]; then
         fi
         expires_at=$(( ($(date +%s) + expires_in) * 1000 ))
         effective_refresh="${new_refresh:-$CLAUDE_REFRESH_TOKEN}"
-
-        # Rotation push — BLOCKING. Anthropic has consumed the old refresh_token by
-        # now. If we don't persist the new credentials, the next boot's secret will
-        # be stale and Anthropic will return invalid_grant. Better to crash loud
-        # here than corrupt the secret silently.
-        if [ -n "${AGENT_NAME:-}" ]; then
-            POD_TOKEN=$(cat /var/run/secrets/kyber/pod-token 2>/dev/null || echo "")
-            rot_body=$(jq -n \
-              --arg at "$access" \
-              --arg rt "$effective_refresh" \
-              --argjson ex "$expires_at" \
-              '{access_token:$at, refresh_token:$rt, expires_at:$ex}')
-            if ! rotation_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
-                 -H "Authorization: Bearer $POD_TOKEN" \
-                 -H "Content-Type: application/json" \
-                 -X POST \
-                 "$KYBER_REFRESH_TOKEN_URL" \
-                 -d "$rot_body"); then
-                kyber_credential_sync_failure "credential rotation push to the Kyber control plane failed"
-            fi
-            if ! [[ "$rotation_status" =~ ^2[0-9][0-9]$ ]]; then
-                kyber_credential_sync_failure "credential rotation push to the Kyber control plane returned HTTP $rotation_status"
-            fi
-            echo "[kyber] rotation push succeeded — secret updated with new credentials"
-        fi
+        REFRESHED=true
     fi
 fi
 
-# ---- Always write credentials.json from the resolved trio ----
+# Write the local recovery copy BEFORE remote synchronization. Once the
+# provider rotates a single-use token, this file is the only recoverable copy
+# until the Secret update succeeds.
 if [ -n "${access:-}" ] && [ -n "${effective_refresh:-}" ] && [ -n "${expires_at:-}" ]; then
-    mkdir -p "$HOME/.claude"
-    cat > "$HOME/.claude/.credentials.json" <<EOF
-{
-  "claudeAiOauth": {
-    "accessToken": "$access",
-    "refreshToken": "$effective_refresh",
-    "expiresAt": $expires_at,
-    "scopes": ["org:create_api_key","user:profile","user:inference","user:sessions:claude_code","user:mcp_servers","user:file_upload"]
-  }
-}
-EOF
-    chmod 600 "$HOME/.claude/.credentials.json"
-    echo "[kyber] credentials.json written"
+    kyber_write_claude_credentials "$access" "$effective_refresh" "$expires_at"
+    resolved_hash=$(kyber_claude_credential_hash "$access" "$effective_refresh" "$expires_at")
+    echo "[kyber] credentials.json written atomically"
+
+    if { [ "$REFRESHED" = true ] || [ "$SYNC_PENDING" = true ]; } && [ -n "${AGENT_NAME:-}" ]; then
+        POD_TOKEN=$(cat /var/run/secrets/kyber/pod-token 2>/dev/null || echo "")
+        rot_body=$(jq -n \
+          --arg at "$access" \
+          --arg rt "$effective_refresh" \
+          --argjson ex "$expires_at" \
+          --arg expected "$expected_hash" \
+          '{access_token:$at, refresh_token:$rt, expires_at:$ex}
+           + (if $expected == "" then {} else {expected_hash:$expected} end)')
+        if ! rotation_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
+             -H "Authorization: Bearer $POD_TOKEN" \
+             -H "Content-Type: application/json" \
+             -X POST \
+             "$KYBER_REFRESH_TOKEN_URL" \
+             -d "$rot_body"); then
+            unset rot_body POD_TOKEN
+            kyber_credential_sync_failure "credential rotation push to the Kyber control plane failed; the rotated credential remains on persistent disk"
+        fi
+        unset rot_body POD_TOKEN
+        if [ "$rotation_status" = "409" ]; then
+            kyber_credential_sync_failure "credential rotation was superseded by a newer Secret; restart is required"
+        fi
+        if ! [[ "$rotation_status" =~ ^2[0-9][0-9]$ ]]; then
+            kyber_credential_sync_failure "credential rotation push to the Kyber control plane returned HTTP $rotation_status; the rotated credential remains on persistent disk"
+        fi
+        kyber_write_claude_seed_marker "$CLAUDE_SEED_MARKER" "$resolved_hash"
+        export KYBER_CLAUDE_CREDENTIAL_HASH="$resolved_hash"
+        echo "[kyber] rotation push succeeded — secret updated with new credentials"
+    fi
 fi
+
+unset secret_access secret_refresh secret_expires secret_hash seeded_hash
+unset local_access local_refresh local_expires local_hash expected_hash resolved_hash
 
 fi # end of OAuth/api-key guard
 

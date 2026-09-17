@@ -162,6 +162,43 @@ for failure to persist refreshed credentials. Only the confirmed-auth category
 automatically enters `NeedsAuth`; provider and synchronization failures enter
 the existing bounded `Failed` recovery path with distinct operator evidence.
 
+### Credential synchronization ordering
+
+For Claude Code and Codex subscription credentials, the runtime-owned file on
+the Agent's persistent disk is the recovery authority while a provider rotation
+is pending. The per-Agent Kubernetes Secret becomes the durable bootstrap
+authority after write-back succeeds. Startup records only a SHA-256 identifier
+of the Secret credential beside the native credential file; it never stores a
+second plaintext credential in platform metadata.
+
+New-runtime write-back requests carry the identifier of the Secret credential
+from which the rotation began. The control plane applies the update only when
+that identifier still matches, or returns success when the proposed credential
+is already present. A delayed old pod therefore cannot overwrite a later
+rotation or operator reauthorization, and a lost success response is safe to
+retry. During a mixed-version rollout, older runtime images may omit this
+precondition for compatibility; completing the runtime-image rollout is part
+of establishing the guarantee.
+
+Claude startup writes and flushes a provider-refreshed credential to its native
+persistent file before attempting Secret write-back. On a write-back failure it
+exits with the runtime's credential-sync category while retaining that local
+recovery copy. The next bounded restart recognizes the unchanged bootstrap
+Secret plus newer local credential and retries synchronization without replaying
+the consumed refresh token. Codex treats `auth.json` as opaque, preserves a
+newer local document when the seed marker is unchanged, and asks its reporter
+to synchronize it immediately.
+
+Both reporters serialize updates, identify the complete credential rather than
+expiry alone, retry transport/server failures from one second up to a five-minute
+cap independently of their polling backstop, and stop retrying a superseded
+snapshot after `409 Conflict` until restart supplies the current Secret base.
+Session restart does not replace these files or reporters. Pod replacement with
+the same persistent disk re-runs reconciliation. Loss of that disk after an
+upstream rotation but before Secret write-back remains irrecoverable and may
+require reauthorization; Kyber does not claim atomicity across provider, disk,
+and Kubernetes storage.
+
 Compatibility rules: contract version, image digest, and installed CLI version
 are separate axes. Widening optional vocabulary can be additive; narrowing a
 baseline requirement or changing its meaning requires a major contract revision
@@ -188,7 +225,9 @@ conformance guide. Publication follows repository review; the contract version
 alone is not a certification of every native feature. Record changes
 here by contract version and reference the implementation release. Initial
 history: 2026-09-06 — approved v1 scope and test-first migration; 2026-09-07 —
-1.0 implementation and four-way native auth evidence ready for publication.
+1.0 implementation and four-way native auth evidence ready for publication;
+2026-09-17 — MAT-77 ordered credential write-back and persistent recovery
+guarantees specified, with mixed-version and storage-loss limits retained.
 
 ## 7. Cross-references
 

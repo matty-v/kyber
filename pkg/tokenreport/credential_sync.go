@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	"github.com/matty-v/kyber/pkg/credentialsync"
 )
 
 // CredentialSyncer watches ~/.claude/.credentials.json and pushes changed
@@ -41,9 +43,16 @@ type CredentialSyncer struct {
 	SidecarURL string
 	Interval   time.Duration
 
-	// InitialExpiresAt seeds the last-pushed state from boot-time env vars.
-	// If non-zero, the first tick skips pushing unless expiresAt has changed.
-	InitialExpiresAt int64
+	// InitialCredentialHash identifies the complete credential in the Secret
+	// that boot started from and is sent as the write-back precondition.
+	// Startup sets PushInitial when a known pending local rotation must be
+	// reconciled immediately.
+	InitialCredentialHash string
+	PushInitial           bool
+
+	// Configurable for deterministic tests. Zero values use 1s -> 5m.
+	RetryInitial time.Duration
+	RetryMax     time.Duration
 
 	HTTPClient *http.Client
 }
@@ -76,30 +85,81 @@ func (s *CredentialSyncer) Run(ctx context.Context) {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 
-	lastExpiresAt := s.InitialExpiresAt
-	backoff := time.Second
-	maxBackoff := 5 * time.Minute
+	expectedHash := s.InitialCredentialHash
+	lastLocalHash := ""
+	localHash := ""
+	if creds, err := s.read(); err == nil {
+		localHash = hashClaudeCredential(creds.ClaudeAiOauth)
+		if !s.PushInitial {
+			lastLocalHash = localHash
+		}
+	}
 
-	tick := time.NewTicker(s.Interval)
+	retryInitial := s.RetryInitial
+	if retryInitial <= 0 {
+		retryInitial = time.Second
+	}
+	retryMax := s.RetryMax
+	if retryMax <= 0 {
+		retryMax = 5 * time.Minute
+	}
+	backoff := retryInitial
+
+	interval := s.Interval
+	if interval <= 0 {
+		interval = 5 * time.Minute
+	}
+	tick := time.NewTicker(interval)
 	defer tick.Stop()
 
-	doTick := func() {
-		newExpiresAt, err := s.tick(ctx, client, lastExpiresAt)
-		if err != nil {
-			log.Printf("[credential-sync] error: %v (backing off %s)", err, backoff)
+	var retryTimer *time.Timer
+	var retryC <-chan time.Time
+	stopRetry := func() {
+		if retryTimer != nil && !retryTimer.Stop() {
 			select {
-			case <-ctx.Done():
-			case <-time.After(backoff):
+			case <-retryTimer.C:
+			default:
 			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
+		}
+		retryC = nil
+	}
+	scheduleRetry := func() {
+		stopRetry()
+		retryTimer = time.NewTimer(backoff)
+		retryC = retryTimer.C
+		backoff *= 2
+		if backoff > retryMax {
+			backoff = retryMax
+		}
+	}
+	defer stopRetry()
+
+	doTick := func() {
+		observedHash, pushed, err := s.tick(ctx, client, lastLocalHash, expectedHash)
+		if err != nil {
+			if errors.Is(err, ErrCredentialSuperseded) {
+				lastLocalHash = observedHash
+				stopRetry()
+				backoff = retryInitial
+				log.Printf("[credential-sync] local rotation superseded by newer Secret; restart required")
+				return
 			}
+			if errors.Is(err, ErrCredentialRejected) {
+				lastLocalHash = observedHash
+				stopRetry()
+				backoff = retryInitial
+				log.Printf("[credential-sync] local credential was rejected; fix runtime authorization or credential format before retrying: %v", err)
+				return
+			}
+			log.Printf("[credential-sync] error: %v (backing off %s)", err, backoff)
+			scheduleRetry()
 			return
 		}
-		backoff = time.Second
-		if newExpiresAt != 0 {
-			lastExpiresAt = newExpiresAt
+		stopRetry()
+		backoff = retryInitial
+		if pushed {
+			lastLocalHash = observedHash
+			expectedHash = observedHash
 		}
 	}
 
@@ -118,12 +178,20 @@ func (s *CredentialSyncer) Run(ctx context.Context) {
 	if watcher, ok := s.startFSWatcher(ctx, nudge); ok {
 		defer watcher.Close()
 	}
+	if s.PushInitial {
+		doTick()
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-tick.C:
+			if retryC == nil {
+				doTick()
+			}
+		case <-retryC:
+			retryC = nil
 			doTick()
 		case <-fsTrigger:
 			// Debounce: claude-code's atomic-rename emits Create+Write in
@@ -138,10 +206,20 @@ func (s *CredentialSyncer) Run(ctx context.Context) {
 			case <-fsTrigger:
 			default:
 			}
+			stopRetry()
 			doTick()
 		}
 	}
 }
+
+// ErrCredentialSuperseded means the Secret changed after this runtime read its
+// bootstrap credential. Retrying would risk overwriting operator reauthorization.
+var ErrCredentialSuperseded = errors.New("credential write superseded")
+
+// ErrCredentialRejected means the control plane permanently rejected this
+// snapshot (for example, malformed input or failed runtime authorization).
+// Retrying unchanged content cannot succeed and would obscure the diagnosis.
+var ErrCredentialRejected = errors.New("credential write rejected")
 
 // startFSWatcher arms an fsnotify watch on the parent directory of
 // CredentialsPath. See watchCredentialFile for the mechanics.
@@ -205,60 +283,93 @@ func watchCredentialFile(ctx context.Context, path string, nudge func(), logPref
 	return watcher, true
 }
 
-// tick reads the credentials file and pushes to the rotation endpoint if
-// expiresAt has changed. Returns the new expiresAt on successful push,
-// 0 if no push was needed, or an error to trigger backoff.
-func (s *CredentialSyncer) tick(ctx context.Context, client *http.Client, lastExpiresAt int64) (int64, error) {
+func (s *CredentialSyncer) read() (credentialFile, error) {
 	data, err := os.ReadFile(s.CredentialsPath)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return 0, nil // api-key agent or pre-login — skip silently
-		}
-		return 0, fmt.Errorf("read credentials: %w", err)
+		return credentialFile{}, err
 	}
-
 	var creds credentialFile
 	if err := json.Unmarshal(data, &creds); err != nil {
-		// File may be mid-write — skip this tick
-		log.Printf("[credential-sync] skipping malformed credentials file: %v", err)
-		return 0, nil
+		return credentialFile{}, fmt.Errorf("%w: %v", errMalformedClaudeCredential, err)
+	}
+	return creds, nil
+}
+
+func hashClaudeCredential(oauth struct {
+	AccessToken  string `json:"accessToken"`
+	RefreshToken string `json:"refreshToken"`
+	ExpiresAt    int64  `json:"expiresAt"`
+}) string {
+	return credentialsync.HashClaude(oauth.AccessToken, oauth.RefreshToken, oauth.ExpiresAt)
+}
+
+// tick reads the credentials file and pushes it when the complete credential
+// hash changed. observedHash identifies the attempted snapshot even on error;
+// pushed means the Secret confirmed or already contained that snapshot.
+func (s *CredentialSyncer) tick(ctx context.Context, client *http.Client, lastHash, expectedHash string) (observedHash string, pushed bool, err error) {
+	creds, err := s.read()
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", false, nil // api-key agent or pre-login — skip silently
+		}
+		// The file may be mid-write. JSON syntax errors are not retried until
+		// another fsnotify/poll event; a corrupt snapshot must never reach the
+		// Secret.
+		if errors.Is(err, errMalformedClaudeCredential) {
+			log.Printf("[credential-sync] skipping malformed credentials file")
+			return "", false, nil
+		}
+		return "", false, fmt.Errorf("read credentials: %w", err)
 	}
 
 	oauth := creds.ClaudeAiOauth
 	if oauth.AccessToken == "" || oauth.RefreshToken == "" || oauth.ExpiresAt == 0 {
-		return 0, nil // incomplete credentials — nothing to sync
+		return "", false, nil // incomplete credentials — nothing to sync
 	}
 
-	if oauth.ExpiresAt == lastExpiresAt {
-		return 0, nil // unchanged — no push needed
+	hash := hashClaudeCredential(oauth)
+	if hash == lastHash {
+		return "", false, nil // unchanged — no push needed
 	}
 
 	// Credentials changed — push to rotation endpoint
-	body, err := json.Marshal(map[string]any{
-		"access_token":  oauth.AccessToken,
-		"refresh_token": oauth.RefreshToken,
-		"expires_at":    oauth.ExpiresAt,
+	body, err := json.Marshal(struct {
+		AccessToken  string `json:"access_token"`
+		RefreshToken string `json:"refresh_token"`
+		ExpiresAt    int64  `json:"expires_at"`
+		ExpectedHash string `json:"expected_hash,omitempty"`
+	}{
+		AccessToken: oauth.AccessToken, RefreshToken: oauth.RefreshToken,
+		ExpiresAt: oauth.ExpiresAt, ExpectedHash: expectedHash,
 	})
 	if err != nil {
-		return 0, fmt.Errorf("marshal: %w", err)
+		return hash, false, fmt.Errorf("marshal: %w", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.rotationURL(), bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return hash, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		return 0, fmt.Errorf("post rotation: %w", err)
+		return hash, false, fmt.Errorf("post rotation: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode >= 400 {
-		return 0, fmt.Errorf("rotation endpoint returned %d", resp.StatusCode)
+	if resp.StatusCode == http.StatusConflict {
+		return hash, false, ErrCredentialSuperseded
+	}
+	if resp.StatusCode >= 400 && resp.StatusCode < 500 {
+		return hash, false, fmt.Errorf("%w: rotation endpoint returned %d", ErrCredentialRejected, resp.StatusCode)
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return hash, false, fmt.Errorf("rotation endpoint returned %d", resp.StatusCode)
 	}
 
-	log.Printf("[credential-sync] pushed updated credentials (expiresAt: %d → %d)", lastExpiresAt, oauth.ExpiresAt)
-	return oauth.ExpiresAt, nil
+	log.Printf("[credential-sync] pushed updated credentials (%s…)", firstN(hash, 8))
+	return hash, true, nil
 }
+
+var errMalformedClaudeCredential = errors.New("malformed Claude credential")

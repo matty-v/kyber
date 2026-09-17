@@ -30,7 +30,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -63,13 +62,6 @@ func main() {
 	// Watches ~/.claude/.credentials.json and pushes runtime token refreshes
 	// through the sidecar's /refresh-token path. Prevents stale-token
 	// NeedsAuth after long-running sessions.
-	var initialExpiresAt int64
-	if s := os.Getenv("CLAUDE_ACCESS_TOKEN_EXPIRES_AT"); s != "" {
-		if v, err := strconv.ParseInt(s, 10, 64); err == nil {
-			initialExpiresAt = v
-		}
-	}
-
 	credsPath := filepath.Join(home, ".claude", ".credentials.json")
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
@@ -82,13 +74,14 @@ func main() {
 	syncer := &tokenreport.CredentialSyncer{
 		CredentialsPath: credsPath,
 		SidecarURL:      sidecarURL,
+		PushInitial:     os.Getenv("KYBER_CLAUDE_PUSH_INITIAL") == "1",
 		// Polling Interval is the fsnotify-miss backstop; primary
 		// trigger is fsnotify on the credentials directory (kyber#273).
 		// 5m is short enough that a missed event loses at most one
 		// poll window, vs. the prior 1h cold-boot stale-token window
 		// that bit chewie 2026-05-06.
-		Interval:         5 * time.Minute,
-		InitialExpiresAt: initialExpiresAt,
+		Interval:              5 * time.Minute,
+		InitialCredentialHash: os.Getenv("KYBER_CLAUDE_CREDENTIAL_HASH"),
 	}
 	go syncer.Run(ctx)
 	log.Printf("token-reporter: credential syncer started (fsnotify primary + 5m poll backstop, via sidecar at %s)",
