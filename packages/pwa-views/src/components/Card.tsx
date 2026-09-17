@@ -8,7 +8,7 @@ interface Props {
 
 export function Card({ children, className = '', onClick }: Props) {
   const base =
-    'min-w-0 max-w-full rounded-xl border border-border-subtle bg-surface-raised p-4'
+    'rounded-xl border border-border-subtle bg-surface-raised p-4'
   const interactive = onClick
     ? 'cursor-pointer hover:border-border-default transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring'
     : ''

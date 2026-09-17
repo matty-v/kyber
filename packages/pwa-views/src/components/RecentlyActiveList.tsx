@@ -22,7 +22,7 @@ export function RecentlyActiveList({
   const rows = rankByActivity(agents, limit)
 
   return (
-    <Card>
+    <Card className="min-w-0 max-w-full">
       <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-text-muted">
         Recently active
       </div>
@@ -41,7 +41,13 @@ export function RecentlyActiveList({
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[state]}`} aria-hidden />
                   <span className="min-w-0 flex-1">
-                    <span className="block truncate text-sm text-text-primary">{agent.id}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="block min-w-0 flex-1 truncate text-sm text-text-primary">{agent.id}</span>
+                      <span className="shrink-0 whitespace-nowrap text-[10px] text-text-muted sm:hidden">
+                        {formatAgo(agent.activity?.lastActivityAt ?? agent.activity?.lastHeartbeatAt, now)}
+                        {label}
+                      </span>
+                    </span>
                     <AgentGoalLine goal={agent.goal} />
                   </span>
                   {isAttentionPhase(agent.phase) && <StatusBadge phase={agent.phase} />}

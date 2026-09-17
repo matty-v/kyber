@@ -24,7 +24,10 @@ describe('RecentlyActiveList', () => {
     expect(row).toHaveAttribute('href', '/agents/carol')
     expect(row).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
     expect(row.closest('.kyber-card')).toHaveClass('min-w-0', 'max-w-full')
-    expect(screen.getByText('30s ago · working')).toHaveClass('hidden', 'sm:block')
+    const activityLabels = screen.getAllByText('30s ago · working')
+    expect(activityLabels).toHaveLength(2)
+    expect(activityLabels[0]).toHaveClass('sm:hidden')
+    expect(activityLabels[1]).toHaveClass('hidden', 'sm:block')
     expect(screen.getByText('Review MAT-62')).toBeInTheDocument()
   })
   it('shows an attention badge for a NeedsAuth agent', () => {
