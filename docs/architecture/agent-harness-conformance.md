@@ -26,7 +26,7 @@ from fixture execution; a source implementation alone is not certification.
 | Requirement | Claude Code | Codex | Hermes 0.21.0 preview | Reusable or existing evidence |
 |---|---|---|---|---|
 | HC-01 registration/pod assembly | Implemented | Implemented | Live verified | `pkg/runtimes/contracttest`, adapter tests, and exact-image dev evidence |
-| HC-02 lifecycle/readiness | Process probe; some exit-2 failures conflated | Process/local login probes; device marker rejected | Process + credential probes, live verified | Adapter/startup fixtures and stable two-container dev rollout; clearer normalized failure taxonomy is a gap |
+| HC-02 lifecycle/readiness | Process probe; auth/service/sync exits classified by runtime descriptor | Process/local login probes; device marker rejected | Process + credential probes, live verified | Adapter/startup fixtures and stable two-container dev rollout; Claude taxonomy has fixture/envtest evidence, live staging validation remains pending |
 | HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Native SQLite resume + platform recall, fixture only | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
 | HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | Startup, fresh restart, `/compress`, fixture only | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
 | HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | OpenRouter creation and model roll live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
@@ -255,3 +255,17 @@ initial runtime to API-key authentication.
 Regression checks include API-server-backed public availability persistence,
 job delivery rejection and native-config probes. These are deterministic
 checks; the earlier native live matrix remains pinned to its recorded images.
+
+## MAT-76 authentication failure taxonomy — fixture checkpoint
+
+PR #249 adds deterministic Claude startup fixtures for missing and
+`invalid_grant` credentials, HTTP 429/5xx, malformed success responses,
+transport timeout, and failed credential write-back. The fixtures assert exit
+categories `2`, `44`, and `45` and reject credential/raw-response leakage.
+Descriptor and controller tests cover code uniqueness, runtime-label scoping,
+current-agent-container-only classification, lifecycle transitions, bounded
+restart counting, category-specific status, and truthful retry-limit guidance.
+A Kubernetes 1.31 envtest exercises confirmed-auth, provider/service, and
+credential-sync failures through the real CRD status subresource. This is
+fixture evidence only; the combined MAT-7 staging matrix remains the release
+gate after MAT-76 through MAT-79 are merged.

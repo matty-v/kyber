@@ -79,6 +79,14 @@ const (
 	// refresh returned an error) or start-codex.sh code 42 (`codex login
 	// status` failed). Requires human re-auth.
 	EventOAuthRefreshFailed Event = "OAuthRefreshFailed"
+	// EventAuthServiceFailed means the runtime could not reach or obtain a
+	// usable response from its authentication provider. Credentials are not
+	// known to be invalid, so bounded automatic recovery is appropriate.
+	EventAuthServiceFailed Event = "AuthServiceFailed"
+	// EventCredentialSyncFailed means a refreshed credential could not be
+	// persisted back to Kyber. Keep this distinct because the provider may
+	// already have rotated the refresh token.
+	EventCredentialSyncFailed Event = "CredentialSyncFailed"
 	// EventRuntimeProbeFailed fires when the startup script proves the harness
 	// itself cannot execute. It must win over credential failure classification.
 	EventRuntimeProbeFailed Event = "RuntimeProbeFailed"
@@ -208,6 +216,14 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
 		},
+		{phase: kyberv1.AgentPhaseStarting, event: EventAuthServiceFailed}: {
+			Action:    ActionEmitEventAutoRestart,
+			NextPhase: kyberv1.AgentPhaseFailed,
+		},
+		{phase: kyberv1.AgentPhaseStarting, event: EventCredentialSyncFailed}: {
+			Action:    ActionEmitEventAutoRestart,
+			NextPhase: kyberv1.AgentPhaseFailed,
+		},
 		{phase: kyberv1.AgentPhaseStarting, event: EventRuntimeProbeFailed}: {
 			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseBrokenRuntime,
 		},
@@ -243,6 +259,14 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseRunning, event: EventOAuthRefreshFailed}: {
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventAuthServiceFailed}: {
+			Action:    ActionEmitEventAutoRestart,
+			NextPhase: kyberv1.AgentPhaseFailed,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventCredentialSyncFailed}: {
+			Action:    ActionEmitEventAutoRestart,
+			NextPhase: kyberv1.AgentPhaseFailed,
 		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventRuntimeProbeFailed}: {
 			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseBrokenRuntime,

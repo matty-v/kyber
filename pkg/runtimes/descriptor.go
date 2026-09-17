@@ -13,6 +13,11 @@ import (
 const ContractVersion = "1.0"
 const InteractiveProfile = "interactive-tmux-v1"
 
+// RuntimeProbeFailureExitCode is reserved by the shared harness bootstrap for
+// an unusable runtime executable. Runtime-owned failure categories must not
+// reuse it because probe classification intentionally runs first.
+const RuntimeProbeFailureExitCode int32 = 43
+
 type Feature string
 
 const (
@@ -32,22 +37,24 @@ var runtimeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 // Descriptor is trusted, code-owned integration metadata. It declares support,
 // not observed readiness or provider availability. No credentials belong here.
 type Descriptor struct {
-	ID                    string     `json:"id"`
-	Name                  string     `json:"name"`
-	ContractVersion       string     `json:"contractVersion"`
-	Profile               string     `json:"profile"`
-	AuthModes             []AuthMode `json:"authModes"`
-	Features              []Feature  `json:"features"`
-	Cancellation          string     `json:"cancellation"`
-	ModelPrefix           string     `json:"-"`
-	LegacyCatalogKey      string     `json:"legacyCatalogKey,omitempty"`
-	LegacyVersionsKey     string     `json:"legacyVersionsKey,omitempty"`
-	LegacyDefaultsKey     string     `json:"-"`
-	HelmKey               string     `json:"-"`
-	TranscriptPath        string     `json:"-"` // relative to persisted HOME
-	TranscriptExchange    string     `json:"-"` // trusted jq expression yielding one exchange
-	RequireCatalogContext bool       `json:"-"`
-	AuthFailureExitCode   int32      `json:"-"`
+	ID                            string     `json:"id"`
+	Name                          string     `json:"name"`
+	ContractVersion               string     `json:"contractVersion"`
+	Profile                       string     `json:"profile"`
+	AuthModes                     []AuthMode `json:"authModes"`
+	Features                      []Feature  `json:"features"`
+	Cancellation                  string     `json:"cancellation"`
+	ModelPrefix                   string     `json:"-"`
+	LegacyCatalogKey              string     `json:"legacyCatalogKey,omitempty"`
+	LegacyVersionsKey             string     `json:"legacyVersionsKey,omitempty"`
+	LegacyDefaultsKey             string     `json:"-"`
+	HelmKey                       string     `json:"-"`
+	TranscriptPath                string     `json:"-"` // relative to persisted HOME
+	TranscriptExchange            string     `json:"-"` // trusted jq expression yielding one exchange
+	RequireCatalogContext         bool       `json:"-"`
+	AuthFailureExitCode           int32      `json:"-"`
+	AuthServiceFailureExitCode    int32      `json:"-"`
+	CredentialSyncFailureExitCode int32      `json:"-"`
 }
 type AuthMode struct {
 	ID                  kyberv1.AgentAuthType `json:"id"`
@@ -109,6 +116,33 @@ func (d Descriptor) Validate() error {
 			}
 			channels[channel] = true
 		}
+	}
+	exitCodes := map[int32]string{}
+	for _, failure := range []struct {
+		name string
+		code int32
+	}{
+		{name: "authentication", code: d.AuthFailureExitCode},
+		{name: "authentication service", code: d.AuthServiceFailureExitCode},
+		{name: "credential sync", code: d.CredentialSyncFailureExitCode},
+	} {
+		name, code := failure.name, failure.code
+		if code < 0 {
+			return fmt.Errorf("runtime %s has negative %s failure exit code", d.ID, name)
+		}
+		if code == 0 {
+			continue
+		}
+		if code > 255 {
+			return fmt.Errorf("runtime %s has out-of-range %s failure exit code %d", d.ID, name, code)
+		}
+		if code == RuntimeProbeFailureExitCode {
+			return fmt.Errorf("runtime %s reuses reserved runtime probe exit code %d for %s failure", d.ID, code, name)
+		}
+		if previous, exists := exitCodes[code]; exists {
+			return fmt.Errorf("runtime %s reuses exit code %d for %s and %s failures", d.ID, code, previous, name)
+		}
+		exitCodes[code] = name
 	}
 	return nil
 }

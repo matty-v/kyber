@@ -836,6 +836,18 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			message = fmt.Sprintf("%s runtime harness failed its executable/version probe. Repair the runtime before retrying authentication.", agent.Spec.Runtime)
 		}
 	}
+	if result.NextPhase == kyberv1.AgentPhaseFailed {
+		switch event {
+		case EventAuthServiceFailed:
+			message = "The runtime authentication provider or network is unavailable. Kyber will retry within the bounded restart policy; replacing credentials is not the indicated fix."
+		case EventCredentialSyncFailed:
+			message = "The runtime refreshed its credential but could not persist it to Kyber. Kyber will retry within the bounded restart policy; reauthorization may be required if the rotated credential cannot be recovered."
+		case EventRetryLimitReached:
+			message = strings.Replace(agent.Status.Message,
+				"Kyber will retry within the bounded restart policy;",
+				"Automatic retries are exhausted;", 1)
+		}
+	}
 	if err := r.updatePhase(ctx, agent, result.NextPhase, message); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -1142,8 +1154,13 @@ func (r *AgentReconciler) classifyEvent(
 			if isRuntimeProbeFailure(pod) {
 				return EventRuntimeProbeFailed, nil
 			}
-			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
+			switch classifyRuntimeFailure(pod, agent.Spec.Runtime) {
+			case runtimeFailureAuthentication:
 				return EventOAuthRefreshFailed, nil
+			case runtimeFailureAuthService:
+				return EventAuthServiceFailed, nil
+			case runtimeFailureCredentialSync:
+				return EventCredentialSyncFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
 			// generic PodDied auto-restart — bumping memory is the real fix,
@@ -1208,8 +1225,13 @@ func (r *AgentReconciler) classifyEvent(
 				return EventRuntimeProbeFailed, nil
 			}
 			// Check for OAuth refresh failure (exit code 2 from start-claude.sh).
-			if isOAuthRefreshFailure(pod, agent.Spec.Runtime) {
+			switch classifyRuntimeFailure(pod, agent.Spec.Runtime) {
+			case runtimeFailureAuthentication:
 				return EventOAuthRefreshFailed, nil
+			case runtimeFailureAuthService:
+				return EventAuthServiceFailed, nil
+			case runtimeFailureCredentialSync:
+				return EventCredentialSyncFailed, nil
 			}
 			// Check for kubelet-tagged OOM kill before falling through to a
 			// generic PodDied auto-restart. Bumping memory is the real fix;
@@ -1440,8 +1462,18 @@ func (r *AgentReconciler) executeAction(
 		return requeueWaiting, nil
 
 	case ActionEmitEventAutoRestart:
-		r.Recorder.Eventf(agent, corev1.EventTypeWarning, "AgentCrashed",
-			"Agent pod died unexpectedly (restartCount=%d)", agent.Status.RestartCount)
+		reason := "AgentCrashed"
+		detail := "Agent pod died unexpectedly"
+		switch event {
+		case EventAuthServiceFailed:
+			reason = "AuthServiceUnavailable"
+			detail = "Runtime authentication provider or network is unavailable; credentials are not known to be invalid"
+		case EventCredentialSyncFailed:
+			reason = "CredentialSyncFailed"
+			detail = "Runtime refreshed its credential but could not persist it to Kyber"
+		}
+		r.Recorder.Eventf(agent, corev1.EventTypeWarning, reason,
+			"%s (restartCount=%d)", detail, agent.Status.RestartCount)
 		// Increment restart count.
 		patch := client.MergeFrom(agent.DeepCopy())
 		agent.Status.RestartCount++
@@ -3128,52 +3160,44 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
-// Credential-failure exit codes. Each runtime's start script exits with its own
-// code when the harness cannot authenticate, so the reconciler can tell
-// "bad/expired credentials" apart from a generic crash and route the agent to
-// NeedsAuth (which lights up the PWA's Re-authorize button) rather than to a
-// pointless auto-restart loop on the same broken credential.
-const (
-	// runtimeProbeFailureExitCode is emitted before authentication when the
-	// harness executable/version probe fails.
-	runtimeProbeFailureExitCode int32 = 43
-	// claudeCodeAuthFailureExitCode is start-claude.sh's signal that the
-	// Anthropic OAuth refresh failed.
-	claudeCodeAuthFailureExitCode int32 = 2
-	// codexAuthFailureExitCode is start-codex.sh's signal that `codex login
-	// status` failed — the ChatGPT auth.json is missing or no longer valid.
-	codexAuthFailureExitCode int32 = 42
-)
-
 func isRuntimeProbeFailure(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
 	}
 	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.Name == AgentContainerName && cs.State.Terminated != nil && cs.State.Terminated.ExitCode == runtimeProbeFailureExitCode {
+		if cs.Name == AgentContainerName && cs.State.Terminated != nil && cs.State.Terminated.ExitCode == pkgruntimes.RuntimeProbeFailureExitCode {
 			return true
 		}
 	}
 	return false
 }
 
-// isOAuthRefreshFailure checks whether the agent container's CURRENT termination
-// carried one of the runtimes' credential-failure exit codes. Only inspects
+type runtimeFailure uint8
+
+const (
+	runtimeFailureNone runtimeFailure = iota
+	runtimeFailureAuthentication
+	runtimeFailureAuthService
+	runtimeFailureCredentialSync
+)
+
+// classifyRuntimeFailure checks whether the agent container's CURRENT termination
+// carried one of the runtime's declared failure exit codes. It only inspects
 // State.Terminated (not LastTerminationState) — a previous auth failure
 // followed by a non-auth crash must not be misclassified as NeedsAuth.
 //
 // Exit codes are provider-specific. Prefer the platform-owned pod runtime label
 // (the actual launched integration), falling back to spec for legacy pods.
-func isOAuthRefreshFailure(pod *corev1.Pod, runtimeID string) bool {
+func classifyRuntimeFailure(pod *corev1.Pod, runtimeID string) runtimeFailure {
 	if pod == nil {
-		return false
+		return runtimeFailureNone
 	}
 	if id := pod.Labels["kyber.io/runtime"]; id != "" {
 		runtimeID = id
 	}
 	descriptor, ok := pkgruntimes.Describe(runtimeID)
-	if !ok || descriptor.AuthFailureExitCode == 0 {
-		return false
+	if !ok {
+		return runtimeFailureNone
 	}
 	for _, cs := range pod.Status.ContainerStatuses {
 		if cs.Name != "agent" {
@@ -3182,11 +3206,26 @@ func isOAuthRefreshFailure(pod *corev1.Pod, runtimeID string) bool {
 		if cs.State.Terminated == nil {
 			continue
 		}
-		if cs.State.Terminated.ExitCode == descriptor.AuthFailureExitCode {
-			return true
+		switch cs.State.Terminated.ExitCode {
+		case descriptor.AuthFailureExitCode:
+			if descriptor.AuthFailureExitCode != 0 {
+				return runtimeFailureAuthentication
+			}
+		case descriptor.AuthServiceFailureExitCode:
+			if descriptor.AuthServiceFailureExitCode != 0 {
+				return runtimeFailureAuthService
+			}
+		case descriptor.CredentialSyncFailureExitCode:
+			if descriptor.CredentialSyncFailureExitCode != 0 {
+				return runtimeFailureCredentialSync
+			}
 		}
 	}
-	return false
+	return runtimeFailureNone
+}
+
+func isOAuthRefreshFailure(pod *corev1.Pod, runtimeID string) bool {
+	return classifyRuntimeFailure(pod, runtimeID) == runtimeFailureAuthentication
 }
 
 // isAgentContainerTerminated returns true when the agent container in the pod

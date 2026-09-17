@@ -145,13 +145,22 @@ new runtime never inherits another provider's credentials, transcripts or defaul
 | Process present or key exists | Readiness observation, not successful authentication |
 | Login pending / rejected | Show pending action or NeedsAuth; a recovery trigger is not proof of success |
 | Upstream refresh succeeded, synchronization failed | Retry/surface failure; possible reauthorization, not a lossless guarantee |
-| Provider/network outage | MUST be distinct from confirmed invalid credentials; Claude boot currently conflates some exit-2 paths |
+| Provider/network outage | MUST be distinct from confirmed invalid credentials and use bounded recovery, not automatic `NeedsAuth` |
 | Missing/stale turn-hook sentinel | Dependent job controls unavailable; no silent feature success |
 | Receipt unavailable or mismatched | Hook exits 2; task may end delivery_unknown; CLI fail-closed behavior requires live version evidence |
 | Cancellation requested | Cooperative control request; no forced interruption claim |
 | API-key + Telegram | Current API rejects this combination. Review policy separately; do not infer a provider limitation |
 | Hard pod/node death | Persistence and receipt evidence can survive within their storage guarantees; in-flight work may remain uncertain |
 | Unknown capability/contract version | Do not advertise availability; preserve unrelated supported features where compatible |
+
+Runtime-owned failure exit codes are private adapter metadata, not a public API.
+Configured nonzero codes must be unique within a descriptor, fit the process
+exit range `1..255`, and not reuse shared runtime-probe exit `43`. Claude Code
+currently reserves `2` for a missing credential or OAuth `invalid_grant`, `44`
+for authentication-provider/transport/malformed-response failures, and `45`
+for failure to persist refreshed credentials. Only the confirmed-auth category
+automatically enters `NeedsAuth`; provider and synchronization failures enter
+the existing bounded `Failed` recovery path with distinct operator evidence.
 
 Compatibility rules: contract version, image digest, and installed CLI version
 are separate axes. Widening optional vocabulary can be additive; narrowing a

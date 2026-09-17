@@ -121,7 +121,8 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `DesiredNeedsAuth`, `DesiredRunning`, `PodDied`, `LivenessFailed`,
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
 `RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
-`MachineReady`, `OAuthRefreshFailed`, `OOMKilled`.
+`MachineReady`, `OAuthRefreshFailed`, `AuthServiceFailed`,
+`CredentialSyncFailed`, `OOMKilled`.
 
 `MachineUnavailable` is the provider-neutral capacity-loss event. Active and
 retrying Agents park in `WaitingForMachine` without consuming restart retries;
@@ -165,7 +166,7 @@ stateDiagram-v2
     Creating --> Failed: PodScheduleFailed
 
     Starting --> Running: PodReady
-    Starting --> Failed: StartupTimeout / PodScheduleFailed / PodDied
+    Starting --> Failed: StartupTimeout / PodScheduleFailed / PodDied / AuthServiceFailed / CredentialSyncFailed
     Starting --> NeedsAuth: OAuthRefreshFailed
     Starting --> MemoryExhausted: OOMKilled
     Starting --> WaitingForMachine: MachinePreempted
@@ -176,7 +177,7 @@ stateDiagram-v2
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
-    Running --> Failed: PodDied / LivenessFailed*
+    Running --> Failed: PodDied / LivenessFailed* / AuthServiceFailed / CredentialSyncFailed
     Running --> NeedsAuth: OAuthRefreshFailed
     Running --> MemoryExhausted: OOMKilled
     Running --> DiskExhausted: DiskReserveReached
@@ -241,6 +242,8 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Starting` | `PodScheduleFailed` | `LogAndEmitEvent` | `Failed` |
 | `Starting` | `PodDied` | `LogAndEmitEvent` | `Failed` |
 | `Starting` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
+| `Starting` | `AuthServiceFailed` | `EmitEventAutoRestart` | `Failed` |
+| `Starting` | `CredentialSyncFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Starting` | `RuntimeProbeFailed` | `UpdateStatus` | `BrokenRuntime` |
 | `Starting` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
 | `Starting` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
@@ -253,6 +256,8 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
+| `Running` | `AuthServiceFailed` | `EmitEventAutoRestart` | `Failed` |
+| `Running` | `CredentialSyncFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `RuntimeProbeFailed` | `UpdateStatus` | `BrokenRuntime` |
 | `BrokenRuntime` | `DesiredRestarting` | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `OOMKilled` | `UpdateStatus` | `MemoryExhausted` |
@@ -327,9 +332,14 @@ silently.
   memory limit would crash-loop and hide the real problem; the operator must
   raise `spec.resources.memory` and request `DesiredRunning` to recover
   ([kyber#272](https://github.com/matty-v/kyber/issues/272)).
-- **OAuth failure requires a human.** `OAuthRefreshFailed` (start-claude.sh
-  exit code 2) routes to `NeedsAuth` with no auto-restart; recovery is an
-  operator re-authorizing and the resulting `DesiredRunning`.
+- **Confirmed OAuth failure requires a human.** `OAuthRefreshFailed`
+  (runtime-owned auth exit; Claude Code uses `2`) routes to `NeedsAuth` with no
+  auto-restart; recovery is an operator re-authorizing and the resulting
+  `DesiredRunning`. Provider/network failures (`AuthServiceFailed`; Claude
+  `44`) and credential persistence failures (`CredentialSyncFailed`; Claude
+  `45`) instead route through `Failed` and the bounded restart budget. Their
+  distinct status message survives `RetryLimitReached`; a provider outage does
+  not instruct the operator to replace valid credentials.
 - **Operator-forced re-auth is gated in the reconciler, and its Action splits
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).
   `DesiredNeedsAuth` (set by the `force-needs-auth` API action) drops a wedged
@@ -496,7 +506,9 @@ silently.
 | Pod dies unexpectedly while Running | `PodDied` | `Failed` → auto-restart (under retry limit) |
 | Agent container OOM-killed | `OOMKilled` | `MemoryExhausted` (no auto-restart) |
 | Native **sidecar** OOM-killed / flapping (transcript-tailer, kyber-status-sidecar) | reconciler pod-status scan `sidecarOOMOrFlapping` (kyber#584 Phase C) | best-effort **`SidecarOOMRestart` warning alert** via the existing path → `WebhookAlertSink` → Echo Base / Telegram, deduped per escalation. The sidecar still self-heals under `restartPolicy:Always` (kyber#575) — this surfaces it so a memory regression can't hide behind the auto-restart (closes the #575 masking that hid #584). Threshold: restartCount ≥ 3 or an OOMKilled (current or last) termination. Does **not** change agent phase. **Delivery** (kyber#586): the alert is pushed to a receiver only when `KYBER_ALERT_WEBHOOK_URL` is configured; otherwise it is log-only and the control plane warns loudly at startup. The receiver contract (payload/transport/auth) is in `docs/operator/telemetry.md` |
-| OAuth refresh fails (exit 2) | `OAuthRefreshFailed` | `NeedsAuth` (no auto-restart) |
+| OAuth credential is missing or refresh returns `invalid_grant` (Claude exit 2) | `OAuthRefreshFailed` | `NeedsAuth` (no auto-restart) |
+| OAuth provider/network request fails or returns an unusable response (Claude exit 44) | `AuthServiceFailed` | `Failed` → bounded auto-restart; status says credentials are not known invalid |
+| Refreshed credential cannot be persisted (Claude exit 45) | `CredentialSyncFailed` | `Failed` → bounded auto-restart; status warns rotation may already have occurred |
 | Spot machine preempted (with notice) | `PreemptionNotice` → drain → `PodDeleted` | `Draining` → `WaitingForMachine` |
 | Spot machine preempted (no notice) | `MachinePreempted` | `WaitingForMachine` |
 | Retry budget exhausted | `RetryLimitReached` | stays `Failed`, alerts operator |

@@ -357,6 +357,21 @@ fi
 # CLAUDE_ACCESS_TOKEN_EXPIRES_AT from the <agent>-oauth k8s Secret (PKCE flow).
 # The credential-handling block below refreshes if needed and writes .credentials.json.
 
+kyber_auth_failure() {
+    echo "[kyber] FATAL: $1 — exiting with confirmed authentication failure" >&2
+    exit 2
+}
+
+kyber_auth_service_failure() {
+    echo "[kyber] FATAL: $1 — credentials are not known to be invalid; Kyber may retry" >&2
+    exit 44
+}
+
+kyber_credential_sync_failure() {
+    echo "[kyber] FATAL: $1 — the provider may already have rotated the refresh token; credential recovery is tracked by MAT-77" >&2
+    exit 45
+}
+
 # ---- Credential handling ----
 # On every boot we reach this block with three potentially-set env vars from
 # the <agent>-oauth Secret:
@@ -379,8 +394,7 @@ else
 ANTHROPIC_TOKEN_URL="${ANTHROPIC_TOKEN_URL:-https://platform.claude.com/v1/oauth/token}"
 
 if [ -z "${KYBER_REFRESH_TOKEN_URL:-}" ]; then
-    echo "[kyber] FATAL: KYBER_REFRESH_TOKEN_URL not set — controller did not inject the rotation endpoint" >&2
-    exit 2
+    kyber_credential_sync_failure "KYBER_REFRESH_TOKEN_URL is not set; the controller did not inject the rotation endpoint"
 fi
 
 NOW_MS=$(($(date +%s) * 1000))
@@ -422,29 +436,58 @@ fi
 
 if [ "$USE_CACHED" = false ]; then
     if [ -z "${CLAUDE_REFRESH_TOKEN:-}" ]; then
-        echo "[kyber] FATAL: Claude Code OAuth credential is missing (no complete injected or persisted credential) — exiting 2 so the agent transitions to NeedsAuth" >&2
-        exit 2
+        kyber_auth_failure "Claude Code OAuth credential is missing (no complete injected or persisted credential)"
     else
         echo "[kyber] refreshing access token from stored refresh token"
         refresh_body=$(jq -n --arg rt "$CLAUDE_REFRESH_TOKEN" \
           '{grant_type:"refresh_token", client_id:"9d1c250a-e61b-44d9-88ed-5944d1962f5e", refresh_token:$rt}')
-        if ! resp=$(curl -fsS --max-time 15 -X POST "$ANTHROPIC_TOKEN_URL" \
+        if ! resp_and_status=$(curl -sS --max-time "${KYBER_AUTH_HTTP_TIMEOUT:-15}" -X POST "$ANTHROPIC_TOKEN_URL" \
              -H "Content-Type: application/json" \
              -H "User-Agent: kyber-claude-code/1.0" \
-             -d "$refresh_body"); then
-            echo "[kyber] refresh failed — exiting 2 so node-agent transitions to NeedsAuth" >&2
-            exit 2
+             -d "$refresh_body" -w $'\n%{http_code}'); then
+            kyber_auth_service_failure "Claude Code OAuth refresh transport failed"
         fi
-        access=$(echo "$resp" | jq -r .access_token)
-        new_refresh=$(echo "$resp" | jq -r '.refresh_token // empty')
-        expires_in=$(echo "$resp" | jq -r '((.expires_in // 3600) | floor)')
-        if ! [[ "$expires_in" =~ ^[0-9]+$ ]]; then
-            echo "[kyber] invalid expires_in: $expires_in" >&2
-            exit 2
+        refresh_status="${resp_and_status##*$'\n'}"
+        resp="${resp_and_status%$'\n'*}"
+        unset resp_and_status refresh_body
+        if ! [[ "$refresh_status" =~ ^[0-9]{3}$ ]]; then
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid HTTP status"
         fi
-        if [ -z "$access" ] || [ "$access" = "null" ]; then
-            echo "[kyber] refresh returned empty access_token" >&2
-            exit 2
+        if [ "$refresh_status" -lt 200 ] || [ "$refresh_status" -ge 300 ]; then
+            oauth_error=$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null || true)
+            # RFC 6749 token errors use HTTP 400. A 5xx/429 response remains a
+            # provider/service failure even if an intermediary or broken
+            # provider body happens to say invalid_grant.
+            if [ "$refresh_status" -eq 400 ] && [ "$oauth_error" = "invalid_grant" ]; then
+                unset resp oauth_error
+                kyber_auth_failure "Claude Code OAuth refresh failed because the provider rejected the credential with invalid_grant"
+            fi
+            unset resp oauth_error
+            kyber_auth_service_failure "Claude Code OAuth refresh failed with HTTP $refresh_status"
+        fi
+        if ! access=$(printf '%s' "$resp" | jq -er '.access_token | select(type == "string" and length > 0)' 2>/dev/null); then
+            unset resp
+            kyber_auth_service_failure "Claude Code OAuth refresh returned a malformed or incomplete success response"
+        fi
+        if ! new_refresh=$(printf '%s' "$resp" | jq -er '
+            if has("refresh_token") and .refresh_token != null then
+                .refresh_token | select(type == "string" and length > 0)
+            else "" end
+        ' 2>/dev/null); then
+            unset resp
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid refresh_token"
+        fi
+        if ! expires_in=$(printf '%s' "$resp" | jq -er '
+            (.expires_in // 3600)
+            | select(type == "number" and . > 0 and (. == floor))
+            | tostring
+        ' 2>/dev/null); then
+            unset resp
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid expires_in value"
+        fi
+        unset resp
+        if ! [[ "$expires_in" =~ ^[0-9]+$ ]] || [ "$expires_in" -le 0 ]; then
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid expires_in value"
         fi
         expires_at=$(( ($(date +%s) + expires_in) * 1000 ))
         effective_refresh="${new_refresh:-$CLAUDE_REFRESH_TOKEN}"
@@ -460,16 +503,16 @@ if [ "$USE_CACHED" = false ]; then
               --arg rt "$effective_refresh" \
               --argjson ex "$expires_at" \
               '{access_token:$at, refresh_token:$rt, expires_at:$ex}')
-            if ! curl -fsS --max-time 10 \
+            if ! rotation_status=$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' \
                  -H "Authorization: Bearer $POD_TOKEN" \
                  -H "Content-Type: application/json" \
                  -X POST \
                  "$KYBER_REFRESH_TOKEN_URL" \
-                 -d "$rot_body"; then
-                echo "[kyber] FATAL: rotation push to control-plane failed" >&2
-                echo "[kyber] Anthropic has consumed the old refresh_token, but Kyber's secret was not updated." >&2
-                echo "[kyber] To recover: re-auth this agent via the PWA (delete + recreate, or patch the secret manually)." >&2
-                exit 2
+                 -d "$rot_body"); then
+                kyber_credential_sync_failure "credential rotation push to the Kyber control plane failed"
+            fi
+            if ! [[ "$rotation_status" =~ ^2[0-9][0-9]$ ]]; then
+                kyber_credential_sync_failure "credential rotation push to the Kyber control plane returned HTTP $rotation_status"
             fi
             echo "[kyber] rotation push succeeded — secret updated with new credentials"
         fi
@@ -1072,7 +1115,7 @@ if ! jq --arg launch_dir "$LAUNCH_DIR" '
   ' "$CLAUDE_STATE" > "$CLAUDE_STATE_TMP"; then
     rm -f "$CLAUDE_STATE_TMP"
     echo "[kyber] FATAL: could not trust Claude Code launch directory $LAUNCH_DIR" >&2
-    exit 2
+    exit 1
 fi
 mv "$CLAUDE_STATE_TMP" "$CLAUDE_STATE"
 chmod 600 "$CLAUDE_STATE"
