@@ -153,6 +153,28 @@ new runtime never inherits another provider's credentials, transcripts or defaul
 | Hard pod/node death | Persistence and receipt evidence can survive within their storage guarantees; in-flight work may remain uncertain |
 | Unknown capability/contract version | Do not advertise availability; preserve unrelated supported features where compatible |
 
+### Lifecycle conformance evidence
+
+The versioned lifecycle evidence catalog at
+[`test/contract/harness_lifecycle_evidence.json`](../../test/contract/harness_lifecycle_evidence.json)
+maps every HC-01 through HC-10 requirement to named automated checks, explicit
+staging-only procedures, or both. Its validation test rejects missing
+requirements, missing production-runtime scope, stale test references, and
+staging claims without a rationale and documented procedure.
+
+Deterministic fixtures establish control-plane behavior; they do not turn
+provider behavior into a CI guarantee. In particular, compaction delivery is
+not upstream completion, simulated Kubernetes objects are not storage-provider
+evidence, and repair fixtures are not a live package-registry qualification.
+Use the linked staging runbook for those boundaries.
+
+Capability observations belong to one pod UID. A replacement pod must publish
+new evidence before hook-dependent operations resume. An attempt lost between
+delivery and receipt is terminal `delivery_unknown` after its ambiguity lease
+and must not be automatically reclaimed. Persistent-volume loss remains outside
+workspace durability, and loss of the only pending rotated credential copy can
+require reauthorization.
+
 Runtime-owned failure exit codes are private adapter metadata, not a public API.
 Configured nonzero codes must be unique within a descriptor, fit the process
 exit range `1..255`, and not reuse shared runtime-probe exit `43`. Claude Code

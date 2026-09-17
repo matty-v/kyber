@@ -1,6 +1,6 @@
 # MAT-78 — harness lifecycle conformance plan
 
-Status: awaiting implementation approval.
+Status: implementation complete; validation in progress.
 Issue: https://linear.app/matty-v/issue/MAT-78
 Parent: MAT-7.
 Baseline: `a18e971` (`origin/main`, including MAT-76 and MAT-77).
@@ -48,8 +48,8 @@ proving that a minimal third runtime can be added without Claude/Codex branches.
 
 ### 1. Versioned lifecycle evidence catalog
 
-Add a machine-readable catalog under `test/contract/` covering HC-03, HC-04,
-HC-06, HC-09, and HC-10. Each lifecycle scenario will identify its runtime
+Add a machine-readable catalog under `test/contract/` covering HC-01 through
+HC-10. Each lifecycle scenario will identify its runtime
 scope, guarantee, evidence kind, named automated checks, and any staging-only
 step or residual loss boundary.
 
@@ -121,11 +121,21 @@ it does not silently broaden the normative runtime interface.
 - [x] Trace compaction, repair, machine recovery, session recall, capability
   gates, credential recovery, and ambiguous task delivery against MAT-78.
 - [x] Record the CI/staging boundary and implementation plan.
-- [ ] Add and validate the lifecycle evidence catalog.
-- [ ] Add the missing deterministic behavior regressions.
-- [ ] Add the staging qualification runbook and update contract/conformance
+- [x] Add and validate the lifecycle evidence catalog.
+- [x] Add the missing deterministic behavior regressions.
+- [x] Add the staging qualification runbook and update contract/conformance
   documentation.
-- [ ] Run focused suites, full build/lint/test gates, and review the complete
+- [x] Run focused suites, full build/lint/test gates, and review the complete
   diff for false claims, secret exposure, and provider-specific branching.
 - [ ] Open a PR, require green CI, merge, and retain MAT-78 in testing until the
   combined MAT-76 through MAT-79 staging matrix passes before the Kyber release.
+
+Local evidence: the catalog validator, compaction/repair API tests, repair
+integration fixtures, machine-recovery envtest, all runtime packages, shell
+syntax, product-documentation checks, `go build ./...`, and `go vet ./...`
+pass. The PostgreSQL integration suite compiles; its database-backed execution
+requires integration CI because this workspace has no Docker/PostgreSQL
+service. The aggregate `go test ./...` passed every reported package except
+`pkg/controllers/agent`, whose many serial envtest control planes exhausted the
+package's 10-minute timeout after an API-server startup timeout. The exact
+modified controller test passes independently with the same envtest assets.

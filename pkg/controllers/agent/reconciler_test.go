@@ -29,6 +29,7 @@ import (
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/githubapp"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
 )
 
 // envtestBinPath resolves the envtest binary path from the KUBEBUILDER_ASSETS env var
@@ -1814,17 +1815,40 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 	}
 
 	agent := newTestAgent("dave", namespace)
+	agent.Spec.Runtime = "claude-code"
 	if err := k8sClient.Create(ctx, agent); err != nil {
 		t.Fatalf("creating agent: %v", err)
 	}
 	key := types.NamespacedName{Name: agent.Name, Namespace: namespace}
 	req := ctrl.Request{NamespacedName: key}
 	reconcileN(t, r, req, 1) // birth path creates PVCs and the initial pod
+	oldPod := &corev1.Pod{}
+	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: namespace}, oldPod); err != nil {
+		t.Fatalf("getting initial pod: %v", err)
+	}
+	persistPVC := &corev1.PersistentVolumeClaim{}
+	persistKey := types.NamespacedName{Name: PVCName(agent.Name), Namespace: namespace}
+	if err := k8sClient.Get(ctx, persistKey, persistPVC); err != nil {
+		t.Fatalf("getting persistent volume claim: %v", err)
+	}
+	originalPVCUID := persistPVC.UID
+	credentialSecret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{Name: pkgruntimes.CredentialName(agent.Spec.Runtime, agent.Name, agent.Spec.Secrets.AuthType), Namespace: namespace},
+		Data:       map[string][]byte{"credential.json": []byte("synthetic-opaque-state")},
+	}
+	if err := k8sClient.Create(ctx, credentialSecret); err != nil {
+		t.Fatalf("creating synthetic agent credential Secret: %v", err)
+	}
 
 	current := getAgent(t, k8sClient, key)
 	statusPatch := client.MergeFrom(current.DeepCopy())
 	current.Status.Scheduling = &kyberv1.AgentSchedulingStatus{
 		Category: "Placement", LastError: "raw scheduler detail",
+	}
+	current.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{
+		PodUID: string(oldPod.UID), ContractVersion: pkgruntimes.ContractVersion,
+		ObservedAt: metav1.Now(),
+		Features:   map[string]bool{string(pkgruntimes.TaskReceipts): true},
 	}
 	if err := k8sClient.Status().Patch(ctx, current, statusPatch); err != nil {
 		t.Fatalf("seeding scheduling status: %v", err)
@@ -1871,6 +1895,49 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 	values := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0].Values
 	if len(values) != 1 || values[0] != "replacement-node" {
 		t.Errorf("replacement pod node affinity = %v, want replacement-node", values)
+	}
+	if pod.UID == oldPod.UID {
+		t.Errorf("replacement pod retained old UID %q", pod.UID)
+	}
+	claimName := ""
+	for _, volume := range pod.Spec.Volumes {
+		if volume.Name == "persist" && volume.PersistentVolumeClaim != nil {
+			claimName = volume.PersistentVolumeClaim.ClaimName
+		}
+	}
+	if claimName != persistKey.Name {
+		t.Errorf("replacement pod persist claim = %q, want %q", claimName, persistKey.Name)
+	}
+	persistPVC = &corev1.PersistentVolumeClaim{}
+	if err := k8sClient.Get(ctx, persistKey, persistPVC); err != nil || persistPVC.UID != originalPVCUID {
+		t.Fatalf("persistent volume claim changed across replacement: uid=%q err=%v", persistPVC.UID, err)
+	}
+	storedSecret := &corev1.Secret{}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(credentialSecret), storedSecret); err != nil {
+		t.Fatalf("getting credential Secret after replacement: %v", err)
+	}
+	if got := string(storedSecret.Data["credential.json"]); got != "synthetic-opaque-state" {
+		t.Errorf("credential Secret changed across replacement: %q", got)
+	}
+
+	if availability := pkgruntimes.AvailabilityFor(resumed, pkgruntimes.TaskReceipts, time.Now()); availability.State != "unavailable" || availability.Reason != "agent_not_running" {
+		t.Fatalf("stale evidence authorized a dependent operation during replacement: %+v", availability)
+	}
+	podPatch := client.MergeFrom(pod.DeepCopy())
+	pod.Status.Phase = corev1.PodRunning
+	pod.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}
+	if err := k8sClient.Status().Patch(ctx, pod, podPatch); err != nil {
+		t.Fatalf("marking replacement pod ready: %v", err)
+	}
+	// The first pass enters Running; the next mirrors replacement-pod identity
+	// and invalidates the old observation.
+	reconcileN(t, r, req, 2)
+	resumed = getAgent(t, k8sClient, key)
+	if resumed.Status.Runtime.Capabilities != nil {
+		t.Errorf("old-pod capability evidence survived replacement: %+v", resumed.Status.Runtime.Capabilities)
+	}
+	if resumed.Status.RestartCount != 0 {
+		t.Errorf("restartCount after replacement: got %d, want 0", resumed.Status.RestartCount)
 	}
 }
 

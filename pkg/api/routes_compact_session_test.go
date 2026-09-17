@@ -13,6 +13,8 @@ import (
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	"github.com/matty-v/kyber/pkg/runtimes/codex"
 )
 
 // compactCmd is a stand-in argv. The handler never inspects its contents —
@@ -76,24 +78,35 @@ func TestCompactSession_501UnsupportedRuntime(t *testing.T) {
 	}
 }
 
-// TestCompactSession_CodexSupported guards against a regression where only
-// claude-code gets wired up. Both shipped runtimes must reach the same
-// branch — here the 503, which is past every runtime-specific guard.
-func TestCompactSession_CodexSupported(t *testing.T) {
-	api.ResetCompactSessionCooldown()
-	agent := runningCompactAgent("hk47", "codex")
+// TestCompactSession_RuntimeMatrix binds the API guard to the actual adapter
+// declarations for both production runtimes and keeps optional absence a valid,
+// visible state for a minimal runtime.
+func TestCompactSession_RuntimeMatrix(t *testing.T) {
+	commands := map[string][]string{
+		"claude-code": claudecode.NewClaudeCodeAdapter().CompactSessionCommand(),
+		"codex":       codex.NewAdapter().CompactSessionCommand(),
+	}
+	for _, tc := range []struct {
+		name, agentName, runtime string
+		want                     int
+	}{
+		{name: "claude", agentName: "matrix-claude", runtime: "claude-code", want: http.StatusServiceUnavailable},
+		{name: "codex", agentName: "matrix-codex", runtime: "codex", want: http.StatusServiceUnavailable},
+		{name: "unsupported fixture", agentName: "matrix-unsupported", runtime: "openclaw", want: http.StatusNotImplemented},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api.ResetCompactSessionCooldown()
+			agent := runningCompactAgent(tc.agentName, tc.runtime)
+			srv := newCompactSessionServer(t, commands, agent)
+			ts := httptest.NewServer(srv.BuildHandler())
+			defer ts.Close()
 
-	srv := newCompactSessionServer(t, map[string][]string{
-		"claude-code": compactCmd,
-		"codex":       compactCmd,
-	}, agent)
-	ts := httptest.NewServer(srv.BuildHandler())
-	defer ts.Close()
-
-	resp := postCompact(t, ts, "hk47")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusServiceUnavailable {
-		t.Errorf("status: got %d, want 503 (codex should pass the 501 guard)", resp.StatusCode)
+			resp := postCompact(t, ts, agent.Name)
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.want {
+				t.Errorf("status: got %d, want %d", resp.StatusCode, tc.want)
+			}
+		})
 	}
 }
 

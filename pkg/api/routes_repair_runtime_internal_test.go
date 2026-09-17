@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +22,33 @@ type delayedRepairPodClient struct {
 	client.Client
 	repairPodName string
 	missed        bool
+}
+
+type repairPodPhaseClient struct {
+	client.Client
+	repairPodName string
+	phase         corev1.PodPhase
+}
+
+func (c *repairPodPhaseClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if err := c.Client.Get(ctx, key, obj, opts...); err != nil {
+		return err
+	}
+	if key.Name == c.repairPodName {
+		pod := obj.(*corev1.Pod)
+		pod.Status.Phase = c.phase
+		if c.phase == corev1.PodFailed {
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
+				Name: "repair",
+				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+					ExitCode: 17,
+					Reason:   "SyntheticFailure",
+					Message:  "must stay out of the operator-facing error",
+				}},
+			}}
+		}
+	}
+	return nil
 }
 
 func (c *delayedRepairPodClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -121,6 +150,51 @@ func TestRuntimeRepairToleratesCacheMissImmediatelyAfterCreate(t *testing.T) {
 	}
 	if output != "repair completed and executable verified" {
 		t.Fatalf("Run() output = %q", output)
+	}
+}
+
+func TestRuntimeRepairRunnerLifecycle(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		phase     corev1.PodPhase
+		timeout   bool
+		wantError string
+	}{
+		{name: "success", phase: corev1.PodSucceeded},
+		{name: "failure", phase: corev1.PodFailed, wantError: "exit 17 (SyntheticFailure)"},
+		{name: "timeout", phase: corev1.PodPending, timeout: true, wantError: "context deadline exceeded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runner, agent, plan := repairRunnerFixture(t)
+			base := runner.server.K8sClient
+			runner.server.K8sClient = &repairPodPhaseClient{
+				Client: base, repairPodName: runtimeRepairPodName(agent.Name), phase: tc.phase,
+			}
+			var ctx context.Context = context.Background()
+			if tc.timeout {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, 10*time.Millisecond)
+				defer cancel()
+			}
+			output, err := runner.Run(ctx, agent, plan)
+			if tc.wantError == "" {
+				if err != nil || output != "repair completed and executable verified" {
+					t.Fatalf("Run() output=%q err=%v", output, err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), tc.wantError) {
+				t.Fatalf("Run() error=%v, want containing %q", err, tc.wantError)
+			}
+			if err != nil && strings.Contains(err.Error(), "must stay out") {
+				t.Fatalf("maintenance output leaked through bounded failure: %v", err)
+			}
+			pod := &corev1.Pod{}
+			err = base.Get(context.Background(), client.ObjectKey{
+				Name: runtimeRepairPodName(agent.Name), Namespace: agent.Namespace,
+			}, pod)
+			if !k8serrors.IsNotFound(err) {
+				t.Fatalf("maintenance pod was not cleaned up: %v", err)
+			}
+		})
 	}
 }
 
