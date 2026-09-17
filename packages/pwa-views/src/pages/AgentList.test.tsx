@@ -100,4 +100,22 @@ describe('AgentList activity badge (kyber#417)', () => {
     expect(screen.getByText('claude-sonnet-5')).toBeInTheDocument()
     expect(screen.getByText(/claude-sonnet-5 ·/)).toBeInTheDocument()
   })
+
+  it('renders the same one-line goal on desktop and mobile paths', () => {
+    renderList([{
+      ...mockIdleAgent,
+      goal: {
+        summary: 'Review MAT-62',
+        source: 'agent',
+        acceptedAt: '2026-09-16T12:00:00Z',
+        updatedAt: '2026-09-16T12:00:01Z',
+      },
+    }])
+    const goals = screen.getAllByTestId('agent-goal')
+    expect(goals).toHaveLength(2)
+    for (const goal of goals) {
+      expect(goal).toHaveTextContent('Review MAT-62')
+      expect(goal).toHaveClass('truncate')
+    }
+  })
 })

@@ -81,6 +81,7 @@ export function AgentTerminalPeek({ agentName, hasPod, goal }: { agentName: stri
   if (!agentName || !hasPod) {
     return (
       <Card>
+        <AgentGoalLine goal={goal} className="mb-2" />
         <EmptyState title="Terminal unavailable" description="The live terminal appears while this agent has a running pod." />
       </Card>
     )

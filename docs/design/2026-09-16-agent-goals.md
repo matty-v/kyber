@@ -81,9 +81,10 @@ currently running. Pod/session restarts also retain it because Agent status is
 the authority. A newly accepted prompt after restart replaces it normally.
 
 Hook or sidecar failure must never block a user prompt. The prior goal can be
-stale in that degraded case, but its `acceptedAt` remains visible and the
-existing heartbeat exposes sidecar health. Goal writes are best-effort and
-bounded; they do not join the durable-task delivery contract.
+stale in that degraded case, but its `acceptedAt` remains visible. The existing
+heartbeat exposes sidecar health, not successful delivery of an individual goal
+write. Goal writes are best-effort and bounded; they do not join the durable-task
+delivery contract.
 
 ## 5. Trust, privacy, and access
 

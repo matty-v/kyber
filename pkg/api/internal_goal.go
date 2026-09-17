@@ -46,7 +46,11 @@ func (s *InternalServer) handleAgentGoal(w http.ResponseWriter, r *http.Request,
 	if !start && r.Method == http.MethodGet {
 		goal, err := s.readAgentGoal(r.Context(), agentName)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusNotFound)
+			status := http.StatusInternalServerError
+			if errors.Is(err, errAgentGoalNotFound) || apierrors.IsNotFound(err) {
+				status = http.StatusNotFound
+			}
+			http.Error(w, err.Error(), status)
 			return
 		}
 		writeAgentGoal(w, goal)
@@ -92,7 +96,10 @@ func (s *InternalServer) handleAgentGoal(w http.ResponseWriter, r *http.Request,
 	writeAgentGoal(w, goal)
 }
 
-var errStaleAgentGoal = errors.New("agent goal: revision is stale")
+var (
+	errAgentGoalNotFound = errors.New("agent goal not found")
+	errStaleAgentGoal    = errors.New("agent goal: revision is stale")
+)
 
 func (s *InternalServer) readAgentGoal(ctx context.Context, agentName string) (*kyberv1.AgentGoalStatus, error) {
 	var agent kyberv1.Agent
@@ -100,7 +107,7 @@ func (s *InternalServer) readAgentGoal(ctx context.Context, agentName string) (*
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
 	if agent.Status.Goal == nil {
-		return nil, fmt.Errorf("agent goal not found")
+		return nil, errAgentGoalNotFound
 	}
 	return agent.Status.Goal.DeepCopy(), nil
 }

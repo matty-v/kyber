@@ -51,8 +51,16 @@ describe('TerminalPeek', () => {
   })
 
   it('does not attempt an exec connection when the agent has no pod', () => {
-    render(<AgentTerminalPeek agentName="sleeping" hasPod={false} />)
+    render(<AgentTerminalPeek
+      agentName="sleeping"
+      hasPod={false}
+      goal={{
+        summary: 'Waiting for deployment', source: 'agent',
+        acceptedAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:01Z',
+      }}
+    />)
     expect(screen.getByText('Terminal unavailable')).toBeInTheDocument()
+    expect(screen.getByText('Waiting for deployment')).toBeInTheDocument()
     expect(screen.queryByTestId('exec')).not.toBeInTheDocument()
   })
 })
