@@ -400,6 +400,7 @@ unset _device_auth_pending
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
 KYBER_TASK_RECEIPT_CMD="${KYBER_TASK_RECEIPT_CMD:-/usr/local/bin/kyber-task-receipt}"
+KYBER_GOAL_CMD="${KYBER_GOAL_CMD:-/usr/local/bin/kyber-goal-start}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
 arm_kyber_cron_postrun() {
     local sentinel_dir
@@ -444,6 +445,15 @@ KYBER_CODEX_CLEAR_TEXT="${KYBER_CLEAR_SESSION_TEXT:-/clear}"
 export KYBER_CLEAR_SESSION_TEXT="$KYBER_CODEX_CLEAR_TEXT"
 
 KYBER_CODEX_HOOKS_TOML=""
+if [ -x "$KYBER_GOAL_CMD" ]; then
+    KYBER_CODEX_HOOKS_TOML="${KYBER_CODEX_HOOKS_TOML}
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = \"command\"
+command = \"${KYBER_GOAL_CMD}\"
+timeout = 20
+"
+fi
 if [ -x "$KYBER_TURNSTART_CMD" ]; then
     KYBER_CODEX_HOOKS_TOML="${KYBER_CODEX_HOOKS_TOML}
 [[hooks.UserPromptSubmit]]

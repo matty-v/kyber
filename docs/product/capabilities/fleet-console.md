@@ -23,6 +23,12 @@ An agent’s General settings let you set its alias and description. Private ava
 
 Each agent in the Agents list shows a status dot plus a short activity signal: "Working" while the agent is mid-turn, or "Idle" with a relative time once it is waiting for input. This is the same signal the agent detail view shows, so you can tell at a glance which agents have been idle longest without opening each one. An agent that has not reported an activity state yet shows nothing rather than a fabricated state.
 
+Supported runtimes also show a one-line current goal in the agent list,
+recently-active dashboard, terminal peek, and agent detail overview. Kyber
+opens a privacy-safe fallback when a prompt is accepted; the agent refines it
+after understanding the request. The activity badge remains the source for
+working versus idle, while the goal answers what the most recent work is.
+
 The agent detail view's Activity tab is a structured record of what the agent has actually done: its conversation, its tool calls, and the work it delegated to subagents, shown in place as collapsible blocks at the point it happened. The recent conversation is pinned at the top; the full per-session history sits below it. The tab opens on the last 24 hours and widens on request to 3 and then 7 days, and Export downloads everything loaded as a plain text file. A window holding more than can be returned at once is shown truncated, with a banner saying so. The tab reads from the cluster's durable log archive, so it needs the archive bucket configured; on an install without one it shows an error instead of history.
 
 ## Agent logs

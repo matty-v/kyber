@@ -1323,6 +1323,37 @@ func TestStartClaude_CronHooks_FirstBootArmsSentinel(t *testing.T) {
 	}
 }
 
+func TestStartClaude_RegistersManagedGoalHookIndependently(t *testing.T) {
+	home := t.TempDir()
+	goal := filepath.Join(t.TempDir(), "kyber-goal-start")
+	if err := os.WriteFile(goal, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"CLAUDE_ACCESS_TOKEN=cached-access-token",
+		"CLAUDE_REFRESH_TOKEN=unused-refresh-token",
+		fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", time.Now().Add(30*time.Minute).UnixMilli()),
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/should-not-be-called",
+		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_GOAL_CMD=" + goal,
+		"KYBER_CRON_POSTRUN_CMD=/missing/postrun",
+		"KYBER_CRON_TURNSTART_CMD=/missing/turnstart",
+	})
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), goal) || !strings.Contains(string(settings), "UserPromptSubmit") {
+		t.Fatalf("goal hook not registered:\n%s", settings)
+	}
+}
+
 // TestStartClaude_BootAfterRotation_UsesNewToken simulates three consecutive
 // boots with rotating mock Anthropic + recording mock control-plane:
 //  1. Fresh: refresh runs, rotation push records new tokens, secret updated.

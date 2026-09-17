@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Managed UserPromptSubmit hook for agent goals. It deliberately ignores the
+# prompt body: raw user text must never be copied into fleet list surfaces.
+# Failure is best-effort and never blocks the turn.
+
+set -uo pipefail
+
+payload="$(cat)"
+if ! command -v jq >/dev/null 2>&1 \
+    || [[ "$(jq -r '.hook_event_name // empty' <<<"$payload" 2>/dev/null)" != "UserPromptSubmit" ]]; then
+    exit 0
+fi
+
+url="${KYBER_GOAL_START_URL:-http://127.0.0.1:8091/goal-start}"
+response="$(curl -fsS --connect-timeout 0.2 --max-time 1 -H 'Content-Type: application/json' --data-binary '{}' "$url" 2>/dev/null || true)"
+revision="$(jq -r '.acceptedAt // empty' <<<"$response" 2>/dev/null || true)"
+[[ -n "$revision" ]] || exit 0
+
+jq -nc --arg revision "$revision" '{hookSpecificOutput:{hookEventName:"UserPromptSubmit",additionalContext:("Kyber has opened goal revision " + $revision + ". After understanding this request, call the kyber-request-reply set_goal tool with a concise one-line summary and this exact accepted_at revision. Never include credentials, secrets, or sensitive prompt details. Do this before substantial work.")}}'
+exit 0

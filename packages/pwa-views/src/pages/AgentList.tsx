@@ -18,6 +18,7 @@ import { Card } from '../components/Card'
 import { StatusBadge } from '../components/StatusBadge'
 import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
 import { AgentActivityBadge } from '../components/AgentActivityBadge'
+import { AgentGoalLine } from '../components/AgentGoalLine'
 import { AgentDiskPressureBadge } from '../components/AgentResourceUsage'
 import { Button } from '../components/Button'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -120,6 +121,7 @@ export function AgentList() {
                 {row.original.id}
               </span>
             )}
+            <AgentGoalLine goal={row.original.goal} className="mt-0.5 max-w-72" />
           </div>
         ),
       },
@@ -308,6 +310,7 @@ export function AgentList() {
                       </div>
                     )}
                     {a.profile?.alias && <p className="mt-0.5 font-mono text-[10px] text-text-muted">{a.id}</p>}
+                    <AgentGoalLine goal={a.goal} className="mt-1" />
                     <p className="mt-1 text-xs text-text-muted">
                       {a.currentModel || a.model || '—'} &middot; {a.machine}
                     </p>

@@ -133,6 +133,15 @@ transcript. The control plane persists that observation as
 empty: the spec continues to mean “use the harness default,” while status and
 the PWA can still show which model the harness actually selected.
 
+Agent goals use the same trusted sidecar boundary but remain separate from
+activity detection. A managed `UserPromptSubmit` hook signals `/goal-start`
+without sending prompt text. The sidecar supplies the revision timestamp and
+the control plane writes a privacy-safe fallback to `Agent.status.goal`. The
+agent can then replace it through the self-scoped `get_goal` / `set_goal` tools
+on the existing request MCP endpoint. Revision matching prevents a late turn
+from overwriting a newer prompt's goal. See
+[`2026-09-16-agent-goals.md`](../design/2026-09-16-agent-goals.md).
+
 Resource usage is best-effort and sampled on the sidecar heartbeat tick. The
 pod-level cgroup provides CPU and memory usage/limits. Disk total always comes
 from the Agent's requested allocation, passed to the sidecar as

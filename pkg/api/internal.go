@@ -422,6 +422,8 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleTaskReceiptPost(w, r, agentName)
 	case "status-event":
 		s.handleStatusEvent(w, r, agentName)
+	case "goal", "goal-start":
+		s.handleAgentGoal(w, r, agentName, parts[1] == "goal-start")
 	case "status":
 		s.handleStatusSnapshot(w, r, agentName)
 	case "identity-repo-token":

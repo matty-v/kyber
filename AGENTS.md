@@ -227,6 +227,15 @@ in-memory outcome callback. They do not loop through the public webhook route,
 binding matcher, HMAC verifier, or deduper. Unlike legacy webhook jobs, they do
 not attempt delivery after the Running-phase wait reaches their expiry.
 
+Current one-line agent goals live in `Agent.status.goal`. Managed
+`UserPromptSubmit` hooks signal prompt acceptance without forwarding prompt
+text; the trusted status sidecar owns the revision timestamp and writes the
+privacy-safe fallback through the internal API. Agents refine only their own
+current revision through `get_goal` / `set_goal` on the existing
+`kyber-request-reply` MCP endpoint. Keep this separate from activity state and
+never derive a fleet-visible fallback by truncating raw prompt text. The design
+is `docs/design/2026-09-16-agent-goals.md`.
+
 Durable agent tasks are a separate PostgreSQL-backed contract in
 `pkg/taskstore/` and `pkg/taskdispatch/`, exposed at
 `/api/v1/agents/{agent}/tasks`. They are opt-in via

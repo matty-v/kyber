@@ -292,6 +292,30 @@ func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 	}
 }
 
+func TestAgents_Get_ExposesGoal(t *testing.T) {
+	accepted := metav1.NewMicroTime(time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC))
+	updated := metav1.NewMicroTime(time.Date(2026, 9, 16, 12, 0, 4, 0, time.UTC))
+	agent := sampleAgentCRD("dave")
+	agent.Status.Goal = &kyberv1.AgentGoalStatus{
+		Summary: "Implement agent goals", Source: "agent", AcceptedAt: accepted, UpdatedAt: updated,
+	}
+	h, _ := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var wire map[string]any
+	if err := json.NewDecoder(rr.Body).Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	goal, ok := wire["goal"].(map[string]any)
+	if !ok || goal["summary"] != "Implement agent goals" || goal["source"] != "agent" ||
+		goal["acceptedAt"] != "2026-09-16T12:00:00Z" || goal["updatedAt"] != "2026-09-16T12:00:04Z" {
+		t.Fatalf("goal=%v", wire["goal"])
+	}
+}
+
 // TestAgents_Get_ExposesRuntimeVersion verifies the response surfaces
 // status.runtime.installedVersion when populated by the in-pod reporter.
 // The PWA reads this to show what Claude Code version each agent is running.

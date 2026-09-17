@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/taskobject"
@@ -113,6 +114,24 @@ func (s *requestMCPServer) handle(w http.ResponseWriter, r *http.Request) {
 			"inputSchema": map[string]any{
 				"type": "object", "additionalProperties": false,
 				"properties": map[string]any{},
+			},
+		}, {
+			"name":        "get_goal",
+			"description": "Read this agent's current one-line goal and its accepted_at revision.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{},
+			},
+		}, {
+			"name":        "set_goal",
+			"description": "Refine this agent's current goal after understanding the accepted prompt. Use the accepted_at revision returned by the prompt instruction or get_goal.",
+			"inputSchema": map[string]any{
+				"type": "object", "additionalProperties": false,
+				"properties": map[string]any{
+					"summary":     map[string]any{"type": "string", "minLength": 1, "maxLength": 120},
+					"accepted_at": map[string]any{"type": "string", "format": "date-time"},
+				},
+				"required": []string{"summary", "accepted_at"},
 			},
 		}, {
 			"name":        "respond",
@@ -224,6 +243,8 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 			AuthorizationFlow string                        `json:"authorization_flow"`
 			ExpiresInSeconds  int64                         `json:"expires_in_seconds"`
 			Reason            string                        `json:"reason"`
+			Summary           string                        `json:"summary"`
+			AcceptedAt        string                        `json:"accepted_at"`
 		} `json:"arguments"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
@@ -231,6 +252,12 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	if params.Name == "get_self_profile" {
 		return s.getSelfProfile(ctx)
+	}
+	if params.Name == "get_goal" {
+		return s.getAgentGoal(ctx)
+	}
+	if params.Name == "set_goal" {
+		return s.setAgentGoal(ctx, params.Arguments.AcceptedAt, params.Arguments.Summary)
 	}
 	if params.Name == "complete" {
 		return s.completeTask(ctx, params.Arguments.TaskID, params.Arguments.AttemptID, params.Arguments.Response)
@@ -291,6 +318,58 @@ func (s *requestMCPServer) callTool(ctx context.Context, raw json.RawMessage) re
 	}
 	result := requestToolText("response accepted")
 	result.StructuredContent = map[string]any{"accepted": true, "request_id": params.Arguments.RequestID}
+	return result
+}
+
+type agentGoalToolResponse struct {
+	Summary    string `json:"summary"`
+	Source     string `json:"source"`
+	AcceptedAt string `json:"acceptedAt"`
+	UpdatedAt  string `json:"updatedAt"`
+}
+
+func (s *requestMCPServer) getAgentGoal(ctx context.Context) requestToolResult {
+	var goal agentGoalToolResponse
+	status, err := getFromCP(ctx, s.client, s.cfg, "goal", &goal)
+	if err != nil {
+		if status == http.StatusNotFound {
+			return requestToolError("no goal has been accepted yet")
+		}
+		return requestToolError("goal service is unavailable")
+	}
+	result := requestToolText("%s", goal.Summary)
+	result.StructuredContent = map[string]any{
+		"summary": goal.Summary, "source": goal.Source,
+		"accepted_at": goal.AcceptedAt, "updated_at": goal.UpdatedAt,
+	}
+	return result
+}
+
+func (s *requestMCPServer) setAgentGoal(ctx context.Context, acceptedAt, summary string) requestToolResult {
+	acceptedAt = strings.TrimSpace(acceptedAt)
+	if _, err := time.Parse(time.RFC3339Nano, acceptedAt); err != nil {
+		return requestToolError("accepted_at must be an RFC3339 timestamp")
+	}
+	if strings.TrimSpace(summary) == "" || utf8.RuneCountInString(strings.Join(strings.Fields(summary), " ")) > 120 {
+		return requestToolError("summary must be between 1 and 120 characters")
+	}
+	body, _ := json.Marshal(map[string]string{"acceptedAt": acceptedAt, "summary": summary})
+	var goal agentGoalToolResponse
+	status, err := postToCPJSON(ctx, s.client, s.cfg, "goal", body, &goal)
+	if err != nil {
+		if status == http.StatusConflict {
+			return requestToolError("goal revision is stale; call get_goal before retrying")
+		}
+		if status == http.StatusBadRequest {
+			return requestToolError("goal summary is invalid")
+		}
+		return requestToolError("goal service is unavailable")
+	}
+	result := requestToolText("goal updated")
+	result.StructuredContent = map[string]any{
+		"summary": goal.Summary, "source": goal.Source,
+		"accepted_at": goal.AcceptedAt, "updated_at": goal.UpdatedAt,
+	}
 	return result
 }
 

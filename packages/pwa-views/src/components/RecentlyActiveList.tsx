@@ -4,6 +4,7 @@ import type { Agent, AgentActivityState } from '../lib/types'
 import { Card } from './Card'
 import { EmptyState } from './EmptyState'
 import { StatusBadge } from './StatusBadge'
+import { AgentGoalLine } from './AgentGoalLine'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { rankByActivity, isStale, isAttentionPhase, formatAgo, DEFAULT_LIST_LIMIT } from '../lib/dashboard'
 
@@ -39,9 +40,12 @@ export function RecentlyActiveList({
                   className="-mx-1 flex items-center gap-2 rounded border-b border-border-subtle px-1 py-2 transition-colors last:border-0 hover:bg-surface-overlay/40"
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[state]}`} aria-hidden />
-                  <span className="text-sm text-text-primary">{agent.id}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sm text-text-primary">{agent.id}</span>
+                    <AgentGoalLine goal={agent.goal} />
+                  </span>
                   {isAttentionPhase(agent.phase) && <StatusBadge phase={agent.phase} />}
-                  <span className="ml-auto whitespace-nowrap text-xs text-text-muted">
+                  <span className="whitespace-nowrap text-xs text-text-muted">
                     {formatAgo(agent.activity?.lastActivityAt ?? agent.activity?.lastHeartbeatAt, now)}
                     {label}
                   </span>

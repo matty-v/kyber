@@ -21,6 +21,7 @@ ENV KYBER_RUNTIME_DEFAULT_VERSION=${CODEX_VERSION}
 
 COPY --chmod=0755 images/codex/start-codex.sh /usr/local/bin/start-codex.sh
 COPY --chmod=0755 images/agent-base/scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
+COPY --chmod=0755 images/agent-base/scripts/kyber-goal-start /usr/local/bin/kyber-goal-start
 COPY --chmod=0755 images/shared/kyber-harness-install /usr/local/bin/kyber-harness-install
 COPY --chmod=0755 images/shared/kyber-runtime-repair /usr/local/bin/kyber-runtime-repair
 # Shared identity-repo setup (kyber#676) — installed BESIDE the start script so

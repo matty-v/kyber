@@ -101,6 +101,7 @@ fi
 KYBER_POSTRUN_CMD="${KYBER_CRON_POSTRUN_CMD:-/usr/local/bin/kyber-cron-postrun}"
 KYBER_TURNSTART_CMD="${KYBER_CRON_TURNSTART_CMD:-/usr/local/bin/kyber-cron-turn-start}"
 KYBER_TASK_RECEIPT_CMD="${KYBER_TASK_RECEIPT_CMD:-/usr/local/bin/kyber-task-receipt}"
+KYBER_GOAL_CMD="${KYBER_GOAL_CMD:-/usr/local/bin/kyber-goal-start}"
 KYBER_POSTRUN_SENTINEL="${KYBER_CRON_POSTRUN_SENTINEL:-/persist/var/run/kyber-cron-postrun-enabled}"
 
 arm_kyber_cron_postrun() {
@@ -140,6 +141,11 @@ register_kyber_hook() {
     rm -f ~/.claude/settings.json.tmp
     return 1
 }
+
+if [ -x "$KYBER_GOAL_CMD" ] && command -v jq >/dev/null 2>&1; then
+    register_kyber_hook UserPromptSubmit "$KYBER_GOAL_CMD" \
+        || echo "[kyber] WARNING: could not register agent goal hook" >&2
+fi
 
 if [ -x "$KYBER_POSTRUN_CMD" ] && [ -x "$KYBER_TURNSTART_CMD" ] && command -v jq >/dev/null 2>&1; then
     register_kyber_hook Stop "$KYBER_POSTRUN_CMD" \
