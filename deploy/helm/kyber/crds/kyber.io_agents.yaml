@@ -913,6 +913,43 @@ spec:
                   CurrentModel is the model currently in use by the agent.
                   Updated when a model change takes effect.
                 type: string
+              goal:
+                description: |-
+                  Goal is the latest one-line description of the work accepted by this
+                  agent. Kyber writes a privacy-safe fallback at prompt acceptance; the
+                  agent may replace it with a semantic summary through its self-scoped MCP
+                  tool. It survives pod and harness restarts as observed status.
+                properties:
+                  acceptedAt:
+                    description: AcceptedAt is when the managed UserPromptSubmit hook
+                      observed the prompt.
+                    format: date-time
+                    type: string
+                  source:
+                    description: |-
+                      Source identifies whether Summary is the platform's privacy-safe fallback
+                      or a semantic summary supplied by the agent.
+                    enum:
+                    - platform
+                    - agent
+                    type: string
+                  summary:
+                    description: |-
+                      Summary is normalized plain text with a maximum of 120 Unicode code
+                      points. It is never interpreted as Markdown or HTML.
+                    maxLength: 120
+                    minLength: 1
+                    type: string
+                  updatedAt:
+                    description: UpdatedAt is when Summary was last written.
+                    format: date-time
+                    type: string
+                required:
+                - acceptedAt
+                - source
+                - summary
+                - updatedAt
+                type: object
               identityRepo:
                 description: |-
                   IdentityRepo reports the mint/refresh state of the agent's GitHub

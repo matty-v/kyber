@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
@@ -72,6 +73,33 @@ func TestPostStatusEvent_SurfacesNon2xxAsError(t *testing.T) {
 	}
 	if status != http.StatusNotFound {
 		t.Errorf("status: got %d, want 404", status)
+	}
+}
+
+func TestGoalStartForwarderOwnsRevisionTimestamp(t *testing.T) {
+	var got map[string]string
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/agents/alice/goal-start" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"summary":"Working on a new request","source":"platform","acceptedAt":"2026-09-16T12:00:00Z","updatedAt":"2026-09-16T12:00:00Z"}`))
+	}))
+	defer cp.Close()
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/goal-start", strings.NewReader(`{"acceptedAt":"2999-01-01T00:00:00Z"}`))
+	goalStartForwarder(cp.Client(), config{AgentName: "alice", ControlPlaneURL: cp.URL})(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if got["acceptedAt"] == "2999-01-01T00:00:00Z" {
+		t.Fatal("forwarder trusted the runtime-supplied revision")
+	}
+	if _, err := time.Parse(time.RFC3339Nano, got["acceptedAt"]); err != nil {
+		t.Fatalf("acceptedAt=%q: %v", got["acceptedAt"], err)
 	}
 }
 

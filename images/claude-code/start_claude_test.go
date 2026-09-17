@@ -123,9 +123,13 @@ func TestStartClaudeRegistersDiscordMCP(t *testing.T) {
 
 func TestStartClaudeRegistersSlackMCP(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{`claude mcp remove kyber-slack --scope user`, `claude mcp add kyber-slack "$KYBER_SLACK_MCP_URL"`, `Slack MCP sidecar registered`} {
-		if !strings.Contains(string(script), want) { t.Fatalf("start-claude.sh missing Slack MCP registration %q", want) }
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-claude.sh missing Slack MCP registration %q", want)
+		}
 	}
 }
 
@@ -1252,6 +1256,37 @@ func TestStartClaude_CronHooks_FirstBootArmsSentinel(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "[kyber] cron context hooks registered") {
 		t.Fatalf("first boot did not report verified registration:\n%s", out)
+	}
+}
+
+func TestStartClaude_RegistersManagedGoalHookIndependently(t *testing.T) {
+	home := t.TempDir()
+	goal := filepath.Join(t.TempDir(), "kyber-goal-start")
+	if err := os.WriteFile(goal, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runScript(t, []string{
+		"HOME=" + home,
+		"PATH=" + testPATH(),
+		"AGENT_NAME=unit-test",
+		"CLAUDE_ACCESS_TOKEN=cached-access-token",
+		"CLAUDE_REFRESH_TOKEN=unused-refresh-token",
+		fmt.Sprintf("CLAUDE_ACCESS_TOKEN_EXPIRES_AT=%d", time.Now().Add(30*time.Minute).UnixMilli()),
+		"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/should-not-be-called",
+		"SKIP_CLAUDE_LAUNCH=1",
+		"KYBER_GOAL_CMD=" + goal,
+		"KYBER_CRON_POSTRUN_CMD=/missing/postrun",
+		"KYBER_CRON_TURNSTART_CMD=/missing/turnstart",
+	})
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	settings, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(settings), goal) || !strings.Contains(string(settings), "UserPromptSubmit") {
+		t.Fatalf("goal hook not registered:\n%s", settings)
 	}
 }
 

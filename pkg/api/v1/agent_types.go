@@ -992,6 +992,13 @@ type AgentStatus struct {
 	// +optional
 	Activity *ActivityStatus `json:"activity,omitempty"`
 
+	// Goal is the latest one-line description of the work accepted by this
+	// agent. Kyber writes a privacy-safe fallback at prompt acceptance; the
+	// agent may replace it with a semantic summary through its self-scoped MCP
+	// tool. It survives pod and harness restarts as observed status.
+	// +optional
+	Goal *AgentGoalStatus `json:"goal,omitempty"`
+
 	// Conditions holds standard k8s conditions for this Agent.
 	// +optional
 	// +listType=map
@@ -1025,6 +1032,28 @@ type AgentStatus struct {
 	// not a previous one. See classifyEvent for the routing logic.
 	// +optional
 	LastKernelOOMKillAt *metav1.Time `json:"lastKernelOOMKillAt,omitempty"`
+}
+
+// AgentGoalStatus is the current bounded operator-facing description of an
+// agent's work. AcceptedAt is also the optimistic-concurrency revision: an
+// agent refinement for an older prompt cannot replace a newer goal.
+type AgentGoalStatus struct {
+	// Summary is normalized plain text with a maximum of 120 Unicode code
+	// points. It is never interpreted as Markdown or HTML.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=120
+	Summary string `json:"summary"`
+
+	// Source identifies whether Summary is the platform's privacy-safe fallback
+	// or a semantic summary supplied by the agent.
+	// +kubebuilder:validation:Enum=platform;agent
+	Source string `json:"source"`
+
+	// AcceptedAt is when the managed UserPromptSubmit hook observed the prompt.
+	AcceptedAt metav1.MicroTime `json:"acceptedAt"`
+
+	// UpdatedAt is when Summary was last written.
+	UpdatedAt metav1.MicroTime `json:"updatedAt"`
 }
 
 // AgentSchedulingStatus mirrors a Pod-level scheduling/kubelet failure up to

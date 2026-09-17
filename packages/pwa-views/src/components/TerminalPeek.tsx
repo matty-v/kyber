@@ -1,20 +1,23 @@
 import { useMemo, useState, type ReactNode } from 'react'
-import type { Agent } from '../lib/types'
+import type { Agent, AgentGoalStatus } from '../lib/types'
 import { Card } from './Card'
 import { EmptyState } from './EmptyState'
 import { ExecTerminal } from './ExecTerminal'
 import { rankByActivity } from '../lib/dashboard'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './ui/select'
+import { AgentGoalLine } from './AgentGoalLine'
 
 function PeekFrame({
   name,
   selector,
   heightClassName,
+  goal,
 }: {
   name: string
   selector?: ReactNode
   heightClassName: string
+  goal?: AgentGoalStatus
 }) {
   const visible = usePageVisible()
 
@@ -29,6 +32,7 @@ function PeekFrame({
           <span className="h-1.5 w-1.5 rounded-full bg-success" aria-hidden /> LIVE · read-only
         </span>
       </div>
+      <AgentGoalLine goal={goal} className="mb-2" />
       {visible ? (
         <ExecTerminal key={name} kind="agent" name={name} mode="attach" heightClassName={heightClassName} />
       ) : (
@@ -47,6 +51,7 @@ export function TerminalPeek({ agents }: { agents: Agent[] }) {
   )
   const [selected, setSelected] = useState('')
   const name = selected || defaultName
+  const goal = agents.find((agent) => agent.id === name)?.goal
 
   if (agents.length === 0) {
     return (
@@ -69,10 +74,10 @@ export function TerminalPeek({ agents }: { agents: Agent[] }) {
     </Select>
   )
 
-  return <PeekFrame name={name} selector={selector} heightClassName="h-64" />
+  return <PeekFrame name={name} selector={selector} heightClassName="h-64" goal={goal} />
 }
 
-export function AgentTerminalPeek({ agentName, hasPod }: { agentName: string; hasPod: boolean }) {
+export function AgentTerminalPeek({ agentName, hasPod, goal }: { agentName: string; hasPod: boolean; goal?: AgentGoalStatus }) {
   if (!agentName || !hasPod) {
     return (
       <Card>
@@ -81,5 +86,5 @@ export function AgentTerminalPeek({ agentName, hasPod }: { agentName: string; ha
     )
   }
 
-  return <PeekFrame name={agentName} heightClassName="h-56 sm:h-80" />
+  return <PeekFrame name={agentName} heightClassName="h-56 sm:h-80" goal={goal} />
 }

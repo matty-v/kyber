@@ -167,6 +167,7 @@ func main() {
 //	POST /skills          → /internal/agents/{name}/skills
 //	POST /refresh-token  → /internal/agents/{name}/refresh-token
 //	POST /codex-auth     → /internal/agents/{name}/codex-auth
+//	POST /goal-start     → /internal/agents/{name}/goal-start
 //	POST /mcp            → MCP kyber-request-reply.respond tool
 //	POST /a2a/mcp        → MCP outbound A2A client tools
 //
@@ -192,6 +193,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// access/refresh/expires trio (kyber#681).
 	mux.HandleFunc("/runtime-capabilities", forwardHandler(client, cfg, metrics, logger, "runtime-capabilities", false))
 	mux.HandleFunc("/codex-auth", forwardHandler(client, cfg, metrics, logger, "codex-auth", false))
+	mux.HandleFunc("/goal-start", goalStartForwarder(client, cfg))
 	mux.HandleFunc("/mcp", (&requestMCPServer{client: client, cfg: cfg}).handle)
 	mux.HandleFunc("/a2a/mcp", (&outboundA2AMCPServer{peers: cfg.A2APeers}).handle)
 	mux.HandleFunc("/task-receipts", taskReceiptForwarder(client, cfg))
@@ -221,6 +223,39 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	logger.Info("forwarder listening", "addr", localhostAddr)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("forwarder server died", "err", err)
+	}
+}
+
+func goalStartForwarder(client *http.Client, cfg config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		// The trusted platform sidecar owns the revision clock. Ignore any
+		// runtime-supplied timestamp so a compromised runtime cannot pin a goal
+		// in the future and make all subsequent managed-hook writes stale.
+		_, _ = io.Copy(io.Discard, http.MaxBytesReader(w, r.Body, 4096))
+		body, _ := json.Marshal(map[string]string{"acceptedAt": time.Now().UTC().Format(time.RFC3339Nano)})
+		target := fmt.Sprintf("%s/internal/agents/%s/goal-start", cfg.ControlPlaneURL, cfg.AgentName)
+		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, target, bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "invalid goal request", http.StatusBadRequest)
+			return
+		}
+		req.Header.Set("Content-Type", "application/json")
+		if token, err := readPodToken(podTokenPath); err == nil && token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			http.Error(w, "goal service unavailable", http.StatusBadGateway)
+			return
+		}
+		defer resp.Body.Close()
+		w.Header().Set("Content-Type", resp.Header.Get("Content-Type"))
+		w.WriteHeader(resp.StatusCode)
+		_, _ = io.Copy(w, io.LimitReader(resp.Body, 8192))
 	}
 }
 

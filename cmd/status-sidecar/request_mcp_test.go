@@ -40,10 +40,42 @@ func TestRequestMCPInitializeAndToolList(t *testing.T) {
 	}
 	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
 	encoded, _ := json.Marshal(listed.Result)
-	for _, want := range []string{`"name":"get_self_profile"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"get_control"`, `"name":"ack_cancel"`, `"name":"request_input"`, `"name":"request_authorization"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
+	for _, want := range []string{`"name":"get_self_profile"`, `"name":"get_goal"`, `"name":"set_goal"`, `"name":"respond"`, `"name":"report_progress"`, `"name":"publish_text"`, `"name":"publish_json"`, `"name":"get_control"`, `"name":"ack_cancel"`, `"name":"request_input"`, `"name":"request_authorization"`, `"name":"complete"`, `"request_id"`, `"task_id"`, `"attempt_id"`, `"response"`} {
 		if !bytes.Contains(encoded, []byte(want)) {
 			t.Fatalf("tools/list missing %s: %s", want, encoded)
 		}
+	}
+}
+
+func TestRequestMCPGoalToolsAreSelfScopedAndRevisioned(t *testing.T) {
+	var posted map[string]string
+	cp := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/internal/agents/alice/goal" {
+			t.Fatalf("path=%q", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPost {
+			_ = json.NewDecoder(r.Body).Decode(&posted)
+		}
+		_, _ = w.Write([]byte(`{"summary":"Implement agent goals","source":"agent","acceptedAt":"2026-09-16T12:00:00Z","updatedAt":"2026-09-16T12:00:01Z"}`))
+	}))
+	defer cp.Close()
+	server := &requestMCPServer{client: cp.Client(), cfg: config{AgentName: "alice", ControlPlaneURL: cp.URL}}
+
+	read := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "get_goal", "arguments": map[string]any{}})
+	structured := read.Result.(map[string]any)["structuredContent"].(map[string]any)
+	if structured["accepted_at"] != "2026-09-16T12:00:00Z" {
+		t.Fatalf("get_goal=%+v", structured)
+	}
+
+	updated := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "set_goal", "arguments": map[string]any{
+		"summary": "Implement agent goals", "accepted_at": "2026-09-16T12:00:00Z",
+	}})
+	if updated.Result.(map[string]any)["isError"] == true {
+		t.Fatalf("set_goal=%+v", updated.Result)
+	}
+	if posted["summary"] != "Implement agent goals" || posted["acceptedAt"] != "2026-09-16T12:00:00Z" {
+		t.Fatalf("posted=%v", posted)
 	}
 }
 

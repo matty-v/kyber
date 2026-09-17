@@ -804,7 +804,7 @@ export function AgentDetail() {
             </Card>
           )}
           <MismatchBadges agent={agent} />
-          <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} />
+          <AgentTerminalPeek agentName={name} hasPod={Boolean(agent.status.podName)} goal={agent.goal} />
           <TokenUsageCard data={tokenUsage.data} isLoading={tokenUsage.isLoading} />
           <Card>
             <h2 className="mb-3 text-sm font-semibold text-text-primary">Live pod resources</h2>

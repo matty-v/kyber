@@ -178,7 +178,16 @@ export interface Agent {
   // pipeline (kyber#247 epic; kyber#248 foundation; kyber#249 adds the
   // working/idle state via in-pod kyber-token-reporter).
   activity?: AgentActivityStatus
+  // Latest platform-owned one-line description of the agent's accepted work.
+  goal?: AgentGoalStatus
   createdAt: string
+}
+
+export interface AgentGoalStatus {
+  summary: string
+  source: 'platform' | 'agent'
+  acceptedAt: string
+  updatedAt: string
 }
 
 export interface AgentA2APeer {

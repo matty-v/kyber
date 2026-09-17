@@ -251,6 +251,9 @@ type AgentResponse struct {
 	// Phase A populates LastHeartbeatAt only — proves the sidecar is
 	// alive. Phase B (kyber#249) adds State + LastActivityAt.
 	Activity *agentActivityStatusResponse `json:"activity,omitempty"`
+	// Goal is the latest bounded operator-facing description of this agent's
+	// accepted work. Absent when the runtime has not reported goal support.
+	Goal *agentGoalStatusResponse `json:"goal,omitempty"`
 	// Dirty is true when the running pod is on an older spec generation
 	// than the live Agent CR — i.e. an operator edit hasn't yet been
 	// rolled into a new pod. Derived as metadata.generation >
@@ -312,6 +315,13 @@ type agentActivityStatusResponse struct {
 	State           string                      `json:"state,omitempty"`
 	LastActivityAt  string                      `json:"lastActivityAt,omitempty"`
 	Resources       *agentResourceUsageResponse `json:"resources,omitempty"`
+}
+
+type agentGoalStatusResponse struct {
+	Summary    string `json:"summary"`
+	Source     string `json:"source"`
+	AcceptedAt string `json:"acceptedAt"`
+	UpdatedAt  string `json:"updatedAt"`
 }
 
 type agentResourceUsageResponse struct {
@@ -670,6 +680,14 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			}
 		}
 		resp.Activity = act
+	}
+	if goal := a.Status.Goal; goal != nil {
+		resp.Goal = &agentGoalStatusResponse{
+			Summary:    goal.Summary,
+			Source:     goal.Source,
+			AcceptedAt: goal.AcceptedAt.UTC().Format(time.RFC3339),
+			UpdatedAt:  goal.UpdatedAt.UTC().Format(time.RFC3339),
+		}
 	}
 	if descriptor, ok := pkgruntimes.Describe(a.Spec.Runtime); ok {
 		resp.RuntimeContract = &descriptor

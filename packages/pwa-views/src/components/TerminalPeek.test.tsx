@@ -21,10 +21,13 @@ const a = (id: string, secsAgo?: number): Agent => ({
 
 describe('TerminalPeek', () => {
   it('defaults the attach to the most-recently-active agent in live mode', () => {
-    render(<TerminalPeek agents={[a('old', 300), a('fresh', 10)]} />)
+    const fresh = a('fresh', 10)
+    fresh.goal = { summary: 'Implement agent goals', source: 'agent', acceptedAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:01Z' }
+    render(<TerminalPeek agents={[a('old', 300), fresh]} />)
     const exec = screen.getByTestId('exec')
     expect(exec).toHaveAttribute('data-name', 'fresh')
     expect(exec).toHaveAttribute('data-mode', 'attach')
+    expect(screen.getByText('Implement agent goals')).toBeInTheDocument()
   })
   it('renders an empty state with no agents', () => {
     render(<TerminalPeek agents={[]} />)

@@ -444,9 +444,13 @@ func TestStartCodexRegistersDiscordMCP(t *testing.T) {
 
 func TestStartCodexRegistersSlackMCP(t *testing.T) {
 	script, err := os.ReadFile(scriptPath(t))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, want := range []string{"kyber_converge_mcp kyber_slack", `"${KYBER_SLACK_MCP_URL:-}"`} {
-		if !strings.Contains(string(script), want) { t.Fatalf("start-codex.sh missing Slack MCP registration %q", want) }
+		if !strings.Contains(string(script), want) {
+			t.Fatalf("start-codex.sh missing Slack MCP registration %q", want)
+		}
 	}
 }
 
@@ -1203,6 +1207,33 @@ func TestStartCodex_CronHooks_RegistersBothSignalsAndArmsSentinel(t *testing.T) 
 	}
 	if !strings.Contains(string(out), "cron context hooks registered") {
 		t.Errorf("boot did not report registration:\n%s", out)
+	}
+}
+
+func TestStartCodex_RegistersManagedGoalHookIndependently(t *testing.T) {
+	home := t.TempDir()
+	dir := t.TempDir()
+	managed := filepath.Join(dir, "managed_config.toml")
+	goal := filepath.Join(dir, "kyber-goal-start")
+	if err := os.WriteFile(goal, []byte("#!/usr/bin/env bash\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runBoot(t, home, "", stubBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+managed,
+		"KYBER_GOAL_CMD="+goal,
+		"KYBER_CRON_POSTRUN_CMD=/missing/postrun",
+		"KYBER_CRON_TURNSTART_CMD=/missing/turnstart",
+		"KYBER_TASK_RECEIPT_CMD=/missing/receipt",
+	)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(managed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), goal) || !strings.Contains(string(body), "[[hooks.UserPromptSubmit]]") {
+		t.Fatalf("goal hook not registered:\n%s", body)
 	}
 }
 

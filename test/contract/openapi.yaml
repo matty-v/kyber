@@ -2057,6 +2057,23 @@ components:
         resources:
           $ref: '#/components/schemas/AgentResourceUsage'
 
+    AgentGoalStatus:
+      type: object
+      required: [summary, source, acceptedAt, updatedAt]
+      properties:
+        summary:
+          type: string
+          maxLength: 120
+        source:
+          type: string
+          enum: [platform, agent]
+        acceptedAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
     RuntimeDescriptor:
       type: object
       required: [id, name, contractVersion, profile, authModes, features, cancellation]
@@ -2152,6 +2169,8 @@ components:
           $ref: '#/components/schemas/AgentStatus'
         activity:
           $ref: '#/components/schemas/AgentActivityStatus'
+        goal:
+          $ref: '#/components/schemas/AgentGoalStatus'
         createdAt:
           type: string
           format: date-time

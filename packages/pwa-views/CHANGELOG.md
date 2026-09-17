@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.44.0
+
+- Show each agent's current one-line goal in the dashboard's recently active
+  and terminal-peek surfaces, the agent list, and the agent detail overview.
+  Platform fallback goals remain visually muted and absent goals add no empty
+  layout space.
+
 ## 0.42.0
 
 - Show Hermes's observed provider, model, and context budget, enable its

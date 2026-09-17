@@ -16,9 +16,13 @@ const render1 = (agents: Agent[]) =>
 
 describe('RecentlyActiveList', () => {
   it('links each row to the agent detail page', () => {
-    render1([a('carol', { activity: { lastActivityAt: new Date(NOW - 30_000).toISOString(), state: 'working' } })])
+    render1([a('carol', {
+      activity: { lastActivityAt: new Date(NOW - 30_000).toISOString(), state: 'working' },
+      goal: { summary: 'Review MAT-62', source: 'agent', acceptedAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:01Z' },
+    })])
     expect(screen.getByRole('link', { name: /carol/ })).toHaveAttribute('href', '/agents/carol')
     expect(screen.getByText('30s ago · working')).toBeInTheDocument()
+    expect(screen.getByText('Review MAT-62')).toBeInTheDocument()
   })
   it('shows an attention badge for a NeedsAuth agent', () => {
     render1([a('alice', { phase: 'NeedsAuth', activity: { lastActivityAt: new Date(NOW - 60_000).toISOString() } })])
