@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -79,7 +80,14 @@ func TestTaskStoreAmbiguousAttemptIsNeverRedelivered(t *testing.T) {
 				t.Fatal("missing terminal task evidence")
 			}
 			terminal := events.Events[len(events.Events)-1]
-			if terminal.Type != taskstore.EventTaskTerminal || !strings.Contains(string(terminal.Payload), `"failureCode":"delivery_unknown"`) {
+			var payload struct {
+				State       taskstore.State       `json:"state"`
+				FailureCode taskstore.FailureCode `json:"failureCode"`
+			}
+			if err = json.Unmarshal(terminal.Payload, &payload); err != nil {
+				t.Fatalf("decode terminal evidence: %v", err)
+			}
+			if terminal.Type != taskstore.EventTaskTerminal || payload.State != taskstore.StateFailed || payload.FailureCode != taskstore.FailureDeliveryUnknown {
 				t.Fatalf("terminal evidence=%s %s", terminal.Type, terminal.Payload)
 			}
 		})
