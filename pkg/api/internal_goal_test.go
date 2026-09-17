@@ -16,6 +16,7 @@ import (
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/podtoken"
 )
 
 func TestAgentGoalLifecycleAndStaleRevision(t *testing.T) {
@@ -48,6 +49,13 @@ func TestAgentGoalLifecycleAndStaleRevision(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || goal["summary"] != "Implement agent goals" || goal["source"] != "agent" {
 		t.Fatalf("refine status=%d goal=%v", resp.StatusCode, goal)
 	}
+	// A control-plane retry carries the original nanosecond timestamp. It must
+	// compare equal to the persisted microsecond revision and preserve the
+	// semantic refinement rather than resetting the fallback.
+	resp, goal = post("/internal/agents/alice/goal-start", fmt.Sprintf(`{"acceptedAt":%q}`, first))
+	if resp.StatusCode != http.StatusOK || goal["summary"] != "Implement agent goals" || goal["source"] != "agent" {
+		t.Fatalf("duplicate start status=%d goal=%v", resp.StatusCode, goal)
+	}
 
 	second := "2026-09-16T12:01:00Z"
 	resp, _ = post("/internal/agents/alice/goal-start", fmt.Sprintf(`{"acceptedAt":%q}`, second))
@@ -65,6 +73,58 @@ func TestAgentGoalLifecycleAndStaleRevision(t *testing.T) {
 	}
 	if got.Status.Goal == nil || got.Status.Goal.AcceptedAt.UTC().Format("2006-01-02T15:04:05Z07:00") != second {
 		t.Fatalf("stored goal=%+v", got.Status.Goal)
+	}
+}
+
+func TestAgentGoalPersistsAcrossIdleAndServerRestart(t *testing.T) {
+	accepted := metav1.NewMicroTime(metav1.Now().Time)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Status: kyberv1.AgentStatus{
+			Activity: &kyberv1.ActivityStatus{State: "idle"},
+			Goal: &kyberv1.AgentGoalStatus{
+				Summary: "Review MAT-62", Source: "agent", AcceptedAt: accepted, UpdatedAt: accepted,
+			},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(statusEventTestScheme(t)).WithObjects(agent).
+		WithStatusSubresource(&kyberv1.Agent{}).Build()
+
+	// Constructing a new InternalServer models a control-plane restart while
+	// retaining the Kubernetes Agent status that is the source of truth.
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	req := httptest.NewRequest(http.MethodGet, "/internal/agents/alice/goal", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var goal map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&goal); err != nil {
+		t.Fatal(err)
+	}
+	if goal["summary"] != "Review MAT-62" || goal["source"] != "agent" {
+		t.Fatalf("goal after idle/restart=%v", goal)
+	}
+}
+
+func TestAgentGoalInternalAPIIsSelfScoped(t *testing.T) {
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"}}
+	fakeClient := fake.NewClientBuilder().WithScheme(statusEventTestScheme(t)).WithObjects(agent).
+		WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(
+		briefstore.NewMemoryStore(),
+		api.WithKubeClient(fakeClient, "kyber-system"),
+		api.WithInternalAuth(api.NewHMACInternalAuthenticator(testSigningKey), false),
+	)
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := `{"acceptedAt":"2026-09-16T12:00:00Z"}`
+	resp := do(t, ts, http.MethodPost, "/internal/agents/alice/goal-start", podtoken.Sign("other", testSigningKey), body)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-agent status=%d, want 403", resp.StatusCode)
 	}
 }
 
