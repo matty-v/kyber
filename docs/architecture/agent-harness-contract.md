@@ -78,6 +78,15 @@ execution or provider authentication. Missing, stale or negative evidence cannot
 enable dependent task delivery or public task claims. Non-hook session commands
 retain their actual in-pod checks in addition to declared capability gates.
 
+`model-catalog` is the trusted declaration for authenticated model discovery
+and Kyber-owned explicit model selection. A runtime that omits it is conforming:
+its adapter returns an empty `ModelEnvVar`, an Agent is created without a model
+override, the API rejects catalog/set-model/create-or-patch overrides as
+unsupported, and the PWA omits those controls. Model choice may still exist
+inside the upstream harness, but Kyber neither discovers nor changes it. This
+declaration is independent of task receipts, task tools, job hooks, and baseline
+prompt delivery.
+
 Out-of-interface obligations include Docker image/default-version metadata,
 start scripts and watchdog behavior, startup prompt/identity loading, managed
 MCP configuration, cron and receipt hooks, credential reporters, usage/model
@@ -124,13 +133,13 @@ of this path is an architectural decision, not accomplished by this document.
 | HC-01 | An integration MUST register a stable runtime ID, supply its configured image and launch entrypoint, and report requested/installed upstream versions separately. Missing image or unusable installation MUST fail visibly. Current profile images MUST provide `KYBER_START_CMD` and `KYBER_RUNTIME_DEFAULT_VERSION`. |
 | HC-02 | It MUST expose lifecycle observations with their actual meaning and provide a bounded termination budget. Readiness MUST NOT imply authenticated provider availability unless directly evidenced. Startup/auth/install failures MUST remain distinguishable; hard termination MUST NOT imply successful final-state capture. Pre-stop MAY be unnecessary. |
 | HC-03 | It MUST use the platform persistence/identity environment, load platform instructions, and provide the continuity inputs it claims to support. Current adapter brief/state paths MUST reside under `/persist`. Native conversation resume MUST be distinguished from platform recall and from durable task recovery. Loss of the persistent volume is outside workspace durability guarantees. |
-| HC-04 | It MUST accept prompts through the current shared transport without treating prompt content as shell code; model/configuration overrides it supports MUST be passed explicitly. Session command requests MUST coordinate with dispatch. Optional commands MUST return nil when unsupported, never an empty argv pretending to support an operation. Command delivery success MUST NOT imply operation completion. |
+| HC-04 | It MUST accept prompts through the current shared transport without treating prompt content as shell code; model/configuration overrides it supports MUST be passed explicitly. When explicit model selection is unsupported, it MUST omit `model-catalog`, return an empty model environment key, and reject rather than ignore an override. Session command requests MUST coordinate with dispatch. Optional commands MUST return nil when unsupported, never an empty argv pretending to support an operation. Command delivery success MUST NOT imply operation completion. |
 | HC-05 | It MUST declare supported auth modes and preserve the selected mode without implicit billing fallback. Credentials MUST be scoped to that Agent, referenced rather than embedded in pod-spec literals, and excluded from user-visible reports/logs/model context. It MUST define login, refresh ownership, persistence, invalidation and reauthorization behavior, including synchronization failure windows. It MUST distinguish configured credential presence from observed validity and human login pending. The clearer failure classification is a migration requirement where today's implementation conflates failures. |
 | HC-06 | If session restart/resume/compaction or scheduled-job controls are offered, the integration MUST implement their actual semantics. Explicit session restart is fresh even when crash resume is enabled. Compaction delivery is asynchronous. Job exclusivity/context clearing require both start and stop hooks and current-boot evidence; stale sentinels MUST NOT enable missing hooks. Job exclusivity is scoped to the job, not a universal execution mutex. |
 | HC-07 | Durable task support MUST provide a correlated pre-model acceptance receipt and the platform task-tool completion/control path. Receipt identity includes task, attempt, runtime, session, and optional native turn. Successful tmux delivery MUST NOT imply durable acceptance. A lost POST response MAY be reconciled by exact GET; absent or conflicting evidence MUST fail closed. Ambiguous attempts MUST NOT be blindly redelivered. Neither receipts nor completion guarantee exactly-once external side effects. |
 | HC-08 | Cancellation MUST declare `notify_only` versus evidence-backed `exact_interrupt`. Current harnesses provide cooperative notification. Exact interruption requires targeting the receipt's native turn and terminal evidence for that turn. Requesting cancellation MUST NOT be represented as immediate interruption or rollback of prior effects. |
 | HC-09 | Each integration MUST distinguish declared support from current availability and unverified/stale evidence. Unsupported operations MUST fail visibly; optional absence MUST NOT prevent unrelated baseline operation. The registered descriptor and bounded observations define the shared vocabulary; availability gates MUST reject missing evidence for dependent features. Observed harness features MUST NOT automatically become MAT-24 public service promises. |
-| HC-10 | Claimed tool/channel, model/usage reporting, native resume, or repair features MUST define prerequisites and failure behavior. Model/context unknowns MUST remain unknown. Repair MUST operate within runtime-owned durable paths and distinguish broken installation from missing authorization. A feature MAY remain unsupported with an explicit reason. |
+| HC-10 | Claimed tool/channel, model discovery/selection, usage reporting, native resume, or repair features MUST define prerequisites and failure behavior. `model-catalog` is optional and controls both authenticated discovery and explicit selection surfaces; usage reporting remains separately declared. Model/context unknowns MUST remain unknown. Repair MUST operate within runtime-owned durable paths and distinguish broken installation from missing authorization. A feature MAY remain unsupported with an explicit reason. |
 
 Existing auth values are `oauth` and `api-key`; a new harness need not support
 both. Configuring a new auth mechanism/schema requires review, not an arbitrary
@@ -249,7 +258,9 @@ here by contract version and reference the implementation release. Initial
 history: 2026-09-06 — approved v1 scope and test-first migration; 2026-09-07 —
 1.0 implementation and four-way native auth evidence ready for publication;
 2026-09-17 — MAT-77 ordered credential write-back and persistent recovery
-guarantees specified, with mixed-version and storage-loss limits retained.
+guarantees specified, with mixed-version and storage-loss limits retained;
+2026-09-17 — MAT-79 made model discovery and explicit selection an optional,
+shared `model-catalog` capability with fail-closed API and UI behavior.
 
 ## 7. Cross-references
 

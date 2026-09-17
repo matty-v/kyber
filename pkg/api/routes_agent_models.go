@@ -31,6 +31,10 @@ func (s *Server) handleAgentModels(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to read agent")
 		return
 	}
+	if !runtimeSupportsModelSelection(agent.Spec.Runtime) {
+		writeJSONError(w, http.StatusNotImplemented, "unsupported", unsupportedModelSelectionMessage(agent.Spec.Runtime))
+		return
+	}
 	if s.RuntimeDetectCache == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is not configured")
 		return

@@ -25,7 +25,11 @@ func TestAdapterContract(t *testing.T) {
 			},
 		},
 	}
-	failures := contracttest.CheckAdapter(NewAdapter(), agent, contracttest.AuthCase{
+	descriptor, ok := runtimes.Describe(Type)
+	if !ok {
+		t.Fatal("Hermes descriptor is not registered")
+	}
+	failures := contracttest.CheckAdapter(NewAdapter(), descriptor, agent, contracttest.AuthCase{
 		Mode:             api.AgentAuthTypeAPIKey,
 		CredentialSuffix: "-openrouter",
 		RequiredEnvKeys:  map[string]string{"OPENROUTER_API_KEY": "token"},

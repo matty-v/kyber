@@ -1,4 +1,4 @@
-import { agentAuth, agentContract, authorizationUrl } from '../lib/runtime-contract'
+import { agentAuth, agentContract, authorizationUrl, supportsModelSelection } from '../lib/runtime-contract'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
@@ -507,7 +507,8 @@ export function AgentDetail() {
   const [startupPrompt, setStartupPrompt] = useState('')
   const [profileAlias, setProfileAlias] = useState('')
   const [profileDescription, setProfileDescription] = useState('')
-  const agentModels = useAgentModels(name, pending === 'set-model')
+  const canSelectModel = agent ? supportsModelSelection(agentContract(agent)) : false
+  const agentModels = useAgentModels(name, pending === 'set-model' && canSelectModel)
 
   useEffect(() => {
     if (pending === 'set-model' && !newModel && agentModels.data?.models[0]) {
@@ -905,16 +906,16 @@ export function AgentDetail() {
                     <div className="flex flex-wrap items-start justify-between gap-3">
                       <div>
                         <h2 className="text-sm font-semibold text-text-primary">Runtime</h2>
-                        <p className="mt-1 text-xs text-text-muted">Model, harness version, and compute allocation.</p>
+                        <p className="mt-1 text-xs text-text-muted">{canSelectModel ? 'Model, harness version, and compute allocation.' : 'Harness version and compute allocation.'}</p>
                       </div>
                       <div className="flex flex-wrap gap-2">
-                        <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>
+                        {canSelectModel && <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>}
                         <Button size="sm" variant="secondary" onClick={() => { setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? ''); setPending('set-runtime-version') }}>Harness</Button>
                         <Button size="sm" variant="secondary" onClick={() => { setNewCPU(agent.resources.cpu); setNewMemory(agent.resources.memory); setPending('set-resources') }}>Resources</Button>
                       </div>
                     </div>
                     <dl className="mt-4 grid gap-x-8 gap-y-2 border-t border-border-subtle pt-3 text-sm sm:grid-cols-2">
-                      <div className="flex justify-between gap-3"><dt className="text-text-muted">Model</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd></div>
+                      {canSelectModel && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd></div>}
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Harness</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.runtimeVersion?.installedVersion || agent.runtime}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
@@ -956,7 +957,7 @@ export function AgentDetail() {
       </LocalNavigation>
 
       {/* Set model dialog — custom modal because we need an input field inside */}
-      {pending === 'set-model' && (
+      {pending === 'set-model' && canSelectModel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
           <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">

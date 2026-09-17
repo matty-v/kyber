@@ -1049,6 +1049,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			"unknown runtime '"+req.Runtime+"'", "runtime")
 		return
 	}
+	if req.Model != "" && !runtimeSupportsModelSelection(req.Runtime) {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", unsupportedModelSelectionMessage(req.Runtime), "model")
+		return
+	}
 	// Same catalog check + force escape set-model applies — an unknown
 	// model id would otherwise fail every turn while the agent reports
 	// healthy.
@@ -1408,6 +1412,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 	}
 
 	if req.Model != nil {
+		if !runtimeSupportsModelSelection(agent.Spec.Runtime) {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", unsupportedModelSelectionMessage(agent.Spec.Runtime), "model")
+			return
+		}
 		if *req.Model == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "model must not be empty", "model")
 			return
@@ -1762,6 +1770,10 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		}
 		slog.Error("failed to get agent", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
+		return
+	}
+	if !runtimeSupportsModelSelection(agent.Spec.Runtime) {
+		writeJSONError(w, http.StatusNotImplemented, "unsupported", unsupportedModelSelectionMessage(agent.Spec.Runtime))
 		return
 	}
 

@@ -1,6 +1,6 @@
 # MAT-79 optional model conformance plan
 
-Status: proposed for implementation. Tracker: MAT-79. Parent: MAT-7.
+Status: implemented; awaiting review and CI. Tracker: MAT-79. Parent: MAT-7.
 
 ## Goal
 

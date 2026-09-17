@@ -88,7 +88,9 @@ type Adapter interface {
 	// Read by the controller after pod termination to construct the next brief.
 	SessionStatePath() string
 
-	// ModelEnvVar returns the env var name used to set the LLM model (e.g., "CLAUDE_MODEL").
+	// ModelEnvVar returns the env var name used to set the LLM model (e.g.,
+	// "CLAUDE_MODEL"), or "" when the runtime descriptor does not declare
+	// ModelCatalog and Kyber cannot explicitly select a model for the runtime.
 	ModelEnvVar() string
 
 	// CredentialSecretName returns the name of the Secret holding the
