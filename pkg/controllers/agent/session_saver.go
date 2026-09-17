@@ -48,15 +48,16 @@ const (
 	// read-only at /agent-home), the saver must WRITE session-state.json to the
 	// durable PVC, so it mounts at /persist — the same path the agent container
 	// uses — and writes the snapshot at saverStateFile below. The transcript
-	// JSONL is read from the same two mode-dependent roots as the tailer, here
+	// JSONL is read from the same persistence roots as the tailer, here
 	// re-rooted under /persist.
 	saverMountPath = "/persist"
 
-	// saverProjectsOverlayRoot / saverProjectsBindRoot mirror the tailer's two
-	// physical locations of ~/.claude/projects on the PVC (overlay-upper vs
-	// bind-HOME), re-rooted from the tailer's /agent-home to the saver's
-	// /persist. See transcript_tailer.go for the full explanation of the two
-	// persistence modes.
+	// saverProjectsRootFSRoot / saverProjectsOverlayRoot /
+	// saverProjectsBindRoot mirror the tailer's physical locations of
+	// ~/.claude/projects on the PVC, re-rooted from the tailer's /agent-home to
+	// the saver's /persist. Rootfs is the current default; overlay and bind-HOME
+	// remain readable for upgrades from older persistence modes.
+	saverProjectsRootFSRoot  = saverMountPath + "/agentroot/home/kyber/.claude/projects"
 	saverProjectsOverlayRoot = saverMountPath + "/overlay/upper/home/kyber/.claude/projects"
 	saverProjectsBindRoot    = saverMountPath + "/home/.claude/projects"
 
@@ -103,6 +104,7 @@ func AppendSessionSaver(spec *corev1.PodSpec, cfg SessionSaverConfig) {
 		Command: []string{"/bin/bash", "-c", sessionSaverScriptFor(legacyRuntimeID(cfg.Runtime))},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
+			{Name: "SAVER_ROOTFS_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/agentroot/home/kyber")},
 			{Name: "SAVER_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/overlay/upper/home/kyber")},
 			{Name: "SAVER_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), "/persist/home")},
 		},
@@ -157,7 +159,7 @@ func AppendSessionSaver(spec *corev1.PodSpec, cfg SessionSaverConfig) {
 }
 
 // sessionSaverScript is the sidecar's poll loop. Every poll it finds the single
-// NEWEST session JSONL across the two PVC roots, extracts the last N user/assistant
+// NEWEST session JSONL across the PVC roots, extracts the last N user/assistant
 // text exchanges plus a "last activity" line via one jq program, and writes the
 // recall snapshot to session-state.json atomically (tmp+rename), skipping the
 // write when the content is unchanged so it doesn't churn the PVC.
@@ -171,11 +173,11 @@ func AppendSessionSaver(spec *corev1.PodSpec, cfg SessionSaverConfig) {
 // from a torn record.
 //
 // The roots, output path, turn count, and poll cadence default to the documented
-// constants but are env-overridable (SAVER_OVERLAY_ROOT / SAVER_BIND_ROOT /
-// SAVER_OUT / SAVER_TURNS / SAVER_POLL_SECONDS) so the loop can be exercised
+// constants but are env-overridable (SAVER_ROOTFS_ROOT / SAVER_OVERLAY_ROOT /
+// SAVER_BIND_ROOT / SAVER_OUT / SAVER_TURNS / SAVER_POLL_SECONDS) so the loop can be exercised
 // against a fixture in tests; SAVER_POLL_LIMIT (0 = run forever, the production
-// default) bounds the poll count for the same reason. None are set on the
-// production container, so its behavior is unchanged.
+// default) bounds the poll count for the same reason. Production injects the
+// runtime-specific roots; output and polling controls retain these defaults.
 func sessionSaverScriptFor(id string) string {
 	descriptor, ok := runtimes.Describe(id)
 	exchange := "empty"
@@ -183,6 +185,7 @@ func sessionSaverScriptFor(id string) string {
 		exchange = descriptor.TranscriptExchange
 	}
 	return fmt.Sprintf(`set -u
+ROOTFS_ROOT="${SAVER_ROOTFS_ROOT:-%q}"
 OVERLAY_ROOT="${SAVER_OVERLAY_ROOT:-%q}"
 BIND_ROOT="${SAVER_BIND_ROOT:-%q}"
 OUT="${SAVER_OUT:-%q}"
@@ -192,11 +195,11 @@ POLL_SECONDS="${SAVER_POLL_SECONDS:-5}"
 POLL_LIMIT="${SAVER_POLL_LIMIT:-0}"   # 0 = run forever (production); >0 = exit after N polls (tests only)
 
 # newest_transcript prints the path of the most-recently-modified *.jsonl across
-# both roots, or nothing when neither root has one yet (fresh pod: the agent
+# all roots, or nothing when no root has one yet (fresh pod: the agent
 # hasn't written a transcript). Uses find -printf mtime so it is a single stream,
 # no per-file processes.
 newest_transcript() {
-  { for root in "$OVERLAY_ROOT" "$BIND_ROOT"; do
+  { for root in "$ROOTFS_ROOT" "$OVERLAY_ROOT" "$BIND_ROOT"; do
       [ -d "$root" ] || continue
       find "$root" -type f -name '*.jsonl' -printf '%%T@ %%p\n' 2>/dev/null
     done; } | sort -n | tail -1 | cut -d' ' -f2-
@@ -254,5 +257,5 @@ while true; do
   fi
   sleep "$POLL_SECONDS"
 done
-`, saverProjectsOverlayRoot, saverProjectsBindRoot, saverStateFile, saverDefaultTurns, exchange)
+`, saverProjectsRootFSRoot, saverProjectsOverlayRoot, saverProjectsBindRoot, saverStateFile, saverDefaultTurns, exchange)
 }

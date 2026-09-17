@@ -787,9 +787,9 @@ func TestReconciler_Deletion_NamespaceTerminating_SelfRemovesFinalizer(t *testin
 	}
 }
 
-// TestReconciler_Restarting_TransitionsToStarting verifies that setting desiredPhase=Restarting
-// on a Running agent transitions to Restarting, then Starting after pod deletion.
-func TestReconciler_Restarting_TransitionsToStarting(t *testing.T) {
+// TestReconciler_Restarting_TransitionsToCreating verifies that setting desiredPhase=Restarting
+// on a Running agent transitions to Restarting, then Creating after pod deletion.
+func TestReconciler_Restarting_TransitionsToCreating(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
 	defer teardown()
 
@@ -839,13 +839,13 @@ func TestReconciler_Restarting_TransitionsToStarting(t *testing.T) {
 			agentAfterRestart.Status.Phase, kyberv1.AgentPhaseRestarting)
 	}
 
-	// Reconcile again: pod should be deleted by now → Restarting + pod deleted → Starting.
+	// Reconcile again: pod should be deleted by now → Restarting + pod deleted → Creating.
 	reconcileN(t, r, req, 1)
 
 	agentAfterPodDelete := getAgent(t, k8sClient, agentKey)
-	if agentAfterPodDelete.Status.Phase != kyberv1.AgentPhaseStarting {
+	if agentAfterPodDelete.Status.Phase != kyberv1.AgentPhaseCreating {
 		t.Errorf("phase after pod deletion: got %q, want %q",
-			agentAfterPodDelete.Status.Phase, kyberv1.AgentPhaseStarting)
+			agentAfterPodDelete.Status.Phase, kyberv1.AgentPhaseCreating)
 	}
 }
 
@@ -945,10 +945,10 @@ func TestReconciler_FailedAgentBackoffThrottle(t *testing.T) {
 	// wait for the new pod. It should NOT be the backoff throttle value.
 	_ = result2 // the exact value depends on action; we care that no throttle fired.
 
-	// The agent must have transitioned out of Failed (to Starting).
+	// The agent must have transitioned out of Failed (to Creating).
 	agentFinal := getAgent(t, k8sClient, agentKey)
-	if agentFinal.Status.Phase != kyberv1.AgentPhaseStarting {
-		t.Errorf("phase after backoff elapsed: got %q, want %q", agentFinal.Status.Phase, kyberv1.AgentPhaseStarting)
+	if agentFinal.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Errorf("phase after backoff elapsed: got %q, want %q", agentFinal.Status.Phase, kyberv1.AgentPhaseCreating)
 	}
 
 	// A new pod must now exist.
@@ -1077,12 +1077,12 @@ func TestReconciler_RestartingClearsDesiredPhase(t *testing.T) {
 		t.Errorf("spec.desiredPhase after Restarting trigger: got %q, want \"\" — infinite restart loop bug", afterFirstReconcile.Spec.DesiredPhase)
 	}
 
-	// Reconcile: Restarting + pod deleted → Starting (creates new pod).
+	// Reconcile: Restarting + pod deleted → Creating (creates new pod).
 	reconcileN(t, r, req, 1)
 
 	afterPodDelete := getAgent(t, k8sClient, agentKey)
-	if afterPodDelete.Status.Phase != kyberv1.AgentPhaseStarting {
-		t.Fatalf("phase after pod delete: got %q, want Starting", afterPodDelete.Status.Phase)
+	if afterPodDelete.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Fatalf("phase after pod delete: got %q, want Creating", afterPodDelete.Status.Phase)
 	}
 
 	// Fast-forward to Running again (simulate pod becoming Ready).
@@ -1099,7 +1099,9 @@ func TestReconciler_RestartingClearsDesiredPhase(t *testing.T) {
 	if err := k8sClient.Status().Patch(context.Background(), pod, podPatch2); err != nil {
 		t.Fatalf("patching new pod to Ready: %v", err)
 	}
-	reconcileN(t, r, req, 1)
+	// Creating observes the Running pod and advances to Starting; the next pass
+	// observes readiness and advances to Running.
+	reconcileN(t, r, req, 2)
 
 	afterRunning := getAgent(t, k8sClient, agentKey)
 	if afterRunning.Status.Phase != kyberv1.AgentPhaseRunning {
@@ -1173,7 +1175,7 @@ func TestReconciler_FirstBoot_BriefWritten(t *testing.T) {
 		}
 	}
 
-	// Set desiredPhase=Running to trigger the Stopped → Starting transition (ActionWriteBriefAndCreatePod).
+	// Set desiredPhase=Running to trigger the Stopped → Creating transition (ActionWriteBriefAndCreatePod).
 	agentObj := getAgent(t, k8sClient, agentKey)
 	specPatch := client.MergeFrom(agentObj.DeepCopy())
 	agentObj.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
@@ -1181,7 +1183,7 @@ func TestReconciler_FirstBoot_BriefWritten(t *testing.T) {
 		t.Fatalf("setting desiredPhase=Running: %v", err)
 	}
 
-	// Reconcile: Stopped + desired=Running → ActionWriteBriefAndCreatePod → Starting.
+	// Reconcile: Stopped + desired=Running → ActionWriteBriefAndCreatePod → Creating.
 	reconcileN(t, r, req, 1)
 
 	// Verify the brief was written.
@@ -1358,7 +1360,7 @@ func TestReconciler_ReauthReplacesStaleFailedPod(t *testing.T) {
 	}
 
 	// Operator re-authorizes: /api/v1/agents/{name}/oauth writes the new tokens
-	// and sets desiredPhase=Running, which fires NeedsAuth → Starting
+	// and sets desiredPhase=Running, which fires NeedsAuth → Creating
 	// (ActionResetRetryAndCreatePod) on the next reconcile.
 	agentObj = getAgent(t, k8sClient, agentKey)
 	specPatch := client.MergeFrom(agentObj.DeepCopy())
@@ -1747,7 +1749,7 @@ func TestReconciler_RestartFromStopped_BriefWritten(t *testing.T) {
 		t.Fatalf("setting desiredPhase=Running: %v", err)
 	}
 
-	// Reconcile: Stopped + desired=Running → ActionWriteBriefAndCreatePod → Starting.
+	// Reconcile: Stopped + desired=Running → ActionWriteBriefAndCreatePod → Creating.
 	reconcileN(t, r, req, 1)
 
 	ctx := context.Background()
@@ -1762,10 +1764,10 @@ func TestReconciler_RestartFromStopped_BriefWritten(t *testing.T) {
 	if brief.RestartReason != "operator" {
 		t.Errorf("RestartReason: got %q, want %q", brief.RestartReason, "operator")
 	}
-	// Verify the agent phase moved to Starting.
+	// Verify the agent phase moved to Creating.
 	finalAgent := getAgent(t, k8sClient, agentKey)
-	if finalAgent.Status.Phase != kyberv1.AgentPhaseStarting {
-		t.Errorf("phase: got %q, want Starting", finalAgent.Status.Phase)
+	if finalAgent.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Errorf("phase: got %q, want Creating", finalAgent.Status.Phase)
 	}
 }
 
@@ -1890,8 +1892,8 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 
 	reconcileN(t, r, req, 1)
 	resumed := getAgent(t, k8sClient, key)
-	if resumed.Status.Phase != kyberv1.AgentPhaseStarting {
-		t.Fatalf("phase after replacement: got %q, want Starting", resumed.Status.Phase)
+	if resumed.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Fatalf("phase after replacement: got %q, want Creating", resumed.Status.Phase)
 	}
 	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: namespace}, pod); err != nil {
 		t.Fatalf("replacement pod was not created: %v", err)
@@ -1935,9 +1937,9 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 	if err := k8sClient.Status().Patch(ctx, pod, podPatch); err != nil {
 		t.Fatalf("marking replacement pod ready: %v", err)
 	}
-	// The first pass enters Running; the next mirrors replacement-pod identity
-	// and invalidates the old observation.
-	reconcileN(t, r, req, 2)
+	// The first pass enters Starting, the second enters Running, and the third
+	// mirrors replacement-pod identity and invalidates the old observation.
+	reconcileN(t, r, req, 3)
 	resumed = getAgent(t, k8sClient, key)
 	if resumed.Status.Runtime.Capabilities != nil {
 		t.Errorf("old-pod capability evidence survived replacement: %+v", resumed.Status.Runtime.Capabilities)
@@ -3762,7 +3764,7 @@ func TestClassifyEvent_RunningExitCode137_KernelOOMBeforeContainerStart_DoesNotA
 
 // TestReconciler_RestartPodDiedRace verifies that when the pod dies while
 // desiredPhase=Restarting (race between pod termination and controller processing),
-// the agent transitions through Restarting→Starting, NOT through Failed.
+// the agent transitions through Restarting→Creating, NOT through Failed.
 // This prevents the confusing "Failed" flash in the PWA during operator-triggered restarts.
 func TestReconciler_RestartPodDiedRace(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
@@ -3834,13 +3836,13 @@ func TestReconciler_RestartPodDiedRace(t *testing.T) {
 			agentAfter.Status.Phase, kyberv1.AgentPhaseRestarting)
 	}
 
-	// Next reconcile: Restarting + pod gone → Starting (creates new pod).
+	// Next reconcile: Restarting + pod gone → Creating (creates new pod).
 	reconcileN(t, r, req, 1)
 
 	agentFinal := getAgent(t, k8sClient, agentKey)
-	if agentFinal.Status.Phase != kyberv1.AgentPhaseStarting {
+	if agentFinal.Status.Phase != kyberv1.AgentPhaseCreating {
 		t.Errorf("phase after restart completion: got %q, want %q",
-			agentFinal.Status.Phase, kyberv1.AgentPhaseStarting)
+			agentFinal.Status.Phase, kyberv1.AgentPhaseCreating)
 	}
 }
 
@@ -5052,7 +5054,7 @@ func TestReconcile_VerifiesImageOnReadyPodMatchingControllerImage(t *testing.T) 
 // end-to-end integration test on envtest: bootstrap an Agent + Pod on
 // sidecar image A, change the controller's StatusSidecarImage to B, run
 // reconciles through the rollout. It pins the production regression: Kyber's
-// own convergence deletion must go Running → Restarting → Starting, never
+// own convergence deletion must go Running → Restarting → Creating, never
 // Running → Failed, and must not consume restartCount or crash backoff.
 func TestReconciler_SidecarConvergence_UsesIntentionalRestart(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
@@ -5147,7 +5149,7 @@ func TestReconciler_SidecarConvergence_UsesIntentionalRestart(t *testing.T) {
 	if _, err := r.Reconcile(context.Background(), req); err != nil {
 		t.Fatalf("recreate reconcile: %v", err)
 	}
-	assertAgent(kyberv1.AgentPhaseStarting)
+	assertAgent(kyberv1.AgentPhaseCreating)
 	replacement := &corev1.Pod{}
 	if err := k8sClient.Get(context.Background(), podKey, replacement); err != nil {
 		t.Fatalf("getting replacement pod: %v", err)

@@ -48,7 +48,11 @@ installer_source="${KYBER_REPAIR_INSTALLER_SOURCE:-/usr/local/bin/kyber-harness-
 install -D -m 0755 "$installer_source" "$installer"
 
 echo "[kyber] runtime repair: repairing ${package}@${version}"
-chroot "$root" /usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest \
+# A repair is not a normal boot-time version convergence. The package manifest
+# can still report the requested version while its executable is missing,
+# truncated, or otherwise unusable. Force the atomic installer through a fresh
+# staged activation so same-version repair replaces damaged package contents.
+chroot "$root" /usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest KYBER_HARNESS_FORCE_REINSTALL=true \
     /usr/local/bin/kyber-harness-install "$package" "$version" "$binary"
 
 [ -d "$root$package_path" ] || {

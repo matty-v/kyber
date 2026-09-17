@@ -104,7 +104,7 @@ fi
 	}
 	logText := string(logBody)
 	if !strings.Contains(logText, "/usr/local/bin/kyber-harness-install @openai/codex 0.150.1 codex") ||
-		!strings.Contains(logText, "/usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest") {
+		!strings.Contains(logText, "/usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest KYBER_HARNESS_FORCE_REINSTALL=true") {
 		t.Fatalf("chroot calls = %q", logText)
 	}
 	assertUnrelatedDurableState(t, root, sentinels)

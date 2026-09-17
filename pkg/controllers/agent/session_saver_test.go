@@ -123,6 +123,7 @@ func runSaverFor(t *testing.T, runtimeID, turns, fixture string, extraEnv ...str
 	cmd := exec.Command("bash", "-c", sessionSaverScriptFor(runtimeID))
 	cmd.Env = append(os.Environ(),
 		"AGENT_NAME=k-2so",
+		"SAVER_ROOTFS_ROOT="+filepath.Join(dir, "nonexistent-rootfs"),
 		"SAVER_OVERLAY_ROOT="+overlay,
 		"SAVER_BIND_ROOT="+filepath.Join(dir, "nonexistent-bind"),
 		"SAVER_OUT="+out,
@@ -143,6 +144,42 @@ func runSaverFor(t *testing.T, runtimeID, turns, fixture string, extraEnv ...str
 		t.Fatalf("session-state.json is not valid JSON: %v\ncontent: %s", err, string(data))
 	}
 	return st
+}
+
+func TestSessionSaverScript_DiscoversRootFSPersistence(t *testing.T) {
+	dir := t.TempDir()
+	rootfs := filepath.Join(dir, "agentroot", "home", "kyber", ".claude", "projects")
+	if err := os.MkdirAll(rootfs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rootfs, "rootfs.jsonl"), []byte(saverFixture), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "session-state.json")
+	cmd := exec.Command("bash", "-c", sessionSaverScriptFor("claude-code"))
+	cmd.Env = append(os.Environ(),
+		"AGENT_NAME=rootfs-agent",
+		"SAVER_ROOTFS_ROOT="+rootfs,
+		"SAVER_OVERLAY_ROOT="+filepath.Join(dir, "missing-overlay"),
+		"SAVER_BIND_ROOT="+filepath.Join(dir, "missing-bind"),
+		"SAVER_OUT="+out,
+		"SAVER_POLL_SECONDS=0",
+		"SAVER_POLL_LIMIT=1",
+	)
+	if body, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("saver script failed: %v\n%s", err, body)
+	}
+	body, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("rootfs transcript did not produce session-state.json: %v", err)
+	}
+	var state sessionState
+	if err := json.Unmarshal(body, &state); err != nil {
+		t.Fatal(err)
+	}
+	if state.AgentName != "rootfs-agent" || state.LastActivity != "Final assistant answer." {
+		t.Fatalf("rootfs recall = %+v", state)
+	}
 }
 
 // A realistic Claude Code transcript: a user string turn, an assistant with a

@@ -286,7 +286,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action: ActionUpdateStatus, NextPhase: kyberv1.AgentPhaseRunning,
 		},
 		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredRunning}: {
-			Action: ActionResetRetryAndCreatePod, NextPhase: kyberv1.AgentPhaseStarting,
+			Action: ActionResetRetryAndCreatePod, NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventLivenessFailed}: {
 			Action:    ActionKillPodEmitEventAutoRestart,
@@ -301,20 +301,25 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionForceKillPod,
 			NextPhase: kyberv1.AgentPhaseStopped,
 		},
+		// Every action that creates a pod re-enters through Creating. Creating
+		// owns scheduling, volume attachment, image pull, and init-container wait;
+		// it advances to Starting only once Kubernetes reports the pod Running.
+		// This keeps the runtime startup budget from being spent on provider
+		// infrastructure work during cold start or node replacement.
 		// Stopped transitions
 		{phase: kyberv1.AgentPhaseStopped, event: EventDesiredRunning}: {
 			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// Restarting transitions
 		{phase: kyberv1.AgentPhaseRestarting, event: EventPodDeleted}: {
 			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// Failed transitions
 		{phase: kyberv1.AgentPhaseFailed, event: EventAutoRestartTriggered}: {
 			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		{phase: kyberv1.AgentPhaseFailed, event: EventRetryLimitReached}: {
 			Action:    ActionStayFailedAndAlert,
@@ -322,7 +327,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		},
 		{phase: kyberv1.AgentPhaseFailed, event: EventDesiredRunning}: {
 			Action:    ActionResetRetryAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// NeedsAuth transitions: operator re-authorizes → restarts the agent.
 		//
@@ -335,7 +340,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		// every ~20s indefinitely. Do not reintroduce an unguarded edge here.
 		{phase: kyberv1.AgentPhaseNeedsAuth, event: EventDesiredRunning}: {
 			Action:    ActionResetRetryAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// Operator-forced re-auth (#395): drop a wedged agent to NeedsAuth so it
 		// can be re-authorized from scratch.
@@ -406,7 +411,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		// triggers Restart → recreate the pod with the new limit (#272).
 		{phase: kyberv1.AgentPhaseMemoryExhausted, event: EventDesiredRunning}: {
 			Action:    ActionResetRetryAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// Preemption: graceful drain path — advance notice received while running
 		{phase: kyberv1.AgentPhaseRunning, event: EventPreemptionNotice}: {
@@ -452,7 +457,7 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		// Recovery: replacement machine is ready — write brief and recreate pod
 		{phase: kyberv1.AgentPhaseWaitingForMachine, event: EventMachineReady}: {
 			Action:    ActionWriteBriefAndCreatePod,
-			NextPhase: kyberv1.AgentPhaseStarting,
+			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 	}
 

@@ -185,16 +185,19 @@ func TestAppendTranscriptTailer_NoLivenessProbe(t *testing.T) {
 	}
 }
 
-// TestAppendTranscriptTailer_CommandShipsBothRootsWithResume is the load-bearing
-// behavior AC: the ship loop must scan BOTH mode-dependent PVC roots (overlay +
-// bind-mount fallback), resume each file from its persisted line offset (default
-// line 1 when no checkpoint, so the head is never lost), and never `tail -n 0`.
-func TestAppendTranscriptTailer_CommandShipsBothRootsWithResume(t *testing.T) {
+// TestAppendTranscriptTailer_CommandShipsAllRootsWithResume is the load-bearing
+// behavior AC: the ship loop must scan rootfs plus both legacy mode-dependent
+// PVC roots, resume each file from its persisted line offset (default line 1
+// when no checkpoint, so the head is never lost), and never `tail -n 0`.
+func TestAppendTranscriptTailer_CommandShipsAllRootsWithResume(t *testing.T) {
 	spec := &corev1.PodSpec{Containers: []corev1.Container{{Name: "agent"}}}
 	AppendTranscriptTailer(spec, TranscriptTailerConfig{AgentName: "alice", RuntimeImage: "img:v1"})
 	side := mustInitContainerByName(t, spec, TranscriptTailerContainerName)
 	cmd := strings.Join(side.Command, " ") + " " + strings.Join(side.Args, " ")
 
+	if !strings.Contains(cmd, transcriptProjectsRootFSRoot) {
+		t.Errorf("command must scan the rootfs root %q; cmd=%q", transcriptProjectsRootFSRoot, cmd)
+	}
 	if !strings.Contains(cmd, transcriptProjectsOverlayRoot) {
 		t.Errorf("command must scan the overlay root %q; cmd=%q", transcriptProjectsOverlayRoot, cmd)
 	}
@@ -400,11 +403,13 @@ func TestAppendTranscriptTailer_ShipAwkFlushesWithoutInteractive(t *testing.T) {
 	}
 }
 
-// TestTranscriptProjectsRoots pins the two documented PVC roots to the layouts
-// produced by images/agent-base/entrypoint.sh: overlay mode upper-dir vs the
-// bind-mount-HOME fallback. These are the AC's "named, commented constant"
-// (not inline literals) so they survive overlay/runtime changes.
+// TestTranscriptProjectsRoots pins the documented PVC roots to the layouts
+// produced by images/agent-base/entrypoint.sh: durable rootfs, overlay upper,
+// and bind-mount-HOME fallback.
 func TestTranscriptProjectsRoots(t *testing.T) {
+	if transcriptProjectsRootFSRoot != "/agent-home/agentroot/home/kyber/.claude/projects" {
+		t.Errorf("rootfs root drifted: %q", transcriptProjectsRootFSRoot)
+	}
 	if transcriptProjectsOverlayRoot != "/agent-home/overlay/upper/home/kyber/.claude/projects" {
 		t.Errorf("overlay root drifted: %q", transcriptProjectsOverlayRoot)
 	}

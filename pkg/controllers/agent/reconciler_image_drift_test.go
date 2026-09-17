@@ -362,13 +362,13 @@ func TestReconciler_RuntimeImageDrift_RollsOnceAndConverges(t *testing.T) {
 			afterDrift.Status.Phase, kyberv1.AgentPhaseRestarting)
 	}
 
-	// Reconcile: pod deleted → Restarting + pod gone → Starting (pod recreated on
+	// Reconcile: pod deleted → Restarting + pod gone → Creating (pod recreated on
 	// the desired image).
 	reconcileN(t, r, req, 1)
 	afterRecreate := getAgent(t, k8sClient, agentKey)
-	if afterRecreate.Status.Phase != kyberv1.AgentPhaseStarting {
+	if afterRecreate.Status.Phase != kyberv1.AgentPhaseCreating {
 		t.Fatalf("phase after pod deletion: got %q, want %q",
-			afterRecreate.Status.Phase, kyberv1.AgentPhaseStarting)
+			afterRecreate.Status.Phase, kyberv1.AgentPhaseCreating)
 	}
 
 	// Convergence input: the recreated pod carries the desired image.

@@ -305,8 +305,8 @@ func TestStateMachine_NeedsAuth_DesiredRunningRecreatesPod(t *testing.T) {
 	if tr.Action != ActionResetRetryAndCreatePod {
 		t.Fatalf("NeedsAuth recovery must rebuild the pod; got action %q want %q", tr.Action, ActionResetRetryAndCreatePod)
 	}
-	if tr.NextPhase != kyberv1.AgentPhaseStarting {
-		t.Fatalf("NeedsAuth recovery must land in Starting; got %q", tr.NextPhase)
+	if tr.NextPhase != kyberv1.AgentPhaseCreating {
+		t.Fatalf("NeedsAuth recovery must land in Creating; got %q", tr.NextPhase)
 	}
 
 	// The dead-button check (#599): desiredPhase=Restarting still has no edge

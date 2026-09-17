@@ -10,6 +10,12 @@ if ! [[ "$package" =~ ^@[0-9A-Za-z._-]+/[0-9A-Za-z._-]+$ ]] ||
     echo "[kyber] harness install: invalid package, version, or binary" >&2; exit 2
 fi
 
+force_reinstall="${KYBER_HARNESS_FORCE_REINSTALL:-false}"
+case "$force_reinstall" in
+    true|false) ;;
+    *) echo "[kyber] harness install: invalid force-reinstall setting" >&2; exit 2 ;;
+esac
+
 npm_bin="${KYBER_HARNESS_NPM:-$(command -v npm || true)}"
 [ -n "$npm_bin" ] || { echo "[kyber] harness install: npm not found" >&2; exit 1; }
 global_root="${KYBER_HARNESS_GLOBAL_ROOT:-$("$npm_bin" root -g)}"
@@ -124,7 +130,7 @@ live_version="$(valid_dir_version "$live" 2>/dev/null || true)"
 if [ -n "$live_version" ]; then
     binary_rel="$(binary_rel_of "$live")"
     repair_link "$binary_rel"
-    if [ "$live_version" = "$version" ]; then
+    if [ "$live_version" = "$version" ] && [ "$force_reinstall" != true ]; then
         echo "[kyber] harness install: ${package}@${version} already active"
         exit 0
     fi

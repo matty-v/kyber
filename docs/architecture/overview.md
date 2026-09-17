@@ -177,14 +177,14 @@ stateDiagram-v2
     Running --> WaitingForMachine: MachinePreempted
 
     Stopping --> Stopped: PodTerminated
-    Stopped --> Starting: DesiredRunning
-    Restarting --> Starting: PodDeleted
-    NeedsAuth --> Starting: DesiredRunning
-    MemoryExhausted --> Starting: DesiredRunning
+    Stopped --> Creating: DesiredRunning
+    Restarting --> Creating: PodDeleted
+    NeedsAuth --> Creating: DesiredRunning
+    MemoryExhausted --> Creating: DesiredRunning
     Draining --> WaitingForMachine: PodDeleted
-    WaitingForMachine --> Starting: MachineReady
+    WaitingForMachine --> Creating: MachineReady
 
-    Failed --> Starting: AutoRestartTriggered (under retry limit)
+    Failed --> Creating: AutoRestartTriggered (under retry limit)
     Failed --> Failed: RetryLimitReached (restartCount == 3)
 
     %% Operator-forced re-auth (#395): wedged-agent recovery into NeedsAuth.
@@ -207,8 +207,10 @@ extending it:
   than `Failed`-with-auto-restart, so a too-small agent doesn't crash-loop.
 - **Machine interruption parks the agent, not the operator.** A spot-preemption
   notice drains the agent into `Draining` → `WaitingForMachine`, and the
-  controller brings it back through `Starting` once a replacement machine is
-  ready — no operator action needed.
+  controller brings it back through `Creating` and then `Starting` once a
+  replacement machine is ready — no operator action needed. `Creating` absorbs
+  scheduling, volume attachment, image-pull, and init-container delay;
+  `Starting` measures only runtime readiness after the pod is running.
 
 How the running agent reports `status.activity` back up — the in-pod signal
 source → status sidecar → control plane path — is the **status pipeline**, and
