@@ -58,3 +58,23 @@ func TestDescriptorCopiesAndUnsupportedRuntime(t *testing.T) {
 		t.Fatalf("unknown runtime advertised: %+v", got)
 	}
 }
+
+func TestDescriptorFailureExitCodesAreDistinct(t *testing.T) {
+	claude, ok := runtimes.Describe("claude-code")
+	if !ok {
+		t.Fatal("claude-code descriptor missing")
+	}
+	if claude.AuthFailureExitCode != 2 || claude.AuthServiceFailureExitCode != 44 || claude.CredentialSyncFailureExitCode != 45 {
+		t.Fatalf("claude failure exit codes = auth:%d service:%d sync:%d", claude.AuthFailureExitCode, claude.AuthServiceFailureExitCode, claude.CredentialSyncFailureExitCode)
+	}
+	duplicate := claude
+	duplicate.CredentialSyncFailureExitCode = duplicate.AuthFailureExitCode
+	if err := duplicate.Validate(); err == nil {
+		t.Fatal("descriptor accepted duplicate failure exit codes")
+	}
+	negative := claude
+	negative.AuthServiceFailureExitCode = -1
+	if err := negative.Validate(); err == nil {
+		t.Fatal("descriptor accepted a negative failure exit code")
+	}
+}

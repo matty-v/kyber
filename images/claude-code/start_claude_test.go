@@ -325,6 +325,48 @@ func TestStartClaude_RefreshFailure_ExitsTwo(t *testing.T) {
 	}
 }
 
+func TestStartClaude_AuthServiceFailures_ExitFortyFourWithoutLeakingResponse(t *testing.T) {
+	secretResponse := "provider-response-must-not-leak"
+	for _, tc := range []struct {
+		name    string
+		status  int
+		body    string
+		timeout bool
+	}{
+		{name: "rate limited", status: http.StatusTooManyRequests, body: `{"error":"temporarily_unavailable"}`},
+		{name: "provider outage", status: http.StatusInternalServerError, body: `{"error":"server_error"}`},
+		{name: "malformed success", status: http.StatusOK, body: `{not-json`},
+		{name: "timeout", status: http.StatusOK, body: `{}`, timeout: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.timeout {
+					time.Sleep(250 * time.Millisecond)
+				}
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body+secretResponse)
+			}))
+			defer server.Close()
+			env := []string{
+				"HOME=" + t.TempDir(), "PATH=" + testPATH(), "CLAUDE_REFRESH_TOKEN=refresh-secret",
+				"AGENT_NAME=unit-test", "ANTHROPIC_TOKEN_URL=" + server.URL,
+				"KYBER_REFRESH_TOKEN_URL=http://127.0.0.1:1/unused", "SKIP_CLAUDE_LAUNCH=1",
+			}
+			if tc.timeout {
+				env = append(env, "KYBER_AUTH_HTTP_TIMEOUT=0.05")
+			}
+			out, err := runScript(t, env)
+			exitErr, ok := err.(*exec.ExitError)
+			if !ok || exitErr.ExitCode() != 44 {
+				t.Fatalf("service failure exit = %v, want 44\n%s", err, out)
+			}
+			if strings.Contains(string(out), secretResponse) || strings.Contains(string(out), "refresh-secret") {
+				t.Fatalf("boot output leaked credential or provider body: %s", out)
+			}
+		})
+	}
+}
+
 func TestStartClaude_MissingOAuthCredential_ExitsTwo(t *testing.T) {
 	tmpHome := t.TempDir()
 	out, err := runScript(t, []string{
@@ -1341,10 +1383,10 @@ func TestStartClaude_BootAfterRotation_UsesNewToken(t *testing.T) {
 	}
 }
 
-// TestStartClaude_RotationPushFails_ExitsTwo verifies that when the rotation
-// push fails (control-plane returns 500), the script exits 2 with FATAL —
+// TestStartClaude_RotationPushFails_ExitsFortyFive verifies that when the rotation
+// push fails (control-plane returns 500), the script exits 45 with FATAL —
 // it does NOT silently continue with a stale secret.
-func TestStartClaude_RotationPushFails_ExitsTwo(t *testing.T) {
+func TestStartClaude_RotationPushFails_ExitsFortyFive(t *testing.T) {
 	cpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "simulated cp outage", 500)
 	}))
@@ -1378,8 +1420,8 @@ func TestStartClaude_RotationPushFails_ExitsTwo(t *testing.T) {
 	if !ok {
 		t.Fatalf("expected exit error, got %v\n%s", err, out)
 	}
-	if exitErr.ExitCode() != 2 {
-		t.Errorf("expected exit code 2, got %d\n%s", exitErr.ExitCode(), out)
+	if exitErr.ExitCode() != 45 {
+		t.Errorf("expected exit code 45, got %d\n%s", exitErr.ExitCode(), out)
 	}
 	if !strings.Contains(string(out), "FATAL") {
 		t.Errorf("expected FATAL message in output, got: %s", out)

@@ -1,6 +1,6 @@
 # MAT-76 — Claude authentication failure classification plan
 
-Status: proposed; awaiting Matt's approval before implementation.
+Status: approved by Matt via Telegram callback on 2026-09-16; implementation in progress.
 Issue: https://linear.app/matty-v/issue/MAT-76
 Parent: MAT-7.
 Baseline: `3e4afb9` (`origin/main`, Kyber v1.6.0).
@@ -112,10 +112,11 @@ for confirmed credential failure.
   classification, state-machine transitions, status messaging, and existing
   tests/docs.
 - [x] Run focused baseline controller and Claude startup tests.
-- [ ] Obtain Matt's approval for the design above.
-- [ ] Add failing shell, descriptor, controller/state-machine, and reconcile
+- [x] Obtain Matt's approval for the design above (Telegram message 1086,
+  callback `mat76_plan_approve_ecaf8a8`, 2026-09-16).
+- [x] Add failing shell, descriptor, controller/state-machine, and reconcile
   tests for the new taxonomy and bounded recovery behavior.
-- [ ] Implement runtime-owned codes, Claude response classification, and
+- [x] Implement runtime-owned codes, Claude response classification, and
   controller translation without expanding the public API.
 - [ ] Run focused tests, full Claude integration tests, controller envtest,
   `make build`, `make lint`, and `make test` with the required envtest assets.
@@ -152,6 +153,24 @@ for confirmed credential failure.
 
 ## Current next action
 
-Matt reviews this proposed design. On approval, begin with failing tests for the
-three exit categories and state transitions, then implement the smallest code
-changes that satisfy them.
+Run the broader regression suites, then update the public harness/lifecycle
+documentation with the verified contract and evidence.
+
+## Implementation checkpoint — failure contract
+
+- Claude now reserves exit `2` only for missing credentials and OAuth
+  `invalid_grant`, exit `44` for provider/transport/response failures, and exit
+  `45` for credential write-back failures. The workspace-trust failure now uses
+  generic exit `1`.
+- The token endpoint is read without `curl -f`, so transport failure, HTTP
+  status, and the OAuth error code remain distinguishable. Diagnostics never
+  print the request, tokens, or raw response body.
+- Runtime descriptors validate configured failure codes as non-negative and
+  unique. Controller classification remains scoped to the actual pod runtime
+  label and current agent-container termination.
+- Provider and credential-sync failures now enter `Failed`, increment the
+  existing bounded restart counter, emit category-specific events, and retain
+  an actionable status message when the retry limit is reached. Confirmed auth
+  failure still enters `NeedsAuth`.
+- Focused Go unit tests, the new envtest-backed reconciliation test using
+  Kubernetes 1.31 assets, and focused Claude shell integration tests pass.
