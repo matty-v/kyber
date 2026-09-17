@@ -8,8 +8,7 @@ import { mockIdleAgent, mockNoActivityAgent } from '../mocks/fixtures'
 // "Idle <relative-time>" / "Working" activity text that the detail view
 // shows, by mounting AgentActivityBadge on both render paths. The page
 // renders BOTH the mobile card tree (md:hidden) and the desktop table tree
-// (hidden md:block) into the DOM under jsdom (CSS visibility isn't applied),
-// so each agent yields TWO badge elements — assert with getAllByTestId.
+// (hidden md:block) into the DOM under jsdom (CSS visibility isn't applied).
 
 // Mock the data hooks AgentList consumes. useAgents feeds the list; the
 // mutation hooks only need an isPending flag + a mutateAsync stub so the
@@ -26,10 +25,12 @@ vi.mock('../hooks/useAPI', () => ({
   useCompactAgentSession: vi.fn(),
 }))
 
+const navigate = vi.hoisted(() => vi.fn())
+
 // Replace useNavigate with a spy; keep the real MemoryRouter/usePrefixedPath.
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual<typeof import('react-router-dom')>('react-router-dom')
-  return { ...actual, useNavigate: () => vi.fn() }
+  return { ...actual, useNavigate: () => navigate }
 })
 
 import * as useAPIModule from '../hooks/useAPI'
@@ -68,17 +69,23 @@ describe('AgentList activity badge (kyber#417)', () => {
     vi.clearAllMocks()
   })
 
-  it('renders "Idle <relative>" text on both list render paths for an idle agent', () => {
+  it('keeps activity in the mobile card and discloses it in desktop details', () => {
     renderList([mockIdleAgent])
-    // One badge per render path (mobile card + desktop table row).
-    const badges = screen.getAllByTestId('agent-activity-badge')
-    expect(badges).toHaveLength(2)
+    // The compact desktop row omits secondary activity, while the unchanged
+    // mobile card still shows it.
+    let badges = screen.getAllByTestId('agent-activity-badge')
+    expect(badges).toHaveLength(1)
     for (const badge of badges) {
       expect(badge).toHaveAttribute('data-state', 'idle')
       expect(badge).toHaveClass('whitespace-nowrap')
       expect(badge.textContent).toMatch(/^Idle 1h ago$/)
       expect(badge.querySelector('[aria-hidden="true"]')).toBeNull()
     }
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand idle-han details' }))
+    badges = screen.getAllByTestId('agent-activity-badge')
+    expect(badges).toHaveLength(2)
+    expect(screen.getByText('Activity & health')).toBeInTheDocument()
   })
 
   it('renders no activity badge for an agent with no reported activity', () => {
@@ -120,10 +127,17 @@ describe('AgentList activity badge (kyber#417)', () => {
   })
 
   it('keeps desktop rows compact and discloses secondary details on demand', () => {
-    renderList([mockIdleAgent])
+    const { container } = renderList([mockIdleAgent])
 
     const headers = screen.getAllByRole('columnheader').map((header) => header.textContent?.trim())
     expect(headers).toEqual(['Agent', 'Status', 'Model', ''])
+    expect(container.querySelector('.kyber-data-table')).toHaveClass('table-fixed')
+    expect(Array.from(container.querySelectorAll('col')).map((col) => col.style.width)).toEqual([
+      '42%',
+      '16%',
+      'calc(42% - 3.5rem)',
+      '3.5rem',
+    ])
     expect(screen.queryByText('Runtime')).not.toBeInTheDocument()
     expect(screen.queryByText('Context')).not.toBeInTheDocument()
 
@@ -133,6 +147,22 @@ describe('AgentList activity badge (kyber#417)', () => {
 
     expect(screen.getByText('Runtime')).toBeInTheDocument()
     expect(screen.getByText('Context')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse idle-han details' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('keeps row navigation while the dedicated expand control only toggles details', () => {
+    renderList([mockIdleAgent])
+
+    const toggle = screen.getByRole('button', { name: 'Expand idle-han details' })
+    const row = toggle.closest('tr')
+    expect(row).not.toBeNull()
+
+    fireEvent.click(row!)
+    expect(navigate).toHaveBeenCalledWith('/agents/idle-han')
+
+    navigate.mockClear()
+    fireEvent.click(toggle)
+    expect(navigate).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Collapse idle-han details' })).toHaveAttribute('aria-expanded', 'true')
   })
 })

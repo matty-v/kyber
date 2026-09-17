@@ -112,7 +112,7 @@ export function AgentList() {
         accessorKey: 'id',
         header: 'Agent',
         cell: ({ row }) => (
-          <div className="min-w-0">
+          <div className="min-w-0 overflow-hidden">
             <span className="block truncate text-sm font-medium text-text-primary">
               {row.original.profile?.alias || row.original.id}
             </span>
@@ -121,21 +121,14 @@ export function AgentList() {
                 {row.original.id}
               </span>
             )}
-            <AgentGoalLine goal={row.original.goal} className="mt-0.5 max-w-72" />
+            <AgentGoalLine goal={row.original.goal} className="mt-0.5" />
           </div>
         ),
       },
       {
         accessorKey: 'phase',
         header: 'Status',
-        cell: ({ row }) => (
-          <div className="inline-flex items-center gap-1.5">
-            <StatusBadge phase={row.original.phase} />
-            <SchedulingFailureBadge agent={row.original} />
-            <AgentActivityBadge agent={row.original} showDot={false} />
-            <AgentDiskPressureBadge usage={row.original.activity?.resources} />
-          </div>
-        ),
+        cell: ({ row }) => <StatusBadge phase={row.original.phase} />,
       },
       {
         id: 'model',
@@ -316,6 +309,7 @@ export function AgentList() {
               data={desktopAgents}
               getRowId={(a) => a.id}
               onRowClick={(a) => navigate(prefixed(`/agents/${a.id}`))}
+              columnWidths={['42%', '16%', 'calc(42% - 3.5rem)', '3.5rem']}
               renderExpandedRow={({ original: agent }) => (
                 <AgentExpandedDetails agent={agent} onAction={confirm} />
               )}
@@ -347,7 +341,7 @@ function AgentExpandedDetails({ agent, onAction }: { agent: Agent; onAction: (ki
     : 'text-text-secondary'
 
   return (
-    <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-center">
+    <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_1.5fr_auto] lg:items-center">
       <AgentDetailValue label="Machine" value={agent.machine || '—'} />
       <AgentDetailValue
         label="Runtime"
@@ -361,6 +355,14 @@ function AgentExpandedDetails({ agent, onAction }: { agent: Agent; onAction: (ki
           {usage
             ? <>{formatTokens(usage.tokens.used)} / {formatTokens(usage.tokens.limit)} <span className="text-text-muted">({formatPct(usage.percentage)})</span></>
             : '—'}
+        </div>
+      </div>
+      <div className="min-w-0">
+        <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.15em] text-text-muted">Activity &amp; health</div>
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+          <AgentActivityBadge agent={agent} showDot={false} />
+          <SchedulingFailureBadge agent={agent} />
+          <AgentDiskPressureBadge usage={agent.activity?.resources} />
         </div>
       </div>
       <div className="flex justify-start lg:justify-end">

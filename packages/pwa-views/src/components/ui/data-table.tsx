@@ -23,6 +23,7 @@ interface Props<T> {
   className?: string
   initialSorting?: SortingState
   renderExpandedRow?: (row: Row<T>) => ReactNode
+  columnWidths?: readonly string[]
 }
 
 export function DataTable<T>({
@@ -34,6 +35,7 @@ export function DataTable<T>({
   className,
   initialSorting,
   renderExpandedRow,
+  columnWidths,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? [])
   const [expanded, setExpanded] = useState<ExpandedState>({})
@@ -59,7 +61,14 @@ export function DataTable<T>({
         className,
       )}
     >
-      <table className="kyber-data-table w-full text-sm">
+      <table className={cn('kyber-data-table w-full text-sm', columnWidths && 'table-fixed')}>
+        {columnWidths && (
+          <colgroup>
+            {table.getVisibleLeafColumns().map((column, index) => (
+              <col key={column.id} style={{ width: columnWidths[index] }} />
+            ))}
+          </colgroup>
+        )}
         <thead className="border-b border-border-subtle bg-surface-overlay/40">
           {table.getHeaderGroups().map((hg) => (
             <tr key={hg.id}>
