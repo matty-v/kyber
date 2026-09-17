@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -1839,6 +1840,9 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 	if err := k8sClient.Create(ctx, credentialSecret); err != nil {
 		t.Fatalf("creating synthetic agent credential Secret: %v", err)
 	}
+	originalSecretUID := credentialSecret.UID
+	originalSecretVersion := credentialSecret.ResourceVersion
+	originalSecretData := credentialSecret.DeepCopy().Data
 
 	current := getAgent(t, k8sClient, key)
 	statusPatch := client.MergeFrom(current.DeepCopy())
@@ -1916,8 +1920,10 @@ func TestReconciler_UnavailableMachineParksAndResumesAgent(t *testing.T) {
 	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(credentialSecret), storedSecret); err != nil {
 		t.Fatalf("getting credential Secret after replacement: %v", err)
 	}
-	if got := string(storedSecret.Data["credential.json"]); got != "synthetic-opaque-state" {
-		t.Errorf("credential Secret changed across replacement: %q", got)
+	if storedSecret.UID != originalSecretUID || storedSecret.ResourceVersion != originalSecretVersion ||
+		!reflect.DeepEqual(storedSecret.Data, originalSecretData) {
+		t.Errorf("credential Secret changed across replacement: uid=%q version=%q dataEqual=%t",
+			storedSecret.UID, storedSecret.ResourceVersion, reflect.DeepEqual(storedSecret.Data, originalSecretData))
 	}
 
 	if availability := pkgruntimes.AvailabilityFor(resumed, pkgruntimes.TaskReceipts, time.Now()); availability.State != "unavailable" || availability.Reason != "agent_not_running" {

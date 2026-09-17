@@ -122,7 +122,11 @@ func validateStagingProcedure(t *testing.T, root, scenarioID, file, anchor strin
 		return
 	}
 	for _, line := range strings.Split(string(body), "\n") {
-		heading := strings.TrimSpace(strings.TrimLeft(line, "#"))
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		heading := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
 		if markdownAnchor(heading) == anchor {
 			return
 		}
