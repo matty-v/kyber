@@ -258,13 +258,14 @@ checks; the earlier native live matrix remains pinned to its recorded images.
 
 ## MAT-76 authentication failure taxonomy — fixture checkpoint
 
-Commit `46e4535` adds deterministic Claude startup fixtures for missing and
+PR #249 adds deterministic Claude startup fixtures for missing and
 `invalid_grant` credentials, HTTP 429/5xx, malformed success responses,
 transport timeout, and failed credential write-back. The fixtures assert exit
 categories `2`, `44`, and `45` and reject credential/raw-response leakage.
 Descriptor and controller tests cover code uniqueness, runtime-label scoping,
 current-agent-container-only classification, lifecycle transitions, bounded
-restart counting, category-specific status, and message retention at the retry
-limit. A Kubernetes 1.31 envtest exercises service failure through the real CRD
-status subresource. This is fixture evidence only; the combined MAT-7 staging
-matrix remains the release gate after MAT-76 through MAT-79 are merged.
+restart counting, category-specific status, and truthful retry-limit guidance.
+A Kubernetes 1.31 envtest exercises confirmed-auth, provider/service, and
+credential-sync failures through the real CRD status subresource. This is
+fixture evidence only; the combined MAT-7 staging matrix remains the release
+gate after MAT-76 through MAT-79 are merged.

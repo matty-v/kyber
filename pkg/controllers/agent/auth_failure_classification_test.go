@@ -34,72 +34,97 @@ func TestClassifyRuntimeFailureUsesRuntimeOwnedCodes(t *testing.T) {
 	}
 }
 
-func TestReconcilerAuthServiceFailureUsesBoundedRecovery(t *testing.T) {
+func TestReconcilerRuntimeFailureCategories(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
 	defer teardown()
 
 	ctx := context.Background()
-	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-auth-service-recovery"}}
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-runtime-failure-categories"}}
 	if err := k8sClient.Create(ctx, ns); err != nil {
 		t.Fatalf("creating namespace: %v", err)
 	}
-	agent := newTestAgent("service-failure", ns.Name)
-	agent.Spec.Runtime = "claude-code"
-	if err := k8sClient.Create(ctx, agent); err != nil {
-		t.Fatalf("creating agent: %v", err)
-	}
 	r := newReconciler(k8sClient, buildTestScheme())
-	key := types.NamespacedName{Name: agent.Name, Namespace: ns.Name}
-	req := ctrl.Request{NamespacedName: key}
-	reconcileN(t, r, req, 1)
 
-	current := getAgent(t, k8sClient, key)
-	statusPatch := client.MergeFrom(current.DeepCopy())
-	current.Status.Phase = kyberv1.AgentPhaseRunning
-	now := metav1.Now()
-	current.Status.LastTransition = &now
-	current.Status.StartTime = &now
-	if err := k8sClient.Status().Patch(ctx, current, statusPatch); err != nil {
-		t.Fatalf("setting Running status: %v", err)
-	}
-	pod := &corev1.Pod{}
-	if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: ns.Name}, pod); err != nil {
-		t.Fatalf("getting pod: %v", err)
-	}
-	metadataPatch := client.MergeFrom(pod.DeepCopy())
-	pod.Labels["kyber.io/runtime"] = "claude-code"
-	if err := k8sClient.Patch(ctx, pod, metadataPatch); err != nil {
-		t.Fatalf("setting launched runtime label: %v", err)
-	}
-	podPatch := client.MergeFrom(pod.DeepCopy())
-	pod.Status.Phase = corev1.PodFailed
-	pod.Status.ContainerStatuses = terminatedClaudePod(44).Status.ContainerStatuses
-	if err := k8sClient.Status().Patch(ctx, pod, podPatch); err != nil {
-		t.Fatalf("setting terminal pod status: %v", err)
-	}
+	for _, tc := range []struct {
+		name            string
+		exitCode        int32
+		wantPhase       kyberv1.AgentPhase
+		wantRestarts    int32
+		messageContains string
+		messageForbids  string
+	}{
+		{name: "confirmed-auth", exitCode: 2, wantPhase: kyberv1.AgentPhaseNeedsAuth},
+		{name: "provider-service", exitCode: 44, wantPhase: kyberv1.AgentPhaseFailed, wantRestarts: 1, messageContains: "provider or network is unavailable", messageForbids: "reauthor"},
+		{name: "credential-sync", exitCode: 45, wantPhase: kyberv1.AgentPhaseFailed, wantRestarts: 1, messageContains: "could not persist it to Kyber"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := newTestAgent(tc.name, ns.Name)
+			agent.Spec.Runtime = "claude-code"
+			if err := k8sClient.Create(ctx, agent); err != nil {
+				t.Fatalf("creating agent: %v", err)
+			}
+			key := types.NamespacedName{Name: agent.Name, Namespace: ns.Name}
+			req := ctrl.Request{NamespacedName: key}
+			reconcileN(t, r, req, 1)
 
-	if _, err := r.Reconcile(ctx, req); err != nil {
-		t.Fatalf("reconciling service failure: %v", err)
-	}
-	updated := getAgent(t, k8sClient, key)
-	if updated.Status.Phase != kyberv1.AgentPhaseFailed || updated.Status.RestartCount != 1 {
-		t.Fatalf("status = phase:%s restartCount:%d, want Failed/1", updated.Status.Phase, updated.Status.RestartCount)
-	}
-	if !strings.Contains(updated.Status.Message, "provider or network is unavailable") || strings.Contains(updated.Status.Message, "reauthor") {
-		t.Fatalf("status message is not actionable for a service failure: %q", updated.Status.Message)
-	}
-	originalMessage := updated.Status.Message
-	retryPatch := client.MergeFrom(updated.DeepCopy())
-	updated.Status.RestartCount = maxRestartRetries
-	if err := k8sClient.Status().Patch(ctx, updated, retryPatch); err != nil {
-		t.Fatalf("setting exhausted retry count: %v", err)
-	}
-	if _, err := r.Reconcile(ctx, req); err != nil {
-		t.Fatalf("reconciling exhausted service failure: %v", err)
-	}
-	updated = getAgent(t, k8sClient, key)
-	if updated.Status.Message != originalMessage {
-		t.Fatalf("retry-limit reconcile cleared actionable message: got %q, want %q", updated.Status.Message, originalMessage)
+			current := getAgent(t, k8sClient, key)
+			statusPatch := client.MergeFrom(current.DeepCopy())
+			current.Status.Phase = kyberv1.AgentPhaseRunning
+			now := metav1.Now()
+			current.Status.LastTransition = &now
+			current.Status.StartTime = &now
+			if err := k8sClient.Status().Patch(ctx, current, statusPatch); err != nil {
+				t.Fatalf("setting Running status: %v", err)
+			}
+			pod := &corev1.Pod{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: ns.Name}, pod); err != nil {
+				t.Fatalf("getting pod: %v", err)
+			}
+			metadataPatch := client.MergeFrom(pod.DeepCopy())
+			pod.Labels["kyber.io/runtime"] = "claude-code"
+			if err := k8sClient.Patch(ctx, pod, metadataPatch); err != nil {
+				t.Fatalf("setting launched runtime label: %v", err)
+			}
+			podPatch := client.MergeFrom(pod.DeepCopy())
+			pod.Status.Phase = corev1.PodFailed
+			pod.Status.ContainerStatuses = terminatedClaudePod(tc.exitCode).Status.ContainerStatuses
+			if err := k8sClient.Status().Patch(ctx, pod, podPatch); err != nil {
+				t.Fatalf("setting terminal pod status: %v", err)
+			}
+
+			if _, err := r.Reconcile(ctx, req); err != nil {
+				t.Fatalf("reconciling runtime failure: %v", err)
+			}
+			updated := getAgent(t, k8sClient, key)
+			if updated.Status.Phase != tc.wantPhase || updated.Status.RestartCount != tc.wantRestarts {
+				t.Fatalf("status = phase:%s restartCount:%d, want %s/%d", updated.Status.Phase, updated.Status.RestartCount, tc.wantPhase, tc.wantRestarts)
+			}
+			if tc.messageContains != "" && !strings.Contains(updated.Status.Message, tc.messageContains) {
+				t.Fatalf("status message %q does not contain %q", updated.Status.Message, tc.messageContains)
+			}
+			if tc.messageForbids != "" && strings.Contains(updated.Status.Message, tc.messageForbids) {
+				t.Fatalf("status message %q unexpectedly contains %q", updated.Status.Message, tc.messageForbids)
+			}
+			if tc.wantPhase != kyberv1.AgentPhaseFailed {
+				return
+			}
+
+			retryPatch := client.MergeFrom(updated.DeepCopy())
+			updated.Status.RestartCount = maxRestartRetries
+			if err := k8sClient.Status().Patch(ctx, updated, retryPatch); err != nil {
+				t.Fatalf("setting exhausted retry count: %v", err)
+			}
+			if _, err := r.Reconcile(ctx, req); err != nil {
+				t.Fatalf("reconciling exhausted failure: %v", err)
+			}
+			updated = getAgent(t, k8sClient, key)
+			if !strings.Contains(updated.Status.Message, tc.messageContains) {
+				t.Fatalf("retry-limit reconcile cleared the actionable category: %q", updated.Status.Message)
+			}
+			if !strings.Contains(updated.Status.Message, "Automatic retries are exhausted") || strings.Contains(updated.Status.Message, "Kyber will retry") {
+				t.Fatalf("retry-limit message misstates recovery state: %q", updated.Status.Message)
+			}
+		})
 	}
 }
 

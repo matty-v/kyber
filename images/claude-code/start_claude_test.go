@@ -339,7 +339,11 @@ func TestStartClaude_AuthServiceFailures_ExitFortyFourWithoutLeakingResponse(t *
 	}{
 		{name: "rate limited", status: http.StatusTooManyRequests, body: `{"error":"temporarily_unavailable"}`},
 		{name: "provider outage", status: http.StatusInternalServerError, body: `{"error":"server_error"}`},
+		{name: "invalid grant on provider outage", status: http.StatusInternalServerError, body: `{"error":"invalid_grant"}`},
 		{name: "malformed success", status: http.StatusOK, body: `{not-json`},
+		{name: "non-string rotated token", status: http.StatusOK, body: `{"access_token":"access","refresh_token":42,"expires_in":3600}`},
+		{name: "immediately expired success", status: http.StatusOK, body: `{"access_token":"access","refresh_token":"refresh","expires_in":0}`},
+		{name: "fractional expiry", status: http.StatusOK, body: `{"access_token":"access","refresh_token":"refresh","expires_in":1.5}`},
 		{name: "timeout", status: http.StatusOK, body: `{}`, timeout: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,7 +352,7 @@ func TestStartClaude_AuthServiceFailures_ExitFortyFourWithoutLeakingResponse(t *
 					time.Sleep(250 * time.Millisecond)
 				}
 				w.WriteHeader(tc.status)
-				fmt.Fprint(w, tc.body+secretResponse)
+				fmt.Fprint(w, strings.Replace(tc.body, "}", `,"detail":"`+secretResponse+`"}`, 1))
 			}))
 			defer server.Close()
 			env := []string{

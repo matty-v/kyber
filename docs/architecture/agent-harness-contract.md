@@ -154,7 +154,8 @@ new runtime never inherits another provider's credentials, transcripts or defaul
 | Unknown capability/contract version | Do not advertise availability; preserve unrelated supported features where compatible |
 
 Runtime-owned failure exit codes are private adapter metadata, not a public API.
-Configured nonzero codes must be unique within a descriptor. Claude Code
+Configured nonzero codes must be unique within a descriptor, fit the process
+exit range `1..255`, and not reuse shared runtime-probe exit `43`. Claude Code
 currently reserves `2` for a missing credential or OAuth `invalid_grant`, `44`
 for authentication-provider/transport/malformed-response failures, and `45`
 for failure to persist refreshed credentials. Only the confirmed-auth category

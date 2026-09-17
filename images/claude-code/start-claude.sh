@@ -455,7 +455,10 @@ if [ "$USE_CACHED" = false ]; then
         fi
         if [ "$refresh_status" -lt 200 ] || [ "$refresh_status" -ge 300 ]; then
             oauth_error=$(printf '%s' "$resp" | jq -r '.error // empty' 2>/dev/null || true)
-            if [ "$oauth_error" = "invalid_grant" ]; then
+            # RFC 6749 token errors use HTTP 400. A 5xx/429 response remains a
+            # provider/service failure even if an intermediary or broken
+            # provider body happens to say invalid_grant.
+            if [ "$refresh_status" -eq 400 ] && [ "$oauth_error" = "invalid_grant" ]; then
                 unset resp oauth_error
                 kyber_auth_failure "Claude Code OAuth refresh failed because the provider rejected the credential with invalid_grant"
             fi
@@ -466,10 +469,24 @@ if [ "$USE_CACHED" = false ]; then
             unset resp
             kyber_auth_service_failure "Claude Code OAuth refresh returned a malformed or incomplete success response"
         fi
-        new_refresh=$(printf '%s' "$resp" | jq -r '.refresh_token // empty' 2>/dev/null || true)
-        expires_in=$(printf '%s' "$resp" | jq -r '((.expires_in // 3600) | floor)' 2>/dev/null || true)
+        if ! new_refresh=$(printf '%s' "$resp" | jq -er '
+            if has("refresh_token") and .refresh_token != null then
+                .refresh_token | select(type == "string" and length > 0)
+            else "" end
+        ' 2>/dev/null); then
+            unset resp
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid refresh_token"
+        fi
+        if ! expires_in=$(printf '%s' "$resp" | jq -er '
+            (.expires_in // 3600)
+            | select(type == "number" and . > 0 and (. == floor))
+            | tostring
+        ' 2>/dev/null); then
+            unset resp
+            kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid expires_in value"
+        fi
         unset resp
-        if ! [[ "$expires_in" =~ ^[0-9]+$ ]]; then
+        if ! [[ "$expires_in" =~ ^[0-9]+$ ]] || [ "$expires_in" -le 0 ]; then
             kyber_auth_service_failure "Claude Code OAuth refresh returned an invalid expires_in value"
         fi
         expires_at=$(( ($(date +%s) + expires_in) * 1000 ))

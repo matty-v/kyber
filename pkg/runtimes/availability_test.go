@@ -77,4 +77,14 @@ func TestDescriptorFailureExitCodesAreDistinct(t *testing.T) {
 	if err := negative.Validate(); err == nil {
 		t.Fatal("descriptor accepted a negative failure exit code")
 	}
+	outOfRange := claude
+	outOfRange.AuthServiceFailureExitCode = 256
+	if err := outOfRange.Validate(); err == nil {
+		t.Fatal("descriptor accepted a failure exit code outside the process range")
+	}
+	reserved := claude
+	reserved.AuthServiceFailureExitCode = runtimes.RuntimeProbeFailureExitCode
+	if err := reserved.Validate(); err == nil {
+		t.Fatal("descriptor accepted the reserved runtime-probe failure exit code")
+	}
 }

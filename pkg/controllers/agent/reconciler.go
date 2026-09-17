@@ -843,7 +843,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		case EventCredentialSyncFailed:
 			message = "The runtime refreshed its credential but could not persist it to Kyber. Kyber will retry within the bounded restart policy; reauthorization may be required if the rotated credential cannot be recovered."
 		case EventRetryLimitReached:
-			message = agent.Status.Message
+			message = strings.Replace(agent.Status.Message,
+				"Kyber will retry within the bounded restart policy;",
+				"Automatic retries are exhausted;", 1)
 		}
 	}
 	if err := r.updatePhase(ctx, agent, result.NextPhase, message); err != nil {
@@ -3158,17 +3160,12 @@ func removeString(slice []string, s string) []string {
 	return result
 }
 
-// runtimeProbeFailureExitCode is the integration-neutral signal emitted before
-// authentication when the harness executable/version probe fails. Other
-// runtime failure codes are owned by each runtime descriptor below.
-const runtimeProbeFailureExitCode int32 = 43
-
 func isRuntimeProbeFailure(pod *corev1.Pod) bool {
 	if pod == nil {
 		return false
 	}
 	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.Name == AgentContainerName && cs.State.Terminated != nil && cs.State.Terminated.ExitCode == runtimeProbeFailureExitCode {
+		if cs.Name == AgentContainerName && cs.State.Terminated != nil && cs.State.Terminated.ExitCode == pkgruntimes.RuntimeProbeFailureExitCode {
 			return true
 		}
 	}

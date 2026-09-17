@@ -13,6 +13,11 @@ import (
 const ContractVersion = "1.0"
 const InteractiveProfile = "interactive-tmux-v1"
 
+// RuntimeProbeFailureExitCode is reserved by the shared harness bootstrap for
+// an unusable runtime executable. Runtime-owned failure categories must not
+// reuse it because probe classification intentionally runs first.
+const RuntimeProbeFailureExitCode int32 = 43
+
 type Feature string
 
 const (
@@ -127,6 +132,12 @@ func (d Descriptor) Validate() error {
 		}
 		if code == 0 {
 			continue
+		}
+		if code > 255 {
+			return fmt.Errorf("runtime %s has out-of-range %s failure exit code %d", d.ID, name, code)
+		}
+		if code == RuntimeProbeFailureExitCode {
+			return fmt.Errorf("runtime %s reuses reserved runtime probe exit code %d for %s failure", d.ID, code, name)
 		}
 		if previous, exists := exitCodes[code]; exists {
 			return fmt.Errorf("runtime %s reuses exit code %d for %s and %s failures", d.ID, code, previous, name)

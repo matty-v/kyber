@@ -198,3 +198,20 @@ an assertion failure; a 20-minute rerun later stalled after its fixture child
 processes had exited and was stopped. The new MAT-76 envtest and all focused
 controller/runtime tests pass. Required PR CI remains the authoritative full
 `go test ./...` gate; do not merge if it is not green.
+
+## Code-review checkpoint
+
+The full PR diff was reviewed for lifecycle ordering, runtime scoping, shell
+`set -euo pipefail` behavior, response parsing, secret leakage, retry semantics,
+and evidence coverage. Five findings were fixed:
+
+- `invalid_grant` now requires the RFC-defined HTTP 400 response; a 429/5xx
+  response cannot misroute an outage to `NeedsAuth` based on a misleading body;
+- retry-limit status replaces the stale “Kyber will retry” promise with
+  “Automatic retries are exhausted” while preserving the failure category;
+- descriptor validation rejects runtime-probe code `43` and values outside the
+  real process exit range;
+- successful token responses reject a non-string rotated token and nonpositive
+  or fractional `expires_in` instead of persisting unusable credentials; and
+- Kubernetes 1.31 envtest now drives all three categories through real status
+  updates, including retry exhaustion for both retryable categories.
