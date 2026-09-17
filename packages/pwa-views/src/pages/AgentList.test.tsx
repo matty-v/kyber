@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import type { Agent } from '../lib/types'
 import { mockIdleAgent, mockNoActivityAgent } from '../mocks/fixtures'
@@ -117,5 +117,22 @@ describe('AgentList activity badge (kyber#417)', () => {
       expect(goal).toHaveTextContent('Review MAT-62')
       expect(goal).toHaveClass('truncate')
     }
+  })
+
+  it('keeps desktop rows compact and discloses secondary details on demand', () => {
+    renderList([mockIdleAgent])
+
+    const headers = screen.getAllByRole('columnheader').map((header) => header.textContent?.trim())
+    expect(headers).toEqual(['Agent', 'Status', 'Model', ''])
+    expect(screen.queryByText('Runtime')).not.toBeInTheDocument()
+    expect(screen.queryByText('Context')).not.toBeInTheDocument()
+
+    const toggle = screen.getByRole('button', { name: 'Expand idle-han details' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    fireEvent.click(toggle)
+
+    expect(screen.getByText('Runtime')).toBeInTheDocument()
+    expect(screen.getByText('Context')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse idle-han details' })).toHaveAttribute('aria-expanded', 'true')
   })
 })
