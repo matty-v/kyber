@@ -16,6 +16,7 @@ describe('AgentGoalLine', () => {
     const goal = screen.getByTestId('agent-goal')
     expect(goal).toHaveTextContent('<b>Review MAT-62</b>')
     expect(goal).toHaveAttribute('title', '<b>Review MAT-62</b>')
+    expect(goal).toHaveClass('min-w-0', 'max-w-full', 'truncate')
     expect(goal.querySelector('b')).toBeNull()
   })
 

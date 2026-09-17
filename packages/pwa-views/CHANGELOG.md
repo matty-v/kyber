@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.46.0
+
+- Collapse the desktop agent list to agent, status, model, and one-line goal;
+  machine, runtime, context, and actions are available in an explicit expanded
+  detail row.
+- Keep dashboard cards and agent goals inside narrow mobile viewports, with
+  goals ellipsized inside their available row width.
+
 ## 0.45.0
 
 - Hide model discovery and selection controls when a runtime omits the

@@ -29,15 +29,15 @@ export function RecentlyActiveList({
       {rows.length === 0 ? (
         <EmptyState title="No activity yet" />
       ) : (
-        <ul>
+        <ul className="min-w-0 max-w-full">
           {rows.map((agent) => {
             const state: AgentActivityState = agent.activity?.state ?? 'unknown'
             const label = state && state !== 'unknown' ? ` · ${state}` : ''
             return (
-              <li key={agent.id}>
+              <li key={agent.id} className="min-w-0 max-w-full">
                 <Link
                   to={prefixed(`/agents/${agent.id}`)}
-                  className="-mx-1 flex items-center gap-2 rounded border-b border-border-subtle px-1 py-2 transition-colors last:border-0 hover:bg-surface-overlay/40"
+                  className="-mx-1 flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded border-b border-border-subtle px-1 py-2 transition-colors last:border-0 hover:bg-surface-overlay/40"
                 >
                   <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[state]}`} aria-hidden />
                   <span className="min-w-0 flex-1">
@@ -45,7 +45,7 @@ export function RecentlyActiveList({
                     <AgentGoalLine goal={agent.goal} />
                   </span>
                   {isAttentionPhase(agent.phase) && <StatusBadge phase={agent.phase} />}
-                  <span className="whitespace-nowrap text-xs text-text-muted">
+                  <span className="hidden shrink-0 whitespace-nowrap text-xs text-text-muted sm:block">
                     {formatAgo(agent.activity?.lastActivityAt ?? agent.activity?.lastHeartbeatAt, now)}
                     {label}
                   </span>

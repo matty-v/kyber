@@ -6,7 +6,7 @@ export function AgentGoalLine({ goal, className = '' }: { goal?: AgentGoalStatus
   const tone = goal.source === 'platform' ? 'text-text-muted' : 'text-text-secondary'
   return (
     <p
-      className={`truncate text-xs ${tone} ${className}`}
+      className={`block min-w-0 max-w-full truncate text-xs ${tone} ${className}`}
       title={goal.summary}
       data-testid="agent-goal"
     >

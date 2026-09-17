@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { Bot, Plus, Trash2, MoreHorizontal } from 'lucide-react'
+import { Bot, ChevronDown, ChevronRight, Plus, Trash2, MoreHorizontal } from 'lucide-react'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
   useAgents,
@@ -144,77 +144,47 @@ export function AgentList() {
         cell: ({ row }) => {
           const model = row.original.currentModel || row.original.model
           return (
-            <span className={`font-mono text-xs ${model ? 'text-text-secondary' : 'text-text-disabled'}`}>
+            <span className={`block max-w-56 truncate font-mono text-xs ${model ? 'text-text-secondary' : 'text-text-disabled'}`}>
               {model || '—'}
             </span>
           )
         },
       },
       {
-        accessorKey: 'machine',
-        header: 'Machine',
-        cell: ({ row }) => (
-          <span className="text-xs text-text-secondary">{row.original.machine}</span>
-        ),
-      },
-      {
-        id: 'runtimeVersion',
-        // Sort by version string; empty strings sort to the bottom on desc.
-        accessorFn: (row) => row.runtimeVersion?.installedVersion ?? '',
-        header: 'Runtime',
-        cell: ({ row }) => {
-          const v = row.original.runtimeVersion?.installedVersion
-          if (!v) {
-            return (
-              <span className="font-mono text-xs text-text-disabled" title="Not yet reported">
-                {row.original.runtime} —
-              </span>
-            )
-          }
-          return (
-            <span className="font-mono text-xs text-text-secondary">
-              {row.original.runtime} {v}
-            </span>
-          )
-        },
-      },
-      {
-        id: 'context',
-        // Sort by percentage so operators see the agents closest to compaction
-        // first. Rows without a token-usage snapshot sort to the bottom on
-        // desc (treated as -1).
-        accessorFn: (row) => row.tokenUsage?.percentage ?? -1,
-        header: 'Context',
-        cell: ({ row }) => {
-          const usage = row.original.tokenUsage
-          if (!usage) {
-            return <span className="font-mono text-xs text-text-disabled">—</span>
-          }
-          const pct = usage.percentage
-          const color =
-            pct >= 90 ? 'text-danger'
-            : pct >= 75 ? 'text-warn'
-            : 'text-text-secondary'
-          return (
-            <span className={`font-mono text-xs tabular-nums ${color}`}>
-              {formatTokens(usage.tokens.used)} / {formatTokens(usage.tokens.limit)}{' '}
-              <span className="text-text-muted">({formatPct(pct)})</span>
-            </span>
-          )
-        },
-      },
-      {
-        id: 'actions',
+        id: 'expand',
         header: '',
         enableSorting: false,
         cell: ({ row }) => (
           <div className="flex justify-end">
-            <AgentActionsMenu agent={row.original} onAction={confirm} />
+            <button
+              type="button"
+              aria-label={`${row.getIsExpanded() ? 'Collapse' : 'Expand'} ${row.original.id} details`}
+              aria-expanded={row.getIsExpanded()}
+              className="rounded p-1.5 text-text-muted transition-colors hover:bg-surface-overlay hover:text-text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring"
+              onClick={(event) => {
+                event.stopPropagation()
+                row.toggleExpanded()
+              }}
+            >
+              {row.getIsExpanded()
+                ? <ChevronDown className="h-4 w-4" aria-hidden />
+                : <ChevronRight className="h-4 w-4" aria-hidden />}
+            </button>
           </div>
         ),
       },
     ],
     [],
+  )
+
+  // Preserve the prior desktop default: highest context pressure first. The
+  // value now lives in the disclosed details instead of consuming a compact
+  // summary column; clicking a visible header still replaces this order.
+  const desktopAgents = useMemo(
+    () => [...(agents ?? [])].sort(
+      (a, b) => (b.tokenUsage?.percentage ?? -1) - (a.tokenUsage?.percentage ?? -1),
+    ),
+    [agents],
   )
 
   async function executeAction() {
@@ -343,10 +313,12 @@ export function AgentList() {
           <div className="hidden md:block">
             <DataTable
               columns={columns}
-              data={agents}
+              data={desktopAgents}
               getRowId={(a) => a.id}
               onRowClick={(a) => navigate(prefixed(`/agents/${a.id}`))}
-              initialSorting={[{ id: 'context', desc: true }]}
+              renderExpandedRow={({ original: agent }) => (
+                <AgentExpandedDetails agent={agent} onAction={confirm} />
+              )}
             />
           </div>
         </>
@@ -362,6 +334,49 @@ export function AgentList() {
         onConfirm={() => void executeAction()}
         onCancel={() => setPending(null)}
       />
+    </div>
+  )
+}
+
+function AgentExpandedDetails({ agent, onAction }: { agent: Agent; onAction: (kind: ActionKind, agent: Agent) => void }) {
+  const runtimeVersion = agent.runtimeVersion?.installedVersion
+  const usage = agent.tokenUsage
+  const contextTone = !usage ? 'text-text-disabled'
+    : usage.percentage >= 90 ? 'text-danger'
+    : usage.percentage >= 75 ? 'text-warn'
+    : 'text-text-secondary'
+
+  return (
+    <div className="grid min-w-0 gap-4 sm:grid-cols-2 lg:grid-cols-[1fr_1fr_1fr_auto] lg:items-center">
+      <AgentDetailValue label="Machine" value={agent.machine || '—'} />
+      <AgentDetailValue
+        label="Runtime"
+        value={`${agent.runtime}${runtimeVersion ? ` ${runtimeVersion}` : ' —'}`}
+        muted={!runtimeVersion}
+        mono
+      />
+      <div className="min-w-0">
+        <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.15em] text-text-muted">Context</div>
+        <div className={`truncate font-mono text-xs tabular-nums ${contextTone}`}>
+          {usage
+            ? <>{formatTokens(usage.tokens.used)} / {formatTokens(usage.tokens.limit)} <span className="text-text-muted">({formatPct(usage.percentage)})</span></>
+            : '—'}
+        </div>
+      </div>
+      <div className="flex justify-start lg:justify-end">
+        <AgentActionsMenu agent={agent} onAction={onAction} />
+      </div>
+    </div>
+  )
+}
+
+function AgentDetailValue({ label, value, mono = false, muted = false }: { label: string; value: string; mono?: boolean; muted?: boolean }) {
+  return (
+    <div className="min-w-0">
+      <div className="mb-1 font-mono text-[10px] uppercase tracking-[0.15em] text-text-muted">{label}</div>
+      <div className={`truncate text-xs ${mono ? 'font-mono' : ''} ${muted ? 'text-text-disabled' : 'text-text-secondary'}`}>
+        {value}
+      </div>
     </div>
   )
 }

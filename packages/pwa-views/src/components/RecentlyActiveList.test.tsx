@@ -20,8 +20,11 @@ describe('RecentlyActiveList', () => {
       activity: { lastActivityAt: new Date(NOW - 30_000).toISOString(), state: 'working' },
       goal: { summary: 'Review MAT-62', source: 'agent', acceptedAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:01Z' },
     })])
-    expect(screen.getByRole('link', { name: /carol/ })).toHaveAttribute('href', '/agents/carol')
-    expect(screen.getByText('30s ago · working')).toBeInTheDocument()
+    const row = screen.getByRole('link', { name: /carol/ })
+    expect(row).toHaveAttribute('href', '/agents/carol')
+    expect(row).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
+    expect(row.closest('.kyber-card')).toHaveClass('min-w-0', 'max-w-full')
+    expect(screen.getByText('30s ago · working')).toHaveClass('hidden', 'sm:block')
     expect(screen.getByText('Review MAT-62')).toBeInTheDocument()
   })
   it('shows an attention badge for a NeedsAuth agent', () => {

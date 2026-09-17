@@ -1,11 +1,14 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import type { ReactNode } from 'react'
 import {
   type ColumnDef,
+  type ExpandedState,
   type SortingState,
   flexRender,
   getCoreRowModel,
+  getExpandedRowModel,
   getSortedRowModel,
+  type Row,
   useReactTable,
 } from '@tanstack/react-table'
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react'
@@ -19,6 +22,7 @@ interface Props<T> {
   emptyState?: ReactNode
   className?: string
   initialSorting?: SortingState
+  renderExpandedRow?: (row: Row<T>) => ReactNode
 }
 
 export function DataTable<T>({
@@ -29,16 +33,21 @@ export function DataTable<T>({
   emptyState,
   className,
   initialSorting,
+  renderExpandedRow,
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? [])
+  const [expanded, setExpanded] = useState<ExpandedState>({})
   const table = useReactTable({
     data,
     columns,
-    state: { sorting },
+    state: { sorting, expanded },
     onSortingChange: setSorting,
+    onExpandedChange: setExpanded,
     getCoreRowModel: getCoreRowModel(),
+    getExpandedRowModel: getExpandedRowModel(),
     getSortedRowModel: getSortedRowModel(),
     getRowId,
+    getRowCanExpand: () => Boolean(renderExpandedRow),
   })
 
   const rows = table.getRowModel().rows
@@ -95,20 +104,29 @@ export function DataTable<T>({
             </tr>
           )}
           {rows.map((row) => (
-            <tr
-              key={row.id}
-              onClick={onRowClick ? () => onRowClick(row.original) : undefined}
-              className={cn(
-                'border-b border-border-subtle/60 transition-colors last:border-0',
-                onRowClick && 'cursor-pointer hover:bg-surface-overlay/30',
+            <Fragment key={row.id}>
+              <tr
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+                className={cn(
+                  'border-b border-border-subtle/60 transition-colors',
+                  !row.getIsExpanded() && 'last:border-0',
+                  onRowClick && 'cursor-pointer hover:bg-surface-overlay/30',
+                )}
+              >
+                {row.getVisibleCells().map((cell) => (
+                  <td key={cell.id} className="px-4 py-3 align-middle">
+                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                  </td>
+                ))}
+              </tr>
+              {row.getIsExpanded() && renderExpandedRow && (
+                <tr className="border-b border-border-subtle/60 last:border-0">
+                  <td colSpan={row.getVisibleCells().length} className="bg-surface-overlay/20 px-4 py-3">
+                    {renderExpandedRow(row)}
+                  </td>
+                </tr>
               )}
-            >
-              {row.getVisibleCells().map((cell) => (
-                <td key={cell.id} className="px-4 py-3 align-middle">
-                  {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                </td>
-              ))}
-            </tr>
+            </Fragment>
           ))}
         </tbody>
       </table>
