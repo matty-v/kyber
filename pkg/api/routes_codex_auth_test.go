@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,10 +10,51 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/runtimes"
 )
+
+func TestCodexDeviceAuthStatus_PodlessState(t *testing.T) {
+	tests := []struct {
+		name      string
+		phase     kyberv1.AgentPhase
+		wantState runtimes.AuthState
+	}{
+		{"NeedsAuth offers device login", kyberv1.AgentPhaseNeedsAuth, runtimes.AuthAbsent},
+		{"Starting keeps waiting for pod creation", kyberv1.AgentPhaseStarting, runtimes.AuthStarting},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s := newTestPublicServer(t, testAPIKey)
+			agent := sampleAgentCRD("needy")
+			agent.Spec.Runtime = "codex"
+			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+			agent.Status.Phase = tc.phase
+			s.K8sClient = fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent).Build()
+			s.RestConfig = &rest.Config{}
+			s.Clientset = k8sfake.NewSimpleClientset()
+
+			req := httptest.NewRequest(http.MethodGet, "/api/v1/agents/needy/auth", nil)
+			req.Header.Set("Authorization", "Bearer "+testAPIKey)
+			rr := httptest.NewRecorder()
+			buildTestHandler(s).ServeHTTP(rr, req)
+			if rr.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			var got runtimes.AuthObservation
+			if err := json.NewDecoder(rr.Body).Decode(&got); err != nil {
+				t.Fatalf("decoding response: %v", err)
+			}
+			if got.State != tc.wantState {
+				t.Fatalf("state=%q, want %q", got.State, tc.wantState)
+			}
+		})
+	}
+}
 
 func TestCodexDeviceAuthResetsCredentialAndStartsAgent(t *testing.T) {
 	s := newTestPublicServer(t, "test-key")

@@ -92,12 +92,21 @@ func (s *Server) handleCodexDeviceAuthStatus(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// No live pod means the flow cannot be running yet. That is the first
-	// ~20s of every click, so it reads as `starting` rather than an error —
-	// the panel would otherwise flash a failure on the happy path.
+	// A pod-less NeedsAuth agent has no login process to observe. Report that as
+	// absent so the panel offers the operator a way to start one. Returning
+	// starting here deadlocks recovery: the panel hides its start button and
+	// polls forever even though no pod exists to produce a device code.
+	//
+	// Other pod-less phases can legitimately be between the accepted POST and
+	// pod creation, so they remain starting to avoid flashing the idle action in
+	// the middle of a healthy boot.
 	podName := "agent-" + name
 	pod := &corev1.Pod{}
 	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: podName, Namespace: s.Namespace}, pod); err != nil {
+		if k8serrors.IsNotFound(err) && agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth {
+			writeJSON(w, http.StatusOK, runtimes.AuthObservation{State: runtimes.AuthAbsent})
+			return
+		}
 		writeJSON(w, http.StatusOK, runtimes.AuthObservation{State: runtimes.AuthStarting})
 		return
 	}
