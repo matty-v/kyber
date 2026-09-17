@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.46.1
+
+- Keep desktop agent-list columns inside the table, truncate goal text, and
+  move activity and health badges into the expandable detail row without
+  changing the mobile card layout.
+
 ## 0.46.0
 
 - Collapse the desktop agent list to agent, status, model, and one-line goal;
