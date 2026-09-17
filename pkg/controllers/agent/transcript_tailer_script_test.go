@@ -17,7 +17,7 @@ import (
 // assert its BEHAVIOR — that the single-process incremental reader ships active
 // sessions exactly once and in order, skips idle ones (active-set bounding), and
 // stays bounded over a ≥5,000-file backlog. The script is parameterized via the
-// TRANSCRIPT_* env vars (overlay/bind roots, offset dir, poll cadence, and a
+// TRANSCRIPT_* env vars (persistence roots, offset dir, poll cadence, and a
 // test-only bounded poll count) so it can run against a temp tree without the
 // in-cluster PVC mounts.
 
@@ -90,6 +90,7 @@ func (h *scriptHarness) runPolls(t *testing.T, n int) []string {
 	t.Helper()
 	cmd := exec.Command("bash", "-c", transcriptTailScript)
 	cmd.Env = append(os.Environ(),
+		"TRANSCRIPT_ROOTFS_ROOT="+filepath.Join(t.TempDir(), "nonexistent-rootfs"),
 		"TRANSCRIPT_OVERLAY_ROOT="+h.overlayRoot,
 		"TRANSCRIPT_BIND_ROOT="+filepath.Join(t.TempDir(), "nonexistent-bind"),
 		"TRANSCRIPT_OFFSET_DIR="+h.offsetDir,
@@ -289,25 +290,29 @@ func TestTranscriptTailerScript_BoundedOverManyFiles(t *testing.T) {
 	}
 }
 
-// TestTranscriptTailerScript_BothRootsScanned confirms a session file under the
-// BIND-mount fallback root is shipped too (not only the overlay root).
-func TestTranscriptTailerScript_BothRootsScanned(t *testing.T) {
+// TestTranscriptTailerScript_AllRootsScanned confirms session files under the
+// durable rootfs and both legacy persistence layouts are shipped.
+func TestTranscriptTailerScript_AllRootsScanned(t *testing.T) {
 	requireScriptTools(t)
 	dir := t.TempDir()
+	rootfs := filepath.Join(dir, "rootfs")
 	overlay := filepath.Join(dir, "overlay")
 	bind := filepath.Join(dir, "bind")
 	offsets := filepath.Join(dir, "offsets")
-	for _, d := range []string{overlay, bind, offsets} {
+	for _, d := range []string{rootfs, overlay, bind, offsets} {
 		if err := os.MkdirAll(d, 0o755); err != nil {
 			t.Fatalf("mkdir %s: %v", d, err)
 		}
 	}
-	if err := os.WriteFile(filepath.Join(bind, "b.jsonl"), []byte("{\"from\":\"bind\"}\n"), 0o644); err != nil {
-		t.Fatalf("write bind file: %v", err)
+	for name, root := range map[string]string{"rootfs": rootfs, "overlay": overlay, "bind": bind} {
+		if err := os.WriteFile(filepath.Join(root, name+".jsonl"), []byte(fmt.Sprintf("{\"from\":%q}\n", name)), 0o644); err != nil {
+			t.Fatalf("write %s file: %v", name, err)
+		}
 	}
 
 	cmd := exec.Command("bash", "-c", transcriptTailScript)
 	cmd.Env = append(os.Environ(),
+		"TRANSCRIPT_ROOTFS_ROOT="+rootfs,
 		"TRANSCRIPT_OVERLAY_ROOT="+overlay,
 		"TRANSCRIPT_BIND_ROOT="+bind,
 		"TRANSCRIPT_OFFSET_DIR="+offsets,
@@ -318,7 +323,9 @@ func TestTranscriptTailerScript_BothRootsScanned(t *testing.T) {
 	if err != nil {
 		t.Fatalf("script run failed: %v\nout: %s", err, string(out))
 	}
-	if !strings.Contains(string(out), `{"from":"bind"}`) {
-		t.Errorf("bind-root session file was not shipped; out=%q", string(out))
+	for _, name := range []string{"rootfs", "overlay", "bind"} {
+		if !strings.Contains(string(out), fmt.Sprintf(`{"from":%q}`, name)) {
+			t.Errorf("%s session file was not shipped; out=%q", name, string(out))
+		}
 	}
 }

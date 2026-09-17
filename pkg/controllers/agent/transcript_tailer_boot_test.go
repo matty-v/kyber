@@ -14,19 +14,19 @@ import (
 // boot-tolerance regression guard. AC7's live production run caught the
 // transcript-tailer crash-looping at boot (restartCount climbing to 3): as a
 // native sidecar (restartPolicy:Always) it starts AHEAD of the agent container,
-// so on a fresh agent neither transcript projects root exists yet, and any
+// so on a fresh agent no transcript projects root exists yet, and any
 // startup exit is restarted by the kubelet — a visible crash-loop until the agent
 // finally writes a transcript. A native sidecar MUST come up at restartCount 0.
 //
 // This runs the ACTUAL tailer script and asserts it does NOT exit on its own
-// while both projects roots are absent — it must wait, not die.
+// while all projects roots are absent — it must wait, not die.
 func TestTranscriptTailer_DoesNotExitWhenProjectsDirAbsent(t *testing.T) {
 	if _, err := exec.LookPath("bash"); err != nil {
 		t.Skip("bash not available on the test host")
 	}
 	// The script's projects roots live under transcriptMountPath (/agent-home),
 	// the read-only persist PVC mount. That path does not exist on the test host,
-	// so BOTH roots are absent — exactly the fresh-agent boot condition the AC7
+	// so ALL roots are absent — exactly the fresh-agent boot condition the AC7
 	// crash-loop reproduces.
 	if _, err := os.Stat(transcriptMountPath); err == nil {
 		t.Skipf("%s exists on the test host; cannot simulate absent projects dirs", transcriptMountPath)
@@ -67,7 +67,7 @@ func TestTranscriptTailer_ProceedsOnceProjectsDirExists(t *testing.T) {
 	}
 	// Build a tail script whose roots point at a temp dir that exists, so the
 	// boot-wait gate is satisfied immediately. We reuse the real script body but
-	// override the two root vars + OFFSET_DIR via a prelude (the script reads them
+	// override all root vars + OFFSET_DIR via a prelude (the script reads them
 	// as plain shell vars after its own assignments, so the last assignment wins).
 	root := t.TempDir()
 	projects := root + "/projects"
@@ -79,7 +79,7 @@ func TestTranscriptTailer_ProceedsOnceProjectsDirExists(t *testing.T) {
 	// Re-point the roots by appending overriding assignments after the script's
 	// own (the script's `set -u` + later re-assignment is valid shell); then the
 	// gate sees BIND_ROOT existing and proceeds.
-	override := "\nOVERLAY_ROOT=" + projects + "\nBIND_ROOT=" + projects +
+	override := "\nROOTFS_ROOT=" + projects + "\nOVERLAY_ROOT=" + projects + "\nBIND_ROOT=" + projects +
 		"\nOFFSET_DIR=" + offsets + "\nmkdir -p \"$OFFSET_DIR\"\n"
 	// Insert the override right before the boot-wait gate marker.
 	marker := "# Boot-tolerance gate"

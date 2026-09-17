@@ -100,10 +100,11 @@ object store → windowed read), one tier up:
 ```
 
 - **Discovery + ship (single-process, active-set bounded — kyber#584).** The
-  sidecar mounts the PVC **read-only** at `/agent-home` and polls two
-  mode-dependent roots — `…/overlay/upper/home/kyber/.claude/projects` (overlay
-  boot) or `…/home/.claude/projects` (bind-mount-HOME fallback), per
-  `images/agent-base/entrypoint.sh` — captured as named constants in
+  sidecar mounts the PVC **read-only** at `/agent-home` and polls the current
+  durable-rootfs location (`…/agentroot/home/kyber/.claude/projects`) plus the
+  legacy overlay and bind-HOME locations
+  (`…/overlay/upper/home/kyber/.claude/projects` and
+  `…/home/.claude/projects`). These are captured as named constants in
   `transcript_tailer.go`. It is **one poll loop**, not a per-file `tail -F`
   follower-process fan-out: each poll walks every `*.jsonl` and ships only the
   un-shipped lines, in process, one file at a time. So the tailer's peak memory

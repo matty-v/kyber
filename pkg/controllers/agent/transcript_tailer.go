@@ -40,12 +40,16 @@ const (
 	// mode-dependent roots below.
 	transcriptMountPath = "/agent-home"
 
-	// transcriptProjectsOverlayRoot and transcriptProjectsBindRoot are the two
-	// physical locations of the agent's ~/.claude/projects/ on the PVC,
+	// transcriptProjectsRootFSRoot, transcriptProjectsOverlayRoot, and
+	// transcriptProjectsBindRoot are the physical locations of the agent's
+	// ~/.claude/projects/ on the PVC,
 	// depending on which persistence mode images/agent-base/entrypoint.sh
 	// selected at boot. They are named, commented constants (not inline
 	// literals) per the kyber#446 AC, so they survive overlay/runtime changes:
 	//
+	//   - Durable rootfs (current default): the agent's entire root lives at
+	//     $PERSIST_DIR/agentroot, so ~/.claude/projects resolves below
+	//     .../agentroot/home/kyber/.claude/projects.
 	//   - Kernel/fuse overlay (UPPER_DIR="$PERSIST_DIR/overlay/upper"):
 	//     $HOME (/home/kyber) writes land in the overlay upper-dir, so
 	//     ~/.claude/projects resolves to .../overlay/upper/home/kyber/.claude/projects.
@@ -53,8 +57,8 @@ const (
 	//     over $HOME, incl. the selective-symlink sub-fallback for ~/.claude):
 	//     ~/.claude/projects resolves to .../home/.claude/projects.
 	//
-	// The discovery loop iterates whichever exists at runtime. (Confirmed
-	// against a live pod: the overlay layout is the one in use in production.)
+	// The discovery loop iterates whichever exists at runtime.
+	transcriptProjectsRootFSRoot  = transcriptMountPath + "/agentroot/home/kyber/.claude/projects"
 	transcriptProjectsOverlayRoot = transcriptMountPath + "/overlay/upper/home/kyber/.claude/projects"
 	transcriptProjectsBindRoot    = transcriptMountPath + "/home/.claude/projects"
 	transcriptCodexOverlayRoot    = transcriptMountPath + "/overlay/upper/home/kyber/.codex/sessions"
@@ -109,6 +113,7 @@ func AppendTranscriptTailer(spec *corev1.PodSpec, cfg TranscriptTailerConfig) {
 		Command: []string{"/bin/bash", "-c", transcriptTailScript},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
+			{Name: "TRANSCRIPT_ROOTFS_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/agentroot/home/kyber")},
 			{Name: "TRANSCRIPT_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/overlay/upper/home/kyber")},
 			{Name: "TRANSCRIPT_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/home")},
 		},
@@ -237,7 +242,7 @@ func legacyRuntimeID(id string) string {
 // processes and NO in-memory per-file maps — peak RSS is O(one line of one
 // active file), constant in file count.
 //
-// Each poll, for every *.jsonl under the two documented PVC roots:
+// Each poll, for every *.jsonl under the documented PVC roots:
 //
 //   - Phase A (active-set bounding, kyber#584 Path 2): an idle file — one whose
 //     byte size is unchanged since its last checkpoint — is skipped with a
@@ -278,12 +283,14 @@ func legacyRuntimeID(id string) string {
 // not just on restart, which is a correctness failure for an audit surface.
 //
 // The roots, offset dir, and poll cadence default to the documented constants
-// but are env-overridable (TRANSCRIPT_OVERLAY_ROOT / TRANSCRIPT_BIND_ROOT /
-// TRANSCRIPT_OFFSET_DIR / TRANSCRIPT_POLL_SECONDS) so the loop can be exercised
+// but are env-overridable (TRANSCRIPT_ROOTFS_ROOT / TRANSCRIPT_OVERLAY_ROOT /
+// TRANSCRIPT_BIND_ROOT / TRANSCRIPT_OFFSET_DIR / TRANSCRIPT_POLL_SECONDS) so the loop can be exercised
 // against a fixture in tests; TRANSCRIPT_POLL_LIMIT (0 = run forever, the
-// production default) bounds the poll count for the same reason. None of these
-// are set on the production container, so its behavior is unchanged.
+// production default) bounds the poll count for the same reason. Production
+// injects the runtime-specific roots; offset and polling controls retain these
+// defaults.
 var transcriptTailScript = fmt.Sprintf(`set -u
+ROOTFS_ROOT="${TRANSCRIPT_ROOTFS_ROOT:-%q}"
 OVERLAY_ROOT="${TRANSCRIPT_OVERLAY_ROOT:-%q}"
 BIND_ROOT="${TRANSCRIPT_BIND_ROOT:-%q}"
 OFFSET_DIR="${TRANSCRIPT_OFFSET_DIR:-%q}"
@@ -398,8 +405,8 @@ ship_file() {
 }
 
 # Boot-tolerance gate (kyber#575): as a native sidecar (restartPolicy:Always) the
-# tailer starts AHEAD of the agent container, so on a fresh agent NEITHER projects
-# root exists yet — the agent's overlay/bind HOME setup creates them only once it
+# tailer starts AHEAD of the agent container, so on a fresh agent no projects
+# root exists yet — the agent's rootfs or legacy HOME setup creates one only once it
 # boots. Block here, polling, until at least one root appears, BEFORE entering the
 # ship loop. This gate must NEVER exit: a startup exit is restarted by the kubelet
 # and shows as a climbing restartCount (the boot crash-loop AC7 caught in production)
@@ -408,7 +415,7 @@ ship_file() {
 # An already-running/recreated agent (PVC reused, projects dir already present)
 # passes the gate immediately with no wait. Logged once so the wait is observable.
 boot_wait_logged=0
-until [ -d "$OVERLAY_ROOT" ] || [ -d "$BIND_ROOT" ]; do
+until [ -d "$ROOTFS_ROOT" ] || [ -d "$OVERLAY_ROOT" ] || [ -d "$BIND_ROOT" ]; do
   if [ "$boot_wait_logged" -eq 0 ]; then
     echo "[transcript-tailer] waiting for a transcript projects dir to appear (agent not booted yet) — normal at startup, not an error" >&2
     boot_wait_logged=1
@@ -418,7 +425,7 @@ done
 
 polls=0
 while true; do
-  for root in "$OVERLAY_ROOT" "$BIND_ROOT"; do
+  for root in "$ROOTFS_ROOT" "$OVERLAY_ROOT" "$BIND_ROOT"; do
     [ -d "$root" ] || continue
     # Stream the file list one path at a time (NO sort buffer) so memory stays
     # O(1) in file count; ordering across files is irrelevant (every active file
@@ -434,4 +441,4 @@ while true; do
   fi
   sleep "$POLL_SECONDS"
 done
-`, transcriptProjectsOverlayRoot, transcriptProjectsBindRoot, transcriptOffsetsDir)
+`, transcriptProjectsRootFSRoot, transcriptProjectsOverlayRoot, transcriptProjectsBindRoot, transcriptOffsetsDir)

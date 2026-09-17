@@ -102,34 +102,34 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 		},
 		// Stopped transitions
 		{
-			name:       "Stopped: desired=Running → Starting",
+			name:       "Stopped: desired=Running → Creating",
 			current:    kyberv1.AgentPhaseStopped,
 			event:      EventDesiredRunning,
 			wantAction: ActionWriteBriefAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// Restarting transitions
 		{
-			name:       "Restarting: pod deleted → Starting",
+			name:       "Restarting: pod deleted → Creating",
 			current:    kyberv1.AgentPhaseRestarting,
 			event:      EventPodDeleted,
 			wantAction: ActionWriteBriefAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// Failed transitions
 		{
-			name:       "Failed: auto-restart triggered (retries available) → Starting",
+			name:       "Failed: auto-restart triggered (retries available) → Creating",
 			current:    kyberv1.AgentPhaseFailed,
 			event:      EventAutoRestartTriggered,
 			wantAction: ActionWriteBriefAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		{
-			name:       "Failed: desired=Running (operator override) → Starting",
+			name:       "Failed: desired=Running (operator override) → Creating",
 			current:    kyberv1.AgentPhaseFailed,
 			event:      EventDesiredRunning,
 			wantAction: ActionResetRetryAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// NeedsAuth transitions
 		{
@@ -203,11 +203,11 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseRestarting,
 		},
 		{
-			name:       "NeedsAuth + DesiredRunning → Starting",
+			name:       "NeedsAuth + DesiredRunning → Creating",
 			current:    kyberv1.AgentPhaseNeedsAuth,
 			event:      EventDesiredRunning,
 			wantAction: ActionResetRetryAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// MemoryExhausted transitions (#272)
 		{
@@ -225,11 +225,11 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseMemoryExhausted,
 		},
 		{
-			name:       "MemoryExhausted + DesiredRunning → Starting",
+			name:       "MemoryExhausted + DesiredRunning → Creating",
 			current:    kyberv1.AgentPhaseMemoryExhausted,
 			event:      EventDesiredRunning,
 			wantAction: ActionResetRetryAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// DiskExhausted transitions (MAT-10).
 		{
@@ -247,11 +247,11 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseRunning,
 		},
 		{
-			name:       "DiskExhausted + DesiredRunning → Starting",
+			name:       "DiskExhausted + DesiredRunning → Creating",
 			current:    kyberv1.AgentPhaseDiskExhausted,
 			event:      EventDesiredRunning,
 			wantAction: ActionResetRetryAndCreatePod,
-			wantNext:   kyberv1.AgentPhaseStarting,
+			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		// Operator-forced re-auth (#395). Live-pod phases delete the pod;
 		// pod-less phases flip status only. All land in NeedsAuth.
@@ -457,10 +457,10 @@ func TestPreemptionTransitions(t *testing.T) {
 			wantAction: ActionTransitionToWaiting,
 		},
 		{
-			name:       "WaitingForMachine + MachineReady → Starting",
+			name:       "WaitingForMachine + MachineReady → Creating",
 			phase:      kyberv1.AgentPhaseWaitingForMachine,
 			event:      EventMachineReady,
-			wantPhase:  kyberv1.AgentPhaseStarting,
+			wantPhase:  kyberv1.AgentPhaseCreating,
 			wantAction: ActionWriteBriefAndCreatePod,
 		},
 		{

@@ -60,8 +60,9 @@ potentially-slow git-clone boot, while the runtime stays `Containers[0]`.
 > one-shot death it would have been as a regular container. A native sidecar's
 > entrypoint must therefore **wait, not exit**, for any not-yet-present
 > dependency. The `transcript-tailer` does this with an explicit boot-wait gate:
-> it polls for a transcript projects dir (created by the agent's overlay/bind HOME
-> setup) before entering its tail loop, and never exits while waiting — so it
+> it polls for a transcript projects dir (under the durable rootfs or a legacy
+> overlay/bind-HOME layout) before entering its tail loop, and never exits while
+> waiting — so it
 > comes up at `restartCount 0` on a fresh agent. (AC7's live run on kyber-laptop
 > caught the tailer crash-looping at boot before this gate was added.)
 
@@ -97,8 +98,8 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 
 | Phase | Meaning |
 |---|---|
-| `Creating` | being provisioned (PV, identity repo, pod) |
-| `Starting` | pod exists but not yet Ready |
+| `Creating` | resources and pod provisioning (scheduling, volume attach, image pull, init) |
+| `Starting` | pod is `Running` but not yet Ready |
 | `Running` | pod Running and readiness probe passes |
 | `Stopping` | being gracefully shut down |
 | `Stopped` | pod not running, PV preserved |
@@ -185,16 +186,16 @@ stateDiagram-v2
     Running --> WaitingForMachine: MachinePreempted
 
     Stopping --> Stopped: PodTerminated / GracePeriodExceeded
-    Stopped --> Starting: DesiredRunning
-    Restarting --> Starting: PodDeleted
+    Stopped --> Creating: DesiredRunning
+    Restarting --> Creating: PodDeleted
 
-    Failed --> Starting: AutoRestartTriggered / DesiredRunning
+    Failed --> Creating: AutoRestartTriggered / DesiredRunning
     Failed --> Failed: RetryLimitReached
 
-    NeedsAuth --> Starting: DesiredRunning
-    MemoryExhausted --> Starting: DesiredRunning
+    NeedsAuth --> Creating: DesiredRunning
+    MemoryExhausted --> Creating: DesiredRunning
     DiskExhausted --> Running: DiskReserveCleared
-    DiskExhausted --> Starting: DesiredRunning (terminal pod + larger PVC)
+    DiskExhausted --> Creating: DesiredRunning (terminal pod + larger PVC)
 
     %% Operator-forced re-auth (#395): drop a wedged agent to NeedsAuth.
     %% Live-pod phases delete the pod; pod-less phases flip status only.
@@ -215,12 +216,17 @@ stateDiagram-v2
     DiskExhausted --> Stopping: DesiredStopped
 
     Draining --> WaitingForMachine: PodDeleted / MachinePreempted
-    WaitingForMachine --> Starting: MachineReady
+    WaitingForMachine --> Creating: MachineReady
     WaitingForMachine --> Stopped: DesiredStopped
 
+    note right of Creating
+        Creating is the pod-creation re-entry point:
+        infrastructure delays do not spend startup time.
+    end note
+
     note right of Starting
-        Starting is the common re-entry point:
-        every recovery/resume path lands here.
+        Starting begins only after the pod is Running:
+        the runtime readiness budget starts here.
     end note
 ```
 
@@ -267,15 +273,15 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Stopping` | `PodTerminated` | `UpdateStatus` | `Stopped` |
 | `Stopping` | `GracePeriodExceeded` | `ForceKillPod` | `Stopped` |
-| `Stopped` | `DesiredRunning` | `WriteBriefAndCreatePod` | `Starting` |
-| `Restarting` | `PodDeleted` | `WriteBriefAndCreatePod` | `Starting` |
-| `Failed` | `AutoRestartTriggered` | `WriteBriefAndCreatePod` | `Starting` |
+| `Stopped` | `DesiredRunning` | `WriteBriefAndCreatePod` | `Creating` |
+| `Restarting` | `PodDeleted` | `WriteBriefAndCreatePod` | `Creating` |
+| `Failed` | `AutoRestartTriggered` | `WriteBriefAndCreatePod` | `Creating` |
 | `Failed` | `RetryLimitReached` | `StayFailedAndAlert` | `Failed` |
-| `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
-| `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
-| `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
+| `Failed` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
+| `NeedsAuth` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
+| `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
 | `DiskExhausted` | `DiskReserveCleared` | `UpdateStatus` | `Running` |
-| `DiskExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Starting` |
+| `DiskExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
 | `Running` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Starting` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Failed` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |
@@ -288,7 +294,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `DiskExhausted` | `DesiredStopped` | `CaptureStateAndDeletePod` | `Stopping` |
 | `Draining` | `PodDeleted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Draining` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
-| `WaitingForMachine` | `MachineReady` | `WriteBriefAndCreatePod` | `Starting` |
+| `WaitingForMachine` | `MachineReady` | `WriteBriefAndCreatePod` | `Creating` |
 
 † `DesiredRestarting` is derived both by the external `spec.desiredPhase=Restarting`
 write **and** intrinsically by the reconciler's runtime-image-drift check — see the
@@ -447,10 +453,13 @@ silently.
   write), so the impactful verbs are never less-protected than fail-safe Stop.
   Off by default (permissive/audit), legacy key = full scope. See
   [api-authorization.md](api-authorization.md).
-- **`Starting` is the single recovery re-entry point.** Every resume/restart
-  path (`Stopped`, `Restarting`, `Failed`, `NeedsAuth`,
-  `MemoryExhausted`, `WaitingForMachine`) re-enters at `Starting`, never
-  directly at `Running` — readiness is always re-proven.
+- **Pod recreation re-enters through `Creating`.** Every resume/restart path
+  (`Stopped`, `Restarting`, `Failed`, `NeedsAuth`, `MemoryExhausted`,
+  `DiskExhausted`, `WaitingForMachine`) creates its replacement pod in
+  `Creating`. Only a Kubernetes `Running` pod advances to `Starting`, so volume
+  attachment, scheduling, image pull, and init-container time cannot consume
+  the runtime startup timeout. Readiness is still always re-proven before
+  entering `Running`.
 - **Retries are bounded with backoff.** `Failed → Failed` on
   `RetryLimitReached` parks-and-alerts rather than looping. `RetryBackoffDuration`
   is exponential (10s, 30s, 90s, ×3) and `ShouldResetRetryCount` clears the

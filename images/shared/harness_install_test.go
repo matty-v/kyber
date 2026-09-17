@@ -91,7 +91,7 @@ func seedHarness(t *testing.T, path, version string) {
 	t.Helper()
 	writeExecutable(t, path, fmt.Sprintf("echo 'harness %s'", version))
 	manifest := filepath.Join(filepath.Dir(filepath.Dir(path)), "package.json")
-	if err := os.WriteFile(manifest, []byte(`{"bin":{"harness":"bin/harness"}}`), 0o644); err != nil {
+	if err := os.WriteFile(manifest, []byte(fmt.Sprintf(`{"version":%q,"bin":{"harness":"bin/harness"}}`, version)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -134,6 +134,35 @@ func TestHarnessInstallerManifestVerificationSupportsOfflineChroot(t *testing.T)
 	}
 	if _, err := os.Lstat(filepath.Join(prefix, "bin", "harness")); err != nil {
 		t.Fatalf("global command link was not activated: %v", err)
+	}
+}
+
+func TestHarnessInstallerForceReinstallReplacesCorruptSameVersion(t *testing.T) {
+	root, prefix, npm := fakeHarnessEnv(t)
+	path := liveBinary(root)
+	seedHarness(t, path, "2.0.0")
+	writeExecutable(t, path, "exit 42")
+
+	out, err := runInstaller(t, root, prefix, npm, "2.0.0", "2.0.0",
+		"KYBER_HARNESS_VERIFY_MODE=manifest",
+		"KYBER_HARNESS_FORCE_REINSTALL=true",
+	)
+	if err != nil {
+		t.Fatalf("forced same-version reinstall: %v\n%s", err, out)
+	}
+	got, err := exec.Command(path, "--version").Output()
+	if err != nil || !strings.Contains(string(got), "2.0.0") {
+		t.Fatalf("reinstalled harness version = %q, err=%v", got, err)
+	}
+}
+
+func TestHarnessInstallerRejectsInvalidForceReinstallSetting(t *testing.T) {
+	root, prefix, npm := fakeHarnessEnv(t)
+	out, err := runInstaller(t, root, prefix, npm, "2.0.0", "2.0.0",
+		"KYBER_HARNESS_FORCE_REINSTALL=yes",
+	)
+	if err == nil || !strings.Contains(string(out), "invalid force-reinstall setting") {
+		t.Fatalf("invalid force setting should fail: err=%v\n%s", err, out)
 	}
 }
 

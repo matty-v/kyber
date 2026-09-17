@@ -114,7 +114,7 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 			Name:      "persist",
 			MountPath: transcriptMountPath,
 			// ReadOnly omitted (defaults false) — RW, scoped by the prune script
-			// to *.jsonl under the two projects roots only.
+			// to *.jsonl under the configured transcript roots only.
 		},
 	}
 	// On the optional cross-check path, mount the tailer's offsets emptyDir
@@ -136,6 +136,7 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 		Command: []string{"/bin/bash", "-c", transcriptPruneLoopScript},
 		Env: []corev1.EnvVar{
 			{Name: "AGENT_NAME", Value: cfg.AgentName},
+			{Name: "PRUNE_ROOTFS_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/agentroot/home/kyber")},
 			{Name: "PRUNE_OVERLAY_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/overlay/upper/home/kyber")},
 			{Name: "PRUNE_BIND_ROOT", Value: runtimes.TranscriptRoot(legacyRuntimeID(cfg.Runtime), transcriptMountPath+"/home")},
 			{Name: "PRUNE_MAX_AGE_DAYS", Value: fmt.Sprintf("%d", cfg.MaxAgeDays)},
@@ -162,7 +163,7 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 		// mount, but NOT privileged, no added capabilities, no privilege
 		// escalation, read-only root filesystem. Strictly more locked down than
 		// the agent container beside it; its only write authority is bounded by
-		// the prune script to *.jsonl under the two projects roots.
+		// the prune script to *.jsonl under the configured transcript roots.
 		SecurityContext: &corev1.SecurityContext{
 			RunAsUser:                ptrTo(int64(0)),
 			ReadOnlyRootFilesystem:   ptrTo(true),
@@ -185,7 +186,8 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 // parameterized by environment variables (no baked-in paths) so it is directly
 // executable in unit tests against a temp directory:
 //
-//	PRUNE_OVERLAY_ROOT / PRUNE_BIND_ROOT  the two projects roots to scan
+//	PRUNE_ROOTFS_ROOT / PRUNE_OVERLAY_ROOT / PRUNE_BIND_ROOT
+//	                                            projects roots to scan
 //	PRUNE_MAX_AGE_DAYS                    age threshold in days (archived proxy)
 //	PRUNE_MAX_BYTES                       optional size ceiling (0 = age-only)
 //	PRUNE_OFFSET_DIR                      tailer offsets dir (cross-check only)
@@ -201,7 +203,7 @@ func AppendTranscriptPruner(spec *corev1.PodSpec, cfg TranscriptPrunerConfig) {
 //   - with a size ceiling: eligible files are deleted oldest-first only until the
 //     total on-PVC transcript bytes are at or under the ceiling
 const transcriptPruneOnceScript = `set -u
-ROOTS=("${PRUNE_OVERLAY_ROOT:-}" "${PRUNE_BIND_ROOT:-}")
+ROOTS=("${PRUNE_ROOTFS_ROOT:-}" "${PRUNE_OVERLAY_ROOT:-}" "${PRUNE_BIND_ROOT:-}")
 MAX_AGE_DAYS="${PRUNE_MAX_AGE_DAYS:-0}"
 MAX_BYTES="${PRUNE_MAX_BYTES:-0}"
 OFFSET_DIR="${PRUNE_OFFSET_DIR:-}"

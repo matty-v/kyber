@@ -107,6 +107,9 @@ func TestAppendTranscriptPruner_InjectsLockedDownRWSidecar(t *testing.T) {
 	if env["PRUNE_INTERVAL_SECONDS"] != "3600" {
 		t.Errorf("PRUNE_INTERVAL_SECONDS = %q, want 3600 (60m)", env["PRUNE_INTERVAL_SECONDS"])
 	}
+	if env["PRUNE_ROOTFS_ROOT"] != transcriptProjectsRootFSRoot {
+		t.Errorf("PRUNE_ROOTFS_ROOT = %q, want %q", env["PRUNE_ROOTFS_ROOT"], transcriptProjectsRootFSRoot)
+	}
 	if env["PRUNE_OVERLAY_ROOT"] != transcriptProjectsOverlayRoot {
 		t.Errorf("PRUNE_OVERLAY_ROOT = %q, want %q", env["PRUNE_OVERLAY_ROOT"], transcriptProjectsOverlayRoot)
 	}
