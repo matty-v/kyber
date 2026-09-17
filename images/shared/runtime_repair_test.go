@@ -3,12 +3,56 @@
 package identityreposhared
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+type durableSentinel struct {
+	path string
+	body []byte
+	mode os.FileMode
+}
+
+func seedUnrelatedDurableState(t *testing.T, root string) []durableSentinel {
+	t.Helper()
+	sentinels := []durableSentinel{
+		{path: "persist/identity/SOUL.md", body: []byte("synthetic identity\n"), mode: 0o644},
+		{path: "persist/session-state.json", body: []byte(`{"synthetic":"recall"}`), mode: 0o600},
+		{path: "persist/home/.config/runtime/credential-sentinel", body: []byte("not-a-real-credential\n"), mode: 0o600},
+	}
+	for _, sentinel := range sentinels {
+		path := filepath.Join(root, sentinel.path)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, sentinel.body, sentinel.mode); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return sentinels
+}
+
+func assertUnrelatedDurableState(t *testing.T, root string, sentinels []durableSentinel) {
+	t.Helper()
+	for _, sentinel := range sentinels {
+		path := filepath.Join(root, sentinel.path)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read preserved %s: %v", sentinel.path, err)
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			t.Fatalf("stat preserved %s: %v", sentinel.path, err)
+		}
+		if !bytes.Equal(body, sentinel.body) || info.Mode().Perm() != sentinel.mode.Perm() {
+			t.Errorf("unrelated durable file changed: %s body=%q mode=%#o", sentinel.path, body, info.Mode().Perm())
+		}
+	}
+}
 
 func runtimeRepairScript(t *testing.T) string {
 	t.Helper()
@@ -25,6 +69,7 @@ func TestRuntimeRepairInstallsAndVerifiesConfiguredHarness(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	sentinels := seedUnrelatedDurableState(t, root)
 	installer := filepath.Join(dir, "kyber-harness-install")
 	writeExecutable(t, installer, "exit 0")
 	logPath := filepath.Join(dir, "chroot.log")
@@ -62,6 +107,7 @@ fi
 		!strings.Contains(logText, "/usr/bin/env KYBER_HARNESS_VERIFY_MODE=manifest") {
 		t.Fatalf("chroot calls = %q", logText)
 	}
+	assertUnrelatedDurableState(t, root, sentinels)
 }
 
 func TestRuntimeRepairRejectsMismatchedVerification(t *testing.T) {
@@ -70,6 +116,7 @@ func TestRuntimeRepairRejectsMismatchedVerification(t *testing.T) {
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	sentinels := seedUnrelatedDurableState(t, root)
 	installer := filepath.Join(dir, "kyber-harness-install")
 	writeExecutable(t, installer, "exit 0")
 	writeExecutable(t, filepath.Join(dir, "chroot"), `
@@ -94,4 +141,5 @@ fi
 	if err == nil || !strings.Contains(string(out), "reports 9.9.9, expected 2.1.250") {
 		t.Fatalf("mismatched repair should fail: err=%v\n%s", err, out)
 	}
+	assertUnrelatedDurableState(t, root, sentinels)
 }

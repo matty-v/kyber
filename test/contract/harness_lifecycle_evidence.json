@@ -1,0 +1,144 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "1.0",
+  "scenarios": [
+    {
+      "id": "adapter-registration-and-launch",
+      "requirements": ["HC-01"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Each production runtime resolves through the registry with an image, launch arguments, and a valid descriptor.",
+      "automated": [
+        {"file": "pkg/runtimes/contracttest/adapter_test.go", "test": "TestInteractiveAdapters"}
+      ]
+    },
+    {
+      "id": "bounded-process-lifecycle",
+      "requirements": ["HC-02"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Lifecycle probes and termination budgets are present without claiming provider authentication.",
+      "automated": [
+        {"file": "pkg/runtimes/contracttest/adapter_test.go", "test": "TestInteractiveAdapters"}
+      ]
+    },
+    {
+      "id": "platform-recall-extraction",
+      "requirements": ["HC-03"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Bounded platform recall is extracted from each runtime's persisted native transcript.",
+      "automated": [
+        {"file": "pkg/controllers/agent/session_saver_test.go", "test": "TestSessionSaverScript_ExtractsRecallSnapshot"},
+        {"file": "pkg/controllers/agent/session_saver_test.go", "test": "TestSessionSaverScript_ExtractsCodexRecallSnapshot"}
+      ]
+    },
+    {
+      "id": "recoverable-node-and-volume-replacement",
+      "requirements": ["HC-03", "HC-05", "HC-09"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "A replacement pod keeps the agent PVC and credential boundary, spends no retry, and cannot reuse old-pod capability evidence.",
+      "automated": [
+        {"file": "pkg/controllers/agent/reconciler_test.go", "test": "TestReconciler_UnavailableMachineParksAndResumesAgent"},
+        {"file": "pkg/controllers/agent/reconciler_pod_status_test.go", "test": "TestPodDerivedCapabilitiesBelongToPodUID"}
+      ],
+      "staging": {
+        "reason": "CI simulates Kubernetes objects and cannot certify a provider storage class or node replacement.",
+        "procedure": "docs/operator/harness-lifecycle-staging.md#node-pod-and-storage-recovery"
+      },
+      "residualBoundary": "Loss of the persistent volume is outside workspace durability; pending credential write-back can then require reauthorization."
+    },
+    {
+      "id": "prompt-and-optional-command-safety",
+      "requirements": ["HC-04"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Shared transport does not execute prompt content as shell code and optional commands are nil or invocable argv.",
+      "automated": [
+        {"file": "pkg/runtimes/contracttest/adapter_test.go", "test": "TestCheckerRejectsContractViolations"},
+        {"file": "test/integration/harness_contract_test.go", "test": "TestHarnessContractBootReceiptAndExplicitCompletion"}
+      ]
+    },
+    {
+      "id": "credential-recovery-boundary",
+      "requirements": ["HC-05"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Credential updates are agent-scoped, ordered, retryable, and preserve newer operator state without exposing values.",
+      "automated": [
+        {"file": "pkg/tokenreport/credential_sync_test.go", "test": "TestCredentialSyncer_RetriesBeforePollingBackstop"},
+        {"file": "pkg/tokenreport/codex_credential_sync_test.go", "test": "TestCodexCredentialSyncer_RetriesAfterServerError"}
+      ],
+      "residualBoundary": "Simultaneous loss of the persistent credential copy and its last synchronized Secret is unrecoverable."
+    },
+    {
+      "id": "session-compaction-delivery",
+      "requirements": ["HC-04", "HC-06"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Compaction is supported only with a nonempty runtime command and delivery coordinates with session and restart locks.",
+      "automated": [
+        {"file": "pkg/api/routes_compact_session_test.go", "test": "TestCompactSession_RuntimeMatrix"},
+        {"file": "images/agent-base/compact_session_test.go", "test": "TestCompact_DeliveryFailuresAreExit5"}
+      ],
+      "staging": {
+        "reason": "The endpoint acknowledges command delivery; upstream compaction completion is asynchronous runtime behavior.",
+        "procedure": "docs/operator/harness-lifecycle-staging.md#native-compaction"
+      }
+    },
+    {
+      "id": "durable-receipt-and-ambiguity",
+      "requirements": ["HC-07"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Acceptance requires a correlated receipt; unresolved attempts terminate as delivery_unknown and are not reclaimed.",
+      "automated": [
+        {"file": "test/integration/harness_contract_test.go", "test": "TestHarnessContractBootReceiptAndExplicitCompletion"},
+        {"file": "test/integration/taskstore_dispatch_test.go", "test": "TestTaskStoreAmbiguousAttemptIsNeverRedelivered"}
+      ]
+    },
+    {
+      "id": "cooperative-cancellation",
+      "requirements": ["HC-08"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Current cancellation is cooperative and an unconfirmed request becomes an honest terminal failure.",
+      "automated": [
+        {"file": "test/integration/taskstore_cancellation_test.go", "test": "TestTaskStoreCancellationDeadlineIsHonestFailure"}
+      ],
+      "residualBoundary": "Exact native-turn interruption and rollback of external effects are not claimed."
+    },
+    {
+      "id": "current-capability-evidence",
+      "requirements": ["HC-06", "HC-09"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Hook-dependent operations reject missing, stale, negative, wrong-version, or wrong-pod evidence with a bounded reason.",
+      "automated": [
+        {"file": "pkg/runtimes/availability_test.go", "test": "TestAvailabilityRequiresCurrentEvidence"},
+        {"file": "pkg/api/internal_runtime_capabilities_test.go", "test": "TestRuntimeCapabilitiesRejectsStaleAndUndeclaredEvidence"},
+        {"file": "pkg/api/inbound_gate_test.go", "test": "TestTaskGateRequiresBothFreshCapabilities"}
+      ]
+    },
+    {
+      "id": "in-place-runtime-repair",
+      "requirements": ["HC-10"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Repair is bounded to runtime-owned paths, verifies the executable, preserves unrelated durable state, and cleans up its maintenance pod.",
+      "automated": [
+        {"file": "pkg/api/routes_repair_runtime_internal_test.go", "test": "TestRuntimeRepairRunnerLifecycle"},
+        {"file": "images/shared/runtime_repair_test.go", "test": "TestRuntimeRepairInstallsAndVerifiesConfiguredHarness"},
+        {"file": "images/shared/runtime_repair_test.go", "test": "TestRuntimeRepairRejectsMismatchedVerification"}
+      ],
+      "staging": {
+        "reason": "Fixture package installation cannot certify a real registry, node, volume, or upstream executable.",
+        "procedure": "docs/operator/harness-lifecycle-staging.md#in-place-runtime-repair"
+      }
+    },
+    {
+      "id": "native-model-usage-tools-and-channels",
+      "requirements": ["HC-10"],
+      "runtimes": ["claude-code", "codex"],
+      "guarantee": "Reporter parsing stays bounded and unknown model context remains unknown; live provider and channel claims require staging evidence.",
+      "automated": [
+        {"file": "pkg/tokenreport/reporter_test.go", "test": "TestReporter_PostsParsedSnapshot"},
+        {"file": "pkg/tokenreport/limits_test.go", "test": "TestLimitFor"}
+      ],
+      "staging": {
+        "reason": "Provider model catalogs, usage output, authentication, and external channels change independently of fixture code.",
+        "procedure": "docs/operator/harness-lifecycle-staging.md#final-evidence-record"
+      }
+    }
+  ]
+}

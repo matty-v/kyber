@@ -27,17 +27,17 @@ from fixture execution; a source implementation alone is not certification.
 |---|---|---|---|---|
 | HC-01 registration/pod assembly | Implemented | Implemented | Live verified | `pkg/runtimes/contracttest`, adapter tests, and exact-image dev evidence |
 | HC-02 lifecycle/readiness | Process probe; auth/service/sync exits classified by runtime descriptor | Process/local login probes; device marker rejected | Process + credential probes, live verified | Adapter/startup fixtures and stable two-container dev rollout; Claude taxonomy has fixture/envtest evidence, live staging validation remains pending |
-| HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Native SQLite resume + platform recall, fixture only | Adapter path checks; generated relaunch fixtures, session-saver tests; storage recovery live checks outstanding |
-| HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction fixture | Startup delivery + fresh restart live verified; compaction fixture | Startup, fresh restart, `/compress`, fixture only | `job_dispatch_test.go`, `compact_session_test.go`, startup/relaunch tests |
+| HC-03 continuity | Platform recall + optional native resume | Platform recall + optional native resume | Native SQLite resume + platform recall, fixture only | Adapter/session-saver checks plus replacement continuity regression; provider storage recovery remains staging-only |
+| HC-04 prompt/session commands | Startup/task + corrected fresh restart live verified; compaction delivery fixture | Startup delivery + fresh restart live verified; compaction delivery fixture | Startup, fresh restart, `/compress`, fixture only | Shared transport/compaction matrix; upstream compaction completion remains staging-only |
 | HC-05 API-key mode | Fresh native login/task/restart live verified | Fresh native login/task/restart live verified | OpenRouter creation and model roll live verified | Private per-agent Secrets, native onboarding regressions and exact-image evidence below |
 | HC-05 subscription mode | PKCE login live verified; ordered local recovery and compare-and-set write-back fixtures | Device login live verified; opaque auth JSON, stale-seed and compare-and-set fixtures | Gap | Shared checks, `*credential_sync_test.go`, API CAS tests, boot/device/seed/restart fixtures; persistent-volume loss before write-back remains outside the guarantee |
 | HC-06 job turn hooks | Registered start/stop hooks | Registered start/stop hooks | Gap | Hermes `pre_llm_call` is context-only and fail-open in the pinned version |
 | HC-07 task receipts/completion | Session receipt, explicit task tools | Session + optional turn receipt, explicit task tools | Gap | Hermes cannot satisfy the fail-closed pre-model receipt boundary in the pinned version |
 | HC-08 cancellation | notify_only | notify_only | notify_only | `pkg/taskdispatch/cancellation.go` and task control tests; exact interruption unsupported |
-| HC-09 common discovery/availability | Descriptor + pod-specific observations | Descriptor + pod-specific observations | Descriptor + pod observations, live verified | Availability expiry/negative tests, API pod/runtime mismatch tests, native-config probes, task/session gates and discovery-driven UI |
+| HC-09 common discovery/availability | Descriptor + pod-specific observations | Descriptor + pod-specific observations | Descriptor + pod observations, live verified | Availability expiry/negative tests, API pod/runtime mismatch tests, task/session gates, and replacement-pod invalidation |
 | HC-10 model/usage reporting | Reporter/catalog paths | Reporter/catalog paths, unknown catalog context windows | OpenRouter catalog + native call-summary reporter, live verified | `pkg/tokenreport`, runtime catalog tests, and dev model/context evidence; no guessed metric promises |
 | HC-10 tools/channels | Configured MCP sidecars | Configured MCP sidecars | Descriptor-gated MCP sidecars; Telegram live verified | Adapter/startup and channel-auth tests; Discord and Slack live evidence outstanding |
-| HC-10 in-place repair | Adapter metadata | Adapter metadata | Gap | Existing adapter/installer/repair tests; real repair requires separate live evidence |
+| HC-10 in-place repair | Adapter metadata | Adapter metadata | Gap | Success/failure/timeout cleanup and durable-file preservation fixtures; real repair remains staging-only |
 
 The small adapter fixture in `pkg/runtimes/contracttest` checks optional-command
 absence and credential isolation. `pkg/api/runtime_extension_test.go` proves a
@@ -52,6 +52,29 @@ and flushes on shutdown. It passed in integration CI run
 [34064463947](https://github.com/matty-v/kyber/actions/runs/34064463947) against
 `aa26d5c`, alongside the OpenAPI and native startup fixtures. Kubernetes state is simulated. This is neither a
 live-pod test nor evidence that an upstream CLI obeys its native hook contract.
+
+## Lifecycle evidence checkpoint — MAT-78
+
+[`test/contract/harness_lifecycle_evidence.json`](../../test/contract/harness_lifecycle_evidence.json)
+is the reviewable source of truth mapping HC-01 through HC-10 to named CI tests
+and explicit staging-only evidence. It covers both production runtimes and is
+validated for missing requirements, broken test references, and undocumented
+staging claims.
+
+The deterministic additions cover the production compaction declarations plus
+unsupported absence; repair success, failure, timeout, cleanup, and preservation
+of unrelated durable files; pod/node replacement retaining the same claim and
+credential boundary while invalidating old-pod capability evidence; and the
+PostgreSQL transition from ambiguous delivery to terminal `delivery_unknown`
+without redelivery.
+
+Live native compaction completion, real package repair, provider node/volume
+reattachment, and post-recovery runtime behavior remain staging evidence. Follow
+[`docs/operator/harness-lifecycle-staging.md`](../operator/harness-lifecycle-staging.md)
+for the combined MAT-76 through MAT-79 pre-release matrix and cleanup record.
+Volume loss, unavailable provider state, and uncertain in-flight external side
+effects must be reported honestly; no fixture or HTTP delivery response closes
+those boundaries.
 
 ## Dev validation checkpoint — 2026-09-06
 
