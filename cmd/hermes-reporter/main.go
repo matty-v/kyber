@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log"
 	"net/http"
 	"os"
@@ -45,6 +47,11 @@ func main() {
 	client := &http.Client{Timeout: 5 * time.Second}
 	logPath := filepath.Join(home, "logs", "agent.log")
 	providerCache := filepath.Join(home, "provider_models_cache.json")
+	// Report the catalog for the provider this agent actually runs against.
+	// HERMES_PROVIDER is "openrouter" for a default agent and the Kyber-managed
+	// id for one pointed at its own inference endpoint; reading the literal
+	// "openrouter" there returned an empty picker.
+	activeProvider := os.Getenv("HERMES_PROVIDER")
 	metadataCache := filepath.Join(home, "cache", "openrouter_model_metadata.json")
 
 	report := func() {
@@ -66,9 +73,12 @@ func main() {
 		}
 	}
 	reportCatalog := func() bool {
-		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, 100)
+		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, 100)
 		if err != nil {
-			if !os.IsNotExist(err) {
+			// errors.Is, not os.IsNotExist: the loader wraps with %w and
+			// os.IsNotExist does not unwrap, so a simply-absent cache logged
+			// a failure on every interval.
+			if !errors.Is(err, fs.ErrNotExist) {
 				log.Printf("hermes-reporter: model catalog discovery failed: %v", err)
 			}
 			return false

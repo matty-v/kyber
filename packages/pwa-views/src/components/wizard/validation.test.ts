@@ -9,6 +9,7 @@ import {
   WIZARD_STEPS,
 } from './validation'
 import { initialWizardState } from './types'
+import type { WizardState } from './types'
 
 const base = initialWizardState([])
 
@@ -202,5 +203,58 @@ describe('earliestInvalidStep', () => {
         anthropicApiKey: 'sk-ant-xxx',
       }),
     ).toBe(5)
+  })
+})
+
+describe('isAuthValid — custom inference endpoint', () => {
+  // A half-filled endpoint produces an agent that comes up, reports healthy,
+  // and fails every turn. Gate the step rather than let the API reject it
+  // after the rest of the form is gone.
+  const base = () => ({
+    ...initialWizardState([]),
+    runtime: 'hermes',
+    authType: 'api-key' as const,
+    runtimeApiKey: 'placeholder-runtime-key',
+    runtimeContract: {
+      id: 'hermes',
+      name: 'Hermes',
+      contractVersion: '1.0',
+      profile: 'interactive-tmux-v1',
+      cancellation: 'notify_only',
+      features: ['custom-inference-endpoint'],
+      authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey', channels: ['telegram'] }],
+    },
+    inferenceEnabled: true,
+    inferenceBaseURL: 'https://llm.example.com/v1',
+    inferenceSecretName: 'falcon-llm',
+    inferenceSecretKey: 'token',
+  }) as WizardState
+
+  it('accepts a fully specified endpoint', () => {
+    expect(isAuthValid(base()).ok).toBe(true)
+  })
+
+  it('blocks on a missing URL, secret name, or secret key', () => {
+    expect(isAuthValid({ ...base(), inferenceBaseURL: '  ' }).ok).toBe(false)
+    expect(isAuthValid({ ...base(), inferenceSecretName: '' }).ok).toBe(false)
+    expect(isAuthValid({ ...base(), inferenceSecretKey: '' }).ok).toBe(false)
+  })
+
+  it('ignores the endpoint fields entirely when the operator did not opt in', () => {
+    const off = { ...base(), inferenceEnabled: false, inferenceBaseURL: '', inferenceSecretName: '', inferenceSecretKey: '' }
+    expect(isAuthValid(off).ok).toBe(true)
+  })
+
+  // An agent on its own endpoint authenticates with that endpoint's Secret
+  // and never reaches the harness's built-in provider, so requiring the
+  // provider's key forced a dummy string on operators without an account.
+  it('does not require the built-in provider key when an endpoint is configured', () => {
+    const noProviderKey = { ...base(), runtimeApiKey: '' }
+    expect(isAuthValid(noProviderKey).ok).toBe(true)
+  })
+
+  it('still requires the provider key when no endpoint is configured', () => {
+    const off = { ...base(), inferenceEnabled: false, runtimeApiKey: '' }
+    expect(isAuthValid(off).ok).toBe(false)
   })
 })

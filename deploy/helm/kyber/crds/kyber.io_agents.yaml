@@ -349,6 +349,67 @@ spec:
                   - signatureHeader
                   type: object
                 type: array
+              inference:
+                description: |-
+                  Inference points this agent at a model endpoint Kyber does not host.
+                  Nil means the runtime's built-in provider, unchanged.
+                properties:
+                  api:
+                    description: |-
+                      API is the wire protocol the endpoint speaks.
+
+                      Only "openai" is implemented. The enum exists so that adding
+                      "anthropic" later is a one-line change here rather than a schema
+                      redesign — but an unimplemented value is rejected rather than
+                      silently accepted, because an agent that cannot talk to its endpoint
+                      is worse than one that refused to be created.
+                    enum:
+                    - openai
+                    type: string
+                  baseURL:
+                    description: |-
+                      BaseURL is the root of the endpoint's API, including any version path
+                      segment the server expects (for example https://llm.example.com/v1).
+
+                      HTTPS is required for anything outside the cluster. Plain HTTP is
+                      accepted only for unambiguously cluster-internal hosts — see
+                      validateInference in pkg/api.
+                    maxLength: 2048
+                    pattern: ^https?://[^[:space:]]+$
+                    type: string
+                  credential:
+                    description: |-
+                      Credential references one key in a Secret in the Agent's namespace.
+                      The value is injected into the runtime container as an environment
+                      variable and never appears in this resource or in any API response.
+                    properties:
+                      existingSecret:
+                        description: ExistingSecret names a Secret in the Agent's
+                          namespace.
+                        maxLength: 253
+                        pattern: ^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$
+                        type: string
+                      key:
+                        description: Key is the entry within that Secret holding the
+                          bearer token.
+                        maxLength: 253
+                        minLength: 1
+                        type: string
+                    required:
+                    - existingSecret
+                    - key
+                    type: object
+                  model:
+                    description: |-
+                      Model is the id to request from the endpoint. Empty falls back to
+                      spec.model, so an operator who already set that does not repeat it.
+                    maxLength: 253
+                    type: string
+                required:
+                - api
+                - baseURL
+                - credential
+                type: object
               jobs:
                 description: |-
                   Jobs declares recurring scheduled prompts for this agent. Each entry is

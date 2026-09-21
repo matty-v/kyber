@@ -12,7 +12,16 @@ PERSIST_ROOT="${KYBER_PERSIST_ROOT:-/persist}"
 mkdir -p "$HERMES_HOME" "$PERSIST_ROOT/var/log" "$PERSIST_ROOT/var/lock"
 chmod 0700 "$HERMES_HOME"
 
-if [ -z "${OPENROUTER_API_KEY:-}" ]; then
+# Gate on the credential THIS agent is configured for. An agent pointed at its
+# own inference endpoint carries OPENAI_API_KEY and never has an OpenRouter
+# key; demanding OPENROUTER_API_KEY by name would exit 42 on every boot and
+# park a correctly-configured agent in NeedsAuth forever.
+if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
+    if [ -z "${OPENAI_API_KEY:-}" ]; then
+        echo "[kyber] Hermes inference-endpoint credential is missing" >&2
+        exit 42
+    fi
+elif [ -z "${OPENROUTER_API_KEY:-}" ]; then
     echo "[kyber] Hermes OpenRouter credential is missing" >&2
     exit 42
 fi

@@ -61,7 +61,7 @@ func TestParseHermesLatestIgnoresNonSummaryAndScopesOutput(t *testing.T) {
 func TestLoadHermesCatalog(t *testing.T) {
 	providers := writeHermesFixture(t, "providers.json", `{"openrouter":{"models":["z/model","a/model","a/model","unknown"]},"other":{"models":["ignored"]}}`)
 	metadata := writeHermesFixture(t, "metadata.json", `{"a/model":{"context_length":200000,"name":"A Model"},"z/model":{"context_length":1000000,"name":"Z Model"},"unknown":{"context_length":0}}`)
-	models, err := LoadHermesCatalog(providers, metadata, 10)
+	models, err := LoadHermesCatalog(providers, metadata, "openrouter", 10)
 	if err != nil {
 		t.Fatal(err)
 	}

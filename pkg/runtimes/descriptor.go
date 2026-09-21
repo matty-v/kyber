@@ -30,6 +30,12 @@ const (
 	ModelCatalog         Feature = "model-catalog"
 	UsageReporting       Feature = "usage-reporting"
 	RuntimeRepairFeature Feature = "runtime-repair"
+	// CustomInferenceEndpoint declares that the runtime honours
+	// Agent.spec.inference — an operator-supplied model endpoint Kyber does
+	// not host. A runtime that does not declare it ignores the field, so the
+	// API refuses to write it there rather than accepting a setting that
+	// would silently do nothing.
+	CustomInferenceEndpoint Feature = "custom-inference-endpoint"
 )
 
 var runtimeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)

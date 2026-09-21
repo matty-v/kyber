@@ -35,6 +35,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			runtimes.Compaction,
 			runtimes.ModelCatalog,
 			runtimes.UsageReporting,
+			runtimes.CustomInferenceEndpoint,
 		},
 	}
 }

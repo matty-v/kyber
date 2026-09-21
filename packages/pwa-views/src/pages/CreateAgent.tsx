@@ -255,12 +255,21 @@ export function CreateAgent() {
         machine: state.machine,
         runtime: state.runtime,
         startupPrompt: state.startupPrompt || undefined,
+        inference: state.inferenceEnabled ? {
+          baseURL: state.inferenceBaseURL.trim(),
+          api: 'openai',
+          model: state.inferenceModel.trim() || undefined,
+          credential: {
+            existingSecret: state.inferenceSecretName.trim(),
+            key: state.inferenceSecretKey.trim(),
+          },
+        } : undefined,
         resources: { cpu: state.cpu, memory: state.memory, disk: state.disk },
         identity: { soulDescription: state.soulDescription || undefined },
         identityRepo,
         secrets: {
           authType: state.authType,
-          runtimeAuth: config?.runtimes && selectedAuth?.inputField ? {
+          runtimeAuth: config?.runtimes && selectedAuth?.inputField && !state.inferenceEnabled ? {
             [selectedAuth.inputField]: selectedAuth.flow === 'api-key' ? wizardApiKey(state) : (oauthCodeFinal ?? ''),
             pkceVerifier: pkceVerifierFinal ?? '', pkceState: state.pkceState,
           } : undefined,

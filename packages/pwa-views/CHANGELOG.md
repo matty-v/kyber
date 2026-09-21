@@ -1,5 +1,16 @@
 # @matty-v/kyber-pwa-views
 
+## 0.47.0
+
+- Offer a custom inference endpoint in the create-agent wizard for harnesses
+  that declare the `custom-inference-endpoint` feature: an endpoint URL, model,
+  and the name and key of an existing Secret holding its bearer token. The step
+  will not advance on a half-filled endpoint, and Agent Detail shows the
+  configured endpoint with the Secret it reads — never the token.
+- Stop requiring the harness's built-in provider key when a custom endpoint is
+  configured, and clear the endpoint when the selected runtime changes so a
+  harness that cannot use one never submits it.
+
 ## 0.46.1
 
 - Keep desktop agent-list columns inside the table, truncate goal text, and

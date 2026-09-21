@@ -3,6 +3,26 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AuthSection } from './AuthSection'
 import { initialWizardState } from './types'
+import type { RuntimeDescriptor } from '../../lib/types'
+
+/** A runtime contract that declares the custom-inference-endpoint feature. */
+const hermesContract: RuntimeDescriptor = {
+  id: 'hermes',
+  name: 'Hermes',
+  contractVersion: '1.0',
+  profile: 'interactive-tmux-v1',
+  cancellation: 'notify_only',
+  features: ['model-catalog', 'custom-inference-endpoint'],
+  authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey', channels: ['telegram'] }],
+} as RuntimeDescriptor
+
+const hermesState = () => ({
+  ...initialWizardState([]),
+  runtime: 'hermes',
+  authType: 'api-key' as const,
+  runtimeContract: hermesContract,
+  runtimes: [hermesContract],
+})
 
 describe('AuthSection', () => {
   it('switching auth type to api-key clears telegramEnabled', async () => {
@@ -169,5 +189,35 @@ describe('AuthSection', () => {
       />,
     )
     expect(screen.getByLabelText(/paste authorization code/i)).toBeInTheDocument()
+  })
+
+  // The block is contract-driven, not hardcoded to a runtime id: a harness
+  // that does not declare the feature ignores spec.inference, and offering it
+  // there would produce a setting the agent silently drops.
+  it('offers the inference endpoint only for runtimes that declare the feature', () => {
+    const withoutFeature = {
+      ...hermesState(),
+      runtimeContract: { ...hermesContract, features: ['model-catalog'] } as RuntimeDescriptor,
+    }
+    const { rerender } = render(<AuthSection state={withoutFeature} set={vi.fn()} />)
+    expect(screen.queryByLabelText(/use a custom inference endpoint/i)).not.toBeInTheDocument()
+
+    rerender(<AuthSection state={hermesState()} set={vi.fn()} />)
+    expect(screen.getByLabelText(/use a custom inference endpoint/i)).toBeInTheDocument()
+  })
+
+  it('keeps the endpoint fields hidden until the operator opts in', async () => {
+    const user = userEvent.setup()
+    const set = vi.fn()
+    const { rerender } = render(<AuthSection state={hermesState()} set={set} />)
+    expect(screen.queryByLabelText(/endpoint url/i)).not.toBeInTheDocument()
+
+    await user.click(screen.getByLabelText(/use a custom inference endpoint/i))
+    expect(set).toHaveBeenCalledWith('inferenceEnabled', true)
+
+    rerender(<AuthSection state={{ ...hermesState(), inferenceEnabled: true }} set={set} />)
+    expect(screen.getByLabelText(/endpoint url/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/credential secret/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/secret key/i)).toBeInTheDocument()
   })
 })

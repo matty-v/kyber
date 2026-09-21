@@ -42,6 +42,15 @@ export interface WizardState {
   slackAppToken: string
   slackAllowedUserIds: string
   slackAllowedChannelIds: string
+  // Custom inference endpoint (spec.inference). Off by default: an agent with
+  // inferenceEnabled false uses its harness's built-in provider, which is what
+  // every agent did before this field existed. Only offered for runtimes that
+  // declare the custom-inference-endpoint feature.
+  inferenceEnabled: boolean
+  inferenceBaseURL: string
+  inferenceModel: string
+  inferenceSecretName: string
+  inferenceSecretKey: string
   // Discord (kyber#664) is optional at create time and needs a bot that already
   // exists, so it defaults off and collapsed. When enabled, CreateAgent wires it
   // through PUT /comms/discord AFTER the agent exists — the same code path the
@@ -101,6 +110,11 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     slackAppToken: '',
     slackAllowedUserIds: '',
     slackAllowedChannelIds: '',
+    inferenceEnabled: false,
+    inferenceBaseURL: '',
+    inferenceModel: '',
+    inferenceSecretName: '',
+    inferenceSecretKey: 'token',
     discordEnabled: false,
     discordBotToken: '',
     discordGuildIds: '',

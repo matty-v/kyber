@@ -11,6 +11,16 @@ import (
 
 const RuntimeImageEnv = "KYBER_HERMES_RUNTIME_IMAGE"
 
+// CustomProviderID is the provider name Kyber writes into Hermes's config.yaml
+// when the agent carries spec.inference. It is a fixed, Kyber-owned id rather
+// than something operator-supplied so the value can never collide with one of
+// Hermes's own provider names or smuggle YAML through the configurator.
+const CustomProviderID = "kyber-endpoint"
+
+// defaultProviderID is the built-in provider a Hermes agent uses when it has
+// no spec.inference — the behaviour every agent had before that field existed.
+const defaultProviderID = "openrouter"
+
 type Adapter struct{ image string }
 
 func NewAdapter() *Adapter       { return &Adapter{image: os.Getenv(RuntimeImageEnv)} }
@@ -21,8 +31,17 @@ func (a *Adapter) EntrypointArgs(*kyberv1.Agent) []string {
 	return []string{"/usr/local/bin/start-hermes.sh"}
 }
 
+// CredentialSecretName is keyed on by the NeedsAuth recovery gate. An agent
+// pointed at its own inference endpoint is recovered by rotating that
+// endpoint's Secret, not the OpenRouter one it does not use.
 func (a *Adapter) CredentialSecretName(agent *kyberv1.Agent) string {
-	if agent == nil || agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeAPIKey {
+	if agent == nil {
+		return ""
+	}
+	if inf := agent.Spec.Inference; inf != nil {
+		return inf.Credential.ExistingSecret
+	}
+	if agent.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeAPIKey {
 		return ""
 	}
 	return agent.Name + "-openrouter"
@@ -30,18 +49,34 @@ func (a *Adapter) CredentialSecretName(agent *kyberv1.Agent) string {
 
 func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 	vars := []corev1.EnvVar{
-		{Name: "HERMES_INFERENCE_MODEL", Value: agent.Spec.Model},
-		{Name: "HERMES_PROVIDER", Value: "openrouter"},
+		{Name: "HERMES_INFERENCE_MODEL", Value: inferenceModel(agent)},
+		{Name: "HERMES_PROVIDER", Value: providerID(agent)},
 		{Name: "HERMES_HOME", Value: "/home/kyber/.hermes"},
 		{Name: "HERMES_YOLO_MODE", Value: "1"},
 		{Name: "HERMES_ACCEPT_HOOKS", Value: "1"},
 		{Name: "HERMES_DISABLE_LAZY_INSTALLS", Value: "1"},
-		{Name: "OPENROUTER_API_KEY", ValueFrom: &corev1.EnvVarSource{
+	}
+	// Exactly one credential is referenced. Naming the OpenRouter Secret on an
+	// agent that does not use it would block the pod from starting, because a
+	// SecretKeyRef to a missing Secret is fatal to pod creation.
+	if inf := agent.Spec.Inference; inf != nil {
+		vars = append(vars,
+			corev1.EnvVar{Name: "KYBER_INFERENCE_BASE_URL", Value: inf.BaseURL},
+			corev1.EnvVar{Name: "KYBER_INFERENCE_PROVIDER", Value: CustomProviderID},
+			corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: inf.Credential.ExistingSecret},
+					Key:                  inf.Credential.Key,
+				},
+			}},
+		)
+	} else {
+		vars = append(vars, corev1.EnvVar{Name: "OPENROUTER_API_KEY", ValueFrom: &corev1.EnvVarSource{
 			SecretKeyRef: &corev1.SecretKeySelector{
 				LocalObjectReference: corev1.LocalObjectReference{Name: agent.Name + "-openrouter"},
 				Key:                  "token",
 			},
-		}},
+		}})
 	}
 	if agent.Spec.Secrets.TelegramEnabled {
 		vars = append(vars, corev1.EnvVar{Name: "KYBER_TELEGRAM_MCP_URL", Value: runtimes.TelegramMCPURL()})
@@ -68,9 +103,13 @@ func (a *Adapter) LivenessProbe() *corev1.Probe {
 }
 
 func (a *Adapter) ReadinessProbe() *corev1.Probe {
+	// Either credential satisfies the probe: an agent on its own inference
+	// endpoint carries OPENAI_API_KEY and never has OPENROUTER_API_KEY. The
+	// adapter guarantees exactly one of them is set, so checking for either
+	// still proves a credential reached the container.
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{
-			"/bin/bash", "-c", `[ -n "${OPENROUTER_API_KEY:-}" ] && pgrep -f '[h]ermes.*chat' >/dev/null`,
+			"/bin/bash", "-c", `[ -n "${OPENROUTER_API_KEY:-}${OPENAI_API_KEY:-}" ] && pgrep -f '[h]ermes.*chat' >/dev/null`,
 		}}},
 		InitialDelaySeconds: 5,
 		PeriodSeconds:       5,
@@ -98,6 +137,26 @@ func (a *Adapter) RestartSessionCommand() []string {
 
 func (a *Adapter) CompactSessionCommand() []string {
 	return []string{"nsenter", "--target", "1", "--mount", "--uts", "--ipc", "--net", "--pid", "--root", "--wd", "--", "/usr/sbin/runuser", "-u", "kyber", "--", "/usr/local/bin/kyber-compact-session", "/compress"}
+}
+
+// providerID is the Hermes provider name this agent runs against.
+func providerID(agent *kyberv1.Agent) string {
+	if agent != nil && agent.Spec.Inference != nil {
+		return CustomProviderID
+	}
+	return defaultProviderID
+}
+
+// inferenceModel prefers the endpoint-specific model id and falls back to
+// spec.model, so an operator who already set spec.model need not repeat it.
+func inferenceModel(agent *kyberv1.Agent) string {
+	if agent == nil {
+		return ""
+	}
+	if inf := agent.Spec.Inference; inf != nil && inf.Model != "" {
+		return inf.Model
+	}
+	return agent.Spec.Model
 }
 
 func (a *Adapter) PreStopCommand() []string                             { return nil }

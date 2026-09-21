@@ -43,12 +43,14 @@ startup update check is disabled because Kyber centrally manages the pinned
 harness: use **Set harness version** in the agent action menu to upgrade or
 downgrade explicitly.
 
-## Hermes preview with OpenRouter
+## Hermes preview
 
 Hermes 0.21.0 is available when the installation pins `image.hermes.tag`.
 Creation requires an OpenRouter API key, stored in `<agent>-openrouter` and
 injected only into that agent. The requested model is passed to Hermes as its
-OpenRouter model identifier.
+OpenRouter model identifier. An agent carrying `spec.inference` uses that
+endpoint instead and needs no OpenRouter key — see *A model endpoint Kyber does
+not host* below.
 
 The preview supports fresh session restart, native resume from Hermes's
 persisted SQLite state, `/compress`, an authenticated OpenRouter model catalog,
@@ -61,6 +63,56 @@ Hermes does not advertise durable tasks, job turn hooks, subscription login,
 or in-place runtime repair. Its pinned pre-model hook cannot enforce Kyber's
 fail-closed task receipt boundary, so durable task dispatch remains disabled
 for this runtime.
+
+## A model endpoint Kyber does not host
+
+`spec.inference` points an agent at an inference endpoint you run. Hermes reads
+it; a runtime that does not declare the `custom-inference-endpoint` feature
+rejects the field rather than storing a setting it would ignore.
+
+```yaml
+spec:
+  inference:
+    baseURL: https://llm.example.com/v1
+    api: openai
+    model: qwen3.6-35b-a3b
+    credential:
+      existingSecret: falcon-llm
+      key: token
+```
+
+`api` names the **wire protocol, not a vendor**, so any server speaking it
+qualifies — llama.cpp's `llama-server`, vLLM, SGLang, Ollama, or a hosted
+provider Kyber has never heard of. `openai` is the only protocol implemented
+today.
+
+Such an agent needs no OpenRouter key: it authenticates to its own endpoint and
+never contacts the harness's built-in provider, so Kyber neither asks for that
+credential at creation nor mints an `<agent>-openrouter` Secret for it.
+
+The Secret must already exist in the agent's namespace; Kyber does not create
+it. Its value is injected into the agent's pod as an environment variable and
+never appears in the Agent resource, an API response, or a log line — the API
+returns only the Secret name and key, so an operator can find what to rotate.
+
+`baseURL` must be HTTPS unless the host is unambiguously cluster-internal (a
+bare Service name, `*.svc`, `*.svc.cluster.local`, or localhost), because a
+plaintext hop off-cluster would put the bearer token on the wire. Credentials
+embedded in the URL are rejected; use the Secret.
+
+Omitting `model` falls back to `spec.model`. Changing the model through the
+normal model action keeps both in step. Changing or clearing `inference` rolls the agent's pod, because the endpoint,
+the provider selection, and the credential reference are all pod environment.
+Clearing it returns the agent to its harness's built-in provider and removes
+the managed provider entry from its Hermes config — which then requires that
+provider's own credential.
+
+The model picker for such an agent is populated from the endpoint's own
+`/v1/models`. Context windows come from OpenRouter metadata, which a
+self-hosted endpoint does not publish, so those models are listed with the
+context window reported as unknown rather than omitted. Usage reporting records
+tokens for the endpoint and reports no cost, because a self-hosted endpoint has
+no per-token price to apply.
 
 ## Telegram, Discord, and Slack
 
