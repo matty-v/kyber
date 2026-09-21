@@ -50,7 +50,7 @@ type CreateAgentRequest struct {
 	A2APeers            []kyberv1.AgentA2APeer `json:"a2aPeers,omitempty"`
 	// Inference points the agent at a model endpoint Kyber does not host.
 	// Nil keeps the runtime's built-in provider.
-	Inference *kyberv1.AgentInference `json:"inference,omitempty"`
+	Inference *agentInferenceRequest `json:"inference,omitempty"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
 	Resources    agentResourcesRequest    `json:"resources"`
@@ -1051,7 +1051,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtime is required", "runtime")
 		return
 	}
-	if err := validateInference(req.Runtime, req.Inference); err != nil {
+	if err := validateInferenceRequest(req.Runtime, req.Inference); err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "inference")
 		return
 	}
@@ -1205,7 +1205,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			SessionResume:       req.SessionResume,
 			RequestReplyEnabled: req.RequestReplyEnabled,
 			A2APeers:            req.A2APeers,
-			Inference:           req.Inference,
+			Inference:           req.Inference.spec(req.Name),
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1404,16 +1404,27 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		if strings.TrimSpace(string(req.Inference)) == "null" {
 			agent.Spec.Inference = nil
 		} else {
-			var inference kyberv1.AgentInference
+			var inference agentInferenceRequest
 			if err := json.Unmarshal(req.Inference, &inference); err != nil {
 				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "inference must be an object or null", "inference")
 				return
 			}
-			if err := validateInference(agent.Spec.Runtime, &inference); err != nil {
+			if err := validateInferenceRequest(agent.Spec.Runtime, &inference); err != nil {
 				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "inference")
 				return
 			}
-			agent.Spec.Inference = &inference
+			// A key supplied by value is written to the managed Secret before
+			// the spec points at it, so the agent never references a Secret
+			// that does not exist yet. Upsert, not create: changing the key on
+			// an agent that already has one is the rotation path.
+			if inference.managed() {
+				if err := s.upsertInferenceSecret(r.Context(), name, inference.APIKey); err != nil {
+					slog.Error("failed to write inference credential", "agent", name, "error", err)
+					writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store the inference credential")
+					return
+				}
+			}
+			agent.Spec.Inference = inference.spec(name)
 		}
 		// The endpoint URL, HERMES_PROVIDER, and the credential SecretKeyRef
 		// are all pod env, and configure-hermes.py only runs at container
@@ -1542,6 +1553,78 @@ func patchIncludesLifecycleFields(req PatchAgentRequest) bool {
 }
 
 var a2aPeerNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// InferenceSecretSuffix names the Secret Kyber mints for an endpoint key it
+// was given directly: <agent>-inference, single key "token". Same convention
+// as the runtime provider Secrets (<agent>-openrouter, <agent>-anthropic).
+const InferenceSecretSuffix = "inference"
+
+// InferenceSecretKey is the key inside that managed Secret.
+const InferenceSecretKey = "token"
+
+// agentInferenceRequest is the write shape for spec.inference.
+//
+// It takes the endpoint's key as a VALUE, because that is how every other
+// credential in Kyber is supplied — the operator types it into the create
+// form and Kyber stores it. The first cut of this feature accepted only a
+// reference to a Secret the operator had already created with kubectl, which
+// made it the one credential in the product you could not set from the UI.
+//
+// Credential remains as an escape hatch for an operator who would rather own
+// the Secret themselves. Exactly one of the two is required: accepting both
+// would leave which one wins undefined.
+type agentInferenceRequest struct {
+	BaseURL string `json:"baseURL"`
+	API     string `json:"api"`
+	Model   string `json:"model,omitempty"`
+	// APIKey is the bearer token for the endpoint. It is written into a
+	// Kyber-managed Secret and never stored on the Agent resource.
+	APIKey string `json:"apiKey,omitempty"`
+	// Credential names a Secret the operator manages themselves.
+	Credential *kyberv1.AgentInferenceCredentialRef `json:"credential,omitempty"`
+}
+
+// managed reports whether Kyber owns the Secret for this endpoint.
+func (r *agentInferenceRequest) managed() bool { return r != nil && r.APIKey != "" }
+
+// spec converts the request into the CRD shape. agentName is used to name the
+// managed Secret; it is ignored when the operator supplied their own.
+func (r *agentInferenceRequest) spec(agentName string) *kyberv1.AgentInference {
+	if r == nil {
+		return nil
+	}
+	out := &kyberv1.AgentInference{BaseURL: r.BaseURL, API: r.API, Model: r.Model}
+	if r.managed() {
+		out.Credential = kyberv1.AgentInferenceCredentialRef{
+			ExistingSecret: agentName + "-" + InferenceSecretSuffix,
+			Key:            InferenceSecretKey,
+		}
+		return out
+	}
+	if r.Credential != nil {
+		out.Credential = *r.Credential
+	}
+	return out
+}
+
+// validateInferenceRequest checks the write shape before anything is created.
+func validateInferenceRequest(runtime string, req *agentInferenceRequest) error {
+	if req == nil {
+		return nil
+	}
+	switch {
+	case req.APIKey == "" && req.Credential == nil:
+		return fmt.Errorf("inference requires either apiKey or credential")
+	case req.APIKey != "" && req.Credential != nil:
+		return fmt.Errorf("inference accepts apiKey or credential, not both")
+	}
+	if len(req.APIKey) > 4096 {
+		return fmt.Errorf("apiKey exceeds 4096 characters")
+	}
+	// Reuse the one validator so the managed and operator-owned paths can
+	// never drift on URL, protocol, or model rules.
+	return validateInference(runtime, req.spec("validation-probe"))
+}
 
 // agentInferenceResponse is the read projection of spec.inference.
 //
@@ -2178,6 +2261,42 @@ func defaultString(s, fallback string) string {
 	return fallback
 }
 
+// upsertInferenceSecret writes the endpoint key into the Kyber-managed Secret
+// for this agent, creating it when absent and replacing the value when present.
+//
+// Deliberately separate from createAgentSecrets, which is create-only with
+// rollback because a half-created AGENT must leave nothing behind. A PATCH is
+// editing an agent that already exists, so replacing the value in place is the
+// correct behaviour and a conflict is not an error.
+func (s *Server) upsertInferenceSecret(ctx context.Context, agentName, apiKey string) error {
+	secretName := agentName + "-" + InferenceSecretSuffix
+	existing := &corev1.Secret{}
+	err := s.K8sClient.Get(ctx, types.NamespacedName{Name: secretName, Namespace: s.Namespace}, existing)
+	switch {
+	case err == nil:
+		if existing.Data != nil {
+			delete(existing.Data, InferenceSecretKey)
+		}
+		existing.StringData = map[string]string{InferenceSecretKey: apiKey}
+		return s.K8sClient.Update(ctx, existing)
+	case k8serrors.IsNotFound(err):
+		return s.K8sClient.Create(ctx, &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: s.Namespace,
+				Labels: map[string]string{
+					"app.kubernetes.io/managed-by": "kyber-api",
+					"kyber.io/agent":               agentName,
+				},
+			},
+			Type:       corev1.SecretTypeOpaque,
+			StringData: map[string]string{InferenceSecretKey: apiKey},
+		})
+	default:
+		return err
+	}
+}
+
 // createAgentSecrets creates k8s Secrets for any token values provided in the
 // agent creation request. The RuntimeAdapter (e.g. ClaudeCodeAdapter) references
 // these secrets via valueFrom.SecretKeyRef — if the secret doesn't exist, the
@@ -2275,6 +2394,13 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 			suffix: "discord",
 			data:   map[string][]byte{"webhook-url": []byte(req.Secrets.DiscordWebhookUrl)},
 		})
+	}
+
+	// The inference endpoint's key, when supplied as a value rather than as a
+	// reference to an operator-managed Secret. Named <agent>-inference to match
+	// the runtime provider Secrets, and torn down by the same rollback.
+	if req.Inference.managed() {
+		defs = append(defs, secretDef{suffix: InferenceSecretSuffix, value: req.Inference.APIKey})
 	}
 
 	// NOTE: Telegram's public setWebhook registration is deliberately never

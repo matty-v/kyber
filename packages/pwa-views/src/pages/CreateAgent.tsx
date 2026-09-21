@@ -259,10 +259,7 @@ export function CreateAgent() {
           baseURL: state.inferenceBaseURL.trim(),
           api: 'openai',
           model: state.inferenceModel.trim() || undefined,
-          credential: {
-            existingSecret: state.inferenceSecretName.trim(),
-            key: state.inferenceSecretKey.trim(),
-          },
+          apiKey: state.inferenceApiKey,
         } : undefined,
         resources: { cpu: state.cpu, memory: state.memory, disk: state.disk },
         identity: { soulDescription: state.soulDescription || undefined },

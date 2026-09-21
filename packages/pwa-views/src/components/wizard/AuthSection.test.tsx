@@ -217,7 +217,8 @@ describe('AuthSection', () => {
 
     rerender(<AuthSection state={{ ...hermesState(), inferenceEnabled: true }} set={set} />)
     expect(screen.getByLabelText(/endpoint url/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/credential secret/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/secret key/i)).toBeInTheDocument()
+    // The key is entered as a value, not as the name of a Secret the operator
+    // had to create themselves with kubectl.
+    expect(screen.getByLabelText(/endpoint api key/i)).toBeInTheDocument()
   })
 })

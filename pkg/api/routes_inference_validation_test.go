@@ -193,3 +193,110 @@ func TestValidateInferenceAllowsExternalHostsOverHTTPS(t *testing.T) {
 		t.Errorf("HTTPS to an external host rejected: %v", err)
 	}
 }
+
+// The point of the request shape: an operator supplies the endpoint key as a
+// VALUE, the way every other credential in Kyber is supplied, and Kyber owns
+// the Secret. The first cut accepted only a reference to a Secret the operator
+// had already created with kubectl, which made this the one credential in the
+// product that could not be set from the UI.
+func TestInferenceRequestMintsAManagedSecretFromAKeyValue(t *testing.T) {
+	req := &agentInferenceRequest{
+		BaseURL: "https://llm.voget.io/v1",
+		API:     "openai",
+		Model:   "qwen3.6-35b-a3b",
+		APIKey:  "endpoint-key-value",
+	}
+	if err := validateInferenceRequest("hermes", req); err != nil {
+		t.Fatalf("a key-value request was rejected: %v", err)
+	}
+	if !req.managed() {
+		t.Error("a request carrying apiKey must be Kyber-managed")
+	}
+
+	spec := req.spec("scout")
+	if spec.Credential.ExistingSecret != "scout-"+InferenceSecretSuffix {
+		t.Errorf("managed secret = %q, want scout-%s", spec.Credential.ExistingSecret, InferenceSecretSuffix)
+	}
+	if spec.Credential.Key != InferenceSecretKey {
+		t.Errorf("managed secret key = %q, want %q", spec.Credential.Key, InferenceSecretKey)
+	}
+	// The key value must never reach the Agent resource — only the pointer to
+	// where it lives.
+	if spec.BaseURL != req.BaseURL || spec.API != req.API || spec.Model != req.Model {
+		t.Errorf("spec lost a field: %+v", spec)
+	}
+}
+
+// The escape hatch still works for an operator who wants to own the Secret.
+func TestInferenceRequestAcceptsAnOperatorOwnedSecret(t *testing.T) {
+	req := &agentInferenceRequest{
+		BaseURL:    "https://llm.voget.io/v1",
+		API:        "openai",
+		Credential: &kyberv1.AgentInferenceCredentialRef{ExistingSecret: "my-own", Key: "k"},
+	}
+	if err := validateInferenceRequest("hermes", req); err != nil {
+		t.Fatalf("an operator-owned credential was rejected: %v", err)
+	}
+	if req.managed() {
+		t.Error("a request with no apiKey must not be Kyber-managed")
+	}
+	if got := req.spec("scout").Credential.ExistingSecret; got != "my-own" {
+		t.Errorf("credential = %q, want the operator's own Secret", got)
+	}
+}
+
+func TestInferenceRequestRequiresExactlyOneCredentialSource(t *testing.T) {
+	neither := &agentInferenceRequest{BaseURL: "https://llm.voget.io/v1", API: "openai"}
+	err := validateInferenceRequest("hermes", neither)
+	if err == nil || !strings.Contains(err.Error(), "either apiKey or credential") {
+		t.Errorf("no credential source: err = %v", err)
+	}
+
+	both := &agentInferenceRequest{
+		BaseURL:    "https://llm.voget.io/v1",
+		API:        "openai",
+		APIKey:     "k",
+		Credential: &kyberv1.AgentInferenceCredentialRef{ExistingSecret: "my-own", Key: "k"},
+	}
+	// Accepting both would leave which one wins undefined, and an operator
+	// would have no way to tell which credential the agent is actually using.
+	err = validateInferenceRequest("hermes", both)
+	if err == nil || !strings.Contains(err.Error(), "not both") {
+		t.Errorf("both credential sources: err = %v", err)
+	}
+}
+
+// The URL and protocol rules must apply identically however the credential
+// arrives, or one path silently accepts what the other rejects.
+func TestInferenceRequestAppliesTheSameURLRulesOnBothPaths(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  *agentInferenceRequest
+	}{
+		{"managed", &agentInferenceRequest{BaseURL: "http://llm.svc.attacker.com/v1", API: "openai", APIKey: "k"}},
+		{"operator-owned", &agentInferenceRequest{
+			BaseURL:    "http://llm.svc.attacker.com/v1",
+			API:        "openai",
+			Credential: &kyberv1.AgentInferenceCredentialRef{ExistingSecret: "my-own", Key: "k"},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateInferenceRequest("hermes", tc.req)
+			if err == nil || !strings.Contains(err.Error(), "HTTPS") {
+				t.Errorf("plaintext to a public host was accepted on the %s path: %v", tc.name, err)
+			}
+		})
+	}
+}
+
+// A runtime that ignores the field must reject it however the credential is
+// supplied.
+func TestInferenceRequestRuntimeGateAppliesToKeyValues(t *testing.T) {
+	req := &agentInferenceRequest{BaseURL: "https://llm.voget.io/v1", API: "openai", APIKey: "k"}
+	if err := validateInferenceRequest("claude-code", req); err == nil {
+		t.Error("claude-code accepted an inference endpoint it does not read")
+	}
+	if err := validateInferenceRequest("hermes", nil); err != nil {
+		t.Errorf("nil request rejected: %v", err)
+	}
+}

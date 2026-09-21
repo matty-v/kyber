@@ -227,28 +227,16 @@ export function AuthSection({ state, set }: AuthSectionProps) {
             />
           </div>
           <div>
-            <label htmlFor="agent-inference-secret" className={labelClass}>Credential Secret</label>
+            <label htmlFor="agent-inference-key" className={labelClass}>Endpoint API key</label>
             <input
-              id="agent-inference-secret"
-              type="text"
+              id="agent-inference-key"
+              type="password"
               required
-              placeholder="falcon-llm"
-              value={state.inferenceSecretName}
-              onChange={e => set('inferenceSecretName', e.target.value)}
+              value={state.inferenceApiKey}
+              onChange={e => set('inferenceApiKey', e.target.value)}
               className={inputClass}
             />
-            <p className="mt-1.5 text-xs text-text-muted">Name of an existing Secret holding the endpoint&apos;s bearer token. Kyber never sees the value.</p>
-          </div>
-          <div>
-            <label htmlFor="agent-inference-secret-key" className={labelClass}>Secret key</label>
-            <input
-              id="agent-inference-secret-key"
-              type="text"
-              required
-              value={state.inferenceSecretKey}
-              onChange={e => set('inferenceSecretKey', e.target.value)}
-              className={inputClass}
-            />
+            <p className="mt-1.5 text-xs text-text-muted">Stored as a Secret and injected only into this agent.</p>
           </div>
         </>}
       </div>}

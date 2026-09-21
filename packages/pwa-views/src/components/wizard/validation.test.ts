@@ -226,22 +226,20 @@ describe('isAuthValid — custom inference endpoint', () => {
     },
     inferenceEnabled: true,
     inferenceBaseURL: 'https://llm.example.com/v1',
-    inferenceSecretName: 'falcon-llm',
-    inferenceSecretKey: 'token',
+    inferenceApiKey: 'placeholder-endpoint-key',
   }) as WizardState
 
   it('accepts a fully specified endpoint', () => {
     expect(isAuthValid(base()).ok).toBe(true)
   })
 
-  it('blocks on a missing URL, secret name, or secret key', () => {
+  it('blocks on a missing URL or endpoint key', () => {
     expect(isAuthValid({ ...base(), inferenceBaseURL: '  ' }).ok).toBe(false)
-    expect(isAuthValid({ ...base(), inferenceSecretName: '' }).ok).toBe(false)
-    expect(isAuthValid({ ...base(), inferenceSecretKey: '' }).ok).toBe(false)
+    expect(isAuthValid({ ...base(), inferenceApiKey: '' }).ok).toBe(false)
   })
 
   it('ignores the endpoint fields entirely when the operator did not opt in', () => {
-    const off = { ...base(), inferenceEnabled: false, inferenceBaseURL: '', inferenceSecretName: '', inferenceSecretKey: '' }
+    const off = { ...base(), inferenceEnabled: false, inferenceBaseURL: '', inferenceApiKey: '' }
     expect(isAuthValid(off).ok).toBe(true)
   })
 
