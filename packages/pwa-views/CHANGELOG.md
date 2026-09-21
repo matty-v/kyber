@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.48.0
+
+- Take the custom inference endpoint's API key as a value in the create-agent
+  wizard, replacing the Secret name and key fields. Kyber stores it the same
+  way it stores an OpenRouter or Anthropic key, so setting up an endpoint no
+  longer requires creating a Secret with kubectl first.
+
 ## 0.47.0
 
 - Offer a custom inference endpoint in the create-agent wizard for harnesses

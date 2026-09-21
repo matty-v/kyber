@@ -77,8 +77,7 @@ export function isAuthValid(state: WizardState): StepValidation {
   // reject it after the rest of the form is gone.
   if (state.inferenceEnabled) {
     if (!state.inferenceBaseURL.trim()) return { ok: false, reason: 'Enter the inference endpoint URL.' }
-    if (!state.inferenceSecretName.trim()) return { ok: false, reason: 'Name the Secret holding the endpoint credential.' }
-    if (!state.inferenceSecretKey.trim()) return { ok: false, reason: 'Name the key within that Secret.' }
+    if (!state.inferenceApiKey.trim()) return { ok: false, reason: "Paste the endpoint's API key." }
   }
   if (auth.flow === 'device-code') return OK
   // An agent on its own endpoint authenticates with that endpoint's Secret and

@@ -49,8 +49,10 @@ export interface WizardState {
   inferenceEnabled: boolean
   inferenceBaseURL: string
   inferenceModel: string
-  inferenceSecretName: string
-  inferenceSecretKey: string
+  // The endpoint's key as a value. Kyber stores it in a managed Secret, the
+  // same way it does an OpenRouter or Anthropic key — the operator never
+  // creates a Secret by hand.
+  inferenceApiKey: string
   // Discord (kyber#664) is optional at create time and needs a bot that already
   // exists, so it defaults off and collapsed. When enabled, CreateAgent wires it
   // through PUT /comms/discord AFTER the agent exists — the same code path the
@@ -113,8 +115,7 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     inferenceEnabled: false,
     inferenceBaseURL: '',
     inferenceModel: '',
-    inferenceSecretName: '',
-    inferenceSecretKey: 'token',
+    inferenceApiKey: '',
     discordEnabled: false,
     discordBotToken: '',
     discordGuildIds: '',

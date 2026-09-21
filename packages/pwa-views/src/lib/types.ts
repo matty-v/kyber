@@ -556,7 +556,13 @@ export interface AgentInferenceInput {
   baseURL: string
   api: 'openai'
   model?: string
-  credential: {
+  /**
+   * The endpoint's bearer token. Kyber stores it in a managed Secret and never
+   * returns it. Supply this OR `credential`, not both.
+   */
+  apiKey?: string
+  /** Escape hatch for a Secret the operator manages themselves. */
+  credential?: {
     existingSecret: string
     key: string
   }

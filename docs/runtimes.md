@@ -70,6 +70,28 @@ for this runtime.
 it; a runtime that does not declare the `custom-inference-endpoint` feature
 rejects the field rather than storing a setting it would ignore.
 
+In the create-agent wizard this is four fields on the Auth step: tick **Use a
+custom inference endpoint**, then the URL, the model, and the endpoint's API
+key. Kyber stores the key in a managed `<agent>-inference` Secret, exactly as
+it does an OpenRouter or Anthropic key — there is no Secret to create by hand.
+
+Through the API, supply the key as a value:
+
+```json
+{
+  "inference": {
+    "baseURL": "https://llm.example.com/v1",
+    "api": "openai",
+    "model": "qwen3.6-35b-a3b",
+    "apiKey": "<the endpoint's key>"
+  }
+}
+```
+
+An operator who would rather own the Secret can pass `credential` instead of
+`apiKey` — exactly one of the two. What lands on the Agent resource is always
+a reference, never the value:
+
 ```yaml
 spec:
   inference:
@@ -77,7 +99,7 @@ spec:
     api: openai
     model: qwen3.6-35b-a3b
     credential:
-      existingSecret: falcon-llm
+      existingSecret: <agent>-inference
       key: token
 ```
 
@@ -90,8 +112,8 @@ Such an agent needs no OpenRouter key: it authenticates to its own endpoint and
 never contacts the harness's built-in provider, so Kyber neither asks for that
 credential at creation nor mints an `<agent>-openrouter` Secret for it.
 
-The Secret must already exist in the agent's namespace; Kyber does not create
-it. Its value is injected into the agent's pod as an environment variable and
+When you pass `credential` instead, that Secret must already exist in the
+agent's namespace; Kyber does not create it. Either way the value is injected into the agent's pod as an environment variable and
 never appears in the Agent resource, an API response, or a log line — the API
 returns only the Secret name and key, so an operator can find what to rotate.
 
