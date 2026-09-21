@@ -189,6 +189,69 @@ export function AuthSection({ state, set }: AuthSectionProps) {
         </select>
       </div>
       {!auth && <p role="alert">Authentication is unavailable for this harness.</p>}
+      {contract?.features?.includes('custom-inference-endpoint') && <div className="space-y-3 rounded-md border border-border p-3">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            checked={state.inferenceEnabled}
+            onChange={e => set('inferenceEnabled', e.target.checked)}
+          />
+          <span>Use a custom inference endpoint</span>
+        </label>
+        <p className="text-xs text-text-muted">
+          Point this agent at a model server you run — anything speaking the OpenAI API.
+          Leave off to use the harness&apos;s built-in provider.
+        </p>
+        {state.inferenceEnabled && <>
+          <div>
+            <label htmlFor="agent-inference-url" className={labelClass}>Endpoint URL</label>
+            <input
+              id="agent-inference-url"
+              type="url"
+              required
+              placeholder="https://llm.example.com/v1"
+              value={state.inferenceBaseURL}
+              onChange={e => set('inferenceBaseURL', e.target.value)}
+              className={inputClass}
+            />
+            <p className="mt-1.5 text-xs text-text-muted">Include the version path the server expects. HTTPS unless the host is inside the cluster.</p>
+          </div>
+          <div>
+            <label htmlFor="agent-inference-model" className={labelClass}>Model</label>
+            <input
+              id="agent-inference-model"
+              type="text"
+              value={state.inferenceModel}
+              onChange={e => set('inferenceModel', e.target.value)}
+              className={inputClass}
+            />
+          </div>
+          <div>
+            <label htmlFor="agent-inference-secret" className={labelClass}>Credential Secret</label>
+            <input
+              id="agent-inference-secret"
+              type="text"
+              required
+              placeholder="falcon-llm"
+              value={state.inferenceSecretName}
+              onChange={e => set('inferenceSecretName', e.target.value)}
+              className={inputClass}
+            />
+            <p className="mt-1.5 text-xs text-text-muted">Name of an existing Secret holding the endpoint&apos;s bearer token. Kyber never sees the value.</p>
+          </div>
+          <div>
+            <label htmlFor="agent-inference-secret-key" className={labelClass}>Secret key</label>
+            <input
+              id="agent-inference-secret-key"
+              type="text"
+              required
+              value={state.inferenceSecretKey}
+              onChange={e => set('inferenceSecretKey', e.target.value)}
+              className={inputClass}
+            />
+          </div>
+        </>}
+      </div>}
       {auth?.flow === 'device-code' && <p className="text-sm text-text-muted">After creation, Kyber will show a device code. Open the displayed URL, enter the code, and the agent will start automatically.</p>}
       {auth?.flow === 'api-key' && <div>
         <label htmlFor="agent-api-key" className={labelClass}>{auth.name}</label>

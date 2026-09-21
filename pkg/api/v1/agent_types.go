@@ -740,6 +740,11 @@ type AgentSpec struct {
 	// +listMapKey=name
 	A2APeers []AgentA2APeer `json:"a2aPeers,omitempty"`
 
+	// Inference points this agent at a model endpoint Kyber does not host.
+	// Nil means the runtime's built-in provider, unchanged.
+	// +optional
+	Inference *AgentInference `json:"inference,omitempty"`
+
 	// Resources specifies the compute resources requested for the agent pod.
 	Resources AgentResources `json:"resources"`
 
@@ -824,6 +829,72 @@ type AgentSpec struct {
 	// which are the older runtime-coupled / outbound-only paths.
 	// +optional
 	Channels *AgentChannels `json:"channels,omitempty"`
+}
+
+// AgentInference points an agent at a model endpoint Kyber does not host.
+//
+// The field names the WIRE PROTOCOL, not a vendor. Anything speaking the named
+// protocol qualifies — llama.cpp's llama-server, vLLM, SGLang, Ollama, or a
+// hosted provider this platform has never heard of. That is what keeps the
+// field open-ended; keying on a vendor name would have to grow an arm per
+// provider.
+//
+// Nil means the runtime uses its built-in provider, which is the behaviour
+// every existing agent has.
+//
+// This lives on AgentSpec rather than inside a runtime adapter so the other
+// harnesses can adopt it without a second design: Claude Code reads
+// ANTHROPIC_BASE_URL and Codex has model_provider. Only Hermes consumes it
+// today.
+type AgentInference struct {
+	// BaseURL is the root of the endpoint's API, including any version path
+	// segment the server expects (for example https://llm.example.com/v1).
+	//
+	// HTTPS is required for anything outside the cluster. Plain HTTP is
+	// accepted only for unambiguously cluster-internal hosts — see
+	// validateInference in pkg/api.
+	// +kubebuilder:validation:MaxLength=2048
+	// +kubebuilder:validation:Pattern=`^https?://[^[:space:]]+$`
+	BaseURL string `json:"baseURL"`
+
+	// API is the wire protocol the endpoint speaks.
+	//
+	// Only "openai" is implemented. The enum exists so that adding
+	// "anthropic" later is a one-line change here rather than a schema
+	// redesign — but an unimplemented value is rejected rather than
+	// silently accepted, because an agent that cannot talk to its endpoint
+	// is worse than one that refused to be created.
+	// +kubebuilder:validation:Enum=openai
+	API string `json:"api"`
+
+	// Model is the id to request from the endpoint. Empty falls back to
+	// spec.model, so an operator who already set that does not repeat it.
+	// +optional
+	// +kubebuilder:validation:MaxLength=253
+	Model string `json:"model,omitempty"`
+
+	// Credential references one key in a Secret in the Agent's namespace.
+	// The value is injected into the runtime container as an environment
+	// variable and never appears in this resource or in any API response.
+	Credential AgentInferenceCredentialRef `json:"credential"`
+}
+
+// AgentInferenceCredentialRef identifies the bearer credential for an
+// inference endpoint.
+//
+// Deliberately not shared with AgentA2ACredentialRef despite the identical
+// shape: that type is part of the A2A peer contract, and the two should be
+// free to diverge without one feature's schema change rippling into the
+// other.
+type AgentInferenceCredentialRef struct {
+	// ExistingSecret names a Secret in the Agent's namespace.
+	// +kubebuilder:validation:MaxLength=253
+	// +kubebuilder:validation:Pattern=`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$`
+	ExistingSecret string `json:"existingSecret"`
+	// Key is the entry within that Secret holding the bearer token.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=253
+	Key string `json:"key"`
 }
 
 // AgentA2APeer declares one allowlisted outbound A2A destination.

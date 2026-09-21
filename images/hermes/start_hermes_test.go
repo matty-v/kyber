@@ -147,3 +147,100 @@ func writeExecutable(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// runConfigurator runs configure-hermes.py against a temp HERMES_HOME seeded
+// with the given config, and returns the converged result.
+func runConfigurator(t *testing.T, seed map[string]any, env ...string) map[string]any {
+	t.Helper()
+	home := t.TempDir()
+	if seed != nil {
+		data, _ := json.Marshal(seed)
+		if err := os.WriteFile(filepath.Join(home, "config.yaml"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shim := t.TempDir()
+	if err := os.WriteFile(filepath.Join(shim, "yaml.py"), []byte(yamlShim), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("python3", scriptPath(t, "configure-hermes.py"))
+	cmd.Env = append(os.Environ(), append([]string{"HERMES_HOME=" + home, "PYTHONPATH=" + shim}, env...)...)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("configure Hermes: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "config.yaml"))
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("parse config: %v, body=%s", err, data)
+	}
+	return got
+}
+
+// The providers block is what Hermes resolves `--provider` against. Without
+// it, an agent pointed at its own endpoint looks up a provider that does not
+// exist.
+func TestConfigureHermesWritesTheInferenceProvider(t *testing.T) {
+	got := runConfigurator(t, map[string]any{"display": map[string]any{"streaming": true}},
+		"KYBER_INFERENCE_PROVIDER=kyber-endpoint",
+		"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1",
+		"HERMES_INFERENCE_MODEL=qwen3.6-35b-a3b",
+	)
+	providers, ok := got["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("no providers block written: %+v", got)
+	}
+	entry, ok := providers["kyber-endpoint"].(map[string]any)
+	if !ok {
+		t.Fatalf("managed provider missing: %+v", providers)
+	}
+	if entry["base_url"] != "https://llm.example.com/v1" {
+		t.Errorf("base_url = %v", entry["base_url"])
+	}
+	if entry["model"] != "qwen3.6-35b-a3b" {
+		t.Errorf("model = %v", entry["model"])
+	}
+	// The credential is referenced, never inlined — the adapter injects the
+	// value as an env var from the operator's Secret.
+	if entry["api_key"] != "${OPENAI_API_KEY}" {
+		t.Errorf("api_key = %v, want the env reference", entry["api_key"])
+	}
+	if got["display"].(map[string]any)["streaming"] != true {
+		t.Errorf("operator config was not preserved: %+v", got)
+	}
+}
+
+// Clearing spec.inference must actually move the agent back to its built-in
+// provider. The adapter stops setting KYBER_INFERENCE_PROVIDER entirely when
+// the field is cleared, so the removal cannot depend on that env being set.
+func TestConfigureHermesRemovesTheInferenceProviderWhenCleared(t *testing.T) {
+	seed := map[string]any{
+		"providers": map[string]any{
+			"kyber-endpoint": map[string]any{"base_url": "https://old.invalid/v1"},
+			"operator_owned": map[string]any{"base_url": "https://keep.invalid/v1"},
+		},
+	}
+	got := runConfigurator(t, seed)
+
+	providers, ok := got["providers"].(map[string]any)
+	if !ok {
+		t.Fatalf("operator providers were dropped entirely: %+v", got)
+	}
+	if _, stale := providers["kyber-endpoint"]; stale {
+		t.Errorf("stale managed provider survived: %+v", providers)
+	}
+	if _, kept := providers["operator_owned"]; !kept {
+		t.Errorf("operator-owned provider was removed: %+v", providers)
+	}
+}
+
+// With no managed provider and nothing operator-owned, the key is dropped
+// rather than left as an empty map.
+func TestConfigureHermesOmitsAnEmptyProvidersBlock(t *testing.T) {
+	got := runConfigurator(t, nil)
+	if _, present := got["providers"]; present {
+		t.Errorf("empty providers block was written: %+v", got)
+	}
+}

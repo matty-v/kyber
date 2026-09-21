@@ -3,8 +3,10 @@ package tokenreport
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"regexp"
 	"sort"
@@ -29,6 +31,11 @@ type HermesCatalogModel struct {
 	ContextWindow      int64  `json:"contextWindow"`
 	ContextWindowKnown bool   `json:"contextWindowKnown"`
 }
+
+// openRouterProvider is the built-in provider a Hermes agent uses when it has
+// no custom inference endpoint. Its metadata cache is authoritative for it and
+// for nothing else.
+const openRouterProvider = "openrouter"
 
 type hermesCall struct {
 	at, session, model, provider string
@@ -159,13 +166,33 @@ func hermesContextWindow(path, model string) int64 {
 	return metadata[model].ContextLength
 }
 
-// LoadHermesCatalog loads Hermes's own OpenRouter-compatible model cache and
-// enriches it from Hermes's OpenRouter metadata cache. The result is sorted
-// for a stable operator picker and capped before it crosses the sidecar.
-func LoadHermesCatalog(providerCachePath, metadataPath string, limit int) ([]HermesCatalogModel, error) {
+// LoadHermesCatalog loads the model ids Hermes cached for the ACTIVE provider
+// and enriches them from Hermes's OpenRouter metadata cache. The result is
+// sorted for a stable operator picker and capped before it crosses the
+// sidecar.
+//
+// provider selects which entry of Hermes's provider cache to read. It used to
+// be the literal "openrouter", which meant an agent pointed at its own
+// inference endpoint reported an empty catalog and got an empty model picker.
+//
+// Metadata is OpenRouter-specific. For the OpenRouter provider it is
+// authoritative, so an id it does not describe is a stale or junk entry and is
+// still dropped — unchanged behaviour. For any other provider there is no
+// metadata to be authoritative: a self-hosted endpoint publishes none, so
+// dropping on absence returned an empty catalog even when the endpoint listed
+// its models perfectly well. Those are kept with ContextWindowKnown=false,
+// which the API already carries end to end (routes_available.go passes the
+// flag straight through).
+func LoadHermesCatalog(providerCachePath, metadataPath, provider string, limit int) ([]HermesCatalogModel, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
+	if provider == "" {
+		provider = openRouterProvider
+	}
+	// OpenRouter's metadata cache is authoritative for OpenRouter and for
+	// nothing else. Decided up front because the read below branches on it.
+	metadataIsAuthoritative := provider == openRouterProvider
 	f, err := os.Open(providerCachePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening Hermes provider cache: %w", err)
@@ -179,9 +206,18 @@ func LoadHermesCatalog(providerCachePath, metadataPath string, limit int) ([]Her
 	}
 	metadata, err := readHermesMetadata(metadataPath)
 	if err != nil {
-		return nil, fmt.Errorf("reading Hermes model metadata: %w", err)
+		// A custom endpoint never talks to OpenRouter, so nothing ever writes
+		// its metadata cache. Failing here returned an error on every poll and
+		// left the model picker empty — the failure this whole path exists to
+		// remove. For OpenRouter the file IS expected, so a missing one stays
+		// an error rather than silently publishing an empty catalog over a
+		// good one.
+		if !errors.Is(err, fs.ErrNotExist) || metadataIsAuthoritative {
+			return nil, fmt.Errorf("reading Hermes model metadata: %w", err)
+		}
+		metadata = nil
 	}
-	ids := append([]string(nil), cache["openrouter"].Models...)
+	ids := append([]string(nil), cache[provider].Models...)
 	sort.Strings(ids)
 	seen := make(map[string]struct{}, len(ids))
 	models := make([]HermesCatalogModel, 0, min(len(ids), limit))
@@ -194,14 +230,19 @@ func LoadHermesCatalog(providerCachePath, metadataPath string, limit int) ([]Her
 		}
 		seen[id] = struct{}{}
 		m, ok := metadata[id]
-		if !ok || m.ContextLength <= 0 {
+		known := ok && m.ContextLength > 0
+		if !known && metadataIsAuthoritative {
 			continue
 		}
 		name := m.Name
 		if name == "" {
 			name = id
 		}
-		models = append(models, HermesCatalogModel{ID: id, DisplayName: name, ContextWindow: m.ContextLength, ContextWindowKnown: true})
+		contextWindow := int64(0)
+		if known {
+			contextWindow = m.ContextLength
+		}
+		models = append(models, HermesCatalogModel{ID: id, DisplayName: name, ContextWindow: contextWindow, ContextWindowKnown: known})
 		if len(models) == limit {
 			break
 		}

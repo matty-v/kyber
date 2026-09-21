@@ -72,8 +72,21 @@ export function isIdentityValid(state: WizardState): StepValidation {
 export function isAuthValid(state: WizardState): StepValidation {
   const auth = wizardAuth(state)
   if (!auth) return { ok: false, reason: 'Authentication is unavailable for this harness.' }
+  // A half-filled endpoint is worse than none: the agent comes up, reports
+  // healthy, and fails every turn. Gate the step rather than let the API
+  // reject it after the rest of the form is gone.
+  if (state.inferenceEnabled) {
+    if (!state.inferenceBaseURL.trim()) return { ok: false, reason: 'Enter the inference endpoint URL.' }
+    if (!state.inferenceSecretName.trim()) return { ok: false, reason: 'Name the Secret holding the endpoint credential.' }
+    if (!state.inferenceSecretKey.trim()) return { ok: false, reason: 'Name the key within that Secret.' }
+  }
   if (auth.flow === 'device-code') return OK
-  if (auth.flow === 'api-key') return wizardApiKey(state).trim() ? OK : { ok: false, reason: `Paste your ${auth.name}.` }
+  // An agent on its own endpoint authenticates with that endpoint's Secret and
+  // never reaches the harness's built-in provider, so its key is not required.
+  if (auth.flow === 'api-key') {
+    if (state.inferenceEnabled) return OK
+    return wizardApiKey(state).trim() ? OK : { ok: false, reason: `Paste your ${auth.name}.` }
+  }
   if (auth.flow === 'authorization-code') {
     if (!state.pkceVerifier) return { ok: false, reason: 'Open the login page to authorize.' }
     if (!state.oauthCode) return { ok: false, reason: 'Paste the authorization code.' }

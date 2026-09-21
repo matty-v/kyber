@@ -54,7 +54,13 @@ export function ResourcesSection({
         <select
           id="agent-runtime"
           value={state.runtime}
-          onChange={(e) => set('runtime', e.target.value)}
+          onChange={(e) => {
+            set('runtime', e.target.value)
+            // The endpoint panel is gated on the new runtime's features, so it
+            // vanishes on a switch. Leaving the flag set would submit an
+            // `inference` the API rejects, with no visible field to correct.
+            set('inferenceEnabled', false)
+          }}
           className={inputClass}
         >
           {(state.runtimes ?? legacyRuntimeContracts).map(runtime => <option key={runtime.id} value={runtime.id}>{runtime.name}</option>)}

@@ -118,6 +118,9 @@ export interface Agent {
   // Opt-in gate for authenticated bounded request/reply submissions.
   requestReplyEnabled?: boolean
   a2aPeers?: AgentA2APeer[]
+  // Set when the agent runs against a model endpoint Kyber does not host.
+  // The read projection names where the credential lives, never its value.
+  inference?: AgentInferenceView
   publicCapabilities?: PublicCapabilitiesManifest
   publicCapabilitiesStatus?: PublicCapabilitiesStatus
   profile?: AgentProfile
@@ -451,6 +454,7 @@ export interface CreateAgentRequest {
   sessionResume?: boolean
   requestReplyEnabled?: boolean
   a2aPeers?: AgentA2APeer[]
+  inference?: AgentInferenceInput
   resources?: Partial<AgentResources>
   identity?: {
     soulDescription?: string
@@ -537,7 +541,34 @@ export interface PatchAgentRequest {
   sessionResume?: boolean
   requestReplyEnabled?: boolean
   a2aPeers?: AgentA2APeer[]
+  // null clears the endpoint and returns the agent to its built-in provider.
+  inference?: AgentInferenceInput | null
   publicCapabilities?: PublicCapabilitiesManifest | null
+}
+
+/**
+ * AgentInferenceInput points an agent at a model endpoint Kyber does not host.
+ * `api` names the wire protocol, not a vendor, so any server speaking it
+ * qualifies. The bearer token is referenced by Secret name and key — it is
+ * never sent through this API.
+ */
+export interface AgentInferenceInput {
+  baseURL: string
+  api: 'openai'
+  model?: string
+  credential: {
+    existingSecret: string
+    key: string
+  }
+}
+
+/** AgentInferenceView is the read projection: where the credential lives, never its value. */
+export interface AgentInferenceView {
+  baseURL: string
+  api: string
+  model?: string
+  credentialSecret: string
+  credentialKey: string
 }
 
 export interface SetModelRequest {

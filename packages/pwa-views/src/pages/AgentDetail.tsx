@@ -831,6 +831,18 @@ export function AgentDetail() {
                   <dt className="text-text-muted">Runtime</dt>
                   <dd className="text-text-primary">{agent.runtime}{agent.runtimeVersion?.installedVersion ? ` ${agent.runtimeVersion.installedVersion}` : ''}</dd>
                 </div>
+                {agent.inference && <>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-text-muted">Inference endpoint</dt>
+                    <dd className="truncate font-mono text-xs text-text-primary" title={agent.inference.baseURL}>{agent.inference.baseURL}</dd>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <dt className="text-text-muted">Endpoint credential</dt>
+                    <dd className="truncate font-mono text-xs text-text-primary">
+                      {agent.inference.credentialSecret}/{agent.inference.credentialKey}
+                    </dd>
+                  </div>
+                </>}
                 <div className="flex justify-between">
                   <dt className="text-text-muted">Machine</dt>
                   <dd className="text-text-primary">{agent.machine}</dd>

@@ -48,6 +48,9 @@ type CreateAgentRequest struct {
 	SessionResume       bool                   `json:"sessionResume,omitempty"`
 	RequestReplyEnabled bool                   `json:"requestReplyEnabled,omitempty"`
 	A2APeers            []kyberv1.AgentA2APeer `json:"a2aPeers,omitempty"`
+	// Inference points the agent at a model endpoint Kyber does not host.
+	// Nil keeps the runtime's built-in provider.
+	Inference *kyberv1.AgentInference `json:"inference,omitempty"`
 	// Force skips catalog validation of the model id, same as set-model.
 	Force        bool                     `json:"force,omitempty"`
 	Resources    agentResourcesRequest    `json:"resources"`
@@ -134,6 +137,12 @@ type PatchAgentRequest struct {
 	SessionResume       *bool                   `json:"sessionResume,omitempty"`
 	RequestReplyEnabled *bool                   `json:"requestReplyEnabled,omitempty"`
 	A2APeers            *[]kyberv1.AgentA2APeer `json:"a2aPeers,omitempty"`
+	// Inference is RawMessage so PATCH can tell omitted (leave unchanged)
+	// from explicit null (clear it and return to the built-in provider) from
+	// an object (validate and set). A plain pointer collapses the first two,
+	// which would make the field impossible to unset — and clearing it is how
+	// an operator moves an agent back off a custom endpoint.
+	Inference json.RawMessage `json:"inference,omitempty"`
 	// PublicCapabilities is RawMessage so PATCH can distinguish omitted (leave
 	// unchanged) from explicit null (unpublish) and an object (validate/update).
 	PublicCapabilities json.RawMessage        `json:"publicCapabilities,omitempty"`
@@ -207,6 +216,7 @@ type AgentResponse struct {
 	RequestReplyEnabled      bool                                   `json:"requestReplyEnabled,omitempty"`
 	PublicCapabilities       *kyberv1.AgentPublicCapabilities       `json:"publicCapabilities,omitempty"`
 	A2APeers                 []kyberv1.AgentA2APeer                 `json:"a2aPeers,omitempty"`
+	Inference                *agentInferenceResponse                `json:"inference,omitempty"`
 	PublicCapabilitiesStatus *kyberv1.AgentPublicCapabilitiesStatus `json:"publicCapabilitiesStatus,omitempty"`
 	Profile                  agentProfileResponse                   `json:"profile"`
 	// CurrentModel is the concrete model observed from the running runtime.
@@ -474,6 +484,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		PublicCapabilities:       a.Spec.PublicCapabilities,
 		PublicCapabilitiesStatus: a.Status.PublicCapabilities,
 		A2APeers:                 a.Spec.A2APeers,
+		Inference:                inferenceResponse(a.Spec.Inference),
 		CurrentModel:             a.Status.CurrentModel,
 		Profile: agentProfileResponse{
 			Alias:       a.Spec.Profile.Alias,
@@ -1040,6 +1051,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtime is required", "runtime")
 		return
 	}
+	if err := validateInference(req.Runtime, req.Inference); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "inference")
+		return
+	}
 	if err := validateA2APeers(req.A2APeers); err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "a2aPeers")
 		return
@@ -1084,14 +1099,21 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "runtime authentication is not registered", "runtime")
 		return
 	}
-	if err := strategy.Validate(kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput()); err != nil {
-		field := "secrets.authType"
-		var validation *pkgruntimes.AuthValidationError
-		if errors.As(err, &validation) {
-			field = validation.Field
+	// An agent carrying spec.inference authenticates to its own endpoint with
+	// the operator's Secret and never contacts the harness's built-in
+	// provider, so that provider's credential is not required. Demanding it
+	// anyway forced an operator with no OpenRouter account to paste a dummy
+	// string and had Kyber mint a Secret nothing reads.
+	if req.Inference == nil {
+		if err := strategy.Validate(kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput()); err != nil {
+			field := "secrets.authType"
+			var validation *pkgruntimes.AuthValidationError
+			if errors.As(err, &validation) {
+				field = validation.Field
+			}
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), field)
+			return
 		}
-		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), field)
-		return
 	}
 
 	if req.Secrets.TelegramEnabled {
@@ -1183,6 +1205,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			SessionResume:       req.SessionResume,
 			RequestReplyEnabled: req.RequestReplyEnabled,
 			A2APeers:            req.A2APeers,
+			Inference:           req.Inference,
 			Resources: kyberv1.AgentResources{
 				CPU:    cpuQ,
 				Memory: memQ,
@@ -1377,6 +1400,36 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		agent.Spec.A2APeers = append([]kyberv1.AgentA2APeer(nil), (*req.A2APeers)...)
 	}
 
+	if len(req.Inference) > 0 {
+		if strings.TrimSpace(string(req.Inference)) == "null" {
+			agent.Spec.Inference = nil
+		} else {
+			var inference kyberv1.AgentInference
+			if err := json.Unmarshal(req.Inference, &inference); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "inference must be an object or null", "inference")
+				return
+			}
+			if err := validateInference(agent.Spec.Runtime, &inference); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "inference")
+				return
+			}
+			agent.Spec.Inference = &inference
+		}
+		// The endpoint URL, HERMES_PROVIDER, and the credential SecretKeyRef
+		// are all pod env, and configure-hermes.py only runs at container
+		// start. Without a roll this returned 200 while the running agent kept
+		// using the old endpoint and old credential indefinitely — including
+		// on the documented path for moving an agent back off a custom
+		// endpoint. Mirrors set-model: roll only actively-running phases so a
+		// dormant agent is not started by a config edit.
+		switch agent.Status.Phase {
+		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
+			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+		case kyberv1.AgentPhaseFailed:
+			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+		}
+	}
+
 	if len(req.PublicCapabilities) > 0 {
 		if strings.TrimSpace(string(req.PublicCapabilities)) == "null" {
 			agent.Spec.PublicCapabilities = nil
@@ -1484,10 +1537,120 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 
 func patchIncludesLifecycleFields(req PatchAgentRequest) bool {
 	return req.Model != nil || req.StartupPrompt != nil || req.SessionResume != nil ||
-		req.RequestReplyEnabled != nil || req.A2APeers != nil || req.Resources != nil || req.Jobs != nil
+		req.RequestReplyEnabled != nil || req.A2APeers != nil || req.Resources != nil || req.Jobs != nil ||
+		len(req.Inference) > 0
 }
 
 var a2aPeerNamePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$`)
+
+// agentInferenceResponse is the read projection of spec.inference.
+//
+// It deliberately carries the Secret NAME and KEY but never a value — the
+// control plane does not read the Secret on this path at all. The credential
+// reaches only the agent's own pod, as an env var from a SecretKeyRef.
+type agentInferenceResponse struct {
+	BaseURL string `json:"baseURL"`
+	API     string `json:"api"`
+	Model   string `json:"model,omitempty"`
+	// CredentialSecret and CredentialKey identify where the token lives so an
+	// operator can rotate it. The token itself is never returned.
+	CredentialSecret string `json:"credentialSecret"`
+	CredentialKey    string `json:"credentialKey"`
+}
+
+func inferenceResponse(inf *kyberv1.AgentInference) *agentInferenceResponse {
+	if inf == nil {
+		return nil
+	}
+	return &agentInferenceResponse{
+		BaseURL:          inf.BaseURL,
+		API:              inf.API,
+		Model:            inf.Model,
+		CredentialSecret: inf.Credential.ExistingSecret,
+		CredentialKey:    inf.Credential.Key,
+	}
+}
+
+// clusterInternalHost reports whether a hostname is unambiguously inside the
+// cluster, which is the only case where plain HTTP is accepted.
+//
+// Kubernetes service DNS always ends in ".svc" or ".svc.<clusterdomain>", and
+// those names do not resolve outside the cluster — so a credential sent to one
+// cannot leave the node's network the way it could over a plaintext hop to the
+// public internet. Everything else must be HTTPS.
+func clusterInternalHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	if !strings.Contains(host, ".") {
+		// A bare single label is a same-namespace Service name.
+		return true
+	}
+	// Suffix-anchored, never Contains: `strings.Contains(host, ".svc.")`
+	// matched llm.svc.attacker.com, which classified a public host as
+	// cluster-internal and waived the HTTPS requirement — sending the
+	// operator's bearer token over the internet in cleartext, the exact thing
+	// this function exists to prevent.
+	//
+	// A cluster domain other than the default is not recognised here; those
+	// installs use the `.svc` form or HTTPS.
+	return strings.HasSuffix(host, ".svc") || strings.HasSuffix(host, ".svc.cluster.local")
+}
+
+// validateInference checks an inference endpoint an operator is about to write.
+//
+// The rules exist because a bad endpoint here is silent: the agent comes up,
+// reports healthy, and fails every turn. Rejecting at write time is the only
+// place an operator sees the mistake immediately.
+func validateInference(runtime string, inf *kyberv1.AgentInference) error {
+	if inf == nil {
+		return nil
+	}
+	// Refuse the field on a runtime that does not read it. Accepting it there
+	// would store a setting the agent silently ignores, which is the exact
+	// class of failure this feature exists to remove.
+	if d, ok := pkgruntimes.Describe(runtime); !ok || !d.Supports(pkgruntimes.CustomInferenceEndpoint) {
+		return fmt.Errorf("runtime %q does not support a custom inference endpoint", runtime)
+	}
+	if len(inf.BaseURL) > 2048 {
+		return fmt.Errorf("baseURL exceeds 2048 characters")
+	}
+	parsed, err := url.Parse(inf.BaseURL)
+	if err != nil || parsed.Hostname() == "" {
+		return fmt.Errorf("baseURL must be an absolute http or https URL")
+	}
+	switch parsed.Scheme {
+	case "https":
+	case "http":
+		// Plain HTTP would put the bearer token on the wire in cleartext.
+		// Tolerated only where the hop cannot leave the cluster.
+		if !clusterInternalHost(parsed.Hostname()) {
+			return fmt.Errorf("baseURL must use HTTPS unless the host is cluster-internal (got %q)", parsed.Hostname())
+		}
+	default:
+		return fmt.Errorf("baseURL must be an absolute http or https URL")
+	}
+	if parsed.User != nil {
+		return fmt.Errorf("baseURL must not embed credentials; use credential.existingSecret")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return fmt.Errorf("baseURL must not carry a query string or fragment")
+	}
+	if inf.API != "openai" {
+		return fmt.Errorf("api must be \"openai\" (the only wire protocol implemented)")
+	}
+	if len(inf.Model) > 253 {
+		return fmt.Errorf("model exceeds 253 characters")
+	}
+	if problems := validation.IsDNS1123Subdomain(inf.Credential.ExistingSecret); len(problems) > 0 {
+		return fmt.Errorf("credential.existingSecret must be a valid Kubernetes Secret name")
+	}
+	if len(inf.Credential.Key) == 0 || len(inf.Credential.Key) > 253 {
+		return fmt.Errorf("credential.key must contain 1 to 253 characters")
+	}
+	return nil
+}
 
 func validateA2APeers(peers []kyberv1.AgentA2APeer) error {
 	if len(peers) > 16 {
@@ -1789,6 +1952,12 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.Model = req.Model
+	// An agent on a custom endpoint resolves its model from
+	// spec.inference.model first, so writing only spec.Model here returned 200
+	// and rolled the pod while the agent kept running the old model.
+	if agent.Spec.Inference != nil {
+		agent.Spec.Inference.Model = req.Model
+	}
 	// Only roll the pod for actively-running phases; leave Stopped alone
 	// so a model change doesn't start a dormant agent.
 	switch agent.Status.Phase {
@@ -2061,12 +2230,17 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 	if !ok {
 		return nil, fmt.Errorf("runtime authentication is not registered")
 	}
-	credentials, err := strategy.Prepare(ctx, kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput(), pkgruntimes.AuthOptions{TokenURL: s.anthropicTokenURL()})
-	if err != nil {
-		return nil, err
-	}
-	for _, credential := range credentials {
-		defs = append(defs, secretDef{suffix: credential.Suffix, data: credential.Data})
+	// Skip the built-in provider's credential entirely for an agent on its own
+	// endpoint — minting <agent>-openrouter there would store a token nothing
+	// reads, and the adapter references the operator's Secret instead.
+	if req.Inference == nil {
+		credentials, err := strategy.Prepare(ctx, kyberv1.AgentAuthType(req.Secrets.AuthType), req.Secrets.runtimeAuthInput(), pkgruntimes.AuthOptions{TokenURL: s.anthropicTokenURL()})
+		if err != nil {
+			return nil, err
+		}
+		for _, credential := range credentials {
+			defs = append(defs, secretDef{suffix: credential.Suffix, data: credential.Data})
+		}
 	}
 
 	if req.Secrets.TelegramEnabled && req.Secrets.TelegramBotToken != "" {

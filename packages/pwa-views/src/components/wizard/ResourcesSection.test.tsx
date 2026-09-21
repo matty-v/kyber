@@ -131,4 +131,33 @@ describe('ResourcesSection — capacity card', () => {
     )
     expect(screen.getByText(/won't fit/)).toBeInTheDocument()
   })
+
+  // Switching runtime hides the endpoint panel (it is gated on the new
+  // runtime's features), so a stale inferenceEnabled would submit an
+  // `inference` the API rejects with no visible field to correct.
+  it('clears the custom inference endpoint when the runtime changes', async () => {
+    const user = userEvent.setup()
+    const set = vi.fn()
+    render(
+      <ResourcesSection
+        state={{
+          ...initialState(),
+          inferenceEnabled: true,
+          runtimes: [
+            { id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: ['custom-inference-endpoint'], authModes: [] },
+            { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [] },
+          ],
+          runtime: 'hermes',
+        }}
+        set={set}
+        selectedMachine={null}
+        machineAvailable={null}
+      />,
+    )
+
+    await user.selectOptions(screen.getByLabelText(/^Runtime$/i), 'claude-code')
+
+    expect(set).toHaveBeenCalledWith('runtime', 'claude-code')
+    expect(set).toHaveBeenCalledWith('inferenceEnabled', false)
+  })
 })
