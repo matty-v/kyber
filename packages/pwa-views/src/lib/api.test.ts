@@ -220,6 +220,18 @@ describe('switchAgentRuntime', () => {
   })
 })
 
+describe('reauthorizeAPIKey', () => {
+  it('sends the target key through the runtime auth action', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204 }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    await createApiClient(mockCluster).reauthorizeAPIKey('han solo', 'new-key')
+    const [[url, init]] = (fetchMock as unknown as { mock: { calls: [string, RequestInit][][] } }).mock.calls
+    expect(url).toBe('http://localhost:8080/api/v1/agents/han%20solo/auth')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ apiKey: 'new-key' })
+  })
+})
+
 describe('logStream — source/window query building (kyber#431)', () => {
   beforeEach(() => {
     localStorage.clear()

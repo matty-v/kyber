@@ -21,6 +21,10 @@ credential Secret and transcript trees remain on the PVC.
 The route does not migrate conversations across harnesses. The first target
 pod must not resume the source harness's session. Scheduled jobs remain in the
 Agent spec; the UI calls out job hooks that the target contract does not offer.
+The target credential is created when its authorization flow completes:
+Claude OAuth can now create a missing Secret, Codex device login already
+creates its placeholder Secret, and the generic API-key flow creates or
+updates the runtime-owned Secret for Claude Code, Codex, or Hermes.
 
 ## Checkpoints
 
@@ -55,3 +59,11 @@ switch action test, API transport test, TypeScript lint, and PWA build pass.
 Next: run the complete Go/PWA/embedded gates, fix failures, push the branch and
 open the review PR. Then arrange canary validation after standard deployment;
 do not deploy by hand or choose a real agent without Matt's direction.
+
+## Checkpoint: 2026-09-22 22:15 UTC
+
+Review found that the old Claude OAuth endpoint returned 404 when the target
+Secret did not exist, and that `/auth` had no API-key branch. Both first-switch
+authorization cases now create the target Secret, with focused tests and an
+Agent Detail API-key control. Draft PR #272 is open; these follow-up changes
+still need a checkpoint commit and CI.

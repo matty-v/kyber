@@ -75,6 +75,7 @@ vi.mock('./hooks/useAPI', () => {
     useSwitchAgentRuntime: () => mutation,
     useCompactAgentSession: () => mutation,
     useReauthorizeAgent: () => mutation,
+    useReauthorizeAPIKey: () => mutation,
     usePatchAgentJobs: () => mutation,
     useRunAgentJob: () => mutation,
     useCreateInboundBinding: () => mutation,

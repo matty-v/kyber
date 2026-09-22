@@ -485,6 +485,20 @@ export function useReauthorizeAgent(useContract = false) {
   })
 }
 
+export function useReauthorizeAPIKey() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, apiKey }: { name: string; apiKey: string }) => api.reauthorizeAPIKey(name, apiKey),
+    onSuccess: (_data, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+    },
+    meta: { successMessage: 'Runtime credential saved; agent starting', errorPrefix: 'Authorization failed' },
+  })
+}
+
 export function useStartCodexDeviceAuth(useContract = false) {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

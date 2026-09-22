@@ -16,10 +16,11 @@ import type { Agent } from '../lib/types'
 
 // vi.hoisted: vi.mock's factory is lifted above the imports, so anything it
 // closes over has to be hoisted with it.
-const { startAgent, restartAgent, switchAgentRuntime, idleMutation, effectiveModelList, agentModels } = vi.hoisted(() => ({
+const { startAgent, restartAgent, switchAgentRuntime, reauthorizeAPIKey, idleMutation, effectiveModelList, agentModels } = vi.hoisted(() => ({
   startAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   restartAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   switchAgentRuntime: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
+  reauthorizeAPIKey: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   idleMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   effectiveModelList: {
     models: [], claudeCodeVersions: [], codexVersions: [], hermesVersions: [],
@@ -50,6 +51,7 @@ vi.mock('../hooks/useAPI', () => ({
   useAgentSkills: () => ({ data: null, isLoading: false, isError: false }),
   useDeleteAgent: idleMutation,
   useReauthorizeAgent: idleMutation,
+  useReauthorizeAPIKey: () => reauthorizeAPIKey,
   useStartCodexDeviceAuth: idleMutation,
   useTokenUsage: () => ({ data: undefined }),
   useComputeConfig: vi.fn(() => ({ data: undefined })),
@@ -156,6 +158,24 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
     await user.click(screen.getAllByRole('button', { name: 'Switch harness' }).at(-1)!)
     expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code' })
+  })
+
+  it('offers the target API-key authorization after a switch', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, runtime: 'hermes', authType: 'api-key', runtimeContract: {
+        id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+        cancellation: 'notify_only', features: [], authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key' }],
+      } }, isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    render(
+      <MemoryRouter initialEntries={['/agents/lando/overview']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    await user.type(screen.getByLabelText('API key'), 'new-key')
+    await user.click(screen.getByRole('button', { name: 'Save key and start' }))
+    expect(reauthorizeAPIKey.mutateAsync).toHaveBeenCalledWith({ name: 'lando', apiKey: 'new-key' })
   })
 
   it('browses Hermes releases without offering an unsafe source install', async () => {

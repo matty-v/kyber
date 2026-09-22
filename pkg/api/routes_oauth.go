@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -88,28 +89,35 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, 502, "oauth_exchange_failed", "runtime returned invalid credentials")
 		return
 	}
-	// Patch the existing provider-owned credential Secret.
+	// A harness switch has no target credential Secret yet. Create it on
+	// first authorization; ordinary reauthorization updates it in place.
 	sec := &corev1.Secret{}
 	secKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
-	if err := s.K8sClient.Get(r.Context(), secKey, sec); err != nil {
-		if k8serrors.IsNotFound(err) {
-			writeJSONError(w, http.StatusNotFound, "not_found",
-				"oauth secret '"+name+"-oauth' not found — agent may not have been created with OAuth")
+	if err := s.K8sClient.Get(r.Context(), secKey, sec); k8serrors.IsNotFound(err) {
+		sec = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secKey.Name, Namespace: secKey.Namespace}, Data: credentials[0].Data}
+		if err := s.K8sClient.Create(r.Context(), sec); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create oauth secret")
 			return
 		}
+	} else if err != nil {
 		slog.Error("failed to get oauth secret for reauthorize", "name", name, "secret", name+"-oauth", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get oauth secret")
 		return
+	} else {
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		for k, v := range credentials[0].Data {
+			sec.Data[k] = v
+		}
+		if err := s.K8sClient.Update(r.Context(), sec); err != nil {
+			slog.Error("failed to update oauth secret", "name", name, "secret", name+"-oauth", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update oauth secret")
+			return
+		}
 	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
-	}
-	for k, v := range credentials[0].Data {
-		sec.Data[k] = v
-	}
-	if err := s.K8sClient.Update(r.Context(), sec); err != nil {
-		slog.Error("failed to update oauth secret", "name", name, "secret", name+"-oauth", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update oauth secret")
+	if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm authorization recovery")
 		return
 	}
 

@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -151,6 +152,39 @@ func TestSwitchRuntimePreparationFailureLeavesSource(t *testing.T) {
 	}
 	if stored.Spec.Runtime != "codex" || stored.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 		t.Fatalf("source mutated: %+v", stored.Spec)
+	}
+}
+
+func TestSwitchRuntimeBackKeepsOriginalCredential(t *testing.T) {
+	runner := &fakeRuntimeRepairRunner{}
+	s, original := switchTestServer(t, "codex", runner)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: original.Name + "-codex-auth", Namespace: original.Namespace}, Data: map[string][]byte{"auth.json": []byte(`{"saved":true}`)}}
+	if err := s.K8sClient.Create(context.Background(), secret); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postSwitch(t, s, "claude-code"); rr.Code != http.StatusAccepted {
+		t.Fatalf("first switch: %d %s", rr.Code, rr.Body.String())
+	}
+	current := &kyberv1.Agent{}
+	key := types.NamespacedName{Name: original.Name, Namespace: original.Namespace}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	if err := s.K8sClient.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postSwitch(t, s, "codex"); rr.Code != http.StatusAccepted {
+		t.Fatalf("switch back: %d %s", rr.Code, rr.Body.String())
+	}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Spec.Runtime != "codex" || current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth {
+		t.Fatalf("switch back spec=%+v", current.Spec)
+	}
+	if err := s.K8sClient.Get(context.Background(), client.ObjectKeyFromObject(secret), secret); err != nil || string(secret.Data["auth.json"]) != `{"saved":true}` {
+		t.Fatalf("original credential missing: err=%v", err)
 	}
 }
 

@@ -163,7 +163,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"agent": name, "runtime": req.Runtime,
-		"message":               "target prepared; agent is moving to NeedsAuth on the same volume",
+		"message":               "runtime switch requested; agent is moving to NeedsAuth on the same volume",
 		"jobTurnHooksSupported": descriptor.Supports(runtimes.JobTurnHooks),
 		"jobWarning":            jobWarning,
 	})

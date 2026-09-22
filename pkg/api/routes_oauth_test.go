@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -25,10 +26,16 @@ func pkceChallenge(verifier string) string {
 
 func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
 	for _, route := range []string{"oauth", "auth"} {
-		t.Run(route, func(t *testing.T) { testReauthorizeExchange(t, route) })
+		for _, missing := range []bool{false, true} {
+			name := route + "-existing"
+			if missing {
+				name = route + "-first-switch"
+			}
+			t.Run(name, func(t *testing.T) { testReauthorizeExchange(t, route, missing) })
+		}
 	}
 }
-func testReauthorizeExchange(t *testing.T, route string) {
+func testReauthorizeExchange(t *testing.T, route string, missing bool) {
 	t.Helper()
 	mock := mockserver.New()
 	mockSrv := httptest.NewServer(mock)
@@ -54,9 +61,13 @@ func testReauthorizeExchange(t *testing.T, route string) {
 	}
 
 	scheme := mustNewScheme(t)
+	objects := []runtime.Object{defaultMachine(), agent}
+	if !missing {
+		objects = append(objects, secret)
+	}
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(defaultMachine(), agent, secret).
+		WithRuntimeObjects(objects...).
 		WithStatusSubresource(agent).
 		Build()
 	s := &api.Server{
@@ -83,8 +94,10 @@ func testReauthorizeExchange(t *testing.T, route string) {
 
 	// Verify the secret was updated.
 	updatedSecret := &corev1.Secret{}
-	_ = fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy-oauth", Namespace: "kyber-system"}, updatedSecret)
-	if string(updatedSecret.Data["refresh_token"]) == "old-token" {
+	if err := fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy-oauth", Namespace: "kyber-system"}, updatedSecret); err != nil {
+		t.Fatal(err)
+	}
+	if !missing && string(updatedSecret.Data["refresh_token"]) == "old-token" {
 		t.Error("refresh_token was not updated")
 	}
 	if len(updatedSecret.Data["access_token"]) == 0 {

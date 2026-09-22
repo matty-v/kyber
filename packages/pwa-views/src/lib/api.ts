@@ -350,6 +350,8 @@ export function createApiClient(cluster: Cluster) {
 
     reauthorizeRuntime: (name: string, body?: { oauthCode: string; pkceVerifier: string; state: string }): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${encodeURIComponent(name)}/auth`, body),
+    reauthorizeAPIKey: (name: string, apiKey: string): Promise<void> =>
+      request<void>('POST', `/api/v1/agents/${encodeURIComponent(name)}/auth`, { apiKey }),
     getRuntimeAuthStatus: (name: string): Promise<CodexDeviceAuthStatus> =>
       request<CodexDeviceAuthStatus>('GET', `/api/v1/agents/${encodeURIComponent(name)}/auth`),
 

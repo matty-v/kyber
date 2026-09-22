@@ -815,7 +815,7 @@ paths:
                 runtime: {type: string}
       responses:
         '202':
-          description: Target prepared and runtime switch requested
+          description: Runtime switch requested after target preparation where required
           content:
             application/json:
               schema:
@@ -832,6 +832,8 @@ paths:
           $ref: '#/components/responses/Conflict'
         '500':
           $ref: '#/components/responses/InternalError'
+        '501':
+          $ref: '#/components/responses/NotImplemented'
 
   /api/v1/agents/{name}/models:
     parameters:
@@ -1020,18 +1022,19 @@ paths:
         '503': {description: Pod inspection unavailable}
     post:
       operationId: reauthorizeRuntime
-      summary: Start the registered harness subscription reauthorization flow
+      summary: Authorize the registered harness with its own flow
       requestBody:
         required: false
         content:
           application/json:
             schema:
               type: object
-              description: Required only for authorization-code flows.
+              description: Authorization-code flows use OAuth fields; API-key flows require apiKey; device-code flows omit the body.
               properties:
                 oauthCode: {type: string, writeOnly: true}
                 pkceVerifier: {type: string, writeOnly: true}
                 state: {type: string, writeOnly: true}
+                apiKey: {type: string, writeOnly: true}
       responses:
         '204': {description: Credentials updated or device login scheduled}
         '400': {$ref: '#/components/responses/ValidationError'}

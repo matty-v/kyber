@@ -32,8 +32,8 @@ selected. The agent name, volume, identity checkout, skills, local files,
 scheduled jobs, previous credential Secret, and old transcript trees remain.
 
 The switch clears the old harness's model and version overrides, stops its
-current pod, and enters NeedsAuth. Complete the target runtime's authorization
-flow, or use **Retry startup** if that runtime already has a valid credential
+current pod, and enters NeedsAuth. Complete the target runtime's OAuth,
+device-login, or API-key authorization flow, or use **Retry startup** if that runtime already has a valid credential
 Secret from an earlier switch. The target starts a fresh session unless it
 already has its own resumable transcript on disk. If scheduled jobs use
 `exclusive` or `clearContextAfter` and the target lacks job turn hooks, those

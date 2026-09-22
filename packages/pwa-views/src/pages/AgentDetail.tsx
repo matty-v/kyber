@@ -20,6 +20,7 @@ import {
   useDeleteAgent,
   useTokenUsage,
   useReauthorizeAgent,
+  useReauthorizeAPIKey,
   useComputeConfig,
   usePatchAgent,
   useSetSessionResume,
@@ -564,6 +565,8 @@ export function AgentDetail() {
   const [reauthCode, setReauthCode] = useState('')
   const [reauthError, setReauthError] = useState<string | null>(null)
   const [reauthSuccess, setReauthSuccess] = useState(false)
+  const [runtimeAPIKey, setRuntimeAPIKey] = useState('')
+  const [runtimeAPIKeyError, setRuntimeAPIKeyError] = useState<string | null>(null)
 
   const startAgent = useStartAgent()
   const stopAgent = useStopAgent()
@@ -582,6 +585,7 @@ export function AgentDetail() {
   const setRequestReplyEnabled = useSetRequestReplyEnabled()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent(Boolean(agent?.runtimeContract))
+  const reauthorizeAPIKey = useReauthorizeAPIKey()
 
   useEffect(() => {
     setStartupPrompt(agent?.startupPrompt ?? '')
@@ -849,6 +853,34 @@ export function AgentDetail() {
                   Re-authorized successfully. The agent will transition out of NeedsAuth shortly.
                 </p>
               )}
+            </Card>
+          )}
+          {agent.phase === 'NeedsAuth' && agentAuth(agent)?.flow === 'api-key' && (
+            <Card className="border-warn/40 bg-warn-muted">
+              <h2 className="text-sm font-semibold text-warn mb-1">{agentAuth(agent)?.name ?? 'API key'} required</h2>
+              <p className="text-xs text-warn/80 mb-3">Enter a credential for this harness to start the agent. Its previous harness credential remains saved separately.</p>
+              <label className="block text-xs font-medium text-text-muted" htmlFor="runtime-api-key">API key</label>
+              <input
+                id="runtime-api-key"
+                type="password"
+                value={runtimeAPIKey}
+                onChange={(event) => { setRuntimeAPIKey(event.target.value); setRuntimeAPIKeyError(null) }}
+                autoComplete="off"
+                className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+              />
+              <Button
+                type="button" variant="primary" size="sm" className="mt-3"
+                loading={reauthorizeAPIKey.isPending} disabled={!runtimeAPIKey || reauthorizeAPIKey.isPending}
+                onClick={async () => {
+                  try {
+                    await reauthorizeAPIKey.mutateAsync({ name, apiKey: runtimeAPIKey })
+                    setRuntimeAPIKey('')
+                  } catch (err) {
+                    setRuntimeAPIKeyError(err instanceof Error ? err.message : 'Authorization failed')
+                  }
+                }}
+              >Save key and start</Button>
+              {runtimeAPIKeyError && <p className="mt-2 text-xs text-danger">{runtimeAPIKeyError}</p>}
             </Card>
           )}
           <MismatchBadges agent={agent} />
