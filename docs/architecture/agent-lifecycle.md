@@ -360,7 +360,8 @@ silently.
   not instruct the operator to replace valid credentials.
 - **Operator-forced re-auth is gated in the reconciler, and its Action splits
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).
-  `DesiredNeedsAuth` (set by the `force-needs-auth` API action) drops a wedged
+  `DesiredNeedsAuth` (set by the `force-needs-auth` API action and by a
+  validated harness switch) drops an agent
   agent to `NeedsAuth`, but only from the recoverable phases (`Running`,
   `Starting`, `Failed`, `MemoryExhausted`, `Stopped`). The
   allowlist lives in `classifyEvent` — **not** in the API setter, which has no
@@ -465,6 +466,13 @@ silently.
   write), so the impactful verbs are never less-protected than fail-safe Stop.
   Off by default (permissive/audit), legacy key = full scope. See
   [api-authorization.md](api-authorization.md).
+- **Harness switching reuses `DesiredNeedsAuth` without a new phase.** The
+  switch API accepts only Running, Stopped, Failed, or NeedsAuth, prepares the
+  target on the existing PVC, then atomically patches `spec.runtime`, clears
+  runtime-scoped model/version overrides, and requests NeedsAuth. The existing
+  `DesiredNeedsAuth` transitions tear down any old pod. Runtime observations
+  from the source harness are cleared and late source reports are rejected.
+  The target credential is supplied through its own authorization flow.
 - **Pod recreation re-enters through `Creating`.** Every resume/restart path
   (`Stopped`, `Restarting`, `Failed`, `NeedsAuth`, `MemoryExhausted`,
   `DiskExhausted`, `WaitingForMachine`) creates its replacement pod in

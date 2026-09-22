@@ -368,6 +368,23 @@ export function useRepairAgentRuntime() {
   })
 }
 
+export function useSwitchAgentRuntime() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, runtime }: { name: string; runtime: string }) => api.switchAgentRuntime(name, runtime),
+    onSuccess: (_data, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+    },
+    meta: {
+      successMessage: (_d: unknown, v: unknown) => `${(v as { name: string }).name} is switching harness and will request authorization`,
+      errorPrefix: 'Failed to switch harness',
+    },
+  })
+}
+
 export function useSetAgentModel() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

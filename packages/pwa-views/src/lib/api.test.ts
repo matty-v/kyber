@@ -205,6 +205,21 @@ describe('repairAgentRuntime', () => {
   })
 })
 
+describe('switchAgentRuntime', () => {
+  it('sends the target to the encoded lifecycle action', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 202,
+      json: async () => ({ agent: 'han solo', runtime: 'claude-code', message: 'moving to NeedsAuth', jobTurnHooksSupported: true }),
+    }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    await createApiClient(mockCluster).switchAgentRuntime('han solo', 'claude-code')
+    const [[url, init]] = (fetchMock as unknown as { mock: { calls: [string, RequestInit][][] } }).mock.calls
+    expect(url).toBe('http://localhost:8080/api/v1/agents/han%20solo/switch-runtime')
+    expect(init.method).toBe('POST')
+    expect(JSON.parse(init.body as string)).toEqual({ runtime: 'claude-code' })
+  })
+})
+
 describe('logStream — source/window query building (kyber#431)', () => {
   beforeEach(() => {
     localStorage.clear()

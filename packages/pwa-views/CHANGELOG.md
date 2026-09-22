@@ -10,6 +10,9 @@
 - Create Agent says so when the control plane's config cannot be loaded,
   instead of showing "Checking…" forever, and the identity step's hint names
   the "No identity repository" option by its label.
+- Agent Detail can switch an existing agent to another configured harness on
+  the same disk. The dialog explains session, model, credential, job, and
+  persistence effects before applying the switch.
 
 ## 0.51.0
 

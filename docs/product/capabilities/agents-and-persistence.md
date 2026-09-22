@@ -20,6 +20,25 @@ session. Startup prompts are operator-visible configuration, not secrets.
 
 An agent keeps its entire filesystem on its persistent volume across pod restarts and upgrades: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. Recovery on a replacement machine depends on storage: portable cloud volumes can reattach, while node-local storage cannot survive loss of its node. Pushed identity-repo content survives either case.
 
+## Switch the harness on the same agent
+
+Agent Detail offers **Switch harness** for agents in Running, Stopped, Failed,
+or NeedsAuth. The API equivalent is `POST /api/v1/agents/{name}/switch-runtime`
+with `{"runtime":"codex"}` (or any other configured runtime). It requires
+`lifecycle:write`. Kyber verifies the target image, current authentication
+mode, and enabled channel compatibility before preparing the target on the
+same persistent volume. A failed preparation leaves the original runtime
+selected. The agent name, volume, identity checkout, skills, local files,
+scheduled jobs, previous credential Secret, and old transcript trees remain.
+
+The switch clears the old harness's model and version overrides, stops its
+current pod, and enters NeedsAuth. Complete the target runtime's authorization
+flow, or use **Retry startup** if that runtime already has a valid credential
+Secret from an earlier switch. The target starts a fresh session unless it
+already has its own resumable transcript on disk. If scheduled jobs use
+`exclusive` or `clearContextAfter` and the target lacks job turn hooks, those
+flags are inert; the switch response and console call this out.
+
 ## Curate what an agent promises publicly
 
 An operator can publish a versioned capability manifest for an agent from its

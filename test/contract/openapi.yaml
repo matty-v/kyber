@@ -792,6 +792,47 @@ paths:
         '501':
           $ref: '#/components/responses/NotImplemented'
 
+  /api/v1/agents/{name}/switch-runtime:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: switchAgentRuntime
+      summary: Switch an existing agent to a different harness on the same PVC
+      description: >
+        Requires lifecycle:write. Prepares the target harness on the agent's
+        current disk, then clears runtime-scoped model/version overrides and
+        requests NeedsAuth. Previous credentials, transcripts, skills, jobs,
+        and local data remain intact. Only stable phases are accepted.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [runtime]
+              properties:
+                runtime: {type: string}
+      responses:
+        '202':
+          description: Target prepared and runtime switch requested
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SwitchRuntimeResponse'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
   /api/v1/agents/{name}/models:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -2348,6 +2389,16 @@ components:
           type: string
         output:
           type: string
+
+    SwitchRuntimeResponse:
+      type: object
+      required: [agent, runtime, message, jobTurnHooksSupported]
+      properties:
+        agent: {type: string}
+        runtime: {type: string}
+        message: {type: string}
+        jobTurnHooksSupported: {type: boolean}
+        jobWarning: {type: string}
 
     AgentList:
       type: object

@@ -16,9 +16,10 @@ import type { Agent } from '../lib/types'
 
 // vi.hoisted: vi.mock's factory is lifted above the imports, so anything it
 // closes over has to be hoisted with it.
-const { startAgent, restartAgent, idleMutation, effectiveModelList, agentModels } = vi.hoisted(() => ({
+const { startAgent, restartAgent, switchAgentRuntime, idleMutation, effectiveModelList, agentModels } = vi.hoisted(() => ({
   startAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   restartAgent: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
+  switchAgentRuntime: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   idleMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   effectiveModelList: {
     models: [], claudeCodeVersions: [], codexVersions: [], hermesVersions: [],
@@ -36,6 +37,7 @@ vi.mock('../hooks/useAPI', () => ({
   useCompactAgentSession: idleMutation,
   useForceNeedsAuthAgent: idleMutation,
   useRepairAgentRuntime: idleMutation,
+  useSwitchAgentRuntime: () => switchAgentRuntime,
   useSetAgentModel: idleMutation,
   useAgentModels: agentModels,
   useSetAgentRuntimeVersion: idleMutation,
@@ -50,7 +52,7 @@ vi.mock('../hooks/useAPI', () => ({
   useReauthorizeAgent: idleMutation,
   useStartCodexDeviceAuth: idleMutation,
   useTokenUsage: () => ({ data: undefined }),
-  useComputeConfig: () => ({ data: undefined }),
+  useComputeConfig: vi.fn(() => ({ data: undefined })),
 }))
 vi.mock('../lib/models', () => ({ useEffectiveModelList: () => effectiveModelList }))
 vi.mock('../components/TerminalPeek', () => ({
@@ -131,6 +133,29 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     expect(screen.queryByText('Model')).not.toBeInTheDocument()
     expect(screen.getByText('Harness version and compute allocation.')).toBeInTheDocument()
     expect(agentModels).toHaveBeenCalledWith('fixed', false)
+  })
+
+  it('switches a running agent to a configured compatible harness', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, id: 'switcher', phase: 'Running', runtime: 'codex', authType: 'oauth' },
+      isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: { runtimes: [
+        { id: 'codex', name: 'Codex', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'device-code' }] },
+        { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: ['job-turn-hooks'], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'authorization-code' }] },
+      ] },
+    } as ReturnType<typeof useAPIModule.useComputeConfig>)
+    render(
+      <MemoryRouter initialEntries={['/agents/switcher/general']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Switch harness' }))
+    await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
+    await user.click(screen.getAllByRole('button', { name: 'Switch harness' }).at(-1)!)
+    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code' })
   })
 
   it('browses Hermes releases without offering an unsafe source install', async () => {
