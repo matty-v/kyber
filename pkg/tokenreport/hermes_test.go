@@ -22,7 +22,7 @@ func TestParseHermesLatest(t *testing.T) {
 		"2026-09-08 13:05:02,000 INFO [session_one] turn_context: user said secret text\n"+
 		"2026-09-08 13:05:03,033 INFO [session_one] agent.conversation_loop: API call #3: model=z-ai/glm-5.2 provider=openrouter in=18393 out=22 total=18415 latency=1.1s cache=18304/18393 (100%)\n")
 	metadata := writeHermesFixture(t, "metadata.json", `{"z-ai/glm-5.2":{"context_length":131072,"name":"GLM 5.2"}}`)
-	snap, err := ParseHermesLatest(logPath, metadata)
+	snap, err := ParseHermesLatest(logPath, metadata, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestParseHermesLatestIgnoresNonSummaryAndScopesOutput(t *testing.T) {
 		"user payload API call #9: model=bad provider=bad in=999 out=999 total=1998 latency=1s\n"+
 		"2026-09-08 13:06:00,303 INFO [new] agent.conversation_loop: API call #1: model=new/model provider=openrouter in=200 out=20 total=220 latency=1s\n")
 	metadata := writeHermesFixture(t, "metadata.json", `{}`)
-	snap, err := ParseHermesLatest(logPath, metadata)
+	snap, err := ParseHermesLatest(logPath, metadata, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,7 +61,7 @@ func TestParseHermesLatestIgnoresNonSummaryAndScopesOutput(t *testing.T) {
 func TestLoadHermesCatalog(t *testing.T) {
 	providers := writeHermesFixture(t, "providers.json", `{"openrouter":{"models":["z/model","a/model","a/model","unknown"]},"other":{"models":["ignored"]}}`)
 	metadata := writeHermesFixture(t, "metadata.json", `{"a/model":{"context_length":200000,"name":"A Model"},"z/model":{"context_length":1000000,"name":"Z Model"},"unknown":{"context_length":0}}`)
-	models, err := LoadHermesCatalog(providers, metadata, "openrouter", 10)
+	models, err := LoadHermesCatalog(providers, metadata, "openrouter", nil, 10)
 	if err != nil {
 		t.Fatal(err)
 	}
