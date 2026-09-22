@@ -1689,10 +1689,130 @@ func TestReconciler_AutoCreatePending_GatesPodCreation(t *testing.T) {
 		t.Errorf("unexpected error getting pod: %v", getErr)
 	}
 
-	// Agent phase should not have progressed beyond the initial empty/Creating state.
+	// MAT-53: a gated agent is never phase-less. It shows Creating, and the
+	// AwaitingIdentityRepo condition carries the scaffold failure.
 	got := getAgent(t, k8sClient, types.NamespacedName{Name: "hk-47", Namespace: "test-autocreate-gate"})
-	if got.Status.Phase != "" && got.Status.Phase != kyberv1.AgentPhaseCreating {
-		t.Errorf("phase: got %q, want empty or Creating (state machine should be gated)", got.Status.Phase)
+	if got.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Errorf("phase: got %q, want Creating", got.Status.Phase)
+	}
+	if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseFailed {
+		t.Errorf("identityRepo.phase: got %q, want Failed", got.Status.IdentityRepo.Phase)
+	}
+	cond := meta.FindStatusCondition(got.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo)
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.Reason != "ScaffoldFailed" {
+		t.Fatalf("AwaitingIdentityRepo condition: got %+v, want True/ScaffoldFailed", cond)
+	}
+	if !strings.Contains(cond.Message, "Git Repository is empty") {
+		t.Errorf("condition message %q: want the scaffold error", cond.Message)
+	}
+}
+
+// TestReconciler_AutoCreate_RecoversAfterScaffoldFailure: once a failed
+// scaffold succeeds on retry, the agent gets its repo and its first pod with
+// no manual CR repair (MAT-53). Before, a gated agent that had moved to
+// Creating had no path to a pod.
+func TestReconciler_AutoCreate_RecoversAfterScaffoldFailure(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme)
+	r.GithubTokenMinter = &fakeMinter{
+		tok: &githubapp.InstallationToken{Token: "ghs_test", ExpiresAt: time.Now().Add(time.Hour)},
+	}
+	scaffolder := &fakeScaffolder{err: fmt.Errorf("GitHub 502")}
+	r.Scaffolder = scaffolder
+	r.IdentityRepoOwner = "matty-v"
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-autocreate-recover"}}
+	if err := k8sClient.Create(context.Background(), ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	agent := newTestAgent("ig-88", "test-autocreate-recover")
+	agent.Spec.Runtime = "claude-code"
+	agent.Spec.IdentityRepo = kyberv1.AgentIdentityRepo{Template: "matty-v/kyber-agent-template"}
+	if err := k8sClient.Create(context.Background(), agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	key := types.NamespacedName{Name: "ig-88", Namespace: "test-autocreate-recover"}
+	req := ctrl.Request{NamespacedName: key}
+
+	res, err := r.Reconcile(context.Background(), req)
+	if err != nil {
+		t.Fatalf("first reconcile: %v", err)
+	}
+	if res.RequeueAfter != githubTokenErrorRetry {
+		t.Errorf("RequeueAfter after a retryable failure: got %v, want %v", res.RequeueAfter, githubTokenErrorRetry)
+	}
+	if got := getAgent(t, k8sClient, key); got.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Fatalf("phase after failed scaffold: got %q, want Creating", got.Status.Phase)
+	}
+
+	// GitHub recovers and the backoff window passes.
+	scaffolder.err = nil
+	r.scaffoldBackoff = scaffoldBackoff{}
+	reconcileN(t, r, req, 2)
+
+	got := getAgent(t, k8sClient, key)
+	if got.Spec.IdentityRepo.Repo != "matty-v/ig-88-agent" {
+		t.Errorf("spec.identityRepo.repo: got %q, want matty-v/ig-88-agent", got.Spec.IdentityRepo.Repo)
+	}
+	if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseReady {
+		t.Errorf("identityRepo.phase: got %q, want Ready", got.Status.IdentityRepo.Phase)
+	}
+	if meta.FindStatusCondition(got.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo) != nil {
+		t.Error("AwaitingIdentityRepo condition still present after the pod was created")
+	}
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: AgentPodName("ig-88"), Namespace: key.Namespace}, pod); err != nil {
+		t.Fatalf("pod not created after scaffold recovered: %v", err)
+	}
+	if !podHasEnv(pod, IdentityRepoEnvVar, "matty-v/ig-88-agent") {
+		t.Errorf("pod missing %s=matty-v/ig-88-agent", IdentityRepoEnvVar)
+	}
+}
+
+// TestReconciler_AutoCreate_NoGitHubApp covers a template-backed Agent applied
+// directly to a cluster with no GitHub App (the API rejects it; kubectl does
+// not). It must show Creating with an actionable reason, create no pod, and
+// not poll a failure that cannot fix itself.
+func TestReconciler_AutoCreate_NoGitHubApp(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+
+	scheme := buildTestScheme()
+	r := newReconciler(k8sClient, scheme) // no minter, no scaffolder
+
+	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-autocreate-noapp"}}
+	if err := k8sClient.Create(context.Background(), ns); err != nil {
+		t.Fatalf("creating namespace: %v", err)
+	}
+	agent := newTestAgent("dengar", "test-autocreate-noapp")
+	agent.Spec.IdentityRepo = kyberv1.AgentIdentityRepo{Template: "matty-v/kyber-agent-template"}
+	if err := k8sClient.Create(context.Background(), agent); err != nil {
+		t.Fatalf("creating agent: %v", err)
+	}
+	key := types.NamespacedName{Name: "dengar", Namespace: "test-autocreate-noapp"}
+
+	res, err := r.Reconcile(context.Background(), ctrl.Request{NamespacedName: key})
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if res.RequeueAfter != 0 {
+		t.Errorf("RequeueAfter: got %v, want 0 (a missing App does not fix itself)", res.RequeueAfter)
+	}
+	got := getAgent(t, k8sClient, key)
+	if got.Status.Phase != kyberv1.AgentPhaseCreating {
+		t.Errorf("phase: got %q, want Creating", got.Status.Phase)
+	}
+	if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseFailed ||
+		!strings.Contains(got.Status.IdentityRepo.Message, "Kyber GitHub App is not configured") {
+		t.Errorf("identityRepo status: got %q %q, want Failed naming the GitHub App",
+			got.Status.IdentityRepo.Phase, got.Status.IdentityRepo.Message)
+	}
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: AgentPodName("dengar"), Namespace: key.Namespace}, pod); !errors.IsNotFound(err) {
+		t.Errorf("pod get: got %v, want NotFound", err)
 	}
 }
 
@@ -5230,4 +5350,17 @@ func TestDesiredPhaseEnum_AcceptsEveryAPISettablePhase(t *testing.T) {
 			}
 		})
 	}
+}
+
+// podHasEnv reports whether the pod's agent container sets name=value.
+func podHasEnv(pod *corev1.Pod, name, value string) bool {
+	if len(pod.Spec.Containers) == 0 {
+		return false
+	}
+	for _, e := range pod.Spec.Containers[0].Env {
+		if e.Name == name && e.Value == value {
+			return true
+		}
+	}
+	return false
 }

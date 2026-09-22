@@ -284,6 +284,39 @@ describe('AgentDetail MismatchBadges', () => {
     expect(screen.getByText(/No model resolved/i)).toBeInTheDocument()
   })
 
+  // --- MAT-53: first pod waiting on a template-backed identity repo ------
+
+  it('says the identity repo could not be created, with the reason', () => {
+    const agent = baseAgent({
+      identityRepo: {
+        repo: '',
+        template: 'acme/kyber-agent-template',
+        phase: 'Failed',
+        message: 'Cannot create the identity repository: the Kyber GitHub App is not configured.',
+      },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByText(/identity repository could not be created/i)).toBeInTheDocument()
+    expect(screen.getByTestId('identity-repo-failed')).toHaveTextContent(/GitHub App is not configured/)
+  })
+
+  it('says the identity repo is being created while scaffolding is pending', () => {
+    const agent = baseAgent({
+      identityRepo: { repo: '', template: 'acme/kyber-agent-template', phase: 'Pending' },
+    })
+    render(<MismatchBadges agent={agent} />)
+    expect(screen.getByTestId('identity-repo-pending')).toHaveTextContent('acme/kyber-agent-template')
+    expect(screen.queryByTestId('identity-repo-failed')).not.toBeInTheDocument()
+  })
+
+  it('stays silent once the identity repo exists', () => {
+    const agent = baseAgent({
+      identityRepo: { repo: 'acme/alice-agent', template: 'acme/kyber-agent-template', phase: 'Ready' },
+    })
+    const { container } = render(<MismatchBadges agent={agent} />)
+    expect(container.firstChild).toBeNull()
+  })
+
   it('stays silent for a healthy agent on the new flags too', () => {
     const agent = baseAgent({ runtimeImageMissing: false, modelUnresolved: false })
     const { container } = render(<MismatchBadges agent={agent} />)

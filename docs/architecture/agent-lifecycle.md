@@ -123,7 +123,17 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
 `RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
 `MachineReady`, `OAuthRefreshFailed`, `AuthServiceFailed`,
-`CredentialSyncFailed`, `OOMKilled`.
+`CredentialSyncFailed`, `OOMKilled`, `IdentityRepoReady`.
+
+`IdentityRepoReady` builds the first pod of an agent that was held back for
+its identity repository. An agent with `spec.identityRepo.template` and no
+`spec.identityRepo.repo` does not get a pod until the controller has created
+the repository: the reconciler moves it to `Creating` (never a blank phase),
+sets the `AwaitingIdentityRepo` condition, and reports scaffolding as
+`status.identityRepo.phase` Pending or Failed with the reason. Retryable
+GitHub failures retry after a minute; a missing GitHub App or repo owner is
+reported and not polled. Once `.repo` is patched, `IdentityRepoReady` creates
+the pod and the condition is cleared.
 
 `MachineUnavailable` is the provider-neutral capacity-loss event. Active and
 retrying Agents park in `WaitingForMachine` without consuming restart retries;
@@ -163,6 +173,7 @@ transition:
 stateDiagram-v2
     [*] --> Creating: CRDCreated
 
+    Creating --> Creating: IdentityRepoReady
     Creating --> Starting: PodScheduled
     Creating --> Failed: PodScheduleFailed
 
@@ -241,6 +252,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | Current phase | Event | Action | Next phase |
 |---|---|---|---|
 | *(none)* | `CRDCreated` | `CreatePVAndPod` | `Creating` |
+| `Creating` | `IdentityRepoReady` | `CreatePVAndPod` | `Creating` |
 | `Creating` | `PodScheduled` | `WaitForStart` | `Starting` |
 | `Creating` | `PodScheduleFailed` | `LogAndEmitEvent` | `Failed` |
 | `Starting` | `PodReady` | `UpdateStatus` | `Running` |

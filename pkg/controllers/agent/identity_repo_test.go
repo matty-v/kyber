@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -490,5 +492,103 @@ func TestReconcileIdentityRepo_AutoCreate_InvalidTemplateSlug(t *testing.T) {
 	}
 	if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseFailed {
 		t.Errorf("status.phase: got %q, want Failed", got.Status.IdentityRepo.Phase)
+	}
+}
+
+// MAT-53: a retryable scaffold failure backs off instead of retrying on every
+// reconcile. Each status write re-triggers Reconcile, so without the backoff a
+// failing scaffold would hit GitHub as fast as its own status patches land.
+func TestReconcileIdentityRepo_AutoCreate_ScaffoldFailureBacksOff(t *testing.T) {
+	ctx := context.Background()
+	agent := newTemplateTestAgent("wedge")
+	minter := &fakeMinter{tok: &githubapp.InstallationToken{Token: "ghs_minttoken", ExpiresAt: time.Now().Add(time.Hour)}}
+	scaffolder := &fakeScaffolder{err: errors.New("GitHub 503 on generate")}
+	r, c := newScaffoldReconciler(t, minter, scaffolder, "matty-v", agent)
+
+	requeue, err := r.reconcileIdentityRepo(ctx, agent)
+	if err == nil {
+		t.Fatal("expected error from scaffolder failure, got nil")
+	}
+	if requeue != githubTokenErrorRetry {
+		t.Errorf("requeue after failure: got %v, want %v", requeue, githubTokenErrorRetry)
+	}
+
+	requeue, err = r.reconcileIdentityRepo(ctx, agent)
+	if err != nil {
+		t.Errorf("reconcile inside backoff: got error %v, want nil", err)
+	}
+	if scaffolder.calls != 1 {
+		t.Errorf("scaffolder calls: got %d, want 1 (second reconcile is inside the backoff)", scaffolder.calls)
+	}
+	if requeue <= 0 || requeue > githubTokenErrorRetry {
+		t.Errorf("requeue inside backoff: got %v, want (0, %v]", requeue, githubTokenErrorRetry)
+	}
+
+	got := &kyberv1.Agent{}
+	if err := c.Get(ctx, types.NamespacedName{Name: "wedge", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatalf("Get agent: %v", err)
+	}
+	if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseFailed {
+		t.Errorf("status.phase: got %q, want Failed", got.Status.IdentityRepo.Phase)
+	}
+	for _, want := range []string{"matty-v/wedge-agent", "will retry", "GitHub 503 on generate"} {
+		if !strings.Contains(got.Status.IdentityRepo.Message, want) {
+			t.Errorf("status.message %q: want it to mention %q", got.Status.IdentityRepo.Message, want)
+		}
+	}
+}
+
+// MAT-53: a missing GitHub App or owner cannot fix itself inside this
+// control-plane process, so it is reported with an actionable message and not
+// polled.
+func TestReconcileIdentityRepo_AutoCreate_NotConfiguredDoesNotRetry(t *testing.T) {
+	cases := []struct {
+		name       string
+		minter     GithubTokenMinter
+		scaffolder RepoScaffolder
+		owner      string
+		want       string
+	}{
+		{name: "no app", owner: "matty-v", want: "Kyber GitHub App is not configured"},
+		{name: "no owner", minter: &fakeMinter{}, scaffolder: &fakeScaffolder{}, want: "identityRepo.defaultOwner"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			agent := newTemplateTestAgent("porkins")
+			r, c := newScaffoldReconciler(t, tc.minter, tc.scaffolder, tc.owner, agent)
+
+			requeue, err := r.reconcileIdentityRepo(ctx, agent)
+			if !errors.Is(err, errScaffoldNotConfigured) {
+				t.Fatalf("error: got %v, want errScaffoldNotConfigured", err)
+			}
+			if requeue != 0 {
+				t.Errorf("requeue: got %v, want 0", requeue)
+			}
+			got := &kyberv1.Agent{}
+			if err := c.Get(ctx, types.NamespacedName{Name: "porkins", Namespace: "kyber-system"}, got); err != nil {
+				t.Fatalf("Get agent: %v", err)
+			}
+			if got.Status.IdentityRepo.Phase != kyberv1.AgentIdentityRepoPhaseFailed {
+				t.Errorf("status.phase: got %q, want Failed", got.Status.IdentityRepo.Phase)
+			}
+			if !strings.Contains(got.Status.IdentityRepo.Message, tc.want) {
+				t.Errorf("status.message %q: want it to mention %q", got.Status.IdentityRepo.Message, tc.want)
+			}
+		})
+	}
+}
+
+func TestBoundedMessage(t *testing.T) {
+	if got := boundedMessage("short"); got != "short" {
+		t.Errorf("short message changed: %q", got)
+	}
+	long := strings.Repeat("é", identityRepoMessageMax) // 2 bytes per rune
+	got := boundedMessage(long)
+	if len(got) > identityRepoMessageMax+len("…") {
+		t.Errorf("bounded length: got %d bytes, want <= %d", len(got), identityRepoMessageMax+len("…"))
+	}
+	if !utf8.ValidString(got) {
+		t.Error("bounded message split a rune")
 	}
 }

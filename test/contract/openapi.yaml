@@ -2148,6 +2148,23 @@ components:
           example: dave
         phase:
           $ref: '#/components/schemas/AgentPhase'
+        identityRepo:
+          type: object
+          description: >-
+            Present when the agent has an identity repository, or asked for one
+            from a template. repo is empty until a template-backed repository
+            has been created; phase and message say whether that is Pending or
+            Failed.
+          required: [repo]
+          properties:
+            repo: {type: string}
+            template: {type: string}
+            phase:
+              type: string
+              enum: [Pending, Ready, Failed]
+            message: {type: string}
+            tokenExpiresAt: {type: string}
+            lastMinted: {type: string}
         machine:
           type: string
           example: worker-1

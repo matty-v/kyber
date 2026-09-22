@@ -224,6 +224,11 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
   // the page is empty.
   const showImageMissing = Boolean(agent.runtimeImageMissing)
   const showModelUnresolved = Boolean(agent.modelUnresolved)
+  // MAT-53: the first pod waits for a template-backed identity repo to be
+  // created. Say so here, since the identity card is collapsed by default.
+  const identityRepoWaiting = Boolean(agent.identityRepo && !agent.identityRepo.repo && agent.identityRepo.template)
+  const showIdentityRepoFailed = identityRepoWaiting && agent.identityRepo?.phase === 'Failed'
+  const showIdentityRepoPending = identityRepoWaiting && !showIdentityRepoFailed
   // Probe ran and failed for a reason NOT attributable to the model
   // (auth, network, unrecognized error): modelSupported is absent, but
   // the diagnostic is present. "Couldn't verify" must be visible here,
@@ -235,7 +240,7 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
     !showUnsupported &&
     agent.runtimeVersion?.modelSupported !== false &&
     Boolean(agent.runtimeVersion?.modelProbeMessage)
-  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showBrokenRuntime && !showProbeInconclusive) return null
+  if (!showMismatch && !showUnsupported && !showImageMissing && !showModelUnresolved && !showIdentityRepoFailed && !showIdentityRepoPending && !showBrokenRuntime && !showProbeInconclusive) return null
   const installed = agent.runtimeVersion?.installedVersion
   const requested = agent.runtimeVersion?.requestedVersion
   return (
@@ -290,6 +295,31 @@ export function MismatchBadges({ agent }: { agent: Agent }) {
               </p>
             </div>
           </div>
+        </Card>
+      )}
+      {showIdentityRepoFailed && (
+        <Card className="border-danger/40 bg-danger/5">
+          <div className="flex items-start gap-3" data-testid="identity-repo-failed">
+            <AlertTriangle className="h-5 w-5 text-danger shrink-0 mt-0.5" aria-hidden="true" />
+            <div className="space-y-1">
+              <h2 className="text-sm font-semibold text-text-primary">
+                The identity repository could not be created
+              </h2>
+              <p className="text-xs text-text-muted">
+                {agent.identityRepo?.message ?? agent.blockedReason}{' '}
+                The agent starts as soon as the repository exists.
+              </p>
+            </div>
+          </div>
+        </Card>
+      )}
+      {showIdentityRepoPending && (
+        <Card>
+          <p className="text-xs text-text-muted" data-testid="identity-repo-pending">
+            Creating the identity repository from{' '}
+            <code className="font-mono">{agent.identityRepo?.template}</code>. The agent starts as
+            soon as it exists.
+          </p>
         </Card>
       )}
       {showMismatch && (
@@ -448,6 +478,12 @@ function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
             </dd>
           </div>
         )}
+        {!data.repo && data.template && (
+          <div className="flex justify-between gap-2">
+            <dt className="text-text-muted shrink-0">Template</dt>
+            <dd className="truncate font-mono text-xs text-text-primary">{data.template}</dd>
+          </div>
+        )}
         {data.repo && (
           <div className="flex justify-between gap-2">
             <dt className="text-text-muted shrink-0">Repo</dt>
@@ -469,10 +505,12 @@ function IdentityRepoCard({ data }: { data: AgentIdentityRepoStatus }) {
             <dd className="text-text-primary text-xs">{formatTimestamp(data.tokenExpiresAt)}</dd>
           </div>
         )}
-        {data.phase === 'Failed' && data.message && (
+        {(data.phase === 'Failed' || data.phase === 'Pending') && data.message && (
           <div>
             <dt className="text-text-muted mb-1">Message</dt>
-            <dd className="text-danger text-xs">{data.message}</dd>
+            <dd className={`text-xs ${data.phase === 'Failed' ? 'text-danger' : 'text-text-muted'}`}>
+              {data.message}
+            </dd>
           </div>
         )}
       </dl>

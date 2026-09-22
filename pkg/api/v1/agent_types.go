@@ -91,6 +91,17 @@ const (
 	// in the Helm values) and the condition clears on the next reconcile.
 	AgentConditionRuntimeImageMissing = "RuntimeImageMissing"
 
+	// AgentConditionAwaitingIdentityRepo is set True while an agent's pod is
+	// held back because spec.identityRepo.template is set and the controller
+	// has not yet created the repository (spec.identityRepo.repo is empty).
+	// The agent sits in phase Creating with no pod; status.identityRepo says
+	// whether scaffolding is Pending or Failed, and why. The condition is what
+	// tells the state machine that a Creating agent with no pod is waiting on
+	// its repo rather than on an in-flight pod create, so the pod is built as
+	// soon as the repo exists (EventIdentityRepoReady). Cleared once the pod
+	// is created. See MAT-53.
+	AgentConditionAwaitingIdentityRepo = "AwaitingIdentityRepo"
+
 	// AgentConditionTelegramUnavailable is set True when the agent has
 	// spec.secrets.telegramEnabled but the install has not pinned
 	// image.telegramSidecar.tag, so no Telegram sidecar can be injected.

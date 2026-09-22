@@ -99,6 +99,10 @@ const (
 	EventOOMKilled          Event = "OOMKilled"
 	EventDiskReserveReached Event = "DiskReserveReached"
 	EventDiskReserveCleared Event = "DiskReserveCleared"
+	// EventIdentityRepoReady fires for a Creating agent with no pod that was
+	// held back waiting for its identity repo to be scaffolded, once that wait
+	// is over. It builds the first pod, as EventCRDCreated would have.
+	EventIdentityRepoReady Event = "IdentityRepoReady"
 )
 
 // Action describes what the reconciler must do as a result of a transition.
@@ -168,6 +172,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseCreating,
 		},
 		// Creating transitions
+		{phase: kyberv1.AgentPhaseCreating, event: EventIdentityRepoReady}: {
+			Action:    ActionCreatePVAndPod,
+			NextPhase: kyberv1.AgentPhaseCreating,
+		},
 		{phase: kyberv1.AgentPhaseCreating, event: EventPodScheduled}: {
 			Action:    ActionWaitForStart,
 			NextPhase: kyberv1.AgentPhaseStarting,
