@@ -1621,7 +1621,28 @@ components:
           items:
             type: object
         identity:
-          type: object
+          $ref: '#/components/schemas/IdentityRepoCapability'
+
+    IdentityRepoCapability:
+      type: object
+      description: >-
+        Which identity-repository modes POST /api/v1/agents accepts on this
+        installation. Both managed modes require the Kyber GitHub App and a
+        configured repo owner; "none" is always supported.
+      required: [managedReposAvailable, supportedModes, repoOwner]
+      properties:
+        managedReposAvailable:
+          type: boolean
+        supportedModes:
+          type: array
+          items:
+            type: string
+            enum: [template, existing, none]
+        repoOwner:
+          type: string
+        unavailableReason:
+          type: string
+          description: Operator-safe reason the managed modes are unavailable. Omitted when available.
 
     LoggingSettings:
       type: object
@@ -2372,6 +2393,20 @@ components:
           properties:
             soulDescription:
               type: string
+        identityRepo:
+          type: object
+          description: >-
+            Omit for an agent with no identity repository. Set exactly one of
+            repo or template; a mode missing from
+            GET /api/v1/config identity.supportedModes is rejected with 400
+            VALIDATION_ERROR (field identityRepo) before anything is created.
+          properties:
+            repo:
+              type: string
+              description: owner/name of an existing repository to link.
+            template:
+              type: string
+              description: owner/name of a template repository to create a new identity repository from.
         secrets:
           type: object
           properties:

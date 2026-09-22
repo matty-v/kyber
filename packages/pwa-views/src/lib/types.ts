@@ -907,13 +907,23 @@ export type ComputeConfig = {
   // Used by the PWA to render full webhook URLs for inbound bindings (#208).
   // Omitted by the server when not configured — the PWA degrades gracefully.
   publicUrl?: string
-  // Identity-repo settings used by the Create Agent wizard's identity
-  // dropdown + collision check. RepoOwner is empty when the control
-  // plane was started without KYBER_IDENTITY_REPO_OWNER.
+  // Identity-repo capability used by the Create Agent wizard. Drive the
+  // identity choice off supportedModes, never off repoOwner alone: the owner
+  // and the GitHub App are configured independently. Mirrors ConfigIdentity
+  // in pkg/api/routes_config.go. The capability fields are optional only
+  // because older control planes do not send them; treat absence as
+  // "managed repos unavailable".
   identity: {
+    managedReposAvailable?: boolean
+    supportedModes?: IdentityRepoMode[]
     repoOwner: string
+    unavailableReason?: string
   }
 }
+
+// Identity-repo modes POST /api/v1/agents accepts. Mirrors the
+// IdentityRepoMode* constants in pkg/api/identity_repo_capability.go.
+export type IdentityRepoMode = 'template' | 'existing' | 'none'
 
 // One installed-repo entry returned by GET /api/v1/github/repos.
 // Mirrors pkg/githubapp.Repository on the wire.

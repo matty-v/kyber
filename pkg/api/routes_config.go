@@ -29,15 +29,25 @@ type ConfigResponse struct {
 	PublicURL string `json:"publicUrl,omitempty"`
 }
 
-// ConfigIdentity carries identity-repo settings the wizard needs to
-// construct the create-new-from-template flow's full repo name and call
-// the collision-check endpoint with the right owner. Empty when the
-// control plane was started without KYBER_IDENTITY_REPO_OWNER (auto-create
-// disabled).
+// ConfigIdentity reports whether this control plane can manage GitHub
+// identity repositories, and for which modes. The PWA must drive the Create
+// Agent identity choice off SupportedModes rather than inferring availability
+// from RepoOwner: the owner and the GitHub App are configured independently
+// and fail independently. Computed by Server.identityRepoCapability, which
+// also backs create-time validation.
 type ConfigIdentity struct {
+	// ManagedReposAvailable is true when at least one GitHub-backed mode
+	// (template, existing) can be used.
+	ManagedReposAvailable bool `json:"managedReposAvailable"`
+	// SupportedModes lists the identity-repo modes POST /api/v1/agents will
+	// accept: some of "template", "existing", and always "none".
+	SupportedModes []string `json:"supportedModes"`
 	// RepoOwner is the GitHub user/org under which auto-created identity
 	// repos are placed (e.g. "matty-v"). Empty string when not configured.
 	RepoOwner string `json:"repoOwner"`
+	// UnavailableReason is an operator-safe explanation of why the managed
+	// modes are unavailable. Empty when they are available.
+	UnavailableReason string `json:"unavailableReason,omitempty"`
 }
 
 // ConfigCompute reports which ComputeAdapter the control plane is configured
@@ -112,7 +122,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Runtimes:  s.availableRuntimeDescriptors(),
 		Compute:   ConfigCompute{Provider: s.ComputeProvider},
 		Models:    modelsForConfig(r.Context(), s.RuntimeDetectCache),
-		Identity:  ConfigIdentity{RepoOwner: s.IdentityRepoOwner},
+		Identity:  s.identityRepoCapability(),
 		PublicURL: s.PublicURL,
 	}
 	if s.ComputeProvider == "gce" || s.ComputeProvider == "fake" {

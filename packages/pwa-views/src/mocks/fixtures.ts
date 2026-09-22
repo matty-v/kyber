@@ -193,7 +193,11 @@ export const mockComputeConfig: ComputeConfig = {
     { id: 'claude-opus-4-7', contextWindow: 200_000 },
     { id: 'claude-haiku-4-5', contextWindow: 200_000 },
   ],
-  identity: { repoOwner: 'matty-v' },
+  identity: {
+    managedReposAvailable: true,
+    supportedModes: ['template', 'existing', 'none'],
+    repoOwner: 'matty-v',
+  },
 }
 
 // GitHub repos the App "has access to" in mock mode. Includes the

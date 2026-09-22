@@ -70,13 +70,14 @@ type agentIdentityRequest struct {
 }
 
 // agentIdentityRepoRequest carries the GitHub identity-repo config for the
-// agent at creation time. When Repo is set, the controller mints a short-lived
-// installation token via the Kyber GitHub App and exposes it to the pod.
-// When Template is set and Repo is empty, the controller creates a new repo
-// from the template and fills in Repo automatically.
+// agent at creation time. When Repo is set, the agent clones and pushes it
+// with repo-scoped tokens minted by the Kyber GitHub App. When Template is set,
+// the controller creates a new repo from the template and fills in Repo
+// automatically. Both modes require the App (validateIdentityRepoRequest);
+// omitting both creates an agent with no identity repo.
 type agentIdentityRepoRequest struct {
 	// Repo is the "owner/name" slug of an existing GitHub repo. Mutually
-	// exclusive with Template: if both are set, Repo takes precedence.
+	// exclusive with Template: a request setting both is rejected.
 	Repo string `json:"repo,omitempty"`
 	// Template is the "owner/repo" slug of a GitHub template repo. When set
 	// and Repo is empty, the controller scaffolds a new repo from this template.
@@ -1057,6 +1058,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := validateA2APeers(req.A2APeers); err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "a2aPeers")
+		return
+	}
+	if err := s.validateIdentityRepoRequest(req.IdentityRepo); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "identityRepo")
 		return
 	}
 	if len(s.ValidRuntimes) > 0 && !s.ValidRuntimes[req.Runtime] {
