@@ -21,6 +21,21 @@ const CustomProviderID = "kyber-endpoint"
 // no spec.inference — the behaviour every agent had before that field existed.
 const defaultProviderID = "openrouter"
 
+// CustomEndpointStaleTimeoutSeconds is how long Hermes waits for the first
+// streamed byte from a custom inference endpoint before killing the request.
+//
+// Hermes' own default is 180s for any endpoint it does not recognise as local,
+// and 900s for localhost ones, because self-hosted servers send nothing until
+// prefill finishes. A self-hosted model behind a public URL gets the cloud
+// 180s, so a long prompt is cancelled mid-prefill and retried from scratch.
+// 900s matches what Hermes already grants local servers.
+//
+// Set through HERMES_STREAM_STALE_TIMEOUT rather than a per-provider
+// stale_timeout_seconds in config.yaml: Hermes looks that up by its runtime
+// provider id, which resolves to "custom" for a providers: entry rather than
+// CustomProviderID, so a per-provider value would be silently ignored.
+const CustomEndpointStaleTimeoutSeconds = "900"
+
 type Adapter struct{ image string }
 
 func NewAdapter() *Adapter       { return &Adapter{image: os.Getenv(RuntimeImageEnv)} }
@@ -63,6 +78,7 @@ func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 		vars = append(vars,
 			corev1.EnvVar{Name: "KYBER_INFERENCE_BASE_URL", Value: inf.BaseURL},
 			corev1.EnvVar{Name: "KYBER_INFERENCE_PROVIDER", Value: CustomProviderID},
+			corev1.EnvVar{Name: "HERMES_STREAM_STALE_TIMEOUT", Value: CustomEndpointStaleTimeoutSeconds},
 			corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: inf.Credential.ExistingSecret},
