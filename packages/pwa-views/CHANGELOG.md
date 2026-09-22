@@ -1,5 +1,12 @@
 # @matty-v/kyber-pwa-views
 
+## 0.49.0
+
+- Type the identity-repository capability that `GET /api/v1/config` now
+  reports: `identity.managedReposAvailable`, `identity.supportedModes` and
+  `identity.unavailableReason`, plus the `IdentityRepoMode` union. The fields
+  are optional so the package still reads configs from older control planes.
+
 ## 0.48.0
 
 - Take the custom inference endpoint's API key as a value in the create-agent

@@ -640,10 +640,12 @@ func TestAgents_Create_IdentityRepoPassthrough(t *testing.T) {
 		WithRuntimeObjects(defaultMachine()).
 		Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		ValidRuntimes: map[string]bool{"claude-code": true},
+		K8sClient:         fakeClient,
+		APIKey:            testAPIKey,
+		Namespace:         "kyber-system",
+		ValidRuntimes:     map[string]bool{"claude-code": true},
+		GithubAppClient:   newIdentityTestGithubClient(t),
+		IdentityRepoOwner: "matty-v",
 	}
 	h := s.BuildHandler()
 
