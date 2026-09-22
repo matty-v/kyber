@@ -298,6 +298,9 @@ export function createApiClient(cluster: Cluster) {
     repairAgentRuntime: (name: string): Promise<RuntimeRepairResponse> =>
       request<RuntimeRepairResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/repair-runtime`),
 
+    switchAgentRuntime: (name: string, runtime: string): Promise<SwitchRuntimeResponse> =>
+      request<SwitchRuntimeResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/switch-runtime`, { runtime }),
+
     setAgentModel: (name: string, model: string): Promise<Agent> => {
       const req: SetModelRequest = { model }
       return request<Agent>('POST', `/api/v1/agents/${name}/set-model`, req)
@@ -347,6 +350,8 @@ export function createApiClient(cluster: Cluster) {
 
     reauthorizeRuntime: (name: string, body?: { oauthCode: string; pkceVerifier: string; state: string }): Promise<void> =>
       request<void>('POST', `/api/v1/agents/${encodeURIComponent(name)}/auth`, body),
+    reauthorizeAPIKey: (name: string, apiKey: string): Promise<void> =>
+      request<void>('POST', `/api/v1/agents/${encodeURIComponent(name)}/auth`, { apiKey }),
     getRuntimeAuthStatus: (name: string): Promise<CodexDeviceAuthStatus> =>
       request<CodexDeviceAuthStatus>('GET', `/api/v1/agents/${encodeURIComponent(name)}/auth`),
 
@@ -944,6 +949,14 @@ export interface RuntimeRepairResponse {
   runtime: string
   message: string
   output: string
+}
+
+export interface SwitchRuntimeResponse {
+  agent: string
+  runtime: string
+  message: string
+  jobTurnHooksSupported: boolean
+  jobWarning?: string
 }
 
 // runAgentJob response type.

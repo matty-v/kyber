@@ -526,7 +526,23 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionSidecarOutOfDate),
 		CreatedAt: a.CreationTimestamp.UTC().Format(time.RFC3339),
 	}
-	if a.Status.Runtime.InstalledVersion != "" {
+	// The spec switch is one write; the controller clears old observations on
+	// its next reconcile. Never present source-harness facts as target facts in
+	// the interim.
+	staleRuntime := a.Status.Runtime.Runtime != "" && a.Status.Runtime.Runtime != a.Spec.Runtime ||
+		a.Status.Runtime.Runtime == "" && a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && a.Status.ObservedGeneration < a.Generation
+	if staleRuntime {
+		resp.CurrentModel = ""
+		if a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth {
+			// The CRD's observed phase can still be Running until the old pod
+			// is removed. Present the handoff as transient rather than showing
+			// a healthy target runtime that has not started yet.
+			resp.Phase = kyberv1.AgentPhaseRestarting
+			resp.Status.Phase = kyberv1.AgentPhaseRestarting
+			resp.Status.Message = "Switching harness; waiting for the old pod to stop"
+		}
+	}
+	if a.Status.Runtime.InstalledVersion != "" && a.Status.Runtime.Runtime == a.Spec.Runtime {
 		rv := &agentRuntimeVersionResponse{
 			Runtime:          a.Status.Runtime.Runtime,
 			InstalledVersion: a.Status.Runtime.InstalledVersion,
@@ -559,8 +575,8 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	// array. Computed via meta.IsStatusConditionTrue so they stay True
 	// exactly when the reconciler set the condition True (and clear
 	// within one reconcile cycle once the underlying signal resolves).
-	resp.RuntimeVersionMismatch = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionRuntimeVersionMismatch)
-	resp.ModelUnsupported = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionModelUnsupported)
+	resp.RuntimeVersionMismatch = !staleRuntime && meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionRuntimeVersionMismatch)
+	resp.ModelUnsupported = !staleRuntime && meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionModelUnsupported)
 	// kyber#674: the two "controller refused to build a pod" conditions. Both
 	// leave the agent with no pod and — before this — nothing on the wire, so
 	// the PWA showed a blank agent with no way to reach the cause. Surfacing
@@ -719,7 +735,13 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	}
 	if descriptor, ok := pkgruntimes.Describe(a.Spec.Runtime); ok {
 		resp.RuntimeContract = &descriptor
-		resp.RuntimeCapabilities = pkgruntimes.AvailabilityMap(a, time.Now())
+		if staleRuntime {
+			copy := a.DeepCopy()
+			copy.Status.Runtime = kyberv1.AgentRuntimeStatus{}
+			resp.RuntimeCapabilities = pkgruntimes.AvailabilityMap(copy, time.Now())
+		} else {
+			resp.RuntimeCapabilities = pkgruntimes.AvailabilityMap(a, time.Now())
+		}
 	}
 
 	return resp
@@ -875,6 +897,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.handleCompactSession(w, r, name)
 	case "repair-runtime":
 		s.handleRepairRuntime(w, r, name)
+	case "switch-runtime":
+		s.handleSwitchRuntime(w, r, name)
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "unknown action")
 	}

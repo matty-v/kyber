@@ -9,6 +9,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -25,10 +26,16 @@ func pkceChallenge(verifier string) string {
 
 func TestReauthorize_ExchangesAndPatchesSecret(t *testing.T) {
 	for _, route := range []string{"oauth", "auth"} {
-		t.Run(route, func(t *testing.T) { testReauthorizeExchange(t, route) })
+		for _, missing := range []bool{false, true} {
+			name := route + "-existing"
+			if missing {
+				name = route + "-first-switch"
+			}
+			t.Run(name, func(t *testing.T) { testReauthorizeExchange(t, route, missing) })
+		}
 	}
 }
-func testReauthorizeExchange(t *testing.T, route string) {
+func testReauthorizeExchange(t *testing.T, route string, missing bool) {
 	t.Helper()
 	mock := mockserver.New()
 	mockSrv := httptest.NewServer(mock)
@@ -48,15 +55,22 @@ func testReauthorizeExchange(t *testing.T, route string) {
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseNeedsAuth},
 	}
 	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
+	if missing {
+		agent.Status.RecoveryInput = "old-source-credential"
+	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "needy-oauth", Namespace: "kyber-system"},
 		Data:       map[string][]byte{"refresh_token": []byte("old-token")},
 	}
 
 	scheme := mustNewScheme(t)
+	objects := []runtime.Object{defaultMachine(), agent}
+	if !missing {
+		objects = append(objects, secret)
+	}
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(defaultMachine(), agent, secret).
+		WithRuntimeObjects(objects...).
 		WithStatusSubresource(agent).
 		Build()
 	s := &api.Server{
@@ -83,12 +97,17 @@ func testReauthorizeExchange(t *testing.T, route string) {
 
 	// Verify the secret was updated.
 	updatedSecret := &corev1.Secret{}
-	_ = fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy-oauth", Namespace: "kyber-system"}, updatedSecret)
-	if string(updatedSecret.Data["refresh_token"]) == "old-token" {
+	if err := fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy-oauth", Namespace: "kyber-system"}, updatedSecret); err != nil {
+		t.Fatal(err)
+	}
+	if !missing && string(updatedSecret.Data["refresh_token"]) == "old-token" {
 		t.Error("refresh_token was not updated")
 	}
 	if len(updatedSecret.Data["access_token"]) == 0 {
 		t.Error("access_token is empty after reauthorize")
+	}
+	if missing && updatedSecret.Labels["kyber.io/agent"] != agent.Name {
+		t.Errorf("first-switch credential lacks cleanup label: %v", updatedSecret.Labels)
 	}
 
 	// Verify the agent's desiredPhase was set to Running.
@@ -96,6 +115,9 @@ func testReauthorizeExchange(t *testing.T, route string) {
 	_ = fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy", Namespace: "kyber-system"}, updatedAgent)
 	if updatedAgent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 		t.Errorf("desiredPhase=%q, want Running", updatedAgent.Spec.DesiredPhase)
+	}
+	if updatedAgent.Status.RecoveryInput != "" {
+		t.Errorf("recoveryInput=%q, want cleared", updatedAgent.Status.RecoveryInput)
 	}
 }
 

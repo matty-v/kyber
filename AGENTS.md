@@ -34,6 +34,13 @@ controllers reconcile reality toward it. Nothing mutates cluster state
 imperatively except controllers executing reconcile actions. Regenerate CRD
 manifests with `make generate` — NEVER hand-edit `deploy/helm/kyber/crds/`.
 
+An existing Agent changes harness through the lifecycle-write
+`POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`
+edit. It checks the target image, authentication and channels, prepares the
+target on the same PVC when the adapter has a repair contract, clears the old
+model/version overrides, and requests NeedsAuth. See
+`docs/design/2026-09-22-agent-runtime-switch.md`.
+
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function
   `(phase, event) → (action, nextPhase)`. Zero k8s imports. Unit-testable.

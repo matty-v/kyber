@@ -88,35 +88,49 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, 502, "oauth_exchange_failed", "runtime returned invalid credentials")
 		return
 	}
-	// Patch the existing provider-owned credential Secret.
+	// A harness switch has no target credential Secret yet. Create it on
+	// first authorization; ordinary reauthorization updates it in place.
 	sec := &corev1.Secret{}
 	secKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
-	if err := s.K8sClient.Get(r.Context(), secKey, sec); err != nil {
-		if k8serrors.IsNotFound(err) {
-			writeJSONError(w, http.StatusNotFound, "not_found",
-				"oauth secret '"+name+"-oauth' not found — agent may not have been created with OAuth")
+	if err := s.K8sClient.Get(r.Context(), secKey, sec); k8serrors.IsNotFound(err) {
+		sec = newAgentCredentialSecret(secKey, agent, credentials[0].Data)
+		if err := s.K8sClient.Create(r.Context(), sec); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create oauth secret")
 			return
 		}
+	} else if err != nil {
 		slog.Error("failed to get oauth secret for reauthorize", "name", name, "secret", name+"-oauth", "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get oauth secret")
 		return
+	} else {
+		if sec.Data == nil {
+			sec.Data = map[string][]byte{}
+		}
+		for k, v := range credentials[0].Data {
+			sec.Data[k] = v
+		}
+		if err := s.K8sClient.Update(r.Context(), sec); err != nil {
+			slog.Error("failed to update oauth secret", "name", name, "secret", name+"-oauth", "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update oauth secret")
+			return
+		}
 	}
-	if sec.Data == nil {
-		sec.Data = map[string][]byte{}
-	}
-	for k, v := range credentials[0].Data {
-		sec.Data[k] = v
-	}
-	if err := s.K8sClient.Update(r.Context(), sec); err != nil {
-		slog.Error("failed to update oauth secret", "name", name, "secret", name+"-oauth", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update oauth secret")
+	if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm authorization recovery")
 		return
 	}
 
 	// Set desiredPhase=Running to trigger a restart with the new credentials.
-	patch := client.MergeFrom(agent.DeepCopy())
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(r.Context(), key, current); err != nil ||
+		current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType ||
+		current.Spec.DesiredPhase == kyberv1.AgentPhaseStopped || current.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
+		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
+		return
+	}
+	patch := client.MergeFromWithOptions(current.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {
 		slog.Error("failed to patch agent desired phase for reauthorize", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 		return

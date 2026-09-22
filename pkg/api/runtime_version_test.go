@@ -75,6 +75,54 @@ func TestInternalAPI_RuntimeVersion_PatchesStatus(t *testing.T) {
 	}
 }
 
+func TestInternalAPI_RuntimeVersion_RejectsSourceHarnessAfterSwitch(t *testing.T) {
+	scheme := newRuntimeVersionScheme(t)
+	agent := newRuntimeVersionAgent("switched")
+	agent.Spec.Runtime = "claude-code"
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	resp, err := http.Post(ts.URL+"/internal/agents/switched/runtime-version", "application/json",
+		bytes.NewBufferString(`{"version":"old","runtime":"codex"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status=%d, want 409", resp.StatusCode)
+	}
+	got := &kyberv1.Agent{}
+	if err := fakeClient.Get(context.Background(), k8stypes.NamespacedName{Name: "switched", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.Runtime.InstalledVersion != "" {
+		t.Fatalf("stale version landed: %q", got.Status.Runtime.InstalledVersion)
+	}
+}
+
+func TestInternalAPI_RuntimeVersion_RejectsUntaggedReportDuringSwitch(t *testing.T) {
+	scheme := newRuntimeVersionScheme(t)
+	agent := newRuntimeVersionAgent("switched-legacy")
+	agent.Spec.Runtime = "claude-code"
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	agent.Generation = 3
+	agent.Status.ObservedGeneration = 3 // controller has already seen the switch
+	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(fakeClient, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	resp, err := http.Post(ts.URL+"/internal/agents/switched-legacy/runtime-version", "application/json",
+		bytes.NewBufferString(`{"version":"source-version"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusConflict {
+		t.Fatalf("status=%d, want 409", resp.StatusCode)
+	}
+}
+
 func TestInternalAPI_RuntimeVersion_OverwritesOnReport(t *testing.T) {
 	scheme := newRuntimeVersionScheme(t)
 	agent := newRuntimeVersionAgent("chewie")

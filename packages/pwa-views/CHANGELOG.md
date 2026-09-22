@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.53.0
+
+- Agent Detail can switch an existing agent to another configured harness on
+  the same disk. The dialog explains session, model, credential, job, and
+  persistence effects before applying the switch.
+- When the target harness needs an API key, Agent Detail can submit it after
+  the switch without creating a new agent.
+
 ## 0.52.0
 
 - The Skills tab no longer tells the operator that an agent without an

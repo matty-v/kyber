@@ -47,7 +47,7 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
 
 | Scope | Grants | Verbs |
 |---|---|---|
-| `lifecycle:write` | the fail-safe verbs | `start`, `stop`, `restart`, OAuth re-auth resume to `Running` |
+| `lifecycle:write` | routine lifecycle operations | `start`, `stop`, `restart`, OAuth re-auth resume to `Running`, validated `switch-runtime` |
 | `lifecycle:admin` | the impactful verbs (⊃ `write`) | `force-needs-auth`, **agent/machine `DELETE`** (kyber#565) — **and** everything `write` grants |
 | `tasks:create` | create durable tasks | `POST /agents/{agent}/tasks` |
 | `tasks:read` / `tasks:list` | read or list owned tasks | task `GET` / collection `GET` |
@@ -62,6 +62,12 @@ routine start/stop **cannot** wedge an agent into `NeedsAuth`.
 `DELETE` is the single most impactful verb — irreversible identity destruction —
 so it requires `lifecycle:admin`, the maximum (nothing is more impactful than
 delete).
+
+`switch-runtime` also requests NeedsAuth, but only after checking a registered
+target, configured image, compatible auth mode and channels, stable phase, and
+successful target preparation on the existing volume. MAT-85 assigns this
+bounded operator action `lifecycle:write`; `force-needs-auth` remains admin
+because it can wedge an arbitrary agent without those preconditions.
 
 ## Destructive DELETE — two interlocks (kyber#565)
 

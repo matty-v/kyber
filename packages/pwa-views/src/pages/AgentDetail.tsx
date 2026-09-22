@@ -12,6 +12,7 @@ import {
   useCompactAgentSession,
   useForceNeedsAuthAgent,
   useRepairAgentRuntime,
+  useSwitchAgentRuntime,
   useSetAgentModel,
   useAgentModels,
   useSetAgentRuntimeVersion,
@@ -19,6 +20,7 @@ import {
   useDeleteAgent,
   useTokenUsage,
   useReauthorizeAgent,
+  useReauthorizeAPIKey,
   useComputeConfig,
   usePatchAgent,
   useSetSessionResume,
@@ -78,6 +80,7 @@ type ActionKind =
   | 'delete'
   | 'set-model'
   | 'set-runtime-version'
+  | 'switch-runtime'
   | 'set-resources'
 type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'a2a'
 
@@ -540,6 +543,7 @@ export function AgentDetail() {
   const [pending, setPending] = useState<ActionKind | null>(null)
   const [newModel, setNewModel] = useState('')
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
+  const [targetRuntime, setTargetRuntime] = useState('')
   const [newCPU, setNewCPU] = useState('')
   const [newMemory, setNewMemory] = useState('')
   const [startupPrompt, setStartupPrompt] = useState('')
@@ -561,6 +565,8 @@ export function AgentDetail() {
   const [reauthCode, setReauthCode] = useState('')
   const [reauthError, setReauthError] = useState<string | null>(null)
   const [reauthSuccess, setReauthSuccess] = useState(false)
+  const [runtimeAPIKey, setRuntimeAPIKey] = useState('')
+  const [runtimeAPIKeyError, setRuntimeAPIKeyError] = useState<string | null>(null)
 
   const startAgent = useStartAgent()
   const stopAgent = useStopAgent()
@@ -569,6 +575,7 @@ export function AgentDetail() {
   const compactAgentSession = useCompactAgentSession()
   const forceNeedsAuthAgent = useForceNeedsAuthAgent()
   const repairAgentRuntime = useRepairAgentRuntime()
+  const switchAgentRuntime = useSwitchAgentRuntime()
   const setAgentModel = useSetAgentModel()
   const setAgentRuntimeVersion = useSetAgentRuntimeVersion()
   const setAgentResources = useSetAgentResources()
@@ -578,6 +585,7 @@ export function AgentDetail() {
   const setRequestReplyEnabled = useSetRequestReplyEnabled()
   const deleteAgent = useDeleteAgent()
   const reauthorizeAgent = useReauthorizeAgent(Boolean(agent?.runtimeContract))
+  const reauthorizeAPIKey = useReauthorizeAPIKey()
 
   useEffect(() => {
     setStartupPrompt(agent?.startupPrompt ?? '')
@@ -596,6 +604,7 @@ export function AgentDetail() {
     compactAgentSession.isPending ||
     forceNeedsAuthAgent.isPending ||
     repairAgentRuntime.isPending ||
+    switchAgentRuntime.isPending ||
     setAgentModel.isPending ||
     setAgentRuntimeVersion.isPending ||
     setAgentResources.isPending ||
@@ -626,6 +635,10 @@ export function AgentDetail() {
         // Empty input is a deliberate clear (revert to fleet default).
         await setAgentRuntimeVersion.mutateAsync({ name, runtimeVersion: newRuntimeVersion })
         setNewRuntimeVersion('')
+      }
+      if (pending === 'switch-runtime' && targetRuntime) {
+        await switchAgentRuntime.mutateAsync({ name, runtime: targetRuntime })
+        setTargetRuntime('')
       }
       if (pending === 'set-resources') {
         const body: SetResourcesRequest = {}
@@ -742,11 +755,11 @@ export function AgentDetail() {
         {activeSection === 'overview' && (
           <div className="space-y-4">
           <SchedulingFailureBanner agent={agent} />
-          {agentAuth(agent)?.flow === 'device-code' &&
+          {!agent.inference && agentAuth(agent)?.flow === 'device-code' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
             <CodexDeviceAuthPanel name={name} phase={agent.phase} runtimeName={agentContract(agent)?.name} useContract={Boolean(agent.runtimeContract)} />
           )}
-          {agent.phase === 'NeedsAuth' && agentAuth(agent)?.flow === 'authorization-code' && (
+          {agent.phase === 'NeedsAuth' && !agent.inference && agentAuth(agent)?.flow === 'authorization-code' && (
             <Card className="border-warn/40 bg-warn-muted">
               <h2 className="text-sm font-semibold text-warn mb-1">Re-authorization required</h2>
               <p className="text-xs text-warn/80 mb-3">
@@ -840,6 +853,46 @@ export function AgentDetail() {
                   Re-authorized successfully. The agent will transition out of NeedsAuth shortly.
                 </p>
               )}
+            </Card>
+          )}
+          {agent.phase === 'NeedsAuth' && !agent.inference && agentAuth(agent)?.flow === 'api-key' && (
+            <Card className="border-warn/40 bg-warn-muted">
+              <h2 className="text-sm font-semibold text-warn mb-1">{agentAuth(agent)?.name ?? 'API key'} required</h2>
+              <p className="text-xs text-warn/80 mb-3">Enter a credential for this harness to start the agent. Its previous harness credential remains saved separately.</p>
+              <label className="block text-xs font-medium text-text-muted" htmlFor="runtime-api-key">API key</label>
+              <input
+                id="runtime-api-key"
+                type="password"
+                value={runtimeAPIKey}
+                onChange={(event) => { setRuntimeAPIKey(event.target.value); setRuntimeAPIKeyError(null) }}
+                autoComplete="off"
+                className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+              />
+              <Button
+                type="button" variant="primary" size="sm" className="mt-3"
+                loading={reauthorizeAPIKey.isPending} disabled={!runtimeAPIKey || reauthorizeAPIKey.isPending}
+                onClick={async () => {
+                  try {
+                    await reauthorizeAPIKey.mutateAsync({ name, apiKey: runtimeAPIKey })
+                    setRuntimeAPIKey('')
+                  } catch (err) {
+                    setRuntimeAPIKeyError(err instanceof Error ? err.message : 'Authorization failed')
+                  }
+                }}
+              >Save key and start</Button>
+              {runtimeAPIKeyError && <p className="mt-2 text-xs text-danger">{runtimeAPIKeyError}</p>}
+            </Card>
+          )}
+          {agent.phase === 'NeedsAuth' && agent.inference && (
+            <Card className="border-warn/40 bg-warn-muted">
+              <h2 className="text-sm font-semibold text-warn mb-1">Custom inference credential</h2>
+              <p className="text-xs text-warn/80 mb-3">
+                This harness uses the existing custom inference Secret. If its key needs changing,
+                update that Secret first, then retry startup.
+              </p>
+              <Button type="button" variant="primary" size="sm" loading={startAgent.isPending} onClick={() => startAgent.mutate(name)}>
+                Retry with existing credential
+              </Button>
             </Card>
           )}
           <MismatchBadges agent={agent} />
@@ -961,6 +1014,7 @@ export function AgentDetail() {
                       <div className="flex flex-wrap gap-2">
                         {canSelectModel && <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>}
                         <Button size="sm" variant="secondary" onClick={() => { setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? ''); setPending('set-runtime-version') }}>Harness</Button>
+                        <Button size="sm" variant="secondary" disabled={!['Running', 'Stopped', 'Failed', 'NeedsAuth'].includes(agent.phase)} onClick={() => { setTargetRuntime(''); setPending('switch-runtime') }}>Switch harness</Button>
                         <Button size="sm" variant="secondary" onClick={() => { setNewCPU(agent.resources.cpu); setNewMemory(agent.resources.memory); setPending('set-resources') }}>Resources</Button>
                       </div>
                     </div>
@@ -1057,6 +1111,43 @@ export function AgentDetail() {
               >
                 Apply
               </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pending === 'switch-runtime' && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+            <h2 className="text-base font-semibold text-text-primary">Switch harness</h2>
+            <p className="mt-2 text-sm text-text-muted">
+              The agent keeps its disk, identity checkout, skills, local files, jobs, and old transcripts.
+              Its model and harness version overrides will clear. The current session stops and the
+              target harness will ask for its own authorization, or reuse the custom inference
+              credential if this agent has one.
+            </p>
+            <label className="mt-4 block text-xs font-medium text-text-muted" htmlFor="target-runtime">Target harness</label>
+            <select
+              id="target-runtime"
+              value={targetRuntime}
+              onChange={(event) => setTargetRuntime(event.target.value)}
+              className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+            >
+              <option value="">Choose a harness</option>
+              {(computeConfig?.runtimes ?? []).filter((runtime) => runtime.id !== agent.runtime).map((runtime) => (
+                <option key={runtime.id} value={runtime.id} disabled={!runtime.authModes.some((mode) => mode.id === agent.authType)}>
+                  {runtime.name}{!runtime.authModes.some((mode) => mode.id === agent.authType) ? ` (does not offer ${agent.authType} auth)` : ''}
+                </option>
+              ))}
+            </select>
+            {targetRuntime && agent.jobs?.some((job) => job.exclusive || job.clearContextAfter) &&
+              !computeConfig?.runtimes?.find((runtime) => runtime.id === targetRuntime)?.features.includes('job-turn-hooks') && (
+                <p className="mt-3 text-xs text-warn">Scheduled jobs stay configured, but exclusive and clear context after are inert on this harness.</p>
+              )}
+            <div className="mt-4 flex justify-end gap-3">
+              <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>Cancel</Button>
+              <Button variant="primary" size="sm" onClick={() => void executeAction()} loading={isActing} disabled={!targetRuntime || isActing}>Switch harness</Button>
             </div>
           </div>
         </div>

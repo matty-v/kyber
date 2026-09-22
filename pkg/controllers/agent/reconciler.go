@@ -607,10 +607,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// resolves. Same best-effort patch shape as 5b — kyber#379 / PR-E.
 	{
 		before := agent.DeepCopy()
-		if r.reconcileRuntimeStatusConditions(agent) {
+		// A harness switch changes spec before the old pod finishes shutting
+		// down. Its version/model/capability observations cannot describe the
+		// target harness, even while the old pod is still present.
+		clearStaleRuntimeStatus(agent)
+		r.reconcileRuntimeStatusConditions(agent)
+		if !reflect.DeepEqual(before.Status, agent.Status) {
 			if patchErr := r.Status().Patch(ctx, agent, client.MergeFrom(before)); patchErr != nil {
-				logger.Info("runtime-status condition patch failed (best-effort)",
-					"agent", agent.Name, "err", patchErr)
+				logger.Info("runtime-status condition patch failed (best-effort)", "agent", agent.Name, "err", patchErr)
 			}
 		}
 	}
@@ -868,6 +872,26 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	}
 
 	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue)}, nil
+}
+
+// clearStaleRuntimeStatus discards observations from the source harness once
+// spec.runtime changes. The old pod can still exist during the NeedsAuth
+// transition, so the internal reporter separately rejects its reports.
+func clearStaleRuntimeStatus(agent *kyberv1.Agent) bool {
+	staleRuntime := agent.Status.Runtime.Runtime != "" && agent.Status.Runtime.Runtime != agent.Spec.Runtime
+	// Older start scripts left status.runtime.runtime empty. When an explicit
+	// NeedsAuth intent has not yet been observed, no target pod exists, so its
+	// installed version and current model cannot describe the new harness.
+	untaggedHandoff := agent.Status.Runtime.Runtime == "" &&
+		agent.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth &&
+		agent.Status.ObservedGeneration < agent.Generation
+	if !staleRuntime && !untaggedHandoff {
+		return false
+	}
+	agent.Status.Runtime = kyberv1.AgentRuntimeStatus{}
+	agent.Status.CurrentModel = ""
+	meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionRuntimeUnusable)
+	return true
 }
 
 // minNonZero returns the smaller of two durations, treating 0 as "no

@@ -712,6 +712,41 @@ func TestInternalServer_TokenUsagePostPersistsObservedCurrentModel(t *testing.T)
 	}
 }
 
+func TestInternalServer_TokenUsageDoesNotRestoreSourceModelDuringSwitch(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := kyberv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "switched", Namespace: "kyber-system", Generation: 3},
+		Spec:       kyberv1.AgentSpec{Runtime: "claude-code", DesiredPhase: kyberv1.AgentPhaseNeedsAuth},
+		Status:     kyberv1.AgentStatus{ObservedGeneration: 3},
+	}
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent).Build()
+	s := api.NewInternalServer(briefstore.NewMemoryStore(),
+		api.WithTokenStore(tokenstore.NewMemoryStore()),
+		api.WithKubeClient(k8sClient, "kyber-system"),
+	)
+	srv := httptest.NewServer(s.Handler())
+	defer srv.Close()
+	body, _ := json.Marshal(tokenreport.Snapshot{Model: "source-model"})
+	resp, err := http.Post(srv.URL+"/internal/agents/switched/token-usage", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d", resp.StatusCode)
+	}
+	got := &kyberv1.Agent{}
+	if err := k8sClient.Get(t.Context(), types.NamespacedName{Name: agent.Name, Namespace: agent.Namespace}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.CurrentModel != "" {
+		t.Fatalf("source model restored during switch: %q", got.Status.CurrentModel)
+	}
+}
+
 // TestInternalServer_TokenUsagePost_DuplicatePost verifies that a second POST
 // with the same cumulative counts as the first (d==0, newVal>0) contributes 0
 // to the accumulator — no double-counting on idle heartbeat or duplicate delivery.

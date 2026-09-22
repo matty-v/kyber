@@ -823,7 +823,8 @@ func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Req
 	if snap.Model != "" && s.k8sClient != nil {
 		key := types.NamespacedName{Name: agent, Namespace: s.namespace}
 		current := &kyberv1.Agent{}
-		if err := s.k8sClient.Get(r.Context(), key, current); err == nil && current.Status.CurrentModel != snap.Model {
+		if err := s.k8sClient.Get(r.Context(), key, current); err == nil && current.Status.CurrentModel != snap.Model &&
+			current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth {
 			patch := client.MergeFrom(current.DeepCopy())
 			current.Status.CurrentModel = snap.Model
 			_ = s.k8sClient.Status().Patch(r.Context(), current, patch)
@@ -1132,6 +1133,16 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 			return
 		}
 		http.Error(w, "agent lookup failed", http.StatusInternalServerError)
+		return
+	}
+	// Older start scripts omit runtime from their second version report. No
+	// target pod can legitimately report while desiredPhase is NeedsAuth, so
+	// reject those untagged reports throughout the handoff, including after
+	// the controller has observed the new generation but before the source pod
+	// finishes stopping.
+	if agent.Spec.Runtime != "" && body.Runtime != "" && body.Runtime != agent.Spec.Runtime ||
+		body.Runtime == "" && agent.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth {
+		http.Error(w, "stale runtime report", http.StatusConflict)
 		return
 	}
 
