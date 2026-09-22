@@ -89,3 +89,11 @@ workflow passed; the manual test workflow exposed only the legacy empty-runtime
 fixture, now fixed locally. The full local Go run is still completing. Next:
 push these fixes, run both workflows on the final head, then request a named
 canary agent for live acceptance after standard deployment.
+
+## Checkpoint: 2026-09-22 22:45 UTC
+
+The first final-head test and integration workflows passed. PR #272 was marked
+ready, but main then advanced with the repo-less agent documentation update.
+The branch has been rebased; its overlapping PWA changelog entry is resolved,
+and this feature now takes the next package version, 0.53.0. Re-run both
+workflows on the rebased head before canary handoff.
