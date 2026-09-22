@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.52.0
+
+- The Skills tab no longer tells the operator that an agent without an
+  identity repository saves its skills to one. `SkillsTab` takes
+  `hasIdentityRepo` (default `true`); when false it says the skills live on
+  the agent's own disk and survive restarts but not a lost disk or a
+  recreated agent.
+
 ## 0.51.0
 
 - Agent Detail shows an agent whose identity repository is still being

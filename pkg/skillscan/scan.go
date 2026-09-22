@@ -583,11 +583,16 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 					continue
 				}
 				if e.IsDir() {
+					detail := fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
+						rh.dir, e.Name())
+					if opts.RepoDir == "" {
+						detail = fmt.Sprintf("~/%s/%s is kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
+							rh.dir, e.Name())
+					}
 					issues = append(issues, Issue{
 						Code:     IssueUnmanaged,
 						Severity: SeverityWarning,
-						Detail: fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
-							rh.dir, e.Name()),
+						Detail:   detail,
 					})
 				}
 				continue
@@ -622,11 +627,16 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 				}
 				continue
 			}
+			detail := fmt.Sprintf("~/%s/%s links outside the identity repo (%s) — it is committed nowhere and will not survive a reprovision",
+				rh.dir, e.Name(), target)
+			if opts.RepoDir == "" {
+				detail = fmt.Sprintf("~/%s/%s links to %s, kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
+					rh.dir, e.Name(), target)
+			}
 			issues = append(issues, Issue{
 				Code:     IssueUnmanaged,
 				Severity: SeverityWarning,
-				Detail: fmt.Sprintf("~/%s/%s links outside the identity repo (%s) — it is committed nowhere and will not survive a reprovision",
-					rh.dir, e.Name(), target),
+				Detail:   detail,
 			})
 		}
 	}

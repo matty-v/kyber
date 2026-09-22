@@ -934,8 +934,10 @@ storage:
 #      tokens agents use to read/write their own identity repo (kyber#508).
 #   2. `identityRepo.defaultOwner` below, set to the account the App is
 #      installed on.
-# If either is absent the identity-repo feature disables cleanly (agents run
-# without an identity repo); it is never silently backfilled with a broad PAT.
+# If either is absent, agents can only be created without an identity repo:
+# the API reports identity.supportedModes ["none"] and rejects the GitHub
+# modes. Those agents keep their state on their own volume only. It is never
+# silently backfilled with a broad PAT.
 identityRepo:
   # defaultOwner: GitHub username or org under which auto-created identity repos
   # are placed and against which the Kyber App is installed. Required for

@@ -153,6 +153,28 @@ describe('SkillsTab', () => {
     expect(screen.getByText(/disappear when the pod is/)).toBeInTheDocument()
   })
 
+  // MAT-53: an agent with no identity repository has nowhere to push skills,
+  // so the tab must not tell the operator they live in one.
+  it('describes disk-only durability for an agent with no identity repo', () => {
+    mockSkills(
+      report({
+        issues: [
+          {
+            code: 'unmanaged',
+            severity: 'warning',
+            detail: "~/.claude/skills/handwritten is kept on this agent's disk only",
+          },
+        ],
+      }),
+    )
+    renderWithQuery(<SkillsTab agentName="dave" hasIdentityRepo={false} />)
+
+    expect(screen.getByText('Skills kept on this agent’s disk only')).toBeInTheDocument()
+    expect(screen.queryByText(/saves them to its identity repo/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Not backed up anywhere/)).toBeInTheDocument()
+    expect(screen.getByText(/It has no identity repository, so they live on its own disk/)).toBeInTheDocument()
+  })
+
   // "Never reported" and "has no skills" are different facts and must not
   // render the same — one points at a stale pod, the other at an empty repo.
   it('distinguishes never-reported from no-skills', () => {

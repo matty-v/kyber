@@ -452,7 +452,7 @@ Expected output: `signing-key`.
 
 **What this does:** Registers a GitHub App on the operator's GitHub account, captures App ID + Installation ID + private key, creates a Kubernetes Secret holding all three, and points `identityRepo.defaultOwner` at that account. Each agent gets a private **identity repo** (memory, skills, `SOUL.md`, session state) managed **exclusively** by this per-install **Kyber Platform GitHub App**: the control plane mints a **short-lived token scoped to just that one repo** (`contents:write`, ~1h) on demand, which the agent uses for both reads and writes of its own identity repo — no per-agent PATs, and **no PAT fallback** (a broken App flow fails loudly rather than silently succeeding on a broad credential). See [agents-identity-repos.md](./agents-identity-repos.md) for the full credential model.
 
-Both parts are required to enable the feature: the `kyber-github-app` Secret **and** a non-empty `identityRepo.defaultOwner`. If either is absent the identity-repo feature **disables cleanly** — agents are still created and run, just without a managed identity repo (never backfilled with a PAT).
+Both parts are required to enable the feature: the `kyber-github-app` Secret **and** a non-empty `identityRepo.defaultOwner`. If either is absent, agents can only be created without an identity repo — the Create Agent form and API refuse the GitHub modes — and those agents keep their state on their own volume only (never backfilled with a PAT).
 
 This section is optional — skip it if you don't want git-backed agent identity. The rest of the install works either way.
 

@@ -380,9 +380,9 @@ Then substitute your own project ID and tailnet name.
 
 ## 6. Register the Kyber GitHub App (optional)
 
-Kyber gives every agent a private GitHub-backed **identity repo** (memory,
-skills, `SOUL.md`, session state all live there and persist across pod
-restarts). That repo is managed **exclusively** by a per-install **Kyber
+Kyber can give each agent a private GitHub-backed **identity repo** (memory,
+skills, `SOUL.md`, session state all live there and survive even the loss of
+the agent's volume). Identity repos are optional. That repo is managed **exclusively** by a per-install **Kyber
 Platform GitHub App** — nothing is hardcoded to a particular app or account.
 Instead of handing agents a broad Personal Access Token, the control plane
 authenticates as this App and, on demand, mints a **short-lived token scoped to
@@ -396,10 +396,13 @@ model.
 
 Enabling the feature has two parts — (a) create the App and its
 `kyber-github-app` Secret, and (b) point `identityRepo.defaultOwner` at the
-account the App is installed on. **If either part is absent the feature disables
-cleanly** — agents are created and run normally, just without a managed identity
-repo (their identity is never backfilled with a PAT). Skip this section entirely
-if you don't want it. Estimated time: ~5 min.
+account the App is installed on. **If either part is absent, agents can only be
+created without an identity repo**: `GET /api/v1/config` reports
+`identity.supportedModes: ["none"]`, Create Agent shows the GitHub modes
+disabled with the reason, and the API rejects them. Such agents run normally but
+keep their state on their own volume only — it survives restarts, not a lost
+volume or a re-created agent (their identity is never backfilled with a PAT).
+Skip this section entirely if that is what you want. Estimated time: ~5 min.
 
 **1. Create the App.** Go to https://github.com/settings/apps/new (logged in as
 the user whose account will own agent identity repos) and fill in:
@@ -453,10 +456,11 @@ kubectl -n kyber-system create secret generic kyber-github-app \
 The control plane reads this Secret at startup via
 `pkg/githubapp.LoadConfigFromSecret`. If the Secret is missing or malformed, the
 control plane logs `GitHub App Secret not loaded — identity-repo feature
-disabled` and continues to start normally with the feature off — agents that
-don't use an identity repo are unaffected, and the internal
-`identity-repo-token` endpoint returns `503` so a git op against an identity repo
-fails loudly rather than falling back to a PAT.
+disabled` and continues to start normally with the feature off — new agents can
+only be created without an identity repo, agents that don't use one are
+unaffected, and for an existing agent linked to a repo the internal
+`identity-repo-token` endpoint returns `503`, so its identity-repo git fails
+loudly rather than falling back to a PAT.
 
 **5. Set `identityRepo.defaultOwner`** in `~/.config/kyber/values-gcp.yaml` to
 the GitHub account/org the App is installed on:
@@ -981,7 +985,8 @@ terraform destroy -var="project_id=your-gcp-project" -var="profile=small"
 Terraform destroys the VM, network, firewall rules, and static IP. Helm
 uninstalls the control plane and first-party StatefulSets. The Postgres and Redis
 PVCs are deleted with the namespace — **this wipes all agent session state**.
-Agent identity repos live on GitHub and survive.
+Agent identity repos live on GitHub and survive; agents without one lose
+everything they kept.
 
 Helm does not delete CRDs. If you are rebuilding from scratch rather than walking
 away, remove them too, or the next install inherits this install's schema:

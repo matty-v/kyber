@@ -460,6 +460,17 @@ func TestScan_NoRepoDirStillReportsPlatformAndUnmanagedSkills(t *testing.T) {
 	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
 		t.Errorf("expected %s for the hand-written directory; got %v", skillscan.IssueUnmanaged, codes(rep.Issues))
 	}
+	// With no repo there is no identity repo to link into, so the detail must
+	// describe where the skill actually lives rather than blame a missing link.
+	for _, iss := range rep.Issues {
+		if iss.Code != skillscan.IssueUnmanaged {
+			continue
+		}
+		if strings.Contains(iss.Detail, "not a link into the identity repo") ||
+			!strings.Contains(iss.Detail, "no identity repository") {
+			t.Errorf("repo-less unmanaged detail = %q", iss.Detail)
+		}
+	}
 }
 
 func TestScan_RequiresHomeDir(t *testing.T) {

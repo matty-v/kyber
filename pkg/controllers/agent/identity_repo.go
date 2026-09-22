@@ -27,10 +27,11 @@ var identityRepoSlugRegex = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*/[A-Z
 
 const (
 	// IdentityRepoEnvVar names the env var set on the agent container when
-	// spec.identityRepo.repo is configured. start-claude.sh branches on this
-	// to clone the repo; git auth itself rides the generic PAT user-secret
-	// ($GH_TOKEN / $USER_GITHUB_TOKEN), not an in-platform-delivered token
-	// (kyber#509 — the per-agent <name>-github Secret delivery loop was removed).
+	// spec.identityRepo.repo is configured. images/shared/kyber-identity-repo.sh
+	// branches on it: set, it clones the repo and installs a git credential
+	// helper that fetches an App-minted, repo-scoped token from the control
+	// plane's identity-repo-token endpoint (kyber#508, no PAT fallback); unset,
+	// it does nothing and the agent runs without an identity repo.
 	IdentityRepoEnvVar = "KYBER_IDENTITY_REPO"
 
 	// githubTokenErrorRetry is how long to wait before retrying after a
@@ -173,13 +174,10 @@ type RepoScaffolder interface {
 // the duration after which the reconciler should re-run (0 means "nothing to
 // reschedule on this account").
 //
-// Git authentication for the identity repo is NOT handled here. As of kyber#509
-// (Stage 2 of the decouple-#508 cutover) the in-platform per-agent git-token
-// mint + <name>-github Secret delivery loop was removed: the agent pod
-// authenticates git with the generic PAT user-secret ($GH_TOKEN /
-// $USER_GITHUB_TOKEN), which start-claude.sh installs as the git credential
-// helper. The GitHub App client is retained only for scaffolding (and the
-// GitHub API routes), retired later in #508 Stage 3/4.
+// Git authentication for the identity repo is NOT handled here: the agent's
+// credential helper fetches an App-minted, repo-scoped token on demand from
+// GET /internal/agents/{name}/identity-repo-token (kyber#508). This controller
+// only scaffolds from a template and records status.
 //
 // Errors are wrapped and returned — the caller should log but not fail the
 // whole reconcile over them, since identity-repo failures shouldn't block the
@@ -230,9 +228,9 @@ func (r *AgentReconciler) reconcileIdentityRepo(ctx context.Context, agent *kybe
 		return 0, nil
 	}
 
-	// Configured and valid. Git auth rides the generic PAT user-secret in the
-	// pod (no in-platform token to mint, deliver, or refresh). Record Ready so
-	// the status surface stays accurate; schedule no token-refresh requeue.
+	// Configured and valid. Tokens are minted on demand by the internal API,
+	// so there is nothing to deliver or refresh here. Record Ready so the
+	// status surface stays accurate; schedule no token-refresh requeue.
 	if err := r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseReady, "", nil, nil); err != nil {
 		return 0, err
 	}

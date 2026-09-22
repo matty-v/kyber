@@ -388,6 +388,18 @@ func TestInstall_WithoutAnIdentityRepoFailsLoudly(t *testing.T) {
 	}
 }
 
+func TestRequireRepo_ExplainsWhereRepoLessSkillsLive(t *testing.T) {
+	err := (&paths{}).requireRepo()
+	if err == nil {
+		t.Fatal("requireRepo with no repo: want an error")
+	}
+	for _, want := range []string{"no identity repository", "stays on this agent's disk"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q: want it to mention %q", err, want)
+		}
+	}
+}
+
 func TestResolve_DerivesRepoDirFromTheIdentitySlug(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("KYBER_IDENTITY_REPO", "matty-v/dave-agent")

@@ -2,17 +2,19 @@
 
 You are an agent running on **Kyber**, a self-hosted agent-fleet platform. This is your operator's manual for the environment itself: what keeps you alive, what quietly deletes you, what you own, and what you have to ask for.
 
-Your identity repo says *who* you are. This says *where* you live.
+Your identity repo, if you have one, says *who* you are. This says *where* you live.
+
+> **Do you have an identity repo?** Check `echo "$KYBER_IDENTITY_REPO"`. If it prints `owner/name`, your repo is cloned at `~/dev/name` and everything below applies. If it prints nothing, your operator created you without one: you keep your state on your own disk only, and anything below about committing, pushing or syncing your identity repo does not apply to you. Kyber supports both.
 
 > Kyber wrote this file into your pod at boot, so it matches the version of the platform you are actually running on. It is read-only to you — editing it changes nothing, and your next restart overwrites it.
 
 **Five things that will bite you if you forget them**
 
-1. **Only git is durable.** Your identity repo is the one layer guaranteed to survive. Pushed, or it didn't happen.
+1. **Only git is durable.** Your identity repo is the one layer guaranteed to survive. Pushed, or it didn't happen. With no identity repo, your disk is all you have, and it is not backed up.
 2. **You will be restarted without warning.** Everything in your session context is gone. What you wake up with is `.runtime/session-recall.md`.
 3. **You can't fix your own pod.** Memory limits, phases, images, secrets are the operator's. Your job is to name the exact fix.
 4. **Long sessions are the expensive thing** — not long prompts. Restart on purpose.
-5. **A failed push to your own identity repo is the App-token path**, not your PAT. Don't debug the wrong credential.
+5. **A failed push to your own identity repo is the App-token path**, not your PAT. Don't debug the wrong credential. (No identity repo? There is nothing of yours to push.)
 
 ---
 
@@ -26,11 +28,11 @@ You are not a request handler that gets torn down between messages. You are a pr
 
 | Tier | Holds | Survives |
 |---|---|---|
-| **Identity repo** (GitHub, cloned to `~/dev/<name>-agent`) | identity, memory, state, skills, config | everything — pod loss, machine loss, being rebuilt on new hardware |
+| **Identity repo** (GitHub, cloned to `~/dev/<name>-agent`) — *only if you have one* | identity, memory, state, skills, config | everything — pod loss, machine loss, being rebuilt on new hardware |
 | **`/persist` durable root** | your whole root filesystem — HOME, installed packages, `/etc` edits, `/persist/session-state.json` | pod recreation and restart — **not** a PV wipe, a re-created agent, or (on node-local volumes) losing the machine |
 | **Everything else** | your in-context memory of this session | nothing |
 
-If it matters past this session, it goes in the identity repo. Also note the flip side of tier 2: your root filesystem is genuinely yours, which means it **accumulates**. When a config change or an upgrade mysteriously "won't take", something you persisted earlier is the first suspect — a Kyber base-image upgrade deliberately will not overwrite a file you have touched, and it lists what it kept in `/persist/kyber/rootfs-upgrade-conflicts.log`.
+If it matters past this session, it goes in the identity repo. **Without an identity repo**, tier 2 is your ceiling: memory, notes and skills live in your home directory on the durable root, survive restarts and pod recreation, and are gone if the volume is lost or you are re-created. Don't tell anyone something is saved to GitHub when it isn't — and if losing it would hurt, tell the operator, who can recreate you with a repo. Also note the flip side of tier 2: your root filesystem is genuinely yours, which means it **accumulates**. When a config change or an upgrade mysteriously "won't take", something you persisted earlier is the first suspect — a Kyber base-image upgrade deliberately will not overwrite a file you have touched, and it lists what it kept in `/persist/kyber/rootfs-upgrade-conflicts.log`.
 
 ## 3. How you stop and start
 
@@ -68,7 +70,7 @@ That file is platform-owned and read-only to you. Because the sidecar writes it 
   phase, requested CPU/memory/disk, installed runtime version, and reported
   skills. It does not grant Kubernetes API access or expose placement, network,
   credentials, channels, bindings, or raw Agent CR fields.
-- **Your identity repo** — git goes through the `git-credential-kyber-github` helper, which mints a short-lived, repo-scoped token from the platform GitHub App on every call. There is **no PAT fallback**, on purpose: if the App path is broken the git op fails loudly. It also needs the pod environment, so it won't work from a bare `nsenter`/`su` shell.
+- **Your identity repo** (if you have one) — git goes through the `git-credential-kyber-github` helper, which mints a short-lived, repo-scoped token from the platform GitHub App on every call. There is **no PAT fallback**, on purpose: if the App path is broken the git op fails loudly. It also needs the pod environment, so it won't work from a bare `nsenter`/`su` shell.
 - **Other repos** — `$GH_TOKEN` / `$USER_GITHUB_TOKEN`, only for repos that aren't yours.
 - **Operator-delivered secrets** arrive as `USER_*` environment variables. If one isn't in your environment, it usually needs a pod roll to land — ask for it, don't go hunting for it on disk.
 
@@ -78,11 +80,13 @@ Never echo, log, paste, or commit any of these. A token in a transcript is a lea
 
 A **skill** is a reusable workflow you can invoke — `/name` in Claude Code, `$name` in Codex — and that either runtime can also trigger on its own when your description matches what is being asked.
 
-Every Kyber agent keeps skills in the same place, whatever runtime it runs:
+An agent with an identity repo keeps skills in the same place, whatever runtime it runs:
 
 ```
 ~/dev/<your-repo>/skills/<name>/SKILL.md
 ```
+
+With no identity repo, put a skill directory straight into `~/.claude/skills/<name>/` (Claude Code) or `~/.codex/skills/<name>/` (Codex). It loads and it survives restarts, because your home is on the durable root; it is never backed up, and `kyber-skills list` flags it as kept on this disk only.
 
 `SKILL.md` needs YAML frontmatter with a `name` and a `description`. The **directory name is what gets invoked** — if the frontmatter disagrees with it, the directory wins. Bundle whatever else the skill needs (a `references/` folder, scripts, assets) inside the same directory.
 
@@ -96,11 +100,11 @@ After you write (or download) a skill, run:
 kyber-skills install
 ```
 
-That one command does the whole job: it links the skill into both runtimes so it works **immediately**, commits it, and pushes it to your identity repo. It is idempotent, so running it again is always safe. To pull in something you downloaded elsewhere, point it at the source: `kyber-skills install --from /tmp/some-skill`.
+That one command does the whole job: it links the skill into both runtimes so it works **immediately**, commits it, and pushes it to your identity repo. Without an identity repo it refuses and says so — there is nowhere to push to — so use the runtime skill directories above instead. It is idempotent, so running it again is always safe. To pull in something you downloaded elsewhere, point it at the source: `kyber-skills install --from /tmp/some-skill`.
 
 If you forget, the platform catches up on its own within a couple of minutes — it relinks and re-reports on a loop. `install` just makes it instant, and makes sure the skill is actually pushed. Until it is pushed it shows as `not_pushed`, because a skill that lives only in this pod dies with it.
 
-Writing a skill straight into `~/.claude/skills/` or `~/.codex/skills/` looks like it works and is the one way to lose it — nothing there is committed, so it is gone the moment you are reprovisioned.
+If you have an identity repo, writing a skill straight into `~/.claude/skills/` or `~/.codex/skills/` looks like it works and is the one way to lose it — nothing there is committed, so it is gone the moment you are reprovisioned.
 
 Run `kyber-skills list` any time to see what you actually have, including anything broken.
 
@@ -152,7 +156,7 @@ Two things that surface has a blind spot for: the activity view reads the archiv
 
 ## 10. Yours vs. the operator's
 
-**You can:** edit and push your identity repo, save memory, install tools in your home, restart your own session, use your credentials within their scope.
+**You can:** edit and push your identity repo (if you have one), save memory, install tools in your home, restart your own session, use your credentials within their scope.
 
 **You cannot:** change your own memory/CPU limits, phase, model, image, or secrets; recover yourself from `MemoryExhausted`, `Failed`, or `NeedsAuth`; touch another agent's anything.
 
@@ -162,7 +166,7 @@ When you're blocked on the platform, say exactly what needs to change and where.
 
 | Symptom | Look here first |
 |---|---|
-| Push to your identity repo fails | The App-token path (pod token readable? control plane reachable?) — **not** your PAT. It's designed to fail loudly |
+| Push to your identity repo fails | First, `echo "$KYBER_IDENTITY_REPO"` — empty means you have no identity repo, so there is nothing to push. Otherwise the App-token path (pod token readable? control plane reachable?) — **not** your PAT. It's designed to fail loudly |
 | Push rejected as diverged | Someone/something wrote to the repo out of band. Pull first, then push — never force |
 | You woke up with no idea what you were doing | `.runtime/session-recall.md` missing or stale → tell the operator; that's a continuity bug, not something to paper over |
 | Channel went silent after a restart | The channel plugin didn't reclaim its connection. Report it — a restart usually clears it |
