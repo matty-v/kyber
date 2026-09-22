@@ -65,17 +65,16 @@ A `pre_llm_call` hook opens a goal revision at the start of each user turn, so
 the agents list shows `Working on a new request` rather than nothing, and the
 agent refines it by calling `get_goal` then `set_goal`.
 
-Two things differ from Claude Code and are worth knowing before changing it:
+The nudge works the same way it does on Claude Code: a `pre_llm_call` hook that
+prints `{"context": "..."}` has that string injected into the model's context,
+so the agent is told the revision rather than having to discover it.
 
-- **Hermes hooks cannot inject prompt context.** Only `pre_tool_call` is
-  blocking, and nothing reads a hook's stdout back into the model's context.
-  Claude Code's `UserPromptSubmit` hook *tells* the agent to call `set_goal`;
-  Hermes cannot, so the agent has to ask via `get_goal` — a path `set_goal`'s
-  own description names.
-- **`pre_llm_call` fires on every model call, not once per user turn.** The
-  hook deduplicates on `turn_id` (keyed with `session_id`, since a restarted
-  session reuses turn ids). Without that it would re-open the revision
-  mid-turn and repeatedly wipe the summary the agent had just set.
+The one real difference: **`pre_llm_call` fires on every model call, not once
+per user turn.** The hook deduplicates on `turn_id` (keyed with `session_id`,
+since a restarted session reuses turn ids) under a lock. Without that it would
+re-open the revision mid-turn — resetting the goal to the placeholder and
+invalidating the agent's revision, so its next `set_goal` gets a 409 — and
+re-inject the nudge on every call.
 
 Refinement is best-effort, exactly as on Claude Code: an agent that ignores the
 instruction leaves the platform placeholder in place.

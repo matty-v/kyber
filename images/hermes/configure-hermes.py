@@ -29,7 +29,11 @@ MANAGED_PROVIDER = "kyber-endpoint"
 # UserPromptSubmit, which fires once per user prompt AND can inject context;
 # Hermes offers neither, so the hook script deduplicates on turn_id itself.
 GOAL_HOOK_EVENT = "pre_llm_call"
-GOAL_HOOK_COMMAND = "/usr/local/bin/kyber-hermes-goal-start"
+# Overridable so the presence path is exercisable in a test; the default is
+# the installed path and nothing sets this in production.
+GOAL_HOOK_COMMAND = os.environ.get(
+    "KYBER_HERMES_GOAL_HOOK_COMMAND", "/usr/local/bin/kyber-hermes-goal-start"
+)
 
 # The env var the adapter injects the endpoint credential into, and which
 # upstream Hermes reads for a provider configured with an explicit base_url.
@@ -37,6 +41,21 @@ GOAL_HOOK_COMMAND = "/usr/local/bin/kyber-hermes-goal-start"
 # credential-shaped key with a quoted literal — secret scanners flag that
 # shape on sight, however inert the value.
 INFERENCE_CREDENTIAL_ENV = "OPENAI_API_KEY"
+
+
+def sequence(value: object) -> list:
+    """Coerce a hooks entry to a list without losing an operator's config.
+
+    YAML gives None for an empty key and a dict for a single un-listed entry;
+    both must survive rather than crash or be discarded.
+    """
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, dict):
+        return [value]
+    return []
 
 
 def mapping(value: object) -> dict:
@@ -110,7 +129,12 @@ def main() -> None:
     # REMOVED when it is not, so an image without the script does not leave a
     # dangling hook Hermes would try to run every call.
     hooks = mapping(config.get("hooks"))
-    managed_hooks = [h for h in hooks.get(GOAL_HOOK_EVENT, [])
+    # sequence(), not a bare .get: `pre_llm_call:` with nothing under it is
+    # ordinary YAML and parses to None, which would raise TypeError here — and
+    # start-hermes.sh treats a non-zero configurator exit as FATAL, so a
+    # config-shaped input would stop the agent booting at all. A single mapping
+    # instead of a list is likewise preserved rather than silently dropped.
+    managed_hooks = [h for h in sequence(hooks.get(GOAL_HOOK_EVENT))
                      if isinstance(h, dict) and h.get("command") != GOAL_HOOK_COMMAND]
     if os.access(GOAL_HOOK_COMMAND, os.X_OK):
         managed_hooks.append({"command": GOAL_HOOK_COMMAND, "timeout": 5})

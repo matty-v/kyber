@@ -1,8 +1,10 @@
 //go:build integration
 
-package agent_base_test
+package hermes_test
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -14,25 +16,28 @@ import (
 	"testing"
 )
 
-// runHermesGoalHook feeds a payload to the hook and returns how many
-// /goal-start calls the server saw in total.
-func runHermesGoalHook(t *testing.T, url, persistRoot, payload string) error {
+// runHermesGoalHook feeds a payload to the hook and returns its stdout, which
+// is the {"context": ...} Hermes injects into the model's context.
+func runHermesGoalHook(t *testing.T, url, persistRoot, payload string) (string, error) {
 	t.Helper()
 	wd, err := os.Getwd()
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("/bin/bash", filepath.Join(wd, "scripts", "kyber-hermes-goal-start"))
+	cmd := exec.Command("/bin/bash", filepath.Join(wd, "..", "agent-base", "scripts", "kyber-hermes-goal-start"))
 	cmd.Stdin = strings.NewReader(payload)
 	cmd.Env = append(os.Environ(),
 		"KYBER_GOAL_START_URL="+url,
 		"KYBER_PERSIST_ROOT="+persistRoot,
 	)
-	out, err := cmd.CombinedOutput()
-	if len(out) > 0 {
-		t.Logf("hook output: %s", out)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err = cmd.Run()
+	if stderr.Len() > 0 {
+		t.Logf("hook stderr: %s", stderr.String())
 	}
-	return err
+	return stdout.String(), err
 }
 
 func goalStartServer(t *testing.T, calls *int32) *httptest.Server {
@@ -58,7 +63,7 @@ func TestHermesGoalHookOpensOncePerTurn(t *testing.T) {
 	}
 
 	for i := 0; i < 3; i++ {
-		if err := runHermesGoalHook(t, srv.URL, persist, payload("turn_1")); err != nil {
+		if _, err := runHermesGoalHook(t, srv.URL, persist, payload("turn_1")); err != nil {
 			t.Fatalf("hook failed: %v", err)
 		}
 	}
@@ -66,7 +71,7 @@ func TestHermesGoalHookOpensOncePerTurn(t *testing.T) {
 		t.Fatalf("goal-start called %d times within one turn, want 1", got)
 	}
 
-	if err := runHermesGoalHook(t, srv.URL, persist, payload("turn_2")); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, payload("turn_2")); err != nil {
 		t.Fatalf("hook failed: %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -83,10 +88,10 @@ func TestHermesGoalHookTreatsANewSessionAsANewTurn(t *testing.T) {
 	defer srv.Close()
 	persist := t.TempDir()
 
-	if err := runHermesGoalHook(t, srv.URL, persist, `{"session_id":"sess_a","extra":{"turn_id":"turn_1"}}`); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, `{"session_id":"sess_a","extra":{"turn_id":"turn_1"}}`); err != nil {
 		t.Fatal(err)
 	}
-	if err := runHermesGoalHook(t, srv.URL, persist, `{"session_id":"sess_b","extra":{"turn_id":"turn_1"}}`); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, `{"session_id":"sess_b","extra":{"turn_id":"turn_1"}}`); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -101,7 +106,7 @@ func TestHermesGoalHookDoesNothingWithoutATurnID(t *testing.T) {
 	srv := goalStartServer(t, &calls)
 	defer srv.Close()
 
-	if err := runHermesGoalHook(t, srv.URL, t.TempDir(), `{"session_id":"sess_a"}`); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, t.TempDir(), `{"session_id":"sess_a"}`); err != nil {
 		t.Fatalf("hook must not fail: %v", err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 0 {
@@ -127,18 +132,18 @@ func TestHermesGoalHookRetriesAfterAFailedOpen(t *testing.T) {
 	persist := t.TempDir()
 	payload := `{"session_id":"sess_a","extra":{"turn_id":"turn_1"}}`
 
-	if err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
 		t.Fatalf("a failed open must not fail the hook: %v", err)
 	}
 	fail.Store(false)
-	if err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Fatalf("goal-start called %d times, want 2 — a failed open must be retried", got)
 	}
 	// And now that it succeeded, the turn is recorded.
-	if err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
+	if _, err := runHermesGoalHook(t, srv.URL, persist, payload); err != nil {
 		t.Fatal(err)
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
@@ -148,8 +153,64 @@ func TestHermesGoalHookRetriesAfterAFailedOpen(t *testing.T) {
 
 // The hook must never block or fail a turn, whatever the endpoint does.
 func TestHermesGoalHookNeverFailsTheTurn(t *testing.T) {
-	if err := runHermesGoalHook(t, "http://127.0.0.1:1/goal-start", t.TempDir(),
+	if _, err := runHermesGoalHook(t, "http://127.0.0.1:1/goal-start", t.TempDir(),
 		`{"session_id":"s","extra":{"turn_id":"t"}}`); err != nil {
 		t.Fatalf("unreachable endpoint failed the hook: %v", err)
+	}
+}
+
+// Hermes passes a pre_llm_call hook's {"context": "..."} stdout into the
+// model's context, so the agent is TOLD the revision — the same nudge the
+// Claude Code hook delivers through additionalContext. Without this the agent
+// would have to discover the revision on its own and the placeholder would
+// usually stand.
+func TestHermesGoalHookInjectsTheRevisionAsContext(t *testing.T) {
+	var calls int32
+	srv := goalStartServer(t, &calls)
+	defer srv.Close()
+	persist := t.TempDir()
+	payload := `{"session_id":"sess_a","extra":{"turn_id":"turn_1"}}`
+
+	out, err := runHermesGoalHook(t, srv.URL, persist, payload)
+	if err != nil {
+		t.Fatalf("hook failed: %v", err)
+	}
+	var got struct {
+		Context string `json:"context"`
+	}
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("stdout is not the {\"context\": ...} Hermes injects: %q", out)
+	}
+	if !strings.Contains(got.Context, "2026-09-22T05:00:00Z") {
+		t.Errorf("context does not carry the revision: %q", got.Context)
+	}
+	if !strings.Contains(got.Context, "set_goal") {
+		t.Errorf("context does not name the tool to call: %q", got.Context)
+	}
+
+	// Later calls in the same turn must inject nothing, or the nudge is
+	// repeated on every model call of the turn.
+	out, err = runHermesGoalHook(t, srv.URL, persist, payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("nudge re-injected within the same turn: %q", out)
+	}
+}
+
+// The hook must never copy the user's prompt into the goal surface.
+func TestHermesGoalHookNeverEchoesThePrompt(t *testing.T) {
+	var calls int32
+	srv := goalStartServer(t, &calls)
+	defer srv.Close()
+
+	out, err := runHermesGoalHook(t, srv.URL, t.TempDir(),
+		`{"session_id":"s","extra":{"turn_id":"t"},"messages":[{"role":"user","content":"my secret deploy token is hunter2"}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out, "hunter2") || strings.Contains(out, "secret deploy") {
+		t.Fatalf("prompt body leaked into the injected context: %q", out)
 	}
 }
