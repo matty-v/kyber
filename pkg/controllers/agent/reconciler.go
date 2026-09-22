@@ -878,7 +878,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 // spec.runtime changes. The old pod can still exist during the NeedsAuth
 // transition, so the internal reporter separately rejects its reports.
 func clearStaleRuntimeStatus(agent *kyberv1.Agent) bool {
-	if agent.Status.Runtime.Runtime == "" || agent.Status.Runtime.Runtime == agent.Spec.Runtime {
+	staleRuntime := agent.Status.Runtime.Runtime != "" && agent.Status.Runtime.Runtime != agent.Spec.Runtime
+	// Older start scripts left status.runtime.runtime empty. When an explicit
+	// NeedsAuth intent has not yet been observed, no target pod exists, so its
+	// installed version and current model cannot describe the new harness.
+	untaggedHandoff := agent.Status.Runtime.Runtime == "" &&
+		agent.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth &&
+		agent.Status.ObservedGeneration < agent.Generation
+	if !staleRuntime && !untaggedHandoff {
 		return false
 	}
 	agent.Status.Runtime = kyberv1.AgentRuntimeStatus{}

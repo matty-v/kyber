@@ -8,7 +8,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -94,7 +93,7 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 	sec := &corev1.Secret{}
 	secKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), secKey, sec); k8serrors.IsNotFound(err) {
-		sec = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secKey.Name, Namespace: secKey.Namespace}, Data: credentials[0].Data}
+		sec = newAgentCredentialSecret(secKey, agent, credentials[0].Data)
 		if err := s.K8sClient.Create(r.Context(), sec); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to create oauth secret")
 			return

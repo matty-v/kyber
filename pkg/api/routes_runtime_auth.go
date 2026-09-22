@@ -47,6 +47,10 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 		writeJSONError(w, http.StatusConflict, "invalid_phase", "API-key authorization requires NeedsAuth")
 		return
 	}
+	if agent.Spec.Inference != nil {
+		writeJSONError(w, http.StatusConflict, "custom_inference", "agent uses a custom inference credential; update that Secret and retry startup")
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -70,7 +74,7 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 	secretKey := types.NamespacedName{Name: runtimes.CredentialName(agent.Spec.Runtime, name, agent.Spec.Secrets.AuthType), Namespace: s.Namespace}
 	secret := &corev1.Secret{}
 	if err := s.K8sClient.Get(r.Context(), secretKey, secret); k8serrors.IsNotFound(err) {
-		secret = &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: secretKey.Name, Namespace: secretKey.Namespace}, Data: credentials[0].Data}
+		secret = newAgentCredentialSecret(secretKey, agent, credentials[0].Data)
 		if err := s.K8sClient.Create(r.Context(), secret); err != nil {
 			slog.Error("failed to create runtime credential", "agent", name, "runtime", agent.Spec.Runtime, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store runtime credential")
@@ -105,4 +109,25 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// The agent deletion finalizer finds credentials by this label. First-time
+// authorization after a harness switch must use the same metadata as agent
+// creation, or the new runtime's Secret survives agent deletion.
+func newAgentCredentialSecret(key types.NamespacedName, agent *kyberv1.Agent, data map[string][]byte) *corev1.Secret {
+	secret := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: key.Name, Namespace: key.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kyber-api",
+				"kyber.io/agent":               agent.Name,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: data,
+	}
+	if agent.UID != "" {
+		secret.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(agent, kyberv1.GroupVersion.WithKind("Agent"))}
+	}
+	return secret
 }

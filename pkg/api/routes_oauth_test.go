@@ -106,6 +106,9 @@ func testReauthorizeExchange(t *testing.T, route string, missing bool) {
 	if len(updatedSecret.Data["access_token"]) == 0 {
 		t.Error("access_token is empty after reauthorize")
 	}
+	if missing && updatedSecret.Labels["kyber.io/agent"] != agent.Name {
+		t.Errorf("first-switch credential lacks cleanup label: %v", updatedSecret.Labels)
+	}
 
 	// Verify the agent's desiredPhase was set to Running.
 	updatedAgent := &kyberv1.Agent{}

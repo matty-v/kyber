@@ -6,7 +6,6 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -45,6 +44,10 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 	if !s.authorizePhase(w, r, name, kyberv1.AgentPhaseRunning) {
 		return
 	}
+	if agent.Spec.Inference != nil {
+		writeJSONError(w, http.StatusConflict, "custom_inference", "agent uses a custom inference credential; update that Secret and retry startup")
+		return
+	}
 
 	strategy, ok := runtimes.AuthenticationFor(agent.Spec.Runtime)
 	if !ok {
@@ -61,10 +64,7 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 	err := s.K8sClient.Get(r.Context(), secretKey, secret)
 	switch {
 	case k8serrors.IsNotFound(err):
-		secret = &corev1.Secret{
-			ObjectMeta: metav1.ObjectMeta{Name: secretKey.Name, Namespace: secretKey.Namespace},
-			Data:       credentials[0].Data,
-		}
+		secret = newAgentCredentialSecret(secretKey, agent, credentials[0].Data)
 		if err := s.K8sClient.Create(r.Context(), secret); err != nil {
 			slog.Error("failed to create codex auth secret", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start Codex device auth")
@@ -94,10 +94,17 @@ func (s *Server) handleCodexDeviceAuth(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	patch := client.MergeFrom(agent.DeepCopy())
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to restart agent")
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(r.Context(), key, current); err != nil ||
+		current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType ||
+		current.Spec.DesiredPhase == kyberv1.AgentPhaseStopped || current.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
+		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
+		return
+	}
+	patch := client.MergeFromWithOptions(current.DeepCopy(), client.MergeFromWithOptimisticLock{})
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {
+		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

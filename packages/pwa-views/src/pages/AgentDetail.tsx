@@ -755,11 +755,11 @@ export function AgentDetail() {
         {activeSection === 'overview' && (
           <div className="space-y-4">
           <SchedulingFailureBanner agent={agent} />
-          {agentAuth(agent)?.flow === 'device-code' &&
+          {!agent.inference && agentAuth(agent)?.flow === 'device-code' &&
             (agent.phase === 'Starting' || agent.phase === 'NeedsAuth') && (
             <CodexDeviceAuthPanel name={name} phase={agent.phase} runtimeName={agentContract(agent)?.name} useContract={Boolean(agent.runtimeContract)} />
           )}
-          {agent.phase === 'NeedsAuth' && agentAuth(agent)?.flow === 'authorization-code' && (
+          {agent.phase === 'NeedsAuth' && !agent.inference && agentAuth(agent)?.flow === 'authorization-code' && (
             <Card className="border-warn/40 bg-warn-muted">
               <h2 className="text-sm font-semibold text-warn mb-1">Re-authorization required</h2>
               <p className="text-xs text-warn/80 mb-3">
@@ -855,7 +855,7 @@ export function AgentDetail() {
               )}
             </Card>
           )}
-          {agent.phase === 'NeedsAuth' && agentAuth(agent)?.flow === 'api-key' && (
+          {agent.phase === 'NeedsAuth' && !agent.inference && agentAuth(agent)?.flow === 'api-key' && (
             <Card className="border-warn/40 bg-warn-muted">
               <h2 className="text-sm font-semibold text-warn mb-1">{agentAuth(agent)?.name ?? 'API key'} required</h2>
               <p className="text-xs text-warn/80 mb-3">Enter a credential for this harness to start the agent. Its previous harness credential remains saved separately.</p>
@@ -881,6 +881,18 @@ export function AgentDetail() {
                 }}
               >Save key and start</Button>
               {runtimeAPIKeyError && <p className="mt-2 text-xs text-danger">{runtimeAPIKeyError}</p>}
+            </Card>
+          )}
+          {agent.phase === 'NeedsAuth' && agent.inference && (
+            <Card className="border-warn/40 bg-warn-muted">
+              <h2 className="text-sm font-semibold text-warn mb-1">Custom inference credential</h2>
+              <p className="text-xs text-warn/80 mb-3">
+                This harness uses the existing custom inference Secret. If its key needs changing,
+                update that Secret first, then retry startup.
+              </p>
+              <Button type="button" variant="primary" size="sm" loading={startAgent.isPending} onClick={() => startAgent.mutate(name)}>
+                Retry with existing credential
+              </Button>
             </Card>
           )}
           <MismatchBadges agent={agent} />
@@ -1112,7 +1124,8 @@ export function AgentDetail() {
             <p className="mt-2 text-sm text-text-muted">
               The agent keeps its disk, identity checkout, skills, local files, jobs, and old transcripts.
               Its model and harness version overrides will clear. The current session stops and the
-              target harness will ask for its own authorization.
+              target harness will ask for its own authorization, or reuse the custom inference
+              credential if this agent has one.
             </p>
             <label className="mt-4 block text-xs font-medium text-text-muted" htmlFor="target-runtime">Target harness</label>
             <select

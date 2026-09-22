@@ -25,6 +25,14 @@ func TestClearStaleRuntimeStatusAfterSwitch(t *testing.T) {
 	if !clearStaleRuntimeStatus(stale) || stale.Status.Runtime.Runtime != "" || stale.Status.Runtime.Capabilities != nil || stale.Status.CurrentModel != "" || len(stale.Status.Conditions) != 0 {
 		t.Fatalf("stale runtime observation retained: %+v", stale.Status)
 	}
+	legacy := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Generation: 3},
+		Spec:       kyberv1.AgentSpec{Runtime: "claude-code", DesiredPhase: kyberv1.AgentPhaseNeedsAuth},
+		Status:     kyberv1.AgentStatus{ObservedGeneration: 2, CurrentModel: "gpt-old", Runtime: kyberv1.AgentRuntimeStatus{InstalledVersion: "old"}},
+	}
+	if !clearStaleRuntimeStatus(legacy) || legacy.Status.Runtime.InstalledVersion != "" || legacy.Status.CurrentModel != "" {
+		t.Fatalf("untagged source observation retained: %+v", legacy.Status)
+	}
 }
 
 func TestRuntimeSwitchNeedsAuthKeepsPVCAndSourceCredential(t *testing.T) {

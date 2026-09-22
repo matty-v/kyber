@@ -97,3 +97,14 @@ ready, but main then advanced with the repo-less agent documentation update.
 The branch has been rebased; its overlapping PWA changelog entry is resolved,
 and this feature now takes the next package version, 0.53.0. Re-run both
 workflows on the rebased head before canary handoff.
+
+## Review checkpoint: 2026-09-22 23:17 UTC
+
+Review found three follow-up cases: first-switch credentials need the agent
+cleanup label so deletion reaps them; older source harness reports without a
+runtime identifier must not restore source version or model during NeedsAuth;
+and custom inference agents should retry with their existing inference Secret
+instead of being asked for an unused provider key. First-switch Secrets now
+carry the cleanup label and an owner reference. Full API tests, targeted
+controller envtests, Agent Detail tests, and PWA type-check pass locally.
+The review commit needs PR-head CI before the authorized merge.

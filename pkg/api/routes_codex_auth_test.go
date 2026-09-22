@@ -95,6 +95,51 @@ func TestCodexDeviceAuthResetsCredentialAndStartsAgent(t *testing.T) {
 	}
 }
 
+func TestCodexDeviceAuthCreatesLabeledCredentialAfterSwitch(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("new-codex")
+	agent.Spec.Runtime = "codex"
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	s.K8sClient = fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithStatusSubresource(agent).WithObjects(agent).Build()
+
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/new-codex/auth", nil)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	secret := &corev1.Secret{}
+	if err := s.K8sClient.Get(t.Context(), types.NamespacedName{Name: "new-codex-codex-auth", Namespace: s.Namespace}, secret); err != nil {
+		t.Fatal(err)
+	}
+	if secret.Labels["kyber.io/agent"] != agent.Name {
+		t.Fatalf("first-switch credential lacks cleanup label: %v", secret.Labels)
+	}
+}
+
+func TestCodexDeviceAuthRejectsUnusedProviderCredentialForCustomInference(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("endpoint-codex")
+	agent.Spec.Runtime = "codex"
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
+	agent.Spec.Inference = &kyberv1.AgentInference{Credential: kyberv1.AgentInferenceCredentialRef{ExistingSecret: "endpoint-key", Key: "token"}}
+	agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	if err := s.K8sClient.Create(t.Context(), agent); err != nil {
+		t.Fatal(err)
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/endpoint-codex/auth", nil)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := s.K8sClient.Get(t.Context(), types.NamespacedName{Name: "endpoint-codex-codex-auth", Namespace: s.Namespace}, &corev1.Secret{}); err == nil {
+		t.Fatal("unused device credential was created")
+	}
+}
+
 // MAT-8: the second and every later click of "Start device login".
 //
 // The endpoint signals "re-authorize me" by writing {} into <name>-codex-auth,

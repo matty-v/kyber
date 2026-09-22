@@ -34,7 +34,9 @@ scheduled jobs, previous credential Secret, and old transcript trees remain.
 The switch clears the old harness's model and version overrides, stops its
 current pod, and enters NeedsAuth. Complete the target runtime's OAuth,
 device-login, or API-key authorization flow, or use **Retry startup** if that runtime already has a valid credential
-Secret from an earlier switch. The target starts a fresh session unless it
+Secret from an earlier switch. Agents using a custom inference endpoint keep
+its existing Secret and can retry startup directly; they do not need a provider
+key for the new harness. The target starts a fresh session unless it
 already has its own resumable transcript on disk. If scheduled jobs use
 `exclusive` or `clearContextAfter` and the target lacks job turn hooks, those
 flags are inert; the switch response and console call this out.

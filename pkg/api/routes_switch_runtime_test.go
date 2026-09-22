@@ -117,6 +117,31 @@ func TestSwitchRuntimeRejectsUnconfiguredImageBeforePreparation(t *testing.T) {
 	}
 }
 
+func TestSwitchRuntimeLegacyObservationLooksTransient(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("legacy-handoff")
+	agent.Generation = 3
+	agent.Spec.Runtime = "claude-code"
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	agent.Status.ObservedGeneration = 2
+	agent.Status.Runtime.InstalledVersion = "source-version"
+	agent.Status.CurrentModel = "source-model"
+	if err := s.K8sClient.Create(t.Context(), agent); err != nil {
+		t.Fatal(err)
+	}
+	req := scopedRequest(http.MethodGet, "/api/v1/agents/"+agent.Name, testAPIKey)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	var view api.AgentResponse
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &view) != nil {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if view.Phase != kyberv1.AgentPhaseRestarting || view.CurrentModel != "" || view.RuntimeVersion != nil {
+		t.Fatalf("legacy source observation appeared healthy: %+v", view)
+	}
+}
+
 func TestSwitchRuntimeRejectsQueuedStop(t *testing.T) {
 	runner := &fakeRuntimeRepairRunner{}
 	s, original := switchTestServer(t, "codex", runner)

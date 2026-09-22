@@ -529,7 +529,8 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	// The spec switch is one write; the controller clears old observations on
 	// its next reconcile. Never present source-harness facts as target facts in
 	// the interim.
-	staleRuntime := a.Status.Runtime.Runtime != "" && a.Status.Runtime.Runtime != a.Spec.Runtime
+	staleRuntime := a.Status.Runtime.Runtime != "" && a.Status.Runtime.Runtime != a.Spec.Runtime ||
+		a.Status.Runtime.Runtime == "" && a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && a.Status.ObservedGeneration < a.Generation
 	if staleRuntime {
 		resp.CurrentModel = ""
 		if a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth {

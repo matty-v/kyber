@@ -178,6 +178,27 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     expect(reauthorizeAPIKey.mutateAsync).toHaveBeenCalledWith({ name: 'lando', apiKey: 'new-key' })
   })
 
+  it('retries with the existing custom inference credential after a switch', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, runtime: 'hermes', authType: 'api-key',
+        inference: { baseURL: 'https://llm.example.test/v1', api: 'openai', credentialSecret: 'endpoint-key', credentialKey: 'token' },
+        runtimeContract: {
+          id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+          cancellation: 'notify_only', features: [], authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key' }],
+        },
+      }, isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    render(
+      <MemoryRouter initialEntries={['/agents/lando/overview']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.queryByLabelText('API key')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Retry with existing credential' }))
+    expect(startAgent.mutate).toHaveBeenCalledWith('lando')
+  })
+
   it('browses Hermes releases without offering an unsafe source install', async () => {
     const user = userEvent.setup()
     effectiveModelList.hermesVersions = ['0.21.1', '0.21.0']
