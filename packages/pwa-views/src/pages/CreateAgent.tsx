@@ -1,5 +1,5 @@
 import { legacyRuntimeContracts, wizardAuth, wizardApiKey } from '../lib/runtime-contract'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { ArrowLeft } from 'lucide-react'
@@ -29,6 +29,8 @@ import { WIZARD_STEPS, earliestInvalidStep } from '../components/wizard/validati
 import {
   DEFAULT_IDENTITY_TEMPLATE,
   IDENTITY_REPO_SLUG_RE,
+  defaultIdentityRepoMode,
+  identityRepoCapability,
 } from '../components/wizard/identity-utils'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { useWizardKeyboardShortcuts } from '../components/wizard/keyboardShortcuts'
@@ -58,7 +60,13 @@ export function CreateAgent() {
   const { data: config } = useComputeConfig()
   const [form, setState] = useState<WizardState>(() => initialWizardState([]))
   const runtimeOptions = config?.runtimes ?? legacyRuntimeContracts
-  const state: WizardState = { ...form, runtimes: runtimeOptions, runtimeContract: runtimeOptions.find(d => d.id === form.runtime) }
+  const identityCapability = identityRepoCapability(config)
+  const state: WizardState = {
+    ...form,
+    runtimes: runtimeOptions,
+    runtimeContract: runtimeOptions.find(d => d.id === form.runtime),
+    identityRepoModes: identityCapability.supportedModes,
+  }
   const selectedAuth = wizardAuth(state)
   useEffect(() => {
     if (!config?.runtimes?.length) return
@@ -67,6 +75,28 @@ export function CreateAgent() {
       setState(prev => ({ ...prev, runtime: next.id, authType: next.authModes[0]?.id ?? 'oauth', oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '' }))
     }
   }, [config?.runtimes, form.runtime, form.authType])
+  // Until the operator picks an identity mode, follow the installation's
+  // default. Once config says a mode is unsupported, drop it — including one
+  // the operator picked — so it can never be submitted.
+  const identityModeChosen = useRef(false)
+  const identityModesKey = identityCapability.loaded ? identityCapability.supportedModes.join(',') : ''
+  useEffect(() => {
+    if (!identityCapability.loaded) return
+    setState(prev => {
+      const supported = identityCapability.supportedModes
+      let mode = identityModeChosen.current ? prev.identityRepoMode : defaultIdentityRepoMode(identityCapability)
+      if (!supported.includes(mode)) mode = 'none'
+      if (mode === prev.identityRepoMode) return prev
+      return {
+        ...prev,
+        identityRepoMode: mode,
+        identityRepoExisting: mode === 'existing' ? prev.identityRepoExisting : '',
+        identityRepoCollision: false,
+      }
+    })
+    // identityModesKey stands in for the capability object, which is rebuilt every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [identityModesKey])
   const [fieldError, setFieldError] = useState<string | null>(null)
   const [dirty, setDirty] = useState(false)
   const [dialogOpen, setDialogOpen] = useState(false)
@@ -95,6 +125,7 @@ export function CreateAgent() {
       authType: runtimeOptions.find(d => d.id === value)?.authModes[0]?.id ?? 'oauth',
       oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '',
     } : ({ ...prev, [key]: value }))
+    if (key === 'identityRepoMode') identityModeChosen.current = true
     setFieldError(null)
     setDirty(true)
   }
@@ -189,6 +220,10 @@ export function CreateAgent() {
       }
 
       let identityRepo: { repo?: string; template?: string } | undefined
+      if (state.identityRepoMode !== 'none' && !identityCapability.supportedModes.includes(state.identityRepoMode)) {
+        setFieldError('This installation cannot use GitHub identity repositories. Choose "No identity repository".')
+        return
+      }
       if (state.identityRepoMode === 'template') {
         identityRepo = { template: DEFAULT_IDENTITY_TEMPLATE }
       } else if (state.identityRepoMode === 'existing') {

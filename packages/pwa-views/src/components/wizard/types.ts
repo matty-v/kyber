@@ -1,13 +1,14 @@
 import type { RuntimeDescriptor } from '../../lib/types'
-import type { ModelInfo } from '../../lib/types'
+import type { IdentityRepoMode, ModelInfo } from '../../lib/types'
 
 /**
  * IdentityRepoMode: which of the three identity-repo flows the operator picked.
  * 'template' = create a new repo from `matty-v/kyber-agent-template`,
  * 'existing' = link an already-created repo by `owner/repo`,
- * 'none'     = skip identity-repo provisioning entirely.
+ * 'none'     = no identity repo; the agent keeps its state on its own disk.
+ * Defined next to the config type because the server reports the same modes.
  */
-export type IdentityRepoMode = 'template' | 'existing' | 'none'
+export type { IdentityRepoMode } from '../../lib/types'
 
 /**
  * WizardState is the canonical form-state shape carried through every step of
@@ -64,6 +65,10 @@ export interface WizardState {
   discordAllowedUserIds: string
   discordMentionOnly: boolean
   identityRepoMode: IdentityRepoMode
+  // Modes the control plane accepts, from GET /api/v1/config. Derived at
+  // render time like `runtimes`, never stored; undefined means not yet known,
+  // which isIdentityValid treats as 'none' only.
+  identityRepoModes?: IdentityRepoMode[]
   identityRepoExisting: string
   // True when template-mode and the target repo already exists under
   // the configured identity owner. The IdentitySection populates this
@@ -122,7 +127,10 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     discordChannelIds: '',
     discordAllowedUserIds: '',
     discordMentionOnly: false,
-    identityRepoMode: 'template',
+    // Starts at 'none' so nothing GitHub-backed is assumed before config
+    // loads; CreateAgent moves it to the template default once the control
+    // plane says it can create one.
+    identityRepoMode: 'none',
     identityRepoExisting: '',
     identityRepoCollision: false,
   }

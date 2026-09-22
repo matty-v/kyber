@@ -17,11 +17,13 @@ export interface ReviewSectionProps {
 function fmtIdentity(state: WizardState): string {
   switch (state.identityRepoMode) {
     case 'template':
-      return state.name ? `${state.name}-agent (new from template)` : 'new from template'
+      return state.name
+        ? `${state.name}-agent (new from template) — saved to GitHub`
+        : 'new from template — saved to GitHub'
     case 'existing':
-      return state.identityRepoExisting || '(none)'
+      return `${state.identityRepoExisting || '(none)'} — saved to GitHub`
     case 'none':
-      return 'none'
+      return 'None — kept on the agent’s disk only, not saved to GitHub'
   }
 }
 

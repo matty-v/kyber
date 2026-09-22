@@ -88,7 +88,7 @@ describe('ReviewSection', () => {
         state={{ ...initialWizardState([]), identityRepoMode: 'existing' }}
       />,
     )
-    expect(screen.getByText('(none)')).toBeInTheDocument()
+    expect(screen.getByText('(none) — saved to GitHub')).toBeInTheDocument()
   })
 
   it('renders Identity as "none" when mode === "none"', () => {
@@ -97,8 +97,12 @@ describe('ReviewSection', () => {
         state={{ ...initialWizardState([]), identityRepoMode: 'none' }}
       />,
     )
-    // Identity, startup prompt, and Channels each show literal "none".
-    expect(screen.getAllByText('none')).toHaveLength(3)
+    // Startup prompt and Channels show literal "none"; Identity spells out
+    // that a repo-less agent's state is not saved to GitHub.
+    expect(screen.getAllByText('none')).toHaveLength(2)
+    expect(
+      screen.getByText('None — kept on the agent’s disk only, not saved to GitHub'),
+    ).toBeInTheDocument()
   })
 
   it('renders Channels as "Telegram" when telegramEnabled', () => {

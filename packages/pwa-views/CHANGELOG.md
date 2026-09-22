@@ -1,5 +1,18 @@
 # @matty-v/kyber-pwa-views
 
+## 0.50.0
+
+- Create Agent offers only the identity-repository modes the control plane
+  reports it supports. Without a Kyber GitHub App, "Create new from template"
+  and "Link existing repo" are shown disabled with the reason, and the agent
+  is created with no identity repository.
+- Nothing GitHub-backed is assumed while config loads: the choice starts at
+  "No identity repository" and moves to the template default only once the
+  control plane confirms it can create one. A GitHub mode that config later
+  reports as unsupported is dropped and cannot be submitted.
+- The Identity step and Review say plainly that a repo-less agent's state
+  lives on its own disk, survives restarts, and is not saved to GitHub.
+
 ## 0.49.0
 
 - Type the identity-repository capability that `GET /api/v1/config` now

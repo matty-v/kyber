@@ -9,9 +9,11 @@ import {
   WIZARD_STEPS,
 } from './validation'
 import { initialWizardState } from './types'
+import type { IdentityRepoMode } from './types'
 import type { WizardState } from './types'
 
-const base = initialWizardState([])
+// An installation whose control plane supports every identity mode.
+const base = { ...initialWizardState([]), identityRepoModes: ['template', 'existing', 'none'] as IdentityRepoMode[] }
 
 describe('isBasicsValid', () => {
   it('not ok with reason when name is empty', () => {
@@ -212,6 +214,7 @@ describe('isAuthValid — custom inference endpoint', () => {
   // after the rest of the form is gone.
   const base = () => ({
     ...initialWizardState([]),
+    identityRepoModes: ['template', 'existing', 'none'] as IdentityRepoMode[],
     runtime: 'hermes',
     authType: 'api-key' as const,
     runtimeApiKey: 'placeholder-runtime-key',
