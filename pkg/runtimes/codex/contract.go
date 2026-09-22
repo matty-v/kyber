@@ -19,7 +19,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			{ID: kyberv1.AgentAuthTypeOAuth, Name: "ChatGPT subscription", Flow: "device-code", InputField: "codexAuthJson", SecretSuffix: "codex-auth", ReauthorizePath: "codex-device-auth", Channels: []string{"telegram", "discord", "slack"}},
 			{ID: kyberv1.AgentAuthTypeAPIKey, Name: "OpenAI API key", Flow: "api-key", InputField: "openaiApiKey", SecretSuffix: "openai", Channels: []string{"slack"}},
 		},
-		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature},
+		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature, runtimes.CustomInferenceEndpoint},
 		TranscriptPath:     ".codex/sessions",
 		TranscriptExchange: `select(.type == "event_msg") | select(.payload.type == "user_message" or .payload.type == "agent_message") | {role: (if .payload.type == "user_message" then "user" else "assistant" end), timestamp: (.timestamp // ""), content: ((.payload.message // "") | tostring)}`,
 	}

@@ -16,17 +16,45 @@ type Adapter struct{ image string }
 func NewAdapter() *Adapter      { return &Adapter{image: os.Getenv(RuntimeImageEnv)} }
 func (a *Adapter) Type() string { return "codex" }
 
-// CredentialSecretName is keyed on by the NeedsAuth recovery gate. Subscription
-// agents use the persisted auth.json Secret; API-key agents use their OpenAI
-// key Secret and never enter the interactive login flow.
+// CustomProviderID is the provider name Kyber writes into Codex's managed
+// config when the agent carries spec.inference. Codex resolves `model_provider`
+// against the `[model_providers.<id>]` table, so this string is the join
+// between the adapter's env and start-codex.sh's rendered TOML.
+const CustomProviderID = "kyber-endpoint"
+
+// InferenceCredentialEnv is the variable Codex is told to read the endpoint's
+// bearer token from, via `env_key` in the provider table. The name is Codex's
+// convention and does NOT imply an OpenAI credential — the value is the
+// operator's endpoint key.
+const InferenceCredentialEnv = "OPENAI_API_KEY"
+
+// CredentialSecretName is keyed on by the NeedsAuth recovery gate. An agent
+// pointed at its own inference endpoint is recovered by rotating that
+// endpoint's Secret; subscription agents use the persisted auth.json Secret,
+// and API-key agents their OpenAI key Secret.
 func (a *Adapter) CredentialSecretName(agent *kyberv1.Agent) string {
 	if agent == nil {
 		return ""
+	}
+	if inf := agent.Spec.Inference; inf != nil {
+		return inf.Credential.ExistingSecret
 	}
 	if agent.Spec.Secrets.AuthType == kyberv1.AgentAuthTypeAPIKey {
 		return agent.Name + "-openai"
 	}
 	return agent.Name + "-codex-auth"
+}
+
+// inferenceModel prefers the endpoint-specific model id and falls back to
+// spec.model, so an operator who already set spec.model need not repeat it.
+func inferenceModel(agent *kyberv1.Agent) string {
+	if agent == nil {
+		return ""
+	}
+	if inf := agent.Spec.Inference; inf != nil && inf.Model != "" {
+		return inf.Model
+	}
+	return agent.Spec.Model
 }
 
 func (a *Adapter) Image() string { return a.image }
@@ -36,20 +64,45 @@ func (a *Adapter) EntrypointArgs(*kyberv1.Agent) []string {
 func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 	optional := true
 	vars := []corev1.EnvVar{
-		{Name: "CODEX_MODEL", Value: agent.Spec.Model},
+		{Name: "CODEX_MODEL", Value: inferenceModel(agent)},
 		{Name: "KYBER_REQUESTED_CODEX_VERSION", Value: agent.Spec.RuntimeVersion},
-		{Name: "CODEX_AUTH_JSON", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
+	}
+	// Exactly one credential is referenced. Naming the codex-auth or OpenAI
+	// Secret on an agent that has neither would stop the pod being created at
+	// all: a SecretKeyRef to a missing Secret is fatal, and only the auth.json
+	// one is marked optional.
+	if inf := agent.Spec.Inference; inf != nil {
+		vars = append(vars,
+			corev1.EnvVar{Name: "KYBER_INFERENCE_BASE_URL", Value: inf.BaseURL},
+			corev1.EnvVar{Name: "KYBER_INFERENCE_PROVIDER", Value: CustomProviderID},
+			corev1.EnvVar{Name: InferenceCredentialEnv, ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: inf.Credential.ExistingSecret},
+					Key:                  inf.Credential.Key,
+				},
+			}},
+		)
+	} else {
+		vars = append(vars, corev1.EnvVar{Name: "CODEX_AUTH_JSON", ValueFrom: &corev1.EnvVarSource{SecretKeyRef: &corev1.SecretKeySelector{
 			LocalObjectReference: corev1.LocalObjectReference{Name: agent.Name + "-codex-auth"},
 			Key:                  "auth.json", Optional: &optional,
-		}}},
-	}
-	if agent.Spec.Secrets.AuthType == kyberv1.AgentAuthTypeAPIKey {
-		vars = append(vars, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
-			SecretKeyRef: &corev1.SecretKeySelector{
-				LocalObjectReference: corev1.LocalObjectReference{Name: agent.Name + "-openai"},
-				Key:                  "token",
-			},
-		}})
+		}}})
+		if agent.Spec.Secrets.AuthType == kyberv1.AgentAuthTypeAPIKey {
+			// Optional, like the auth.json ref above. An agent created with an
+			// inference endpoint never had <agent>-openai minted, so clearing
+			// spec.inference later would otherwise point a REQUIRED SecretKeyRef
+			// at a Secret that does not exist: the pod fails with
+			// CreateContainerConfigError before the boot script runs, so it
+			// never reaches the exit-42/NeedsAuth path and cannot be recovered
+			// through the auth UI. Optional lets it boot and fail loudly in the
+			// credential gate instead, which IS recoverable.
+			vars = append(vars, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{
+					LocalObjectReference: corev1.LocalObjectReference{Name: agent.Name + "-openai"},
+					Key:                  "token", Optional: &optional,
+				},
+			}})
+		}
 	}
 	// Telegram MCP sidecar (kyber#684): same endpoint the Claude Code runtime
 	// registers, so both runtimes get one tool surface instead of Codex being
@@ -66,7 +119,9 @@ func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 			Value: runtimes.DiscordMCPURL(),
 		})
 	}
-	if agent.Spec.Secrets.SlackEnabled { vars = append(vars, corev1.EnvVar{Name:"KYBER_SLACK_MCP_URL",Value:runtimes.SlackMCPURL()}) }
+	if agent.Spec.Secrets.SlackEnabled {
+		vars = append(vars, corev1.EnvVar{Name: "KYBER_SLACK_MCP_URL", Value: runtimes.SlackMCPURL()})
+	}
 	return vars
 }
 func (a *Adapter) SecretMounts(*kyberv1.Agent) []runtimes.SecretMount { return nil }

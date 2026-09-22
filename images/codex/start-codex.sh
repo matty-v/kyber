@@ -333,7 +333,48 @@ if [ -n "${CODEX_AUTH_JSON:-}" ] && [ -z "${OPENAI_API_KEY:-}" ]; then
     unset CODEX_AUTH_JSON _secret_hash _seeded_hash _local_hash _seed_marker _prev_umask
 fi
 
-if [ -n "${OPENAI_API_KEY:-}" ]; then
+if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
+    # An agent pointed at its own inference endpoint authenticates through the
+    # provider table's env_key, which Codex reads straight from the
+    # environment. There is no login record to create, and `codex login
+    # --with-api-key` would try to register the key WITH OPENAI and exit 42 on
+    # a key that was never an OpenAI one. Device authorization is equally wrong
+    # here: the agent has a credential, it just is not a ChatGPT session.
+    if [ -z "${OPENAI_API_KEY:-}" ]; then
+        echo "[kyber] Codex inference-endpoint credential is missing" >&2
+        exit 42
+    fi
+    unset CODEX_AUTH_JSON
+    # Codex speaks ONLY the Responses API — wire_api = "chat" was removed
+    # upstream in Feb 2026 and hard-errors. An endpoint that serves just
+    # /v1/chat/completions (plenty do) is accepted by the API's validation,
+    # boots, passes readiness and then 404s on every single turn while the
+    # agent reports healthy. Probe once here so that becomes a loud boot
+    # failure with a reason instead.
+    #
+    # Any status other than 404/405 counts as "speaks Responses" — a 400 or 401
+    # still proves the route exists, and judging the credential is the next
+    # block's job, not this one's.
+    _probe_url="${KYBER_INFERENCE_BASE_URL%/}/responses"
+    _probe_code="$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$_probe_url" \
+        -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+        -H 'Content-Type: application/json' \
+        -d '{"model":"probe","input":"probe","max_output_tokens":1}' 2>/dev/null || echo 000)"
+    case "$_probe_code" in
+        404|405)
+            echo "[kyber] FATAL: ${KYBER_INFERENCE_BASE_URL} does not serve the Responses API (POST /responses returned ${_probe_code})." >&2
+            echo "[kyber] Codex requires it; an endpoint offering only /chat/completions cannot be used without a translating gateway." >&2
+            exit 43
+            ;;
+        000)
+            # Unreachable is not the same as wrong-API. Let the boot continue
+            # and fail on its own terms rather than blocking on a blip.
+            echo "[kyber] WARNING: could not reach ${_probe_url} to verify the Responses API" >&2
+            ;;
+    esac
+    unset _probe_url _probe_code
+    echo "[kyber] Codex using inference endpoint ${KYBER_INFERENCE_BASE_URL}"
+elif [ -n "${OPENAI_API_KEY:-}" ]; then
     # The interactive CLI requires a native login record, not just an env var.
     # Stdin keeps the selected key out of argv; never fall back to subscription.
     unset CODEX_AUTH_JSON
@@ -495,6 +536,32 @@ timeout = 20
 "
 fi
 
+# spec.inference: point Codex at an endpoint Kyber does not host.
+#
+# Split into two fragments because TOML ordering is unforgiving here — the same
+# reason the hook tables are appended last. `model_provider` is a TOP-LEVEL key
+# and must sit above every [table]; `[model_providers.<id>]` is a table and must
+# come after the top-level `model = ...` line. A top-level key written after any
+# table header is parsed as a member of that table, so Codex would silently
+# never see the provider selection.
+KYBER_CODEX_PROVIDER_SELECT=""
+KYBER_CODEX_PROVIDER_TOML=""
+if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
+    _provider="${KYBER_INFERENCE_PROVIDER:-kyber-endpoint}"
+    KYBER_CODEX_PROVIDER_SELECT="model_provider = \"${_provider}\""
+    # wire_api = "responses": Codex speaks the Responses API, not plain chat
+    # completions. env_key names the variable holding the bearer token; it is
+    # not an OpenAI credential despite the conventional name.
+    KYBER_CODEX_PROVIDER_TOML="
+[model_providers.${_provider}]
+name = \"Kyber inference endpoint\"
+base_url = \"${KYBER_INFERENCE_BASE_URL}\"
+wire_api = \"responses\"
+env_key = \"OPENAI_API_KEY\"
+"
+    unset _provider
+fi
+
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
 # Managed by Kyber. Rewritten on every agent boot — do not edit.
 # Agent-owned Codex settings belong in ~/.codex/config.toml, which Kyber
@@ -503,12 +570,18 @@ approval_policy = "never"
 sandbox_mode = "danger-full-access"
 check_for_update_on_startup = false
 tui.resume_cwd = "current"
+${KYBER_CODEX_PROVIDER_SELECT}
 EOF
 then
     if [ -n "${CODEX_MODEL:-}" ]; then
         printf 'model = "%s"\n' "$CODEX_MODEL" | \
             { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
             echo "[kyber] WARNING: could not record the model in $KYBER_MANAGED_CODEX_CONFIG" >&2
+    fi
+    if [ -n "$KYBER_CODEX_PROVIDER_TOML" ]; then
+        printf '%s' "$KYBER_CODEX_PROVIDER_TOML" | \
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
+            echo "[kyber] WARNING: could not record the inference provider in $KYBER_MANAGED_CODEX_CONFIG" >&2
     fi
     # The hook TABLES go last, after every top-level key above: a bare
     # `model = ...` appended after a [[table]] header would be parsed as a

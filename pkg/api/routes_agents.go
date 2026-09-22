@@ -1720,6 +1720,14 @@ func validateInference(runtime string, inf *kyberv1.AgentInference) error {
 	if parsed.RawQuery != "" || parsed.Fragment != "" {
 		return fmt.Errorf("baseURL must not carry a query string or fragment")
 	}
+	// The Codex path interpolates this into a TOML double-quoted string. A
+	// quote or backslash that survived validation would render an unparseable
+	// /etc/codex/managed_config.toml, and nothing repairs that file — the
+	// recovery helper only rebuilds the agent's own config, and it runs before
+	// the managed one is written, so the agent is wedged on every boot.
+	if strings.ContainsAny(inf.BaseURL, "\"\\") {
+		return fmt.Errorf("baseURL must not contain quotes or backslashes")
+	}
 	if inf.API != "openai" {
 		return fmt.Errorf("api must be \"openai\" (the only wire protocol implemented)")
 	}

@@ -25,6 +25,7 @@ func main() {
 		log.Fatal("codex-reporter: HOME is required")
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
+	endpointConfigured := os.Getenv("KYBER_INFERENCE_BASE_URL") != ""
 	root := filepath.Join(home, ".codex", "sessions")
 
 	// ---- Credential syncer (kyber#681) ----
@@ -101,7 +102,17 @@ func main() {
 			}
 			lastTokens = time.Now()
 		}
-		if time.Since(lastCatalog) >= time.Hour {
+		// An agent on a custom inference endpoint must not publish Codex's
+		// built-in OpenAI catalog. app-server's model/list reads CODEX_HOME's
+		// auth.json and knows nothing about the endpoint, so the picker would
+		// offer gpt-5.x ids; selecting one writes it into spec.inference.model
+		// (not catalog-gated, since Codex's ModelPrefix is "gpt-"), rolls the
+		// pod, and every turn then fails against an endpoint that does not
+		// serve that id. Reporting nothing leaves the operator typing the id
+		// they configured, which is correct.
+		if endpointConfigured {
+			lastCatalog = time.Now()
+		} else if time.Since(lastCatalog) >= time.Hour {
 			if models, err := discoverModels(); err != nil {
 				log.Printf("codex-reporter: model catalog discovery failed: %v", err)
 			} else if body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models}); err == nil {
