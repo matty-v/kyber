@@ -35,7 +35,9 @@ func TestValidateInferenceAllowsNilOnAnyRuntime(t *testing.T) {
 // Writing the field on a runtime that ignores it stores a setting that
 // silently does nothing — the failure mode this feature exists to remove.
 func TestValidateInferenceRejectsRuntimesThatIgnoreIt(t *testing.T) {
-	for _, runtime := range []string{"claude-code", "codex", "nonexistent"} {
+	// codex is deliberately absent: it declares CustomInferenceEndpoint and is
+	// covered by TestValidateInferenceAcceptsRuntimesThatDeclareIt below.
+	for _, runtime := range []string{"claude-code", "nonexistent"} {
 		err := validateInference(runtime, validInference())
 		if err == nil {
 			t.Errorf("runtime %s accepted an inference endpoint it does not read", runtime)
@@ -43,6 +45,16 @@ func TestValidateInferenceRejectsRuntimesThatIgnoreIt(t *testing.T) {
 		}
 		if !strings.Contains(err.Error(), "does not support") {
 			t.Errorf("runtime %s error = %q, want it to name the lack of support", runtime, err)
+		}
+	}
+}
+
+// The gate is driven by the descriptor feature, not a hardcoded runtime list,
+// so declaring the feature is all a runtime needs to do to become eligible.
+func TestValidateInferenceAcceptsRuntimesThatDeclareIt(t *testing.T) {
+	for _, runtime := range []string{"hermes", "codex"} {
+		if err := validateInference(runtime, validInference()); err != nil {
+			t.Errorf("runtime %s declares custom-inference-endpoint but was rejected: %v", runtime, err)
 		}
 	}
 }
@@ -295,6 +307,9 @@ func TestInferenceRequestRuntimeGateAppliesToKeyValues(t *testing.T) {
 	req := &agentInferenceRequest{BaseURL: "https://llm.voget.io/v1", API: "openai", APIKey: "k"}
 	if err := validateInferenceRequest("claude-code", req); err == nil {
 		t.Error("claude-code accepted an inference endpoint it does not read")
+	}
+	if err := validateInferenceRequest("codex", req); err != nil {
+		t.Errorf("codex declares the feature but rejected a key-value request: %v", err)
 	}
 	if err := validateInferenceRequest("hermes", nil); err != nil {
 		t.Errorf("nil request rejected: %v", err)

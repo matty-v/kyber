@@ -66,9 +66,10 @@ for this runtime.
 
 ## A model endpoint Kyber does not host
 
-`spec.inference` points an agent at an inference endpoint you run. Hermes reads
-it; a runtime that does not declare the `custom-inference-endpoint` feature
-rejects the field rather than storing a setting it would ignore.
+`spec.inference` points an agent at an inference endpoint you run. **Hermes and
+Codex** read it; a runtime that does not declare the
+`custom-inference-endpoint` feature rejects the field rather than storing a
+setting it would ignore.
 
 In the create-agent wizard this is four fields on the Auth step: tick **Use a
 custom inference endpoint**, then the URL, the model, and the endpoint's API
@@ -107,6 +108,35 @@ spec:
 qualifies — llama.cpp's `llama-server`, vLLM, SGLang, Ollama, or a hosted
 provider Kyber has never heard of. `openai` is the only protocol implemented
 today.
+
+### Codex against a custom endpoint
+
+Codex resolves a model through a named provider, so Kyber renders one into
+`/etc/codex/managed_config.toml` at boot:
+
+```toml
+model_provider = "kyber-endpoint"
+model = "qwen3.6-35b-a3b"
+
+[model_providers.kyber-endpoint]
+name = "Kyber inference endpoint"
+base_url = "https://llm.example.com/v1"
+wire_api = "responses"
+env_key = "OPENAI_API_KEY"
+```
+
+`wire_api = "responses"` because Codex speaks the **Responses API**, not plain
+chat completions — an endpoint serving only `/v1/chat/completions` will not
+work. `env_key` names the variable Codex reads the bearer token from; despite
+the conventional name it is **not** an OpenAI credential, and such an agent
+needs no OpenAI key, no ChatGPT login, and never contacts OpenAI.
+
+Ordering in that file is load-bearing: `model_provider` and `model` are
+top-level keys and must precede `[model_providers.*]`. A top-level key written
+after any table header is parsed as a member of that table, and Codex would
+silently never see the provider selection.
+
+### Hermes against a custom endpoint
 
 Such an agent needs no OpenRouter key: it authenticates to its own endpoint and
 never contacts the harness's built-in provider, so Kyber neither asks for that

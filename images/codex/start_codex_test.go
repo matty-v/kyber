@@ -1951,3 +1951,128 @@ func TestStartCodex_ConfigRecoveryPrecedesCredentialBlock(t *testing.T) {
 		t.Fatalf("the config recovery runs after device authorization (offsets %d > %d) — this is MAT-15", invocation, deviceAuth)
 	}
 }
+
+// An agent with spec.inference authenticates through the provider table's
+// env_key. `codex login --with-api-key` would try to register the key WITH
+// OPENAI and exit 42 on a key that was never an OpenAI one; device
+// authorization is equally wrong, since the agent has a credential.
+func TestStartCodexInferenceEndpointSkipsBothLoginPaths(t *testing.T) {
+	home := t.TempDir()
+	bin := t.TempDir()
+	marker := filepath.Join(home, "login-called")
+	stub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+if [ "$1" = login ]; then printf called > "$LOGIN_MARKER"; exit 0; fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(t.TempDir(), "managed_config.toml")
+	out, err := runBoot(t, home, "", bin+":"+stubBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+cfg,
+		"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1",
+		"KYBER_INFERENCE_PROVIDER=kyber-endpoint",
+		"OPENAI_API_KEY=endpoint-key-value",
+		"CODEX_MODEL=qwen3.6-35b-a3b",
+		"LOGIN_MARKER="+marker)
+	if err != nil {
+		t.Fatalf("endpoint boot failed: %v\n%s", err, out)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("codex login must not run for an inference-endpoint agent")
+	}
+	if strings.Contains(string(out), "device authorization") {
+		t.Error("device authorization must not start for an inference-endpoint agent")
+	}
+	if strings.Contains(string(out), "endpoint-key-value") {
+		t.Fatal("the endpoint credential was logged")
+	}
+}
+
+// Missing credential is still fatal, so a misconfigured endpoint agent lands in
+// NeedsAuth rather than running against an endpoint it cannot authenticate to.
+func TestStartCodexInferenceEndpointRequiresItsCredential(t *testing.T) {
+	bin := t.TempDir()
+	stub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+		"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1")
+	if err == nil || !strings.Contains(string(out), "inference-endpoint credential is missing") {
+		t.Fatalf("a missing endpoint credential was accepted: %v\n%s", err, out)
+	}
+}
+
+// TOML ordering is the fragile part: model_provider is a top-level key and
+// [model_providers.*] is a table, so a top-level key written after any table
+// header is silently parsed as a member of that table and Codex never sees the
+// provider selection.
+func TestStartCodexRendersProviderWithTopLevelKeysIntact(t *testing.T) {
+	bin := t.TempDir()
+	stub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+exit 0
+`
+	if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	cfg := filepath.Join(t.TempDir(), "managed_config.toml")
+	out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+cfg,
+		"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1",
+		"KYBER_INFERENCE_PROVIDER=kyber-endpoint",
+		"OPENAI_API_KEY=endpoint-key-value",
+		"CODEX_MODEL=qwen3.6-35b-a3b")
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	body, err := os.ReadFile(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(body)
+	providerAt := strings.Index(text, "[model_providers.kyber-endpoint]")
+	if providerAt < 0 {
+		t.Fatalf("provider table missing:\n%s", text)
+	}
+	for _, key := range []string{"model_provider = \"kyber-endpoint\"", "model = \"qwen3.6-35b-a3b\""} {
+		at := strings.Index(text, key)
+		if at < 0 {
+			t.Fatalf("%s missing:\n%s", key, text)
+		}
+		if at > providerAt {
+			t.Errorf("%s is written after the provider table, so TOML parses it as part of that table", key)
+		}
+	}
+	for _, want := range []string{`wire_api = "responses"`, `env_key = "OPENAI_API_KEY"`, `base_url = "https://llm.example.com/v1"`} {
+		if !strings.Contains(text, want) {
+			t.Errorf("provider table missing %s:\n%s", want, text)
+		}
+	}
+	// The credential value itself must never reach the config.
+	if strings.Contains(text, "endpoint-key-value") {
+		t.Fatal("the endpoint credential was written into the managed config")
+	}
+}
+
+// A default Codex agent must render exactly as before.
+func TestStartCodexWithoutInferenceWritesNoProvider(t *testing.T) {
+	cfg := filepath.Join(t.TempDir(), "managed_config.toml")
+	out, err := runBoot(t, t.TempDir(), `{"tokens":{"refresh_token":"x"}}`, stubBin(t),
+		"KYBER_MANAGED_CODEX_CONFIG="+cfg, "CODEX_MODEL=gpt-5.6-sol")
+	if err != nil {
+		t.Fatalf("default boot failed: %v\n%s", err, out)
+	}
+	body, _ := os.ReadFile(cfg)
+	if strings.Contains(string(body), "model_providers") || strings.Contains(string(body), "model_provider ") {
+		t.Errorf("a default agent must not get a provider block:\n%s", body)
+	}
+	if !strings.Contains(string(body), `model = "gpt-5.6-sol"`) {
+		t.Errorf("default model line missing:\n%s", body)
+	}
+}
