@@ -29,7 +29,7 @@ func TestLoadHermesCatalogReadsTheActiveProvider(t *testing.T) {
 		`{"openrouter":{"models":["vendor/a"]},"kyber-endpoint":{"models":["qwen3.6-35b-a3b"]}}`,
 		`{}`)
 
-	models, err := LoadHermesCatalog(provider, metadata, "kyber-endpoint", 100)
+	models, err := LoadHermesCatalog(provider, metadata, "kyber-endpoint", 0, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -47,7 +47,7 @@ func TestLoadHermesCatalogKeepsModelsWithoutMetadata(t *testing.T) {
 		`{"kyber-endpoint":{"models":["qwen3.6-35b-a3b"]}}`,
 		`{}`)
 
-	models, err := LoadHermesCatalog(provider, metadata, "kyber-endpoint", 100)
+	models, err := LoadHermesCatalog(provider, metadata, "kyber-endpoint", 0, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestLoadHermesCatalogStillEnrichesOpenRouter(t *testing.T) {
 		`{"openrouter":{"models":["vendor/a"]}}`,
 		`{"vendor/a":{"name":"Vendor A","context_length":128000}}`)
 
-	models, err := LoadHermesCatalog(provider, metadata, "openrouter", 100)
+	models, err := LoadHermesCatalog(provider, metadata, "openrouter", 0, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestLoadHermesCatalogDefaultsToOpenRouter(t *testing.T) {
 		`{"openrouter":{"models":["vendor/a"]}}`,
 		`{"vendor/a":{"name":"Vendor A","context_length":128000}}`)
 
-	models, err := LoadHermesCatalog(provider, metadata, "", 100)
+	models, err := LoadHermesCatalog(provider, metadata, "", 0, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestLoadHermesCatalogStillDropsUnknownOpenRouterModels(t *testing.T) {
 		`{"openrouter":{"models":["vendor/a","vendor/stale"]}}`,
 		`{"vendor/a":{"name":"Vendor A","context_length":128000}}`)
 
-	models, err := LoadHermesCatalog(provider, metadata, "openrouter", 100)
+	models, err := LoadHermesCatalog(provider, metadata, "openrouter", 0, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -129,7 +129,7 @@ func TestLoadHermesCatalogToleratesMissingMetadataForACustomProvider(t *testing.
 		t.Fatal(err)
 	}
 
-	models, err := LoadHermesCatalog(providerPath, filepath.Join(dir, "absent.json"), "kyber-endpoint", 100)
+	models, err := LoadHermesCatalog(providerPath, filepath.Join(dir, "absent.json"), "kyber-endpoint", 0, 100)
 	if err != nil {
 		t.Fatalf("a missing metadata cache must not fail a custom endpoint: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestLoadHermesCatalogStillErrorsOnMissingOpenRouterMetadata(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err := LoadHermesCatalog(providerPath, filepath.Join(dir, "absent.json"), "openrouter", 100)
+	_, err := LoadHermesCatalog(providerPath, filepath.Join(dir, "absent.json"), "openrouter", 0, 100)
 	if err == nil {
 		t.Fatal("a missing OpenRouter metadata cache must still be an error")
 	}

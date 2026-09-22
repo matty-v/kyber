@@ -21,6 +21,11 @@ import (
 const (
 	defaultReportInterval = 30 * time.Second
 	catalogInterval       = time.Hour
+	// catalogBackoffAfter is how many consecutive catalog rejections are
+	// tolerated at the fast cadence before dropping to the hourly one. A
+	// REJECTED catalog is a configuration problem, not a transient: resending
+	// it every 30 seconds never succeeds and only floods the log.
+	catalogBackoffAfter = 3
 )
 
 func main() {
@@ -54,8 +59,35 @@ func main() {
 	activeProvider := os.Getenv("HERMES_PROVIDER")
 	metadataCache := filepath.Join(home, "cache", "openrouter_model_metadata.json")
 
+	// A self-hosted endpoint publishes no OpenRouter metadata, so ask it what
+	// window it is serving. Resolved once at startup and refreshed only when
+	// it is still unknown: the value changes when the operator restarts the
+	// server, not minute to minute.
+	endpointBase := os.Getenv("KYBER_INFERENCE_BASE_URL")
+	endpointKey := os.Getenv("OPENAI_API_KEY")
+	var endpointContext int64
+	resolveEndpointContext := func() {
+		if endpointBase == "" || endpointContext > 0 {
+			return
+		}
+		probeCtx, cancelProbe := context.WithTimeout(ctx, 20*time.Second)
+		defer cancelProbe()
+		window, err := tokenreport.EndpointContextWindow(probeCtx, client, endpointBase, endpointKey)
+		if err != nil {
+			log.Printf("hermes-reporter: could not read the endpoint's context window: %v", err)
+			return
+		}
+		if window <= 0 {
+			log.Printf("hermes-reporter: %s does not publish a context window; the model picker and context budget stay empty", endpointBase)
+			return
+		}
+		endpointContext = window
+		log.Printf("hermes-reporter: endpoint context window = %d", window)
+	}
+	resolveEndpointContext()
+
 	report := func() {
-		snap, err := tokenreport.ParseHermesLatest(logPath, metadataCache)
+		snap, err := tokenreport.ParseHermesLatest(logPath, metadataCache, endpointContext)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				log.Printf("hermes-reporter: token discovery failed: %v", err)
@@ -73,7 +105,8 @@ func main() {
 		}
 	}
 	reportCatalog := func() bool {
-		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, 100)
+		resolveEndpointContext()
+		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, endpointContext, 100)
 		if err != nil {
 			// errors.Is, not os.IsNotExist: the loader wraps with %w and
 			// os.IsNotExist does not unwrap, so a simply-absent cache logged
@@ -95,8 +128,12 @@ func main() {
 
 	report()
 	lastCatalog := time.Time{}
+	lastCatalogAttempt := time.Now()
+	catalogFailures := 0
 	if reportCatalog() {
 		lastCatalog = time.Now()
+	} else {
+		catalogFailures++
 	}
 	tokenTicker := time.NewTicker(interval)
 	defer tokenTicker.Stop()
@@ -108,12 +145,27 @@ func main() {
 			return
 		case <-tokenTicker.C:
 			report()
-			// Fresh Hermes homes populate their native caches after this process
-			// starts. Retry with the ordinary report cadence until the first
-			// successful catalog, then refresh hourly.
-			if lastCatalog.IsZero() || time.Since(lastCatalog) >= catalogInterval {
+			// Fresh Hermes homes populate their native caches after this
+			// process starts, so retry at the ordinary cadence until the first
+			// success, then refresh hourly. Once the failures stop looking
+			// like a cache that has not appeared yet, back off — an agent
+			// whose catalog the control plane rejects logged a failure every
+			// 30 seconds indefinitely and told the operator nothing new after
+			// the first one.
+			due := lastCatalog.IsZero() || time.Since(lastCatalog) >= catalogInterval
+			if due && catalogFailures >= catalogBackoffAfter {
+				due = time.Since(lastCatalogAttempt) >= catalogInterval
+			}
+			if due {
+				lastCatalogAttempt = time.Now()
 				if reportCatalog() {
 					lastCatalog = time.Now()
+					catalogFailures = 0
+				} else {
+					catalogFailures++
+					if catalogFailures == catalogBackoffAfter {
+						log.Printf("hermes-reporter: model catalog rejected %d times in a row; backing off to hourly", catalogFailures)
+					}
 				}
 			}
 		}

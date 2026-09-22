@@ -2,15 +2,18 @@ package tokenreport
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
+	"net/http"
 	"os"
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -32,6 +35,55 @@ type HermesCatalogModel struct {
 	ContextWindowKnown bool   `json:"contextWindowKnown"`
 }
 
+// EndpointContextWindow asks an OpenAI-compatible endpoint what context window
+// it is actually serving.
+//
+// A self-hosted endpoint publishes no OpenRouter metadata, so it is the only
+// authoritative source for the window. Without it the token snapshot carries
+// limit 0 (the UI shows "Context: -") and, because Hermes declares
+// RequireCatalogContext, the control plane rejects the agent's whole model
+// catalog rather than storing a guess.
+//
+// llama.cpp reports the SERVED window as data[].meta.n_ctx, which is what
+// matters: n_ctx_train is what the model was trained for and is routinely far
+// larger than what the server was started with. Returns 0 when the endpoint
+// does not publish it — a guess would be worse than an honest unknown.
+func EndpointContextWindow(ctx context.Context, client *http.Client, baseURL, apiKey string) (int64, error) {
+	endpoint := strings.TrimSuffix(baseURL, "/") + "/models"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return 0, err
+	}
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return 0, fmt.Errorf("%s returned %d", endpoint, resp.StatusCode)
+	}
+	var body struct {
+		Data []struct {
+			ID   string `json:"id"`
+			Meta struct {
+				NCtx int64 `json:"n_ctx"`
+			} `json:"meta"`
+		} `json:"data"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxHermesCacheRead)).Decode(&body); err != nil {
+		return 0, fmt.Errorf("decoding %s: %w", endpoint, err)
+	}
+	for _, m := range body.Data {
+		if m.Meta.NCtx > 0 {
+			return m.Meta.NCtx, nil
+		}
+	}
+	return 0, nil
+}
+
 // openRouterProvider is the built-in provider a Hermes agent uses when it has
 // no custom inference endpoint. Its metadata cache is authoritative for it and
 // for nothing else.
@@ -46,7 +98,7 @@ type hermesCall struct {
 // Only the strict agent.conversation_loop summary line is parsed; prompt and
 // message-bearing log records are ignored. Output is accumulated for the
 // newest session/model so billing deltas are not lost between reporter polls.
-func ParseHermesLatest(logPath, metadataPath string) (*Snapshot, error) {
+func ParseHermesLatest(logPath, metadataPath string, contextWindow int64) (*Snapshot, error) {
 	f, err := os.Open(logPath)
 	if err != nil {
 		return nil, fmt.Errorf("opening Hermes agent log: %w", err)
@@ -80,6 +132,12 @@ func ParseHermesLatest(logPath, metadataPath string) (*Snapshot, error) {
 	}
 
 	limit := hermesContextWindow(metadataPath, latest.model)
+	if limit == 0 {
+		// A self-hosted model has no OpenRouter metadata, so the endpoint's
+		// own answer is the only source. Without it the snapshot carries
+		// limit 0 and the UI shows "Context: -".
+		limit = contextWindow
+	}
 	percentage := float64(0)
 	if limit > 0 {
 		percentage = 100 * float64(latest.input) / float64(limit)
@@ -183,7 +241,7 @@ func hermesContextWindow(path, model string) int64 {
 // its models perfectly well. Those are kept with ContextWindowKnown=false,
 // which the API already carries end to end (routes_available.go passes the
 // flag straight through).
-func LoadHermesCatalog(providerCachePath, metadataPath, provider string, limit int) ([]HermesCatalogModel, error) {
+func LoadHermesCatalog(providerCachePath, metadataPath, provider string, contextWindow int64, limit int) ([]HermesCatalogModel, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
@@ -238,11 +296,20 @@ func LoadHermesCatalog(providerCachePath, metadataPath, provider string, limit i
 		if name == "" {
 			name = id
 		}
-		contextWindow := int64(0)
-		if known {
-			contextWindow = m.ContextLength
+		window := int64(0)
+		switch {
+		case known:
+			window = m.ContextLength
+		case contextWindow > 0:
+			// The endpoint's own answer. Reporting it is what lets the
+			// control plane accept this catalog at all: Hermes declares
+			// RequireCatalogContext, so a model with an unknown window makes
+			// it reject the WHOLE catalog, which left the model picker empty
+			// and the reporter retrying forever.
+			window = contextWindow
+			known = true
 		}
-		models = append(models, HermesCatalogModel{ID: id, DisplayName: name, ContextWindow: contextWindow, ContextWindowKnown: known})
+		models = append(models, HermesCatalogModel{ID: id, DisplayName: name, ContextWindow: window, ContextWindowKnown: known})
 		if len(models) == limit {
 			break
 		}
