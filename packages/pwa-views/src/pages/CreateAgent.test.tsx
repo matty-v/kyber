@@ -49,7 +49,25 @@ const models: ModelInfo[] = [
   { id: 'claude-opus-4-7', contextWindow: 1000000 },
 ]
 
-const config: ComputeConfig = { models } as ComputeConfig
+const config: ComputeConfig = {
+  models,
+  identity: {
+    managedReposAvailable: true,
+    supportedModes: ['template', 'existing', 'none'],
+    repoOwner: 'matty-v',
+  },
+} as ComputeConfig
+
+// An installation with no Kyber GitHub App: only repo-less agents.
+const configWithoutGitHubApp: ComputeConfig = {
+  models,
+  identity: {
+    managedReposAvailable: false,
+    supportedModes: ['none'],
+    repoOwner: '',
+    unavailableReason: 'The Kyber GitHub App is not configured on this control plane.',
+  },
+} as ComputeConfig
 
 function setupHooks(opts?: {
   mutateAsync?: ReturnType<typeof vi.fn>
@@ -535,4 +553,89 @@ describe('CreateAgent — discovered auth modes', () => {
     expect(screen.getByLabelText(/anthropic api key/i)).toBeInTheDocument()
     expect(screen.queryByText('Authentication is unavailable for this harness.')).not.toBeInTheDocument()
   })
+})
+
+describe('CreateAgent — identity repo capability (MAT-53)', () => {
+  async function walkToIdentityStep(user: ReturnType<typeof userEvent.setup>) {
+    await user.type(screen.getByLabelText(/name/i), 'alice')
+    await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByLabelText(/runtime/i)).toBeInTheDocument())
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByLabelText(/identity repo/i)).toBeInTheDocument())
+  }
+
+  async function finishWithApiKey(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByLabelText(/^Authentication$/)).toBeInTheDocument())
+    await user.selectOptions(screen.getByLabelText(/^Authentication$/), 'api-key')
+    await user.type(screen.getByLabelText(/anthropic api key/i), 'sk-ant-test')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /create agent/i })).toBeInTheDocument())
+  }
+
+  it('defaults to no identity repo without a GitHub App, and says so on Review', async () => {
+    const user = userEvent.setup()
+    const { mutateAsync } = setupHooks({ configData: configWithoutGitHubApp })
+    renderAt()
+    await walkToIdentityStep(user)
+
+    expect((screen.getByLabelText(/identity repo/i) as HTMLSelectElement).value).toBe('none')
+    expect(screen.getByTestId('identity-managed-unavailable')).toBeInTheDocument()
+
+    await finishWithApiKey(user)
+    expect(
+      screen.getByText('None — kept on the agent’s disk only, not saved to GitHub'),
+    ).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /create agent/i }))
+
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1))
+    expect(mutateAsync.mock.calls[0][0].identityRepo).toBeUndefined()
+  }, 15_000)
+
+  it('drops a chosen GitHub mode when config turns out not to support it', async () => {
+    const user = userEvent.setup()
+    const { mutateAsync } = setupHooks()
+    const { rerender } = renderAt()
+    await walkToIdentityStep(user)
+
+    await user.selectOptions(screen.getByLabelText(/identity repo/i), 'existing')
+    await user.type(screen.getByLabelText(/^repository$/i), 'matty-v/alice-agent')
+
+    // Config refetches and the App is gone.
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: configWithoutGitHubApp,
+      isLoading: false,
+      error: null,
+    } as unknown as UseQueryResult<ComputeConfig, Error>)
+    rerender(
+      <MemoryRouter initialEntries={['/agents/new']}>
+        <CreateAgent />
+      </MemoryRouter>,
+    )
+    await waitFor(() =>
+      expect((screen.getByLabelText(/identity repo/i) as HTMLSelectElement).value).toBe('none'),
+    )
+
+    await finishWithApiKey(user)
+    await user.click(screen.getByRole('button', { name: /create agent/i }))
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1))
+    expect(mutateAsync.mock.calls[0][0].identityRepo).toBeUndefined()
+  }, 15_000)
+
+  it('assumes no identity repo while config is still loading', async () => {
+    const user = userEvent.setup()
+    setupHooks()
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+    } as unknown as UseQueryResult<ComputeConfig, Error>)
+    renderAt()
+    await walkToIdentityStep(user)
+
+    // Nothing GitHub-backed is assumed before the control plane answers.
+    expect((screen.getByLabelText(/identity repo/i) as HTMLSelectElement).value).toBe('none')
+    expect(screen.getByTestId('identity-capability-loading')).toBeInTheDocument()
+  }, 15_000)
 })

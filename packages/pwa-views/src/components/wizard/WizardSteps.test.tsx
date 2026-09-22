@@ -10,6 +10,7 @@ const fullyValid: WizardState = {
   name: 'alice',
   machine: 'razer',
   identityRepoMode: 'template',
+  identityRepoModes: ['template', 'existing', 'none'],
   authType: 'api-key',
   anthropicApiKey: 'sk-ant-xxx',
 }
@@ -66,6 +67,7 @@ describe('WizardSteps', () => {
       name: 'alice',
       machine: 'razer',
       identityRepoMode: 'template',
+      identityRepoModes: ['template', 'existing', 'none'],
     }
     render(
       <WizardSteps state={partiallyValid} activeStep={1} onStepClick={vi.fn()} />,

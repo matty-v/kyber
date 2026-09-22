@@ -32,7 +32,15 @@ function renderWithQuery(ui: React.ReactElement) {
 // too wide to construct from a partial.
 function configResult(repoOwner = 'matty-v') {
   return {
-    data: { compute: { provider: 'mock' }, models: [], identity: { repoOwner } },
+    data: {
+      compute: { provider: 'mock' },
+      models: [],
+      identity: {
+        managedReposAvailable: true,
+        supportedModes: ['template', 'existing', 'none'],
+        repoOwner,
+      },
+    },
     isSuccess: true,
     isLoading: false,
     error: null,
@@ -101,7 +109,7 @@ describe('IdentitySection', () => {
     expect(screen.getByText(/matty-v\/alice-agent/)).toBeInTheDocument()
   })
 
-  it('shows nothing extra when mode === "none"', () => {
+  it('explains local-only durability and nothing GitHub-specific when mode === "none"', () => {
     renderWithQuery(
       <IdentitySection
         state={{ ...initialWizardState([]), identityRepoMode: 'none' }}
@@ -110,6 +118,77 @@ describe('IdentitySection', () => {
     )
     expect(screen.queryByLabelText(/^repository$/i)).not.toBeInTheDocument()
     expect(screen.queryByText(/will create/i)).not.toBeInTheDocument()
+    expect(screen.getByTestId('identity-local-only')).toHaveTextContent(/not saved to GitHub/)
+    expect(screen.getByLabelText(/identity repo/i)).toHaveAccessibleDescription(
+      /survive restarts, but are not saved to GitHub/,
+    )
+  })
+
+  // ---- MAT-53: managed identity repos are optional ----
+
+  function unavailableConfig(identity: Record<string, unknown>) {
+    return {
+      data: { compute: { provider: 'mock' }, models: [], identity },
+      isSuccess: true,
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useAPIModule.useComputeConfig>
+  }
+
+  function optionFor(value: string) {
+    const select = screen.getByLabelText(/identity repo/i) as HTMLSelectElement
+    return Array.from(select.options).find((o) => o.value === value)!
+  }
+
+  it('disables both GitHub modes and says why when the App is not configured', () => {
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue(
+      unavailableConfig({
+        managedReposAvailable: false,
+        supportedModes: ['none'],
+        repoOwner: '',
+        unavailableReason: 'The Kyber GitHub App is not configured on this control plane.',
+      }),
+    )
+    renderWithQuery(
+      <IdentitySection state={initialWizardState([])} set={vi.fn()} />,
+    )
+    expect(optionFor('template').disabled).toBe(true)
+    expect(optionFor('existing').disabled).toBe(true)
+    expect(optionFor('none').disabled).toBe(false)
+    const reason = screen.getByTestId('identity-managed-unavailable')
+    expect(reason).toHaveTextContent('The Kyber GitHub App is not configured on this control plane.')
+    expect(reason).toHaveTextContent(/require a configured Kyber GitHub App/)
+    expect(screen.getByLabelText(/identity repo/i)).toHaveAccessibleDescription(
+      /GitHub App is not configured/,
+    )
+  })
+
+  it('offers only "none" to a control plane that predates the capability fields', () => {
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue(
+      unavailableConfig({ repoOwner: 'matty-v' }),
+    )
+    renderWithQuery(
+      <IdentitySection state={initialWizardState([])} set={vi.fn()} />,
+    )
+    expect(optionFor('template').disabled).toBe(true)
+    expect(optionFor('existing').disabled).toBe(true)
+    expect(screen.getByTestId('identity-managed-unavailable')).toBeInTheDocument()
+  })
+
+  it('does not offer GitHub modes while config is still loading', () => {
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: undefined,
+      isSuccess: false,
+      isLoading: true,
+      error: null,
+    } as unknown as ReturnType<typeof useAPIModule.useComputeConfig>)
+    renderWithQuery(
+      <IdentitySection state={initialWizardState([])} set={vi.fn()} />,
+    )
+    expect(optionFor('template').disabled).toBe(true)
+    expect(optionFor('existing').disabled).toBe(true)
+    expect(screen.getByTestId('identity-capability-loading')).toBeInTheDocument()
+    expect(screen.queryByTestId('identity-managed-unavailable')).not.toBeInTheDocument()
   })
 
   // ---- new behavior for #134 ----

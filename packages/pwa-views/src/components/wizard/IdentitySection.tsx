@@ -1,6 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useComputeConfig, useGitHubRepoExists, useGitHubRepos } from '../../hooks/useAPI'
-import { DEFAULT_IDENTITY_TEMPLATE, IDENTITY_REPO_SLUG_RE } from './identity-utils'
+import {
+  DEFAULT_IDENTITY_TEMPLATE,
+  IDENTITY_REPO_SLUG_RE,
+  identityRepoCapability,
+} from './identity-utils'
 import { inputClass, labelClass } from './styles'
 import type { IdentityRepoMode, WizardSetter, WizardState } from './types'
 
@@ -17,6 +21,10 @@ const FREEFORM = '__freeform__'
 export function IdentitySection({ state, set }: IdentitySectionProps) {
   const config = useComputeConfig()
   const repoOwner = config.data?.identity?.repoOwner ?? ''
+  const capability = identityRepoCapability(config.data)
+  const templateUsable = capability.supportedModes.includes('template')
+  const existingUsable = capability.supportedModes.includes('existing')
+  const managedUnavailable = capability.loaded && !templateUsable && !existingUsable
 
   // Lazy-load the repo list — it only matters in 'existing' mode, but
   // we also use the templates count to gate a future enhancement; for
@@ -51,12 +59,51 @@ export function IdentitySection({ state, set }: IdentitySectionProps) {
             set('identityRepoMode', e.target.value as IdentityRepoMode)
           }
           className={inputClass}
+          aria-describedby={
+            [
+              managedUnavailable && 'agent-identity-unavailable',
+              state.identityRepoMode === 'none' && 'agent-identity-durability',
+            ]
+              .filter(Boolean)
+              .join(' ') || undefined
+          }
         >
-          <option value="template">Create new from template</option>
-          <option value="existing">Link existing repo</option>
-          <option value="none">None</option>
+          <option value="template" disabled={!templateUsable}>
+            Create new from template{templateUsable ? '' : ' (needs GitHub App)'}
+          </option>
+          <option value="existing" disabled={!existingUsable}>
+            Link existing repo{existingUsable ? '' : ' (needs GitHub App)'}
+          </option>
+          <option value="none">No identity repository</option>
         </select>
+        {!capability.loaded && (
+          <p className="mt-1.5 text-xs text-text-muted" data-testid="identity-capability-loading">
+            Checking whether this installation can use GitHub identity repositories…
+          </p>
+        )}
+        {managedUnavailable && (
+          <p
+            id="agent-identity-unavailable"
+            className="mt-1.5 text-xs text-text-muted"
+            data-testid="identity-managed-unavailable"
+          >
+            {capability.unavailableReason} Creating a repository from a template and linking an
+            existing one both require a configured Kyber GitHub App.
+          </p>
+        )}
       </div>
+
+      {state.identityRepoMode === 'none' && (
+        <p
+          id="agent-identity-durability"
+          className="text-xs text-text-muted"
+          data-testid="identity-local-only"
+        >
+          The agent keeps its memory and settings on its own disk. They survive restarts, but are
+          not saved to GitHub: if the disk is lost or the agent is deleted and recreated, they are
+          gone.
+        </p>
+      )}
 
       {state.identityRepoMode === 'template' && (
         <TemplateModeBadge state={state} repoOwner={repoOwner} set={set} />

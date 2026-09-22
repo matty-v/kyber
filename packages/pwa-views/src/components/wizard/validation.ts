@@ -49,9 +49,14 @@ export function isResourcesValid(state: WizardState): StepValidation {
  *                target repo as already existing (#134). Cleared by the
  *                IdentitySection when the user changes the agent name.
  *   - 'existing' requires a GitHub-shaped slug.
+ * A GitHub-backed mode the control plane has not confirmed it supports never
+ * passes, so a stale or deep-linked choice cannot reach the create call.
  */
 export function isIdentityValid(state: WizardState): StepValidation {
   if (state.identityRepoMode === 'none') return OK
+  if (!state.identityRepoModes?.includes(state.identityRepoMode)) {
+    return { ok: false, reason: 'This installation cannot use GitHub identity repositories — choose None.' }
+  }
   if (state.identityRepoMode === 'template') {
     if (state.identityRepoCollision) {
       return { ok: false, reason: 'A repo with that name already exists — change the agent name.' }
