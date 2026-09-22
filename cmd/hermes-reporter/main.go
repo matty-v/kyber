@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log"
+	"maps"
 	"net/http"
 	"os"
 	"os/signal"
@@ -65,29 +66,41 @@ func main() {
 	// server, not minute to minute.
 	endpointBase := os.Getenv("KYBER_INFERENCE_BASE_URL")
 	endpointKey := os.Getenv("OPENAI_API_KEY")
-	var endpointContext int64
+	// A dedicated client. The shared one above has a 5s Timeout, and
+	// http.Client.Timeout bounds the whole request regardless of the request
+	// context — so a context.WithTimeout here would be dead code, and a cold
+	// self-hosted endpoint (the first call through the tunnel is slow by
+	// design) would fail the probe every time and leave the window unknown.
+	probeClient := &http.Client{Timeout: 30 * time.Second}
+	var endpointWindows map[string]int64
 	resolveEndpointContext := func() {
-		if endpointBase == "" || endpointContext > 0 {
+		if endpointBase == "" {
 			return
 		}
-		probeCtx, cancelProbe := context.WithTimeout(ctx, 20*time.Second)
+		probeCtx, cancelProbe := context.WithTimeout(ctx, 30*time.Second)
 		defer cancelProbe()
-		window, err := tokenreport.EndpointContextWindow(probeCtx, client, endpointBase, endpointKey)
+		windows, err := tokenreport.EndpointContextWindow(probeCtx, probeClient, endpointBase, endpointKey)
 		if err != nil {
 			log.Printf("hermes-reporter: could not read the endpoint's context window: %v", err)
 			return
 		}
-		if window <= 0 {
+		if len(windows) == 0 {
 			log.Printf("hermes-reporter: %s does not publish a context window; the model picker and context budget stay empty", endpointBase)
 			return
 		}
-		endpointContext = window
-		log.Printf("hermes-reporter: endpoint context window = %d", window)
+		// Re-resolved on every catalog refresh, not cached for the pod's
+		// lifetime: an operator restarting llama.cpp with a different -c is
+		// exactly the workflow this feature serves, and a stale window would
+		// keep being published as authoritative until the pod restarted.
+		if !maps.Equal(endpointWindows, windows) {
+			log.Printf("hermes-reporter: endpoint context windows = %v", windows)
+		}
+		endpointWindows = windows
 	}
 	resolveEndpointContext()
 
 	report := func() {
-		snap, err := tokenreport.ParseHermesLatest(logPath, metadataCache, endpointContext)
+		snap, err := tokenreport.ParseHermesLatest(logPath, metadataCache, endpointWindows)
 		if err != nil {
 			if !os.IsNotExist(err) {
 				log.Printf("hermes-reporter: token discovery failed: %v", err)
@@ -104,9 +117,14 @@ func main() {
 			}
 		}
 	}
-	reportCatalog := func() bool {
+	// reportCatalog returns (reported, rejected). Only a control-plane
+	// REJECTION counts toward the backoff: a provider cache that has not
+	// appeared yet is the ordinary fresh-home case — the reporter is started
+	// BEFORE Hermes itself — and backing off on it would leave the picker
+	// empty and the budget "-" for up to an hour on every new agent.
+	reportCatalog := func() (bool, bool) {
 		resolveEndpointContext()
-		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, endpointContext, 100)
+		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, endpointWindows, 100)
 		if err != nil {
 			// errors.Is, not os.IsNotExist: the loader wraps with %w and
 			// os.IsNotExist does not unwrap, so a simply-absent cache logged
@@ -114,26 +132,27 @@ func main() {
 			if !errors.Is(err, fs.ErrNotExist) {
 				log.Printf("hermes-reporter: model catalog discovery failed: %v", err)
 			}
-			return false
+			return false, false
 		}
 		body, err := json.Marshal(map[string]any{"runtime": "hermes", "models": models})
-		if err == nil {
-			if err := post(ctx, client, "runtime-catalog", body); err != nil {
-				log.Printf("hermes-reporter: model catalog report failed: %v", err)
-				return false
-			}
+		if err != nil {
+			return false, false
 		}
-		return true
+		if err := post(ctx, client, "runtime-catalog", body); err != nil {
+			log.Printf("hermes-reporter: model catalog report failed: %v", err)
+			return false, true
+		}
+		return true, false
 	}
 
 	report()
 	lastCatalog := time.Time{}
 	lastCatalogAttempt := time.Now()
-	catalogFailures := 0
-	if reportCatalog() {
+	catalogRejections := 0
+	if ok, rejected := reportCatalog(); ok {
 		lastCatalog = time.Now()
-	} else {
-		catalogFailures++
+	} else if rejected {
+		catalogRejections++
 	}
 	tokenTicker := time.NewTicker(interval)
 	defer tokenTicker.Stop()
@@ -153,18 +172,20 @@ func main() {
 			// 30 seconds indefinitely and told the operator nothing new after
 			// the first one.
 			due := lastCatalog.IsZero() || time.Since(lastCatalog) >= catalogInterval
-			if due && catalogFailures >= catalogBackoffAfter {
+			if due && catalogRejections >= catalogBackoffAfter {
 				due = time.Since(lastCatalogAttempt) >= catalogInterval
 			}
 			if due {
 				lastCatalogAttempt = time.Now()
-				if reportCatalog() {
+				ok, rejected := reportCatalog()
+				switch {
+				case ok:
 					lastCatalog = time.Now()
-					catalogFailures = 0
-				} else {
-					catalogFailures++
-					if catalogFailures == catalogBackoffAfter {
-						log.Printf("hermes-reporter: model catalog rejected %d times in a row; backing off to hourly", catalogFailures)
+					catalogRejections = 0
+				case rejected:
+					catalogRejections++
+					if catalogRejections == catalogBackoffAfter {
+						log.Printf("hermes-reporter: model catalog rejected %d times in a row; backing off to hourly", catalogRejections)
 					}
 				}
 			}

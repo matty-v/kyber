@@ -26,8 +26,8 @@ func TestEndpointContextWindowPrefersServedOverTrained(t *testing.T) {
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
-	if got != 65536 {
-		t.Errorf("context window = %d, want the served 65536", got)
+	if got["qwen"] != 65536 {
+		t.Errorf("context window = %d, want the served 65536", got["qwen"])
 	}
 }
 
@@ -43,8 +43,8 @@ func TestEndpointContextWindowReturnsZeroWhenUnpublished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("probe failed: %v", err)
 	}
-	if got != 0 {
-		t.Errorf("context window = %d, want 0", got)
+	if len(got) != 0 {
+		t.Errorf("windows = %v, want none", got)
 	}
 }
 
@@ -74,7 +74,7 @@ func TestLoadHermesCatalogUsesTheEndpointWindowWhenMetadataHasNone(t *testing.T)
 		t.Fatal(err)
 	}
 
-	models, err := LoadHermesCatalog(providerPath, metadataPath, "kyber-endpoint", 65536, 100)
+	models, err := LoadHermesCatalog(providerPath, metadataPath, "kyber-endpoint", map[string]int64{"qwen3.6-35b-a3b": 65536}, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLoadHermesCatalogPrefersMetadataOverTheEndpointWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	models, err := LoadHermesCatalog(providerPath, metadataPath, "openrouter", 65536, 100)
+	models, err := LoadHermesCatalog(providerPath, metadataPath, "openrouter", map[string]int64{"vendor/a": 65536}, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -125,7 +125,7 @@ func TestParseHermesLatestUsesTheEndpointWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	snap, err := ParseHermesLatest(logPath, metadataPath, 65536)
+	snap, err := ParseHermesLatest(logPath, metadataPath, map[string]int64{"qwen3.6-35b-a3b": 65536})
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -137,5 +137,49 @@ func TestParseHermesLatestUsesTheEndpointWindow(t *testing.T) {
 	}
 	if snap.Percentage <= 0 {
 		t.Errorf("percentage = %v, want a real budget", snap.Percentage)
+	}
+}
+
+// Per-model, not one value stamped on all of them: an endpoint can serve
+// several models, and budgeting a small one against a big one's window is the
+// guess this code refuses to make when nothing is published.
+func TestEndpointContextWindowIsPerModel(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":[{"id":"big","meta":{"n_ctx":131072}},{"id":"small","meta":{"n_ctx":8192}}]}`))
+	}))
+	defer srv.Close()
+
+	got, err := EndpointContextWindow(context.Background(), srv.Client(), srv.URL+"/v1", "")
+	if err != nil {
+		t.Fatalf("probe failed: %v", err)
+	}
+	if got["big"] != 131072 || got["small"] != 8192 {
+		t.Errorf("windows = %v, want each model its own", got)
+	}
+}
+
+// The agent log is durable across a switch onto an endpoint. An OpenRouter
+// line left in it must not be budgeted against the endpoint's window and
+// asserted as known — a 131k model reported against 65k reads as twice the
+// usage it really is.
+func TestParseHermesLatestDoesNotApplyTheEndpointWindowToOpenRouterLines(t *testing.T) {
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "agent.log")
+	line := `2026-09-22 05:00:00,000 INFO [sess] agent.conversation_loop: API call #1: model=vendor/a provider=openrouter in=1000 out=10 total=1010 latency=1.0s cache=0/1000 (0%)` + "\n"
+	if err := os.WriteFile(logPath, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	metadataPath := filepath.Join(dir, "metadata.json")
+	if err := os.WriteFile(metadataPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	snap, err := ParseHermesLatest(logPath, metadataPath, map[string]int64{"vendor/a": 65536})
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if snap.ContextWindowKnown || snap.Tokens.Limit != 0 {
+		t.Errorf("limit = %d known = %v; an OpenRouter line must not borrow the endpoint's window",
+			snap.Tokens.Limit, snap.ContextWindowKnown)
 	}
 }
