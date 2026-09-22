@@ -124,7 +124,16 @@ func main() {
 	// empty and the budget "-" for up to an hour on every new agent.
 	reportCatalog := func() (bool, bool) {
 		resolveEndpointContext()
-		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, activeProvider, endpointWindows, 100)
+		// Hermes keys the cache by "custom:<base_url>" for a base_url provider
+		// and by name for a built-in one, so try both. Getting this wrong meant
+		// an endpoint agent posted an EMPTY catalog, which the control plane
+		// rejects outright — the picker stayed empty and the reporter retried
+		// until it backed off.
+		providerKeys := []string{activeProvider}
+		if endpointBase != "" {
+			providerKeys = append(providerKeys, tokenreport.HermesCustomProviderKey(endpointBase))
+		}
+		models, err := tokenreport.LoadHermesCatalog(providerCache, metadataCache, providerKeys, endpointWindows, 100)
 		if err != nil {
 			// errors.Is, not os.IsNotExist: the loader wraps with %w and
 			// os.IsNotExist does not unwrap, so a simply-absent cache logged
