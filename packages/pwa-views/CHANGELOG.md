@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.51.0
+
+- Agent Detail shows an agent whose identity repository is still being
+  created from a template: a note while it is pending, and a banner with the
+  reason when creating it failed. The identity card lists the template and the
+  pending message. `AgentIdentityRepoStatus` gains `template`, and is now
+  returned before `repo` exists.
+
 ## 0.50.0
 
 - Create Agent offers only the identity-repository modes the control plane

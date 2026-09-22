@@ -366,6 +366,10 @@ type AgentReconciler struct {
 	// alert once per escalation rather than every reconcile. Zero-value-ready
 	// (lazy map init); re-armed on controller restart like the image canaries.
 	sidecarOOMAlerts sidecarAlertTracker
+
+	// scaffoldBackoff spaces out identity-repo scaffold retries per agent
+	// (identity_repo.go). Zero-value-ready.
+	scaffoldBackoff scaffoldBackoff
 }
 
 // Reconcile is the main reconciliation function called by controller-runtime.
@@ -488,14 +492,25 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// Repo empty means the scaffolder hasn't successfully patched Repo yet —
 	// running the state machine now would build a pod without the
 	// identity-repo env vars and mount, and spec changes on an already-running
-	// pod don't rebuild it. Only gate before the state machine has produced a
-	// pod (Phase=="" or Creating); never thrash an already-running agent.
-	if agent.Spec.IdentityRepo.Template != "" && agent.Spec.IdentityRepo.Repo == "" {
-		if agent.Status.Phase == "" || agent.Status.Phase == kyberv1.AgentPhaseCreating {
-			logger.Info("waiting for identity repo scaffold before creating pod",
-				"agent", agent.Name, "template", agent.Spec.IdentityRepo.Template)
-			return ctrl.Result{RequeueAfter: 2 * time.Second}, nil
+	// pod don't rebuild it. Only gate an agent that has never had a pod for
+	// this wait (Phase "" or Creating, or already marked as awaiting its repo);
+	// never thrash an already-running agent.
+	//
+	// A gated agent is moved to Creating and marked AwaitingIdentityRepo, so it
+	// never sits phase-less: the operator sees Creating plus
+	// status.identityRepo Pending/Failed and the reason (MAT-53). The mark is
+	// what lets classifyEvent build the first pod once the repo exists.
+	if identityRepoScaffoldPending(agent) &&
+		(agent.Status.Phase == "" || agent.Status.Phase == kyberv1.AgentPhaseCreating || awaitingIdentityRepo(agent)) {
+		logger.Info("waiting for identity repo scaffold before creating pod",
+			"agent", agent.Name, "template", agent.Spec.IdentityRepo.Template)
+		if err := r.markAwaitingIdentityRepo(ctx, agent); err != nil {
+			return ctrl.Result{}, err
 		}
+		// identityRequeue is the scaffold retry backoff; zero means the
+		// failure will not fix itself (no App, no owner, bad template slug)
+		// and the agent waits for a spec change or a control-plane restart.
+		return ctrl.Result{RequeueAfter: identityRequeue}, nil
 	}
 
 	// 4. Check if the retry counter should be reset (agent stable in Running for 5 min).
@@ -1114,6 +1129,12 @@ func (r *AgentReconciler) classifyEvent(
 	switch phase {
 	case kyberv1.AgentPhaseCreating:
 		if pod == nil {
+			// Held back for identity-repo scaffolding (step 3c) and the wait is
+			// over: build the first pod now. Without this the agent would sit in
+			// Creating forever, because nothing else creates a pod from there.
+			if awaitingIdentityRepo(agent) && !identityRepoScaffoldPending(agent) {
+				return EventIdentityRepoReady, nil
+			}
 			// Pod not yet created or still being applied — requeue.
 			return "", nil
 		}
@@ -2102,6 +2123,15 @@ func (r *AgentReconciler) ensureOffsetsPVC(ctx context.Context, agent *kyberv1.A
 // createPod builds and applies the agent pod.
 // It resolves the adapter from the registry and looks up the node name from the Machine CRD.
 func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) error {
+	// Never build a pod for an agent whose identity repo is still to be
+	// scaffolded: it would boot without the repo, and a later spec patch does
+	// not rebuild a running pod. Step 3c holds these agents back; this catches
+	// any path that reaches pod creation around it (e.g. a Machine recovering
+	// while the agent waits in WaitingForMachine).
+	if identityRepoScaffoldPending(agent) {
+		return fmt.Errorf("agent %s/%s: identity repo from template %q is not created yet",
+			agent.Namespace, agent.Name, agent.Spec.IdentityRepo.Template)
+	}
 	adapter, err := r.resolveAdapter(agent)
 	if err != nil {
 		return err
@@ -2342,6 +2372,16 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	if err := r.stampObservedGeneration(ctx, agent); err != nil {
 		log.FromContext(ctx).Error(err, "stamping observedGeneration after pod create",
 			"agent", agent.Name, "generation", agent.Generation)
+	}
+	// The identity-repo wait is over once a pod exists. Best-effort like the
+	// stamp above: a stale mark on an agent that has a pod changes nothing,
+	// because classifyEvent only reads it when there is no pod.
+	if awaitingIdentityRepo(agent) {
+		patch := client.MergeFrom(agent.DeepCopy())
+		meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo)
+		if err := r.Status().Patch(ctx, agent, patch); err != nil {
+			log.FromContext(ctx).Error(err, "clearing AwaitingIdentityRepo after pod create", "agent", agent.Name)
+		}
 	}
 	return nil
 }

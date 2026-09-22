@@ -251,6 +251,55 @@ func TestAgents_Get_ExposesIdentityRepoStatus(t *testing.T) {
 	}
 }
 
+// TestAgents_Get_ExposesTemplateOnlyIdentityRepo: an agent whose identity repo
+// is still to be created from a template reports its scaffold status and the
+// failure as blockedReason, before spec.identityRepo.repo exists (MAT-53).
+func TestAgents_Get_ExposesTemplateOnlyIdentityRepo(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Spec.IdentityRepo = kyberv1.AgentIdentityRepo{Template: "acme/kyber-agent-template"}
+	agent.Status.Phase = kyberv1.AgentPhaseCreating
+	agent.Status.IdentityRepo = kyberv1.AgentIdentityRepoStatus{
+		Phase:   kyberv1.AgentIdentityRepoPhaseFailed,
+		Message: "Cannot create the identity repository: the Kyber GitHub App is not configured",
+	}
+	agent.Status.Conditions = []metav1.Condition{{
+		Type:               kyberv1.AgentConditionAwaitingIdentityRepo,
+		Status:             metav1.ConditionTrue,
+		Reason:             "ScaffoldFailed",
+		Message:            "Cannot create the identity repository: the Kyber GitHub App is not configured",
+		LastTransitionTime: metav1.Now(),
+	}}
+
+	h, _ := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var wire struct {
+		IdentityRepo  map[string]interface{} `json:"identityRepo"`
+		BlockedReason string                 `json:"blockedReason"`
+	}
+	if err := json.NewDecoder(rr.Body).Decode(&wire); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if wire.IdentityRepo == nil {
+		t.Fatal("response missing identityRepo for a template-only agent")
+	}
+	if got := wire.IdentityRepo["template"]; got != "acme/kyber-agent-template" {
+		t.Errorf("identityRepo.template: got %v", got)
+	}
+	if got := wire.IdentityRepo["repo"]; got != "" {
+		t.Errorf("identityRepo.repo: got %v, want empty", got)
+	}
+	if got := wire.IdentityRepo["phase"]; got != "Failed" {
+		t.Errorf("identityRepo.phase: got %v, want Failed", got)
+	}
+	if !strings.Contains(wire.BlockedReason, "GitHub App is not configured") {
+		t.Errorf("blockedReason: got %q, want the scaffold failure", wire.BlockedReason)
+	}
+}
+
 func TestAgents_Get_ExposesResourceUsage(t *testing.T) {
 	sampled := metav1.NewTime(time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC))
 	diskSampled := metav1.NewTime(time.Date(2026, 8, 27, 11, 58, 0, 0, time.UTC))

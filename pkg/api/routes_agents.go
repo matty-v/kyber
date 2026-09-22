@@ -299,8 +299,9 @@ type AgentResponse struct {
 	// fixed for RuntimeImageMissing, closed here alongside it.
 	ModelUnresolved bool `json:"modelUnresolved,omitempty"`
 	// BlockedReason is the remediation message of whichever blocked-before-pod
-	// condition is True (RuntimeImageMissing or ModelUnresolved), rendered
-	// verbatim by the PWA.
+	// condition is True (RuntimeImageMissing, ModelUnresolved, or
+	// AwaitingIdentityRepo after a failed scaffold), rendered verbatim by the
+	// PWA.
 	//
 	// It deliberately does NOT come from status.message: on these paths the
 	// reconcile returns before updatePhase ever runs, so status.message is
@@ -424,11 +425,17 @@ type agentInboundRunResponse struct {
 }
 
 // agentIdentityRepoResponse mirrors spec.identityRepo + status.identityRepo so
-// callers can diagnose mint/refresh health without hitting the k8s API
-// directly. Populated only when spec.identityRepo.repo is set.
+// callers can diagnose identity-repo health without hitting the k8s API
+// directly. Populated when spec.identityRepo.repo or .template is set — a
+// template-only agent is exactly the one whose scaffold may be Pending or
+// Failed, so its status must be visible before .repo exists.
 type agentIdentityRepoResponse struct {
-	// Repo is the owner/name slug from spec.identityRepo.repo.
+	// Repo is the owner/name slug from spec.identityRepo.repo. Empty while a
+	// template-backed repo has not been created yet.
 	Repo string `json:"repo"`
+	// Template is the owner/name slug from spec.identityRepo.template, when
+	// the repo is (or was) created from a template.
+	Template string `json:"template,omitempty"`
 	// Phase is the observed state of the per-agent github token Secret:
 	// "Pending" | "Ready" | "Failed". Empty when the reconciler hasn't yet
 	// written status (e.g. first reconcile in flight).
@@ -563,6 +570,11 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		resp.BlockedReason = c.Message
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved); c != nil && c.Status == metav1.ConditionTrue {
 		resp.BlockedReason = c.Message
+	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo); c != nil &&
+		c.Status == metav1.ConditionTrue && c.Reason == "ScaffoldFailed" {
+		// MAT-53: the pod is held back until the identity repo exists, and
+		// creating it failed. Pending scaffolding is not blocked, just early.
+		resp.BlockedReason = c.Message
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnsupported); c != nil && c.Status == metav1.ConditionTrue {
 		// An unsupported model doesn't block the pod, but it silently
 		// fails every turn — which is worse than blocked, because the
@@ -572,11 +584,12 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	} else if a.Status.Phase == kyberv1.AgentPhaseNeedsAuth && a.Spec.Runtime == "claude-code" && authType == kyberv1.AgentAuthTypeOAuth {
 		resp.BlockedReason = "Claude Code OAuth credential is missing, expired, or invalid. Re-authorize to resume."
 	}
-	if a.Spec.IdentityRepo.Repo != "" {
+	if a.Spec.IdentityRepo.Repo != "" || a.Spec.IdentityRepo.Template != "" {
 		ir := &agentIdentityRepoResponse{
-			Repo:    a.Spec.IdentityRepo.Repo,
-			Phase:   string(a.Status.IdentityRepo.Phase),
-			Message: a.Status.IdentityRepo.Message,
+			Repo:     a.Spec.IdentityRepo.Repo,
+			Template: a.Spec.IdentityRepo.Template,
+			Phase:    string(a.Status.IdentityRepo.Phase),
+			Message:  a.Status.IdentityRepo.Message,
 		}
 		if a.Status.IdentityRepo.TokenExpiresAt != nil {
 			ir.TokenExpiresAt = a.Status.IdentityRepo.TokenExpiresAt.UTC().Format(time.RFC3339)

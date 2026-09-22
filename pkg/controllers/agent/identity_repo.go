@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
+	"unicode/utf8"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -34,7 +37,110 @@ const (
 	// scaffolding failure. Short enough to recover quickly; long enough to
 	// avoid hammering GitHub during an outage.
 	githubTokenErrorRetry = 1 * time.Minute
+
+	// identityRepoMessageMax bounds the failure text copied into status. A
+	// GitHub error body can be long; status is read in kubectl and the PWA.
+	identityRepoMessageMax = 512
 )
+
+// errScaffoldNotConfigured marks a scaffold failure that retrying cannot fix:
+// the control plane lacks the GitHub App or the repo owner. Both are read once
+// at startup, so the agent waits for a spec change or a control-plane restart
+// (which re-reconciles every agent) instead of polling.
+var errScaffoldNotConfigured = errors.New("identity-repo scaffolding is not configured")
+
+// scaffoldBackoff spaces out scaffold attempts per agent. Every status patch
+// re-triggers Reconcile (the Agent watch has no predicate), so without it a
+// failing scaffold would be retried as fast as its own Pending/Failed writes
+// land. In memory only: a restart retrying immediately is fine.
+type scaffoldBackoff struct {
+	mu   sync.Mutex
+	next map[string]time.Time
+}
+
+// wait returns how long until key may be attempted again (0 = now).
+func (b *scaffoldBackoff) wait(key string, now time.Time) time.Duration {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if t, ok := b.next[key]; ok && now.Before(t) {
+		return t.Sub(now)
+	}
+	return 0
+}
+
+func (b *scaffoldBackoff) failed(key string, now time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.next == nil {
+		b.next = map[string]time.Time{}
+	}
+	b.next[key] = now.Add(githubTokenErrorRetry)
+}
+
+func (b *scaffoldBackoff) succeeded(key string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.next, key)
+}
+
+// identityRepoScaffoldPending reports whether the agent asks for a repo from a
+// template that has not been created yet.
+func identityRepoScaffoldPending(agent *kyberv1.Agent) bool {
+	return agent.Spec.IdentityRepo.Template != "" && agent.Spec.IdentityRepo.Repo == ""
+}
+
+// awaitingIdentityRepo reports whether the agent's first pod is being held
+// back for identity-repo scaffolding.
+func awaitingIdentityRepo(agent *kyberv1.Agent) bool {
+	return meta.IsStatusConditionTrue(agent.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo)
+}
+
+// markAwaitingIdentityRepo records that the agent is held back for its
+// identity repo: phase Creating (never blank) plus the AwaitingIdentityRepo
+// condition carrying status.identityRepo's reason, so `kubectl describe`
+// explains the wait. Patches only when something changed.
+func (r *AgentReconciler) markAwaitingIdentityRepo(ctx context.Context, agent *kyberv1.Agent) error {
+	patch := client.MergeFrom(agent.DeepCopy())
+	changed := false
+	if agent.Status.Phase == "" {
+		agent.Status.Phase = kyberv1.AgentPhaseCreating
+		now := metav1.Now()
+		agent.Status.LastTransition = &now
+		changed = true
+	}
+	reason, message := "Scaffolding", "Creating the identity repository from template "+agent.Spec.IdentityRepo.Template+"."
+	if agent.Status.IdentityRepo.Phase == kyberv1.AgentIdentityRepoPhaseFailed {
+		reason = "ScaffoldFailed"
+		message = agent.Status.IdentityRepo.Message
+	}
+	if meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{
+		Type:    kyberv1.AgentConditionAwaitingIdentityRepo,
+		Status:  metav1.ConditionTrue,
+		Reason:  reason,
+		Message: message,
+	}) {
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := r.Status().Patch(ctx, agent, patch); err != nil {
+		return fmt.Errorf("marking agent as awaiting identity repo: %w", err)
+	}
+	return nil
+}
+
+// boundedMessage trims s to identityRepoMessageMax bytes on a rune boundary.
+func boundedMessage(s string) string {
+	if len(s) <= identityRepoMessageMax {
+		return s
+	}
+	cut := identityRepoMessageMax
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "…"
+}
 
 // GithubTokenMinter is the controller's view of pkg/githubapp.Client. Defined
 // as an interface so tests can inject a fake; the real implementation is
@@ -82,9 +188,25 @@ func (r *AgentReconciler) reconcileIdentityRepo(ctx context.Context, agent *kybe
 	// Auto-create dispatch: if a template is set but Repo is still empty,
 	// scaffold the repo and patch spec.identityRepo.repo with the result. On
 	// success the guard (Repo == "") ensures we never re-scaffold.
-	if agent.Spec.IdentityRepo.Template != "" && agent.Spec.IdentityRepo.Repo == "" {
+	if identityRepoScaffoldPending(agent) {
+		key := string(agent.UID)
+		now := time.Now()
+		if wait := r.scaffoldBackoff.wait(key, now); wait > 0 {
+			// A recent attempt failed; status already says why.
+			return wait, nil
+		}
 		if err := r.scaffoldIdentityRepo(ctx, agent); err != nil {
+			if errors.Is(err, errScaffoldNotConfigured) {
+				return 0, err
+			}
+			r.scaffoldBackoff.failed(key, now)
 			return githubTokenErrorRetry, err
+		}
+		r.scaffoldBackoff.succeeded(key)
+		if agent.Spec.IdentityRepo.Repo == "" {
+			// A permanent spec error (bad template slug) was recorded in
+			// status; nothing to retry until the spec changes.
+			return 0, nil
 		}
 		// scaffoldIdentityRepo patched spec.identityRepo.repo; fall through to
 		// record the configured repo's status.
@@ -125,20 +247,24 @@ func (r *AgentReconciler) reconcileIdentityRepo(ctx context.Context, agent *kybe
 func (r *AgentReconciler) scaffoldIdentityRepo(ctx context.Context, agent *kyberv1.Agent) error {
 	logger := log.FromContext(ctx)
 
-	if r.Scaffolder == nil {
-		msg := "identity-repo auto-create requires GitHub App client — check kyber-github-app Secret"
+	if r.Scaffolder == nil || r.GithubTokenMinter == nil {
+		msg := "Cannot create the identity repository: the Kyber GitHub App is not configured on this " +
+			"control plane (the kyber-github-app Secret is missing or invalid). Configure it and restart " +
+			"the control plane, or recreate this agent without an identity repository."
 		if err := r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseFailed, msg, nil, nil); err != nil {
 			return err
 		}
-		return errors.New("identityRepo.template set but Scaffolder is nil")
+		return fmt.Errorf("identityRepo.template set but the GitHub App client is nil: %w", errScaffoldNotConfigured)
 	}
 
 	if r.IdentityRepoOwner == "" {
-		msg := "identity-repo auto-create requires KYBER_IDENTITY_REPO_OWNER to be set"
+		msg := "Cannot create the identity repository: no identity-repo owner is configured " +
+			"(Helm value identityRepo.defaultOwner). Set it and restart the control plane, or recreate " +
+			"this agent without an identity repository."
 		if err := r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseFailed, msg, nil, nil); err != nil {
 			return err
 		}
-		return errors.New("identityRepo.template set but IdentityRepoOwner is empty")
+		return fmt.Errorf("identityRepo.template set but IdentityRepoOwner is empty: %w", errScaffoldNotConfigured)
 	}
 
 	// Parse "owner/repo" from spec.identityRepo.template.
@@ -164,18 +290,12 @@ func (r *AgentReconciler) scaffoldIdentityRepo(ctx context.Context, agent *kyber
 
 	// We need a fresh installation token to call the GitHub API. Mint one with
 	// a short timeout (scaffolding may take a few seconds + polling).
-	if r.GithubTokenMinter == nil {
-		msg := "identity-repo auto-create requires GitHub App client — check kyber-github-app Secret"
-		if err := r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseFailed, msg, nil, nil); err != nil {
-			return err
-		}
-		return errors.New("identityRepo.template set but GithubTokenMinter is nil")
-	}
 	mintCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	tok, err := r.GithubTokenMinter.MintInstallationToken(mintCtx)
 	if err != nil {
-		msg := "mint installation token for scaffold: " + err.Error()
+		msg := boundedMessage("Could not get a GitHub App token to create the identity repository " +
+			"(will retry): " + err.Error())
 		_ = r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseFailed, msg, nil, nil)
 		return fmt.Errorf("minting token for scaffolding: %w", err)
 	}
@@ -195,7 +315,8 @@ func (r *AgentReconciler) scaffoldIdentityRepo(ctx context.Context, agent *kyber
 		},
 	)
 	if err != nil {
-		msg := "scaffold from template: " + err.Error()
+		msg := boundedMessage(fmt.Sprintf("Could not create %s/%s from template %s (will retry): %s",
+			r.IdentityRepoOwner, newRepoName, templateSlug, err.Error()))
 		_ = r.setIdentityRepoStatus(ctx, agent, kyberv1.AgentIdentityRepoPhaseFailed, msg, nil, nil)
 		return fmt.Errorf("scaffolding identity repo: %w", err)
 	}

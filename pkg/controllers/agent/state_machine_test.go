@@ -240,6 +240,13 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseDiskExhausted,
 		},
 		{
+			name:       "Creating + IdentityRepoReady → create first pod",
+			current:    kyberv1.AgentPhaseCreating,
+			event:      EventIdentityRepoReady,
+			wantAction: ActionCreatePVAndPod,
+			wantNext:   kyberv1.AgentPhaseCreating,
+		},
+		{
 			name:       "DiskExhausted + DiskReserveCleared → Running",
 			current:    kyberv1.AgentPhaseDiskExhausted,
 			event:      EventDiskReserveCleared,

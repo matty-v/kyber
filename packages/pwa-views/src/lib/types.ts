@@ -42,9 +42,11 @@ export interface AgentProfile {
 export type AgentIdentityRepoPhase = 'Pending' | 'Ready' | 'Failed'
 
 // Mirrors agentIdentityRepoResponse from pkg/api/routes_agents.go.
-// Populated on Agent when spec.identityRepo.repo is set.
+// Populated on Agent when spec.identityRepo.repo or .template is set. `repo`
+// is empty while a template-backed repo has not been created yet.
 export interface AgentIdentityRepoStatus {
   repo: string
+  template?: string
   phase?: AgentIdentityRepoPhase
   message?: string
   tokenExpiresAt?: string
