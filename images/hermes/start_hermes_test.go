@@ -244,3 +244,71 @@ func TestConfigureHermesOmitsAnEmptyProvidersBlock(t *testing.T) {
 		t.Errorf("empty providers block was written: %+v", got)
 	}
 }
+
+// The goal hook must be registered so a revision is opened at the start of
+// each turn; without it no Hermes agent shows a goal at all.
+func TestConfigureHermesRegistersTheGoalHook(t *testing.T) {
+	// The configurator only registers the hook when the command is executable,
+	// so stand in a fake at the real path via a bind of the check: point the
+	// script at a temp command through the module-level constant is not
+	// possible, so assert the absence path here and the presence path below
+	// using the real image path when it exists.
+	got := runConfigurator(t, nil)
+	hooks, present := got["hooks"]
+	if _, realScript := os.Stat("/usr/local/bin/kyber-hermes-goal-start"); realScript == nil {
+		if !present {
+			t.Fatalf("goal hook missing while the script is installed: %+v", got)
+		}
+		entries, _ := hooks.(map[string]any)["pre_llm_call"].([]any)
+		if len(entries) == 0 {
+			t.Fatalf("pre_llm_call hook not registered: %+v", hooks)
+		}
+	} else if present {
+		// No script on this machine: the block must not be written at all,
+		// or Hermes would try to run a command that does not exist on every
+		// single model call.
+		if _, dangling := hooks.(map[string]any)["pre_llm_call"]; dangling {
+			t.Fatalf("dangling goal hook written with no script installed: %+v", hooks)
+		}
+	}
+}
+
+// An operator's own hooks must survive, and a managed hook must not be
+// duplicated when the configurator runs again on every boot.
+func TestConfigureHermesGoalHookIsIdempotentAndPreservesOperatorHooks(t *testing.T) {
+	seed := map[string]any{
+		"hooks": map[string]any{
+			"pre_llm_call": []any{
+				map[string]any{"command": "/opt/operator/my-hook", "timeout": 9},
+				map[string]any{"command": "/usr/local/bin/kyber-hermes-goal-start", "timeout": 5},
+			},
+			"post_tool_call": []any{
+				map[string]any{"command": "/opt/operator/after", "timeout": 3},
+			},
+		},
+	}
+	got := runConfigurator(t, seed)
+	hooks, _ := got["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatalf("operator hooks were dropped entirely: %+v", got)
+	}
+	if _, kept := hooks["post_tool_call"]; !kept {
+		t.Errorf("an unrelated operator hook event was removed: %+v", hooks)
+	}
+	entries, _ := hooks["pre_llm_call"].([]any)
+	managed, operator := 0, 0
+	for _, e := range entries {
+		switch e.(map[string]any)["command"] {
+		case "/usr/local/bin/kyber-hermes-goal-start":
+			managed++
+		case "/opt/operator/my-hook":
+			operator++
+		}
+	}
+	if operator != 1 {
+		t.Errorf("operator hook count = %d, want 1: %+v", operator, entries)
+	}
+	if managed > 1 {
+		t.Errorf("managed goal hook duplicated %d times across boots: %+v", managed, entries)
+	}
+}

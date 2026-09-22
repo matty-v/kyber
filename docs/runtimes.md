@@ -59,6 +59,27 @@ model change through the shared model action. The harness dialog can browse
 stable Hermes GitHub releases, but installing a different source release still
 requires a new pinned runtime image.
 
+### Goals on Hermes
+
+A `pre_llm_call` hook opens a goal revision at the start of each user turn, so
+the agents list shows `Working on a new request` rather than nothing, and the
+agent refines it by calling `get_goal` then `set_goal`.
+
+Two things differ from Claude Code and are worth knowing before changing it:
+
+- **Hermes hooks cannot inject prompt context.** Only `pre_tool_call` is
+  blocking, and nothing reads a hook's stdout back into the model's context.
+  Claude Code's `UserPromptSubmit` hook *tells* the agent to call `set_goal`;
+  Hermes cannot, so the agent has to ask via `get_goal` — a path `set_goal`'s
+  own description names.
+- **`pre_llm_call` fires on every model call, not once per user turn.** The
+  hook deduplicates on `turn_id` (keyed with `session_id`, since a restarted
+  session reuses turn ids). Without that it would re-open the revision
+  mid-turn and repeatedly wipe the summary the agent had just set.
+
+Refinement is best-effort, exactly as on Claude Code: an agent that ignores the
+instruction leaves the platform placeholder in place.
+
 Hermes does not advertise durable tasks, job turn hooks, subscription login,
 or in-place runtime repair. Its pinned pre-model hook cannot enforce Kyber's
 fail-closed task receipt boundary, so durable task dispatch remains disabled

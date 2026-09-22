@@ -25,6 +25,12 @@ MANAGED_SERVERS = {
 # if the two ever disagree Hermes looks up a provider that does not exist.
 MANAGED_PROVIDER = "kyber-endpoint"
 
+# The Hermes hook event that fires before a model call. Claude Code uses
+# UserPromptSubmit, which fires once per user prompt AND can inject context;
+# Hermes offers neither, so the hook script deduplicates on turn_id itself.
+GOAL_HOOK_EVENT = "pre_llm_call"
+GOAL_HOOK_COMMAND = "/usr/local/bin/kyber-hermes-goal-start"
+
 # The env var the adapter injects the endpoint credential into, and which
 # upstream Hermes reads for a provider configured with an explicit base_url.
 # Named once and interpolated below so no line in this file pairs a
@@ -94,6 +100,28 @@ def main() -> None:
         config["providers"] = providers
     else:
         config.pop("providers", None)
+
+    # Agent goals. A pre_llm_call hook opens a goal revision at the start of
+    # each user turn; the script itself deduplicates on turn_id, because this
+    # event fires on EVERY model call and re-opening mid-turn would wipe the
+    # summary the agent just set.
+    #
+    # Converged like mcp_servers above: written when the command is present,
+    # REMOVED when it is not, so an image without the script does not leave a
+    # dangling hook Hermes would try to run every call.
+    hooks = mapping(config.get("hooks"))
+    managed_hooks = [h for h in hooks.get(GOAL_HOOK_EVENT, [])
+                     if isinstance(h, dict) and h.get("command") != GOAL_HOOK_COMMAND]
+    if os.access(GOAL_HOOK_COMMAND, os.X_OK):
+        managed_hooks.append({"command": GOAL_HOOK_COMMAND, "timeout": 5})
+    if managed_hooks:
+        hooks[GOAL_HOOK_EVENT] = managed_hooks
+    else:
+        hooks.pop(GOAL_HOOK_EVENT, None)
+    if hooks:
+        config["hooks"] = hooks
+    else:
+        config.pop("hooks", None)
 
     # Kyber's identity repository is the durable source for agent-authored
     # memory and skills. Disable Hermes's automatic post-turn mutation fork

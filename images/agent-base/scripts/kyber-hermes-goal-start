@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Managed pre_llm_call hook for agent goals on the Hermes runtime.
+#
+# Opens a goal revision at the start of each user turn, which sets the platform
+# placeholder ("Working on a new request") and gives the agent a revision to
+# refine against with set_goal.
+#
+# Why this is not the Claude Code hook:
+#
+#   Claude Code uses UserPromptSubmit, whose stdout can carry
+#   hookSpecificOutput.additionalContext — that is how the agent is TOLD to
+#   call set_goal. Hermes hooks cannot inject context: only pre_tool_call is
+#   blocking and nothing reads a hook's stdout back into the model's context.
+#   So this hook only opens the revision; the agent learns it by calling
+#   get_goal, a path set_goal's own description names.
+#
+#   pre_llm_call also fires on EVERY model call, not once per user turn.
+#   Opening a revision each time would reset the goal to the placeholder in the
+#   middle of a turn, repeatedly wiping the summary the agent just set. The
+#   payload carries turn_id, so fire only when it changes.
+#
+# Failure is best-effort and never blocks the turn.
+
+set -uo pipefail
+
+payload="$(cat)"
+command -v jq >/dev/null 2>&1 || exit 0
+
+# turn_id lives under .extra for hook sites that emit it; accept the top level
+# too so a future Hermes that promotes the field keeps working.
+turn_id="$(jq -r '.extra.turn_id // .turn_id // empty' <<<"$payload" 2>/dev/null || true)"
+session_id="$(jq -r '.session_id // empty' <<<"$payload" 2>/dev/null || true)"
+
+# With no turn id there is no way to tell a new turn from the third model call
+# of the current one. Doing nothing is correct: firing blind would clobber the
+# agent's own goal mid-turn, which is worse than showing a stale one.
+[[ -n "$turn_id" ]] || exit 0
+
+state_dir="${KYBER_PERSIST_ROOT:-/persist}/var/run"
+state_file="$state_dir/kyber-hermes-goal-turn"
+mkdir -p "$state_dir" 2>/dev/null || exit 0
+
+# Session is part of the key so a restarted session whose turn ids begin again
+# at the same value is still treated as a new turn.
+current="${session_id}/${turn_id}"
+if [[ -r "$state_file" ]] && [[ "$(cat "$state_file" 2>/dev/null)" == "$current" ]]; then
+    exit 0
+fi
+
+url="${KYBER_GOAL_START_URL:-http://127.0.0.1:8091/goal-start}"
+if curl -fsS --connect-timeout 0.2 --max-time 1 \
+    -H 'Content-Type: application/json' \
+    --data-binary '{}' "$url" >/dev/null 2>&1; then
+    # Recorded only on success, so a failed open is retried on the next model
+    # call of the same turn rather than being silently skipped for the turn.
+    printf '%s' "$current" > "$state_file" 2>/dev/null || true
+fi
+exit 0

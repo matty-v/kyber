@@ -76,6 +76,10 @@ ENV KYBER_START_CMD=/usr/local/bin/start-hermes.sh
 
 COPY --chmod=0755 images/hermes/start-hermes.sh /usr/local/bin/start-hermes.sh
 COPY --chmod=0755 images/hermes/configure-hermes.py /usr/local/bin/kyber-configure-hermes
+# Opens a goal revision at the start of each user turn. Hermes-specific because
+# its hooks cannot inject prompt context the way Claude Code's UserPromptSubmit
+# does, so this one only opens the revision.
+COPY --chmod=0755 images/agent-base/scripts/kyber-hermes-goal-start /usr/local/bin/kyber-hermes-goal-start
 COPY --chmod=0755 images/shared/kyber-identity-repo.sh /usr/local/bin/kyber-identity-repo.sh
 COPY --from=tools-builder /build/kyber-skills /usr/local/bin/kyber-skills
 COPY --from=tools-builder /build/hermes-reporter /usr/local/bin/hermes-reporter
