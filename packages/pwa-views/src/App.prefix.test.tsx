@@ -72,6 +72,7 @@ vi.mock('./hooks/useAPI', () => {
     useDeleteAgent: () => mutation,
     useForceNeedsAuthAgent: () => mutation,
     useRepairAgentRuntime: () => mutation,
+    useSwitchAgentRuntime: () => mutation,
     useCompactAgentSession: () => mutation,
     useReauthorizeAgent: () => mutation,
     usePatchAgentJobs: () => mutation,
