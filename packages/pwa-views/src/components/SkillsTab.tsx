@@ -33,6 +33,10 @@ import { EmptyState } from './EmptyState'
 
 interface Props {
   agentName: string
+  // False for an agent created without an identity repository: its skills
+  // can only live on its own disk, so the copy must not promise a repo.
+  // Defaults to true, the historical assumption.
+  hasIdentityRepo?: boolean
 }
 
 function errorMessage(err: unknown): string {
@@ -188,7 +192,7 @@ function SkillRow({ skill }: { skill: AgentSkill }) {
   )
 }
 
-export function SkillsTab({ agentName }: Props) {
+export function SkillsTab({ agentName, hasIdentityRepo = true }: Props) {
   const { data, isLoading, error, refetch } = useAgentSkills(agentName, true)
 
   if (isLoading) {
@@ -250,8 +254,10 @@ export function SkillsTab({ agentName }: Props) {
         </div>
         <p className="mt-2 text-xs text-text-muted">
           Scanned from the agent&apos;s own filesystem, so this is what it can actually
-          invoke. Skills are added and removed by asking the agent — it saves them to
-          its identity repo, which is the only place they survive a reprovision.
+          invoke.{' '}
+          {hasIdentityRepo
+            ? 'Skills are added and removed by asking the agent — it saves them to its identity repo, which is the only place they survive a reprovision.'
+            : 'Skills are added and removed by asking the agent. It has no identity repository, so they live on its own disk: they survive restarts, but not a lost disk or a recreated agent.'}
         </p>
       </Card>
 
@@ -260,12 +266,13 @@ export function SkillsTab({ agentName }: Props) {
           <div className="flex items-center gap-2">
             <Package className="h-4 w-4 text-warn" aria-hidden="true" />
             <h2 className="text-sm font-semibold text-text-primary">
-              Skill state outside the identity repo
+              {hasIdentityRepo ? 'Skill state outside the identity repo' : 'Skills kept on this agent’s disk only'}
             </h2>
           </div>
           <p className="mt-1 text-xs text-text-muted">
-            These are not committed anywhere, so they disappear when the pod is
-            reprovisioned.
+            {hasIdentityRepo
+              ? 'These are not committed anywhere, so they disappear when the pod is reprovisioned.'
+              : 'Not backed up anywhere: they survive restarts, but not a lost disk or a recreated agent.'}
           </p>
           <ul className="mt-2 space-y-1">
             {issues.map((issue, i) => (

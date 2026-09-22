@@ -158,7 +158,9 @@ func (p *paths) resolve() error {
 // is nowhere else a skill can be saved and survive a reprovision.
 func (p *paths) requireRepo() error {
 	if p.repoDir == "" {
-		return errors.New("no identity repo: pass --repo-dir or set KYBER_IDENTITY_REPO")
+		return errors.New("this agent has no identity repository, so there is nothing to commit or push a skill to. " +
+			"A skill directory in ~/.claude/skills or ~/.codex/skills still loads and stays on this agent's disk, " +
+			"but it is lost if the disk is lost or the agent is recreated")
 	}
 	return nil
 }
@@ -807,7 +809,7 @@ func (e *responseError) Error() string {
 // know what it can actually do.
 func printReport(w io.Writer, rep *skillscan.Report, repoDir string) {
 	if repoDir == "" {
-		fmt.Fprint(w, "\nSkills (no identity repo — only what the runtime image provides)\n")
+		fmt.Fprint(w, "\nSkills (no identity repository — skills live on this agent's disk only, not in GitHub)\n")
 	} else {
 		fmt.Fprintf(w, "\nSkills in %s\n", repoDir)
 	}
@@ -816,8 +818,11 @@ func printReport(w io.Writer, rep *skillscan.Report, repoDir string) {
 	}
 	for _, s := range rep.Skills {
 		origin := "own"
-		if s.Source == skillscan.SourceVendor {
+		switch s.Source {
+		case skillscan.SourceVendor:
 			origin = "vendor:" + s.SourcePackage
+		case skillscan.SourcePlatform:
+			origin = "platform"
 		}
 		status := "ok"
 		switch {

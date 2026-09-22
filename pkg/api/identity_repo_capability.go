@@ -3,6 +3,7 @@ package api
 import (
 	"errors"
 	"slices"
+	"strings"
 )
 
 // Identity-repo modes an agent can be created with. "none" is always
@@ -61,13 +62,33 @@ func (s *Server) validateIdentityRepoRequest(req agentIdentityRepoRequest) error
 		mode = IdentityRepoModeExisting
 	}
 	c := s.identityRepoCapability()
-	if slices.Contains(c.SupportedModes, mode) {
-		return nil
+	if !slices.Contains(c.SupportedModes, mode) {
+		action := "create an identity repository from a template"
+		if mode == IdentityRepoModeExisting {
+			action = "link an existing identity repository"
+		}
+		return errors.New("cannot " + action + ": " + c.UnavailableReason +
+			" Omit identityRepo, or configure the GitHub App and identityRepo.defaultOwner and retry.")
 	}
-	action := "create an identity repository from a template"
-	if mode == IdentityRepoModeExisting {
-		action = "link an existing identity repository"
+	// A malformed slug is otherwise accepted and fails only in the controller:
+	// a bad template parks the agent in Creating with no retry, and a bad repo
+	// is echoed into the pod's KYBER_IDENTITY_REPO.
+	switch mode {
+	case IdentityRepoModeTemplate:
+		if !validIdentityRepoSlug(req.Template) {
+			return errors.New("identityRepo.template must be an owner/name GitHub repository slug")
+		}
+	case IdentityRepoModeExisting:
+		if !validIdentityRepoSlug(req.Repo) {
+			return errors.New("identityRepo.repo must be an owner/name GitHub repository slug")
+		}
 	}
-	return errors.New("cannot " + action + ": " + c.UnavailableReason +
-		" Omit identityRepo, or configure the GitHub App and identityRepo.defaultOwner and retry.")
+	return nil
+}
+
+// validIdentityRepoSlug reports whether s is exactly "owner/name" with both
+// segments valid GitHub names.
+func validIdentityRepoSlug(s string) bool {
+	owner, name, ok := strings.Cut(s, "/")
+	return ok && githubOwnerRepoRe.MatchString(owner) && githubOwnerRepoRe.MatchString(name)
 }

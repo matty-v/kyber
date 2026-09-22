@@ -320,6 +320,18 @@ restarts with full filesystem continuity — though on `local-path` volumes the
 root does NOT survive node replacement. `kubectl exec` does NOT land inside the
 agent's chroot — use nsenter.
 
+Identity repos are optional (MAT-53). `Server.identityRepoCapability`
+(`pkg/api/identity_repo_capability.go`) is the one source for both
+`GET /api/v1/config` `identity.supportedModes` and create-time validation;
+both GitHub modes need the App client and `identityRepo.defaultOwner`, and
+the PWA must follow `supportedModes`, never infer from `repoOwner`. A
+repo-less agent has `KYBER_IDENTITY_REPO` unset: no clone, credential helper,
+or App token, and it launches in `$HOME`. A template-backed Agent gets no pod
+until its repo exists: the reconciler holds it in `Creating` with the
+`AwaitingIdentityRepo` condition, and `EventIdentityRepoReady` builds the
+first pod once `.repo` is patched. `createPod` refuses a first pod while that
+wait is on; don't bypass it.
+
 Identity repos are dual-runtime. The template's canonical contract is
 `AGENTS.md`; `CLAUDE.md` is only a Claude Code compatibility entrypoint. Shared
 `skills/<name>/SKILL.md` packages must be linked into both

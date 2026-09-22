@@ -440,7 +440,8 @@ type agentIdentityRepoResponse struct {
 	// "Pending" | "Ready" | "Failed". Empty when the reconciler hasn't yet
 	// written status (e.g. first reconcile in flight).
 	Phase string `json:"phase,omitempty"`
-	// Message is a human-readable error when Phase=Failed. Empty otherwise.
+	// Message is human-readable detail: the error when Phase=Failed, or the
+	// in-flight scaffold note while Phase=Pending. Empty when Ready.
 	Message string `json:"message,omitempty"`
 	// TokenExpiresAt is the GitHub-reported expiry of the most recently minted
 	// installation token, RFC3339. Empty until the first mint succeeds.
@@ -571,9 +572,11 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved); c != nil && c.Status == metav1.ConditionTrue {
 		resp.BlockedReason = c.Message
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo); c != nil &&
-		c.Status == metav1.ConditionTrue && c.Reason == "ScaffoldFailed" {
+		c.Status == metav1.ConditionTrue && c.Reason == "ScaffoldFailed" && a.Spec.IdentityRepo.Repo == "" {
 		// MAT-53: the pod is held back until the identity repo exists, and
 		// creating it failed. Pending scaffolding is not blocked, just early.
+		// The condition lingers until the first pod is created, so once .repo
+		// is set a stale ScaffoldFailed is not a block.
 		resp.BlockedReason = c.Message
 	} else if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionModelUnsupported); c != nil && c.Status == metav1.ConditionTrue {
 		// An unsupported model doesn't block the pod, but it silently

@@ -3347,3 +3347,30 @@ func TestClaudeAPIKeyApprovalPreservesInteractiveProfile(t *testing.T) {
 		})
 	}
 }
+
+// TestStartClaude_NoIdentityRepo_BootsInHomeWithoutGitHubSetup (MAT-53): with
+// KYBER_IDENTITY_REPO unset, boot uses the real shared identity script and must
+// keep platform continuity in $HOME, and must install no identity-repo credential helper
+// or git config — a repo-less pod has no GitHub dependency at all.
+func TestStartClaude_NoIdentityRepo_BootsInHomeWithoutGitHubSetup(t *testing.T) {
+	home, out := bootWithAgentManual(t, "# Kyber\n")
+
+	// SKIP_CLAUDE_LAUNCH stops before the trust write, so the manual (written
+	// under the launch-dir-equivalent $HOME/.runtime) is the observable proof
+	// that boot did not look for a repo checkout.
+	if _, err := os.Stat(filepath.Join(home, ".runtime", "KYBER.md")); err != nil {
+		t.Errorf("platform manual not in $HOME/.runtime: %v\noutput:\n%s", err, out)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "git-credential-kyber-github")); !os.IsNotExist(err) {
+		t.Errorf("identity-repo credential helper installed with no identity repo (stat err=%v)", err)
+	}
+	if gc, err := os.ReadFile(filepath.Join(home, ".gitconfig")); err == nil && strings.Contains(string(gc), "kyber-github") {
+		t.Errorf("~/.gitconfig wires the identity-repo helper with no identity repo:\n%s", gc)
+	}
+	if _, err := os.Stat(filepath.Join(home, "dev")); !os.IsNotExist(err) {
+		t.Errorf("~/dev created with no identity repo (stat err=%v)", err)
+	}
+	if strings.Contains(string(out), "identity-repo-token") {
+		t.Errorf("boot reached the identity-repo token path with no identity repo:\n%s", out)
+	}
+}

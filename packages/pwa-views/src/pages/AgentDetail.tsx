@@ -1000,7 +1000,7 @@ export function AgentDetail() {
               <p className="mt-1 text-sm text-text-muted">Control the capabilities this agent publishes for agent-to-agent discovery.</p>
             </div>
             <PublicCapabilitiesEditor agent={agent} />
-            <SkillsTab agentName={name} />
+            <SkillsTab agentName={name} hasIdentityRepo={Boolean(agent.identityRepo)} />
           </div>
         )}
         {activeSection === 'shell' && <ShellTab agentName={name} />}

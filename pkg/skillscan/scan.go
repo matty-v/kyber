@@ -143,8 +143,9 @@ type Skill struct {
 	// identity-owned skills.
 	SourcePackage string `json:"sourcePackage,omitempty"`
 	// Path is the skill directory: relative to the identity repo root for
-	// identity and vendor skills, absolute for platform skills, which live
-	// in the image rather than the repo.
+	// identity and vendor skills, absolute for platform skills (which live
+	// in the image) and for the skills of an agent with no identity repo
+	// (which live in its runtime skills homes).
 	Path string `json:"path"`
 	// Linked lists the runtimes this skill is actually loadable in, as
 	// runtime identifiers. Empty means the skill exists but is dead.
@@ -582,12 +583,20 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 				if e.IsDir() && compatWrapperUnderRepo(full, opts.RepoDir) {
 					continue
 				}
+				if e.IsDir() && opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), full, rh.runtime) {
+					continue
+				}
 				if e.IsDir() {
+					detail := fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
+						rh.dir, e.Name())
+					if opts.RepoDir == "" {
+						detail = fmt.Sprintf("~/%s/%s is kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
+							rh.dir, e.Name())
+					}
 					issues = append(issues, Issue{
 						Code:     IssueUnmanaged,
 						Severity: SeverityWarning,
-						Detail: fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
-							rh.dir, e.Name()),
+						Detail:   detail,
 					})
 				}
 				continue
@@ -622,11 +631,19 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 				}
 				continue
 			}
+			if opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), target, rh.runtime) {
+				continue
+			}
+			detail := fmt.Sprintf("~/%s/%s links outside the identity repo (%s) — it is committed nowhere and will not survive a reprovision",
+				rh.dir, e.Name(), target)
+			if opts.RepoDir == "" {
+				detail = fmt.Sprintf("~/%s/%s links to %s, kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
+					rh.dir, e.Name(), target)
+			}
 			issues = append(issues, Issue{
 				Code:     IssueUnmanaged,
 				Severity: SeverityWarning,
-				Detail: fmt.Sprintf("~/%s/%s links outside the identity repo (%s) — it is committed nowhere and will not survive a reprovision",
-					rh.dir, e.Name(), target),
+				Detail:   detail,
 			})
 		}
 	}
@@ -643,6 +660,30 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 		return issues[i].Detail < issues[j].Detail
 	})
 	return out, issues
+}
+
+// addLocalSkill records a skill an agent WITHOUT an identity repo keeps in a
+// runtime skills home. For such an agent that is the only place its own skills
+// can live (kyber-skills install has nowhere to push), so they are its skills,
+// not stray state: reporting them as unmanaged would put a permanent warning
+// on every skill it has, with no remedy. Their disk-only durability is a fact
+// about the agent, stated once by the report's consumer. Returns false when dir
+// holds no SKILL.md, leaving the caller to report it as unmanaged.
+func addLocalSkill(skills map[string]*Skill, order *[]string, name, dir, runtime string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
+		return false
+	}
+	sk, ok := skills[name]
+	if !ok {
+		sk = &Skill{Name: name, Source: SourceIdentity, Path: dir, Linked: []string{}}
+		readSkillMD(filepath.Join(dir, "SKILL.md"), sk)
+		skills[name] = sk
+		*order = append(*order, name)
+	}
+	if !contains(sk.Linked, runtime) {
+		sk.Linked = append(sk.Linked, runtime)
+	}
+	return true
 }
 
 // scanHermesBundledSkills discovers the nested category/name/SKILL.md layout

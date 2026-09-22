@@ -299,10 +299,10 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	}
 
 	// Identity-repo: when spec.identityRepo.repo is set, the pod gets the
-	// KYBER_IDENTITY_REPO env (below) so start-claude.sh clones it. As of
-	// kyber#509 git auth rides the generic PAT user-secret ($GH_TOKEN /
-	// $USER_GITHUB_TOKEN), so there is no per-agent <name>-github Secret volume
-	// to deliver or mount anymore.
+	// KYBER_IDENTITY_REPO env (below) so the runtime clones it. Git auth for it
+	// is an App-minted token fetched on demand through the internal API
+	// (kyber#508), so there is no per-agent Secret volume to mount. With no
+	// repo the env is omitted and the pod has no GitHub dependency at all.
 	identityRepoConfigured := agent.Spec.IdentityRepo.Repo != ""
 
 	// No /dev/fuse. Persistence is a durable root directory on the agent's own
@@ -438,8 +438,8 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: tz})
 	}
 	if identityRepoConfigured {
-		// Only the repo slug — git auth is the generic PAT user-secret
-		// installed by start-claude.sh (kyber#509). No token-path env anymore.
+		// Only the repo slug — git auth is the App-minted, repo-scoped token
+		// the credential helper fetches on demand (kyber#508). No token env.
 		envVars = append(envVars,
 			corev1.EnvVar{Name: IdentityRepoEnvVar, Value: agent.Spec.IdentityRepo.Repo},
 		)

@@ -2,7 +2,7 @@
 
 An **identity repo** is a private GitHub repository that backs a Kyber agent's durable identity. It contains the agent's persona files (`CLAUDE.md`, `IDENTITY.md`, `SOUL.md`, `USER.md`), long-term memory (`memory/`), session state (`state/`, `.runtime/`), and optional skills and configuration. The repo persists across pod restarts, preemptions, and redeployments; the agent picks up right where it left off.
 
-Contrast with the default model: without an identity repo the agent's `CLAUDE.md` is generated at pod start from `spec.identity.soulDescription` and never updated. Learnings, session summaries, and memory are lost when the pod is replaced.
+Identity repos are optional. An agent created without one boots from its runtime image in its home directory, with no project instructions beyond the platform manual (`.runtime/KYBER.md`), and keeps everything it writes — memory, notes, skills — on its own durable volume. See [Durability tiers](#durability-tiers).
 
 ---
 
@@ -10,7 +10,9 @@ Contrast with the default model: without an identity repo the agent's `CLAUDE.md
 
 The Create Agent form offers three modes. Choose one at agent creation time — changing modes afterwards requires deleting and re-creating the agent.
 
-### 1. Create new from template (default)
+Both GitHub-backed modes need the Kyber Platform GitHub App **and** `identityRepo.defaultOwner` (see [GitHub App setup](#github-app-setup)). `GET /api/v1/config` reports which modes an installation supports in `identity.supportedModes`, with `identity.unavailableReason` when the GitHub modes are off. The Create Agent form offers only those modes, and `POST /api/v1/agents` returns `400 VALIDATION_ERROR` (field `identityRepo`), before creating anything, for an unsupported mode, a request that sets both `identityRepo.repo` and `identityRepo.template`, or a slug that is not `owner/name`.
+
+### 1. Create new from template (default when the GitHub App is configured)
 
 Kyber scaffolds a new private repo under the configured owner (`matty-v` by default, overridable via `KYBER_IDENTITY_REPO_OWNER` on the control plane) from the template `matty-v/kyber-agent-template`. The template is runtime-neutral: `AGENTS.md` is the canonical identity/startup contract read directly by Codex, `CLAUDE.md` is Claude Code's compatibility entrypoint to that same contract, and shared memory/state/skills/scripts work in either runtime. Claude-only project hooks live in `.claude/settings.json`; Codex safely ignores them.
 
@@ -36,7 +38,21 @@ Use this mode to:
 
 ### 3. None
 
-No identity repo. The agent runs with `spec.identity.soulDescription` only, exactly as before identity repos were introduced. Memory and session state are not persisted to git.
+No identity repo — the only mode available without the GitHub App, and the default there. `KYBER_IDENTITY_REPO` is unset in the pod, so the runtime clones nothing, installs no identity-repo credential helper, mints no App token, and launches in `$HOME`. Nothing on the pod depends on the GitHub App, the owner, the token endpoint, or a clone.
+
+The agent keeps its state on its durable volume only: it survives session and pod restarts, but not the loss of the volume or the agent being re-created. `kyber-skills install` refuses (there is nothing to push to); skills written into `~/.claude/skills/` or `~/.codex/skills/` load and persist on the volume, and `kyber-skills list` and the Skills tab report them as the agent's own skills, noting that they live on its disk only. Platform-bundled skills (`telegram-messaging`, `discord-messaging`, `a2a-client`) still appear with their sidecars; identity skills such as `sync-identity` or `restart` come from the template repo, so a repo-less agent does not have them.
+
+Adding an identity repo to an existing repo-less agent is not supported; re-create the agent.
+
+### Durability tiers
+
+| Tier | Repo-backed agent | Repo-less agent |
+|---|---|---|
+| GitHub identity repo | identity, memory, state, skills — survives everything, including machine and volume loss | — |
+| Durable root (`/persist`, whole root filesystem incl. `$HOME`) | clone working tree, installed tools, session recall | **everything the agent keeps** — survives pod and session restarts, not a lost volume or a re-created agent |
+| Session context | this session only | this session only |
+
+Platform-owned continuity (`.runtime/session-recall.md`, `.runtime/KYBER.md`) works the same for both: it is written by Kyber from the durable root, not from GitHub.
 
 ---
 
@@ -69,7 +85,7 @@ As of kyber#508 Stage 3/4, the agent's identity repo is managed **exclusively by
 - **No PAT fallback for the identity repo.** If the App flow fails — App unconfigured/broken, pod-token unreadable, endpoint down, empty response — the helper emits nothing and git **fails loudly**. A broken identity-repo credential path must be visible, not masked by the broad PAT.
 - **The generic PAT** (`$USER_GITHUB_TOKEN` / `$GH_TOKEN`, from Kyber's per-agent kv-secrets) is used only for **other** repos the agent touches (e.g. a maintainer agent's cross-repo work).
 
-**Install requirement:** the Kyber Platform GitHub App is a configured per-install plugin — nothing is hardcoded. To enable identity-repo management an install provides (1) a `kyber-github-app` Secret holding an App with `Administration` + `Contents` (write) on the identity-repo account, and (2) `identityRepo.defaultOwner` set to that account (the chart default is empty). If either is absent the feature disables cleanly — agents run without an identity repo; it is never backfilled with a PAT.
+**Install requirement:** the Kyber Platform GitHub App is a configured per-install plugin — nothing is hardcoded. To enable identity-repo management an install provides (1) a `kyber-github-app` Secret holding an App with `Administration` + `Contents` (write) on the identity-repo account, and (2) `identityRepo.defaultOwner` set to that account (the chart default is empty). If either is absent, only repo-less agents can be created: the API reports `identity.supportedModes: ["none"]` and rejects the GitHub modes, and nothing is ever backfilled with a PAT. An Agent applied directly (e.g. with kubectl) that asks for a template without the App stays in `Creating` with `status.identityRepo.phase=Failed` and the reason — see [Graceful degradation](#graceful-degradation).
 
 For a configured identity repo, the controller's `reconcileIdentityRepo` records `status.identityRepo.phase=Ready` (visible in the PWA and `kubectl describe agent <name>`). The `.status.identityRepo.tokenExpiresAt` / `.lastMinted` fields remain unpopulated — they reflected the removed pre-#509 in-platform mint loop, and the Stage 3/4 on-demand mint is stateless — and are slated for removal with the rest of the App-backed status surface later in [#508](https://github.com/matty-v/kyber/issues/508).
 
@@ -159,7 +175,8 @@ To delete the repo: use the GitHub web UI or `gh repo delete owner/repo`.
 |---|---|
 | App token mint fails (App unconfigured/broken, pod-token unreadable, endpoint down) | The identity-repo git op fails **loudly** — there is no PAT fallback — so `start-claude.sh` logs the failure and continues without the repo; the pod still starts. Fix the App path (check the `kyber-github-app` Secret + control plane). |
 | Clone fails at pod start (network error, repo deleted, bad credential) | `start-claude.sh` logs the error and skips clone. Agent starts with no identity files. |
-| Scaffold (create-new mode): GitHub App not installed / mint 5xx / template missing | Controller marks `status.identityRepo.phase=Failed` (or retries). Only affects **create-new-from-template** scaffolding — linking an existing repo does not touch the App. |
+| Scaffold (create-new mode), GitHub error: mint 5xx, template missing, repo create fails | No pod is created yet. The agent shows phase `Creating`, `status.identityRepo.phase=Failed` with the reason, and the `AwaitingIdentityRepo` condition (`kubectl describe agent <name>`); the PWA shows the reason on Agent Detail. The controller retries every minute; when a retry succeeds it patches `spec.identityRepo.repo` and the pod is created with no manual repair. |
+| Scaffold (create-new mode), not configured: no GitHub App or no `identityRepo.defaultOwner` | Same `Creating` / `Failed` status, with a message naming what is missing. Not retried on a timer — configure it and restart the control plane (which re-reconciles every agent), or re-create the agent without an identity repo. The create API rejects this request up front, so it only arises for directly-applied Agents or configuration removed later. |
 | `kyber-github-app` Secret missing at control-plane start | Control plane logs a warning and continues. A linked repo's runtime git (clone/sync) then fails **loudly** — there is no PAT fallback — and **scaffolding** a new repo from a template fails with `status.identityRepo.phase=Failed`. |
 
 ---
@@ -169,7 +186,7 @@ To delete the repo: use the GitHub web UI or `gh repo delete owner/repo`.
 Identity repos require a one-time GitHub App registration. See
 [installation.md § 6](./installation.md#6-register-the-kyber-github-app-optional) for the full step-by-step (create App → generate key → install → apply `kyber-github-app` Secret).
 
-If the `kyber-github-app` Secret is absent, identity-repo management is disabled and the two creation modes differ: an agent requesting a **new** repo from a template shows `phase=Failed` in `status.identityRepo` (scaffolding needs the App), while an agent **linked** to an existing repo reconciles to `Ready` but its identity-repo git fails loudly at runtime (no PAT fallback). Agents without identity repos are unaffected.
+If the `kyber-github-app` Secret is absent (or `identityRepo.defaultOwner` is empty), the create API accepts only agents without an identity repo; the PWA shows the other two modes disabled with the reason. Agents that already exist are not changed: one still waiting for a **new** repo from a template stays in `Creating` with `status.identityRepo.phase=Failed`, and one **linked** to an existing repo reconciles to `Ready` but its identity-repo git fails loudly at runtime (no PAT fallback). Agents without identity repos are unaffected.
 
 ---
 

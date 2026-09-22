@@ -2140,3 +2140,35 @@ exit 0
 		})
 	}
 }
+
+// TestStartCodexWithoutIdentityRepoBootsInHome (MAT-53): with KYBER_IDENTITY_REPO
+// unset and the real shared identity script, boot succeeds, platform continuity
+// lands in $HOME/.runtime, and nothing GitHub-specific is set up.
+func TestStartCodexWithoutIdentityRepoBootsInHome(t *testing.T) {
+	home := t.TempDir()
+	state := filepath.Join(t.TempDir(), "session-state.json")
+	const snapshot = `{"updated_at":"2026-08-06T14:00:03Z","last_activity":"Wrote the notes.","recent_exchanges":[]}`
+	if err := os.WriteFile(state, []byte(snapshot), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runBoot(t, home, secretCred, stubBin(t), "KYBER_SESSION_STATE_FILE="+state)
+	if err != nil {
+		t.Fatalf("boot failed: %v\n%s", err, out)
+	}
+	recall, err := os.ReadFile(filepath.Join(home, ".runtime", "session-recall.md"))
+	if err != nil {
+		t.Fatalf("session recall not rendered into $HOME/.runtime: %v\n%s", err, out)
+	}
+	if !strings.Contains(string(recall), "Wrote the notes.") {
+		t.Errorf("session recall missing last activity:\n%s", recall)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".local", "bin", "git-credential-kyber-github")); !os.IsNotExist(err) {
+		t.Errorf("identity-repo credential helper installed with no identity repo (stat err=%v)", err)
+	}
+	if gc, err := os.ReadFile(filepath.Join(home, ".gitconfig")); err == nil && strings.Contains(string(gc), "kyber-github") {
+		t.Errorf("~/.gitconfig wires the identity-repo helper with no identity repo:\n%s", gc)
+	}
+	if strings.Contains(string(out), "shared identity-repo script not found") {
+		t.Errorf("boot did not load the real shared identity script:\n%s", out)
+	}
+}

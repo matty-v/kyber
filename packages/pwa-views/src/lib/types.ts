@@ -131,7 +131,7 @@ export interface Agent {
   currentModel?: string
   resources: AgentResources
   status: AgentStatus
-  // Populated when spec.identityRepo.repo is configured on the agent.
+  // Populated when spec.identityRepo.repo or .template is set on the agent.
   identityRepo?: AgentIdentityRepoStatus
   // Scheduled prompts declared on the agent (#135). Empty or absent when
   // no jobs are configured.
