@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# Managed pre_llm_call hook for agent goals on the Hermes runtime.
+#
+# Opens a goal revision at the start of each user turn and tells the agent the
+# revision, so it can refine the platform placeholder with set_goal. Same shape
+# as the Claude Code UserPromptSubmit hook (kyber-goal-start): Hermes passes a
+# pre_llm_call hook's {"context": "..."} stdout through into the model's
+# context, so the nudge can be delivered the same way.
+#
+# It deliberately ignores the prompt body: raw user text must never be copied
+# into fleet list surfaces.
+#
+# pre_llm_call fires on EVERY model call, not once per user turn. Opening a
+# revision each time would reset the goal to the platform placeholder mid-turn,
+# repeatedly wiping the summary the agent just set, and would re-inject the
+# nudge on every call. The payload carries turn_id, so fire only when it
+# changes.
+#
+# Failure is best-effort and never blocks the turn.
+
+set -uo pipefail
+
+payload="$(cat)"
+command -v jq >/dev/null 2>&1 || exit 0
+
+# turn_id is documented under .extra for the hook sites that emit it; accept
+# the top level too so a Hermes that promotes the field keeps working.
+turn_id="$(jq -r '.extra.turn_id // .turn_id // empty' <<<"$payload" 2>/dev/null || true)"
+session_id="$(jq -r '.session_id // .parent_session_id // empty' <<<"$payload" 2>/dev/null || true)"
+
+state_dir="${KYBER_PERSIST_ROOT:-/persist}/var/run"
+mkdir -p "$state_dir" 2>/dev/null || exit 0
+state_file="$state_dir/kyber-hermes-goal-turn"
+
+if [[ -z "$turn_id" ]]; then
+    # Without a turn id there is no way to tell a new turn from the third model
+    # call of the current one, and firing blind would clobber the agent's own
+    # goal mid-turn. Do nothing — but say so ONCE, because the silent version
+    # of this is "no Hermes agent ever shows a goal" with no signal at all.
+    marker="$state_dir/kyber-hermes-goal-noturnid"
+    if [[ ! -e "$marker" ]]; then
+        : > "$marker" 2>/dev/null || true
+        echo "[kyber] hermes goal hook: payload carries no turn_id; goals stay at the platform placeholder" >&2
+    fi
+    exit 0
+fi
+
+# Session is part of the key so a restarted session whose turn ids begin again
+# at the same value is still treated as a new turn.
+current="${session_id}/${turn_id}"
+
+# Serialise the read-check-write. Hermes can have more than one model call in
+# flight within a turn, and two racing copies would both see a stale marker and
+# both open a revision — the mid-turn reset this hook exists to avoid.
+exec 9>"$state_dir/kyber-hermes-goal.lock" 2>/dev/null || exit 0
+flock -w 2 9 2>/dev/null || exit 0
+
+if [[ -r "$state_file" ]] && [[ "$(cat "$state_file" 2>/dev/null)" == "$current" ]]; then
+    exit 0
+fi
+
+url="${KYBER_GOAL_START_URL:-http://127.0.0.1:8091/goal-start}"
+# --max-time must exceed the status sidecar's own 5s post timeout. Below it, a
+# goal-start the control plane ACCEPTS but answers slowly makes curl fail, the
+# turn goes unrecorded, and the next model call opens a SECOND revision —
+# resetting the summary the agent just set and making its next set_goal 409.
+response="$(curl -fsS --connect-timeout 1 --max-time 8 \
+    -H 'Content-Type: application/json' \
+    --data-binary '{}' "$url" 2>/dev/null || true)"
+revision="$(jq -r '.acceptedAt // empty' <<<"$response" 2>/dev/null || true)"
+
+# Recorded only on success, so a failed open is retried on the next model call
+# of the same turn rather than silently skipped for the whole turn.
+[[ -n "$revision" ]] || exit 0
+printf '%s' "$current" > "$state_file" 2>/dev/null || true
+
+jq -nc --arg revision "$revision" '{context: ("Kyber has opened goal revision " + $revision + ". After understanding this request, call the kyber-request-reply set_goal tool with a concise one-line summary and this exact accepted_at revision. Never include credentials, secrets, or sensitive prompt details. Do this before substantial work.")}'
+exit 0

@@ -244,3 +244,120 @@ func TestConfigureHermesOmitsAnEmptyProvidersBlock(t *testing.T) {
 		t.Errorf("empty providers block was written: %+v", got)
 	}
 }
+
+// The goal hook must be registered, or no Hermes agent shows a goal at all.
+// KYBER_HERMES_GOAL_HOOK_COMMAND points the configurator at a real executable
+// in the test's temp dir: the production default is an absolute path that does
+// not exist on CI, so without this the presence branch asserted nothing — the
+// whole convergence block could be deleted and the test still passed.
+func TestConfigureHermesRegistersTheGoalHook(t *testing.T) {
+	hookPath := filepath.Join(t.TempDir(), "kyber-hermes-goal-start")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runConfigurator(t, nil, "KYBER_HERMES_GOAL_HOOK_COMMAND="+hookPath)
+	hooks, ok := got["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("no hooks block written: %+v", got)
+	}
+	entries, _ := hooks["pre_llm_call"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("pre_llm_call entries = %+v, want exactly the managed hook", entries)
+	}
+	if entries[0].(map[string]any)["command"] != hookPath {
+		t.Errorf("registered command = %v, want %s", entries[0], hookPath)
+	}
+}
+
+// With no executable at the configured path the block must not be written at
+// all, or Hermes would try to run a missing command on every model call.
+func TestConfigureHermesOmitsTheGoalHookWhenTheScriptIsAbsent(t *testing.T) {
+	got := runConfigurator(t, nil,
+		"KYBER_HERMES_GOAL_HOOK_COMMAND="+filepath.Join(t.TempDir(), "absent"))
+	if _, present := got["hooks"]; present {
+		t.Errorf("hooks block written with no script installed: %+v", got["hooks"])
+	}
+}
+
+// An operator's own hooks must survive, and the managed entry must not pile up
+// across the boots that rewrite this file every time.
+func TestConfigureHermesGoalHookIsIdempotentAndPreservesOperatorHooks(t *testing.T) {
+	hookPath := filepath.Join(t.TempDir(), "kyber-hermes-goal-start")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{
+		"hooks": map[string]any{
+			"pre_llm_call": []any{
+				map[string]any{"command": "/opt/operator/my-hook", "timeout": 9},
+				map[string]any{"command": hookPath, "timeout": 5},
+			},
+			"post_tool_call": []any{
+				map[string]any{"command": "/opt/operator/after", "timeout": 3},
+			},
+		},
+	}
+	got := runConfigurator(t, seed, "KYBER_HERMES_GOAL_HOOK_COMMAND="+hookPath)
+	hooks, _ := got["hooks"].(map[string]any)
+	if hooks == nil {
+		t.Fatalf("operator hooks were dropped entirely: %+v", got)
+	}
+	if _, kept := hooks["post_tool_call"]; !kept {
+		t.Errorf("an unrelated operator hook event was removed: %+v", hooks)
+	}
+	entries, _ := hooks["pre_llm_call"].([]any)
+	managed, operator := 0, 0
+	for _, e := range entries {
+		switch e.(map[string]any)["command"] {
+		case hookPath:
+			managed++
+		case "/opt/operator/my-hook":
+			operator++
+		}
+	}
+	if operator != 1 || managed != 1 {
+		t.Errorf("operator=%d managed=%d, want 1 and 1: %+v", operator, managed, entries)
+	}
+}
+
+// `pre_llm_call:` with nothing under it is ordinary YAML and parses to None.
+// Iterating that raised TypeError, and start-hermes.sh treats a non-zero
+// configurator exit as FATAL — so a config-shaped input stopped the agent
+// booting at all.
+func TestConfigureHermesSurvivesAnEmptyHookEvent(t *testing.T) {
+	hookPath := filepath.Join(t.TempDir(), "kyber-hermes-goal-start")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got := runConfigurator(t, map[string]any{"hooks": map[string]any{"pre_llm_call": nil}},
+		"KYBER_HERMES_GOAL_HOOK_COMMAND="+hookPath)
+	entries, _ := got["hooks"].(map[string]any)["pre_llm_call"].([]any)
+	if len(entries) != 1 {
+		t.Fatalf("entries = %+v, want the managed hook", entries)
+	}
+}
+
+// A single un-listed mapping is also valid YAML. Iterating it yielded its
+// string keys, every one failed the isinstance check, and the operator's hook
+// was silently deleted.
+func TestConfigureHermesPreservesAnUnlistedOperatorHook(t *testing.T) {
+	hookPath := filepath.Join(t.TempDir(), "kyber-hermes-goal-start")
+	if err := os.WriteFile(hookPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := map[string]any{"hooks": map[string]any{
+		"pre_llm_call": map[string]any{"command": "/opt/operator/single", "timeout": 3},
+	}}
+	got := runConfigurator(t, seed, "KYBER_HERMES_GOAL_HOOK_COMMAND="+hookPath)
+	entries, _ := got["hooks"].(map[string]any)["pre_llm_call"].([]any)
+	found := false
+	for _, e := range entries {
+		if e.(map[string]any)["command"] == "/opt/operator/single" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("an un-listed operator hook was destroyed: %+v", entries)
+	}
+}
