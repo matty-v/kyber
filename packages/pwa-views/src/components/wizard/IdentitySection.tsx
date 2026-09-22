@@ -76,7 +76,13 @@ export function IdentitySection({ state, set }: IdentitySectionProps) {
           </option>
           <option value="none">No identity repository</option>
         </select>
-        {!capability.loaded && (
+        {!capability.loaded && config.isError && (
+          <p className="mt-1.5 text-xs text-text-muted" data-testid="identity-capability-error">
+            Could not load this installation&apos;s settings, so only &quot;No identity repository&quot; is
+            offered. Reload the page to try again.
+          </p>
+        )}
+        {!capability.loaded && !config.isError && (
           <p className="mt-1.5 text-xs text-text-muted" data-testid="identity-capability-loading">
             Checking whether this installation can use GitHub identity repositories…
           </p>

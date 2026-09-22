@@ -55,7 +55,7 @@ export function isResourcesValid(state: WizardState): StepValidation {
 export function isIdentityValid(state: WizardState): StepValidation {
   if (state.identityRepoMode === 'none') return OK
   if (!state.identityRepoModes?.includes(state.identityRepoMode)) {
-    return { ok: false, reason: 'This installation cannot use GitHub identity repositories — choose None.' }
+    return { ok: false, reason: 'This installation cannot use GitHub identity repositories — choose "No identity repository".' }
   }
   if (state.identityRepoMode === 'template') {
     if (state.identityRepoCollision) {

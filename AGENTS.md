@@ -329,7 +329,8 @@ repo-less agent has `KYBER_IDENTITY_REPO` unset: no clone, credential helper,
 or App token, and it launches in `$HOME`. A template-backed Agent gets no pod
 until its repo exists: the reconciler holds it in `Creating` with the
 `AwaitingIdentityRepo` condition, and `EventIdentityRepoReady` builds the
-first pod once `.repo` is patched — don't bypass that gate in `createPod`.
+first pod once `.repo` is patched. `createPod` refuses a first pod while that
+wait is on; don't bypass it.
 
 Identity repos are dual-runtime. The template's canonical contract is
 `AGENTS.md`; `CLAUDE.md` is only a Claude Code compatibility entrypoint. Shared

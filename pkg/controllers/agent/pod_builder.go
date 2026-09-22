@@ -438,8 +438,8 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		envVars = append(envVars, corev1.EnvVar{Name: "TZ", Value: tz})
 	}
 	if identityRepoConfigured {
-		// Only the repo slug — git auth is the generic PAT user-secret
-		// installed by start-claude.sh (kyber#509). No token-path env anymore.
+		// Only the repo slug — git auth is the App-minted, repo-scoped token
+		// the credential helper fetches on demand (kyber#508). No token env.
 		envVars = append(envVars,
 			corev1.EnvVar{Name: IdentityRepoEnvVar, Value: agent.Spec.IdentityRepo.Repo},
 		)

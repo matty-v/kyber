@@ -448,6 +448,16 @@ func TestScan_NoRepoDirStillReportsPlatformAndUnmanagedSkills(t *testing.T) {
 	if err := os.MkdirAll(stray, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// MAT-53: a repo-less agent's own skill lives in a runtime home. It is a
+	// skill, not stray state.
+	own := filepath.Join(f.home, ".claude", "skills", "notes")
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(own, "SKILL.md"),
+		[]byte("---\nname: notes\ndescription: Keep notes.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	rep, err := skillscan.Scan(skillscan.Options{HomeDir: f.home, PlatformDir: platform})
 	if err != nil {
@@ -459,6 +469,16 @@ func TestScan_NoRepoDirStillReportsPlatformAndUnmanagedSkills(t *testing.T) {
 	}
 	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
 		t.Errorf("expected %s for the hand-written directory; got %v", skillscan.IssueUnmanaged, codes(rep.Issues))
+	}
+	notes := findSkill(t, rep, "notes")
+	if notes.Source != skillscan.SourceIdentity || !notes.Healthy() || notes.Description != "Keep notes." ||
+		len(notes.Linked) != 1 || notes.Linked[0] != skillscan.RuntimeClaudeCode {
+		t.Errorf("repo-less own skill = %+v, want a healthy identity skill linked in claude-code", notes)
+	}
+	for _, iss := range rep.Issues {
+		if strings.Contains(iss.Detail, "/notes") {
+			t.Errorf("repo-less own skill reported as an issue: %+v", iss)
+		}
 	}
 	// With no repo there is no identity repo to link into, so the detail must
 	// describe where the skill actually lives rather than blame a missing link.

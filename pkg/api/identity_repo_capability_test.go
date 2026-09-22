@@ -220,6 +220,27 @@ func TestAgents_Create_IdentityRepoRejectsRepoAndTemplateTogether(t *testing.T) 
 	assertNothingPersisted(t, c)
 }
 
+func TestAgents_Create_IdentityRepoRejectsMalformedSlug(t *testing.T) {
+	cases := []struct {
+		name         string
+		identityRepo map[string]interface{}
+		want         string
+	}{
+		{name: "template without owner", identityRepo: map[string]interface{}{"template": "kyber-agent-template"}, want: "identityRepo.template"},
+		{name: "template with extra segment", identityRepo: map[string]interface{}{"template": "acme/a/b"}, want: "identityRepo.template"},
+		{name: "repo with shell metacharacters", identityRepo: map[string]interface{}{"repo": "acme/ivy;rm -rf"}, want: "identityRepo.repo"},
+		{name: "repo with empty name", identityRepo: map[string]interface{}{"repo": "acme/"}, want: "identityRepo.repo"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, c := newIdentityTestServer(t, identityInstalls[0])
+			rr := createAgentWithIdentityRepo(t, s, tc.identityRepo)
+			assertIdentityRepoValidationError(t, rr, tc.want)
+			assertNothingPersisted(t, c)
+		})
+	}
+}
+
 func TestAgents_Create_RepoLessAgentHasEmptyIdentityRepo(t *testing.T) {
 	s, c := newIdentityTestServer(t, identityInstall{name: "neither"})
 	rr := createAgentWithIdentityRepo(t, s, nil)

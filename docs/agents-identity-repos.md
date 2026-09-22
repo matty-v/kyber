@@ -10,7 +10,7 @@ Identity repos are optional. An agent created without one boots from its runtime
 
 The Create Agent form offers three modes. Choose one at agent creation time — changing modes afterwards requires deleting and re-creating the agent.
 
-Both GitHub-backed modes need the Kyber Platform GitHub App **and** `identityRepo.defaultOwner` (see [GitHub App setup](#github-app-setup)). `GET /api/v1/config` reports which modes an installation supports in `identity.supportedModes`, with `identity.unavailableReason` when the GitHub modes are off. The Create Agent form offers only those modes, and `POST /api/v1/agents` rejects an unsupported mode — or a request that sets both `identityRepo.repo` and `identityRepo.template` — with `400 VALIDATION_ERROR` (field `identityRepo`) before creating anything.
+Both GitHub-backed modes need the Kyber Platform GitHub App **and** `identityRepo.defaultOwner` (see [GitHub App setup](#github-app-setup)). `GET /api/v1/config` reports which modes an installation supports in `identity.supportedModes`, with `identity.unavailableReason` when the GitHub modes are off. The Create Agent form offers only those modes, and `POST /api/v1/agents` returns `400 VALIDATION_ERROR` (field `identityRepo`), before creating anything, for an unsupported mode, a request that sets both `identityRepo.repo` and `identityRepo.template`, or a slug that is not `owner/name`.
 
 ### 1. Create new from template (default when the GitHub App is configured)
 
@@ -40,7 +40,7 @@ Use this mode to:
 
 No identity repo — the only mode available without the GitHub App, and the default there. `KYBER_IDENTITY_REPO` is unset in the pod, so the runtime clones nothing, installs no identity-repo credential helper, mints no App token, and launches in `$HOME`. Nothing on the pod depends on the GitHub App, the owner, the token endpoint, or a clone.
 
-The agent keeps its state on its durable volume only: it survives session and pod restarts, but not the loss of the volume or the agent being re-created. `kyber-skills install` refuses (there is nothing to push to); skills written into `~/.claude/skills/` or `~/.codex/skills/` load and persist on the volume, and `kyber-skills list` reports them as kept on the agent's disk only. Platform-bundled skills (`telegram-messaging`, `discord-messaging`, `a2a-client`) still appear with their sidecars; identity skills such as `sync-identity` or `restart` come from the template repo, so a repo-less agent does not have them.
+The agent keeps its state on its durable volume only: it survives session and pod restarts, but not the loss of the volume or the agent being re-created. `kyber-skills install` refuses (there is nothing to push to); skills written into `~/.claude/skills/` or `~/.codex/skills/` load and persist on the volume, and `kyber-skills list` and the Skills tab report them as the agent's own skills, noting that they live on its disk only. Platform-bundled skills (`telegram-messaging`, `discord-messaging`, `a2a-client`) still appear with their sidecars; identity skills such as `sync-identity` or `restart` come from the template repo, so a repo-less agent does not have them.
 
 Adding an identity repo to an existing repo-less agent is not supported; re-create the agent.
 

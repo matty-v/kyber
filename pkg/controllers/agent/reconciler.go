@@ -2123,12 +2123,14 @@ func (r *AgentReconciler) ensureOffsetsPVC(ctx context.Context, agent *kyberv1.A
 // createPod builds and applies the agent pod.
 // It resolves the adapter from the registry and looks up the node name from the Machine CRD.
 func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) error {
-	// Never build a pod for an agent whose identity repo is still to be
-	// scaffolded: it would boot without the repo, and a later spec patch does
-	// not rebuild a running pod. Step 3c holds these agents back; this catches
-	// any path that reaches pod creation around it (e.g. a Machine recovering
-	// while the agent waits in WaitingForMachine).
-	if identityRepoScaffoldPending(agent) {
+	// Never build the FIRST pod of an agent still waiting for its identity
+	// repo: it would boot without the repo, and a later spec patch does not
+	// rebuild a running pod. Step 3c holds these agents back; this catches any
+	// path that reaches pod creation around it (e.g. a Machine recovering
+	// while the agent waits in WaitingForMachine). Scoped to the
+	// AwaitingIdentityRepo mark so an agent that already ran is never blocked
+	// from restarting by a template later added to its spec.
+	if identityRepoScaffoldPending(agent) && awaitingIdentityRepo(agent) {
 		return fmt.Errorf("agent %s/%s: identity repo from template %q is not created yet",
 			agent.Namespace, agent.Name, agent.Spec.IdentityRepo.Template)
 	}

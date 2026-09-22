@@ -7,6 +7,9 @@
   `hasIdentityRepo` (default `true`); when false it says the skills live on
   the agent's own disk and survive restarts but not a lost disk or a
   recreated agent.
+- Create Agent says so when the control plane's config cannot be loaded,
+  instead of showing "Checking…" forever, and the identity step's hint names
+  the "No identity repository" option by its label.
 
 ## 0.51.0
 

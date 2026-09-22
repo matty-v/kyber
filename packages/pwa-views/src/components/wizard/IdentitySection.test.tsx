@@ -175,6 +175,22 @@ describe('IdentitySection', () => {
     expect(screen.getByTestId('identity-managed-unavailable')).toBeInTheDocument()
   })
 
+  it('says config failed to load instead of checking forever', () => {
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: undefined,
+      isSuccess: false,
+      isLoading: false,
+      isError: true,
+      error: new Error('boom'),
+    } as unknown as ReturnType<typeof useAPIModule.useComputeConfig>)
+    renderWithQuery(
+      <IdentitySection state={initialWizardState([])} set={vi.fn()} />,
+    )
+    expect(optionFor('template').disabled).toBe(true)
+    expect(screen.getByTestId('identity-capability-error')).toBeInTheDocument()
+    expect(screen.queryByTestId('identity-capability-loading')).not.toBeInTheDocument()
+  })
+
   it('does not offer GitHub modes while config is still loading', () => {
     vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
       data: undefined,

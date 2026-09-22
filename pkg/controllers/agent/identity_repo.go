@@ -75,6 +75,12 @@ func (b *scaffoldBackoff) failed(key string, now time.Time) {
 	if b.next == nil {
 		b.next = map[string]time.Time{}
 	}
+	// Drop expired entries so agents deleted mid-backoff don't accumulate.
+	for k, t := range b.next {
+		if !now.Before(t) {
+			delete(b.next, k)
+		}
+	}
 	b.next[key] = now.Add(githubTokenErrorRetry)
 }
 

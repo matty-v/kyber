@@ -86,7 +86,7 @@ An agent with an identity repo keeps skills in the same place, whatever runtime 
 ~/dev/<your-repo>/skills/<name>/SKILL.md
 ```
 
-With no identity repo, put a skill directory straight into `~/.claude/skills/<name>/` (Claude Code) or `~/.codex/skills/<name>/` (Codex). It loads and it survives restarts, because your home is on the durable root; it is never backed up, and `kyber-skills list` flags it as kept on this disk only.
+With no identity repo, put a skill directory straight into `~/.claude/skills/<name>/` (Claude Code) or `~/.codex/skills/<name>/` (Codex). It loads and it survives restarts, because your home is on the durable root; it is never backed up. `kyber-skills list` shows it as your own skill, under a heading that says your skills live on this disk only.
 
 `SKILL.md` needs YAML frontmatter with a `name` and a `description`. The **directory name is what gets invoked** — if the frontmatter disagrees with it, the directory wins. Bundle whatever else the skill needs (a `references/` folder, scripts, assets) inside the same directory.
 
