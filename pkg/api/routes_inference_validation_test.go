@@ -315,3 +315,26 @@ func TestInferenceRequestRuntimeGateAppliesToKeyValues(t *testing.T) {
 		t.Errorf("nil request rejected: %v", err)
 	}
 }
+
+// A quote or backslash surviving validation renders an unparseable
+// /etc/codex/managed_config.toml, and nothing repairs that file — the recovery
+// helper only rebuilds the agent's own config, and runs before the managed one
+// is written. The agent is then wedged on every boot.
+func TestValidateInferenceRejectsTOMLBreakingBaseURLs(t *testing.T) {
+	for _, bad := range []string{
+		`https://llm.example.com/v1"`,
+		`https://llm.example.com/"v1`,
+		`https://llm.example.com/v1\\`,
+	} {
+		inf := validInference()
+		inf.BaseURL = bad
+		err := validateInference("codex", inf)
+		if err == nil {
+			t.Errorf("baseURL %q was accepted", bad)
+			continue
+		}
+		if !strings.Contains(err.Error(), "quotes or backslashes") {
+			t.Errorf("baseURL %q error = %q", bad, err)
+		}
+	}
+}

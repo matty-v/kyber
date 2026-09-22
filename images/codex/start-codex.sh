@@ -345,6 +345,34 @@ if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
         exit 42
     fi
     unset CODEX_AUTH_JSON
+    # Codex speaks ONLY the Responses API — wire_api = "chat" was removed
+    # upstream in Feb 2026 and hard-errors. An endpoint that serves just
+    # /v1/chat/completions (plenty do) is accepted by the API's validation,
+    # boots, passes readiness and then 404s on every single turn while the
+    # agent reports healthy. Probe once here so that becomes a loud boot
+    # failure with a reason instead.
+    #
+    # Any status other than 404/405 counts as "speaks Responses" — a 400 or 401
+    # still proves the route exists, and judging the credential is the next
+    # block's job, not this one's.
+    _probe_url="${KYBER_INFERENCE_BASE_URL%/}/responses"
+    _probe_code="$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$_probe_url" \
+        -H "Authorization: Bearer ${OPENAI_API_KEY}" \
+        -H 'Content-Type: application/json' \
+        -d '{"model":"probe","input":"probe","max_output_tokens":1}' 2>/dev/null || echo 000)"
+    case "$_probe_code" in
+        404|405)
+            echo "[kyber] FATAL: ${KYBER_INFERENCE_BASE_URL} does not serve the Responses API (POST /responses returned ${_probe_code})." >&2
+            echo "[kyber] Codex requires it; an endpoint offering only /chat/completions cannot be used without a translating gateway." >&2
+            exit 43
+            ;;
+        000)
+            # Unreachable is not the same as wrong-API. Let the boot continue
+            # and fail on its own terms rather than blocking on a blip.
+            echo "[kyber] WARNING: could not reach ${_probe_url} to verify the Responses API" >&2
+            ;;
+    esac
+    unset _probe_url _probe_code
     echo "[kyber] Codex using inference endpoint ${KYBER_INFERENCE_BASE_URL}"
 elif [ -n "${OPENAI_API_KEY:-}" ]; then
     # The interactive CLI requires a native login record, not just an env var.

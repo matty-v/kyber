@@ -2076,3 +2076,67 @@ func TestStartCodexWithoutInferenceWritesNoProvider(t *testing.T) {
 		t.Errorf("default model line missing:\n%s", body)
 	}
 }
+
+// Codex speaks only the Responses API. An endpoint serving just
+// /v1/chat/completions is accepted by write-time validation, boots, passes
+// readiness, and then 404s on every turn while reporting healthy. The boot
+// probe turns that into a loud failure with a reason.
+func TestStartCodexRejectsAnEndpointWithoutTheResponsesAPI(t *testing.T) {
+	for _, code := range []string{"404", "405"} {
+		t.Run("status="+code, func(t *testing.T) {
+			bin := t.TempDir()
+			codexStub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+exit 0
+`
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(codexStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			// Stub curl so the probe returns the status under test without a
+			// real endpoint.
+			curlStub := "#!/usr/bin/env bash\nprintf '" + code + "'\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curlStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+				"KYBER_INFERENCE_BASE_URL=https://chat-only.example.com/v1",
+				"OPENAI_API_KEY=endpoint-key-value")
+			if err == nil {
+				t.Fatalf("a chat-only endpoint was accepted:\n%s", out)
+			}
+			if !strings.Contains(string(out), "does not serve the Responses API") {
+				t.Errorf("boot did not name the cause:\n%s", out)
+			}
+		})
+	}
+}
+
+// A reachable endpoint that answers the probe at all must boot. 400 and 401
+// still prove the route exists; judging the credential is not the probe's job.
+func TestStartCodexAcceptsAnEndpointThatServesResponses(t *testing.T) {
+	for _, code := range []string{"200", "400", "401"} {
+		t.Run("status="+code, func(t *testing.T) {
+			bin := t.TempDir()
+			codexStub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+exit 0
+`
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(codexStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			curlStub := "#!/usr/bin/env bash\nprintf '" + code + "'\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curlStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+				"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1",
+				"OPENAI_API_KEY=endpoint-key-value")
+			if err != nil {
+				t.Fatalf("probe status %s blocked the boot: %v\n%s", code, err, out)
+			}
+			if strings.Contains(string(out), "endpoint-key-value") {
+				t.Fatal("the endpoint credential was logged")
+			}
+		})
+	}
+}

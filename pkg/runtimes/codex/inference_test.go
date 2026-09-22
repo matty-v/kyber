@@ -135,3 +135,21 @@ func TestCredentialSecretNameFollowsTheConfiguredCredential(t *testing.T) {
 		t.Errorf("CredentialSecretName = %q, want pilot-openai", got)
 	}
 }
+
+// Clearing spec.inference on an agent that never had <agent>-openai minted must
+// not make the pod unschedulable. A REQUIRED SecretKeyRef to a missing Secret
+// fails with CreateContainerConfigError before the boot script runs, so the
+// agent never reaches the exit-42/NeedsAuth path and cannot be recovered
+// through the auth UI.
+func TestClearedInferenceLeavesCredentialRefsOptional(t *testing.T) {
+	agent := codexAgent(nil, kyberv1.AgentAuthTypeAPIKey)
+	for _, v := range (&Adapter{}).EnvVars(agent) {
+		if v.ValueFrom == nil || v.ValueFrom.SecretKeyRef == nil {
+			continue
+		}
+		opt := v.ValueFrom.SecretKeyRef.Optional
+		if opt == nil || !*opt {
+			t.Errorf("%s references a Secret without Optional set; a missing Secret would block pod creation", v.Name)
+		}
+	}
+}

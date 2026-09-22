@@ -88,10 +88,18 @@ func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 			Key:                  "auth.json", Optional: &optional,
 		}}})
 		if agent.Spec.Secrets.AuthType == kyberv1.AgentAuthTypeAPIKey {
+			// Optional, like the auth.json ref above. An agent created with an
+			// inference endpoint never had <agent>-openai minted, so clearing
+			// spec.inference later would otherwise point a REQUIRED SecretKeyRef
+			// at a Secret that does not exist: the pod fails with
+			// CreateContainerConfigError before the boot script runs, so it
+			// never reaches the exit-42/NeedsAuth path and cannot be recovered
+			// through the auth UI. Optional lets it boot and fail loudly in the
+			// credential gate instead, which IS recoverable.
 			vars = append(vars, corev1.EnvVar{Name: "OPENAI_API_KEY", ValueFrom: &corev1.EnvVarSource{
 				SecretKeyRef: &corev1.SecretKeySelector{
 					LocalObjectReference: corev1.LocalObjectReference{Name: agent.Name + "-openai"},
-					Key:                  "token",
+					Key:                  "token", Optional: &optional,
 				},
 			}})
 		}

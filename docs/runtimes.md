@@ -109,6 +109,17 @@ qualifies — llama.cpp's `llama-server`, vLLM, SGLang, Ollama, or a hosted
 provider Kyber has never heard of. `openai` is the only protocol implemented
 today.
 
+### What an agent needs no longer includes its harness's own provider key
+
+A Codex agent on an endpoint needs no OpenAI key, no ChatGPT login, and never
+contacts OpenAI; a Hermes agent on one needs no OpenRouter key. Kyber neither
+asks for that credential at creation nor mints a Secret for it.
+
+If such an agent lands in `NeedsAuth`, the fix is to **rotate the endpoint's
+Secret** — that is the credential the recovery gate watches. The re-authorize
+control still offers the harness's own login flow (ChatGPT for Codex), which is
+the wrong lever for these agents and will not clear the phase.
+
 ### Codex against a custom endpoint
 
 Codex resolves a model through a named provider, so Kyber renders one into
@@ -125,9 +136,15 @@ wire_api = "responses"
 env_key = "OPENAI_API_KEY"
 ```
 
-`wire_api = "responses"` because Codex speaks the **Responses API**, not plain
-chat completions — an endpoint serving only `/v1/chat/completions` will not
-work. `env_key` names the variable Codex reads the bearer token from; despite
+`wire_api = "responses"` because Codex speaks **only** the Responses API:
+`wire_api = "chat"` was removed upstream in February 2026 and now hard-errors.
+
+**An endpoint serving only `/v1/chat/completions` cannot be used with Codex**,
+and plenty do — including some of the servers listed above as OpenAI-compatible.
+`api: "openai"` does not distinguish the two, so the runtime probes
+`POST /responses` once at boot and exits with a clear reason on a 404 or 405
+rather than reporting healthy and failing every turn. llama.cpp's
+`llama-server` serves it; check before pointing Codex at anything else. `env_key` names the variable Codex reads the bearer token from; despite
 the conventional name it is **not** an OpenAI credential, and such an agent
 needs no OpenAI key, no ChatGPT login, and never contacts OpenAI.
 
@@ -136,7 +153,9 @@ top-level keys and must precede `[model_providers.*]`. A top-level key written
 after any table header is parsed as a member of that table, and Codex would
 silently never see the provider selection.
 
-### Hermes against a custom endpoint
+### Rules that apply to every runtime
+
+The following hold for Hermes and Codex alike.
 
 Such an agent needs no OpenRouter key: it authenticates to its own endpoint and
 never contacts the harness's built-in provider, so Kyber neither asks for that
