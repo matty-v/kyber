@@ -65,6 +65,10 @@ func TestEnvVarsWithoutInferenceKeepsOpenRouter(t *testing.T) {
 	if _, leaked := values["KYBER_INFERENCE_BASE_URL"]; leaked {
 		t.Error("a default agent must not carry KYBER_INFERENCE_BASE_URL")
 	}
+	// OpenRouter is a cloud provider; Hermes' 180s default is right for it.
+	if _, leaked := values["HERMES_STREAM_STALE_TIMEOUT"]; leaked {
+		t.Error("a default agent must keep Hermes' own stale-stream timeout")
+	}
 }
 
 func TestEnvVarsWithInferencePointsAtTheEndpoint(t *testing.T) {
@@ -81,6 +85,11 @@ func TestEnvVarsWithInferencePointsAtTheEndpoint(t *testing.T) {
 	}
 	if values["KYBER_INFERENCE_BASE_URL"] != "https://llm.example.com/v1" {
 		t.Errorf("base URL = %q", values["KYBER_INFERENCE_BASE_URL"])
+	}
+	// A self-hosted server sends nothing until prefill finishes. Without this,
+	// Hermes cancels any prompt that takes longer than 180s to read.
+	if values["HERMES_STREAM_STALE_TIMEOUT"] != "900" {
+		t.Errorf("HERMES_STREAM_STALE_TIMEOUT = %q, want 900", values["HERMES_STREAM_STALE_TIMEOUT"])
 	}
 	// The env the configurator reads for the provider name must equal the
 	// provider Hermes is told to select, or Hermes resolves a provider that
