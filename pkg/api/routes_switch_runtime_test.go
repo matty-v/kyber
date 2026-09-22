@@ -117,6 +117,23 @@ func TestSwitchRuntimeRejectsUnconfiguredImageBeforePreparation(t *testing.T) {
 	}
 }
 
+func TestSwitchRuntimeRejectsQueuedStop(t *testing.T) {
+	runner := &fakeRuntimeRepairRunner{}
+	s, original := switchTestServer(t, "codex", runner)
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Name: original.Name, Namespace: original.Namespace}, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
+	if err := s.K8sClient.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	rr := postSwitch(t, s, "claude-code")
+	if rr.Code != http.StatusConflict || runner.calls != 0 {
+		t.Fatalf("status=%d body=%s calls=%d", rr.Code, rr.Body.String(), runner.calls)
+	}
+}
+
 func TestSwitchRuntimeRejectsUnsupportedAuthAndChannel(t *testing.T) {
 	runner := &fakeRuntimeRepairRunner{}
 	s, original := switchTestServer(t, "codex", runner)

@@ -1135,7 +1135,7 @@ func (s *InternalServer) handleRuntimeVersion(w http.ResponseWriter, r *http.Req
 		http.Error(w, "agent lookup failed", http.StatusInternalServerError)
 		return
 	}
-	if body.Runtime != "" && body.Runtime != agent.Spec.Runtime ||
+	if agent.Spec.Runtime != "" && body.Runtime != "" && body.Runtime != agent.Spec.Runtime ||
 		body.Runtime == "" && agent.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && agent.Status.ObservedGeneration < agent.Generation {
 		http.Error(w, "stale runtime report", http.StatusConflict)
 		return

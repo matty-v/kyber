@@ -37,10 +37,14 @@ func (s *Server) handleRuntimeReauthorize(w http.ResponseWriter, r *http.Request
 	}
 }
 
-// handleAPIKeyReauthorize writes the target harness's own Secret. It covers
-// first authorization after a switch as well as normal key rotation.
+// handleAPIKeyReauthorize writes the target harness's own Secret while the
+// agent is waiting for authorization, including first use after a switch.
 func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request, name string, agent *kyberv1.Agent, mode runtimes.AuthMode) {
 	if !s.authorizePhase(w, r, name, kyberv1.AgentPhaseRunning) {
+		return
+	}
+	if agent.Status.Phase != kyberv1.AgentPhaseNeedsAuth {
+		writeJSONError(w, http.StatusConflict, "invalid_phase", "API-key authorization requires NeedsAuth")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
@@ -86,9 +90,17 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm authorization recovery")
 		return
 	}
-	before := agent.DeepCopy()
-	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := s.K8sClient.Patch(r.Context(), agent, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: s.Namespace}, current); err != nil ||
+		current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType ||
+		current.Status.Phase != kyberv1.AgentPhaseNeedsAuth ||
+		current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && current.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
+		return
+	}
+	before := current.DeepCopy()
+	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	if err := s.K8sClient.Patch(r.Context(), current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
 		return
 	}

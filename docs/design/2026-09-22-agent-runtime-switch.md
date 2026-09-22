@@ -67,3 +67,25 @@ Secret did not exist, and that `/auth` had no API-key branch. Both first-switch
 authorization cases now create the target Secret, with focused tests and an
 Agent Detail API-key control. Draft PR #272 is open; these follow-up changes
 still need a checkpoint commit and CI.
+
+## Checkpoint: 2026-09-22 22:29 UTC
+
+Full PWA suite passed (88 files, 817 tests) with two workers; the default
+parallel run timed out several otherwise passing UI tests under simultaneous
+Go compilation. The first manual integration workflow passed on PR #272 head
+4865a6f. Full Go tests found one legacy fixture with no `spec.runtime`; the
+stale-report guard now applies only when that field is configured. Focused
+runtime report, switch, OAuth, and API-key tests pass. The API-key handler also
+rejects auth attempts outside NeedsAuth and re-reads the Agent before its
+optimistic spec patch so recovery-gate status writes cannot cause a false
+conflict. Full Go, embedded PWA, and final-head CI checks remain.
+
+## Checkpoint: 2026-09-22 22:33 UTC
+
+The focused switch, OAuth, and API-key authorization tests pass after the
+recovery-gate and optimistic-lock fixes. PWA lint/build, embedded PWA lint/build
+and tests, and the complete PWA test suite pass. The first manual integration
+workflow passed; the manual test workflow exposed only the legacy empty-runtime
+fixture, now fixed locally. The full local Go run is still completing. Next:
+push these fixes, run both workflows on the final head, then request a named
+canary agent for live acceptance after standard deployment.

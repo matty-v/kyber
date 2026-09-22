@@ -55,6 +55,9 @@ func testReauthorizeExchange(t *testing.T, route string, missing bool) {
 		Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseNeedsAuth},
 	}
 	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeOAuth
+	if missing {
+		agent.Status.RecoveryInput = "old-source-credential"
+	}
 	secret := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "needy-oauth", Namespace: "kyber-system"},
 		Data:       map[string][]byte{"refresh_token": []byte("old-token")},
@@ -109,6 +112,9 @@ func testReauthorizeExchange(t *testing.T, route string, missing bool) {
 	_ = fakeClient.Get(t.Context(), types.NamespacedName{Name: "needy", Namespace: "kyber-system"}, updatedAgent)
 	if updatedAgent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 		t.Errorf("desiredPhase=%q, want Running", updatedAgent.Spec.DesiredPhase)
+	}
+	if updatedAgent.Status.RecoveryInput != "" {
+		t.Errorf("recoveryInput=%q, want cleared", updatedAgent.Status.RecoveryInput)
 	}
 }
 

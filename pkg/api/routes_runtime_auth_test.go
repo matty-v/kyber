@@ -8,6 +8,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
@@ -19,12 +20,14 @@ func TestRuntimeAPIKeyAuthorizationCreatesTargetSecretAfterSwitch(t *testing.T) 
 		{"hermes", "openrouter"},
 	} {
 		t.Run(tc.runtime, func(t *testing.T) {
-			s := newTestPublicServer(t, testAPIKey)
 			agent := sampleAgentCRD("new-target")
 			agent.Spec.Runtime = tc.runtime
 			agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
 			agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
 			agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+			agent.Status.RecoveryInput = "old-source-credential"
+			s := newTestPublicServer(t, testAPIKey)
+			s.K8sClient = fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithStatusSubresource(agent).Build()
 			if err := s.K8sClient.Create(context.Background(), agent); err != nil {
 				t.Fatal(err)
 			}
@@ -48,6 +51,29 @@ func TestRuntimeAPIKeyAuthorizationCreatesTargetSecretAfterSwitch(t *testing.T) 
 			if updated.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 				t.Fatalf("desiredPhase=%q", updated.Spec.DesiredPhase)
 			}
+			if updated.Status.RecoveryInput != "" {
+				t.Fatalf("recovery gate remained closed: %q", updated.Status.RecoveryInput)
+			}
 		})
+	}
+}
+
+func TestRuntimeAPIKeyAuthorizationRequiresNeedsAuth(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("running-target")
+	agent.Spec.Runtime = "hermes"
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	if err := s.K8sClient.Create(context.Background(), agent); err != nil {
+		t.Fatal(err)
+	}
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/running-target/auth", map[string]string{"apiKey": "new-provider-key"})
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Name: "running-target-openrouter", Namespace: "kyber-system"}, &corev1.Secret{}); err == nil {
+		t.Fatal("credential changed outside NeedsAuth")
 	}
 }

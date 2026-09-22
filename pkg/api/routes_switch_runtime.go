@@ -72,6 +72,15 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		writeJSONError(w, http.StatusConflict, "invalid_phase", fmt.Sprintf("cannot switch runtime while agent is %s", agent.Status.Phase))
 		return
 	}
+	// A stable observed phase can still have a queued lifecycle intent. Do not
+	// override a Stop, restart, or recovery request that has not reconciled yet.
+	if agent.Status.Phase == kyberv1.AgentPhaseRunning && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
+		agent.Status.Phase == kyberv1.AgentPhaseStopped && agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped ||
+		agent.Status.Phase == kyberv1.AgentPhaseFailed && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
+		agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		writeJSONError(w, http.StatusConflict, "lifecycle_pending", "agent has a pending lifecycle action; wait for it to settle before switching")
+		return
+	}
 	if _, ok := descriptor.Auth(agent.Spec.Secrets.AuthType); !ok {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			fmt.Sprintf("%s does not offer %s authentication", descriptor.Name, agent.Spec.Secrets.AuthType), "authType")
