@@ -481,11 +481,18 @@ silently.
   [api-authorization.md](api-authorization.md).
 - **Harness switching reuses `DesiredNeedsAuth` without a new phase.** The
   switch API accepts only Running, Stopped, Failed, or NeedsAuth, prepares the
-  target on the existing PVC, then atomically patches `spec.runtime`, clears
-  runtime-scoped model/version overrides, and requests NeedsAuth. The existing
+  target on the existing PVC, then atomically patches `spec.runtime` and
+  `spec.secrets.authType`, clears runtime-scoped model/version overrides, and
+  requests NeedsAuth. The existing
   `DesiredNeedsAuth` transitions tear down any old pod. Runtime observations
   from the source harness are cleared and late source reports are rejected.
   The target credential is supplied through its own authorization flow.
+- **Recovery waits for the old pod to leave.** The NeedsAuth, MemoryExhausted,
+  and DiskExhausted recovery gates hold while the previous pod is terminating,
+  and `ResetRetryAndCreatePod` requeues rather than creating over a pod it just
+  deleted that is still present. Otherwise a fast Retry startup after a switch
+  or forced re-auth spent the one-shot recovery input on a colliding create and
+  left the agent in NeedsAuth with no pod.
 - **Pod recreation re-enters through `Creating`.** Every resume/restart path
   (`Stopped`, `Restarting`, `Failed`, `NeedsAuth`, `MemoryExhausted`,
   `DiskExhausted`, `WaitingForMachine`) creates its replacement pod in
