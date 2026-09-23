@@ -507,6 +507,9 @@ func (s *Server) getOrCreateUserSecretsSecret(r *http.Request, agentName string,
 // via envFrom on the next start. Leaving DesiredPhase untouched also means no
 // spurious roll on unrelated reconciles.
 func (s *Server) rollAgentForUserSecret(r *http.Request, agent *kyberv1.Agent) error {
+	if archiveHeld(agent) {
+		return nil // lands on the next pod after the disk archive job releases it
+	}
 	switch agent.Status.Phase {
 	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
 		patch := client.MergeFrom(agent.DeepCopy())

@@ -892,6 +892,10 @@ func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, na
 		if agent.Spec.Machine != name {
 			continue
 		}
+		if archiveHeld(agent) {
+			resp.Skipped = append(resp.Skipped, RestartMachineAgentsSkipped{Name: agent.Name, Reason: "ArchiveInProgress"})
+			continue
+		}
 		if !restartAgentsEligiblePhases[agent.Status.Phase] {
 			reason := string(agent.Status.Phase)
 			if reason == "" {

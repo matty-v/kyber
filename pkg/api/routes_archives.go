@@ -251,6 +251,12 @@ func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// archiveHeld reports whether a disk export or restore owns the agent's
+// volume (MAT-87/MAT-88).
+func archiveHeld(agent *kyberv1.Agent) bool {
+	return agent.Annotations[kyberv1.AnnotationArchiveHold] != ""
+}
+
 // rejectArchiveHeld answers 409 when a disk export or restore owns the
 // agent's volume (MAT-87/MAT-88). Every verb that would start the agent or
 // write its volume calls it; Stop does not, because it is the kill switch and

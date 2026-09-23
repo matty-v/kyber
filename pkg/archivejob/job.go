@@ -104,6 +104,9 @@ type Job struct {
 	PausedByJob       bool   `json:"pausedByJob,omitempty"`
 	HoldApplied       bool   `json:"holdApplied,omitempty"`
 	NodeName          string `json:"nodeName,omitempty"`
+	// Source is the manifest's source description, captured when the
+	// export starts so a recreated export pod writes the same one.
+	Source *diskarchive.Source `json:"source,omitempty"`
 	// Mounts is the source pod's filesystem inventory, captured before the
 	// pause so it reflects the pod the agent actually ran.
 	Mounts []diskarchive.Mount `json:"mounts,omitempty"`
@@ -119,7 +122,10 @@ type Job struct {
 	// UploadClaimed is set, with the version check, before an upload reads
 	// its body, so a job accepts exactly one upload attempt.
 	UploadClaimed bool `json:"uploadClaimed,omitempty"`
-	Uploaded      bool `json:"uploaded,omitempty"`
+	// ExportPodCreated is set once the export pod exists, so a restart
+	// before that point recreates it instead of failing the export.
+	ExportPodCreated bool `json:"exportPodCreated,omitempty"`
+	Uploaded         bool `json:"uploaded,omitempty"`
 	// VerifyStarted and Verified track the verification pod; Verified is set
 	// when it has posted a summary of a fully checked archive.
 	VerifyStarted bool `json:"verifyStarted,omitempty"`

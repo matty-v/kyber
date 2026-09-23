@@ -79,9 +79,10 @@ every sync.
 An archive pod that cannot start (image pull failure, a container
 configuration error, or still pending after 10 minutes because of node
 capacity or volume attachment) fails the job at once and releases the agent.
-Archives are bounded to `agentArchives.maxEntries` files (3 million) so the
-export and verification pods fit their 2Gi memory limit; raise both
-together for larger disks. File names that cannot be stored portably (not
+Archives are bounded to `agentArchives.maxEntries` files (1 million) so the
+export and verification pods fit their 2Gi memory limit and the manifest
+stays within the 512 MiB a verifier decodes; a higher value lets an export
+finish only to fail verification. File names that cannot be stored portably (not
 UTF-8, or that look like path traversal to other ZIP tools) are listed as
 left out.
 

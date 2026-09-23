@@ -1,7 +1,7 @@
 // Package archivestore holds agent-disk archives (MAT-87/MAT-88) outside any
 // agent volume. It has three backends behind one small interface:
 //
-//   - the built-in Kyber archive store (a one-replica StatefulSet serving a
+//   - the built-in Kyber archive store (a one-replica Deployment serving a
 //     filesystem over a private, token-authenticated HTTP API), which is the
 //     default on every installation target because it needs nothing but the
 //     cluster's default StorageClass;

@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -209,6 +210,25 @@ func (h *exportHarness) playVerifyPod(id string) {
 		h.t.Fatalf("verify read = %d", rr.Code)
 	}
 	data := rr.Body.Bytes()
+	// The verify pod opens with HEAD, then reads the archive by byte range.
+	req = httptest.NewRequest(http.MethodHead, "/internal/archive-jobs/"+id+"/archive", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr = httptest.NewRecorder()
+	h.internal.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK || rr.Header().Get("Content-Length") != strconv.Itoa(len(data)) {
+		h.t.Fatalf("verify HEAD = %d length %q, want 200 and %d", rr.Code, rr.Header().Get("Content-Length"), len(data))
+	}
+	req = httptest.NewRequest(http.MethodGet, "/internal/archive-jobs/"+id+"/archive", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Range", "bytes=2-9")
+	rr = httptest.NewRecorder()
+	h.internal.ServeHTTP(rr, req)
+	if rr.Code != http.StatusPartialContent || !bytes.Equal(rr.Body.Bytes(), data[2:10]) {
+		h.t.Fatalf("verify ranged read = %d %q, want 206 %q", rr.Code, rr.Body.Bytes(), data[2:10])
+	}
+	if len(pod.OwnerReferences) != 0 {
+		h.t.Errorf("verify pod is owned by %+v; deleting the released agent must not take verification down", pod.OwnerReferences)
+	}
 	m, err := diskarchive.Verify(bytes.NewReader(data), int64(len(data)), diskarchive.Limits{})
 	if err != nil {
 		h.t.Fatalf("stored archive does not verify: %v", err)
@@ -473,6 +493,32 @@ func TestExportPauseTimeout(t *testing.T) {
 	}
 }
 
+// A parked agent (here Failed, with the stale desiredPhase=Running a Start
+// leaves behind) has no pod to stop. The export must not route it through
+// Stopped and then restore Running, which would restart an agent that was
+// waiting for a human.
+func TestExportLeavesParkedAgentParked(t *testing.T) {
+	h := newExportHarness(t)
+	h.stopAgentPod()
+	a := h.agent()
+	a.Status.Phase = kyberv1.AgentPhaseFailed
+	if err := h.c.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	id := h.start()
+	h.svc.Tick(context.Background())
+	a = h.agent()
+	if a.Annotations[kyberv1.AnnotationArchiveHold] != id || a.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
+		a.Annotations[kyberv1.AnnotationArchivePaused] != "" {
+		t.Fatalf("parked agent: hold=%q paused=%q desired=%s, want the hold only", a.Annotations[kyberv1.AnnotationArchiveHold],
+			a.Annotations[kyberv1.AnnotationArchivePaused], a.Spec.DesiredPhase)
+	}
+	h.svc.Tick(context.Background())
+	if j := h.job(id); j.Step != archivejob.StepArchiving {
+		t.Fatalf("step = %s, want archiving without a pause", j.Step)
+	}
+}
+
 func TestExportOperatorIntentWinsOverRelease(t *testing.T) {
 	h := newExportHarness(t)
 	id := h.runToArchiving()
@@ -608,5 +654,41 @@ func TestFinishResumesAfterInterruption(t *testing.T) {
 	}
 	if a := h.agent(); a.Annotations[kyberv1.AnnotationArchiveHold] != "" || a.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 		t.Errorf("agent not released by the resumed cleanup")
+	}
+}
+
+// Config edits during an export are saved but never restart the agent.
+func TestExportConfigEditsDoNotRestart(t *testing.T) {
+	h := newExportHarness(t)
+	h.start()
+	h.svc.Tick(context.Background()) // hold + Stopped
+	body := strings.NewReader(`{"model":"claude-opus-5-5"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+exportAgent+"/set-model", body)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	h.server.BuildHandler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("set-model during export = %d %s", rr.Code, rr.Body.String())
+	}
+	a := h.agent()
+	if a.Spec.Model != "claude-opus-5-5" || a.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
+		t.Errorf("model=%q desired=%s, want the new model saved and the export's Stopped kept", a.Spec.Model, a.Spec.DesiredPhase)
+	}
+}
+
+// A restart after the archiving step was saved but before the export pod
+// existed creates the pod instead of failing the export.
+func TestExportRecreatesPodAfterRestart(t *testing.T) {
+	h := newExportHarness(t)
+	id := h.runToArchiving()
+	j := h.job(id)
+	j.ExportPodCreated = false
+	h.svc.Jobs.Update(context.Background(), j)
+	h.c.Delete(context.Background(), h.exportPod(id))
+	h.svc.Tick(context.Background())
+	h.exportPod(id)
+	if rr := h.upload(id, h.podToken(id), bytes.NewReader(sampleDisk(t))); rr.Code != http.StatusNoContent {
+		t.Errorf("upload with the reissued token = %d", rr.Code)
 	}
 }

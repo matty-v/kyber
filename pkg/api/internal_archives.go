@@ -4,15 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/matty-v/kyber/pkg/archivejob"
+	"github.com/matty-v/kyber/pkg/archivestore"
 	"github.com/matty-v/kyber/pkg/diskarchive"
 )
 
@@ -143,58 +143,18 @@ func (a *ArchiveService) receiveExport(w http.ResponseWriter, r *http.Request, j
 }
 
 // serveArchiveReads answers ranged reads of a job's archive plaintext.
+// http.ServeContent handles HEAD, Range and Content-Range over the sealed
+// reader.
 func (a *ArchiveService) serveArchiveReads(w http.ResponseWriter, r *http.Request, src *archivejob.Job) {
-	ra, err := a.openArchive(r.Context(), src)
+	ra, err := a.sharedReader(src)
 	if err != nil {
 		slog.Warn("opening archive for reading failed", "job", src.ID, "error", err)
 		http.Error(w, "archive unreadable", http.StatusInternalServerError)
 		return
 	}
-	size := ra.Size()
-	w.Header().Set("Content-Type", "application/zip")
-	w.Header().Set("Accept-Ranges", "bytes")
-	if r.Method == http.MethodHead {
-		w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
-		return
-	}
-	off, n, err := parseByteRange(r.Header.Get("Range"), size)
-	if err != nil {
-		http.Error(w, "bad range", http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
 	_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(10 * time.Minute))
-	w.Header().Set("Content-Length", strconv.FormatInt(n, 10))
-	if r.Header.Get("Range") != "" {
-		w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", off, off+n-1, size))
-		w.WriteHeader(http.StatusPartialContent)
-	}
-	_, _ = io.Copy(w, io.NewSectionReader(ra, off, n))
-}
-
-// parseByteRange accepts one "bytes=a-b" or "bytes=a-" range within size.
-func parseByteRange(h string, size int64) (int64, int64, error) {
-	if h == "" {
-		return 0, size, nil
-	}
-	spec, ok := strings.CutPrefix(h, "bytes=")
-	a, b, ok2 := strings.Cut(spec, "-")
-	if !ok || !ok2 {
-		return 0, 0, errors.New("unsupported range")
-	}
-	start, err := strconv.ParseInt(a, 10, 64)
-	if err != nil || start < 0 || start >= size {
-		return 0, 0, errors.New("bad range start")
-	}
-	end := size - 1
-	if b != "" {
-		if end, err = strconv.ParseInt(b, 10, 64); err != nil || end < start {
-			return 0, 0, errors.New("bad range end")
-		}
-		if end >= size {
-			end = size - 1
-		}
-	}
-	return start, end - start + 1, nil
+	w.Header().Set("Content-Type", "application/zip")
+	http.ServeContent(w, r, "", time.Time{}, ra)
 }
 
 // maxSummaryBytes bounds the verify pod's result. The summary carries no
@@ -220,4 +180,61 @@ func (a *ArchiveService) receiveSummary(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// sharedArchive is one opened archive shared across a pod's ranged reads.
+// Opening costs a size lookup, a header read and a final-chunk read; a verify
+// or restore pod reads a large archive in thousands of 4 MiB requests, so the
+// opened reader, with its decrypted chunk window, is kept between them.
+type sharedArchive struct {
+	mu   sync.Mutex
+	r    *archivestore.SealedReader
+	used time.Time
+}
+
+func (s *sharedArchive) ReadAt(p []byte, off int64) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.used = time.Now()
+	return s.r.ReadAt(p, off)
+}
+
+// sharedReaderIdle is how long an unused opened archive is kept.
+const sharedReaderIdle = 5 * time.Minute
+
+// sharedReader returns the cached reader for a job's archive, opening it on
+// first use. Readers outlive the request that opened them, so they read with
+// a context of their own; idle ones are dropped.
+func (a *ArchiveService) sharedReader(j *archivejob.Job) (*io.SectionReader, error) {
+	a.readersMu.Lock()
+	defer a.readersMu.Unlock()
+	now := time.Now()
+	for id, c := range a.readers {
+		c.mu.Lock()
+		idle := now.Sub(c.used) > sharedReaderIdle
+		c.mu.Unlock()
+		if idle {
+			delete(a.readers, id)
+		}
+	}
+	if c, ok := a.readers[j.ID]; ok {
+		return io.NewSectionReader(c, 0, c.r.Size()), nil
+	}
+	r, err := a.openArchive(context.Background(), j)
+	if err != nil {
+		return nil, err
+	}
+	if a.readers == nil {
+		a.readers = map[string]*sharedArchive{}
+	}
+	c := &sharedArchive{r: r, used: now}
+	a.readers[j.ID] = c
+	return io.NewSectionReader(c, 0, r.Size()), nil
+}
+
+// dropReader forgets a job's opened archive once the job no longer serves it.
+func (a *ArchiveService) dropReader(id string) {
+	a.readersMu.Lock()
+	defer a.readersMu.Unlock()
+	delete(a.readers, id)
 }

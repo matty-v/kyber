@@ -389,3 +389,19 @@ func TestRestrictiveDirectoryModesRestore(t *testing.T) {
 		t.Fatalf("VerifyRestore: %v", err)
 	}
 }
+
+// The walk's size estimate must never undercount the stream: any archive
+// that would exceed the upload limit has to fail during the walk.
+func TestSizeEstimateCoversTheStream(t *testing.T) {
+	root := buildTree(t)
+	noise := make([]byte, 3<<20)
+	for i := range noise {
+		noise[i] = byte(i*7919 + i/13)
+	}
+	os.WriteFile(filepath.Join(root, "agentroot/noise.bin"), noise, 0o644)
+	data, _ := export(t, root)
+	_, err := Write(context.Background(), root, &bytes.Buffer{}, WriteOptions{Scan: ScanOptions{Exclude: DefaultExclusions(), MaxBytes: int64(len(data)) - 1}})
+	if !errors.Is(err, ErrLimitExceeded) {
+		t.Fatalf("a limit one byte under the real stream (%d) was not caught during the walk: %v", len(data), err)
+	}
+}

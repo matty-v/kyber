@@ -20,6 +20,10 @@ type ScanOptions struct {
 	// excluded directory is not descended into.
 	Exclude map[string]string
 	// MaxEntries and MaxBytes bound the walk; zero means unbounded.
+	// MaxBytes bounds the estimated size of the archive stream (file data
+	// plus ZIP headers and the manifest), the same quantity the control
+	// plane enforces on upload, so an export that cannot fit fails while
+	// walking rather than after the whole disk has been read.
 	MaxEntries int
 	MaxBytes   int64
 }
@@ -39,6 +43,7 @@ type scanner struct {
 	opts     ScanOptions
 	entries  int
 	bytes    int64
+	names    int64
 	excluded []Exclusion
 }
 
@@ -89,9 +94,10 @@ func (s *scanner) walk(ctx context.Context, rel string, visit func(scanItem) err
 	}
 	if entry.Type == EntryFile {
 		s.bytes += entry.Size
-		if s.opts.MaxBytes > 0 && s.bytes > s.opts.MaxBytes {
-			return fmt.Errorf("%w: more than %d bytes", ErrLimitExceeded, s.opts.MaxBytes)
-		}
+	}
+	s.names += int64(len(rel))
+	if s.opts.MaxBytes > 0 && s.estimate() > s.opts.MaxBytes {
+		return fmt.Errorf("%w: archive would exceed %d bytes", ErrLimitExceeded, s.opts.MaxBytes)
 	}
 	if err := visit(scanItem{entry: entry, info: info}); err != nil {
 		return err
@@ -119,6 +125,14 @@ func (s *scanner) walk(ctx context.Context, rel string, visit func(scanItem) err
 		}
 	}
 	return nil
+}
+
+// estimate bounds the archive stream the walk so far will produce: file data
+// with deflate's worst-case expansion, per-entry local and central ZIP
+// headers and data descriptors, and the manifest record for each entry.
+func (s *scanner) estimate() int64 {
+	const perEntry = 400 // headers, descriptor and a manifest record
+	return s.bytes + s.bytes/1000 + int64(s.entries)*perEntry + 3*s.names
 }
 
 // entryFromInfo converts lstat output into an Entry. A non-empty special

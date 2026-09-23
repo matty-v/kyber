@@ -1,5 +1,5 @@
 // Command kyber-archive-store is Kyber's built-in store for agent disk
-// archives (MAT-87/MAT-88). The chart runs it as a one-replica StatefulSet
+// archives (MAT-87/MAT-88). The chart runs it as a one-replica Deployment (Recreate)
 // with its own volume on the installation's default StorageClass, so disk
 // export works on every installation target without object storage. It
 // holds sealed bytes only and serves them to the control plane over a

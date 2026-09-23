@@ -512,12 +512,6 @@ transcripts:
     # Off by default — the age threshold alone is archive-safe and needs no creds.
     archiveCrosscheck: false
 
-# Optional in-cluster MinIO (kyber#437) — an S3-compatible object store for the
-# durable log archive on clusters with no cloud object store.
-# Default OFF: GCP installs use backend: gcs and never render these resources.
-# When enabled, set logShipper.backend: s3 and point logShipper.endpoint at the
-# minio Service and logShipper.existingCredentialsSecret at credentialsSecret.
-# Single-node is sufficient for durable logs (distributed/HA is out of scope).
 # Agent disk archives (MAT-87/MAT-88): export an agent's persistent volume as
 # a portable ZIP and create a new agent from one. Works on every installation
 # target because the default store is Kyber's own (archive-store below), which
@@ -570,9 +564,17 @@ agentArchives:
   # Archive jobs running at once across the installation.
   maxConcurrentJobs: 2
   # Files, directories and links in one archive. Bounds the memory of the
-  # export and verification pods (2Gi limit); raise both together.
-  maxEntries: 3000000
+  # export and verification pods (2Gi limit) and keeps the manifest within
+  # the 512 MiB a verifier decodes; a larger value lets an export succeed
+  # only to fail verification.
+  maxEntries: 1000000
 
+# Optional in-cluster MinIO (kyber#437) — an S3-compatible object store for the
+# durable log archive on clusters with no cloud object store.
+# Default OFF: GCP installs use backend: gcs and never render these resources.
+# When enabled, set logShipper.backend: s3 and point logShipper.endpoint at the
+# minio Service and logShipper.existingCredentialsSecret at credentialsSecret.
+# Single-node is sufficient for durable logs (distributed/HA is out of scope).
 minio:
   enabled: false
   image:
