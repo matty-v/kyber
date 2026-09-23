@@ -743,3 +743,52 @@ func TestConverge_SharedUnmanagedSkillIsReportedOnce(t *testing.T) {
 		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v", unmanaged, (*reports)[0].Issues)
 	}
 }
+
+// A shared link the agent deletes, typically from the harness it now runs,
+// must stay deleted rather than reappear on the next pass. A skill created
+// again later is shared again.
+func TestConverge_RespectsAnAgentDeletingASharedSkill(t *testing.T) {
+	home := t.TempDir()
+	skill := filepath.Join(home, ".claude", "skills", "tidy")
+	writeLocal := func() {
+		if err := os.MkdirAll(skill, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: tidy\ndescription: Local.\n---\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeLocal()
+	sidecar, _ := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	p := paths{homeDir: home, platformDir: filepath.Join(t.TempDir(), "none")}
+	converge := func() {
+		t.Helper()
+		if _, err := convergeAndReport(p, postReport); err != nil {
+			t.Fatal(err)
+		}
+	}
+	codex := filepath.Join(home, ".codex", "skills", "tidy")
+
+	converge()
+	if !linkPointsAt(codex, skill) {
+		t.Fatal("skill was not shared into the Codex home")
+	}
+	if err := os.Remove(codex); err != nil {
+		t.Fatal(err)
+	}
+	converge()
+	if _, err := os.Lstat(codex); !os.IsNotExist(err) {
+		t.Fatalf("deleted shared skill came back: %v", err)
+	}
+
+	if err := os.RemoveAll(skill); err != nil {
+		t.Fatal(err)
+	}
+	converge()
+	writeLocal()
+	converge()
+	if !linkPointsAt(codex, skill) {
+		t.Fatal("a skill created again was not shared again")
+	}
+}

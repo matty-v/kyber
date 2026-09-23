@@ -32,11 +32,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -550,13 +552,16 @@ func linkAll(repoDir, homeDir string) (int, error) {
 // identity repo can keep skills nowhere else, and before this a skill written
 // under ~/.claude/skills vanished from view on a switch to Codex or Hermes.
 // An existing entry of the same name, such as a repo link, is never replaced.
+// Links it made are recorded, so one the agent deletes stays deleted.
 func linkLocalSkills(homeDir string) (int, error) {
 	homes := map[string]bool{}
 	for _, rel := range runtimeSkillDirs {
 		homes[filepath.Join(homeDir, rel)] = true
 	}
-	// Drop this function's own links whose skill was deleted. Other dangling
-	// links are left for the report to surface.
+	statePath := filepath.Join(homeDir, sharedLinksState)
+	shared := readSharedLinks(statePath)
+	// Drop this function's own links whose skill was deleted, and their
+	// records. Other dangling links are left for the report to surface.
 	for home := range homes {
 		entries, err := os.ReadDir(home)
 		if err != nil {
@@ -572,9 +577,14 @@ func linkLocalSkills(homeDir string) (int, error) {
 				if err := os.Remove(link); err != nil {
 					return 0, err
 				}
+				if rel, err := filepath.Rel(homeDir, link); err == nil {
+					delete(shared, rel)
+				}
 			}
 		}
 	}
+
+	keep := map[string]string{}
 	var count int
 	for _, srcRel := range runtimeSkillDirs {
 		srcDir := filepath.Join(homeDir, srcRel)
@@ -600,8 +610,17 @@ func linkLocalSkills(homeDir string) (int, error) {
 				if dstRel == srcRel {
 					continue
 				}
+				key := filepath.Join(dstRel, name)
 				dst := filepath.Join(homeDir, dstRel, name)
 				if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+					if linkPointsAt(dst, dir) {
+						keep[key] = dir
+					}
+					continue
+				}
+				if shared[key] == dir {
+					// Made earlier and since removed by the agent: respect it.
+					keep[key] = dir
 					continue
 				}
 				if err := os.MkdirAll(filepath.Join(homeDir, dstRel), 0o755); err != nil {
@@ -610,6 +629,7 @@ func linkLocalSkills(homeDir string) (int, error) {
 				if err := os.Symlink(dir, dst); err != nil {
 					return count, err
 				}
+				keep[key] = dir
 				linked = true
 			}
 			if linked {
@@ -617,7 +637,49 @@ func linkLocalSkills(homeDir string) (int, error) {
 			}
 		}
 	}
+	if err := writeSharedLinks(statePath, shared, keep); err != nil {
+		return count, err
+	}
 	return count, nil
+}
+
+// sharedLinksState records, relative to $HOME, each runtime-home link
+// linkLocalSkills created and the skill it points at. A record outlives its
+// link only while that skill exists, so a later skill of the same name is
+// shared again.
+const sharedLinksState = ".local/state/kyber-skills/shared-links"
+
+func readSharedLinks(path string) map[string]string {
+	out := map[string]string{}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return out
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if key, source, ok := strings.Cut(line, "\t"); ok && key != "" && source != "" {
+			out[key] = source
+		}
+	}
+	return out
+}
+
+func writeSharedLinks(path string, before, after map[string]string) error {
+	if maps.Equal(before, after) {
+		return nil
+	}
+	keys := slices.Sorted(maps.Keys(after))
+	var b strings.Builder
+	for _, k := range keys {
+		b.WriteString(k + "\t" + after[k] + "\n")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func managedSkillNames(sources []string) map[string]bool {
