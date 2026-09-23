@@ -77,10 +77,12 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 	// A stable observed phase can still have a queued lifecycle intent. Do not
 	// override a Stop, restart, or recovery request that has not reconciled yet.
-	if agent.Status.Phase == kyberv1.AgentPhaseRunning && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
+	// An empty desiredPhase is no intent at all (agents whose lifecycle was
+	// never driven through the API); the controller treats it as Running.
+	if agent.Spec.DesiredPhase != "" && (agent.Status.Phase == kyberv1.AgentPhaseRunning && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
 		agent.Status.Phase == kyberv1.AgentPhaseStopped && agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped ||
 		agent.Status.Phase == kyberv1.AgentPhaseFailed && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
-		agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning) {
 		writeJSONError(w, http.StatusConflict, "lifecycle_pending", "agent has a pending lifecycle action; wait for it to settle before switching")
 		return
 	}

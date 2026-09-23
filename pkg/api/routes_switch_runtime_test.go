@@ -159,6 +159,38 @@ func TestSwitchRuntimeRejectsQueuedStop(t *testing.T) {
 	}
 }
 
+func TestSwitchRuntimeAcceptsAgentWithNoDesiredPhase(t *testing.T) {
+	// Agents whose lifecycle was never driven through the API carry an empty
+	// desiredPhase. That is no queued intent, not a pending one.
+	for _, phase := range []kyberv1.AgentPhase{kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseNeedsAuth} {
+		t.Run(string(phase), func(t *testing.T) {
+			runner := &fakeRuntimeRepairRunner{}
+			s, original := switchTestServer(t, "claude-code", runner)
+			current := &kyberv1.Agent{}
+			key := types.NamespacedName{Name: original.Name, Namespace: original.Namespace}
+			if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+				t.Fatal(err)
+			}
+			current.Spec.DesiredPhase = ""
+			current.Status.Phase = phase
+			if err := s.K8sClient.Update(context.Background(), current); err != nil {
+				t.Fatal(err)
+			}
+			rr := postSwitch(t, s, "codex")
+			if rr.Code != http.StatusAccepted || runner.calls != 1 {
+				t.Fatalf("status=%d body=%s calls=%d", rr.Code, rr.Body.String(), runner.calls)
+			}
+			stored := &kyberv1.Agent{}
+			if err := s.K8sClient.Get(context.Background(), key, stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.Spec.Runtime != "codex" || stored.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth {
+				t.Fatalf("runtime=%q desired=%q", stored.Spec.Runtime, stored.Spec.DesiredPhase)
+			}
+		})
+	}
+}
+
 func TestSwitchRuntimeRejectsUnsupportedAuthAndChannel(t *testing.T) {
 	runner := &fakeRuntimeRepairRunner{}
 	s, original := switchTestServer(t, "codex", runner)
