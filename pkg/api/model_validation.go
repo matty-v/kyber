@@ -70,7 +70,7 @@ func (s *Server) validateModelValue(ctx context.Context, runtime, model, agentNa
 		}
 		if agentName != "" {
 			if catalogs, ok := s.RuntimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-				if models, err := catalogs.GetAgentModels(ctx, agentName); err == nil {
+				if models, err := catalogs.GetAgentModels(ctx, agentName, runtime); err == nil {
 					for _, m := range models {
 						known[m.ID] = true
 					}

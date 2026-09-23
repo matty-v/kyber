@@ -498,7 +498,7 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-		if err := catalogs.PutAgentModels(r.Context(), agentName, models); err != nil {
+		if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
 			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
 			return
 		}

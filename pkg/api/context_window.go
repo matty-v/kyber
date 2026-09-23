@@ -33,7 +33,7 @@ type SnapshotWindowResolver interface {
 // previous ContextWindows.LookupNormalized did), and the alias resolution is
 // nil-safe at every tier and stays off any slow/unbounded cache call (the
 // SnapshotResolver's TTL+timeout bounds guarantee that).
-func (s *Server) resolveContextWindow(ctx context.Context, agent, model string) (int64, bool) {
+func (s *Server) resolveContextWindow(ctx context.Context, agent, runtime, model string) (int64, bool) {
 	base := strings.TrimSuffix(model, "[1m]")
 
 	// 1. operator override ConfigMap — wins when the operator pinned the model.
@@ -45,7 +45,7 @@ func (s *Server) resolveContextWindow(ctx context.Context, agent, model string) 
 	// 2. the authenticated catalog reported by this exact agent. Catalogs are
 	// deliberately agent-scoped because provider entitlements can differ.
 	if catalogs, ok := s.RuntimeDetectCache.(runtimedetect.AgentCatalogCache); ok && agent != "" {
-		if models, err := catalogs.GetAgentModels(ctx, agent); err == nil {
+		if models, err := catalogs.GetAgentModels(ctx, agent, runtime); err == nil {
 			for _, candidate := range models {
 				if candidate.ID == base && candidate.ContextWindowKnown && candidate.ContextWindow > 0 {
 					return candidate.ContextWindow, true

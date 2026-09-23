@@ -53,7 +53,8 @@ func main() {
 	var lastActivityPath string
 	var lastActivityMod time.Time
 	var lastTokens time.Time
-	var lastCatalog time.Time
+	var nextCatalog time.Time
+	catalogRetry := catalogRetryMin
 	bootActivity := true
 	for {
 		// Honour the signal context installed above. signal.NotifyContext
@@ -110,20 +111,49 @@ func main() {
 		// pod, and every turn then fails against an endpoint that does not
 		// serve that id. Reporting nothing leaves the operator typing the id
 		// they configured, which is correct.
-		if endpointConfigured {
-			lastCatalog = time.Now()
-		} else if time.Since(lastCatalog) >= time.Hour {
-			if models, err := discoverModels(); err != nil {
-				log.Printf("codex-reporter: model catalog discovery failed: %v", err)
-			} else if body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models}); err == nil {
-				if err := post(client, "runtime-catalog", body); err != nil {
-					log.Printf("codex-reporter: model catalog report failed: %v", err)
-				}
+		if !endpointConfigured && !time.Now().Before(nextCatalog) {
+			err := reportCatalog(client)
+			if err != nil {
+				log.Printf("codex-reporter: model catalog not reported, retrying in %s: %v", catalogRetry, err)
 			}
-			lastCatalog = time.Now()
+			var wait time.Duration
+			wait, catalogRetry = nextCatalogDelay(err, catalogRetry)
+			nextCatalog = time.Now().Add(wait)
 		}
 		time.Sleep(time.Second)
 	}
+}
+
+const (
+	catalogRetryMin = 30 * time.Second
+	catalogRefresh  = time.Hour
+)
+
+// nextCatalogDelay schedules the next catalog report. A failure retries soon:
+// the first model/list often races app-server startup at boot, and waiting the
+// full refresh interval left a new or switched agent with no catalog, or its
+// previous harness's, for up to an hour. Retries back off to the refresh
+// interval.
+func nextCatalogDelay(err error, retry time.Duration) (wait, nextRetry time.Duration) {
+	if err == nil {
+		return catalogRefresh, catalogRetryMin
+	}
+	return retry, min(retry*2, catalogRefresh)
+}
+
+func reportCatalog(client *http.Client) error {
+	models, err := discoverModels()
+	if err != nil {
+		return fmt.Errorf("discovery: %w", err)
+	}
+	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models})
+	if err != nil {
+		return err
+	}
+	if err := post(client, "runtime-catalog", body); err != nil {
+		return fmt.Errorf("report: %w", err)
+	}
+	return nil
 }
 
 type catalogModel struct {

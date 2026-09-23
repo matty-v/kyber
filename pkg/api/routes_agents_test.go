@@ -57,10 +57,10 @@ func TestGetAgentModelsReturnsOnlyAuthenticatedAgentCatalog(t *testing.T) {
 		t.Fatalf("creating agent: %v", err)
 	}
 	cache := runtimedetect.NewMemoryCache()
-	if err := cache.PutAgentModels(context.Background(), "alice", []runtimedetect.Model{{ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1", ContextWindow: 200_000, ContextWindowKnown: true}}); err != nil {
+	if err := cache.PutAgentModels(context.Background(), "alice", "claude-code", []runtimedetect.Model{{ID: "claude-opus-4-1", DisplayName: "Claude Opus 4.1", ContextWindow: 200_000, ContextWindowKnown: true}}); err != nil {
 		t.Fatalf("seeding catalog: %v", err)
 	}
-	if err := cache.PutAgentModels(context.Background(), "bob", []runtimedetect.Model{{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5"}}); err != nil {
+	if err := cache.PutAgentModels(context.Background(), "bob", "claude-code", []runtimedetect.Model{{ID: "claude-sonnet-4-5", DisplayName: "Claude Sonnet 4.5"}}); err != nil {
 		t.Fatalf("seeding other catalog: %v", err)
 	}
 	s.RuntimeDetectCache = cache
@@ -72,6 +72,28 @@ func TestGetAgentModelsReturnsOnlyAuthenticatedAgentCatalog(t *testing.T) {
 	}
 	if !strings.Contains(rr.Body.String(), "claude-opus-4-1") || strings.Contains(rr.Body.String(), "claude-sonnet-4-5") {
 		t.Fatalf("unexpected response: %s", rr.Body.String())
+	}
+}
+
+// MAT-85: after switching harness, the picker must not offer the previous
+// harness's models while the new one has not reported its own catalog.
+func TestGetAgentModelsIgnoresPreviousHarnessCatalog(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("echo")
+	agent.Spec.Runtime = "codex"
+	if err := s.K8sClient.Create(context.Background(), agent); err != nil {
+		t.Fatal(err)
+	}
+	cache := runtimedetect.NewMemoryCache()
+	if err := cache.PutAgentModels(context.Background(), "echo", "claude-code", []runtimedetect.Model{{ID: "claude-opus-5-5", DisplayName: "Claude Opus 5.5"}}); err != nil {
+		t.Fatal(err)
+	}
+	s.RuntimeDetectCache = cache
+	req := scopedRequest(http.MethodGet, "/api/v1/agents/echo/models", testAPIKey)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusConflict || strings.Contains(rr.Body.String(), "claude-opus-5-5") {
+		t.Fatalf("status=%d body=%s, want 409 without the Claude catalog", rr.Code, rr.Body.String())
 	}
 }
 

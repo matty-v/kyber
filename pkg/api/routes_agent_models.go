@@ -40,7 +40,7 @@ func (s *Server) handleAgentModels(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 	if catalogs, ok := s.RuntimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-		models, err := catalogs.GetAgentModels(r.Context(), name)
+		models, err := catalogs.GetAgentModels(r.Context(), name, agent.Spec.Runtime)
 		if err == nil && len(models) > 0 {
 			writeJSON(w, http.StatusOK, agentModelsResponse{Models: availableModels(models)})
 			return

@@ -27,11 +27,14 @@ type Cache interface {
 
 // AgentCatalogCache stores authenticated model catalogs independently from the
 // public harness snapshot, avoiding lost updates when agents and the npm poller
-// report concurrently.
+// report concurrently. Catalogs are keyed by agent AND runtime: an agent that
+// switches harness must never be offered its previous harness's models.
 type AgentCatalogCache interface {
-	PutAgentModels(ctx context.Context, agent string, models []Model) error
-	GetAgentModels(ctx context.Context, agent string) ([]Model, error)
+	PutAgentModels(ctx context.Context, agent, runtime string, models []Model) error
+	GetAgentModels(ctx context.Context, agent, runtime string) ([]Model, error)
 }
+
+func agentCatalogKey(agent, runtime string) string { return agent + "/" + runtime }
 
 // ErrCacheEmpty signals that no snapshot has been written, or the cached
 // snapshot has expired. /available returns the empty fallback in this case.
@@ -93,23 +96,24 @@ func (m *MemoryCache) Get(ctx context.Context) (*Snapshot, error) {
 	return &copy, nil
 }
 
-func (m *MemoryCache) PutAgentModels(_ context.Context, agent string, models []Model) error {
+func (m *MemoryCache) PutAgentModels(_ context.Context, agent, runtime string, models []Model) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.agentModels == nil {
 		m.agentModels = make(map[string][]Model)
 	}
-	m.agentModels[agent] = append([]Model(nil), models...)
+	m.agentModels[agentCatalogKey(agent, runtime)] = append([]Model(nil), models...)
 	return nil
 }
 
-func (m *MemoryCache) GetAgentModels(_ context.Context, agent string) ([]Model, error) {
+func (m *MemoryCache) GetAgentModels(_ context.Context, agent, runtime string) ([]Model, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	if len(m.agentModels[agent]) == 0 {
+	models := m.agentModels[agentCatalogKey(agent, runtime)]
+	if runtime == "" || len(models) == 0 {
 		return nil, ErrCacheEmpty
 	}
-	return append([]Model(nil), m.agentModels[agent]...), nil
+	return append([]Model(nil), models...), nil
 }
 
 // redisKey is where the snapshot lives in Redis. Single key — multi-replica
@@ -171,13 +175,13 @@ func (r *RedisCache) Get(ctx context.Context) (*Snapshot, error) {
 	return &snap, nil
 }
 
-func (r *RedisCache) PutAgentModels(ctx context.Context, agent string, models []Model) error {
+func (r *RedisCache) PutAgentModels(ctx context.Context, agent, runtime string, models []Model) error {
 	data, err := json.Marshal(models)
 	if err != nil {
 		return fmt.Errorf("marshaling agent models: %w", err)
 	}
 	pipe := r.client.TxPipeline()
-	pipe.HSet(ctx, redisAgentModelsKey, agent, data)
+	pipe.HSet(ctx, redisAgentModelsKey, agentCatalogKey(agent, runtime), data)
 	pipe.Expire(ctx, redisAgentModelsKey, r.ttl)
 	if _, err := pipe.Exec(ctx); err != nil {
 		return fmt.Errorf("setting agent models: %w", err)
@@ -185,8 +189,11 @@ func (r *RedisCache) PutAgentModels(ctx context.Context, agent string, models []
 	return nil
 }
 
-func (r *RedisCache) GetAgentModels(ctx context.Context, agent string) ([]Model, error) {
-	raw, err := r.client.HGet(ctx, redisAgentModelsKey, agent).Bytes()
+func (r *RedisCache) GetAgentModels(ctx context.Context, agent, runtime string) ([]Model, error) {
+	if runtime == "" {
+		return nil, ErrCacheEmpty
+	}
+	raw, err := r.client.HGet(ctx, redisAgentModelsKey, agentCatalogKey(agent, runtime)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, ErrCacheEmpty
 	}

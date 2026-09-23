@@ -1370,7 +1370,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 				// (see the /token-usage handler); mutating it in place would
 				// race a concurrent reader. Shallow copy is safe (value fields).
 				resolved := *snap
-				limit, known := s.resolveContextWindow(r.Context(), resp.ID, resolved.Model)
+				limit, known := s.resolveContextWindow(r.Context(), resp.ID, resp.Runtime, resolved.Model)
 				if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {
 					limit, known = resolved.Tokens.Limit, true
 				}
