@@ -241,6 +241,38 @@ as opaque stack traces:
 > `--skip-build` against a stale/placeholder image, the smoke spec's
 > real-surface assertion fails loudly — that assertion is the standing guard.
 
+## Manual testing on the shared GKE dev install
+
+Everything above runs locally. To click through a *published* build on real
+GKE nodes with live agents, deploy it to **kyber-dev** (cluster `kyber-dev`,
+project `datawire-dev`, zone `us-central1-a`), served at
+<https://kyber-dev-gcp.voget.io>.
+
+```bash
+scripts/devenv/deploy-gke-dev.sh --dry-run pr/274   # show the image tags it would use
+scripts/devenv/deploy-gke-dev.sh pr/274             # a PR's build
+scripts/devenv/deploy-gke-dev.sh main               # back to main head
+```
+
+The script resolves every image tag and fails if one isn't published yet (CI
+still building). It then runs `helm upgrade` with the release's existing values
+and the chart from that commit, and waits until `/api/v1/version` reports the
+expected SHA. A PR build publishes only the images it rebuilt; every other
+image falls back to the merge-base's main tag. The script uses a private
+kubeconfig, so your current kubectl context isn't touched.
+
+Requires `gcloud` (authenticated with access to `datawire-dev`), `kubectl`,
+`gke-gcloud-auth-plugin`, `helm`, `gh`, and a clone with release tags. Sign in
+to the PWA with the install's API key:
+
+```bash
+gcloud container clusters get-credentials kyber-dev --location us-central1-a --project datawire-dev
+kubectl -n kyber-system get secret kyber-api-credentials -o jsonpath='{.data.api-key}' | base64 -d
+```
+
+kyber-dev is shared. Put `main` back when you're done with a PR build, and
+use the test agents rather than creating long-lived ones.
+
 ## Requirements
 
 Bring-up needs a local container runtime + Kubernetes tooling on `PATH`:
