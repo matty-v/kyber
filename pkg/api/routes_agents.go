@@ -819,6 +819,12 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Disk export (MAT-87): async jobs that archive the agent's volume.
+	if action == "exports" || strings.HasPrefix(action, "exports/") {
+		s.handleAgentExports(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "exports"), "/"))
+		return
+	}
+
 	if action == "tasks" || strings.HasPrefix(action, "tasks/") {
 		s.handleAgentTasks(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "tasks"), "/"))
 		return
@@ -1478,10 +1484,12 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		// on the documented path for moving an agent back off a custom
 		// endpoint. Mirrors set-model: roll only actively-running phases so a
 		// dormant agent is not started by a config edit.
-		switch agent.Status.Phase {
-		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
+		switch {
+		case archiveHeld(agent):
+			// Lands on the next pod after the disk archive job releases it.
+		case agent.Status.Phase == kyberv1.AgentPhaseRunning, agent.Status.Phase == kyberv1.AgentPhaseStarting, agent.Status.Phase == kyberv1.AgentPhaseRestarting:
 			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
-		case kyberv1.AgentPhaseFailed:
+		case agent.Status.Phase == kyberv1.AgentPhaseFailed:
 			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 		}
 	}
@@ -1991,6 +1999,13 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
+	// A disk export or restore owns the volume (MAT-87/MAT-88); the controller
+	// would refuse to build the pod anyway. Stop stays allowed: it is the
+	// kill switch and never touches the volume.
+	if phase != kyberv1.AgentPhaseStopped && rejectArchiveHeld(w, agent) {
+		return
+	}
+
 	if phase == kyberv1.AgentPhaseRunning {
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
@@ -2023,6 +2038,9 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.DesiredPhase = phase
+	// An operator's lifecycle verb during a disk export is their intent; the
+	// export must not overwrite it when it releases the agent.
+	delete(agent.Annotations, kyberv1.AnnotationArchivePaused)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent desired phase", "name", name, "phase", phase, "error", err)
 		// A schema rejection is a bug in this server (a lifecycle verb writing a
@@ -2096,10 +2114,13 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 	}
 	// Only roll the pod for actively-running phases; leave Stopped alone
 	// so a model change doesn't start a dormant agent.
-	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
+	switch {
+	case archiveHeld(agent):
+		// A disk export or restore owns the volume; the change lands when
+		// the agent's next pod starts after the job releases it.
+	case agent.Status.Phase == kyberv1.AgentPhaseRunning, agent.Status.Phase == kyberv1.AgentPhaseStarting, agent.Status.Phase == kyberv1.AgentPhaseRestarting:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
-	case kyberv1.AgentPhaseFailed:
+	case agent.Status.Phase == kyberv1.AgentPhaseFailed:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	}
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
@@ -2161,10 +2182,13 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 	// Mirror setAgentModel: only roll the pod for actively-running phases.
 	// Stopped agents keep their disk state; the new version takes
 	// effect on the next manual start.
-	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
+	switch {
+	case archiveHeld(agent):
+		// A disk export or restore owns the volume; the change lands when
+		// the agent's next pod starts after the job releases it.
+	case agent.Status.Phase == kyberv1.AgentPhaseRunning, agent.Status.Phase == kyberv1.AgentPhaseStarting, agent.Status.Phase == kyberv1.AgentPhaseRestarting:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
-	case kyberv1.AgentPhaseFailed:
+	case agent.Status.Phase == kyberv1.AgentPhaseFailed:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	}
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
@@ -2274,8 +2298,10 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	// phases need explicit DesiredPhase=Running to fire their state-machine
 	// recovery transitions, per kyber#272). Running→Restarting uses the
 	// normal roll.
-	switch agent.Status.Phase {
-	case kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted, kyberv1.AgentPhaseDiskExhausted:
+	switch {
+	case archiveHeld(agent):
+		// Lands on the next pod after the disk archive job releases it.
+	case agent.Status.Phase == kyberv1.AgentPhaseFailed, agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted, agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	default:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting

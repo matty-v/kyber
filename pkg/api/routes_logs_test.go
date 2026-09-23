@@ -11,8 +11,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/kubernetes"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -27,9 +27,9 @@ func buildLogsHandler(t *testing.T, objs []runtime.Object) http.Handler {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
 		// Clientset intentionally nil — tests 503 and parse paths only
 	}
 	return s.BuildHandler()
@@ -43,10 +43,10 @@ func buildLogsHandlerWithClientset(t *testing.T, crObjs []runtime.Object, k8sObj
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(crObjs...).Build()
 	fakeClientset := k8sfake.NewSimpleClientset(k8sObjs...)
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Clientset:     fakeClientset,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Clientset: fakeClientset,
 	}
 	return s.BuildHandler()
 }
@@ -235,10 +235,10 @@ func TestAgentLogs_PodNotFound(t *testing.T) {
 	realClientset := buildClientsetWithServer(t, mockAPIServer.URL)
 
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Clientset:     realClientset,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Clientset: realClientset,
 	}
 	h := s.BuildHandler()
 
@@ -350,10 +350,10 @@ func TestAgentLogs_DefaultContainerIsAgent(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
 	cs := buildClientsetWithServer(t, mockAPIServer.URL)
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Clientset:     cs,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Clientset: cs,
 	}
 	h := s.BuildHandler()
 
@@ -390,10 +390,10 @@ func TestAgentLogs_ExplicitContainerForwarded(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
 			cs := buildClientsetWithServer(t, mockAPIServer.URL)
 			s := &api.Server{
-				K8sClient:     fakeClient,
-				APIKey:        testAPIKey,
-				Namespace:     "kyber-system",
-				Clientset:     cs,
+				K8sClient: fakeClient,
+				APIKey:    testAPIKey,
+				Namespace: "kyber-system",
+				Clientset: cs,
 			}
 			h := s.BuildHandler()
 
@@ -430,10 +430,10 @@ func TestAgentLogs_InvalidContainerReturns400(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
 	cs := buildClientsetWithServer(t, mockAPIServer.URL)
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Clientset:     cs,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Clientset: cs,
 	}
 	h := s.BuildHandler()
 

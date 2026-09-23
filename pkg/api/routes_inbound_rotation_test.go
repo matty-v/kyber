@@ -16,8 +16,8 @@ func makeRotatedSecret(name string, current, prev []byte, rotatedAt time.Time) *
 	return &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "kyber-system"},
 		Data: map[string][]byte{
-			"webhook-secret":                current,
-			"webhook-secret-prev":           prev,
+			"webhook-secret":                 current,
+			"webhook-secret-prev":            prev,
 			"webhook-secret-prev-rotated-at": []byte(rotatedAt.UTC().Format(time.RFC3339)),
 		},
 	}

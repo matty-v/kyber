@@ -835,6 +835,141 @@ paths:
         '501':
           $ref: '#/components/responses/NotImplemented'
 
+  /api/v1/agents/{name}/exports:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: startAgentExport
+      summary: Start an asynchronous export of the agent's persistent disk
+      description: >
+        Requires archives:admin and the agent in the caller's agent resources.
+        Returns immediately with a queued job. The worker stops a running
+        agent, archives its volume from a same-node pod, restores the prior
+        desiredPhase, and verifies the stored archive. Only stable phases are
+        accepted; one active export per agent.
+      tags: [agents]
+      responses:
+        '202':
+          description: Export queued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    get:
+      operationId: listAgentExports
+      summary: List the agent's recent exports, newest first
+      tags: [agents]
+      responses:
+        '200':
+          description: Exports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [exports]
+                properties:
+                  exports:
+                    type: array
+                    items: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/agents/{name}/exports/{id}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getAgentExport
+      summary: Get one export job
+      tags: [agents]
+      responses:
+        '200':
+          description: Export job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/agents/{name}/exports/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: cancelAgentExport
+      summary: Cancel an export; the worker releases the agent and deletes partial bytes
+      tags: [agents]
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/agents/{name}/exports/{id}/download-link:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: createExportDownloadLink
+      summary: Mint a short-lived download URL for a completed export
+      description: >
+        The returned path carries its own credential, bound to this job and
+        expiring after a few minutes, so a browser can stream a large archive
+        by plain navigation.
+      tags: [agents]
+      responses:
+        '200':
+          description: Download link
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url, expiresAt, filename]
+                properties:
+                  url: {type: string}
+                  expiresAt: {type: string, format: date-time}
+                  filename: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/archive-downloads/{token}:
+    parameters:
+      - {name: token, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: downloadAgentExport
+      summary: Stream a completed export as a plain ZIP
+      description: No bearer key; the path token is the credential and is redacted from request logs.
+      security: []
+      tags: [agents]
+      responses:
+        '200':
+          description: The archive
+          content:
+            application/zip:
+              schema: {type: string, format: binary}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
   /api/v1/agents/{name}/models:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1666,6 +1801,81 @@ components:
             type: object
         identity:
           $ref: '#/components/schemas/IdentityRepoCapability'
+        archives:
+          $ref: '#/components/schemas/ArchivesCapability'
+
+    ArchiveJob:
+      type: object
+      required: [id, kind, agent, state, bytesDone, createdAt, cancelable, downloadable]
+      properties:
+        id: {type: string}
+        kind: {type: string, enum: [export, import]}
+        agent: {type: string}
+        state: {type: string, enum: [queued, running, completed, failed, canceled, expired]}
+        step: {type: string}
+        message: {type: string}
+        error: {type: string}
+        bytesDone: {type: integer, format: int64}
+        sizeBytes: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        startedAt: {type: string, format: date-time}
+        completedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        cancelable: {type: boolean}
+        downloadable: {type: boolean}
+        requestedBy: {type: string}
+        summary: {$ref: '#/components/schemas/ArchiveSummary'}
+
+    ArchiveSummary:
+      type: object
+      required: [formatVersion, exportedAt, source, mounts, totals]
+      properties:
+        formatVersion: {type: string}
+        exportedAt: {type: string, format: date-time}
+        source:
+          type: object
+          additionalProperties: true
+        mounts:
+          type: array
+          nullable: true
+          items:
+            type: object
+            required: [path, kind, archived, reason]
+            properties:
+              path: {type: string}
+              kind: {type: string}
+              archived: {type: boolean}
+              reason: {type: string}
+        excluded:
+          type: array
+          items:
+            type: object
+            required: [path, reason]
+            properties:
+              path: {type: string}
+              reason: {type: string}
+        totals:
+          type: object
+          required: [entries, files, dirs, symlinks, bytes]
+          properties:
+            entries: {type: integer}
+            files: {type: integer}
+            dirs: {type: integer}
+            symlinks: {type: integer}
+            bytes: {type: integer, format: int64}
+        sensitive:
+          type: array
+          items: {type: string}
+
+    ArchivesCapability:
+      type: object
+      required: [available]
+      properties:
+        available: {type: boolean}
+        unavailableReason: {type: string}
+        store: {type: string}
+        maxArchiveBytes: {type: integer, format: int64}
+        retentionSeconds: {type: integer, format: int64}
 
     IdentityRepoCapability:
       type: object

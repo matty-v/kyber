@@ -41,6 +41,27 @@ target on the same PVC when the adapter has a repair contract, clears the old
 model/version overrides, and requests NeedsAuth. See
 `docs/design/2026-09-22-agent-runtime-switch.md`.
 
+An agent's disk is exported as a portable ZIP through async jobs at
+`POST /api/v1/agents/{name}/exports` (`archives:admin` plus the agent in the
+caller's `agentResources`). The job row (Postgres `agent_archive_jobs`,
+`pkg/archivejob`) is the only job state; a leader-gated worker
+(`pkg/api/archives.go`) drives it idempotently. The export stops the agent
+through `desiredPhase` and sets the `kyber.io/archive-hold` annotation; while
+that annotation is present the reconciler never builds an agent pod. A
+same-node pod (control-plane image, `kyber-disk-archive`, read-only PVC, no
+service-account token, per-job token) streams the ZIP to
+`/internal/archive-jobs/{id}/upload`; the control plane seals it (per-archive
+AES-GCM key wrapped under the internal signing key) into `pkg/archivestore`:
+the chart's built-in `kyber-archive-store` by default on every target, or
+S3/GCS. The archive format and its validation are `pkg/diskarchive`; never
+extract an archive except through `diskarchive.Extract`. Downloads use
+short-lived path-token links under `/api/v1/archive-downloads/`, redacted from
+request logs. Verification runs in an unprivileged pod that reads the archive
+back through `/internal/archive-jobs/{id}/archive` and posts a summary — never
+parse a whole archive in the control plane. Release restores the agent's prior
+intent only while the `kyber.io/archive-paused` mark stands; lifecycle verbs
+clear it. See `docs/design/2026-09-22-agent-disk-export-import.md`.
+
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function
   `(phase, event) → (action, nextPhase)`. Zero k8s imports. Unit-testable.

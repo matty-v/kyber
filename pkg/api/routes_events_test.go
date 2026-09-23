@@ -21,10 +21,10 @@ func newTestEventsServer(t *testing.T) *api.Server {
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	bus := api.NewEventBus()
 	return &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		EventBus:      bus,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		EventBus:  bus,
 	}
 }
 
@@ -157,9 +157,9 @@ func TestEvents_NilBus(t *testing.T) {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
 		// EventBus intentionally nil
 	}
 	h := s.BuildHandler()

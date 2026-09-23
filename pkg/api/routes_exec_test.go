@@ -21,9 +21,9 @@ func buildExecHandler(t *testing.T, objs ...runtime.Object) http.Handler {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
 		// Clientset and RestConfig intentionally nil — tests error paths only
 	}
 	return s.BuildHandler()

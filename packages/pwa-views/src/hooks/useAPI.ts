@@ -7,6 +7,7 @@ import { useCluster } from '../lib/cluster-context'
 import { parseTranscript } from '../lib/transcript'
 import type {
   AgentJob,
+  ArchiveJob,
   CommsChannelId,
   CreateAgentRequest,
   CreateMachineRequest,
@@ -382,6 +383,63 @@ export function useSwitchAgentRuntime() {
       successMessage: (_d: unknown, v: unknown) => `${(v as { name: string }).name} is switching harness and will request authorization`,
       errorPrefix: 'Failed to switch harness',
     },
+  })
+}
+
+// ---- Disk export (MAT-87) ----
+
+const archiveActive = (jobs: ArchiveJob[] | undefined) =>
+  (jobs ?? []).some((j) => j.state === 'queued' || j.state === 'running')
+
+// useAgentExports lists an agent's exports, polling every 3s while one is in
+// flight and not at all otherwise.
+export function useAgentExports(name: string, enabled: boolean = true) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'exports'],
+    queryFn: () => api.listAgentExports(name),
+    enabled: enabled && !!name,
+    staleTime: 0,
+    refetchInterval: (query) => (archiveActive(query.state.data) ? 3000 : false),
+  })
+}
+
+export function useStartAgentExport() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) => api.startAgentExport(name),
+    onSuccess: (_data, name) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+    },
+    meta: {
+      successMessage: (_d: unknown, name: unknown) => `Export of ${String(name)} started; the agent pauses while its disk is archived`,
+      errorPrefix: 'Failed to start export',
+    },
+  })
+}
+
+export function useCancelAgentExport() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, id }: { name: string; id: string }) => api.cancelAgentExport(name, id),
+    onSuccess: (_data, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+    },
+    meta: { successMessage: 'Export canceled; the agent is being released', errorPrefix: 'Failed to cancel export' },
+  })
+}
+
+export function useExportDownloadLink() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useMutation({
+    mutationFn: ({ name, id }: { name: string; id: string }) => api.createExportDownloadLink(name, id),
+    meta: { errorPrefix: 'Failed to prepare the download' },
   })
 }
 

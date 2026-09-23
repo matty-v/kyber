@@ -25,9 +25,9 @@ func newTestPublicServer(t *testing.T, apiKey string) *api.Server {
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
 	return &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        apiKey,
-		Namespace:     "kyber-system",
+		K8sClient: fakeClient,
+		APIKey:    apiKey,
+		Namespace: "kyber-system",
 	}
 }
 

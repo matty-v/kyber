@@ -38,12 +38,12 @@ type InboundDebugRequest struct {
 // Mirrors inbound.DecisionDebug at the wire level so a future change to the
 // trace shape only needs to update the inbound package.
 type InboundDebugResponse struct {
-	Match         bool                  `json:"match"`
-	DropReason    string                `json:"dropReason,omitempty"`
-	ResolvedEvent string                `json:"resolvedEvent"`
+	Match         bool                   `json:"match"`
+	DropReason    string                 `json:"dropReason,omitempty"`
+	ResolvedEvent string                 `json:"resolvedEvent"`
 	FilterResults []inbound.FilterResult `json:"filterResults"`
 	FieldResults  []inbound.FieldResult  `json:"fieldResults"`
-	Envelope      string                `json:"envelope,omitempty"`
+	Envelope      string                 `json:"envelope,omitempty"`
 }
 
 // handleInboundDebug serves POST /api/v1/inbound-debug — operator tooling

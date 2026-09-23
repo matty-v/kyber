@@ -512,6 +512,63 @@ transcripts:
     # Off by default — the age threshold alone is archive-safe and needs no creds.
     archiveCrosscheck: false
 
+# Agent disk archives (MAT-87/MAT-88): export an agent's persistent volume as
+# a portable ZIP and create a new agent from one. Works on every installation
+# target because the default store is Kyber's own (archive-store below), which
+# needs nothing but a StorageClass. Requires PostgreSQL for job state.
+agentArchives:
+  enabled: true
+  storage:
+    # builtin — the chart's kyber-archive-store Deployment and volume (default).
+    # s3      — an S3-compatible bucket (AWS S3, MinIO, …); credentials default
+    #           to logShipper's (existingCredentialsSecret) unless s3.* is set.
+    # gcs     — a GCS bucket via node ADC.
+    backend: builtin
+    builtin:
+      # Size the volume for the largest agent disk you expect to export, times
+      # the number of archives kept at once (see retention). Archives larger
+      # than the free space fail cleanly.
+      size: 100Gi
+      # Empty = the cluster's default StorageClass.
+      storageClassName: ""
+      # Pre-created Secret with key "token"; set on GitOps installs so the
+      # chart does not regenerate the token on every sync.
+      existingSecret: ""
+      keepOnUninstall: false
+      resources:
+        requests:
+          cpu: 50m
+          memory: 64Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+    # Object-storage prefix for s3/gcs.
+    prefix: kyber-agent-archives/
+    s3:
+      endpoint: ""
+      bucket: ""
+      region: ""
+      useTLS: true
+      # Secret with access-key-id / secret-access-key. Empty = logShipper's.
+      existingCredentialsSecret: ""
+    gcs:
+      bucket: ""
+  # Largest archive (uncompressed bytes of archived files) accepted.
+  maxArchiveBytes: 214748364800 # 200 GiB
+  # Longest an export waits for the agent pod to stop before failing.
+  pauseTimeout: 5m
+  # Longest a whole job may run; an export's agent is released by then.
+  jobTimeout: 2h
+  # How long a completed archive stays downloadable and importable.
+  retention: 72h
+  # Archive jobs running at once across the installation.
+  maxConcurrentJobs: 2
+  # Files, directories and links in one archive. Bounds the memory of the
+  # export and verification pods (2Gi limit) and keeps the manifest within
+  # the 512 MiB a verifier decodes; a larger value lets an export succeed
+  # only to fail verification.
+  maxEntries: 1000000
+
 # Optional in-cluster MinIO (kyber#437) — an S3-compatible object store for the
 # durable log archive on clusters with no cloud object store.
 # Default OFF: GCP installs use backend: gcs and never render these resources.

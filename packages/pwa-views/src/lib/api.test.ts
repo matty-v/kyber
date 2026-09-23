@@ -350,3 +350,31 @@ describe('generic logging client (kyber#105)', () => {
     expect((await result.stream.getReader().read()).value).toBe('partial\n')
   })
 })
+
+describe('disk export', () => {
+  it('starts, lists and cancels exports on the encoded agent path', async () => {
+    const job = { id: 'j1', kind: 'export', agent: 'han solo', state: 'queued', bytesDone: 0, createdAt: '2026-09-22T00:00:00Z', cancelable: true, downloadable: false }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => job })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ exports: [job] }) })
+      .mockResolvedValueOnce({ ok: true, status: 202, json: async () => job }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    const api = createApiClient(mockCluster)
+    await api.startAgentExport('han solo')
+    expect(await api.listAgentExports('han solo')).toEqual([job])
+    await api.cancelAgentExport('han solo', 'j1')
+    const calls = (fetchMock as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls
+    expect(calls.map(([url, init]) => `${init.method} ${url}`)).toEqual([
+      'POST http://localhost:8080/api/v1/agents/han%20solo/exports',
+      'GET http://localhost:8080/api/v1/agents/han%20solo/exports',
+      'POST http://localhost:8080/api/v1/agents/han%20solo/exports/j1/cancel',
+    ])
+  })
+
+  it('resolves the download link against the cluster base URL', async () => {
+    mockFetch({ url: '/api/v1/archive-downloads/tok', expiresAt: '2026-09-22T00:10:00Z', filename: 'han-disk.zip' })
+    const link = await createApiClient(mockCluster).createExportDownloadLink('han', 'j1')
+    expect(link.url).toBe('http://localhost:8080/api/v1/archive-downloads/tok')
+    expect(link.filename).toBe('han-disk.zip')
+  })
+})

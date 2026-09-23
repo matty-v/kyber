@@ -128,6 +128,10 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
 		return
 	}
+	// The credential is saved; starting waits for the disk archive job.
+	if rejectArchiveHeld(w, current) {
+		return
+	}
 	patch := client.MergeFromWithOptions(current.DeepCopy(), client.MergeFromWithOptimisticLock{})
 	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {

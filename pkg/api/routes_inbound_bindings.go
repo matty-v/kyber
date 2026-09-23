@@ -37,9 +37,9 @@ const inboundRotationGrace = 24 * time.Hour
 // Keys inside a binding's HMAC k8s Secret. webhookSecretKey is shared with the
 // receiver in routes_inbound.go.
 const (
-	webhookSecretPrevKey            = "webhook-secret-prev"
-	webhookSecretPrevRotatedAtKey   = "webhook-secret-prev-rotated-at"
-	webhookSecretRandomBytes        = 32
+	webhookSecretPrevKey          = "webhook-secret-prev"
+	webhookSecretPrevRotatedAtKey = "webhook-secret-prev-rotated-at"
+	webhookSecretRandomBytes      = 32
 )
 
 // inboundBindingFieldRequest mirrors kyberv1.AgentInboundField.
@@ -889,4 +889,3 @@ func computeInboundBindingStats(bindingName string, runs []kyberv1.AgentInboundR
 	}
 	return stats
 }
-

@@ -238,6 +238,10 @@ type Server struct {
 	exportSlots     chan struct{}
 	exportSlotsOnce sync.Once
 
+	// Archives runs disk export/import jobs (MAT-87/MAT-88). Nil reports the
+	// feature unavailable.
+	Archives *ArchiveService
+
 	// RestConfig is the rest.Config used to build SPDY executors for exec proxy.
 	// Optional — exec endpoints return 503 when nil.
 	RestConfig *rest.Config
@@ -740,6 +744,10 @@ func (s *Server) buildTopHandler() http.Handler {
 	// Browser-only API-key exchange. The handler authenticates the bearer key
 	// itself, then stores only an opaque session token in an HttpOnly cookie.
 	top.HandleFunc("/api/v1/browser-session", s.handleBrowserSession)
+	// Disk archive downloads (MAT-87) authenticate with the short-lived token
+	// in their path, minted by an archives:admin caller, so a browser can
+	// stream a multi-gigabyte archive by plain navigation.
+	top.HandleFunc(archiveDownloadPrefix, s.handleArchiveDownload)
 	top.Handle("/webhooks/", webhookMux)
 	// Protected API routes — auth required.
 	top.Handle("/api/", protected)

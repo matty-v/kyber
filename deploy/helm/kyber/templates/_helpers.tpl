@@ -241,3 +241,15 @@ Three cases, all of which matter:
 {{ . | int64 | quote }}
 {{- end -}}
 {{- end }}
+
+{{/*
+Comma-separated names from .Values.imagePullSecrets (a list of {name: ...}
+or of plain strings), for components that pass them on to pods they create.
+*/}}
+{{- define "kyber.imagePullSecretNames" -}}
+{{- $names := list -}}
+{{- range .Values.imagePullSecrets -}}
+{{- if kindIs "string" . -}}{{- $names = append $names . -}}{{- else -}}{{- $names = append $names .name -}}{{- end -}}
+{{- end -}}
+{{- join "," $names -}}
+{{- end -}}

@@ -103,6 +103,10 @@ const (
 	// held back waiting for its identity repo to be scaffolded, once that wait
 	// is over. It builds the first pod, as EventCRDCreated would have.
 	EventIdentityRepoReady Event = "IdentityRepoReady"
+	// EventRestoreComplete fires for a Creating agent with no pod that was
+	// held back while its volume was restored from a disk archive, once the
+	// archive hold is released. It builds the first pod.
+	EventRestoreComplete Event = "RestoreComplete"
 )
 
 // Action describes what the reconciler must do as a result of a transition.
@@ -173,6 +177,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		},
 		// Creating transitions
 		{phase: kyberv1.AgentPhaseCreating, event: EventIdentityRepoReady}: {
+			Action:    ActionCreatePVAndPod,
+			NextPhase: kyberv1.AgentPhaseCreating,
+		},
+		{phase: kyberv1.AgentPhaseCreating, event: EventRestoreComplete}: {
 			Action:    ActionCreatePVAndPod,
 			NextPhase: kyberv1.AgentPhaseCreating,
 		},

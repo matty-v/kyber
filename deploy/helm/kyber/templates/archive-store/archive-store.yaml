@@ -1,0 +1,182 @@
+{{- if and .Values.agentArchives.enabled (eq .Values.agentArchives.storage.backend "builtin") }}
+{{- /*
+  Kyber archive store (MAT-87/MAT-88): where agent disk exports live when no
+  object storage is configured, which is the default on every installation
+  target (GKE, EKS, WSL2, bare Linux). One replica, Recreate, one RWO volume on
+  the installation's default StorageClass (or agentArchives.storage.builtin.
+  storageClassName). It holds sealed archives only — the control plane encrypts
+  before writing — and is reachable only from the control plane (Service is
+  ClusterIP; NetworkPolicy below admits the control plane alone).
+
+  Token: shared bearer token between control plane and store, from a
+  chart-created Secret stabilised by lookup, or a pre-created existingSecret
+  (key "token") for GitOps installs where lookup cannot see the cluster.
+*/}}
+{{- $secretName := .Values.agentArchives.storage.builtin.existingSecret | default (printf "%s-archive-store" (include "kyber.fullname" .)) }}
+{{- if not .Values.agentArchives.storage.builtin.existingSecret }}
+{{- $existing := lookup "v1" "Secret" (include "kyber.namespace" .) $secretName }}
+{{- $token := "" }}
+{{- if $existing }}
+  {{- $token = index $existing.data "token" | b64dec }}
+{{- else }}
+  {{- $token = randAlphaNum 48 }}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $secretName }}
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+type: Opaque
+data:
+  token: {{ $token | b64enc | quote }}
+---
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "kyber.fullname" . }}-archive-store
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+  annotations:
+    # Archives are recoverable data (the source agents still exist); keep the
+    # volume on uninstall only if the operator asks for it.
+    {{- if .Values.agentArchives.storage.builtin.keepOnUninstall }}
+    helm.sh/resource-policy: keep
+    {{- end }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.agentArchives.storage.builtin.size | quote }}
+  {{- if .Values.agentArchives.storage.builtin.storageClassName }}
+  storageClassName: {{ .Values.agentArchives.storage.builtin.storageClassName | quote }}
+  {{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "kyber.fullname" . }}-archive-store
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+spec:
+  replicas: 1
+  # The volume is RWO: never run two replicas, and never overlap a rollout.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: archive-store
+  template:
+    metadata:
+      labels:
+        {{- include "kyber.selectorLabels" . | nindent 8 }}
+        {{- include "kyber.podLabels" . | nindent 8 }}
+        app.kubernetes.io/component: archive-store
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: archive-store
+          image: {{ include "kyber.image" (dict "repo" .Values.image.controlPlane.repository "tag" .Values.image.controlPlane.tag) }}
+          imagePullPolicy: {{ .Values.image.controlPlane.pullPolicy | default "IfNotPresent" }}
+          command: ["/usr/local/bin/kyber-archive-store"]
+          env:
+            - name: KYBER_ARCHIVE_STORE_DIR
+              value: /data/archives
+            - name: KYBER_ARCHIVE_STORE_ADDR
+              value: ":8090"
+            - name: KYBER_ARCHIVE_STORE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secretName }}
+                  key: token
+          ports:
+            - name: http
+              containerPort: 8090
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.agentArchives.storage.builtin.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "kyber.fullname" . }}-archive-store
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kyber.fullname" . }}-archive-store
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "kyber.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+  ports:
+    - name: http
+      port: 8090
+      targetPort: http
+{{- if .Values.networkPolicy.enabled }}
+---
+# Only the control plane may reach the archive store. Agent and archive pods
+# never talk to it directly; they go through the control plane's per-job
+# endpoints.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "kyber.fullname" . }}-archive-store
+  namespace: {{ include "kyber.namespace" . }}
+  labels:
+    {{- include "kyber.labels" . | nindent 4 }}
+    app.kubernetes.io/component: archive-store
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "kyber.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: archive-store
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              {{- include "kyber.selectorLabels" . | nindent 14 }}
+              app.kubernetes.io/component: control-plane
+      ports:
+        - protocol: TCP
+          port: 8090
+{{- end }}
+{{- end }}

@@ -62,6 +62,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /build/transcript-compact ./cmd/transcr
 # binary, same reasoning as transcript-compact — the Job that replaces the
 # control plane must not need an image of its own to build, publish and pin.
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-upgrade ./cmd/kyber-upgrade
+# kyber-disk-archive and kyber-archive-store (MAT-87/MAT-88): the agent disk
+# export/restore pod entrypoint and the built-in archive store. Same image, for
+# the same reason: the control plane can always name an image that has them.
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-disk-archive ./cmd/kyber-disk-archive
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-archive-store ./cmd/kyber-archive-store
 
 # Stage 3: minimal runtime image.
 FROM alpine:3.24
@@ -105,5 +110,7 @@ RUN apk add --no-cache --virtual .helm-deps curl \
 COPY --from=go-builder /build/control-plane /usr/local/bin/control-plane
 COPY --from=go-builder /build/transcript-compact /usr/local/bin/transcript-compact
 COPY --from=go-builder /build/kyber-upgrade /usr/local/bin/kyber-upgrade
+COPY --from=go-builder /build/kyber-disk-archive /usr/local/bin/kyber-disk-archive
+COPY --from=go-builder /build/kyber-archive-store /usr/local/bin/kyber-archive-store
 EXPOSE 8080 8081 8082 9090
 ENTRYPOINT ["/usr/local/bin/control-plane"]

@@ -35,6 +35,7 @@ import { AgentActivityBadge } from '../components/AgentActivityBadge'
 import { AgentResourceUsage } from '../components/AgentResourceUsage'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
+import { DiskExportCard } from '../components/DiskExportCard'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { agentActionConfirmMessage } from '../lib/agentMessages'
 import { Skeleton } from '../components/Skeleton'
@@ -1025,6 +1026,7 @@ export function AgentDetail() {
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
                   </Card>
+                  <DiskExportCard agentName={name} phase={agent.phase} capability={computeConfig?.archives} />
                   <Card>
                     <h2 className="mb-2 text-sm font-semibold text-text-primary">Startup prompt</h2>
                     <p className="mb-3 text-xs text-text-muted">Sent as the first user turn on every new session. Saving marks this agent for restart without interrupting the live session.</p>

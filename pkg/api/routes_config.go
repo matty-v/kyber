@@ -27,6 +27,32 @@ type ConfigResponse struct {
 	// PublicURL configured (dev/test scenarios), in which case the PWA
 	// falls back to displaying just the webhook path.
 	PublicURL string `json:"publicUrl,omitempty"`
+	// Archives reports whether agent disk export and create-from-export are
+	// available (MAT-87/MAT-88) so the PWA offers them only where they work.
+	Archives ConfigArchives `json:"archives"`
+}
+
+// ConfigArchives describes the disk archive capability.
+type ConfigArchives struct {
+	Available         bool   `json:"available"`
+	UnavailableReason string `json:"unavailableReason,omitempty"`
+	Store             string `json:"store,omitempty"`
+	MaxArchiveBytes   int64  `json:"maxArchiveBytes,omitempty"`
+	RetentionSeconds  int64  `json:"retentionSeconds,omitempty"`
+}
+
+func (s *Server) archivesCapability() ConfigArchives {
+	ok, reason := s.Archives.Available()
+	if !ok {
+		return ConfigArchives{UnavailableReason: reason}
+	}
+	l := s.Archives.limits()
+	return ConfigArchives{
+		Available:        true,
+		Store:            s.Archives.Store.Name(),
+		MaxArchiveBytes:  l.MaxArchiveBytes,
+		RetentionSeconds: int64(l.Retention.Seconds()),
+	}
 }
 
 // ConfigIdentity reports whether this control plane can manage GitHub
@@ -124,6 +150,7 @@ func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
 		Models:    modelsForConfig(r.Context(), s.RuntimeDetectCache),
 		Identity:  s.identityRepoCapability(),
 		PublicURL: s.PublicURL,
+		Archives:  s.archivesCapability(),
 	}
 	if s.ComputeProvider == "gce" || s.ComputeProvider == "fake" {
 		profiles := activeGCEVMTypes(s.GCEVMTypeCatalog)

@@ -67,10 +67,10 @@ func TestAgentLogs_StreamError_RedactsError(t *testing.T) {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Clientset:     buildClientsetWithServer(t, mockAPIServer.URL),
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Clientset: buildClientsetWithServer(t, mockAPIServer.URL),
 	}
 	h := s.BuildHandler()
 
