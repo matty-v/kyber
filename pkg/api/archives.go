@@ -1114,10 +1114,22 @@ func (a *ArchiveService) archivePod(j *archivejob.Job, owner *kyberv1.Agent, nod
 		},
 	}
 	spec := corev1.PodSpec{
-		NodeName:                     node,
 		RestartPolicy:                corev1.RestartPolicyNever,
 		ActiveDeadlineSeconds:        &deadline,
 		AutomountServiceAccountToken: &automount,
+	}
+	if node != "" {
+		// Pin through the scheduler (as agent pods do), never spec.nodeName:
+		// a pod with nodeName bypasses the scheduler, so a fresh claim on a
+		// WaitForFirstConsumer StorageClass (local-path, most cloud classes)
+		// is never bound and a restore pod would wait on it forever.
+		spec.Affinity = &corev1.Affinity{NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{MatchExpressions: []corev1.NodeSelectorRequirement{{
+					Key: "kubernetes.io/hostname", Operator: corev1.NodeSelectorOpIn, Values: []string{node},
+				}}}},
+			},
+		}}
 	}
 	for _, name := range a.ImagePullSecrets {
 		spec.ImagePullSecrets = append(spec.ImagePullSecrets, corev1.LocalObjectReference{Name: name})

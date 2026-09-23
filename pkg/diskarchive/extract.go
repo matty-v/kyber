@@ -2,6 +2,7 @@ package diskarchive
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -55,8 +56,10 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 
 	m := in.Manifest
 	if opts.SkipIf != nil {
+		// The caller passes the same map to VerifyRestore; a private map here
+		// would make every verification report the skipped files missing.
 		if opts.Skip == nil {
-			opts.Skip = map[string]bool{}
+			return nil, errors.New("diskarchive: SkipIf needs a Skip map to record what it skipped")
 		}
 		for _, e := range m.Entries {
 			if e.Type == EntryFile && opts.SkipIf(e) {

@@ -17,11 +17,17 @@ function archiveLabel(job: ArchiveJob): string {
   return job.kind === 'upload' ? `Uploaded archive · ${when}${size}` : `${job.agent} · exported ${when}${size}`
 }
 
+// Kubernetes quantity suffixes, in bytes. Decimal "G" is smaller than "Gi",
+// so treating them alike would accept a disk the server then refuses.
+const QUANTITY_BYTES: Record<string, number> = {
+  Ki: 1024, Mi: 1024 ** 2, Gi: 1024 ** 3, Ti: 1024 ** 4,
+  k: 1e3, K: 1e3, M: 1e6, G: 1e9, T: 1e12,
+}
+
 function diskGi(disk: string): number {
-  const m = /^(\d+(?:\.\d+)?)\s*(Gi|G|Ti|T)?$/.exec(disk.trim())
+  const m = /^(\d+(?:\.\d+)?)\s*(Ki|Mi|Gi|Ti|k|K|M|G|T)?$/.exec(disk.trim())
   if (!m) return 0
-  const n = Number(m[1])
-  return m[2]?.startsWith('T') ? n * 1024 : n
+  return (Number(m[1]) * (m[2] ? QUANTITY_BYTES[m[2]] : 1)) / 1024 ** 3
 }
 
 // ArchiveSourcePicker is the Create Agent wizard's "start from" choice

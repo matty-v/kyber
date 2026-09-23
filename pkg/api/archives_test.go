@@ -298,7 +298,7 @@ func TestExportLifecycleEndToEnd(t *testing.T) {
 
 	pod := h.exportPod(id)
 	c := pod.Spec.Containers[0]
-	if pod.Spec.NodeName != "node-a" || !pod.Spec.Volumes[0].PersistentVolumeClaim.ReadOnly || !c.VolumeMounts[0].ReadOnly {
+	if pinnedNode(pod) != "node-a" || !pod.Spec.Volumes[0].PersistentVolumeClaim.ReadOnly || !c.VolumeMounts[0].ReadOnly {
 		t.Errorf("export pod must be same-node and read-only: %+v", pod.Spec)
 	}
 	if pod.Spec.AutomountServiceAccountToken == nil || *pod.Spec.AutomountServiceAccountToken {
@@ -704,4 +704,20 @@ func TestExportRecreatesPodAfterRestart(t *testing.T) {
 	if rr := h.upload(id, h.podToken(id), bytes.NewReader(sampleDisk(t))); rr.Code != http.StatusNoContent {
 		t.Errorf("upload with the reissued token = %d", rr.Code)
 	}
+}
+
+// pinnedNode is the node an archive pod's required node affinity names.
+func pinnedNode(pod *corev1.Pod) string {
+	a := pod.Spec.Affinity
+	if a == nil || a.NodeAffinity == nil || a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return ""
+	}
+	for _, term := range a.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms {
+		for _, e := range term.MatchExpressions {
+			if e.Key == "kubernetes.io/hostname" && len(e.Values) == 1 {
+				return e.Values[0]
+			}
+		}
+	}
+	return ""
 }

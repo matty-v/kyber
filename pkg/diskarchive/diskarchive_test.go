@@ -443,3 +443,11 @@ func TestCronPaths(t *testing.T) {
 		t.Errorf("CronPaths = %v", got)
 	}
 }
+
+func TestSkipIfRequiresSkipMap(t *testing.T) {
+	data, _ := export(t, buildTree(t))
+	_, err := Extract(context.Background(), bytes.NewReader(data), int64(len(data)), t.TempDir(), ExtractOptions{SkipIf: IsSensitive})
+	if err == nil {
+		t.Fatal("Extract accepted SkipIf without a Skip map")
+	}
+}

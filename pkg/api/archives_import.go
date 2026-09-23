@@ -36,6 +36,11 @@ import (
 // Running or NeedsAuth before the job reports that it did not boot.
 const importBootTimeout = 15 * time.Minute
 
+// importCreateGrace is how long after an import is queued the worker waits
+// for the handler to record the agent it created, and tolerates the cached
+// client not showing that agent yet, before treating it as missing.
+const importCreateGrace = 2 * time.Minute
+
 // --- uploads ---
 
 // StartUpload stages an operator-supplied archive. The body is streamed and
@@ -230,7 +235,10 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 	}
 	need := requiredDiskBytes(src.Summary)
 	if req.Agent.Resources.Disk == "" {
-		req.Agent.Resources.Disk = resource.NewQuantity(roundUpGi(need), resource.BinarySI).String()
+		// The source's own disk size where it is known, so the copy keeps the
+		// room the source had rather than starting nearly full.
+		size := max(roundUpGi(need), roundUpGi(src.Summary.Source.Disk.RequestBytes))
+		req.Agent.Resources.Disk = resource.NewQuantity(size, resource.BinarySI).String()
 	}
 	disk, err := resource.ParseQuantity(req.Agent.Resources.Disk)
 	if err != nil {
@@ -330,11 +338,26 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 
 	// Record what was created. The UID and Secret names come from the create
 	// itself, not a read-back through the (possibly stale) cache.
-	j.AgentUID = string(hold.uid)
-	j.CreatedSecrets = hold.secrets
-	j.Message = "Queued"
-	uid, secrets := j.AgentUID, j.CreatedSecrets
-	if err := a.Jobs.Update(r.Context(), j); err != nil {
+	uid, secrets := string(hold.uid), hold.secrets
+	j.AgentUID, j.CreatedSecrets, j.Message = uid, secrets, "Queued"
+	err = a.Jobs.Update(r.Context(), j)
+	// The worker may have adopted this agent by its hold in the meantime (it
+	// cannot tell a slow handler from one that stopped). That is the same
+	// agent, so record onto the current row instead of discarding a good
+	// create over a version conflict.
+	for attempt := 0; errors.Is(err, archivejob.ErrConflict) && attempt < 5; attempt++ {
+		cur, gerr := a.Jobs.Get(r.Context(), j.ID)
+		if gerr != nil || cur.State.Terminal() || cur.Finishing != "" || cur.CancelRequested || cur.AgentUID != "" && cur.AgentUID != uid {
+			break
+		}
+		cur.AgentUID, cur.CreatedSecrets = uid, secrets
+		if cur.State == archivejob.StateQueued {
+			cur.Message = "Queued"
+		}
+		j = cur
+		err = a.Jobs.Update(r.Context(), j)
+	}
+	if err != nil {
 		j.AgentUID, j.CreatedSecrets = uid, secrets
 		abandon("recording the new agent failed")
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to queue the restore; the new agent was removed")
@@ -400,6 +423,9 @@ func (a *ArchiveService) advanceImport(ctx context.Context, j *archivejob.Job) e
 		return a.finish(ctx, j, archivejob.StateCanceled, "canceled by operator")
 	}
 	if j.Deadline != nil && a.now().After(*j.Deadline) {
+		if j.Restored {
+			return a.fail(ctx, j, "the volume was restored but the agent did not boot within the job's time limit; it has been kept for inspection")
+		}
 		return a.fail(ctx, j, "restore exceeded its time limit")
 	}
 	agent := &kyberv1.Agent{}
@@ -412,14 +438,28 @@ func (a *ArchiveService) advanceImport(ctx context.Context, j *archivejob.Job) e
 		// it. The hold annotation, which carries this job's ID, identifies it.
 		if err == nil && agent.Annotations[kyberv1.AnnotationArchiveHold] == j.ID {
 			j.AgentUID = string(agent.UID)
+			// Recover the Secrets the create made, so abandoning this import
+			// still removes them. The name was free when the job reserved it,
+			// so every Secret the API labels for it came from this create.
+			secrets, err := a.createdSecretsFor(ctx, j.Agent)
+			if err != nil {
+				return err
+			}
+			j.CreatedSecrets = secrets
 			return a.Jobs.Update(ctx, j)
 		}
-		if a.now().Sub(j.CreatedAt) > 2*time.Minute {
+		if a.now().Sub(j.CreatedAt) > importCreateGrace {
 			return a.fail(ctx, j, "the new agent was never created")
 		}
 		return nil
 	}
 	if k8serrors.IsNotFound(err) || string(agent.UID) != j.AgentUID {
+		// Reads come from the informer cache, which can trail the create by
+		// a moment. Failing on that would discard the new agent's Secrets
+		// while the cache still hides the agent itself, stranding it held.
+		if a.now().Sub(j.CreatedAt) < importCreateGrace {
+			return nil
+		}
 		return a.fail(ctx, j, "the new agent was deleted during the restore")
 	}
 	switch {
@@ -447,7 +487,7 @@ func (a *ArchiveService) beginRestore(ctx context.Context, j *archivejob.Job, ag
 	pvc.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(agent, kyberv1.GroupVersion.WithKind("Agent"))}
 	if err := a.Client.Create(ctx, pvc); err != nil {
 		existing := &corev1.PersistentVolumeClaim{}
-		if k8serrors.IsAlreadyExists(err) && a.Client.Get(ctx, client.ObjectKeyFromObject(pvc), existing) == nil && isOwnedBy(existing, agent) {
+		if k8serrors.IsAlreadyExists(err) && a.Client.Get(ctx, client.ObjectKeyFromObject(pvc), existing) == nil && metav1.IsControlledBy(existing, agent) {
 			// Our own claim from an interrupted earlier attempt.
 		} else {
 			return a.fail(ctx, j, "creating the new agent's volume: "+err.Error())
@@ -494,15 +534,6 @@ func (a *ArchiveService) createRestorePod(ctx context.Context, j *archivejob.Job
 	}
 	j.RestoreStarted = true
 	return a.Jobs.Update(ctx, j)
-}
-
-func isOwnedBy(obj metav1.Object, owner *kyberv1.Agent) bool {
-	for _, ref := range obj.GetOwnerReferences() {
-		if ref.UID == owner.UID {
-			return true
-		}
-	}
-	return false
 }
 
 func (a *ArchiveService) watchRestorePod(ctx context.Context, j *archivejob.Job, agent *kyberv1.Agent) error {
@@ -576,6 +607,22 @@ func (a *ArchiveService) watchFirstBoot(ctx context.Context, j *archivejob.Job, 
 	return nil
 }
 
+// createdSecretsFor lists the Secrets the create path labels for an agent.
+func (a *ArchiveService) createdSecretsFor(ctx context.Context, agent string) ([]string, error) {
+	var list corev1.SecretList
+	if err := a.Client.List(ctx, &list, client.InNamespace(a.Namespace), client.MatchingLabels{
+		"app.kubernetes.io/managed-by": "kyber-api",
+		"kyber.io/agent":               agent,
+	}); err != nil {
+		return nil, fmt.Errorf("listing the new agent's secrets: %w", err)
+	}
+	names := make([]string, 0, len(list.Items))
+	for _, s := range list.Items {
+		names = append(names, s.Name)
+	}
+	return names, nil
+}
+
 // discardImportDestination removes the new Agent, its volume and the Secrets
 // the create made, unless the restore already completed, in which case the
 // agent is whole and kept (only its hold is released). The source is never
@@ -602,7 +649,7 @@ func (a *ArchiveService) discardImportDestination(ctx context.Context, j *archiv
 		// The finalizer deletes the volume too; deleting it here as well
 		// means a retry never finds a half-restored claim in its way.
 		pvc := &corev1.PersistentVolumeClaim{}
-		if err := a.Client.Get(ctx, types.NamespacedName{Name: agentctrl.PVCName(j.Agent), Namespace: a.Namespace}, pvc); err == nil && isOwnedBy(pvc, agent) {
+		if err := a.Client.Get(ctx, types.NamespacedName{Name: agentctrl.PVCName(j.Agent), Namespace: a.Namespace}, pvc); err == nil && metav1.IsControlledBy(pvc, agent) {
 			if err := a.Client.Delete(ctx, pvc); err != nil && !k8serrors.IsNotFound(err) {
 				return fmt.Errorf("deleting partially restored volume: %w", err)
 			}
@@ -750,9 +797,22 @@ func (s *Server) handleAgentImports(w http.ResponseWriter, r *http.Request) {
 				writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to list imports")
 				return
 			}
+			// For one agent, only the imports that created the agent now
+			// holding that name: a failed import into the name, or an earlier
+			// agent of the same name, is not this agent's restore.
+			liveUID := ""
+			if name := r.URL.Query().Get("agent"); name != "" {
+				live := &kyberv1.Agent{}
+				if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: s.Namespace}, live); err == nil {
+					liveUID = string(live.UID)
+				}
+			}
 			caller := callerFrom(r.Context())
 			out := []archiveJobView{}
 			for _, j := range jobs {
+				if liveUID != "" && j.AgentUID != liveUID {
+					continue
+				}
 				if caller != nil && caller.AgentResources.Has(s.Namespace+"/"+j.Agent) {
 					out = append(out, viewArchiveJob(j))
 				}

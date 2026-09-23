@@ -167,7 +167,7 @@ func TestImportFromExportEndToEnd(t *testing.T) {
 		t.Errorf("destination volume owner = %+v", pvc.OwnerReferences)
 	}
 	pod := h.restorePod(id)
-	if pod.Spec.NodeName != "node-a" || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "agent-"+restoredAgent+"-pv" ||
+	if pinnedNode(pod) != "node-a" || pod.Spec.NodeName != "" || pod.Spec.Volumes[0].PersistentVolumeClaim.ClaimName != "agent-"+restoredAgent+"-pv" ||
 		pod.Spec.Volumes[0].PersistentVolumeClaim.ReadOnly {
 		t.Errorf("restore pod volume/placement = %+v", pod.Spec)
 	}
@@ -516,7 +516,14 @@ func TestImportCreateRejectionFailsTheJob(t *testing.T) {
 func TestImportAdoptsUnrecordedAgent(t *testing.T) {
 	h := newExportHarness(t)
 	exportID, _ := h.completedExport()
-	id := h.startImport(map[string]string{"exportId": exportID})
+	rr := h.post("/api/v1/agent-imports", testAPIKey, apiKeyImportBody(map[string]string{"exportId": exportID}, restoredAgent))
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("import = %d %s", rr.Code, rr.Body.String())
+	}
+	var v struct{ Import struct{ ID string } }
+	json.Unmarshal(rr.Body.Bytes(), &v)
+	id := v.Import.ID
+	created := h.job(id).CreatedSecrets
 	j := h.job(id)
 	j.AgentUID, j.CreatedSecrets = "", nil
 	if err := h.svc.Jobs.Update(context.Background(), j); err != nil {
@@ -524,8 +531,8 @@ func TestImportAdoptsUnrecordedAgent(t *testing.T) {
 	}
 	h.svc.Tick(context.Background())
 	a, _ := h.newAgent()
-	if j := h.job(id); j.AgentUID != string(a.UID) {
-		t.Fatalf("worker did not adopt the held agent: %q vs %q", j.AgentUID, a.UID)
+	if j := h.job(id); j.AgentUID != string(a.UID) || len(j.CreatedSecrets) != len(created) {
+		t.Fatalf("worker did not adopt the held agent and its secrets: uid %q vs %q, secrets %v vs %v", j.AgentUID, a.UID, j.CreatedSecrets, created)
 	}
 	h.svc.Tick(context.Background())
 	h.restorePod(id)
@@ -585,5 +592,23 @@ func TestImportRejectsIncompatiblePersistence(t *testing.T) {
 	rr := h.post("/api/v1/agent-imports", testAPIKey, importBody(map[string]string{"exportId": exportID}, restoredAgent, "20Gi"))
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Errorf("persistence mismatch = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A later agent that reuses a failed import's name does not inherit it.
+func TestImportListIgnoresEarlierAgentWithSameName(t *testing.T) {
+	h := newExportHarness(t)
+	exportID, _ := h.completedExport()
+	id := h.startImport(map[string]string{"exportId": exportID})
+	h.svc.Tick(context.Background())
+	h.setRestorePhase(id, corev1.PodFailed)
+	h.svc.Tick(context.Background())
+	fresh := sampleAgentCRD(restoredAgent)
+	if err := h.c.Create(context.Background(), fresh); err != nil {
+		t.Fatal(err)
+	}
+	rr := h.do(http.MethodGet, "/api/v1/agent-imports?agent="+restoredAgent, testAPIKey)
+	if rr.Code != http.StatusOK || strings.Contains(rr.Body.String(), id) {
+		t.Errorf("new agent shows the old import: %d %s", rr.Code, rr.Body.String())
 	}
 }
