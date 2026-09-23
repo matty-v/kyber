@@ -2,6 +2,7 @@ package diskarchive
 
 import (
 	"archive/zip"
+	"bufio"
 	"compress/flate"
 	"context"
 	"encoding/json"
@@ -104,13 +105,49 @@ func Write(ctx context.Context, rootDir string, w io.Writer, opts WriteOptions) 
 	if err != nil {
 		return nil, fmt.Errorf("writing manifest: %w", err)
 	}
-	enc := json.NewEncoder(fw)
-	enc.SetIndent("", " ")
-	if err := enc.Encode(m); err != nil {
+	if err := writeManifest(fw, m); err != nil {
 		return nil, fmt.Errorf("writing manifest: %w", err)
 	}
 	if err := zw.Close(); err != nil {
 		return nil, fmt.Errorf("finishing archive: %w", err)
 	}
 	return m, nil
+}
+
+// writeManifest streams the manifest one entry at a time. Encoding it whole
+// would build a second copy of a manifest that, on a disk with millions of
+// files, is hundreds of megabytes.
+func writeManifest(w io.Writer, m *Manifest) error {
+	head := *m
+	head.Entries = nil
+	b, err := json.Marshal(head)
+	if err != nil {
+		return err
+	}
+	bw := bufio.NewWriterSize(w, 256<<10)
+	// head ends in "}"; reopen it for the entries (Entries is the last field).
+	if _, err := bw.Write(b[:len(b)-1]); err != nil {
+		return err
+	}
+	if _, err := bw.WriteString(`,"entries":[`); err != nil {
+		return err
+	}
+	for i, e := range m.Entries {
+		if i > 0 {
+			if err := bw.WriteByte(','); err != nil {
+				return err
+			}
+		}
+		eb, err := json.Marshal(e)
+		if err != nil {
+			return err
+		}
+		if _, err := bw.Write(eb); err != nil {
+			return err
+		}
+	}
+	if _, err := bw.WriteString("]}\n"); err != nil {
+		return err
+	}
+	return bw.Flush()
 }

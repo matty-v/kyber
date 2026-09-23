@@ -20,6 +20,7 @@ import (
 	"path"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 // FormatVersion identifies the archive layout and manifest schema. A reader
@@ -73,7 +74,9 @@ type Manifest struct {
 	// left out, each with a reason.
 	Excluded []Exclusion `json:"excluded,omitempty"`
 	Totals   Totals      `json:"totals"`
-	Entries  []Entry     `json:"entries"`
+	// Entries must stay the last field: Write streams the manifest and
+	// appends the entry list after everything else.
+	Entries []Entry `json:"entries,omitempty"`
 }
 
 // Source identifies the agent the archive came from and carries the
@@ -163,11 +166,20 @@ func CleanRelPath(p string) (string, error) {
 	if p == "." {
 		return p, nil
 	}
-	if p == "" || strings.ContainsAny(p, "\\\x00") || strings.HasPrefix(p, "/") {
+	if p == "" || !utf8.ValidString(p) || strings.ContainsRune(p, 0) || strings.HasPrefix(p, "/") || strings.HasPrefix(p, "\\") {
 		return "", fmt.Errorf("%w: %q", ErrUnsafePath, p)
 	}
+	// A backslash is an ordinary character in a Linux file name (systemd's
+	// escaped unit names use them), so it is allowed. But some ZIP tools on
+	// other systems treat it as a separator, so segments are also checked with
+	// it as one: no archive can smuggle ".." past a Windows extractor.
+	for _, seg := range strings.FieldsFunc(p, func(r rune) bool { return r == '/' || r == '\\' }) {
+		if seg == "." || seg == ".." {
+			return "", fmt.Errorf("%w: %q", ErrUnsafePath, p)
+		}
+	}
 	for _, seg := range strings.Split(p, "/") {
-		if seg == "" || seg == "." || seg == ".." {
+		if seg == "" || seg == "." || seg == ".." || strings.Contains(seg, "\\\\") || strings.HasSuffix(seg, "\\") {
 			return "", fmt.Errorf("%w: %q", ErrUnsafePath, p)
 		}
 	}

@@ -41,12 +41,22 @@ func buildArchiveService(ctx context.Context, c client.Client, namespace string,
 		KyberVersion:    version,
 		PersistenceMode: firstNonEmpty(strings.ToLower(os.Getenv("KYBER_AGENT_PERSISTENCE_MODE")), "rootfs"),
 		Recorder:        recorder,
+		ImagePullSecrets: func() []string {
+			var out []string
+			for _, n := range strings.Split(os.Getenv("KYBER_IMAGE_PULL_SECRETS"), ",") {
+				if n = strings.TrimSpace(n); n != "" {
+					out = append(out, n)
+				}
+			}
+			return out
+		}(),
 		Limits: internalapi.ArchiveLimits{
 			MaxArchiveBytes:   envInt64("KYBER_ARCHIVE_MAX_BYTES"),
 			PauseTimeout:      envDuration("KYBER_ARCHIVE_PAUSE_TIMEOUT"),
 			JobTimeout:        envDuration("KYBER_ARCHIVE_JOB_TIMEOUT"),
 			Retention:         envDuration("KYBER_ARCHIVE_RETENTION"),
 			MaxConcurrentJobs: int(envInt64("KYBER_ARCHIVE_MAX_CONCURRENT_JOBS")),
+			MaxEntries:        int(envInt64("KYBER_ARCHIVE_MAX_ENTRIES")),
 		},
 	}
 	switch {

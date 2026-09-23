@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/diskarchive"
 )
@@ -69,5 +71,53 @@ func TestExportReportsRejectionAndWalkFailure(t *testing.T) {
 	t.Setenv("KYBER_ARCHIVE_UPLOAD_URL", ok.URL)
 	if err := runExport(context.Background(), root); err == nil || !strings.Contains(err.Error(), "archiving") {
 		t.Errorf("oversized walk = %v, want an archiving error", err)
+	}
+}
+
+func TestVerifyReadsByRangeAndPostsSummary(t *testing.T) {
+	root := t.TempDir()
+	noise := make([]byte, 9<<20) // incompressible, so the archive spans several read blocks
+	rand.Read(noise)
+	os.WriteFile(filepath.Join(root, "f"), noise, 0o644)
+	var buf bytes.Buffer
+	if _, err := diskarchive.Write(context.Background(), root, &buf, diskarchive.WriteOptions{Source: diskarchive.Source{Agent: "han"}}); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	var posted []byte
+	ranges := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		switch r.URL.Path {
+		case "/archive":
+			if r.Header.Get("Range") != "" {
+				ranges++
+			}
+			http.ServeContent(w, r, "a.zip", time.Time{}, bytes.NewReader(data))
+		case "/summary":
+			posted, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+	t.Setenv("KYBER_ARCHIVE_SOURCE_URL", srv.URL+"/archive")
+	t.Setenv("KYBER_ARCHIVE_SUMMARY_URL", srv.URL+"/summary")
+	t.Setenv("KYBER_ARCHIVE_TOKEN", "tok")
+	if err := runVerify(context.Background()); err != nil {
+		t.Fatalf("runVerify: %v", err)
+	}
+	if ranges < 2 || !strings.Contains(string(posted), `"agent":"han"`) || strings.Contains(string(posted), `"entries":[`) {
+		t.Errorf("ranges=%d posted=%s", ranges, posted)
+	}
+
+	// A corrupt archive fails and reports nothing.
+	data = append([]byte(nil), data...)
+	data[len(data)/3] ^= 0xff
+	posted = nil
+	if err := runVerify(context.Background()); err == nil || posted != nil {
+		t.Errorf("corrupt archive: err=%v posted=%s", err, posted)
 	}
 }

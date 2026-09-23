@@ -569,6 +569,9 @@ agentArchives:
   retention: 72h
   # Archive jobs running at once across the installation.
   maxConcurrentJobs: 2
+  # Files, directories and links in one archive. Bounds the memory of the
+  # export and verification pods (2Gi limit); raise both together.
+  maxEntries: 3000000
 
 minio:
   enabled: false

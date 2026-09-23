@@ -381,4 +381,3 @@ func TestReplay_MissingRequestID(t *testing.T) {
 		t.Fatalf("want 400, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
-

@@ -241,7 +241,8 @@ func TestInspectRejectsUnsafeArchives(t *testing.T) {
 	}{
 		{"traversal", baseManifest(fileX("../evil")), []craftEntry{root, {"persist/../evil", 0o644, "x"}}, ErrUnsafePath},
 		{"absolute", baseManifest(fileX("/etc/passwd")), []craftEntry{root, {"persist//etc/passwd", 0o644, "x"}}, ErrUnsafePath},
-		{"backslash", baseManifest(fileX(`a\b`)), []craftEntry{root, {`persist/a\b`, 0o644, "x"}}, ErrUnsafePath},
+		{"backslash traversal", baseManifest(fileX(`a\..\b`)), []craftEntry{root, {`persist/a\..\b`, 0o644, "x"}}, ErrUnsafePath},
+		{"no entries", Manifest{FormatVersion: FormatVersion}, nil, ErrInvalidArchive},
 		{"unlisted zip entry", baseManifest(), []craftEntry{root, {"persist/extra", 0o644, "x"}}, ErrInvalidArchive},
 		{"listed but missing", baseManifest(fileX("gone")), []craftEntry{root}, ErrInvalidArchive},
 		{"duplicate zip names", baseManifest(fileX("a")), []craftEntry{root, {"persist/a", 0o644, "x"}, {"persist/a", 0o644, "x"}}, ErrInvalidArchive},
@@ -336,11 +337,55 @@ func TestCleanRelPath(t *testing.T) {
 		{".", true}, {"a", true}, {"a/b/.c", true},
 		{"", false}, {"/a", false}, {"a/../b", false}, {"a//b", false}, {"./a", false},
 		{"a/", false}, {"a\x00", false}, {"..", false},
+		{`unit\x2dname.service`, true}, {`a\..\b`, false}, {`\a`, false}, {"bad\xff", false},
 	}
 	for _, tc := range tests {
 		_, err := CleanRelPath(tc.in)
 		if (err == nil) != tc.ok {
 			t.Errorf("CleanRelPath(%q) err = %v, want ok=%v", tc.in, err, tc.ok)
 		}
+	}
+}
+
+func TestUnportableNamesAreListedAndTheArchiveStillVerifies(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{`dev-disk-by\x2duuid.mount`, "bad\xffname", `x\..\y`} {
+		if err := os.WriteFile(filepath.Join(root, name), []byte("x"), 0o644); err != nil {
+			t.Skipf("filesystem refuses %q: %v", name, err)
+		}
+	}
+	data, m := export(t, root)
+	if _, err := Verify(bytes.NewReader(data), int64(len(data)), Limits{}); err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if len(m.Excluded) != 2 {
+		t.Errorf("excluded = %+v, want the non-UTF-8 and the traversal-looking names", m.Excluded)
+	}
+	var kept bool
+	for _, e := range m.Entries {
+		kept = kept || e.Path == `dev-disk-by\x2duuid.mount`
+	}
+	if !kept {
+		t.Error("an ordinary backslash name was not archived")
+	}
+}
+
+func TestRestrictiveDirectoryModesRestore(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root ignores directory permissions")
+	}
+	root := t.TempDir()
+	os.MkdirAll(filepath.Join(root, "locked/inner"), 0o755)
+	os.WriteFile(filepath.Join(root, "locked/inner/f"), []byte("x"), 0o644)
+	os.Chmod(filepath.Join(root, "locked"), 0o500)
+	defer os.Chmod(filepath.Join(root, "locked"), 0o755)
+	data, m := export(t, root)
+	dst := t.TempDir()
+	if _, err := Extract(context.Background(), bytes.NewReader(data), int64(len(data)), dst, ExtractOptions{}); err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	defer os.Chmod(filepath.Join(dst, "locked"), 0o755)
+	if err := VerifyRestore(context.Background(), dst, m, nil); err != nil {
+		t.Fatalf("VerifyRestore: %v", err)
 	}
 }

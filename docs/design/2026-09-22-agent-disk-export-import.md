@@ -38,23 +38,38 @@ Export states: `queued`, then `running` through the steps `pausing → archiving
 `kyber.io/archive-hold` annotation: the reconciler will not create an agent pod
 while it is present, whatever `desiredPhase` says.
 
-1. **pausing** – record the prior `desiredPhase`; if a pod exists, set
-   `desiredPhase: Stopped` and wait (bounded by `pauseTimeout`) for the pod to
-   be gone. The PVC is then quiescent.
+1. **pausing** – record the agent's standing intent (its `desiredPhase`, or,
+   when that is empty as the controller leaves it after a restart, what its
+   phase implies); unless that intent is Stopped, set `desiredPhase: Stopped`
+   and the `kyber.io/archive-paused` mark, and wait (bounded by
+   `pauseTimeout`) for the pod to be gone. The PVC is then quiescent.
 2. **archiving** – create a per-job token Secret and a same-node export pod
    (no service-account token, PVC read-only). It walks `/persist` through
    `os.Root`, streams the ZIP to `PUT /internal/archive-jobs/{id}/upload`, and
    the control plane seals it into the store while counting bytes against
    `maxArchiveBytes`. A file that changes or cannot be read fails the export.
 3. **release** – as soon as the pod has succeeded the hold is removed and the
-   prior `desiredPhase` restored (only if it is still the `Stopped` we set;
-   an operator's newer intent wins). The pause is bounded by `jobTimeout`, which includes
+   prior intent restored, but only while the `kyber.io/archive-paused` mark
+   is still there: every lifecycle verb, Stop included, clears it, so an
+   operator's choice during the export wins. The pause is bounded by `jobTimeout`, which includes
    `pauseTimeout`; on any failure or cancellation the agent is released the
    same way.
-4. **verifying** – the control plane re-reads the sealed object and runs
-   `diskarchive.Verify`: every ZIP entry has exactly one manifest record and
-   vice versa, types, sizes and SHA-256 agree, paths are canonical, no
-   duplicate names. Only then is the job `completed` with an `expiresAt`.
+4. **verifying** – an unprivileged pod with no volumes reads the stored
+   archive back through `GET /internal/archive-jobs/{id}/archive` (ranged
+   plaintext) and runs `diskarchive.Verify`: every ZIP entry has exactly one
+   manifest record and vice versa, types, sizes and SHA-256 agree, paths are
+   canonical, no duplicate names. It posts the manifest summary to
+   `/summary`; only then is the job `completed` with an `expiresAt`. The
+   check runs in a pod because a disk with millions of files has a manifest
+   and ZIP directory the control plane must never hold in memory.
+
+Each job advances in its own goroutine against a fresh read of its row. A
+job ends in two saved steps: it first records the outcome it is heading for
+(`finishing`, version-checked), then releases the agent, removes pods and
+deletes bytes, then saves the terminal state; a restart in between re-runs
+the idempotent cleanup. An archive pod that cannot start (image pull
+failure, container config error, or still pending after 10 minutes) fails
+the job at once instead of holding the agent until its deadline.
 
 Cancellation deletes the pod, token Secret and partial object and releases
 the agent. Retention GC deletes expired objects. Each job owns its object key,
@@ -72,6 +87,8 @@ exclusions under the root, and per entry: path, type, size, mode, uid, gid,
 mtime, symlink target and SHA-256 for regular files.
 
 Excluded by design: sockets, FIFOs and device nodes (listed with a reason),
+names that cannot be carried safely (not UTF-8, or that read as traversal
+when a backslash is taken as a separator; listed with a reason),
 `lost+found`, Kubernetes Secrets and ConfigMaps, the transcript-offsets PVC,
 and image-provided paths outside `/persist`. Hard links are archived as
 independent files. Symlinks are archived as links, never followed.
@@ -81,7 +98,7 @@ independent files. Symlinks are archived as links, never followed.
 A new `archives:admin` scope (not implied by `lifecycle:admin`) gates start,
 cancel, download and import. Download is a two-step: an authorized
 `POST /api/v1/agents/{name}/exports/{id}/download-link` returns a URL carrying an HMAC token
-bound to job ID, agent and a 10-minute expiry. The token is in the path's last
+bound to the job ID and a 10-minute expiry (the job ID identifies the agent). The token is in the path's last
 segment, which request logging redacts. The token never grants access to
 another job.
 
@@ -134,3 +151,16 @@ reconciler hold (envtest), chart rendering, and the PWA card.
 Not yet verified on a real cluster: export of a real agent on k3s local-path,
 GKE PD and EKS EBS, a nearly full disk, and a control-plane restart mid-job.
 Those need a canary run after deployment; the test agent is Matt's call.
+
+## Review checkpoint: 2026-09-22 (MAT-87)
+
+An adversarial review found, and this branch fixes: an empty `desiredPhase`
+left the agent stopped after export; an operator's Stop during an export was
+undone on release; a stale job snapshot could fail a good export and delete
+its bytes; backslash and non-UTF-8 names failed verification after the agent
+had been stopped; verification ran serially in the control plane and could
+hold other agents or exhaust its memory; a pod stuck on image pull held the
+agent for the full timeout and got no pull secrets; a second upload attempt
+was not refused; an empty manifest passed inspection; and restrictive
+directory modes were applied before their children were touched. Each has a
+regression test.

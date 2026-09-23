@@ -116,7 +116,20 @@ type Job struct {
 	WrappedKey []byte `json:"wrappedKey,omitempty"`
 	// TokenHash is the SHA-256 of the per-job pod upload/download token.
 	TokenHash string `json:"tokenHash,omitempty"`
-	Uploaded  bool   `json:"uploaded,omitempty"`
+	// UploadClaimed is set, with the version check, before an upload reads
+	// its body, so a job accepts exactly one upload attempt.
+	UploadClaimed bool `json:"uploadClaimed,omitempty"`
+	Uploaded      bool `json:"uploaded,omitempty"`
+	// VerifyStarted and Verified track the verification pod; Verified is set
+	// when it has posted a summary of a fully checked archive.
+	VerifyStarted bool `json:"verifyStarted,omitempty"`
+	Verified      bool `json:"verified,omitempty"`
+
+	// Finishing is the terminal state a job is being cleaned up towards.
+	// finish saves it before releasing anything, so a concurrent writer or a
+	// restart can never leave cleanup half done and unrecorded.
+	Finishing    State  `json:"finishing,omitempty"`
+	FinishReason string `json:"finishReason,omitempty"`
 
 	// Summary is the verified manifest without its per-entry list, which can
 	// run to millions of records and stays inside the archive.

@@ -85,22 +85,22 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 		}
 	}
 
-	for _, e := range m.Entries {
-		if opts.PreserveOwnership {
+	if opts.PreserveOwnership {
+		for _, e := range m.Entries {
 			if err := root.Lchown(e.Path, e.UID, e.GID); err != nil {
 				return nil, fmt.Errorf("chown %s: %w", e.Path, err)
 			}
 		}
-		if e.Type != EntrySymlink {
-			// chown clears setuid/setgid, so modes are applied after it.
-			if err := root.Chmod(e.Path, toFileMode(e.Mode)); err != nil {
-				return nil, fmt.Errorf("chmod %s: %w", e.Path, err)
-			}
-		}
 	}
+	// Modes and times deepest-first: a directory's restored mode may drop
+	// search permission, and touching children must not disturb a parent's
+	// restored mtime. chown clears setuid/setgid, so modes follow it.
 	for _, e := range slices.Backward(m.Entries) {
 		if e.Type == EntrySymlink {
 			continue
+		}
+		if err := root.Chmod(e.Path, toFileMode(e.Mode)); err != nil {
+			return nil, fmt.Errorf("chmod %s: %w", e.Path, err)
 		}
 		if err := root.Chtimes(e.Path, e.ModTime, e.ModTime); err != nil {
 			return nil, fmt.Errorf("setting times on %s: %w", e.Path, err)

@@ -48,7 +48,9 @@ every sync.
   NetworkPolicy, bearer token).
 - The export pod runs on the agent's node with the volume mounted read-only,
   no service-account token, and one extra capability (`DAC_READ_SEARCH`, to
-  read files regardless of their permissions). It carries the agent's
+  read files regardless of their permissions). The verification pod mounts
+  nothing and runs unprivileged. Both run the control-plane image with the
+  chart's `imagePullSecrets`. It carries the agent's
   `kyber.io/agent` label, so the agent network policies apply to it, and a
   per-job token that can upload to its own job and nothing else.
 - A download link is valid for ten minutes and for one job. The token is in
@@ -60,17 +62,28 @@ every sync.
 
 ## What an export does to the agent
 
-1. The job records the agent's `desiredPhase`, sets the
-   `kyber.io/archive-hold` annotation and, if the agent was not already
-   stopping, sets `desiredPhase: Stopped`. The current session ends.
+1. The job records what the agent is meant to be doing, sets the
+   `kyber.io/archive-hold` annotation and, unless the agent is meant to be
+   stopped, sets `desiredPhase: Stopped` with the `kyber.io/archive-paused`
+   mark. The current session ends.
 2. Once the agent pod is gone (within `agentArchives.pauseTimeout`, 5 minutes
    by default) a same-node pod archives the volume and streams it to the
    control plane. A file that changes or cannot be read fails the export
    rather than being left out.
-3. As soon as the upload is stored the hold is removed and the prior
-   `desiredPhase` is restored, unless an operator changed it in the meantime.
-4. The control plane verifies the stored archive against its manifest and
-   marks the job completed.
+3. As soon as the upload is stored the hold is removed and the agent goes
+   back to what it was doing. If an operator used any lifecycle verb during
+   the export, Stop included, their choice stands instead.
+4. A verification pod reads the stored archive back, checks every entry
+   against the manifest, and reports; then the job is completed.
+
+An archive pod that cannot start (image pull failure, a container
+configuration error, or still pending after 10 minutes because of node
+capacity or volume attachment) fails the job at once and releases the agent.
+Archives are bounded to `agentArchives.maxEntries` files (3 million) so the
+export and verification pods fit their 2Gi memory limit; raise both
+together for larger disks. File names that cannot be stored portably (not
+UTF-8, or that look like path traversal to other ZIP tools) are listed as
+left out.
 
 While the hold is present the API refuses Start, Restart, force-NeedsAuth,
 runtime repair and harness switching with `409 archive_in_progress`. Stop is

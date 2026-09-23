@@ -125,18 +125,18 @@ type InternalServer struct {
 
 	// archives serves the disk archive pods' upload and restore reads
 	// (MAT-87/MAT-88). Nil leaves those routes answering 503.
-	archives *ArchiveService
-	tokenStore             tokenstore.TokenStore
-	tokenAccumulator       tokenstore.Accumulator
-	metricsStore           metricsstore.MetricsStore
-	nodeStore              metricsstore.NodeStore
-	stateChangeAccum       statechangestore.Accumulator
-	runtimeDetectCache     runtimedetect.Cache
-	skillStore             skillstore.Store
-	requestStore           requeststore.Store
-	taskStore              taskstore.DispatchStore
-	taskObjectStore        taskobject.ObjectStore
-	agentMetrics           AgentMetricsProvider
+	archives           *ArchiveService
+	tokenStore         tokenstore.TokenStore
+	tokenAccumulator   tokenstore.Accumulator
+	metricsStore       metricsstore.MetricsStore
+	nodeStore          metricsstore.NodeStore
+	stateChangeAccum   statechangestore.Accumulator
+	runtimeDetectCache runtimedetect.Cache
+	skillStore         skillstore.Store
+	requestStore       requeststore.Store
+	taskStore          taskstore.DispatchStore
+	taskObjectStore    taskobject.ObjectStore
+	agentMetrics       AgentMetricsProvider
 
 	// snapshotMu and snapshotPrior track the last cumulative activity_state_seconds
 	// per (agent, state) so handleStatusSnapshot can store incremental delta seconds

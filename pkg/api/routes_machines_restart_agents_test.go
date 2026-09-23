@@ -25,10 +25,10 @@ func buildRestartAgentsHandler(t *testing.T, scheme *runtime.Scheme, objs ...run
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	rec := record.NewFakeRecorder(16)
 	s := &api.Server{
-		K8sClient:     fakeClient,
-		APIKey:        testAPIKey,
-		Namespace:     "kyber-system",
-		Recorder:      rec,
+		K8sClient: fakeClient,
+		APIKey:    testAPIKey,
+		Namespace: "kyber-system",
+		Recorder:  rec,
 	}
 	return s.BuildHandler(), fakeClient, rec
 }
@@ -265,4 +265,3 @@ func TestRestartMachineAgents_MethodNotAllowed(t *testing.T) {
 		t.Errorf("want 405, got %d", rr.Code)
 	}
 }
-

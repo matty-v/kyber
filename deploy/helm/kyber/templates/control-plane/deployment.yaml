@@ -476,6 +476,13 @@ spec:
               value: {{ $archives.retention | quote }}
             - name: KYBER_ARCHIVE_MAX_CONCURRENT_JOBS
               value: {{ $archives.maxConcurrentJobs | quote }}
+            - name: KYBER_ARCHIVE_MAX_ENTRIES
+              value: {{ $archives.maxEntries | int64 | toString | quote }}
+            {{- with .Values.imagePullSecrets }}
+            # Archive pods run the control-plane image; give them its pull secrets.
+            - name: KYBER_IMAGE_PULL_SECRETS
+              value: {{ include "kyber.imagePullSecretNames" $ | quote }}
+            {{- end }}
             {{- if and $archives.enabled (eq $archives.storage.backend "builtin") }}
             - name: KYBER_ARCHIVE_STORE_URL
               value: "http://{{ include "kyber.fullname" . }}-archive-store.{{ include "kyber.namespace" . }}.svc:8090"

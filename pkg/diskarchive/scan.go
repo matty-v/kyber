@@ -10,6 +10,7 @@ import (
 	"os"
 	"path"
 	"slices"
+	"strings"
 	"syscall"
 )
 
@@ -51,6 +52,15 @@ func (s *scanner) walk(ctx context.Context, rel string, visit func(scanItem) err
 	}
 	if reason, ok := s.opts.Exclude[rel]; ok && rel != "." {
 		s.excluded = append(s.excluded, Exclusion{Path: rel, Reason: reason})
+		return nil
+	}
+	// A name the archive cannot carry safely (not UTF-8, or one that a ZIP
+	// tool could read as traversal) is listed rather than failing the whole
+	// export after the agent was stopped. Such names are vanishingly rare on
+	// agent disks; the manifest says exactly which were left out.
+	if _, err := CleanRelPath(rel); err != nil {
+		s.excluded = append(s.excluded, Exclusion{Path: strings.ToValidUTF8(rel, "\uFFFD"),
+			Reason: "file name cannot be stored safely in a portable archive (not UTF-8, or ambiguous separators)"})
 		return nil
 	}
 	info, err := s.root.Lstat(rel)

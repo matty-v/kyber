@@ -172,6 +172,12 @@ const (
 // it. The job that set it removes it.
 const AnnotationArchiveHold = "kyber.io/archive-hold"
 
+// AnnotationArchivePaused names the export job that stopped the agent
+// itself. Any lifecycle verb during the export removes it, which is how the
+// job knows on release whether the Stopped it finds is its own (restore the
+// prior intent) or the operator's (leave it).
+const AnnotationArchivePaused = "kyber.io/archive-paused"
+
 // AgentResources specifies compute resource requests for an agent pod.
 type AgentResources struct {
 	// CPU is the CPU request and limit (e.g., "1", "500m").

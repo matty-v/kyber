@@ -189,6 +189,53 @@ func (h *exportHarness) setPodPhase(id string, phase corev1.PodPhase) {
 	}
 }
 
+// playVerifyPod does what kyber-disk-archive verify does: read the archive
+// back through the job's endpoint, verify it, and post the summary.
+func (h *exportHarness) playVerifyPod(id string) {
+	h.t.Helper()
+	pod := &corev1.Pod{}
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "disk-verify-" + id, Namespace: "kyber-system"}, pod); err != nil {
+		h.t.Fatalf("verify pod: %v", err)
+	}
+	if len(pod.Spec.Volumes) != 0 || *pod.Spec.Containers[0].SecurityContext.RunAsUser == 0 {
+		h.t.Errorf("verify pod must mount nothing and run unprivileged: %+v", pod.Spec)
+	}
+	token := h.podToken(id)
+	req := httptest.NewRequest(http.MethodGet, "/internal/archive-jobs/"+id+"/archive", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	h.internal.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		h.t.Fatalf("verify read = %d", rr.Code)
+	}
+	data := rr.Body.Bytes()
+	m, err := diskarchive.Verify(bytes.NewReader(data), int64(len(data)), diskarchive.Limits{})
+	if err != nil {
+		h.t.Fatalf("stored archive does not verify: %v", err)
+	}
+	body, _ := json.Marshal(archivejob.SummaryOf(m))
+	req = httptest.NewRequest(http.MethodPost, "/internal/archive-jobs/"+id+"/summary", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr = httptest.NewRecorder()
+	h.internal.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		h.t.Fatalf("summary post = %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func (h *exportHarness) setVerifyPodPhase(id string, phase corev1.PodPhase, msg string) {
+	pod := &corev1.Pod{}
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "disk-verify-" + id, Namespace: "kyber-system"}, pod); err != nil {
+		h.t.Fatalf("verify pod: %v", err)
+	}
+	pod.Status.Phase = phase
+	pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "archive", State: corev1.ContainerState{
+		Terminated: &corev1.ContainerStateTerminated{ExitCode: 1, Message: msg}}}}
+	if err := h.c.Status().Update(context.Background(), pod); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
 // runToArchiving drives a fresh export to the point where the pod exists.
 func (h *exportHarness) runToArchiving() string {
 	h.t.Helper()
@@ -259,6 +306,11 @@ func TestExportLifecycleEndToEnd(t *testing.T) {
 	if a.Annotations[kyberv1.AnnotationArchiveHold] != "" || a.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
 		t.Fatalf("agent not released after upload: hold=%q desired=%s", a.Annotations[kyberv1.AnnotationArchiveHold], a.Spec.DesiredPhase)
 	}
+	h.svc.Tick(ctx) // starts the verification pod
+	if j := h.job(id); j.Step != archivejob.StepVerifying || j.State != archivejob.StateRunning {
+		t.Fatalf("after release: %s/%s", j.State, j.Step)
+	}
+	h.playVerifyPod(id)
 	h.svc.Tick(ctx)
 	j := h.job(id)
 	if j.State != archivejob.StateCompleted || j.Summary == nil || j.Summary.Totals.Files != 2 {
@@ -373,8 +425,18 @@ func TestExportFailuresReleaseAgent(t *testing.T) {
 				h.t.Fatalf("upload = %d", rr.Code)
 			}
 			h.setPodPhase(id, corev1.PodSucceeded)
-			h.svc.Tick(context.Background())
+			h.svc.Tick(context.Background()) // release
+			h.svc.Tick(context.Background()) // verify pod
+			h.setVerifyPodPhase(id, corev1.PodFailed, "diskarchive: archive is invalid: zip: not a valid zip file")
 		}, "verification"},
+		{"export pod cannot pull its image", func(h *exportHarness, id string) {
+			pod := h.exportPod(id)
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: "archive", State: corev1.ContainerState{
+				Waiting: &corev1.ContainerStateWaiting{Reason: "ImagePullBackOff"}}}}
+			if err := h.c.Status().Update(context.Background(), pod); err != nil {
+				h.t.Fatal(err)
+			}
+		}, "ImagePullBackOff"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -470,5 +532,81 @@ func TestExportUnavailableWithoutService(t *testing.T) {
 	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no archive service = %d, want 503", rr.Code)
+	}
+}
+
+// An agent whose desiredPhase was cleared (as the controller does after a
+// restart) comes back to Running after the export.
+func TestExportRestoresRunningWhenDesiredPhaseWasEmpty(t *testing.T) {
+	h := newExportHarness(t)
+	a := h.agent()
+	a.Spec.DesiredPhase = ""
+	if err := h.c.Update(context.Background(), a); err != nil {
+		t.Fatal(err)
+	}
+	id := h.runToArchiving()
+	h.do(http.MethodPost, "/api/v1/agents/"+exportAgent+"/exports/"+id+"/cancel", testAPIKey)
+	h.svc.Tick(context.Background())
+	if got := h.agent().Spec.DesiredPhase; got != kyberv1.AgentPhaseRunning {
+		t.Errorf("desiredPhase after export = %q, want Running", got)
+	}
+}
+
+// Stop pressed during an export is the operator's intent; release keeps it.
+func TestExportKeepsOperatorStop(t *testing.T) {
+	h := newExportHarness(t)
+	id := h.runToArchiving()
+	if rr := h.do(http.MethodPost, "/api/v1/agents/"+exportAgent+"/stop", testAPIKey); rr.Code != http.StatusOK {
+		t.Fatalf("stop during export = %d %s", rr.Code, rr.Body.String())
+	}
+	if h.agent().Annotations[kyberv1.AnnotationArchivePaused] != "" {
+		t.Fatal("Stop did not clear the job's paused mark")
+	}
+	h.do(http.MethodPost, "/api/v1/agents/"+exportAgent+"/exports/"+id+"/cancel", testAPIKey)
+	h.svc.Tick(context.Background())
+	a := h.agent()
+	if a.Spec.DesiredPhase != kyberv1.AgentPhaseStopped || a.Annotations[kyberv1.AnnotationArchiveHold] != "" {
+		t.Errorf("after release: desired=%s hold=%q, want the operator's Stopped and no hold", a.Spec.DesiredPhase, a.Annotations[kyberv1.AnnotationArchiveHold])
+	}
+}
+
+// A job accepts exactly one upload attempt.
+func TestExportRejectsSecondUpload(t *testing.T) {
+	h := newExportHarness(t)
+	id := h.runToArchiving()
+	token := h.podToken(id)
+	if rr := h.upload(id, token, bytes.NewReader(sampleDisk(t))); rr.Code != http.StatusNoContent {
+		t.Fatalf("first upload = %d", rr.Code)
+	}
+	if rr := h.upload(id, token, bytes.NewReader(sampleDisk(t))); rr.Code != http.StatusConflict {
+		t.Errorf("second upload = %d, want 409", rr.Code)
+	}
+	if _, err := h.store.Size(context.Background(), "exports/"+id+"/archive.sealed"); err != nil {
+		t.Errorf("the first upload's object is gone: %v", err)
+	}
+}
+
+// A job whose cleanup was interrupted after it recorded its outcome finishes
+// that cleanup on the next step, and a stale writer cannot undo it.
+func TestFinishResumesAfterInterruption(t *testing.T) {
+	h := newExportHarness(t)
+	id := h.runToArchiving()
+	j := h.job(id)
+	j.Finishing = archivejob.StateFailed
+	j.FinishReason = "simulated crash mid-cleanup"
+	if err := h.svc.Jobs.Update(context.Background(), j); err != nil {
+		t.Fatal(err)
+	}
+	// Uploads are refused once a job is finishing.
+	if rr := h.upload(id, h.podToken(id), bytes.NewReader(sampleDisk(t))); rr.Code != http.StatusForbidden {
+		t.Errorf("upload to a finishing job = %d, want 403", rr.Code)
+	}
+	h.svc.Tick(context.Background())
+	j = h.job(id)
+	if j.State != archivejob.StateFailed || j.Error != "simulated crash mid-cleanup" || j.Finishing != "" {
+		t.Fatalf("state=%s error=%q finishing=%q", j.State, j.Error, j.Finishing)
+	}
+	if a := h.agent(); a.Annotations[kyberv1.AnnotationArchiveHold] != "" || a.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		t.Errorf("agent not released by the resumed cleanup")
 	}
 }

@@ -56,7 +56,11 @@ the chart's built-in `kyber-archive-store` by default on every target, or
 S3/GCS. The archive format and its validation are `pkg/diskarchive`; never
 extract an archive except through `diskarchive.Extract`. Downloads use
 short-lived path-token links under `/api/v1/archive-downloads/`, redacted from
-request logs. See `docs/design/2026-09-22-agent-disk-export-import.md`.
+request logs. Verification runs in an unprivileged pod that reads the archive
+back through `/internal/archive-jobs/{id}/archive` and posts a summary — never
+parse a whole archive in the control plane. Release restores the agent's prior
+intent only while the `kyber.io/archive-paused` mark stands; lifecycle verbs
+clear it. See `docs/design/2026-09-22-agent-disk-export-import.md`.
 
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function

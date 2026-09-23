@@ -82,6 +82,9 @@ func Inspect(ra io.ReaderAt, size int64, lim Limits) (*Inspected, error) {
 	if err := CheckVersion(m.FormatVersion); err != nil {
 		return nil, err
 	}
+	if len(m.Entries) == 0 {
+		return nil, fmt.Errorf("%w: manifest has no entries (not even the root)", ErrInvalidArchive)
+	}
 	if lim.MaxEntries > 0 && len(m.Entries) > lim.MaxEntries {
 		return nil, fmt.Errorf("%w: %d entries exceeds %d", ErrLimitExceeded, len(m.Entries), lim.MaxEntries)
 	}

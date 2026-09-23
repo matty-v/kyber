@@ -2036,6 +2036,9 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.DesiredPhase = phase
+	// An operator's lifecycle verb during a disk export is their intent; the
+	// export must not overwrite it when it releases the agent.
+	delete(agent.Annotations, kyberv1.AnnotationArchivePaused)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent desired phase", "name", name, "phase", phase, "error", err)
 		// A schema rejection is a bug in this server (a lifecycle verb writing a

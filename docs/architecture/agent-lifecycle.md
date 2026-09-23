@@ -139,8 +139,9 @@ The `kyber.io/archive-hold` annotation names a disk export or restore job that
 owns the agent's volume (MAT-87/MAT-88). While it is present `createPod`
 refuses to build an agent pod whatever `desiredPhase` says, and the API
 refuses every lifecycle verb except Stop. An export stops a running agent
-through `desiredPhase` before it sets the hold, so the ordinary Stop path
-removes the pod. A new agent created from an archive starts with the hold:
+through `desiredPhase` together with the `kyber.io/archive-paused` mark, so
+the ordinary Stop path removes the pod; any lifecycle verb clears the mark,
+and the export then leaves the operator's `desiredPhase` alone on release. A new agent created from an archive starts with the hold:
 the reconciler moves it to `Creating` with the `AwaitingRestore` condition and
 no pod, and `RestoreComplete` builds the first pod once the job removes the
 annotation.

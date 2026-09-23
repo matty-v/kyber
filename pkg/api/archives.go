@@ -52,6 +52,9 @@ type ArchiveLimits struct {
 	MaxConcurrentJobs int
 	// LinkTTL is the lifetime of a download link.
 	LinkTTL time.Duration
+	// MaxEntries bounds the files, directories and links in one archive,
+	// which is what bounds the archive and verify pods' memory.
+	MaxEntries int
 }
 
 func (l ArchiveLimits) withDefaults() ArchiveLimits {
@@ -72,6 +75,9 @@ func (l ArchiveLimits) withDefaults() ArchiveLimits {
 	}
 	if l.LinkTTL <= 0 {
 		l.LinkTTL = 10 * time.Minute
+	}
+	if l.MaxEntries <= 0 {
+		l.MaxEntries = 3_000_000
 	}
 	return l
 }
@@ -96,6 +102,9 @@ type ArchiveService struct {
 	Limits          ArchiveLimits
 	Recorder        record.EventRecorder
 	DisabledReason  string
+	// ImagePullSecrets are attached to archive pods; they run the control
+	// plane's image, which may come from a private registry.
+	ImagePullSecrets []string
 
 	// Now is overridable in tests.
 	Now func() time.Time
@@ -103,6 +112,9 @@ type ArchiveService struct {
 	// uploads tracks in-flight uploads so a cancel can abort them.
 	uploadsMu sync.Mutex
 	uploads   map[string]context.CancelFunc
+	// steps marks jobs whose current step is running.
+	stepsMu sync.Mutex
+	steps   map[string]bool
 }
 
 func (a *ArchiveService) now() time.Time {
@@ -192,12 +204,14 @@ func (a *ArchiveService) RequestCancel(ctx context.Context, j *archivejob.Job) e
 
 // Start drives jobs until ctx ends. It is a leader-gated manager Runnable:
 // exactly one replica drives jobs, and every step is idempotent against the
-// persisted job, so a new leader resumes where the last one stopped.
+// persisted job, so a new leader resumes where the last one stopped. Each
+// job advances in its own goroutine, so one slow step (a large delete, a
+// slow store) never delays another job's pause timeout or release.
 func (a *ArchiveService) Start(ctx context.Context) error {
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
 	for {
-		a.Tick(ctx)
+		a.dispatch(ctx)
 		select {
 		case <-ctx.Done():
 			return nil
@@ -209,28 +223,71 @@ func (a *ArchiveService) Start(ctx context.Context) error {
 // NeedLeaderElection keeps the worker on the leader only.
 func (a *ArchiveService) NeedLeaderElection() bool { return true }
 
-// Tick advances every active job by at most one step.
-func (a *ArchiveService) Tick(ctx context.Context) {
+// Tick advances every active job by at most one step and waits for them.
+func (a *ArchiveService) Tick(ctx context.Context) { a.dispatch(ctx).Wait() }
+
+func (a *ArchiveService) dispatch(ctx context.Context) *sync.WaitGroup {
+	wg := &sync.WaitGroup{}
 	if ok, _ := a.Available(); !ok {
-		return
+		return wg
 	}
 	jobs, err := a.Jobs.ListActive(ctx, a.now())
 	if err != nil {
 		slog.Warn("disk archives: listing active jobs failed", "error", err)
-		return
+		return wg
 	}
-	for _, j := range jobs {
-		var err error
-		switch j.Kind {
-		case archivejob.KindExport:
-			err = a.advanceExport(ctx, j)
-		case archivejob.KindImport:
-			err = a.advanceImport(ctx, j)
+	for _, listed := range jobs {
+		if !a.claimStep(listed.ID) {
+			continue // its previous step is still running
 		}
-		if err != nil && !errors.Is(err, archivejob.ErrConflict) {
-			slog.Warn("disk archives: job step failed", "job", j.ID, "kind", j.Kind, "agent", j.Agent, "error", err)
-		}
+		wg.Add(1)
+		go func(id string) {
+			defer wg.Done()
+			defer a.releaseStep(id)
+			// Always act on the current row: the listing may be seconds old,
+			// and the upload handler writes to running jobs concurrently.
+			j, err := a.Jobs.Get(ctx, id)
+			if err == nil {
+				err = a.advance(ctx, j)
+			}
+			if err != nil && !errors.Is(err, archivejob.ErrConflict) {
+				slog.Warn("disk archives: job step failed", "job", id, "error", err)
+			}
+		}(listed.ID)
 	}
+	return wg
+}
+
+func (a *ArchiveService) claimStep(id string) bool {
+	a.stepsMu.Lock()
+	defer a.stepsMu.Unlock()
+	if a.steps == nil {
+		a.steps = map[string]bool{}
+	}
+	if a.steps[id] {
+		return false
+	}
+	a.steps[id] = true
+	return true
+}
+
+func (a *ArchiveService) releaseStep(id string) {
+	a.stepsMu.Lock()
+	defer a.stepsMu.Unlock()
+	delete(a.steps, id)
+}
+
+func (a *ArchiveService) advance(ctx context.Context, j *archivejob.Job) error {
+	if j.Finishing != "" {
+		return a.finish(ctx, j, j.Finishing, j.FinishReason)
+	}
+	switch j.Kind {
+	case archivejob.KindExport:
+		return a.advanceExport(ctx, j)
+	case archivejob.KindImport:
+		return a.advanceImport(ctx, j)
+	}
+	return nil
 }
 
 // fail records a terminal failure after releasing everything the job holds.
@@ -238,7 +295,21 @@ func (a *ArchiveService) fail(ctx context.Context, j *archivejob.Job, reason str
 	return a.finish(ctx, j, archivejob.StateFailed, reason)
 }
 
+// finish ends a job in two saved steps. First it records the outcome it is
+// heading for, with the version check: a job changed by someone else (the
+// upload handler, a cancel) makes this attempt stop before it touches
+// anything, and the next step re-reads it. Only then does it release the
+// agent, remove pods and delete bytes, and finally save the terminal state.
+// A restart between the two saves re-runs the cleanup, which is idempotent.
 func (a *ArchiveService) finish(ctx context.Context, j *archivejob.Job, state archivejob.State, reason string) error {
+	if j.Finishing == "" {
+		j.Finishing = state
+		j.FinishReason = boundedRepairOutput(reason)
+		j.Message = "Cleaning up"
+		if err := a.Jobs.Update(ctx, j); err != nil {
+			return err
+		}
+	}
 	a.abortUpload(j.ID)
 	if err := a.cleanupPod(ctx, j); err != nil {
 		return err
@@ -250,51 +321,61 @@ func (a *ArchiveService) finish(ctx context.Context, j *archivejob.Job, state ar
 	} else if err := a.discardImportDestination(ctx, j); err != nil {
 		return err
 	}
-	if j.ObjectKey != "" && state != archivejob.StateCompleted && !(j.Kind == archivejob.KindImport && j.SourceJobID != "") {
+	if j.ObjectKey != "" && j.Finishing != archivejob.StateCompleted {
 		if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
 			return fmt.Errorf("deleting archive: %w", err)
 		}
 	}
 	now := a.now()
-	j.State = state
+	j.State = j.Finishing
+	j.Error = j.FinishReason
+	j.Finishing, j.FinishReason = "", ""
 	j.CompletedAt = &now
-	j.Error = boundedRepairOutput(reason)
-	switch state {
+	switch j.State {
 	case archivejob.StateFailed:
 		j.Message = "Failed"
 	case archivejob.StateCanceled:
 		j.Message = "Canceled"
 	}
 	j.WrappedKey = nil
-	a.event(j, corev1.EventTypeWarning, "DiskArchive"+strings.ToUpper(string(state[:1]))+string(state[1:]), reason)
+	a.event(j, corev1.EventTypeWarning, "DiskArchive"+strings.ToUpper(string(j.State[:1]))+string(j.State[1:]), j.Error)
 	return a.Jobs.Update(ctx, j)
 }
 
 func (a *ArchiveService) event(j *archivejob.Job, typ, reason, msg string) {
-	if a.Recorder == nil {
+	if a.Recorder == nil || j.Agent == "" || j.AgentUID == "" {
 		return
 	}
 	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: j.Agent, Namespace: a.Namespace, UID: types.UID(j.AgentUID)}}
 	a.Recorder.Eventf(agent, typ, reason, "%s job %s: %s", j.Kind, j.ID, boundedRepairOutput(msg))
 }
 
+// expire deletes a completed archive whose retention has lapsed (ListActive
+// returns completed jobs only once they have).
+func (a *ArchiveService) expire(ctx context.Context, j *archivejob.Job) error {
+	if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
+		return fmt.Errorf("deleting expired archive: %w", err)
+	}
+	j.State = archivejob.StateExpired
+	j.Message = "Expired"
+	j.WrappedKey = nil
+	return a.Jobs.Update(ctx, j)
+}
+
 func (a *ArchiveService) advanceExport(ctx context.Context, j *archivejob.Job) error {
 	now := a.now()
 	if j.State == archivejob.StateCompleted {
-		// Retention lapsed (ListActive returns only those).
-		if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
-			return fmt.Errorf("deleting expired archive: %w", err)
-		}
-		j.State = archivejob.StateExpired
-		j.Message = "Expired"
-		j.WrappedKey = nil
-		return a.Jobs.Update(ctx, j)
+		return a.expire(ctx, j)
 	}
 	if j.CancelRequested {
 		return a.finish(ctx, j, archivejob.StateCanceled, "canceled by operator")
 	}
 	if j.Deadline != nil && now.After(*j.Deadline) {
 		return a.fail(ctx, j, "export exceeded its time limit")
+	}
+	if j.Step == archivejob.StepVerifying {
+		// The agent is already released; verification needs only the bytes.
+		return a.verifyStored(ctx, j, "Ready to download")
 	}
 
 	agent := &kyberv1.Agent{}
@@ -313,8 +394,6 @@ func (a *ArchiveService) advanceExport(ctx context.Context, j *archivejob.Job) e
 		return a.waitForPause(ctx, j, agent)
 	case j.Step == archivejob.StepArchiving:
 		return a.watchExportPod(ctx, j)
-	case j.Step == archivejob.StepVerifying:
-		return a.verifyExport(ctx, j)
 	}
 	return a.fail(ctx, j, "export is in an unknown step "+string(j.Step))
 }
@@ -335,13 +414,14 @@ func (a *ArchiveService) beginExport(ctx context.Context, j *archivejob.Job, age
 	j.Step = archivejob.StepPausing
 	j.StartedAt = &now
 	j.Deadline = &deadline
-	j.PriorDesiredPhase = string(agent.Spec.DesiredPhase)
+	intent := standingIntent(agent)
+	j.PriorDesiredPhase = string(intent)
 	j.Message = "Pausing the agent"
 	// Persist the intent before touching the agent: if this write loses a
 	// race nothing has changed yet; if the patch below fails the job is in a
 	// state whose release path knows exactly what to undo.
 	j.HoldApplied = true
-	j.PausedByJob = agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped
+	j.PausedByJob = intent != kyberv1.AgentPhaseStopped
 	// Inventory the mounts while the agent's own pod (if any) still exists.
 	spec, err := a.podSpecForInventory(ctx, agent)
 	if err != nil {
@@ -357,6 +437,9 @@ func (a *ArchiveService) beginExport(ctx context.Context, j *archivejob.Job, age
 	}
 	agent.Annotations[kyberv1.AnnotationArchiveHold] = j.ID
 	if j.PausedByJob {
+		// The paused mark is how release knows the Stopped it finds is still
+		// the job's: any lifecycle verb during the export clears it.
+		agent.Annotations[kyberv1.AnnotationArchivePaused] = j.ID
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
 	}
 	if err := a.Client.Patch(ctx, agent, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
@@ -367,6 +450,23 @@ func (a *ArchiveService) beginExport(ctx context.Context, j *archivejob.Job, age
 	}
 	a.event(j, corev1.EventTypeNormal, "DiskExportStarted", "agent paused for export")
 	return nil
+}
+
+// standingIntent is what the agent is meant to be doing. desiredPhase is
+// optional and the controller clears it after a restart, so an empty value
+// means "keep doing what it is doing": running unless it is stopped or
+// waiting for authorization.
+func standingIntent(agent *kyberv1.Agent) kyberv1.AgentPhase {
+	if d := agent.Spec.DesiredPhase; d != "" && d != kyberv1.AgentPhaseRestarting {
+		return d
+	}
+	switch agent.Status.Phase {
+	case kyberv1.AgentPhaseStopped:
+		return kyberv1.AgentPhaseStopped
+	case kyberv1.AgentPhaseNeedsAuth:
+		return kyberv1.AgentPhaseNeedsAuth
+	}
+	return kyberv1.AgentPhaseRunning
 }
 
 // waitForPause advances once no agent pod exists, within PauseTimeout.
@@ -434,6 +534,7 @@ func (a *ArchiveService) reapplyHold(ctx context.Context, j *archivejob.Job, age
 	}
 	agent.Annotations[kyberv1.AnnotationArchiveHold] = j.ID
 	if j.PausedByJob {
+		agent.Annotations[kyberv1.AnnotationArchivePaused] = j.ID
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
 	}
 	if err := a.Client.Patch(ctx, agent, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil && !k8serrors.IsConflict(err) {
@@ -469,13 +570,38 @@ func (a *ArchiveService) watchExportPod(ctx context.Context, j *archivejob.Job) 
 	case corev1.PodFailed:
 		return a.fail(ctx, j, "export pod failed: "+archivePodDiagnostic(pod))
 	}
+	if stuck, why := a.archivePodStuck(pod); stuck {
+		return a.fail(ctx, j, "export pod could not start: "+why)
+	}
 	return nil
+}
+
+// archivePodStartTimeout bounds how long an archive pod may sit unstarted
+// (no node capacity, a volume that will not attach) while it holds an agent.
+const archivePodStartTimeout = 10 * time.Minute
+
+// archivePodStuck reports a pod that will not start on its own, so the job
+// fails and releases the agent at once instead of at its deadline.
+func (a *ArchiveService) archivePodStuck(pod *corev1.Pod) (bool, string) {
+	for _, st := range pod.Status.ContainerStatuses {
+		if w := st.State.Waiting; w != nil {
+			switch w.Reason {
+			case "ImagePullBackOff", "ErrImagePull", "InvalidImageName", "CreateContainerConfigError", "CreateContainerError":
+				return true, w.Reason
+			}
+		}
+	}
+	created := pod.CreationTimestamp.Time
+	if pod.Status.Phase == corev1.PodPending && !created.IsZero() && time.Since(created) > archivePodStartTimeout {
+		return true, "still pending after 10 minutes (node capacity, volume attachment, or image)"
+	}
+	return false, ""
 }
 
 // afterUpload releases the agent as soon as its bytes are safely stored;
 // verification reads the stored copy and does not need the volume.
 func (a *ArchiveService) afterUpload(ctx context.Context, j *archivejob.Job) error {
-	if err := a.cleanupPod(ctx, j); err != nil {
+	if err := a.deletePod(ctx, archivePodName(j)); err != nil {
 		return err
 	}
 	if err := a.releaseAgent(ctx, j); err != nil {
@@ -486,26 +612,84 @@ func (a *ArchiveService) afterUpload(ctx context.Context, j *archivejob.Job) err
 	return a.Jobs.Update(ctx, j)
 }
 
-func (a *ArchiveService) verifyExport(ctx context.Context, j *archivejob.Job) error {
-	r, err := a.openArchive(ctx, j)
-	if err != nil {
-		return a.fail(ctx, j, "opening stored archive: "+err.Error())
+// verifyStored checks a stored export or upload end to end before anyone can
+// download or import it. The check runs in a short-lived pod, not in the
+// control plane: a disk with millions of files has a manifest and ZIP
+// directory far larger than the control plane's memory should ever hold.
+// The pod reads the archive back through the job's own endpoint and posts
+// the manifest summary; the job completes only once both have happened.
+func (a *ArchiveService) verifyStored(ctx context.Context, j *archivejob.Job, readyMessage string) error {
+	if j.Verified && j.Summary != nil {
+		if err := a.cleanupPod(ctx, j); err != nil {
+			return err
+		}
+		now := a.now()
+		expires := now.Add(a.limits().Retention)
+		j.State = archivejob.StateCompleted
+		j.Step = ""
+		j.Message = readyMessage
+		j.CompletedAt = &now
+		j.ExpiresAt = &expires
+		j.BytesDone = j.PlainSize
+		if j.Kind == archivejob.KindExport {
+			a.event(j, corev1.EventTypeNormal, "DiskExportCompleted", fmt.Sprintf("%d entries, %d bytes", j.Summary.Totals.Entries, j.PlainSize))
+		}
+		return a.Jobs.Update(ctx, j)
 	}
-	m, err := diskarchive.Verify(r, r.Size(), diskarchive.Limits{MaxBytes: a.limits().MaxArchiveBytes})
-	if err != nil {
-		return a.fail(ctx, j, "archive failed verification: "+err.Error())
+	pod := &corev1.Pod{}
+	err := a.Client.Get(ctx, types.NamespacedName{Name: verifyPodName(j), Namespace: a.Namespace}, pod)
+	if k8serrors.IsNotFound(err) {
+		if j.VerifyStarted {
+			if j.UpdatedAt.Add(2 * time.Minute).Before(a.now()) {
+				return a.fail(ctx, j, "verification pod disappeared before it reported")
+			}
+			return nil
+		}
+		return a.startVerifyPod(ctx, j)
 	}
-	now := a.now()
-	expires := now.Add(a.limits().Retention)
-	j.Summary = archivejob.SummaryOf(m)
-	j.State = archivejob.StateCompleted
-	j.Step = ""
-	j.Message = "Ready to download"
-	j.CompletedAt = &now
-	j.ExpiresAt = &expires
-	j.BytesDone = j.PlainSize
-	a.event(j, corev1.EventTypeNormal, "DiskExportCompleted", fmt.Sprintf("%d entries, %d bytes", m.Totals.Entries, j.PlainSize))
-	return a.Jobs.Update(ctx, j)
+	if err != nil {
+		return fmt.Errorf("reading verification pod: %w", err)
+	}
+	switch pod.Status.Phase {
+	case corev1.PodFailed:
+		return a.fail(ctx, j, "archive failed verification: "+archivePodDiagnostic(pod))
+	case corev1.PodSucceeded:
+		// Succeeded without a posted summary: the result was lost.
+		return a.fail(ctx, j, "verification finished without reporting a result")
+	}
+	if stuck, why := a.archivePodStuck(pod); stuck {
+		return a.fail(ctx, j, "verification pod could not start: "+why)
+	}
+	return nil
+}
+
+func (a *ArchiveService) startVerifyPod(ctx context.Context, j *archivejob.Job) error {
+	var owner *kyberv1.Agent
+	if j.AgentUID != "" {
+		owner = &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: j.Agent, Namespace: a.Namespace, UID: types.UID(j.AgentUID)}}
+	}
+	token, err := a.issuePodToken(ctx, j, owner)
+	if err != nil {
+		return err
+	}
+	j.TokenHash = hashToken(token)
+	j.VerifyStarted = true
+	if err := a.Jobs.Update(ctx, j); err != nil {
+		return err
+	}
+	base := strings.TrimRight(a.InternalURL, "/") + "/internal/archive-jobs/" + j.ID
+	env := []corev1.EnvVar{
+		{Name: "KYBER_ARCHIVE_SOURCE_URL", Value: base + "/archive"},
+		{Name: "KYBER_ARCHIVE_SUMMARY_URL", Value: base + "/summary"},
+		{Name: "KYBER_ARCHIVE_MAX_BYTES", Value: fmt.Sprint(a.limits().MaxArchiveBytes)},
+		{Name: "KYBER_ARCHIVE_MAX_ENTRIES", Value: fmt.Sprint(a.limits().MaxEntries)},
+	}
+	pod := a.archivePod(j, owner, "", "verify", env, false, nil)
+	pod.Name = verifyPodName(j)
+	if err := a.Client.Create(ctx, pod); err != nil && !k8serrors.IsAlreadyExists(err) {
+		return a.fail(ctx, j, "creating verification pod: "+err.Error())
+	}
+	return nil
 }
 
 // openArchive returns a plaintext reader over a job's sealed object.
@@ -539,8 +723,14 @@ func (a *ArchiveService) releaseAgent(ctx context.Context, j *archivejob.Job) er
 			delete(agent.Annotations, kyberv1.AnnotationArchiveHold)
 			changed = true
 		}
-		if j.PausedByJob && agent.Spec.DesiredPhase == kyberv1.AgentPhaseStopped && j.PriorDesiredPhase != "" {
-			agent.Spec.DesiredPhase = kyberv1.AgentPhase(j.PriorDesiredPhase)
+		// Restore the prior intent only while the job's own pause stands: an
+		// operator who used any lifecycle verb during the export (including
+		// Stop) cleared the paused mark, and their choice wins.
+		if agent.Annotations[kyberv1.AnnotationArchivePaused] == j.ID {
+			delete(agent.Annotations, kyberv1.AnnotationArchivePaused)
+			if j.PausedByJob && agent.Spec.DesiredPhase == kyberv1.AgentPhaseStopped && j.PriorDesiredPhase != "" {
+				agent.Spec.DesiredPhase = kyberv1.AgentPhase(j.PriorDesiredPhase)
+			}
 			changed = true
 		}
 		if changed {
@@ -554,15 +744,26 @@ func (a *ArchiveService) releaseAgent(ctx context.Context, j *archivejob.Job) er
 	return nil
 }
 
+// cleanupPod removes every pod the job may have created and its token.
 func (a *ArchiveService) cleanupPod(ctx context.Context, j *archivejob.Job) error {
-	for _, obj := range []client.Object{
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: archivePodName(j), Namespace: a.Namespace}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: archiveTokenSecretName(j), Namespace: a.Namespace}},
-	} {
-		grace := int64(0)
-		if err := a.Client.Delete(ctx, obj, &client.DeleteOptions{GracePeriodSeconds: &grace}); err != nil && !k8serrors.IsNotFound(err) {
-			return fmt.Errorf("deleting %s: %w", obj.GetName(), err)
+	for _, name := range []string{archivePodName(j), verifyPodName(j)} {
+		if err := a.deletePod(ctx, name); err != nil {
+			return err
 		}
+	}
+	grace := int64(0)
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: archiveTokenSecretName(j), Namespace: a.Namespace}}
+	if err := a.Client.Delete(ctx, secret, &client.DeleteOptions{GracePeriodSeconds: &grace}); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("deleting %s: %w", secret.Name, err)
+	}
+	return nil
+}
+
+func (a *ArchiveService) deletePod(ctx context.Context, name string) error {
+	grace := int64(0)
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: a.Namespace}}
+	if err := a.Client.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: &grace}); err != nil && !k8serrors.IsNotFound(err) {
+		return fmt.Errorf("deleting %s: %w", name, err)
 	}
 	return nil
 }
@@ -798,6 +999,10 @@ func archivePodName(j *archivejob.Job) string {
 	return "disk-" + string(j.Kind) + "-" + j.ID
 }
 
+func verifyPodName(j *archivejob.Job) string {
+	return "disk-verify-" + j.ID
+}
+
 func archiveTokenSecretName(j *archivejob.Job) string {
 	return archivePodName(j) + "-token"
 }
@@ -817,15 +1022,19 @@ func (a *ArchiveService) exportPod(j *archivejob.Job, agent *kyberv1.Agent, node
 		{Name: "KYBER_ARCHIVE_UPLOAD_URL", Value: strings.TrimRight(a.InternalURL, "/") + "/internal/archive-jobs/" + j.ID + "/upload"},
 		{Name: "KYBER_ARCHIVE_DESCRIPTION", Value: string(desc)},
 		{Name: "KYBER_ARCHIVE_MAX_BYTES", Value: fmt.Sprint(a.limits().MaxArchiveBytes)},
+		{Name: "KYBER_ARCHIVE_MAX_ENTRIES", Value: fmt.Sprint(a.limits().MaxEntries)},
 	}
 	caps := []corev1.Capability{"DAC_READ_SEARCH"}
 	return a.archivePod(j, agent, node, "export", env, true, caps), nil
 }
 
+// archivePod builds an export, restore or verify pod. Export and restore run
+// as root on the agent's node with the volume mounted (read-only for export)
+// and only the capabilities they name; verify mounts nothing and runs
+// unprivileged. None of them gets a service-account token.
 func (a *ArchiveService) archivePod(j *archivejob.Job, owner *kyberv1.Agent, node, mode string, env []corev1.EnvVar, readOnly bool, caps []corev1.Capability) *corev1.Pod {
 	deadline := int64(a.limits().JobTimeout.Seconds())
 	automount := false
-	root := int64(0)
 	readOnlyRoot := true
 	noEscalation := false
 	env = append(env, corev1.EnvVar{Name: "KYBER_ARCHIVE_TOKEN", ValueFrom: &corev1.EnvVarSource{
@@ -834,42 +1043,54 @@ func (a *ArchiveService) archivePod(j *archivejob.Job, owner *kyberv1.Agent, nod
 			Key:                  "token",
 		},
 	}})
+	container := corev1.Container{
+		Name:    "archive",
+		Image:   a.ToolImage,
+		Command: []string{"/usr/local/bin/kyber-disk-archive", mode, "--root", "/persist"},
+		Env:     env,
+		SecurityContext: &corev1.SecurityContext{
+			ReadOnlyRootFilesystem:   &readOnlyRoot,
+			AllowPrivilegeEscalation: &noEscalation,
+			Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: caps},
+		},
+		// The manifest and ZIP directory of a disk with millions of files
+		// live in memory while archiving or verifying.
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("256Mi")},
+			Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("2Gi")},
+		},
+	}
+	spec := corev1.PodSpec{
+		NodeName:                     node,
+		RestartPolicy:                corev1.RestartPolicyNever,
+		ActiveDeadlineSeconds:        &deadline,
+		AutomountServiceAccountToken: &automount,
+	}
+	for _, name := range a.ImagePullSecrets {
+		spec.ImagePullSecrets = append(spec.ImagePullSecrets, corev1.LocalObjectReference{Name: name})
+	}
+	if mode == "verify" {
+		nonRoot := int64(65532)
+		runAsNonRoot := true
+		container.SecurityContext.RunAsUser = &nonRoot
+		container.SecurityContext.RunAsNonRoot = &runAsNonRoot
+		container.Command = []string{"/usr/local/bin/kyber-disk-archive", mode}
+	} else {
+		root := int64(0)
+		container.SecurityContext.RunAsUser = &root
+		container.VolumeMounts = []corev1.VolumeMount{{Name: "persist", MountPath: "/persist", ReadOnly: readOnly}}
+		spec.Volumes = []corev1.Volume{{
+			Name: "persist",
+			VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+				ClaimName: "agent-" + j.Agent + "-pv",
+				ReadOnly:  readOnly,
+			}},
+		}}
+	}
+	spec.Containers = []corev1.Container{container}
 	pod := &corev1.Pod{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      archivePodName(j),
-			Namespace: a.Namespace,
-			Labels:    archivePodLabels(j),
-		},
-		Spec: corev1.PodSpec{
-			NodeName:                     node,
-			RestartPolicy:                corev1.RestartPolicyNever,
-			ActiveDeadlineSeconds:        &deadline,
-			AutomountServiceAccountToken: &automount,
-			Volumes: []corev1.Volume{{
-				Name: "persist",
-				VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-					ClaimName: "agent-" + j.Agent + "-pv",
-					ReadOnly:  readOnly,
-				}},
-			}},
-			Containers: []corev1.Container{{
-				Name:    "archive",
-				Image:   a.ToolImage,
-				Command: []string{"/usr/local/bin/kyber-disk-archive", mode, "--root", "/persist"},
-				Env:     env,
-				SecurityContext: &corev1.SecurityContext{
-					RunAsUser:                &root,
-					ReadOnlyRootFilesystem:   &readOnlyRoot,
-					AllowPrivilegeEscalation: &noEscalation,
-					Capabilities:             &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}, Add: caps},
-				},
-				VolumeMounts: []corev1.VolumeMount{{Name: "persist", MountPath: "/persist", ReadOnly: readOnly}},
-				Resources: corev1.ResourceRequirements{
-					Requests: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("100m"), corev1.ResourceMemory: resource.MustParse("128Mi")},
-					Limits:   corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("1"), corev1.ResourceMemory: resource.MustParse("512Mi")},
-				},
-			}},
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: archivePodName(j), Namespace: a.Namespace, Labels: archivePodLabels(j)},
+		Spec:       spec,
 	}
 	if owner != nil && owner.UID != "" {
 		pod.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(owner, kyberv1.GroupVersion.WithKind("Agent"))}
