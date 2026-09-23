@@ -630,8 +630,13 @@ func TestClaudeCodeAdapter_ReadinessProbe(t *testing.T) {
 		t.Fatal("ReadinessProbe must be an exec probe")
 	}
 	cmd := probe.Exec.Command
-	if len(cmd) != 3 || cmd[0] != "pgrep" || cmd[1] != "-f" {
-		t.Fatalf("ReadinessProbe command = %q, want pgrep -f <pattern>", cmd)
+	if len(cmd) != 3 || cmd[0] != "/bin/bash" || cmd[1] != "-c" || cmd[2] != readinessCommand {
+		t.Fatalf("ReadinessProbe command = %q, want bash -c readinessCommand", cmd)
+	}
+	// Boot-time claude commands (--version, mcp add, the --print model probe)
+	// match the pattern too; only a child of the tmux server is the session.
+	if !strings.Contains(readinessCommand, `pgrep -d, -x 'tmux: server'`) || !strings.Contains(readinessCommand, `pgrep -P "$servers"`) {
+		t.Fatalf("readiness must require the tmux server as parent: %s", readinessCommand)
 	}
 	if probe.InitialDelaySeconds >= a.LivenessProbe().InitialDelaySeconds {
 		t.Errorf("ReadinessProbe.InitialDelaySeconds %d should be shorter than liveness", probe.InitialDelaySeconds)
@@ -640,7 +645,7 @@ func TestClaudeCodeAdapter_ReadinessProbe(t *testing.T) {
 	// Command lines captured from a live Claude Code agent pod. Only the
 	// harness itself may satisfy readiness; PID 1 and the tmux server name
 	// claude in their arguments from the pod's first second.
-	pattern := regexp.MustCompile(cmd[2])
+	pattern := regexp.MustCompile(readinessProcessPattern)
 	for _, line := range []string{
 		"claude --dangerously-skip-permissions --mcp-config /persist/var/run/kyber-a2a-mcp.json",
 		"node /usr/bin/claude --dangerously-skip-permissions",

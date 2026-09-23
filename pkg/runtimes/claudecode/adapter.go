@@ -324,12 +324,19 @@ func (a *ClaudeCodeAdapter) SecretMounts(agent *kyberv1.Agent) []runtimes.Secret
 	return []runtimes.SecretMount{}
 }
 
-// readinessProcessPattern matches the Claude Code process itself: argv[0] is
-// `claude` (native build) or argv[1] is a path ending in /claude (a Node build
-// run as `node /usr/bin/claude`). A bare `claude` substring also matches PID 1
+// readinessProcessPattern matches a Claude Code process: argv[0] is `claude`
+// (native build) or argv[1] is a path ending in /claude (a Node build run as
+// `node /usr/bin/claude`). A bare `claude` substring also matches PID 1
 // (`entrypoint.sh /usr/local/bin/start-claude.sh`) from the pod's first second,
 // which marked every agent Ready before its harness existed.
 const readinessProcessPattern = `(^|/)claude( |$)`
+
+// readinessCommand passes only for Claude Code running as the agent session:
+// a child of the tmux server. start-claude.sh also runs short-lived `claude`
+// commands before the session exists (`--version`, `mcp add`, and a model
+// probe that can take ten seconds), and a probe landing on one of them would
+// report Ready early.
+const readinessCommand = `servers=$(pgrep -d, -x 'tmux: server') && pgrep -P "$servers" -f '` + readinessProcessPattern + `' >/dev/null`
 
 // LivenessProbe watches start-claude.sh, which supervises and relaunches the
 // harness; the loose `claude` match is deliberate. Its initial delay is the
@@ -350,12 +357,12 @@ func (a *ClaudeCodeAdapter) LivenessProbe() *corev1.Probe {
 	}
 }
 
-// ReadinessProbe passes only while the Claude Code process itself runs.
+// ReadinessProbe passes only while the Claude Code session itself runs.
 func (a *ClaudeCodeAdapter) ReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			Exec: &corev1.ExecAction{
-				Command: []string{"pgrep", "-f", readinessProcessPattern},
+				Command: []string{"/bin/bash", "-c", readinessCommand},
 			},
 		},
 		InitialDelaySeconds: 15,
