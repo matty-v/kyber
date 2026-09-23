@@ -100,7 +100,7 @@ func TestRoundTripPreservesTreeAndMetadata(t *testing.T) {
 	if _, err := Extract(context.Background(), bytes.NewReader(data), int64(len(data)), dst, ExtractOptions{Allowed: allowed}); err != nil {
 		t.Fatalf("Extract: %v", err)
 	}
-	if err := VerifyRestore(context.Background(), dst, m, allowed); err != nil {
+	if err := VerifyRestore(context.Background(), dst, m, allowed, nil); err != nil {
 		t.Fatalf("VerifyRestore: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dst, "agentroot/me/dev/identity/skills/x/SKILL.md"))
@@ -324,7 +324,7 @@ func TestVerifyRestoreDetectsTampering(t *testing.T) {
 		t.Fatal(err)
 	}
 	os.WriteFile(filepath.Join(dst, "agentroot/stray"), []byte("x"), 0o644)
-	if err := VerifyRestore(context.Background(), dst, m, nil); !errors.Is(err, ErrInvalidArchive) {
+	if err := VerifyRestore(context.Background(), dst, m, nil, nil); !errors.Is(err, ErrInvalidArchive) {
 		t.Fatalf("VerifyRestore = %v, want ErrInvalidArchive", err)
 	}
 }
@@ -385,7 +385,7 @@ func TestRestrictiveDirectoryModesRestore(t *testing.T) {
 		t.Fatalf("Extract: %v", err)
 	}
 	defer os.Chmod(filepath.Join(dst, "locked"), 0o755)
-	if err := VerifyRestore(context.Background(), dst, m, nil); err != nil {
+	if err := VerifyRestore(context.Background(), dst, m, nil, nil); err != nil {
 		t.Fatalf("VerifyRestore: %v", err)
 	}
 }
@@ -403,5 +403,51 @@ func TestSizeEstimateCoversTheStream(t *testing.T) {
 	_, err := Write(context.Background(), root, &bytes.Buffer{}, WriteOptions{Scan: ScanOptions{Exclude: DefaultExclusions(), MaxBytes: int64(len(data)) - 1}})
 	if !errors.Is(err, ErrLimitExceeded) {
 		t.Fatalf("a limit one byte under the real stream (%d) was not caught during the walk: %v", len(data), err)
+	}
+}
+
+func TestExtractSkipsCredentialFiles(t *testing.T) {
+	data, m := export(t, buildTree(t))
+	skip := map[string]bool{}
+	for _, p := range SensitivePaths(m) {
+		skip[p] = true
+	}
+	if !skip["agentroot/home/kyber/.claude/.credentials.json"] {
+		t.Fatalf("SensitivePaths = %v, want the Claude credentials file", SensitivePaths(m))
+	}
+	dst := t.TempDir()
+	if _, err := Extract(context.Background(), bytes.NewReader(data), int64(len(data)), dst, ExtractOptions{Skip: skip}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "agentroot/home/kyber/.claude/.credentials.json")); !os.IsNotExist(err) {
+		t.Fatalf("skipped credential file exists after restore: %v", err)
+	}
+	if err := VerifyRestore(context.Background(), dst, m, nil, skip); err != nil {
+		t.Fatalf("VerifyRestore with skips: %v", err)
+	}
+	if err := VerifyRestore(context.Background(), dst, m, nil, nil); err == nil {
+		t.Fatal("VerifyRestore without the skip set accepted a missing file")
+	}
+}
+
+func TestCronPaths(t *testing.T) {
+	m := &Manifest{Entries: []Entry{
+		{Path: "agentroot/var/spool/cron/crontabs/kyber", Type: EntryFile, Size: 10},
+		{Path: "agentroot/etc/cron.d/backup", Type: EntryFile, Size: 10},
+		{Path: "agentroot/etc/cron.d/kyber-jobs", Type: EntryFile, Size: 10},
+		{Path: "agentroot/etc/cron.d/empty", Type: EntryFile, Size: 0},
+		{Path: "agentroot/home/kyber/notes", Type: EntryFile, Size: 10},
+	}}
+	got := CronPaths(m)
+	if len(got) != 2 || got[0] != "agentroot/var/spool/cron/crontabs/kyber" || got[1] != "agentroot/etc/cron.d/backup" {
+		t.Errorf("CronPaths = %v", got)
+	}
+}
+
+func TestSkipIfRequiresSkipMap(t *testing.T) {
+	data, _ := export(t, buildTree(t))
+	_, err := Extract(context.Background(), bytes.NewReader(data), int64(len(data)), t.TempDir(), ExtractOptions{SkipIf: IsSensitive})
+	if err == nil {
+		t.Fatal("Extract accepted SkipIf without a Skip map")
 	}
 }

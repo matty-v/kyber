@@ -954,11 +954,12 @@ export interface ArchiveSummary {
   excluded?: { path: string; reason: string }[]
   totals: { entries: number; files: number; dirs: number; symlinks: number; bytes: number }
   sensitive?: string[]
+  cron?: string[]
 }
 
 export interface ArchiveJob {
   id: string
-  kind: 'export' | 'import'
+  kind: 'export' | 'upload' | 'import'
   agent: string
   state: ArchiveJobState
   step?: string
@@ -974,6 +975,25 @@ export interface ArchiveJob {
   downloadable: boolean
   requestedBy?: string
   summary?: ArchiveSummary
+  // Import only (MAT-88).
+  sourceId?: string
+  restored?: boolean
+  skipped?: string[]
+  cutover?: string[]
+}
+
+// POST /api/v1/agent-imports. Mirrors agentImportRequest in
+// pkg/api/archives_import.go.
+export interface AgentImportRequest {
+  source: { exportId?: string; uploadId?: string }
+  agent: CreateAgentRequest
+  keepCredentialFiles?: boolean
+  keepCrontabs?: boolean
+}
+
+export interface AgentImportResponse {
+  import: ArchiveJob
+  agent: Agent
 }
 
 export interface ArchiveDownloadLink {

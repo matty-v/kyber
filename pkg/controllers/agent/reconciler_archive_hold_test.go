@@ -91,3 +91,42 @@ func TestArchiveHoldBlocksRestartOfExistingAgent(t *testing.T) {
 		t.Fatalf("pod created for an agent whose volume is held by an export: %v", err)
 	}
 }
+
+// Deleting an agent never deletes a same-named volume another object owns.
+func TestFinalizerLeavesForeignPVC(t *testing.T) {
+	k8sClient, teardown := setupEnvtest(t)
+	defer teardown()
+	ctx := context.Background()
+	namespace := "test-foreign-pvc"
+	if err := k8sClient.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: namespace}}); err != nil {
+		t.Fatal(err)
+	}
+	r := newReconciler(k8sClient, buildTestScheme())
+	other := newTestAgent("other-owner", namespace)
+	other.Annotations = map[string]string{kyberv1.AnnotationArchiveHold: "keep-podless"}
+	if err := k8sClient.Create(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	agent := newTestAgent("doomed", namespace)
+	agent.Annotations = map[string]string{kyberv1.AnnotationArchiveHold: "keep-podless"}
+	if err := k8sClient.Create(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	key := types.NamespacedName{Name: agent.Name, Namespace: namespace}
+	reconcileN(t, r, ctrl.Request{NamespacedName: key}, 1) // adds the finalizer
+	foreign := BuildPVC(agent, "")
+	foreign.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(getAgent(t, k8sClient, types.NamespacedName{Name: other.Name, Namespace: namespace}), kyberv1.GroupVersion.WithKind("Agent"))}
+	if err := k8sClient.Create(ctx, foreign); err != nil {
+		t.Fatal(err)
+	}
+	if err := k8sClient.Delete(ctx, getAgent(t, k8sClient, key)); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		_, _ = r.Reconcile(ctx, ctrl.Request{NamespacedName: key})
+	}
+	got := &corev1.PersistentVolumeClaim{}
+	if err := k8sClient.Get(ctx, client.ObjectKeyFromObject(foreign), got); err != nil || got.DeletionTimestamp != nil {
+		t.Fatalf("foreign PVC deleted by another agent's finalizer: err=%v deleting=%v", err, got.DeletionTimestamp)
+	}
+}

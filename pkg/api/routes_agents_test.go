@@ -33,7 +33,7 @@ import (
 
 // defaultMachine returns a Machine CRD named "worker-1" that agent-creation
 // tests can reference in their "machine" field. Without this, the API now
-// rejects the agent with 400 ("machine 'worker-1' does not exist").
+// rejects the agent with 400 ("machine \"worker-1\" does not exist").
 // Capacity is set generously so the capacity check doesn't block normal tests.
 func defaultMachine() *kyberv1.Machine {
 	return &kyberv1.Machine{

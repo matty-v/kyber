@@ -7,6 +7,7 @@ import { useCluster } from '../lib/cluster-context'
 import { parseTranscript } from '../lib/transcript'
 import type {
   AgentJob,
+  AgentImportRequest,
   ArchiveJob,
   CommsChannelId,
   CreateAgentRequest,
@@ -431,6 +432,83 @@ export function useCancelAgentExport() {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
     },
     meta: { successMessage: 'Export canceled; the agent is being released', errorPrefix: 'Failed to cancel export' },
+  })
+}
+
+// ---- Create from archive (MAT-88) ----
+
+export function useArchives(enabled: boolean = true) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'archives'],
+    queryFn: () => api.listArchives(),
+    enabled,
+    staleTime: 0,
+  })
+}
+
+// useArchiveUpload polls an upload until it is verified or has failed.
+export function useArchiveUpload(id: string | undefined) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'archive-uploads', id],
+    queryFn: () => api.getArchiveUpload(id!),
+    enabled: !!id,
+    staleTime: 0,
+    refetchInterval: (query) => (archiveActive(query.state.data ? [query.state.data] : undefined) ? 3000 : false),
+  })
+}
+
+export function useUploadArchive() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useMutation({
+    mutationFn: ({ file, onProgress }: { file: Blob; onProgress?: (loaded: number, total: number) => void }) => api.uploadArchive(file, onProgress),
+    meta: { errorPrefix: 'Failed to upload the archive' },
+  })
+}
+
+export function useCreateAgentFromArchive() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (req: AgentImportRequest) => api.createAgentFromArchive(req),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+    },
+    meta: {
+      successMessage: (_d: unknown, v: unknown) => `${(v as AgentImportRequest).agent.name} created; its disk is being restored`,
+      errorPrefix: 'Failed to create the agent from the archive',
+    },
+  })
+}
+
+// useAgentImports lists restores into an agent, polling while one runs.
+export function useAgentImports(name: string, enabled: boolean = true) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'imports'],
+    queryFn: () => api.listAgentImports(name),
+    enabled: enabled && !!name,
+    staleTime: 0,
+    refetchInterval: (query) => (archiveActive(query.state.data) ? 3000 : false),
+  })
+}
+
+export function useCancelAgentImport() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => api.cancelAgentImport(id),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+    },
+    meta: { successMessage: 'Restore canceled; the new agent is being removed', errorPrefix: 'Failed to cancel the restore' },
   })
 }
 

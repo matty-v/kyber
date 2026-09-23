@@ -378,3 +378,23 @@ describe('disk export', () => {
     expect(link.filename).toBe('han-disk.zip')
   })
 })
+
+describe('create from archive', () => {
+  it('creates an agent from an export on the imports endpoint', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 202, json: async () => ({ import: { id: 'i1' }, agent: { id: 'leia' } }) }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    const agent = { name: 'leia', machine: 'm1', runtime: 'claude-code', resources: { cpu: '1', memory: '2Gi', disk: '20Gi' }, secrets: { authType: 'oauth' } }
+    await createApiClient(mockCluster).createAgentFromArchive({ source: { exportId: 'e1' }, agent: agent as never })
+    const [[url, init]] = (fetchMock as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls
+    expect(url).toBe('http://localhost:8080/api/v1/agent-imports')
+    expect(JSON.parse(init.body as string)).toEqual({ source: { exportId: 'e1' }, agent })
+  })
+
+  it('lists imports for one agent', async () => {
+    mockFetch({ imports: [{ id: 'i1' }] })
+    const got = await createApiClient(mockCluster).listAgentImports('han solo')
+    expect(got).toEqual([{ id: 'i1' }])
+    const [[url]] = (fetch as unknown as { mock: { calls: [string][] } }).mock.calls
+    expect(url).toBe('http://localhost:8080/api/v1/agent-imports?agent=han%20solo')
+  })
+})

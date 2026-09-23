@@ -7,6 +7,11 @@
 //	    Walks the agent volume and streams a Kyber disk archive to
 //	    $KYBER_ARCHIVE_UPLOAD_URL.
 //
+//	kyber-disk-archive restore --root /persist
+//	    Reads the archive at $KYBER_ARCHIVE_SOURCE_URL by byte range,
+//	    validates it, extracts it into the (empty) new volume, and re-scans
+//	    the volume against the manifest. Exit 0 means the volume is complete.
+//
 //	kyber-disk-archive verify
 //	    Reads the stored archive back from $KYBER_ARCHIVE_SOURCE_URL by byte
 //	    range, checks every entry against the manifest, and posts the
@@ -29,6 +34,8 @@ import (
 	"sync"
 	"syscall"
 
+	"golang.org/x/sys/unix"
+
 	"github.com/matty-v/kyber/pkg/archivejob"
 	"github.com/matty-v/kyber/pkg/diskarchive"
 )
@@ -40,7 +47,7 @@ const terminationLog = "/dev/termination-log"
 
 func main() {
 	if len(os.Args) < 2 {
-		fatal(errors.New("usage: kyber-disk-archive export --root DIR | verify"))
+		fatal(errors.New("usage: kyber-disk-archive export|restore --root DIR | verify"))
 	}
 	mode := os.Args[1]
 	fs := flag.NewFlagSet(mode, flag.ExitOnError)
@@ -56,6 +63,8 @@ func main() {
 		err = runExport(ctx, *root)
 	case "verify":
 		err = runVerify(ctx)
+	case "restore":
+		err = runRestore(ctx, *root)
 	default:
 		err = fmt.Errorf("unknown mode %q", mode)
 	}
@@ -163,6 +172,9 @@ func runVerify(ctx context.Context) error {
 	if n := len(sum.Excluded); n > summaryListCap {
 		sum.Excluded = append(sum.Excluded[:summaryListCap], diskarchive.Exclusion{
 			Path: fmt.Sprintf("… and %d more", n-summaryListCap), Reason: "see kyber-export/manifest.json in the archive"})
+	}
+	if n := len(sum.Cron); n > summaryListCap {
+		sum.Cron = append(sum.Cron[:summaryListCap], fmt.Sprintf("… and %d more", n-summaryListCap))
 	}
 	if n := len(sum.Sensitive); n > summaryListCap {
 		sum.Sensitive = append(sum.Sensitive[:summaryListCap], fmt.Sprintf("… and %d more", n-summaryListCap))
@@ -283,4 +295,51 @@ func (h *httpReaderAt) ReadAt(p []byte, off int64) (int, error) {
 		n += copy(p[n:], b[pos%readBlock:])
 	}
 	return n, nil
+}
+
+func runRestore(ctx context.Context, root string) error {
+	url := os.Getenv("KYBER_ARCHIVE_SOURCE_URL")
+	token := os.Getenv("KYBER_ARCHIVE_TOKEN")
+	if url == "" || token == "" {
+		return errors.New("KYBER_ARCHIVE_SOURCE_URL and KYBER_ARCHIVE_TOKEN are required")
+	}
+	// What to leave out is decided here, against the full manifest, so no
+	// credential file or crontab escapes the rule because a summary list
+	// was truncated. Both default to leaving the files out.
+	skipCredentials := os.Getenv("KYBER_ARCHIVE_SKIP_CREDENTIALS") != "false"
+	skipCrontabs := os.Getenv("KYBER_ARCHIVE_SKIP_CRONTABS") != "false"
+	skip := map[string]bool{}
+	ra, err := newHTTPReaderAt(ctx, url, token)
+	if err != nil {
+		return err
+	}
+	// The archive must fit the volume it is restored into.
+	var st unix.Statfs_t
+	if err := unix.Statfs(root, &st); err != nil {
+		return fmt.Errorf("statfs %s: %w", root, err)
+	}
+	available := int64(st.Bavail) * int64(st.Bsize)
+	maxBytes, _ := strconv.ParseInt(os.Getenv("KYBER_ARCHIVE_MAX_BYTES"), 10, 64)
+	if maxBytes <= 0 || available < maxBytes {
+		maxBytes = available
+	}
+	maxEntries, _ := strconv.Atoi(os.Getenv("KYBER_ARCHIVE_MAX_ENTRIES"))
+	allowed := []string{"lost+found"}
+	m, err := diskarchive.Extract(ctx, ra, ra.size, root, diskarchive.ExtractOptions{
+		Limits:            diskarchive.Limits{MaxBytes: maxBytes, MaxEntries: maxEntries},
+		PreserveOwnership: true,
+		Allowed:           allowed,
+		Skip:              skip,
+		SkipIf: func(e diskarchive.Entry) bool {
+			return skipCredentials && diskarchive.IsSensitive(e) || skipCrontabs && diskarchive.IsAgentCrontab(e)
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("restoring: %w", err)
+	}
+	if err := diskarchive.VerifyRestore(ctx, root, m, allowed, skip); err != nil {
+		return fmt.Errorf("verifying restored volume: %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "kyber-disk-archive: restored %d entries (%d left out), %d bytes\n", m.Totals.Entries, len(skip), m.Totals.Bytes)
+	return nil
 }

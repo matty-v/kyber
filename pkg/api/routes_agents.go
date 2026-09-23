@@ -1087,7 +1087,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if err := s.K8sClient.Get(r.Context(), machineKey, machineObj); err != nil {
 		if k8serrors.IsNotFound(err) {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"machine '"+req.Machine+"' does not exist", "machine")
+				fmt.Sprintf("machine %q does not exist", req.Machine), "machine")
 			return
 		}
 		slog.Error("failed to get machine for agent validation", "machine", req.Machine, "error", err)
@@ -1112,7 +1112,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(s.ValidRuntimes) > 0 && !s.ValidRuntimes[req.Runtime] {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			"unknown runtime '"+req.Runtime+"'", "runtime")
+			fmt.Sprintf("unknown runtime %q", req.Runtime), "runtime")
 		return
 	}
 	if req.Model != "" && !runtimeSupportsModelSelection(req.Runtime) {
@@ -1139,7 +1139,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	if s.RuntimeImages != nil {
 		if image, registered := s.RuntimeImages[req.Runtime]; registered && image == "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-				"runtime '"+req.Runtime+"' has no container image configured on this cluster — "+
+				fmt.Sprintf("runtime %q has no container image configured on this cluster — ", req.Runtime)+
 					"pin image."+pkgruntimes.HelmImageKey(req.Runtime)+".tag in the install's Helm values, "+
 					"then retry. No Kyber agent can run this runtime until then.", "runtime")
 			return
@@ -1295,7 +1295,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		var conflict *secretConflictError
 		if errors.As(err, &conflict) {
 			writeJSONError(w, http.StatusConflict, "conflict",
-				"secret '"+conflict.name+"' already exists; a prior create may have failed mid-flow — delete it and retry")
+				fmt.Sprintf("secret %q already exists; a prior create may have failed mid-flow — delete it and retry", conflict.name))
 			return
 		}
 		if oauth.IsInvalidGrant(err) {
@@ -1309,10 +1309,19 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An import (MAT-88) births the agent held, so the controller never boots
+	// it before its volume has been restored and verified.
+	hold := archiveHoldFrom(r.Context())
+	if hold != nil {
+		if agent.Annotations == nil {
+			agent.Annotations = map[string]string{}
+		}
+		agent.Annotations[kyberv1.AnnotationArchiveHold] = hold.jobID
+	}
 	if err := s.K8sClient.Create(r.Context(), agent); err != nil {
 		s.rollbackSecrets(r.Context(), createdSecrets)
 		if k8serrors.IsAlreadyExists(err) {
-			writeJSONError(w, http.StatusConflict, "conflict", "agent '"+req.Name+"' already exists")
+			writeJSONError(w, http.StatusConflict, "conflict", fmt.Sprintf("agent %q already exists", req.Name))
 			return
 		}
 		slog.Error("failed to create agent", "agent", req.Name, "error", err)
@@ -1320,6 +1329,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hold != nil {
+		// The import needs these to clean up without waiting for the
+		// controller's finalizer (which a just-created agent may not have yet).
+		hold.uid = agent.UID
+		hold.secrets = createdSecrets
+	}
 	writeJSON(w, http.StatusCreated, agentToResponse(agent))
 }
 

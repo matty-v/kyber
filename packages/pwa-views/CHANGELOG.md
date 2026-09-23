@@ -1,5 +1,17 @@
 # @matty-v/kyber-pwa-views
 
+## 0.55.0
+
+- Create Agent can start from a disk archive: pick a completed export or
+  upload a Kyber disk archive ZIP (with upload progress). The wizard shows
+  where the archive came from, sets the runtime and a large enough disk, and
+  leaves files that look like credentials, and crontabs the source agent
+  installed itself, out unless the operator opts in.
+- A restored agent's detail page shows the restore's progress, lets the
+  operator cancel it, and lists the cutover checklist: scheduled jobs,
+  channels, webhook bindings, crontabs and credentials that were not copied
+  or that both agents now share.
+
 ## 0.54.0
 
 - Agent Detail has a Disk export card. It starts an export of the agent's

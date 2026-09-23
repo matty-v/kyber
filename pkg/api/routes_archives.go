@@ -40,6 +40,11 @@ type archiveJobView struct {
 	Downloadable bool                `json:"downloadable"`
 	RequestedBy  string              `json:"requestedBy,omitempty"`
 	Summary      *archivejob.Summary `json:"summary,omitempty"`
+	// Import-only.
+	SourceID string   `json:"sourceId,omitempty"`
+	Restored bool     `json:"restored,omitempty"`
+	Skipped  []string `json:"skipped,omitempty"`
+	Cutover  []string `json:"cutover,omitempty"`
 }
 
 func viewArchiveJob(j *archivejob.Job) archiveJobView {
@@ -51,9 +56,16 @@ func viewArchiveJob(j *archivejob.Job) archiveJobView {
 		Downloadable: j.Kind == archivejob.KindExport && j.State == archivejob.StateCompleted,
 		RequestedBy:  j.RequestedBy,
 		Summary:      j.Summary,
+		SourceID:     j.SourceJobID,
+		Restored:     j.Restored,
+		Skipped:      j.Skip,
+		Cutover:      j.Cutover,
 	}
-	if j.State == archivejob.StateCompleted {
+	if j.State == archivejob.StateCompleted && j.Kind != archivejob.KindImport {
 		v.SizeBytes = j.PlainSize
+	}
+	if j.Kind == archivejob.KindImport {
+		v.Cancelable = v.Cancelable && !j.Restored
 	}
 	if j.CancelRequested && !j.State.Terminal() {
 		v.Message = "Canceling"

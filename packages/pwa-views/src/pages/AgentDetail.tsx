@@ -36,6 +36,7 @@ import { AgentResourceUsage } from '../components/AgentResourceUsage'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { DiskExportCard } from '../components/DiskExportCard'
+import { RestoreStatusCard } from '../components/RestoreStatusCard'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { agentActionConfirmMessage } from '../lib/agentMessages'
 import { Skeleton } from '../components/Skeleton'
@@ -1026,6 +1027,7 @@ export function AgentDetail() {
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
                   </Card>
+                  <RestoreStatusCard agentName={name} capability={computeConfig?.archives} />
                   <DiskExportCard agentName={name} phase={agent.phase} capability={computeConfig?.archives} />
                   <Card>
                     <h2 className="mb-2 text-sm font-semibold text-text-primary">Startup prompt</h2>

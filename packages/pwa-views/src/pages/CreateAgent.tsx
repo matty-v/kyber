@@ -7,6 +7,7 @@ import {
   useAgents,
   useComputeConfig,
   useCreateAgent,
+  useCreateAgentFromArchive,
   useMachines,
   usePutDiscordComms,
 } from '../hooks/useAPI'
@@ -17,7 +18,8 @@ import { availableFromMachine, parseCpu, parseMemoryGi } from '../lib/machineTyp
 import { toKebabCase } from '../lib/names'
 import { parseAuthorizationInput } from '../lib/oauth'
 import { firstInvalidId, parseIdList } from '../components/CommsTab'
-import type { PutDiscordCommsRequest } from '../lib/types'
+import type { CreateAgentRequest, PutDiscordCommsRequest } from '../lib/types'
+import { ArchiveSourcePicker } from '../components/wizard/ArchiveSourcePicker'
 import { WizardState, WizardSetter, initialWizardState } from '../components/wizard/types'
 import { BasicsSection } from '../components/wizard/BasicsSection'
 import { ResourcesSection } from '../components/wizard/ResourcesSection'
@@ -48,6 +50,7 @@ export function CreateAgent() {
   const navigate = useNavigate()
   const prefixed = usePrefixedPath()
   const createAgent = useCreateAgent()
+  const createFromArchive = useCreateAgentFromArchive()
   // Creating an agent while the control plane is mid-restart either fails or
   // produces a pod that is immediately rolled again by the upgrade.
   const { inFlight: upgradeInFlight } = useUpgradeProgress()
@@ -185,7 +188,7 @@ export function CreateAgent() {
     onEnter: () => {
       if (activeStep < MAX_STEP) {
         next()
-      } else if (fitCheckPasses && !createAgent.isPending && !upgradeInFlight) {
+      } else if (fitCheckPasses && !createAgent.isPending && !createFromArchive.isPending && !upgradeInFlight) {
         // On step 5 (Review), trigger form submit. fitCheckPasses + isPending
         // guard against double-submit and unfit-resource submission, and
         // upgradeInFlight keeps Enter from bypassing the disabled button.
@@ -281,7 +284,7 @@ export function CreateAgent() {
         }
       }
 
-      await createAgent.mutateAsync({
+      const agentRequest: CreateAgentRequest = {
         // Defense-in-depth strip: BasicsSection's onBlur sanitizes when the
         // user leaves the field, but if they advance via Enter (which doesn't
         // blur the input before unmount) state.name could still carry leading
@@ -319,7 +322,20 @@ export function CreateAgent() {
 		  slackAllowedUserIds: state.slackEnabled ? slackAllowedUserIds : undefined,
 		  slackAllowedChannelIds: state.slackEnabled ? slackAllowedChannelIds : undefined,
         },
-      })
+      }
+      const archive = state.archiveSource
+      if (archive?.exportId || archive?.uploadId) {
+        // The agent is created through the same validation, held until its
+        // disk has been restored and checked.
+        await createFromArchive.mutateAsync({
+          source: archive.exportId ? { exportId: archive.exportId } : { uploadId: archive.uploadId },
+          agent: agentRequest,
+          keepCredentialFiles: state.keepCredentialFiles || undefined,
+          keepCrontabs: state.keepCrontabs || undefined,
+        })
+      } else {
+        await createAgent.mutateAsync(agentRequest)
+      }
 
       // The agent exists now. A Discord failure here must not read as "create
       // failed" — the agent is real and the operator can finish on its Comms
@@ -337,7 +353,7 @@ export function CreateAgent() {
         }
       }
 
-      navigate(prefixed(selectedAuth?.flow === 'device-code'
+      navigate(prefixed(selectedAuth?.flow === 'device-code' || state.archiveSource
         ? `/agents/${toKebabCase(state.name)}`
         : '/agents'))
     } catch (err) {
@@ -363,6 +379,9 @@ export function CreateAgent() {
               collapses the duration in index.css. */}
           <div key={activeStep} className="animate-fade-in">
             {activeStep === 1 && (
+              <ArchiveSourcePicker state={state} set={set} capability={config?.archives} />
+            )}
+            {activeStep === 1 && (
               <BasicsSection
                 state={state}
                 set={set}
@@ -381,6 +400,11 @@ export function CreateAgent() {
             {activeStep === 3 && <IdentitySection state={state} set={set} />}
             {activeStep === 4 && <AuthSection state={state} set={set} />}
             {activeStep === 5 && <ReviewSection state={state} onEdit={(stepId) => jumpTo(stepId)} />}
+            {activeStep === 5 && state.archiveSource?.label && (
+              <p className="mt-3 text-sm text-text-secondary" data-testid="review-archive">
+                Disk restored from {state.archiveSource.label}. The agent starts once the restore has been checked.
+              </p>
+            )}
           </div>
 
           {fieldError && (
@@ -433,8 +457,8 @@ export function CreateAgent() {
                 type="submit"
                 variant="primary"
                 size="md"
-                loading={createAgent.isPending}
-                disabled={!fitCheckPasses || createAgent.isPending || upgradeInFlight}
+                loading={createAgent.isPending || createFromArchive.isPending}
+                disabled={!fitCheckPasses || createAgent.isPending || createFromArchive.isPending || upgradeInFlight}
                 title={
                   upgradeInFlight
                     ? 'An upgrade is in progress — the control plane is restarting. Wait for it to finish.'

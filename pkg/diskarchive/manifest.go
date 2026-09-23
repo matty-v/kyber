@@ -216,24 +216,61 @@ var sensitiveSuffixes = []string{
 	"/.pypirc",
 }
 
-// SensitivePaths lists archived regular files that look like local
-// credentials: the files above, SSH private keys, and *.pem/*.key files.
+// IsSensitive reports whether an entry is a regular file that looks like a
+// local credential: the well-known files above, SSH private keys, and
+// *.pem/*.key files.
+func IsSensitive(e Entry) bool {
+	if e.Type != EntryFile {
+		return false
+	}
+	p := "/" + e.Path
+	base := path.Base(p)
+	if strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") ||
+		strings.Contains(p, "/.ssh/") && strings.HasPrefix(base, "id_") && !strings.HasSuffix(base, ".pub") {
+		return true
+	}
+	for _, s := range sensitiveSuffixes {
+		if strings.HasSuffix(p, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// SensitivePaths lists the entries IsSensitive matches.
 func SensitivePaths(m *Manifest) []string {
 	var out []string
 	for _, e := range m.Entries {
-		if e.Type != EntryFile {
-			continue
+		if IsSensitive(e) {
+			out = append(out, e.Path)
 		}
-		p := "/" + e.Path
-		base := path.Base(p)
-		hit := strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") ||
-			strings.Contains(p, "/.ssh/") && strings.HasPrefix(base, "id_") && !strings.HasSuffix(base, ".pub")
-		for _, s := range sensitiveSuffixes {
-			if strings.HasSuffix(p, s) {
-				hit = true
-			}
-		}
-		if hit {
+	}
+	return out
+}
+
+// IsAgentCrontab reports whether an entry is a crontab the agent installed
+// itself: a user crontab or an /etc/cron.d entry other than Kyber's own
+// kyber-jobs, which the platform regenerates from the Agent spec at every
+// boot. A restored copy of the disk would run it too.
+func IsAgentCrontab(e Entry) bool {
+	if e.Type != EntryFile || e.Size == 0 {
+		return false
+	}
+	p := "/" + e.Path
+	switch {
+	case strings.Contains(p, "/var/spool/cron/crontabs/"), strings.Contains(p, "/cron/crontabs/"):
+		return true
+	case (strings.Contains(p, "/etc/cron.d/") || strings.HasPrefix(p, "/cron/cron.d/")) && path.Base(p) != "kyber-jobs":
+		return true
+	}
+	return false
+}
+
+// CronPaths lists the entries IsAgentCrontab matches.
+func CronPaths(m *Manifest) []string {
+	var out []string
+	for _, e := range m.Entries {
+		if IsAgentCrontab(e) {
 			out = append(out, e.Path)
 		}
 	}
