@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,14 +36,30 @@ func (rw *responseWriter) WriteHeader(status int) {
 }
 
 func (rw *responseWriter) Write(b []byte) (int, error) {
+	w := rw.ResponseWriter
 	if !rw.wrote {
 		rw.wrote = true
+		// A handler that sets no Content-Type gets net/http's sniffed type,
+		// and sniffing turns any body that starts like markup (a pod log line,
+		// a user-supplied string) into text/html: reflected XSS. Keep the
+		// sniffed type, but never let a guess be HTML. Handlers that declare
+		// their type are untouched.
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", sniffedNonHTMLType(b))
+		}
 	}
-	// This is a transparent interface adapter, not an HTML sink: the originating
-	// handler owns its Content-Type and encoding. Escaping here would corrupt
-	// JSON, WebSocket handshakes, and binary responses.
-	// codeql[go/reflected-xss]
-	return rw.ResponseWriter.Write(b)
+	return w.Write(b)
+}
+
+// sniffedNonHTMLType is http.DetectContentType with the markup types a
+// browser would render (HTML, and XML which can carry SVG and script)
+// replaced by plain text.
+func sniffedNonHTMLType(b []byte) string {
+	ct := http.DetectContentType(b)
+	if strings.HasPrefix(ct, "text/html") || strings.HasPrefix(ct, "text/xml") {
+		return "text/plain; charset=utf-8"
+	}
+	return ct
 }
 
 // Flush preserves http.Flusher through the logging wrapper so SSE and other
