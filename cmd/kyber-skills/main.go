@@ -254,6 +254,11 @@ func convergeAndReport(p paths, deliver func(*skillscan.Report) error) ([]byte, 
 			fmt.Printf("kyber-skills: linked %d new or changed skill(s)\n", n)
 		}
 	}
+	if n, err := linkLocalSkills(p.homeDir); err != nil {
+		fmt.Fprintf(os.Stderr, "kyber-skills: sharing local skills across runtimes failed: %v\n", err)
+	} else if n > 0 {
+		fmt.Printf("kyber-skills: shared %d local skill(s) across runtime homes\n", n)
+	}
 	rep, err := skillscan.Scan(skillscan.Options{
 		RepoDir:       p.repoDir,
 		HomeDir:       p.homeDir,
@@ -535,6 +540,81 @@ func linkAll(repoDir, homeDir string) (int, error) {
 	for _, rel := range runtimeSkillDirs {
 		if err := removeStaleCompatWrappers(filepath.Join(homeDir, rel), managedNames); err != nil {
 			return count, err
+		}
+	}
+	return count, nil
+}
+
+// linkLocalSkills makes a skill that lives as a real directory in one runtime
+// home visible to the others, so a harness switch keeps it. Agents without an
+// identity repo can keep skills nowhere else, and before this a skill written
+// under ~/.claude/skills vanished from view on a switch to Codex or Hermes.
+// An existing entry of the same name, such as a repo link, is never replaced.
+func linkLocalSkills(homeDir string) (int, error) {
+	homes := map[string]bool{}
+	for _, rel := range runtimeSkillDirs {
+		homes[filepath.Join(homeDir, rel)] = true
+	}
+	// Drop this function's own links whose skill was deleted. Other dangling
+	// links are left for the report to surface.
+	for home := range homes {
+		entries, err := os.ReadDir(home)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			link := filepath.Join(home, e.Name())
+			target, err := os.Readlink(link)
+			if err != nil || !homes[filepath.Dir(target)] {
+				continue
+			}
+			if _, err := os.Stat(link); os.IsNotExist(err) {
+				if err := os.Remove(link); err != nil {
+					return 0, err
+				}
+			}
+		}
+	}
+	var count int
+	for _, srcRel := range runtimeSkillDirs {
+		srcDir := filepath.Join(homeDir, srcRel)
+		entries, err := os.ReadDir(srcDir)
+		if err != nil {
+			continue
+		}
+		for _, e := range entries {
+			name := e.Name()
+			if strings.HasPrefix(name, ".") {
+				continue
+			}
+			dir := filepath.Join(srcDir, name)
+			info, err := os.Lstat(dir)
+			if err != nil || !info.IsDir() {
+				continue
+			}
+			if skill, err := os.Lstat(filepath.Join(dir, "SKILL.md")); err != nil || !skill.Mode().IsRegular() {
+				continue
+			}
+			var linked bool
+			for _, dstRel := range runtimeSkillDirs {
+				if dstRel == srcRel {
+					continue
+				}
+				dst := filepath.Join(homeDir, dstRel, name)
+				if _, err := os.Lstat(dst); !os.IsNotExist(err) {
+					continue
+				}
+				if err := os.MkdirAll(filepath.Join(homeDir, dstRel), 0o755); err != nil {
+					return count, err
+				}
+				if err := os.Symlink(dir, dst); err != nil {
+					return count, err
+				}
+				linked = true
+			}
+			if linked {
+				count++
+			}
 		}
 	}
 	return count, nil

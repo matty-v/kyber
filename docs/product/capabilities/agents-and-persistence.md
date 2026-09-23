@@ -32,7 +32,11 @@ offer. It requires `lifecycle:write`. Kyber verifies the target image, the
 chosen authentication mode, and that every enabled channel works with that mode
 before preparing the target on the same persistent volume. A failed preparation leaves the original runtime
 selected. The agent name, volume, identity checkout, skills, local files,
-scheduled jobs, previous credential Secret, and old transcript trees remain.
+scheduled jobs, previous credential Secret, and old transcript trees remain. Identity-repo
+skills are linked into every harness's skills directory. A skill kept only on
+the agent's disk, as a directory under one harness's skills directory (the
+only option for an agent with no identity repository), is shared into the
+other harnesses' directories too, so it stays visible after a switch.
 
 The switch clears the old harness's model and version overrides, stops its
 current pod, and enters NeedsAuth. Complete the target runtime's OAuth,

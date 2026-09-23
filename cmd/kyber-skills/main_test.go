@@ -651,3 +651,95 @@ func hasIssueCode(issues []skillscan.Issue, code string) bool {
 	}
 	return false
 }
+
+// MAT-85: a skill kept only in one runtime home (the one place an agent with no
+// identity repo can keep a skill) must survive a harness switch, which means
+// every runtime home has to see it.
+func TestConverge_SharesALocalSkillAcrossRuntimeHomes(t *testing.T) {
+	home := t.TempDir()
+	skill := filepath.Join(home, ".claude", "skills", "switch-test")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"),
+		[]byte("---\nname: switch-test\ndescription: Survives a harness switch.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A different skill of the same name already in the Codex home stays put.
+	taken := filepath.Join(home, ".codex", "skills", "switch-test")
+	if err := os.MkdirAll(taken, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(taken, "SKILL.md"), []byte("---\nname: switch-test\ndescription: Codex's own.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	p := paths{homeDir: home, platformDir: filepath.Join(t.TempDir(), "none")}
+
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatal(err)
+	}
+	hermes := filepath.Join(home, ".hermes", "skills", "switch-test")
+	if !linkPointsAt(hermes, skill) {
+		t.Fatalf("~/.hermes/skills/switch-test does not point at the Claude skill")
+	}
+	if li, err := os.Lstat(taken); err != nil || li.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("the Codex home's own skill was replaced: %v", err)
+	}
+	rep := (*reports)[0]
+	if len(rep.Skills) != 1 || len(rep.Skills[0].Linked) != 3 {
+		t.Fatalf("reported skills = %+v, want switch-test loadable in every runtime", rep.Skills)
+	}
+
+	// Deleting the skill drops the links made to it, without a dangling-link
+	// warning; the freed name then goes to the Codex home's own skill.
+	if err := os.RemoveAll(skill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := convergeAndReport(p, postReport); err != nil {
+		t.Fatal(err)
+	}
+	if !linkPointsAt(hermes, taken) {
+		t.Fatalf("~/.hermes/skills/switch-test should now share the Codex skill")
+	}
+	if !linkPointsAt(filepath.Join(home, ".claude", "skills", "switch-test"), taken) {
+		t.Fatalf("~/.claude/skills/switch-test should now share the Codex skill")
+	}
+	for _, issue := range (*reports)[1].Issues {
+		if issue.Code == skillscan.IssueDanglingLink {
+			t.Fatalf("stale cross-home link reported as dangling: %+v", issue)
+		}
+	}
+}
+
+// With an identity repo, a hand-written skill in a runtime home is already
+// flagged unmanaged; sharing it with the other homes must not add a second
+// warning per home.
+func TestConverge_SharedUnmanagedSkillIsReportedOnce(t *testing.T) {
+	f := newRepoFixture(t)
+	sidecar, reports := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	skill := filepath.Join(f.home, ".claude", "skills", "handmade")
+	if err := os.MkdirAll(skill, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: handmade\ndescription: Not in the repo.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := convergeAndReport(paths{repoDir: f.repoDir, homeDir: f.home}, postReport); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(f.home, ".hermes", "skills", "handmade")); err != nil {
+		t.Fatalf("unmanaged skill not shared: %v", err)
+	}
+	var unmanaged int
+	for _, issue := range (*reports)[0].Issues {
+		if issue.Code == skillscan.IssueUnmanaged {
+			unmanaged++
+		}
+	}
+	if unmanaged != 1 {
+		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v", unmanaged, (*reports)[0].Issues)
+	}
+}
