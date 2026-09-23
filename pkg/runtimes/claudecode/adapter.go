@@ -324,8 +324,19 @@ func (a *ClaudeCodeAdapter) SecretMounts(agent *kyberv1.Agent) []runtimes.Secret
 	return []runtimes.SecretMount{}
 }
 
-// LivenessProbe returns the probe used to health-check the Claude Code agent container.
-// It checks that the claude process is running via pgrep.
+// readinessProcessPattern matches the Claude Code process itself: argv[0] is
+// `claude` (native build) or argv[1] is a path ending in /claude (a Node build
+// run as `node /usr/bin/claude`). A bare `claude` substring also matches PID 1
+// (`entrypoint.sh /usr/local/bin/start-claude.sh`) from the pod's first second,
+// which marked every agent Ready before its harness existed.
+const readinessProcessPattern = `(^|/)claude( |$)`
+
+// LivenessProbe watches start-claude.sh, which supervises and relaunches the
+// harness; the loose `claude` match is deliberate. Its initial delay is the
+// Starting budget (startupTimeoutForPod): a changed base image is merged into
+// the durable root before the harness can exist, and a merge from a very
+// different image (leaving Hermes) took over ten minutes on a dev node. Readiness
+// stays strict throughout, so the grace never exposes a half-started agent.
 func (a *ClaudeCodeAdapter) LivenessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
@@ -333,26 +344,18 @@ func (a *ClaudeCodeAdapter) LivenessProbe() *corev1.Probe {
 				Command: []string{"pgrep", "-f", "claude"},
 			},
 		},
-		InitialDelaySeconds: 30,
+		InitialDelaySeconds: 900,
 		PeriodSeconds:       30,
 		FailureThreshold:    3,
 	}
 }
 
-// ReadinessProbe returns the probe used to check if the Claude Code agent is ready.
-// It uses the same pgrep check as the liveness probe but with a shorter initial delay,
-// so the pod is marked ready once claude is confirmed running. The spec does not define
-// a separate readiness probe for Claude Code; pgrep is the most reliable check available
-// without adding a custom healthcheck endpoint to the Claude Code image.
-//
-// TODO: InitialDelaySeconds=15 is aggressive vs liveness=30. If Claude Code
-// startup (node.js init + OAuth handshake) consistently takes >15s, pods may
-// flap ready/not-ready before settling. Tune after observing real boot times.
+// ReadinessProbe passes only while the Claude Code process itself runs.
 func (a *ClaudeCodeAdapter) ReadinessProbe() *corev1.Probe {
 	return &corev1.Probe{
 		ProbeHandler: corev1.ProbeHandler{
 			Exec: &corev1.ExecAction{
-				Command: []string{"pgrep", "-f", "claude"},
+				Command: []string{"pgrep", "-f", readinessProcessPattern},
 			},
 		},
 		InitialDelaySeconds: 15,
