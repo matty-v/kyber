@@ -9,5 +9,8 @@
   "workspaces": [
     "packages/*",
     "apps/*"
-  ]
+  ],
+  "overrides": {
+    "esbuild": "^0.28.1"
+  }
 }
