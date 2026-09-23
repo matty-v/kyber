@@ -487,6 +487,10 @@ silently.
   `DesiredNeedsAuth` transitions tear down any old pod. Runtime observations
   from the source harness are cleared and late source reports are rejected.
   The target credential is supplied through its own authorization flow.
+  Preparation stages an npm harness with the durable root's own npm. A root
+  last booted by a harness without Node (Hermes) has none; the repair script
+  exits 3, and the switch commits anyway and leaves the install to the target
+  image's first boot, which merges the toolchain back in.
 - **Recovery waits for the old pod to leave.** The NeedsAuth, MemoryExhausted,
   and DiskExhausted recovery gates hold while the previous pod is terminating,
   and `ResetRetryAndCreatePod` requeues rather than creating over a pod it just

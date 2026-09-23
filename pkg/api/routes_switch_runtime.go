@@ -139,7 +139,16 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		if runner == nil {
 			runner = &kubernetesRuntimeRepairRunner{server: s}
 		}
-		if _, err := runner.Run(r.Context(), agent, plan); err != nil {
+		_, err := runner.Run(r.Context(), agent, plan)
+		if errors.Is(err, ErrRuntimePreparationDeferred) {
+			// Leaving a harness that ships no Node (Hermes) removes npm from the
+			// durable root, so an npm harness cannot be staged ahead of time.
+			// Its image brings the toolchain at boot, and the start script
+			// installs the harness there, as for a runtime with no repair plan.
+			slog.Info("target runtime preparation deferred to first boot", "agent", name, "runtime", req.Runtime)
+			err = nil
+		}
+		if err != nil {
 			if errors.Is(err, ErrRuntimeRepairInProgress) {
 				writeJSONError(w, http.StatusConflict, "repair_in_progress", "runtime maintenance is already in progress")
 				return

@@ -36,6 +36,16 @@ if ! [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([0-9A-Za-z.+-]*)?$ ]]; then
     exit 1
 fi
 
+# The installer runs inside the durable root with that root's npm and node. A
+# root last booted by a harness image without them (Hermes ships no Node)
+# cannot host the install until the target image is merged into it at boot.
+# Exit 3 says exactly that: a runtime switch defers the install to that boot,
+# while a repair of a broken runtime still fails.
+if ! chroot "$root" /bin/sh -c 'command -v npm >/dev/null && command -v node >/dev/null'; then
+    echo "[kyber] runtime repair: durable root has no npm/node for ${package}; it installs when the target image boots" >&2
+    exit 3
+fi
+
 installer="$root/usr/local/bin/kyber-harness-install"
 # The maintenance image is authoritative for repair tooling. Copy its atomic
 # installer into the durable root so an old or damaged root cannot strand the

@@ -350,3 +350,29 @@ func TestSwitchRuntimeValidatesTargetAuthMode(t *testing.T) {
 		t.Fatalf("preparation ran for a rejected switch: calls=%d", runner.calls)
 	}
 }
+
+// Leaving Hermes: its root has no npm, so an npm harness cannot be staged
+// ahead of time. The switch still commits and the target installs at boot.
+func TestSwitchRuntimeCommitsWhenPreparationIsDeferred(t *testing.T) {
+	runner := &fakeRuntimeRepairRunner{err: api.ErrRuntimePreparationDeferred}
+	s, original := switchTestServer(t, "hermes", runner)
+	current := &kyberv1.Agent{}
+	key := types.NamespacedName{Name: original.Name, Namespace: original.Namespace}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	current.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
+	if err := s.K8sClient.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	rr := postSwitchAuth(t, s, "claude-code", kyberv1.AgentAuthTypeOAuth)
+	if rr.Code != http.StatusAccepted || runner.calls != 1 {
+		t.Fatalf("status=%d body=%s calls=%d", rr.Code, rr.Body.String(), runner.calls)
+	}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Spec.Runtime != "claude-code" || current.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeOAuth || current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth {
+		t.Fatalf("runtime=%q auth=%q desired=%q", current.Spec.Runtime, current.Spec.Secrets.AuthType, current.Spec.DesiredPhase)
+	}
+}
