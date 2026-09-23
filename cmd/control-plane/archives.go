@@ -55,8 +55,8 @@ func buildArchiveService(ctx context.Context, c client.Client, namespace string,
 			PauseTimeout:      envDuration("KYBER_ARCHIVE_PAUSE_TIMEOUT"),
 			JobTimeout:        envDuration("KYBER_ARCHIVE_JOB_TIMEOUT"),
 			Retention:         envDuration("KYBER_ARCHIVE_RETENTION"),
-			MaxConcurrentJobs: int(envInt64("KYBER_ARCHIVE_MAX_CONCURRENT_JOBS")),
-			MaxEntries:        int(envInt64("KYBER_ARCHIVE_MAX_ENTRIES")),
+			MaxConcurrentJobs: envInt("KYBER_ARCHIVE_MAX_CONCURRENT_JOBS"),
+			MaxEntries:        envInt("KYBER_ARCHIVE_MAX_ENTRIES"),
 		},
 	}
 	switch {
@@ -110,6 +110,11 @@ func buildArchiveService(ctx context.Context, c client.Client, namespace string,
 
 func envInt64(k string) int64 {
 	v, _ := strconv.ParseInt(strings.TrimSpace(os.Getenv(k)), 10, 64)
+	return v
+}
+
+func envInt(k string) int {
+	v, _ := strconv.Atoi(strings.TrimSpace(os.Getenv(k)))
 	return v
 }
 
