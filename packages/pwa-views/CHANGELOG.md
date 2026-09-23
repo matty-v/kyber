@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.56.0
+
+- Switch harness works from Agent Detail. Opening it also stacked the generic
+  "Switch-runtime agent?" confirm over the harness dialog; that confirm had no
+  harness choice and its Confirm closed the dialog without calling the API.
+  Each action kind now declares whether it uses the generic confirm or its own
+  form, exhaustively, so a new form action cannot get both.
+- Switch harness is also offered from the ⋯ menu, under a new Configuration
+  section, on the same phases as the General-section button.
+
 ## 0.55.0
 
 - Create Agent can start from a disk archive: pick a completed export or

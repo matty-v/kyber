@@ -2,7 +2,7 @@ import { agentAuth, agentContract, authorizationUrl, supportsModelSelection } fr
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
-import { AlertTriangle, ArrowLeft, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, ArrowLeftRight, Play, Square, RotateCcw, KeyRound, Cpu, Trash2, MoreHorizontal, Minimize2, ScrollText, Wrench } from 'lucide-react'
 import {
   useAgent,
   useStartAgent,
@@ -61,6 +61,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  canSwitchRuntime,
   isLifecycleKind,
   lifecycleActionEndpoint,
   lifecycleItemsInMore,
@@ -84,6 +85,25 @@ type ActionKind =
   | 'set-runtime-version'
   | 'switch-runtime'
   | 'set-resources'
+// Which dialog each action opens. Exhaustive on purpose: a kind with its own
+// form must not also get the generic confirm stacked on top of it, whose
+// Confirm fires with none of the form's input.
+const ACTION_DIALOG: Record<ActionKind, 'confirm' | 'form'> = {
+  start: 'confirm',
+  stop: 'confirm',
+  restart: 'confirm',
+  'restart-session': 'confirm',
+  'compact-session': 'confirm',
+  'force-needs-auth': 'confirm',
+  'repair-runtime': 'confirm',
+  'retry-startup': 'confirm',
+  delete: 'confirm',
+  'set-model': 'form',
+  'set-runtime-version': 'form',
+  'switch-runtime': 'form',
+  'set-resources': 'form',
+}
+
 type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'a2a'
 
 const agentNavigation: LocalNavigationGroup<AgentSection>[] = [
@@ -743,6 +763,16 @@ export function AgentDetail() {
                   <LifecycleItems phase={agent.phase} onSelect={setPending} />
                 </>
               )}
+              {canSwitchRuntime(agent.phase) && (
+                <>
+                  {(hasAgentActions || hasPodActions) && <DropdownMenuSeparator />}
+                  <DropdownMenuLabel>Configuration</DropdownMenuLabel>
+                  <DropdownMenuItem onSelect={() => { setTargetRuntime(''); setPending('switch-runtime') }}>
+                    <ArrowLeftRight className="h-3.5 w-3.5" />
+                    Switch harness
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem variant="danger" onSelect={() => setPending('delete')}>
                 <Trash2 className="h-3.5 w-3.5" />
@@ -1016,7 +1046,7 @@ export function AgentDetail() {
                       <div className="flex flex-wrap gap-2">
                         {canSelectModel && <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>}
                         <Button size="sm" variant="secondary" onClick={() => { setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? ''); setPending('set-runtime-version') }}>Harness</Button>
-                        <Button size="sm" variant="secondary" disabled={!['Running', 'Stopped', 'Failed', 'NeedsAuth'].includes(agent.phase)} onClick={() => { setTargetRuntime(''); setPending('switch-runtime') }}>Switch harness</Button>
+                        <Button size="sm" variant="secondary" disabled={!canSwitchRuntime(agent.phase)} onClick={() => { setTargetRuntime(''); setPending('switch-runtime') }}>Switch harness</Button>
                         <Button size="sm" variant="secondary" onClick={() => { setNewCPU(agent.resources.cpu); setNewMemory(agent.resources.memory); setPending('set-resources') }}>Resources</Button>
                       </div>
                     </div>
@@ -1284,7 +1314,7 @@ export function AgentDetail() {
         </div>
       )}
 
-      {pending !== null && pending !== 'set-model' && pending !== 'set-runtime-version' && pending !== 'set-resources' && (
+      {pending !== null && ACTION_DIALOG[pending] === 'confirm' && (
         <ConfirmDialog
           open={true}
           title={confirmTitle(pending)}

@@ -161,8 +161,37 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
       </MemoryRouter>,
     )
     await user.click(screen.getByRole('button', { name: 'Switch harness' }))
+    // The harness form is the only dialog: a generic confirm stacked on top of
+    // it swallowed the click and fired with no target (MAT-85).
+    expect(screen.queryByText('Switch-runtime agent?')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
     await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
     await user.click(screen.getAllByRole('button', { name: 'Switch harness' }).at(-1)!)
+    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code' })
+  })
+
+  it('offers Switch harness from the More menu', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, id: 'switcher', phase: 'Running', runtime: 'codex', authType: 'oauth' },
+      isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: { runtimes: [
+        { id: 'codex', name: 'Codex', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'device-code' }] },
+        { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'authorization-code' }] },
+      ] },
+    } as ReturnType<typeof useAPIModule.useComputeConfig>)
+    render(
+      <MemoryRouter initialEntries={['/agents/switcher/overview']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: 'More actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Switch harness' }))
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
+    await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
+    await user.click(screen.getByRole('button', { name: 'Switch harness' }))
     expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code' })
   })
 

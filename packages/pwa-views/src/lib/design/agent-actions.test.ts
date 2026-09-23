@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  canSwitchRuntime,
   isLifecycleKind,
   lifecycleActionEndpoint,
   lifecycleItemsInMore,
@@ -213,4 +214,13 @@ it('uses server capability availability for session controls', () => {
     'session-restart': { supported: true, state: 'available', reason: 'supported' },
   })).toEqual(['restart-session'])
   expect(sessionItemsInMore('Running', {})).toEqual([])
+})
+
+describe('canSwitchRuntime', () => {
+  it('matches the stable phases the switch-runtime route accepts', () => {
+    for (const phase of ['Running', 'Stopped', 'Failed', 'NeedsAuth'] as const) expect(canSwitchRuntime(phase)).toBe(true)
+    for (const phase of ['', 'Starting', 'Creating', 'Stopping', 'Restarting', 'BrokenRuntime', 'MemoryExhausted', 'DiskExhausted', 'Draining', 'WaitingForMachine', 'Deleted'] as const) {
+      expect(canSwitchRuntime(phase)).toBe(false)
+    }
+  })
 })

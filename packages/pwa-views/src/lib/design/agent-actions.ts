@@ -152,3 +152,9 @@ export function lifecycleItemsInMore(phase: AgentPhase): AgentLifecycleKind[] {
       return ['stop']
   }
 }
+
+// Phases the switch-runtime route accepts (routes_switch_runtime.go). Shared by
+// the ⋯ menu entry and the General-section button so they cannot disagree.
+export function canSwitchRuntime(phase: AgentPhase): boolean {
+  return phase === 'Running' || phase === 'Stopped' || phase === 'Failed' || phase === 'NeedsAuth'
+}
