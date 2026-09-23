@@ -3,6 +3,7 @@
 // No globals — multiple clusters can coexist in one React tree.
 
 import type {
+  AgentAuthType,
   Agent,
   AgentInboundBinding,
   AgentJob,
@@ -302,8 +303,8 @@ export function createApiClient(cluster: Cluster) {
     repairAgentRuntime: (name: string): Promise<RuntimeRepairResponse> =>
       request<RuntimeRepairResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/repair-runtime`),
 
-    switchAgentRuntime: (name: string, runtime: string): Promise<SwitchRuntimeResponse> =>
-      request<SwitchRuntimeResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/switch-runtime`, { runtime }),
+    switchAgentRuntime: (name: string, runtime: string, authType?: AgentAuthType): Promise<SwitchRuntimeResponse> =>
+      request<SwitchRuntimeResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/switch-runtime`, authType ? { runtime, authType } : { runtime }),
 
     // Disk export (MAT-87). Start returns immediately with a job to poll.
     startAgentExport: (name: string): Promise<ArchiveJob> =>
@@ -1016,6 +1017,7 @@ export interface RuntimeRepairResponse {
 export interface SwitchRuntimeResponse {
   agent: string
   runtime: string
+  authType: AgentAuthType
   message: string
   jobTurnHooksSupported: boolean
   jobWarning?: string

@@ -75,12 +75,12 @@ func TestInternalRuntimeCatalogStoresClaudeModelsPerAgent(t *testing.T) {
 			t.Fatalf("%s status = %d, want 204; body=%s", tc.agent, rr.Code, rr.Body.String())
 		}
 	}
-	if got, err := cache.GetAgentModels(context.Background(), "alice"); err != nil || len(got) != 1 || got[0].ID != "claude-opus-4-1" {
+	if got, err := cache.GetAgentModels(context.Background(), "alice", "claude-code"); err != nil || len(got) != 1 || got[0].ID != "claude-opus-4-1" {
 		t.Errorf("alice models = %+v", got)
 	} else if got[0].ContextWindow != 1_000_000 || !got[0].ContextWindowKnown {
 		t.Errorf("alice context metadata = %+v", got[0])
 	}
-	if got, err := cache.GetAgentModels(context.Background(), "bob"); err != nil || len(got) != 1 || got[0].ID != "claude-sonnet-4-5" {
+	if got, err := cache.GetAgentModels(context.Background(), "bob", "claude-code"); err != nil || len(got) != 1 || got[0].ID != "claude-sonnet-4-5" {
 		t.Errorf("bob models = %+v", got)
 	}
 }

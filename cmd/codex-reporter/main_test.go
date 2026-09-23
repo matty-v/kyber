@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestCatalogModelsUsesAppServerSchemaWithoutInventingContextWindows(t *testing.T) {
 	got := catalogModels([]appServerModel{
@@ -16,5 +19,25 @@ func TestCatalogModelsUsesAppServerSchemaWithoutInventingContextWindows(t *testi
 	}
 	if got[1].ID != "legacy-id" {
 		t.Errorf("second model = %+v", got[1])
+	}
+}
+
+// MAT-85: the first model/list at boot can race app-server startup. A failure
+// must retry within seconds, backing off, not wait the hourly refresh.
+func TestNextCatalogDelayRetriesFailuresSoonAndBacksOff(t *testing.T) {
+	failure := errors.New("app-server closed before model/list response")
+	wait, retry := nextCatalogDelay(failure, catalogRetryMin)
+	if wait != catalogRetryMin || retry != 2*catalogRetryMin {
+		t.Fatalf("first failure: wait=%s next=%s", wait, retry)
+	}
+	for i := 0; i < 10; i++ {
+		wait, retry = nextCatalogDelay(failure, retry)
+	}
+	if wait > catalogRefresh || retry != catalogRefresh {
+		t.Fatalf("backoff not capped at the refresh interval: wait=%s next=%s", wait, retry)
+	}
+	wait, retry = nextCatalogDelay(nil, retry)
+	if wait != catalogRefresh || retry != catalogRetryMin {
+		t.Fatalf("success: wait=%s next=%s, want hourly refresh and a reset retry", wait, retry)
 	}
 }

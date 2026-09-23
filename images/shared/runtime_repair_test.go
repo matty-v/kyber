@@ -4,6 +4,7 @@ package identityreposhared
 
 import (
 	"bytes"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -140,6 +141,46 @@ fi
 	out, err := cmd.CombinedOutput()
 	if err == nil || !strings.Contains(string(out), "reports 9.9.9, expected 2.1.250") {
 		t.Fatalf("mismatched repair should fail: err=%v\n%s", err, out)
+	}
+	assertUnrelatedDurableState(t, root, sentinels)
+}
+
+// A root last booted by a harness without Node (Hermes) has no npm for the
+// installer. The script must say so with exit 3 and touch nothing, so a
+// runtime switch can defer the install to the target image's boot.
+func TestRuntimeRepairDefersWhenRootLacksToolchain(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "agentroot")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinels := seedUnrelatedDurableState(t, root)
+	installer := filepath.Join(dir, "kyber-harness-install")
+	writeExecutable(t, installer, "exit 0")
+	logPath := filepath.Join(dir, "chroot.log")
+	writeExecutable(t, filepath.Join(dir, "chroot"), `
+printf '%s\n' "$*" >> "$CHROOT_LOG"
+[ "$2" = /bin/sh ] && exit 1
+exit 0
+`)
+	cmd := exec.Command(runtimeRepairScript(t), root, "@anthropic-ai/claude-code", "claude", "2.1.250", "/usr/lib/node_modules/@anthropic-ai/claude-code", "/usr/bin/claude")
+	cmd.Env = append(os.Environ(),
+		"PATH="+dir+":"+os.Getenv("PATH"),
+		"CHROOT_LOG="+logPath,
+		"KYBER_REPAIR_TEST_ROOT="+root,
+		"KYBER_REPAIR_INSTALLER_SOURCE="+installer,
+	)
+	out, err := cmd.CombinedOutput()
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) || exitErr.ExitCode() != 3 {
+		t.Fatalf("err=%v, want exit 3\n%s", err, out)
+	}
+	logBody, _ := os.ReadFile(logPath)
+	if strings.Contains(string(logBody), "kyber-harness-install") {
+		t.Fatalf("installer ran on a root without npm: %q", logBody)
+	}
+	if _, err := os.Stat(filepath.Join(root, "usr/local/bin/kyber-harness-install")); !os.IsNotExist(err) {
+		t.Fatalf("installer was copied into the root: %v", err)
 	}
 	assertUnrelatedDurableState(t, root, sentinels)
 }

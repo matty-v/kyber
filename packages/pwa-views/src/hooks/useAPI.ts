@@ -6,6 +6,7 @@ import { createApiClient } from '../lib/api'
 import { useCluster } from '../lib/cluster-context'
 import { parseTranscript } from '../lib/transcript'
 import type {
+  AgentAuthType,
   AgentJob,
   AgentImportRequest,
   ArchiveJob,
@@ -375,7 +376,7 @@ export function useSwitchAgentRuntime() {
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ name, runtime }: { name: string; runtime: string }) => api.switchAgentRuntime(name, runtime),
+    mutationFn: ({ name, runtime, authType }: { name: string; runtime: string; authType?: AgentAuthType }) => api.switchAgentRuntime(name, runtime, authType),
     onSuccess: (_data, { name }) => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })

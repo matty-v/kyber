@@ -634,6 +634,12 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 			if opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), target, rh.runtime) {
 				continue
 			}
+			// kyber-skills shares a real skill directory from one runtime home
+			// into the others. That directory is already reported as
+			// unmanaged; its links are not a second problem.
+			if inRuntimeHome(target, opts.HomeDir) {
+				continue
+			}
 			detail := fmt.Sprintf("~/%s/%s links outside the identity repo (%s) — it is committed nowhere and will not survive a reprovision",
 				rh.dir, e.Name(), target)
 			if opts.RepoDir == "" {
@@ -660,6 +666,18 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 		return issues[i].Detail < issues[j].Detail
 	})
 	return out, issues
+}
+
+// inRuntimeHome reports whether path is an entry directly inside one of the
+// runtime skills homes under homeDir.
+func inRuntimeHome(path, homeDir string) bool {
+	for _, rh := range runtimeHomes {
+		home, err := filepath.EvalSymlinks(filepath.Join(homeDir, rh.dir))
+		if err == nil && filepath.Dir(path) == home {
+			return true
+		}
+	}
+	return false
 }
 
 // addLocalSkill records a skill an agent WITHOUT an identity repo keeps in a

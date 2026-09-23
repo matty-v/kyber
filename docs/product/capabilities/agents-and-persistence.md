@@ -22,19 +22,28 @@ An agent keeps its entire filesystem on its persistent volume across pod restart
 
 ## Switch the harness on the same agent
 
-Agent Detail offers **Switch harness** for agents in Running, Stopped, Failed,
-or NeedsAuth. The API equivalent is `POST /api/v1/agents/{name}/switch-runtime`
-with `{"runtime":"codex"}` (or any other configured runtime). It requires
-`lifecycle:write`. Kyber verifies the target image, current authentication
-mode, and enabled channel compatibility before preparing the target on the
-same persistent volume. A failed preparation leaves the original runtime
+Agent Detail offers **Switch harness**, in the ⋯ menu and under General, for
+agents in Running, Stopped, Failed, or NeedsAuth. Choose the target harness and
+one of its authentication modes, for example Hermes with an OpenRouter API key
+for an agent that used a Claude subscription. The API equivalent is
+`POST /api/v1/agents/{name}/switch-runtime` with `{"runtime":"hermes","authType":"api-key"}`;
+omit `authType` to keep the agent's current mode, which the target must then
+offer. It requires `lifecycle:write`. Kyber verifies the target image, the
+chosen authentication mode, and that every enabled channel works with that mode
+before preparing the target on the same persistent volume. A failed preparation leaves the original runtime
 selected. The agent name, volume, identity checkout, skills, local files,
-scheduled jobs, previous credential Secret, and old transcript trees remain.
+scheduled jobs, previous credential Secret, and old transcript trees remain. Identity-repo
+skills are linked into every harness's skills directory. A skill kept only on
+the agent's disk, as a directory under one harness's skills directory (the
+only option for an agent with no identity repository), is shared into the
+other harnesses' directories too, so it stays visible after a switch.
 
 The switch clears the old harness's model and version overrides, stops its
 current pod, and enters NeedsAuth. Complete the target runtime's OAuth,
-device-login, or API-key authorization flow, or use **Retry startup** if that runtime already has a valid credential
-Secret from an earlier switch. Agents using a custom inference endpoint keep
+device-login, or API-key authorization flow, or use **Retry startup** if that
+runtime and mode already have a valid credential Secret from an earlier switch.
+Switching back to the original harness and mode reuses its preserved
+credential. Agents using a custom inference endpoint keep
 its existing Secret and can retry startup directly; they do not need a provider
 key for the new harness. The target starts a fresh session unless it
 already has its own resumable transcript on disk. If scheduled jobs use

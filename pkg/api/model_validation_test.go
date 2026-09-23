@@ -77,7 +77,7 @@ func TestValidateModelValue_AgentCatalogExtendsAcceptance(t *testing.T) {
 	// authenticated catalog does — entitlements differ per account.
 	cache := snapshotCache(t, []string{"claude-sonnet-5"}, nil)
 	if err := cache.(runtimedetect.AgentCatalogCache).PutAgentModels(context.Background(),
-		"wedge", []runtimedetect.Model{{ID: "claude-secret-preview"}}); err != nil {
+		"wedge", "claude-code", []runtimedetect.Model{{ID: "claude-secret-preview"}}); err != nil {
 		t.Fatalf("PutAgentModels: %v", err)
 	}
 	s := &Server{RuntimeDetectCache: cache}

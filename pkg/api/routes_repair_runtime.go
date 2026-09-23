@@ -28,6 +28,15 @@ const (
 
 var ErrRuntimeRepairInProgress = errors.New("runtime repair already in progress")
 
+// ErrRuntimePreparationDeferred means the durable root lacks the toolchain the
+// target's installer needs, so the harness can only be installed once the
+// target image is merged into the root at boot.
+var ErrRuntimePreparationDeferred = errors.New("target runtime installs at first boot")
+
+// runtimeRepairDeferredExitCode is kyber-runtime-repair's exit status for a
+// durable root without the installer's npm/node.
+const runtimeRepairDeferredExitCode = 3
+
 // RuntimeRepairPlan is the API-side snapshot of a runtime adapter's repair
 // contract. Values are fixed by registered runtime code, never request input.
 type RuntimeRepairPlan struct {
@@ -93,6 +102,11 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 	if err != nil {
 		if errors.Is(err, ErrRuntimeRepairInProgress) {
 			writeJSONError(w, http.StatusConflict, "repair_in_progress", "runtime repair is already in progress")
+			return
+		}
+		if errors.Is(err, ErrRuntimePreparationDeferred) {
+			writeJSONError(w, http.StatusInternalServerError, "repair_failed",
+				"runtime repair failed; the agent's disk has no npm/node to install with. Start the agent so its image restores them")
 			return
 		}
 		slog.Error("runtime repair failed", "agent", name, "runtime", agent.Spec.Runtime, "error", err)
@@ -193,6 +207,9 @@ func (r *kubernetesRuntimeRepairRunner) Run(ctx context.Context, agent *kyberv1.
 		case corev1.PodSucceeded:
 			return "repair completed and executable verified", nil
 		case corev1.PodFailed:
+			if repairExitCode(stored) == runtimeRepairDeferredExitCode {
+				return "", ErrRuntimePreparationDeferred
+			}
 			return "", fmt.Errorf("maintenance pod failed: %s", repairTerminationMessage(stored))
 		}
 		select {
@@ -289,6 +306,15 @@ func repairTerminationMessage(pod *corev1.Pod) string {
 		}
 	}
 	return "maintenance pod terminated without a diagnostic"
+}
+
+func repairExitCode(pod *corev1.Pod) int32 {
+	for _, status := range pod.Status.ContainerStatuses {
+		if status.Name == "repair" && status.State.Terminated != nil {
+			return status.State.Terminated.ExitCode
+		}
+	}
+	return -1
 }
 
 func boundedRepairOutput(s string) string {

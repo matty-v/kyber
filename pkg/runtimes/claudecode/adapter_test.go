@@ -2,6 +2,7 @@ package claudecode
 
 import (
 	"context"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -609,8 +610,9 @@ func TestClaudeCodeAdapter_LivenessProbe(t *testing.T) {
 			t.Errorf("LivenessProbe command[%d]: got %q, want %q", i, probe.Exec.Command[i], arg)
 		}
 	}
-	if probe.InitialDelaySeconds != 30 {
-		t.Errorf("LivenessProbe.InitialDelaySeconds: got %d, want 30", probe.InitialDelaySeconds)
+	// The initial delay is the Starting budget for a durable-root merge.
+	if probe.InitialDelaySeconds < 600 {
+		t.Errorf("LivenessProbe.InitialDelaySeconds: got %d, want >= 600 for a base-image merge", probe.InitialDelaySeconds)
 	}
 	if probe.PeriodSeconds != 30 {
 		t.Errorf("LivenessProbe.PeriodSeconds: got %d, want 30", probe.PeriodSeconds)
@@ -624,25 +626,49 @@ func TestClaudeCodeAdapter_ReadinessProbe(t *testing.T) {
 	a := &ClaudeCodeAdapter{}
 	probe := a.ReadinessProbe()
 
-	if probe == nil {
-		t.Fatal("ReadinessProbe() returned nil")
+	if probe == nil || probe.Exec == nil {
+		t.Fatal("ReadinessProbe must be an exec probe")
 	}
-	if probe.Exec == nil {
-		t.Fatal("ReadinessProbe must use an exec probe")
+	cmd := probe.Exec.Command
+	if len(cmd) != 3 || cmd[0] != "/bin/bash" || cmd[1] != "-c" || cmd[2] != readinessCommand {
+		t.Fatalf("ReadinessProbe command = %q, want bash -c readinessCommand", cmd)
 	}
-	// Readiness uses pgrep like liveness, with shorter initial delay.
-	wantCmd := []string{"pgrep", "-f", "claude"}
-	if len(probe.Exec.Command) != len(wantCmd) {
-		t.Fatalf("ReadinessProbe command length: got %d, want %d", len(probe.Exec.Command), len(wantCmd))
+	// Boot-time claude commands (--version, mcp add, the --print model probe)
+	// match the pattern too; only a child of the tmux server is the session.
+	if !strings.Contains(readinessCommand, `pgrep -d, -x 'tmux: server'`) || !strings.Contains(readinessCommand, `pgrep -P "$servers"`) {
+		t.Fatalf("readiness must require the tmux server as parent: %s", readinessCommand)
 	}
-	for i, arg := range wantCmd {
-		if probe.Exec.Command[i] != arg {
-			t.Errorf("ReadinessProbe command[%d]: got %q, want %q", i, probe.Exec.Command[i], arg)
+	if probe.InitialDelaySeconds >= a.LivenessProbe().InitialDelaySeconds {
+		t.Errorf("ReadinessProbe.InitialDelaySeconds %d should be shorter than liveness", probe.InitialDelaySeconds)
+	}
+
+	// Command lines captured from a live Claude Code agent pod. Only the
+	// harness itself may satisfy readiness; PID 1 and the tmux server name
+	// claude in their arguments from the pod's first second.
+	pattern := regexp.MustCompile(readinessProcessPattern)
+	for _, line := range []string{
+		"claude --dangerously-skip-permissions --mcp-config /persist/var/run/kyber-a2a-mcp.json",
+		"node /usr/bin/claude --dangerously-skip-permissions",
+		"/usr/bin/claude --resume",
+		"claude",
+	} {
+		if !pattern.MatchString(line) {
+			t.Errorf("harness process %q not matched", line)
 		}
 	}
-	// Readiness has shorter initial delay than liveness (15s vs 30s).
-	if probe.InitialDelaySeconds >= 30 {
-		t.Errorf("ReadinessProbe.InitialDelaySeconds should be < 30 (liveness), got %d", probe.InitialDelaySeconds)
+	for _, line := range []string{
+		"/bin/bash /usr/local/bin/entrypoint.sh /usr/local/bin/start-claude.sh",
+		"su --preserve-environment -s /bin/bash kyber -c set -o pipefail; /usr/local/bin/start-claude.sh 2>&1 | tee /persist/kyber-bootstrap.log",
+		"/bin/bash /usr/local/bin/start-claude.sh",
+		"tmux new-session -d -s agent -c /home/kyber claude --dangerously-skip-permissions",
+		"bash /usr/local/bin/kyber-runtime-capabilities claude-code 2.1.280 /usr/local/bin/kyber-probe-capabilities",
+		"/usr/lib/node_modules/@anthropic-ai/claude-code/bin/install.js",
+		"find /persist/agentroot/home/kyber/.claude -type f",
+		"/persist/last-claude-launch.sh --fresh",
+	} {
+		if pattern.MatchString(line) {
+			t.Errorf("non-harness process %q matched readiness", line)
+		}
 	}
 }
 

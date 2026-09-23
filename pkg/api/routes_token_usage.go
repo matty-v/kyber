@@ -3,6 +3,10 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"k8s.io/apimachinery/pkg/types"
+
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // handleTokenUsageGet handles GET /api/v1/agents/{name}/token-usage.
@@ -46,7 +50,13 @@ func (s *Server) handleTokenUsageGet(w http.ResponseWriter, r *http.Request, nam
 	// concurrent reader (e.g. the agents-list serve site, which now also
 	// resolves). The shallow copy is safe — every mutated field is a value.
 	resolved := *snap
-	limit, known := s.resolveContextWindow(r.Context(), name, resolved.Model)
+	// The agent's catalog is per runtime; an unreadable agent just skips it.
+	runtime := ""
+	var agent kyberv1.Agent
+	if s.K8sClient != nil && s.K8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: name}, &agent) == nil {
+		runtime = agent.Spec.Runtime
+	}
+	limit, known := s.resolveContextWindow(r.Context(), name, runtime, resolved.Model)
 	// Codex reports the authoritative per-turn context window in its rollout
 	// JSONL. Use it when the server has no configured/detected value.
 	if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {

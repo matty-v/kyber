@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
@@ -19,6 +20,9 @@ import (
 
 type switchRuntimeRequest struct {
 	Runtime string `json:"runtime"`
+	// AuthType selects one of the target's auth modes. Empty keeps the agent's
+	// current mode, which the target must then offer.
+	AuthType kyberv1.AgentAuthType `json:"authType,omitempty"`
 }
 
 // handleSwitchRuntime prepares the target on the same PVC before committing
@@ -77,16 +81,26 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 	// A stable observed phase can still have a queued lifecycle intent. Do not
 	// override a Stop, restart, or recovery request that has not reconciled yet.
-	if agent.Status.Phase == kyberv1.AgentPhaseRunning && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
+	// An empty desiredPhase is no intent at all (agents whose lifecycle was
+	// never driven through the API); the controller treats it as Running.
+	if agent.Spec.DesiredPhase != "" && (agent.Status.Phase == kyberv1.AgentPhaseRunning && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
 		agent.Status.Phase == kyberv1.AgentPhaseStopped && agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped ||
 		agent.Status.Phase == kyberv1.AgentPhaseFailed && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning ||
-		agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		agent.Status.Phase == kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning) {
 		writeJSONError(w, http.StatusConflict, "lifecycle_pending", "agent has a pending lifecycle action; wait for it to settle before switching")
 		return
 	}
-	if _, ok := descriptor.Auth(agent.Spec.Secrets.AuthType); !ok {
+	authType := req.AuthType
+	if authType == "" {
+		authType = agent.Spec.Secrets.AuthType
+	}
+	if _, ok := descriptor.Auth(authType); !ok {
+		offered := make([]string, 0, len(descriptor.AuthModes))
+		for _, mode := range descriptor.AuthModes {
+			offered = append(offered, string(mode.ID))
+		}
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-			fmt.Sprintf("%s does not offer %s authentication", descriptor.Name, agent.Spec.Secrets.AuthType), "authType")
+			fmt.Sprintf("%s does not offer %s authentication; choose one of: %s", descriptor.Name, authType, strings.Join(offered, ", ")), "authType")
 		return
 	}
 	channels := map[string]bool{
@@ -96,7 +110,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 	for _, channel := range []string{"telegram", "discord", "slack"} {
 		if channels[channel] {
-			if err := validateChannelAuth(req.Runtime, agent.Spec.Secrets.AuthType, channel); err != nil {
+			if err := validateChannelAuth(req.Runtime, authType, channel); err != nil {
 				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "runtime")
 				return
 			}
@@ -125,7 +139,16 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		if runner == nil {
 			runner = &kubernetesRuntimeRepairRunner{server: s}
 		}
-		if _, err := runner.Run(r.Context(), agent, plan); err != nil {
+		_, err := runner.Run(r.Context(), agent, plan)
+		if errors.Is(err, ErrRuntimePreparationDeferred) {
+			// Leaving a harness that ships no Node (Hermes) removes npm from the
+			// durable root, so an npm harness cannot be staged ahead of time.
+			// Its image brings the toolchain at boot, and the start script
+			// installs the harness there, as for a runtime with no repair plan.
+			slog.Info("target runtime preparation deferred to first boot", "agent", name, "runtime", req.Runtime)
+			err = nil
+		}
+		if err != nil {
 			if errors.Is(err, ErrRuntimeRepairInProgress) {
 				writeJSONError(w, http.StatusConflict, "repair_in_progress", "runtime maintenance is already in progress")
 				return
@@ -150,6 +173,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 	before := current.DeepCopy()
 	current.Spec.Runtime = req.Runtime
+	current.Spec.Secrets.AuthType = authType
 	current.Spec.Model = ""
 	current.Spec.RuntimeVersion = ""
 	current.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
@@ -162,7 +186,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 	if s.Recorder != nil {
-		s.Recorder.Eventf(current, corev1.EventTypeNormal, "RuntimeSwitchRequested", "runtime %s → %s; reauthorization requested", before.Spec.Runtime, req.Runtime)
+		s.Recorder.Eventf(current, corev1.EventTypeNormal, "RuntimeSwitchRequested", "runtime %s (%s) → %s (%s); reauthorization requested", before.Spec.Runtime, before.Spec.Secrets.AuthType, req.Runtime, authType)
 	}
 	jobWarning := ""
 	if !descriptor.Supports(runtimes.JobTurnHooks) {
@@ -174,7 +198,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{
-		"agent": name, "runtime": req.Runtime,
+		"agent": name, "runtime": req.Runtime, "authType": authType,
 		"message":               "runtime switch requested; agent is moving to NeedsAuth on the same volume",
 		"jobTurnHooksSupported": descriptor.Supports(runtimes.JobTurnHooks),
 		"jobWarning":            jobWarning,

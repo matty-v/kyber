@@ -533,10 +533,13 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		a.Status.Runtime.Runtime == "" && a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && a.Status.ObservedGeneration < a.Generation
 	if staleRuntime {
 		resp.CurrentModel = ""
-		if a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth {
+		if a.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && a.Status.Phase != kyberv1.AgentPhaseNeedsAuth {
 			// The CRD's observed phase can still be Running until the old pod
 			// is removed. Present the handoff as transient rather than showing
-			// a healthy target runtime that has not started yet.
+			// a healthy target runtime that has not started yet. Once the
+			// controller reports NeedsAuth, show it: observedGeneration only
+			// advances when a pod is created, which needs the reauthorization
+			// this phase offers, so waiting on it would hide the auth controls.
 			resp.Phase = kyberv1.AgentPhaseRestarting
 			resp.Status.Phase = kyberv1.AgentPhaseRestarting
 			resp.Status.Message = "Switching harness; waiting for the old pod to stop"
@@ -1367,7 +1370,7 @@ func (s *Server) listAgents(w http.ResponseWriter, r *http.Request) {
 				// (see the /token-usage handler); mutating it in place would
 				// race a concurrent reader. Shallow copy is safe (value fields).
 				resolved := *snap
-				limit, known := s.resolveContextWindow(r.Context(), resp.ID, resolved.Model)
+				limit, known := s.resolveContextWindow(r.Context(), resp.ID, resp.Runtime, resolved.Model)
 				if !known && resolved.ContextWindowKnown && resolved.Tokens.Limit > 0 {
 					limit, known = resolved.Tokens.Limit, true
 				}

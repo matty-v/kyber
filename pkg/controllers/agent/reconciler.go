@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	stderrors "errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -852,6 +853,9 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// 8. Execute the transition action.
 	requeueAfter, err := r.executeAction(ctx, agent, pod, result.Action, event)
+	if stderrors.Is(err, errAwaitingPodDeletion) {
+		return ctrl.Result{RequeueAfter: awaitingPodDeletionRequeue}, nil
+	}
 	if err != nil {
 		if telemetry.AgentReconcileErrors != nil {
 			telemetry.AgentReconcileErrors.Add(ctx, 1,
@@ -1094,7 +1098,7 @@ func (r *AgentReconciler) classifyEvent(
 		// cleanup. Expand the claim and wait for its reported capacity before
 		// consuming the size change as recovery input; otherwise the replacement
 		// pod would mount the same full filesystem and immediately fail again.
-		if desired == kyberv1.AgentPhaseRunning && (pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || isAgentContainerTerminated(pod)) {
+		if desired == kyberv1.AgentPhaseRunning && !podTerminating(pod) && (pod == nil || pod.Status.Phase == corev1.PodFailed || pod.Status.Phase == corev1.PodSucceeded || isAgentContainerTerminated(pod)) {
 			ready, err := r.ensureDiskRecoveryCapacity(ctx, agent)
 			if err != nil {
 				return "", err
@@ -1385,7 +1389,7 @@ func (r *AgentReconciler) classifyEvent(
 	// last attempt. desiredPhase is still required — an operator who stopped the
 	// agent must not get a surprise pod — but it is no longer sufficient.
 	case kyberv1.AgentPhaseNeedsAuth:
-		if agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		if agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning || podTerminating(pod) {
 			return "", nil
 		}
 		changed, err := r.recoveryInputChanged(ctx, agent)
@@ -1401,7 +1405,7 @@ func (r *AgentReconciler) classifyEvent(
 		// Operator bumped spec.resources.memory and triggered recovery via
 		// /set-resources or /start (#272). Same gate as NeedsAuth above, keyed
 		// on the memory limit rather than the credential.
-		if agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		if agent.Spec.DesiredPhase != kyberv1.AgentPhaseRunning || podTerminating(pod) {
 			return "", nil
 		}
 		changed, err := r.recoveryInputChanged(ctx, agent)
@@ -1603,6 +1607,23 @@ func (r *AgentReconciler) executeAction(
 			zero := int64(0)
 			if err := r.Delete(ctx, pod, &client.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !errors.IsNotFound(err) {
 				return 0, fmt.Errorf("sweeping existing pod for reset-retry: %w", err)
+			}
+			// An unscheduled pod is removed at once, but one bound to a node
+			// terminates asynchronously even at grace 0, and creating now would
+			// collide with it. That failure used to spend the one-shot recovery
+			// input and strand the agent with no pod. Give the input back and
+			// wait: the recovery gates hold while the pod terminates, and its
+			// removal re-triggers this transition.
+			remaining := &corev1.Pod{}
+			if err := r.Get(ctx, client.ObjectKeyFromObject(pod), remaining); err == nil && remaining.Status.Phase != corev1.PodFailed && remaining.Status.Phase != corev1.PodSucceeded {
+				if agent.Status.RecoveryInput != "" {
+					release := client.MergeFrom(agent.DeepCopy())
+					agent.Status.RecoveryInput = ""
+					if err := r.Status().Patch(ctx, agent, release); err != nil {
+						return 0, fmt.Errorf("releasing recovery input while old pod terminates: %w", err)
+					}
+				}
+				return 0, errAwaitingPodDeletion
 			}
 		}
 		// Write a session brief before creating the pod — same as ActionWriteBriefAndCreatePod.
@@ -2939,6 +2960,19 @@ func (r *AgentReconciler) currentRecoveryInput(ctx context.Context, agent *kyber
 		return "rv:" + name + ":" + secret.ResourceVersion, nil
 	}
 	return "", nil
+}
+
+// errAwaitingPodDeletion aborts a recovery transition without advancing the
+// phase: the previous pod must be gone before its replacement can be created.
+var errAwaitingPodDeletion = stderrors.New("previous pod is still terminating")
+
+const awaitingPodDeletionRequeue = 2 * time.Second
+
+// podTerminating reports whether the agent's previous pod is still being
+// deleted. Recovery gates hold on it rather than spend the one-shot recovery
+// input on a pod create that would collide with it.
+func podTerminating(pod *corev1.Pod) bool {
+	return pod != nil && pod.DeletionTimestamp != nil
 }
 
 // recoveryInputChanged reports whether the operator has supplied something new

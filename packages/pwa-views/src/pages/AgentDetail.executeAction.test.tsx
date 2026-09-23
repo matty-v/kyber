@@ -161,9 +161,66 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
       </MemoryRouter>,
     )
     await user.click(screen.getByRole('button', { name: 'Switch harness' }))
+    // The harness form is the only dialog: a generic confirm stacked on top of
+    // it swallowed the click and fired with no target (MAT-85).
+    expect(screen.queryByText('Switch-runtime agent?')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
     await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
     await user.click(screen.getAllByRole('button', { name: 'Switch harness' }).at(-1)!)
-    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code' })
+    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code', authType: 'oauth' })
+  })
+
+  it('offers Switch harness from the More menu', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, id: 'switcher', phase: 'Running', runtime: 'codex', authType: 'oauth' },
+      isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: { runtimes: [
+        { id: 'codex', name: 'Codex', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'device-code' }] },
+        { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Subscription', flow: 'authorization-code' }] },
+      ] },
+    } as ReturnType<typeof useAPIModule.useComputeConfig>)
+    render(
+      <MemoryRouter initialEntries={['/agents/switcher/overview']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: 'More actions' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Switch harness' }))
+    expect(screen.queryByRole('button', { name: 'Confirm' })).toBeNull()
+    await user.selectOptions(screen.getByLabelText('Target harness'), 'claude-code')
+    await user.click(screen.getByRole('button', { name: 'Switch harness' }))
+    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'claude-code', authType: 'oauth' })
+  })
+
+  it('switches a subscription agent to an API-key-only harness by choosing its mode', async () => {
+    const user = userEvent.setup()
+    switchAgentRuntime.mutateAsync.mockClear()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, id: 'switcher', phase: 'Running', runtime: 'claude-code', authType: 'oauth' },
+      isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue({
+      data: { runtimes: [
+        { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'oauth', name: 'Claude subscription', flow: 'authorization-code' }] },
+        { id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key', channels: ['telegram', 'discord', 'slack'] }] },
+      ] },
+    } as ReturnType<typeof useAPIModule.useComputeConfig>)
+    render(
+      <MemoryRouter initialEntries={['/agents/switcher/general']}>
+        <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+      </MemoryRouter>,
+    )
+    await user.click(screen.getByRole('button', { name: 'Switch harness' }))
+    const hermes = screen.getByRole('option', { name: 'Hermes' }) as HTMLOptionElement
+    expect(hermes.disabled).toBe(false)
+    await user.selectOptions(screen.getByLabelText('Target harness'), 'hermes')
+    expect(screen.getByLabelText('Authentication')).toHaveValue('api-key')
+    expect(screen.getByRole('option', { name: 'OpenRouter API key (telegram, discord, slack)' })).toBeInTheDocument()
+    await user.click(screen.getAllByRole('button', { name: 'Switch harness' }).at(-1)!)
+    expect(switchAgentRuntime.mutateAsync).toHaveBeenCalledWith({ name: 'switcher', runtime: 'hermes', authType: 'api-key' })
   })
 
   it('offers the target API-key authorization after a switch', async () => {

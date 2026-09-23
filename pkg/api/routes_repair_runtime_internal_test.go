@@ -28,6 +28,7 @@ type repairPodPhaseClient struct {
 	client.Client
 	repairPodName string
 	phase         corev1.PodPhase
+	exitCode      int32
 }
 
 func (c *repairPodPhaseClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
@@ -41,7 +42,7 @@ func (c *repairPodPhaseClient) Get(ctx context.Context, key client.ObjectKey, ob
 			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{
 				Name: "repair",
 				State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
-					ExitCode: 17,
+					ExitCode: c.exitCode,
 					Reason:   "SyntheticFailure",
 					Message:  "must stay out of the operator-facing error",
 				}},
@@ -168,7 +169,7 @@ func TestRuntimeRepairRunnerLifecycle(t *testing.T) {
 			runner, agent, plan := repairRunnerFixture(t)
 			base := runner.server.K8sClient
 			runner.server.K8sClient = &repairPodPhaseClient{
-				Client: base, repairPodName: runtimeRepairPodName(agent.Name), phase: tc.phase,
+				Client: base, repairPodName: runtimeRepairPodName(agent.Name), phase: tc.phase, exitCode: 17,
 			}
 			var ctx context.Context = context.Background()
 			if tc.timeout {
@@ -226,5 +227,16 @@ func TestBuildRuntimeRepairPodFallsBackToMachineWhenAgentPodAbsent(t *testing.T)
 	}
 	if pod.Spec.NodeName != "fallback-node" {
 		t.Fatalf("repair pod node = %q, want fallback-node", pod.Spec.NodeName)
+	}
+}
+
+func TestRuntimeRepairRunnerReportsDeferredPreparation(t *testing.T) {
+	runner, agent, plan := repairRunnerFixture(t)
+	runner.server.K8sClient = &repairPodPhaseClient{
+		Client: runner.server.K8sClient, repairPodName: runtimeRepairPodName(agent.Name),
+		phase: corev1.PodFailed, exitCode: runtimeRepairDeferredExitCode,
+	}
+	if _, err := runner.Run(context.Background(), agent, plan); !errors.Is(err, ErrRuntimePreparationDeferred) {
+		t.Fatalf("Run() error=%v, want ErrRuntimePreparationDeferred", err)
 	}
 }

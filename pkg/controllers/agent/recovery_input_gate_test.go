@@ -317,3 +317,65 @@ func TestStateMachine_NeedsAuth_DesiredRunningRecreatesPod(t *testing.T) {
 		t.Fatal("a {NeedsAuth, EventDesiredRestarting} row now exists — spec.desiredPhase=Restarting is sticky and is only cleared by ActionCaptureStateAndDeletePod, so this row will re-fire every reconcile unless it clears the intent too (kyber#684, kyber#26)")
 	}
 }
+
+// A runtime switch or forced re-auth enters NeedsAuth by deleting the pod, and
+// an operator can press Restart pod before it is gone. The gate must hold
+// without spending the one-shot input, then fire once the pod has left.
+func TestRecoveryGate_NeedsAuth_HoldsWhileOldPodTerminates(t *testing.T) {
+	secret := credentialSecret("100")
+	agent := needsAuthAgent("")
+	r := newGateReconciler(t, agent, secret)
+	now := metav1.Now()
+	terminating := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "agent-" + rigAgent, Namespace: rigNS, DeletionTimestamp: &now}}
+
+	ev, err := r.classifyEvent(context.Background(), agent, terminating)
+	if err != nil || ev != "" {
+		t.Fatalf("terminating pod: event=%q err=%v, want hold", ev, err)
+	}
+	if agent.Status.RecoveryInput != "" {
+		t.Fatalf("recovery input spent while the old pod terminates: %q", agent.Status.RecoveryInput)
+	}
+	ev, err = r.classifyEvent(context.Background(), agent, nil)
+	if err != nil || ev != EventDesiredRunning {
+		t.Fatalf("pod gone: event=%q err=%v, want %q", ev, err, EventDesiredRunning)
+	}
+}
+
+// Reset-retry deletes a live pod but must not create its replacement in the
+// same pass: the create collides with the pod it just deleted, and the spent
+// recovery input used to strand the agent in NeedsAuth with no pod.
+func TestResetRetry_LivePodReleasesInputAndWaits(t *testing.T) {
+	secret := credentialSecret("100")
+	claimed := "rv:" + rigAgent + "-codex-auth:100"
+	agent := needsAuthAgent(claimed)
+	// The finalizer stands in for a kubelet that has not yet confirmed the
+	// deletion: the object lingers, terminating, as it does on a real node.
+	live := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-" + rigAgent, Namespace: rigNS, Finalizers: []string{"kyber.test/kubelet"}},
+		Status:     corev1.PodStatus{Phase: corev1.PodRunning},
+	}
+	r := newGateReconciler(t, agent, secret, live)
+
+	_, err := r.executeAction(context.Background(), agent, live, ActionResetRetryAndCreatePod, EventDesiredRunning)
+	if err != errAwaitingPodDeletion {
+		t.Fatalf("err=%v, want errAwaitingPodDeletion", err)
+	}
+	stored := &kyberv1.Agent{}
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(agent), stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status.RecoveryInput != "" {
+		t.Fatalf("recovery input not released: %q", stored.Status.RecoveryInput)
+	}
+	lingering := &corev1.Pod{}
+	if err := r.Get(context.Background(), client.ObjectKeyFromObject(live), lingering); err != nil || lingering.DeletionTimestamp == nil {
+		t.Fatalf("live pod was not deleted: err=%v", err)
+	}
+	if ev, err := r.classifyEvent(context.Background(), stored, lingering); err != nil || ev != "" {
+		t.Fatalf("while the old pod terminates: event=%q err=%v, want hold", ev, err)
+	}
+	ev, err := r.classifyEvent(context.Background(), stored, nil)
+	if err != nil || ev != EventDesiredRunning {
+		t.Fatalf("after the pod is gone: event=%q err=%v, want one recovery attempt", ev, err)
+	}
+}

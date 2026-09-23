@@ -65,7 +65,8 @@ so it requires `lifecycle:admin`, the maximum (nothing is more impactful than
 delete).
 
 `switch-runtime` also requests NeedsAuth, but only after checking a registered
-target, configured image, compatible auth mode and channels, stable phase, and
+target, configured image, an auth mode the target offers (the requested one
+or the current one) and channels compatible with it, stable phase, and
 successful target preparation on the existing volume. MAT-85 assigns this
 bounded operator action `lifecycle:write`; `force-needs-auth` remains admin
 because it can wedge an arbitrary agent without those preconditions.

@@ -94,7 +94,7 @@ func TestMemoryCache_AgentCatalogIsIndependentFromSnapshot(t *testing.T) {
 	c := runtimedetect.NewMemoryCache()
 	ctx := context.Background()
 	models := []runtimedetect.Model{{ID: "claude-opus", ContextWindow: 1_000_000, ContextWindowKnown: true}}
-	if err := c.PutAgentModels(ctx, "alice", models); err != nil {
+	if err := c.PutAgentModels(ctx, "alice", "claude-code", models); err != nil {
 		t.Fatalf("PutAgentModels: %v", err)
 	}
 	if _, err := c.Get(ctx); !errors.Is(err, runtimedetect.ErrCacheEmpty) {
@@ -103,8 +103,29 @@ func TestMemoryCache_AgentCatalogIsIndependentFromSnapshot(t *testing.T) {
 	if err := c.Put(ctx, &runtimedetect.Snapshot{ClaudeCodeVersions: []string{"2.1.0"}}); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, err := c.GetAgentModels(ctx, "alice")
+	got, err := c.GetAgentModels(ctx, "alice", "claude-code")
 	if err != nil || len(got) != 1 || got[0].ID != "claude-opus" {
 		t.Fatalf("catalog lost after snapshot write: models=%+v err=%v", got, err)
+	}
+}
+
+// MAT-85: a catalog belongs to the harness that reported it. After a harness
+// switch the agent's previous catalog must not be served for the new runtime.
+func TestMemoryCache_AgentCatalogIsPerRuntime(t *testing.T) {
+	c := runtimedetect.NewMemoryCache()
+	ctx := context.Background()
+	if err := c.PutAgentModels(ctx, "echo", "claude-code", []runtimedetect.Model{{ID: "claude-opus-5-5"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, runtime := range []string{"codex", ""} {
+		if got, err := c.GetAgentModels(ctx, "echo", runtime); !errors.Is(err, runtimedetect.ErrCacheEmpty) {
+			t.Fatalf("runtime %q served %+v (err=%v), want ErrCacheEmpty", runtime, got, err)
+		}
+	}
+	if err := c.PutAgentModels(ctx, "echo", "codex", []runtimedetect.Model{{ID: "gpt-5.5"}}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := c.GetAgentModels(ctx, "echo", "claude-code"); err != nil || len(got) != 1 || got[0].ID != "claude-opus-5-5" {
+		t.Fatalf("claude-code catalog lost after a codex report: %+v err=%v", got, err)
 	}
 }
