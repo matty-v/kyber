@@ -121,3 +121,58 @@ func TestVerifyReadsByRangeAndPostsSummary(t *testing.T) {
 		t.Errorf("corrupt archive: err=%v posted=%s", err, posted)
 	}
 }
+
+func TestRestoreExtractsAndVerifiesWithSkips(t *testing.T) {
+	src := t.TempDir()
+	os.MkdirAll(filepath.Join(src, "agentroot/home/kyber/.claude"), 0o700)
+	os.MkdirAll(filepath.Join(src, "agentroot/home/kyber/.ssh"), 0o700)
+	os.MkdirAll(filepath.Join(src, "agentroot/var/spool/cron/crontabs"), 0o700)
+	os.WriteFile(filepath.Join(src, "agentroot/home/kyber/.claude/.credentials.json"), []byte("{}"), 0o600)
+	os.WriteFile(filepath.Join(src, "agentroot/home/kyber/.ssh/id_ed25519"), []byte("key"), 0o600)
+	os.WriteFile(filepath.Join(src, "agentroot/var/spool/cron/crontabs/kyber"), []byte("* * * * * work\n"), 0o600)
+	os.WriteFile(filepath.Join(src, "agentroot/home/kyber/work.txt"), []byte("keep me"), 0o644)
+	os.Symlink("home/kyber", filepath.Join(src, "agentroot/me"))
+	var buf bytes.Buffer
+	if _, err := diskarchive.Write(context.Background(), src, &buf, diskarchive.WriteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	data := buf.Bytes()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer tok" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		http.ServeContent(w, r, "a.zip", time.Time{}, bytes.NewReader(data))
+	}))
+	defer srv.Close()
+	t.Setenv("KYBER_ARCHIVE_SOURCE_URL", srv.URL)
+	t.Setenv("KYBER_ARCHIVE_TOKEN", "tok")
+
+	dst := t.TempDir()
+	if err := runRestore(context.Background(), dst); err != nil {
+		t.Fatalf("runRestore: %v", err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dst, "agentroot/me/work.txt")); err != nil || string(b) != "keep me" {
+		t.Errorf("restored work = %q, %v", b, err)
+	}
+	for _, p := range []string{"agentroot/home/kyber/.claude/.credentials.json", "agentroot/home/kyber/.ssh/id_ed25519", "agentroot/var/spool/cron/crontabs/kyber"} {
+		if _, err := os.Stat(filepath.Join(dst, p)); !os.IsNotExist(err) {
+			t.Errorf("%s was restored by default: %v", p, err)
+		}
+	}
+	// A second restore into the now non-empty volume is refused.
+	if err := runRestore(context.Background(), dst); err == nil {
+		t.Error("restore into a non-empty volume succeeded")
+	}
+
+	// Opting in restores them.
+	t.Setenv("KYBER_ARCHIVE_SKIP_CREDENTIALS", "false")
+	t.Setenv("KYBER_ARCHIVE_SKIP_CRONTABS", "false")
+	all := t.TempDir()
+	if err := runRestore(context.Background(), all); err != nil {
+		t.Fatalf("runRestore keeping everything: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(all, "agentroot/var/spool/cron/crontabs/kyber")); err != nil {
+		t.Errorf("opted-in crontab missing: %v", err)
+	}
+}

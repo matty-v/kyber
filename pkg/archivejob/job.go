@@ -19,7 +19,12 @@ import (
 type Kind string
 
 const (
+	// KindExport archives an existing agent's volume (MAT-87).
 	KindExport Kind = "export"
+	// KindUpload stages an operator-supplied archive so it can be imported,
+	// which is how an archive moves between installations (MAT-88).
+	KindUpload Kind = "upload"
+	// KindImport creates a new agent from a completed export or upload.
 	KindImport Kind = "import"
 )
 
@@ -141,9 +146,27 @@ type Job struct {
 	// run to millions of records and stays inside the archive.
 	Summary *Summary `json:"summary,omitempty"`
 
-	// Import-only fields.
-	SourceJobID string         `json:"sourceJobID,omitempty"`
-	Create      *CreateRequest `json:"create,omitempty"`
+	// Import-only fields. Agent is the new agent's name.
+	SourceJobID string `json:"sourceJobID,omitempty"`
+	Machine     string `json:"machine,omitempty"`
+	// Skip lists archived files the restore leaves out (by default the
+	// source harness's own credential files).
+	Skip []string `json:"skip,omitempty"`
+	// Cutover lists what the operator must do by hand while the source and
+	// the new agent coexist.
+	Cutover []string `json:"cutover,omitempty"`
+	// Restored is set once the volume is complete and verified. From then on
+	// the new agent is kept even if the job fails, because it is whole.
+	Restored bool `json:"restored,omitempty"`
+	// RestoreStarted is set once the restore pod exists.
+	RestoreStarted bool `json:"restoreStarted,omitempty"`
+	// CreatedSecrets are the Secrets the create path made for the new agent,
+	// removed with it if the import is abandoned before it is whole.
+	CreatedSecrets []string `json:"createdSecrets,omitempty"`
+	// KeepCredentialFiles and KeepCrontabs restore those files instead of
+	// leaving them out (the default).
+	KeepCredentialFiles bool `json:"keepCredentialFiles,omitempty"`
+	KeepCrontabs        bool `json:"keepCrontabs,omitempty"`
 }
 
 // Summary is the operator-visible part of a manifest.
@@ -155,17 +178,9 @@ type Summary struct {
 	Excluded      []diskarchive.Exclusion `json:"excluded,omitempty"`
 	Totals        diskarchive.Totals      `json:"totals"`
 	Sensitive     []string                `json:"sensitive,omitempty"`
-}
-
-// CreateRequest is the destination an import restores into.
-type CreateRequest struct {
-	Name    string `json:"name"`
-	Machine string `json:"machine"`
-	Runtime string `json:"runtime"`
-	Model   string `json:"model,omitempty"`
-	Disk    string `json:"disk"`
-	CPU     string `json:"cpu,omitempty"`
-	Memory  string `json:"memory,omitempty"`
+	// Cron lists crontabs the agent installed itself; a restored copy runs
+	// them as well.
+	Cron []string `json:"cron,omitempty"`
 }
 
 // SummaryOf strips a manifest down to its summary.
@@ -178,6 +193,7 @@ func SummaryOf(m *diskarchive.Manifest) *Summary {
 		Excluded:      m.Excluded,
 		Totals:        m.Totals,
 		Sensitive:     diskarchive.SensitivePaths(m),
+		Cron:          diskarchive.CronPaths(m),
 	}
 }
 
@@ -190,9 +206,10 @@ func NewID() string {
 
 // Store persists jobs.
 type Store interface {
-	// Create inserts a queued job, refusing a second active job of the same
-	// kind for the same agent, or more than maxActive active jobs overall
-	// (zero means unbounded).
+	// Create inserts a job, refusing a second active job of the same kind
+	// for the same named agent (jobs with no agent, such as uploads, are not
+	// limited per agent), or more than maxActive active jobs overall (zero
+	// means unbounded).
 	Create(ctx context.Context, j *Job, maxActive int) error
 	Get(ctx context.Context, id string) (*Job, error)
 	// List returns an agent's jobs of a kind, newest first; agent "" lists all.

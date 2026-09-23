@@ -60,7 +60,10 @@ request logs. Verification runs in an unprivileged pod that reads the archive
 back through `/internal/archive-jobs/{id}/archive` and posts a summary — never
 parse a whole archive in the control plane. Release restores the agent's prior
 intent only while the `kyber.io/archive-paused` mark stands; lifecycle verbs
-clear it. See `docs/design/2026-09-22-agent-disk-export-import.md`.
+clear it. Create-from-archive (`POST /api/v1/agent-imports`, uploads at
+`/api/v1/archive-uploads`) runs the ordinary `createAgent` handler with the
+hold set from the request context, pre-creates the PVC, and releases the hold
+only after the restore pod has re-scanned the volume against the manifest. See `docs/design/2026-09-22-agent-disk-export-import.md`.
 
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function

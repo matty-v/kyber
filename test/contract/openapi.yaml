@@ -970,6 +970,165 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
 
+  /api/v1/archives:
+    get:
+      operationId: listImportableArchives
+      summary: List completed exports and uploads the caller may create an agent from
+      tags: [agents]
+      responses:
+        '200':
+          description: Importable archives, newest first
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [archives]
+                properties:
+                  archives:
+                    type: array
+                    items: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/archive-uploads:
+    post:
+      operationId: uploadArchive
+      summary: Upload a Kyber disk archive ZIP so an agent can be created from it
+      description: >
+        Requires archives:admin with an installation-wide agent grant. The body
+        is the raw ZIP, streamed and sealed into the archive store; the job is
+        verified asynchronously before it can be imported.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/zip:
+            schema: {type: string, format: binary}
+      responses:
+        '202':
+          description: Upload stored; verification queued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '413': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/archive-uploads/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getArchiveUpload
+      summary: Get one upload job
+      tags: [agents]
+      responses:
+        '200':
+          description: Upload job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+
+  /api/v1/agent-imports:
+    post:
+      operationId: createAgentFromArchive
+      summary: Create a new agent from a completed export or upload
+      description: >
+        Requires archives:admin and both the new agent and (for an export) the
+        source agent in the caller's agentResources. Validates the source,
+        format version, destination disk size and name, then creates the Agent
+        through the normal create path, held until its new volume has been
+        restored and verified. Returns the import job and the new agent.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/AgentImportRequest'}
+      responses:
+        '202':
+          description: Agent created and restore queued
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [import, agent]
+                properties:
+                  import: {$ref: '#/components/schemas/ArchiveJob'}
+                  agent: {$ref: '#/components/schemas/Agent'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+    get:
+      operationId: listAgentImports
+      summary: List imports, optionally for one new agent (?agent=name)
+      tags: [agents]
+      parameters:
+        - {name: agent, in: query, required: false, schema: {type: string}}
+      responses:
+        '200':
+          description: Imports
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [imports]
+                properties:
+                  imports:
+                    type: array
+                    items: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/agent-imports/{id}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    get:
+      operationId: getAgentImport
+      summary: Get one import job, including its cutover checklist
+      tags: [agents]
+      responses:
+        '200':
+          description: Import job
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
+  /api/v1/agent-imports/{id}/cancel:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: cancelAgentImport
+      summary: Cancel a restore; the new agent and its volume are deleted, the source is untouched
+      tags: [agents]
+      responses:
+        '202':
+          description: Cancellation requested
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
   /api/v1/agents/{name}/models:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1825,6 +1984,34 @@ components:
         downloadable: {type: boolean}
         requestedBy: {type: string}
         summary: {$ref: '#/components/schemas/ArchiveSummary'}
+        sourceId: {type: string, description: Import only; the export or upload restored from}
+        restored: {type: boolean, description: Import only; the volume is complete and verified}
+        skipped:
+          type: array
+          description: Import only; archived files the restore left out (the source harness's credential files by default)
+          items: {type: string}
+        cutover:
+          type: array
+          description: Import only; what to reconcile by hand while the source and new agent coexist
+          items: {type: string}
+
+    AgentImportRequest:
+      type: object
+      required: [source, agent]
+      properties:
+        source:
+          type: object
+          description: Exactly one of exportId or uploadId
+          properties:
+            exportId: {type: string}
+            uploadId: {type: string}
+        agent: {$ref: '#/components/schemas/CreateAgentRequest'}
+        keepCredentialFiles:
+          type: boolean
+          description: Restore files that look like credentials instead of leaving them out
+        keepCrontabs:
+          type: boolean
+          description: Restore crontabs the source agent installed itself instead of leaving them out
 
     ArchiveSummary:
       type: object
@@ -1864,6 +2051,9 @@ components:
             symlinks: {type: integer}
             bytes: {type: integer, format: int64}
         sensitive:
+          type: array
+          items: {type: string}
+        cron:
           type: array
           items: {type: string}
 

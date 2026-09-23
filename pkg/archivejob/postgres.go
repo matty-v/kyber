@@ -33,8 +33,9 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		created_at TIMESTAMPTZ NOT NULL,
 		job JSONB NOT NULL
 	);
-	CREATE UNIQUE INDEX IF NOT EXISTS agent_archive_jobs_one_active
-		ON agent_archive_jobs (kind, agent) WHERE state IN ('queued', 'running');
+	DROP INDEX IF EXISTS agent_archive_jobs_one_active;
+	CREATE UNIQUE INDEX IF NOT EXISTS agent_archive_jobs_one_active_per_agent
+		ON agent_archive_jobs (kind, agent) WHERE state IN ('queued', 'running') AND agent <> '';
 	CREATE INDEX IF NOT EXISTS agent_archive_jobs_by_agent
 		ON agent_archive_jobs (kind, agent, created_at DESC);`
 	_, err := s.db.ExecContext(ctx, schema)
@@ -66,7 +67,7 @@ func (s *PostgresStore) Create(ctx context.Context, j *Job, maxActive int) error
 		if active >= maxActive {
 			var sameAgent bool
 			_ = tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM agent_archive_jobs
-				WHERE kind = $1 AND agent = $2 AND state IN ('queued', 'running'))`, j.Kind, j.Agent).Scan(&sameAgent)
+				WHERE kind = $1 AND agent = $2 AND agent <> '' AND state IN ('queued', 'running'))`, j.Kind, j.Agent).Scan(&sameAgent)
 			if sameAgent {
 				return ErrActiveJob
 			}

@@ -33,7 +33,7 @@ func (s *MemoryStore) Create(ctx context.Context, j *Job, maxActive int) error {
 			continue
 		}
 		active++
-		if x.Agent == j.Agent && x.Kind == j.Kind {
+		if j.Agent != "" && x.Agent == j.Agent && x.Kind == j.Kind {
 			return ErrActiveJob
 		}
 	}

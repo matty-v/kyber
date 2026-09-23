@@ -21,6 +21,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -53,6 +54,7 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 	agent.Status.Phase = kyberv1.AgentPhaseRunning
 	machine := &kyberv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", Namespace: "kyber-system"}}
 	machine.Status.NodeName = "node-a"
+	machine.Spec.Capacity = kyberv1.MachineCapacity{CPU: resource.MustParse("16"), Memory: resource.MustParse("64Gi")}
 	sc := "local-path"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-" + exportAgent + "-pv", Namespace: "kyber-system"},
@@ -76,7 +78,14 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 			}}},
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, machine, pvc, pod).Build()
+	// The API server assigns UIDs on create; the fake client does not.
+	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, machine, pvc, pod).
+		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+			if obj.GetUID() == "" {
+				obj.SetUID(types.UID(archivejob.NewID()))
+			}
+			return cl.Create(ctx, obj, opts...)
+		}}).Build()
 	store, err := archivestore.NewFilesystemStore(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +210,11 @@ func (h *exportHarness) playVerifyPod(id string) {
 	if len(pod.Spec.Volumes) != 0 || *pod.Spec.Containers[0].SecurityContext.RunAsUser == 0 {
 		h.t.Errorf("verify pod must mount nothing and run unprivileged: %+v", pod.Spec)
 	}
-	token := h.podToken(id)
+	s := &corev1.Secret{}
+	if err := h.c.Get(context.Background(), types.NamespacedName{Name: "disk-" + string(h.job(id).Kind) + "-" + id + "-token", Namespace: "kyber-system"}, s); err != nil {
+		h.t.Fatalf("token secret: %v", err)
+	}
+	token := s.StringData["token"]
 	req := httptest.NewRequest(http.MethodGet, "/internal/archive-jobs/"+id+"/archive", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	rr := httptest.NewRecorder()

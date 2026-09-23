@@ -72,6 +72,32 @@ Archives are stored encrypted by the installation, in Kyber's own archive
 store by default (on every installation target) or in the object storage the
 operator configures. See [agent disk archives](../../operator/agent-disk-archives.md).
 
+## Create an agent from a disk archive
+
+Create Agent can start from a disk archive instead of an empty disk: a
+completed export, or a Kyber disk archive ZIP uploaded from anywhere (which
+is how an agent moves between installations). The API equivalent is
+`POST /api/v1/agent-imports` with the archive and an ordinary create request;
+upload a ZIP first with `POST /api/v1/archive-uploads`. Kyber rejects an
+unsupported archive version, a disk too small for the archive, a name or
+volume that already exists, and an archive that fails verification, all
+before creating anything.
+
+The new agent is created on the machine and storage you choose, with a fresh
+volume, and does not start until its disk has been restored and every file
+checked against the archive. Ownership, permissions, timestamps and links
+are restored as they were. The source agent is never touched, and a failed or
+canceled restore deletes the new agent and its volume.
+
+Nothing that would make two agents act at once is copied or turned on. Kyber
+lists these on the new agent's page as a cutover checklist: scheduled jobs,
+chat channels, webhook bindings, crontabs the agent installed itself, and a
+shared identity repo. Kubernetes Secrets are never copied. Files that look
+like credentials (harness logins, SSH keys, Git, cloud and registry
+credentials) and crontabs the agent installed itself are left out by default,
+so the new agent authorizes itself and scheduled work does not run twice;
+each can be restored on request.
+
 ## Curate what an agent promises publicly
 
 An operator can publish a versioned capability manifest for an agent from its

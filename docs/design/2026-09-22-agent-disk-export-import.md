@@ -104,29 +104,32 @@ another job.
 
 ## Create from export (MAT-88)
 
-`POST /api/v1/agent-imports` with either a completed export's job ID or an
-uploaded ZIP (streamed to the store and verified before anything is created;
-same retention). The response shows the manifest summary. `POST
-/api/v1/agent-imports/{id}/create` takes the new name, machine, runtime,
-model and disk size; it rejects unsupported format versions, a disk smaller
-than the archived bytes, duplicate names and existing PVCs before creating
-anything.
+An archive is either a completed export or an upload: `POST
+/api/v1/archive-uploads` streams a ZIP into the store and verifies it like an
+export (same retention). `GET /api/v1/archives` lists what the caller may
+import. `POST /api/v1/agent-imports` takes the source and an ordinary create
+request; it rejects unsupported format versions, a disk smaller than the
+archived bytes plus headroom, duplicate names and existing PVCs before
+creating anything, then runs the normal create handler with the hold set.
 
 It then creates the Agent with the `kyber.io/archive-hold` hold and a
 pre-created PVC, runs a same-node restore pod that extracts through `os.Root`
 (no absolute paths, traversal, special files, duplicate paths, entries
 outside the manifest, or symlink-parented writes; symlinks created last),
 re-scans the tree and compares it to the manifest, and only then removes the
-hold. The new agent starts `NeedsAuth` unless its credentials were supplied
-in the create request. Kubernetes Secrets, channel bindings and operator
+hold. The new agent authorizes like any new agent, through the create
+request's credentials or afterwards. Kubernetes Secrets, channel bindings and operator
 tokens are never copied. Scheduled jobs and channel bindings from the source
 config are shown as a cutover checklist and are not activated. A failed or
 canceled restore deletes the new Agent and PVC; the source is never touched.
 
-Credential files on the disk (for example `~/.claude/.credentials.json`,
-`~/.codex/auth.json`) are flagged in the job summary as sensitive. Whether a
-restore keeps or scrubs them, and how that interacts with the new agent's own
-credential Secret at boot, is decided and verified in the MAT-88 work.
+Every file that looks like a credential (harness logins, SSH keys, Git, cloud
+and registry credentials) and every crontab the agent installed itself is
+left out by default, so no copied credential acts as the new agent's
+authorization and no scheduled work runs twice; `keepCredentialFiles` and
+`keepCrontabs` restore them. The restore pod applies the rule against the
+full manifest. Kyber's own job crontab is regenerated from the new agent's
+spec at every boot, so it never duplicates.
 
 Scope for v1: import within one installation, and upload of a Kyber export
 ZIP from anywhere (which is how an archive moves between installations).
@@ -164,3 +167,31 @@ agent for the full timeout and got no pull secrets; a second upload attempt
 was not refused; an empty manifest passed inspection; and restrictive
 directory modes were applied before their children were touched. Each has a
 regression test.
+
+## Checkpoint: 2026-09-22 (MAT-88)
+
+Built on the MAT-87 branch: uploads, importable-archive listing, create from
+archive through the normal create path, the restore worker (volume, restore
+pod, release, first-boot check), `kyber-disk-archive restore`, credential
+file skipping, the cutover checklist, protection of in-use sources from
+retention, OpenAPI, contract tests, the wizard's archive source and Agent
+Detail's restore card. Tests cover the end-to-end restore from an export and
+from an upload, rejections before creation (small disk, existing agent or
+volume, unknown, ambiguous, expired and unsupported sources, missing source
+access), cleanup on restore failure, cancel and deadline, keeping a restored
+agent that fails to boot, and the restore tool itself.
+
+Not yet verified on a real cluster: a restore across machines on k3s
+local-path and on a cloud volume, both backends, and a restart mid-restore.
+
+## Review checkpoint: 2026-09-22 (MAT-88)
+
+A second adversarial review found, and this change fixes, with tests: an
+agent read back through the cache could be orphaned held; capacity was
+checked only after the agent existed and failures leaked its Secrets; a
+verified agent could be discarded if saving the verified state lost a race;
+the credential skip used a truncated summary; credentials and crontabs were
+restored by default against the ticket; persistence mode was not checked; an
+upload could be recorded after its job failed; a restart before the restore
+pod existed failed instead of resuming; and the finalizer could delete a
+same-named volume another object owns.

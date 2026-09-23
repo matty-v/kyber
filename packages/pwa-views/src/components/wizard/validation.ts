@@ -24,6 +24,9 @@ export interface WizardStepDef {
 export function isBasicsValid(state: WizardState): StepValidation {
   if (state.name.length === 0) return { ok: false, reason: 'Pick a name for the agent.' }
   if (state.machine.length === 0) return { ok: false, reason: 'Pick a machine.' }
+  if (state.archiveSource && !state.archiveSource.exportId && !state.archiveSource.uploadId) {
+    return { ok: false, reason: 'Choose the disk archive to start from, or start from an empty disk.' }
+  }
   return OK
 }
 

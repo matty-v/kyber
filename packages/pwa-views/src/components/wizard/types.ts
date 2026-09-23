@@ -1,5 +1,5 @@
 import type { RuntimeDescriptor } from '../../lib/types'
-import type { IdentityRepoMode, ModelInfo } from '../../lib/types'
+import type { ArchiveSummary, IdentityRepoMode, ModelInfo } from '../../lib/types'
 
 /**
  * IdentityRepoMode: which of the three identity-repo flows the operator picked.
@@ -76,6 +76,21 @@ export interface WizardState {
   // gate (isIdentityValid) blocks Continue while it's true so users can
   // pick a different agent name before submission. Defaults to false.
   identityRepoCollision: boolean
+  // Create from a disk archive (MAT-88). Undefined means an empty disk; an
+  // object without an ID means the operator chose "a disk archive" but has
+  // not picked one yet.
+  archiveSource?: ArchiveSourceChoice
+  // Restore files that look like credentials, and crontabs the source agent
+  // installed itself (both off by default).
+  keepCredentialFiles: boolean
+  keepCrontabs: boolean
+}
+
+export interface ArchiveSourceChoice {
+  exportId?: string
+  uploadId?: string
+  label: string
+  summary?: ArchiveSummary
 }
 
 /**
@@ -94,6 +109,8 @@ export type WizardSetter = <K extends keyof WizardState>(
  */
 export function initialWizardState(_models: ModelInfo[]): WizardState {
   return {
+    keepCredentialFiles: false,
+    keepCrontabs: false,
     name: '',
     machine: '',
     runtime: 'claude-code',

@@ -783,6 +783,12 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// Agents.
 	mux.HandleFunc("/api/v1/agents", s.handleAgents)
 	mux.HandleFunc("/api/v1/agents/", s.handleAgents)
+	// Disk archives (MAT-88): import sources, uploads, and create-from-archive.
+	mux.HandleFunc("/api/v1/archives", s.handleArchives)
+	mux.HandleFunc("/api/v1/archive-uploads", s.handleArchiveUploads)
+	mux.HandleFunc("/api/v1/archive-uploads/", s.handleArchiveUploads)
+	mux.HandleFunc("/api/v1/agent-imports", s.handleAgentImports)
+	mux.HandleFunc("/api/v1/agent-imports/", s.handleAgentImports)
 
 	// Fleet.
 	mux.HandleFunc("/api/v1/fleet", s.handleFleet)

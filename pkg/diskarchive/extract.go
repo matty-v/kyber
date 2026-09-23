@@ -19,6 +19,14 @@ type ExtractOptions struct {
 	// Allowed lists top-level names that may already exist in the destination
 	// (for example "lost+found" on a fresh ext4 volume).
 	Allowed []string
+	// Skip names regular files the restore deliberately leaves out (for
+	// example the source harness's credential files). Only regular files can
+	// be skipped, so a skip can never orphan a directory's children.
+	Skip map[string]bool
+	// SkipIf leaves out any regular file it matches, evaluated against the
+	// full manifest (not a truncated summary). Extract adds matches to Skip
+	// so VerifyRestore can be given the same set.
+	SkipIf func(Entry) bool
 }
 
 // Extract restores a structurally valid archive into destDir, which must be
@@ -46,6 +54,16 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 	}
 
 	m := in.Manifest
+	if opts.SkipIf != nil {
+		if opts.Skip == nil {
+			opts.Skip = map[string]bool{}
+		}
+		for _, e := range m.Entries {
+			if e.Type == EntryFile && opts.SkipIf(e) {
+				opts.Skip[e.Path] = true
+			}
+		}
+	}
 	for _, e := range m.Entries {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -59,6 +77,9 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 				return nil, fmt.Errorf("creating %s: %w", e.Path, err)
 			}
 		case EntryFile:
+			if opts.Skip[e.Path] {
+				continue
+			}
 			f, err := root.OpenFile(e.Path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o600)
 			if err != nil {
 				return nil, fmt.Errorf("creating %s: %w", e.Path, err)
@@ -87,6 +108,9 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 
 	if opts.PreserveOwnership {
 		for _, e := range m.Entries {
+			if e.Type == EntryFile && opts.Skip[e.Path] {
+				continue
+			}
 			if err := root.Lchown(e.Path, e.UID, e.GID); err != nil {
 				return nil, fmt.Errorf("chown %s: %w", e.Path, err)
 			}
@@ -96,7 +120,7 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 	// search permission, and touching children must not disturb a parent's
 	// restored mtime. chown clears setuid/setgid, so modes follow it.
 	for _, e := range slices.Backward(m.Entries) {
-		if e.Type == EntrySymlink {
+		if e.Type == EntrySymlink || e.Type == EntryFile && opts.Skip[e.Path] {
 			continue
 		}
 		if err := root.Chmod(e.Path, toFileMode(e.Mode)); err != nil {
@@ -110,8 +134,8 @@ func Extract(ctx context.Context, ra io.ReaderAt, size int64, destDir string, op
 }
 
 // VerifyRestore re-scans a restored tree and compares every entry, including
-// content checksums, with the manifest.
-func VerifyRestore(ctx context.Context, destDir string, m *Manifest, allowed []string) error {
+// content checksums, with the manifest, less the files Extract skipped.
+func VerifyRestore(ctx context.Context, destDir string, m *Manifest, allowed []string, skip map[string]bool) error {
 	exclude := make(map[string]string, len(allowed))
 	for _, name := range allowed {
 		exclude[name] = "pre-existing on the destination volume"
@@ -123,7 +147,16 @@ func VerifyRestore(ctx context.Context, destDir string, m *Manifest, allowed []s
 	// The destination root's mtime moves when an allowed entry (such as
 	// lost+found) is present; CompareEntries skips the root's time for that
 	// reason.
-	return CompareEntries(m.Entries, got)
+	want := m.Entries
+	if len(skip) > 0 {
+		want = make([]Entry, 0, len(m.Entries))
+		for _, e := range m.Entries {
+			if !(e.Type == EntryFile && skip[e.Path]) {
+				want = append(want, e)
+			}
+		}
+	}
+	return CompareEntries(want, got)
 }
 
 func requireEmpty(root *os.Root, allowed []string) error {

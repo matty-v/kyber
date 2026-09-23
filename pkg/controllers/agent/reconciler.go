@@ -1708,6 +1708,11 @@ func (r *AgentReconciler) handleDeletion(ctx context.Context, agent *kyberv1.Age
 			return ctrl.Result{}, fmt.Errorf("fetching PVC for deletion: %w", err)
 		}
 		// Already gone — continue.
+	} else if owner := metav1.GetControllerOf(pvc); owner != nil && owner.UID != agent.UID {
+		// A claim with this name that another object controls (for example
+		// one that appeared while an import of this name was being refused)
+		// is not this agent's disk. Never delete it.
+		logger.Info("leaving PVC owned by another object", "agent", agent.Name, "pvc", pvc.Name, "owner", owner.Name)
 	} else {
 		if err := r.Delete(ctx, pvc); err != nil && !errors.IsNotFound(err) {
 			return ctrl.Result{}, fmt.Errorf("deleting PVC: %w", err)

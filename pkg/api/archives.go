@@ -98,12 +98,15 @@ type ArchiveService struct {
 	ToolImage string
 	// InternalURL is the control plane's internal API base URL, reachable
 	// from agent-labelled pods.
-	InternalURL     string
-	KyberVersion    string
-	PersistenceMode string
-	Limits          ArchiveLimits
-	Recorder        record.EventRecorder
-	DisabledReason  string
+	InternalURL string
+	// AgentStorageClass is the StorageClass new agent volumes use (empty is
+	// the cluster default); imports create their destination volume with it.
+	AgentStorageClass string
+	KyberVersion      string
+	PersistenceMode   string
+	Limits            ArchiveLimits
+	Recorder          record.EventRecorder
+	DisabledReason    string
 	// ImagePullSecrets are attached to archive pods; they run the control
 	// plane's image, which may come from a private registry.
 	ImagePullSecrets []string
@@ -255,7 +258,11 @@ func (a *ArchiveService) dispatch(ctx context.Context) *sync.WaitGroup {
 		slog.Warn("disk archives: listing active jobs failed", "error", err)
 		return wg
 	}
+	inUse := referencedSources(jobs)
 	for _, listed := range jobs {
+		if listed.State == archivejob.StateCompleted && inUse[listed.ID] {
+			continue // an import is still reading it; expire it afterwards
+		}
 		if !a.claimStep(listed.ID) {
 			continue // its previous step is still running
 		}
@@ -303,6 +310,8 @@ func (a *ArchiveService) advance(ctx context.Context, j *archivejob.Job) error {
 	switch j.Kind {
 	case archivejob.KindExport:
 		return a.advanceExport(ctx, j)
+	case archivejob.KindUpload:
+		return a.advanceUpload(ctx, j)
 	case archivejob.KindImport:
 		return a.advanceImport(ctx, j)
 	}

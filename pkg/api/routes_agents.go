@@ -1309,6 +1309,15 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An import (MAT-88) births the agent held, so the controller never boots
+	// it before its volume has been restored and verified.
+	hold := archiveHoldFrom(r.Context())
+	if hold != nil {
+		if agent.Annotations == nil {
+			agent.Annotations = map[string]string{}
+		}
+		agent.Annotations[kyberv1.AnnotationArchiveHold] = hold.jobID
+	}
 	if err := s.K8sClient.Create(r.Context(), agent); err != nil {
 		s.rollbackSecrets(r.Context(), createdSecrets)
 		if k8serrors.IsAlreadyExists(err) {
@@ -1320,6 +1329,12 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if hold != nil {
+		// The import needs these to clean up without waiting for the
+		// controller's finalizer (which a just-created agent may not have yet).
+		hold.uid = agent.UID
+		hold.secrets = createdSecrets
+	}
 	writeJSON(w, http.StatusCreated, agentToResponse(agent))
 }
 

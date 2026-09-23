@@ -1,8 +1,9 @@
 # Agent disk archives
 
-Kyber can export an agent's persistent disk as a portable ZIP (MAT-87). This
-page covers where archives are kept, how to size and secure that storage, and
-what an export does to a running agent.
+Kyber can export an agent's persistent disk as a portable ZIP (MAT-87) and
+create a new agent from one (MAT-88). This page covers where archives are
+kept, how to size and secure that storage, what an export does to a running
+agent, and how a restore works.
 
 ## Requirements
 
@@ -94,6 +95,43 @@ always allowed. Canceling, failing, or reaching `agentArchives.jobTimeout`
 Completed archives are deleted after `agentArchives.retention` (72 hours).
 `agentArchives.maxConcurrentJobs` (2) bounds exports running at once; more
 get `429` with `Retry-After`.
+
+## Creating an agent from an archive
+
+1. Choose a source: a completed export (retention applies), or upload a ZIP
+   with `POST /api/v1/archive-uploads` (needs an installation-wide agent
+   grant). An upload is verified like an export before it can be used. Large
+   uploads go through your ingress; if it caps request size, import from an
+   export on the same installation instead.
+2. `POST /api/v1/agent-imports` with `source` (`exportId` or `uploadId`),
+   `agent` (an ordinary create request) and optionally `keepCredentialFiles`
+   and `keepCrontabs`. By default the restore leaves out every file that looks
+   like a credential and every crontab the agent installed itself; the
+   restore pod decides this against the full manifest.
+   The caller needs the new agent, and for an export the source agent, in its
+   `agentResources`. The disk must hold the archived bytes plus 10% and 1 GiB.
+3. Kyber creates the Agent through the normal create path, held by
+   `kyber.io/archive-hold` in `Creating` with the `AwaitingRestore`
+   condition, then creates its volume on the installation's agent
+   StorageClass and runs a restore pod on the machine's node. That pod
+   (capabilities `CHOWN`, `FOWNER`, `DAC_OVERRIDE`, `FSETID` only) reads the
+   archive through the control plane by byte range, refuses anything unsafe,
+   extracts into the empty volume, and re-scans it against the manifest. An
+   archive from an installation with a different persistence mode (rootfs vs
+   overlay) is refused before anything is created.
+4. Only then is the hold removed and the agent boots. The job completes when
+   the agent reaches Running or NeedsAuth. If it restores but does not boot,
+   the job fails and the agent is kept for inspection.
+
+The import job is recorded before the agent is created, so capacity limits
+are refused with nothing to undo. A restore that fails before the disk is
+complete removes the new agent, its volume, and the Secrets its create made;
+an agent's finalizer never deletes a same-named volume another object owns.
+A source is not deleted by retention while a restore is reading it.
+Canceling or failing before the disk is complete deletes the new agent and
+its volume; the source agent is never touched. The new agent's cutover
+checklist (Agent Detail, or `GET /api/v1/agent-imports/{id}`) lists what you
+must move by hand.
 
 ## Troubleshooting
 

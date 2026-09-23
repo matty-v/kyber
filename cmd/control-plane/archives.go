@@ -32,15 +32,16 @@ import (
 func buildArchiveService(ctx context.Context, c client.Client, namespace string, jobs archivejob.Store,
 	signingKey []byte, version string, recorder record.EventRecorder) *internalapi.ArchiveService {
 	svc := &internalapi.ArchiveService{
-		Client:          c,
-		Namespace:       namespace,
-		Jobs:            jobs,
-		SigningKey:      signingKey,
-		ToolImage:       os.Getenv("KYBER_ARCHIVE_TOOL_IMAGE"),
-		InternalURL:     os.Getenv("KYBER_CONTROL_PLANE_INTERNAL_URL"),
-		KyberVersion:    version,
-		PersistenceMode: firstNonEmpty(strings.ToLower(os.Getenv("KYBER_AGENT_PERSISTENCE_MODE")), "rootfs"),
-		Recorder:        recorder,
+		Client:            c,
+		Namespace:         namespace,
+		Jobs:              jobs,
+		SigningKey:        signingKey,
+		ToolImage:         os.Getenv("KYBER_ARCHIVE_TOOL_IMAGE"),
+		InternalURL:       os.Getenv("KYBER_CONTROL_PLANE_INTERNAL_URL"),
+		AgentStorageClass: os.Getenv("KYBER_AGENT_STORAGE_CLASS"),
+		KyberVersion:      version,
+		PersistenceMode:   firstNonEmpty(strings.ToLower(os.Getenv("KYBER_AGENT_PERSISTENCE_MODE")), "rootfs"),
+		Recorder:          recorder,
 		ImagePullSecrets: func() []string {
 			var out []string
 			for _, n := range strings.Split(os.Getenv("KYBER_IMAGE_PULL_SECRETS"), ",") {

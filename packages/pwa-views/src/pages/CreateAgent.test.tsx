@@ -15,6 +15,10 @@ vi.mock('../hooks/useAPI', () => ({
   // models either from /available or fall back to /config.
   useAvailable: vi.fn(),
   useCreateAgent: vi.fn(),
+  useCreateAgentFromArchive: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
+  useArchives: vi.fn(() => ({ data: [], isLoading: false })),
+  useArchiveUpload: vi.fn(() => ({ data: undefined })),
+  useUploadArchive: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   usePutDiscordComms: vi.fn(),
   useGitHubRepos: vi.fn(),
   useGitHubRepoExists: vi.fn(),

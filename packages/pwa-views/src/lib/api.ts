@@ -57,6 +57,8 @@ import type {
   UpdateRun,
   ArchiveJob,
   ArchiveDownloadLink,
+  AgentImportRequest,
+  AgentImportResponse,
 } from './types'
 import type { Cluster } from './cluster-context'
 
@@ -312,6 +314,46 @@ export function createApiClient(cluster: Cluster) {
 
     cancelAgentExport: (name: string, id: string): Promise<ArchiveJob> =>
       request<ArchiveJob>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/cancel`),
+
+    // Create from archive (MAT-88).
+    listArchives: async (): Promise<ArchiveJob[]> =>
+      (await request<{ archives: ArchiveJob[] }>('GET', '/api/v1/archives')).archives,
+
+    getArchiveUpload: (id: string): Promise<ArchiveJob> =>
+      request<ArchiveJob>('GET', `/api/v1/archive-uploads/${encodeURIComponent(id)}`),
+
+    // uploadArchive streams a ZIP from disk. XMLHttpRequest rather than fetch
+    // because fetch reports no upload progress, and archives are large.
+    uploadArchive: (file: Blob, onProgress?: (loaded: number, total: number) => void): Promise<ArchiveJob> =>
+      new Promise<ArchiveJob>((resolve, reject) => {
+        const xhr = new XMLHttpRequest()
+        xhr.open('POST', `${baseURL}/api/v1/archive-uploads`)
+        xhr.withCredentials = true
+        if (cluster.apiKey) xhr.setRequestHeader('Authorization', `Bearer ${cluster.apiKey}`)
+        xhr.setRequestHeader('Content-Type', 'application/zip')
+        xhr.upload.onprogress = (e) => onProgress?.(e.loaded, e.total)
+        xhr.onload = () => {
+          let body: unknown
+          try { body = JSON.parse(xhr.responseText) } catch { body = undefined }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve(body as ArchiveJob)
+            return
+          }
+          const err = (body as { error?: { code?: string; message?: string } } | undefined)?.error
+          reject(new KyberAPIError(xhr.status, err?.code ?? 'UNKNOWN', err?.message ?? `HTTP ${xhr.status}`))
+        }
+        xhr.onerror = () => reject(new KyberAPIError(0, 'NETWORK', 'upload failed: network error'))
+        xhr.send(file)
+      }),
+
+    createAgentFromArchive: (req: AgentImportRequest): Promise<AgentImportResponse> =>
+      request<AgentImportResponse>('POST', '/api/v1/agent-imports', req),
+
+    listAgentImports: async (agent: string): Promise<ArchiveJob[]> =>
+      (await request<{ imports: ArchiveJob[] }>('GET', `/api/v1/agent-imports?agent=${encodeURIComponent(agent)}`)).imports,
+
+    cancelAgentImport: (id: string): Promise<ArchiveJob> =>
+      request<ArchiveJob>('POST', `/api/v1/agent-imports/${encodeURIComponent(id)}/cancel`),
 
     // The returned URL is relative to the cluster and carries its own
     // short-lived credential, so the browser can stream a large archive by
