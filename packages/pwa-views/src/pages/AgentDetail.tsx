@@ -69,7 +69,7 @@ import {
 } from '../lib/design/agent-actions'
 import { generatePkcePair } from '../lib/pkce'
 import { parseAuthorizationInput } from '../lib/oauth'
-import type { Agent, AgentPhase, AgentIdentityRepoStatus, AgentIdentityRepoPhase, AgentStatus, SetResourcesRequest } from '../lib/types'
+import type { Agent, AgentAuthType, AgentPhase, AgentIdentityRepoStatus, AgentIdentityRepoPhase, AgentStatus, SetResourcesRequest } from '../lib/types'
 
 type ActionKind =
   | 'start'
@@ -566,6 +566,7 @@ export function AgentDetail() {
   const [newModel, setNewModel] = useState('')
   const [newRuntimeVersion, setNewRuntimeVersion] = useState('')
   const [targetRuntime, setTargetRuntime] = useState('')
+  const [targetAuthType, setTargetAuthType] = useState<AgentAuthType | ''>('')
   const [newCPU, setNewCPU] = useState('')
   const [newMemory, setNewMemory] = useState('')
   const [startupPrompt, setStartupPrompt] = useState('')
@@ -658,9 +659,10 @@ export function AgentDetail() {
         await setAgentRuntimeVersion.mutateAsync({ name, runtimeVersion: newRuntimeVersion })
         setNewRuntimeVersion('')
       }
-      if (pending === 'switch-runtime' && targetRuntime) {
-        await switchAgentRuntime.mutateAsync({ name, runtime: targetRuntime })
+      if (pending === 'switch-runtime' && targetRuntime && targetAuthType) {
+        await switchAgentRuntime.mutateAsync({ name, runtime: targetRuntime, authType: targetAuthType })
         setTargetRuntime('')
+        setTargetAuthType('')
       }
       if (pending === 'set-resources') {
         const body: SetResourcesRequest = {}
@@ -767,7 +769,7 @@ export function AgentDetail() {
                 <>
                   {(hasAgentActions || hasPodActions) && <DropdownMenuSeparator />}
                   <DropdownMenuLabel>Configuration</DropdownMenuLabel>
-                  <DropdownMenuItem onSelect={() => { setTargetRuntime(''); setPending('switch-runtime') }}>
+                  <DropdownMenuItem onSelect={() => { setTargetRuntime(''); setTargetAuthType(''); setPending('switch-runtime') }}>
                     <ArrowLeftRight className="h-3.5 w-3.5" />
                     Switch harness
                   </DropdownMenuItem>
@@ -1046,7 +1048,7 @@ export function AgentDetail() {
                       <div className="flex flex-wrap gap-2">
                         {canSelectModel && <Button size="sm" variant="secondary" onClick={() => { setNewModel(agent.currentModel || agent.model); setPending('set-model') }}>Model</Button>}
                         <Button size="sm" variant="secondary" onClick={() => { setNewRuntimeVersion(agent.runtimeVersion?.requestedVersion ?? ''); setPending('set-runtime-version') }}>Harness</Button>
-                        <Button size="sm" variant="secondary" disabled={!canSwitchRuntime(agent.phase)} onClick={() => { setTargetRuntime(''); setPending('switch-runtime') }}>Switch harness</Button>
+                        <Button size="sm" variant="secondary" disabled={!canSwitchRuntime(agent.phase)} onClick={() => { setTargetRuntime(''); setTargetAuthType(''); setPending('switch-runtime') }}>Switch harness</Button>
                         <Button size="sm" variant="secondary" onClick={() => { setNewCPU(agent.resources.cpu); setNewMemory(agent.resources.memory); setPending('set-resources') }}>Resources</Button>
                       </div>
                     </div>
@@ -1159,29 +1161,48 @@ export function AgentDetail() {
               The agent keeps its disk, identity checkout, skills, local files, jobs, and old transcripts.
               Its model and harness version overrides will clear. The current session stops and the
               target harness will ask for its own authorization, or reuse the custom inference
-              credential if this agent has one.
+              credential if this agent has one. The current credential is kept for switching back.
             </p>
             <label className="mt-4 block text-xs font-medium text-text-muted" htmlFor="target-runtime">Target harness</label>
             <select
               id="target-runtime"
               value={targetRuntime}
-              onChange={(event) => setTargetRuntime(event.target.value)}
+              onChange={(event) => {
+                const modes = computeConfig?.runtimes?.find((runtime) => runtime.id === event.target.value)?.authModes ?? []
+                setTargetRuntime(event.target.value)
+                setTargetAuthType(modes.find((mode) => mode.id === agent.authType)?.id ?? modes[0]?.id ?? '')
+              }}
               className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
             >
               <option value="">Choose a harness</option>
               {(computeConfig?.runtimes ?? []).filter((runtime) => runtime.id !== agent.runtime).map((runtime) => (
-                <option key={runtime.id} value={runtime.id} disabled={!runtime.authModes.some((mode) => mode.id === agent.authType)}>
-                  {runtime.name}{!runtime.authModes.some((mode) => mode.id === agent.authType) ? ` (does not offer ${agent.authType} auth)` : ''}
-                </option>
+                <option key={runtime.id} value={runtime.id}>{runtime.name}</option>
               ))}
             </select>
+            {targetRuntime && (
+              <>
+                <label className="mt-3 block text-xs font-medium text-text-muted" htmlFor="target-auth-type">Authentication</label>
+                <select
+                  id="target-auth-type"
+                  value={targetAuthType}
+                  onChange={(event) => setTargetAuthType(event.target.value as AgentAuthType)}
+                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+                >
+                  {(computeConfig?.runtimes?.find((runtime) => runtime.id === targetRuntime)?.authModes ?? []).map((mode) => (
+                    <option key={mode.id} value={mode.id}>
+                      {mode.name}{mode.channels ? ` (${mode.channels.length ? mode.channels.join(', ') : 'no chat channels'})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
             {targetRuntime && agent.jobs?.some((job) => job.exclusive || job.clearContextAfter) &&
               !computeConfig?.runtimes?.find((runtime) => runtime.id === targetRuntime)?.features.includes('job-turn-hooks') && (
                 <p className="mt-3 text-xs text-warn">Scheduled jobs stay configured, but exclusive and clear context after are inert on this harness.</p>
               )}
             <div className="mt-4 flex justify-end gap-3">
               <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>Cancel</Button>
-              <Button variant="primary" size="sm" onClick={() => void executeAction()} loading={isActing} disabled={!targetRuntime || isActing}>Switch harness</Button>
+              <Button variant="primary" size="sm" onClick={() => void executeAction()} loading={isActing} disabled={!targetRuntime || !targetAuthType || isActing}>Switch harness</Button>
             </div>
           </div>
         </div>

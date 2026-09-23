@@ -218,6 +218,17 @@ describe('switchAgentRuntime', () => {
     expect(init.method).toBe('POST')
     expect(JSON.parse(init.body as string)).toEqual({ runtime: 'claude-code' })
   })
+
+  it('sends a chosen target auth mode', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true, status: 202,
+      json: async () => ({ agent: 'han', runtime: 'hermes', authType: 'api-key', message: 'moving to NeedsAuth', jobTurnHooksSupported: false }),
+    }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    await createApiClient(mockCluster).switchAgentRuntime('han', 'hermes', 'api-key')
+    const [[, init]] = (fetchMock as unknown as { mock: { calls: [string, RequestInit][][] } }).mock.calls
+    expect(JSON.parse(init.body as string)).toEqual({ runtime: 'hermes', authType: 'api-key' })
+  })
 })
 
 describe('reauthorizeAPIKey', () => {

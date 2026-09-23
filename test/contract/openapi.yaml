@@ -803,6 +803,9 @@ paths:
         current disk, then clears runtime-scoped model/version overrides and
         requests NeedsAuth. Previous credentials, transcripts, skills, jobs,
         and local data remain intact. Only stable phases are accepted.
+        authType selects one of the target's auth modes; omitted, the agent
+        keeps its current mode, which the target must offer. Enabled channels
+        are validated against the chosen mode.
       tags: [agents]
       requestBody:
         required: true
@@ -813,6 +816,7 @@ paths:
               required: [runtime]
               properties:
                 runtime: {type: string}
+                authType: {type: string, enum: [oauth, api-key]}
       responses:
         '202':
           description: Runtime switch requested after target preparation where required
@@ -2795,10 +2799,11 @@ components:
 
     SwitchRuntimeResponse:
       type: object
-      required: [agent, runtime, message, jobTurnHooksSupported]
+      required: [agent, runtime, authType, message, jobTurnHooksSupported]
       properties:
         agent: {type: string}
         runtime: {type: string}
+        authType: {type: string, enum: [oauth, api-key]}
         message: {type: string}
         jobTurnHooksSupported: {type: boolean}
         jobWarning: {type: string}

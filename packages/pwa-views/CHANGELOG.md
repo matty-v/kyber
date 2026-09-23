@@ -9,6 +9,12 @@
   form, exhaustively, so a new form action cannot get both.
 - Switch harness is also offered from the ⋯ menu, under a new Configuration
   section, on the same phases as the General-section button.
+- The Switch harness dialog asks for the target's authentication mode,
+  defaulting to the agent's current mode when the target offers it, and lists
+  the chat channels each mode supports. A subscription agent can now move to a
+  harness that only takes an API key, such as Hermes.
+  `switchAgentRuntime(name, runtime, authType?)` and `SwitchRuntimeResponse`
+  gain `authType`.
 
 ## 0.55.0
 

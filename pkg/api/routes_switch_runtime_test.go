@@ -267,3 +267,86 @@ var ErrSwitchTestFailure = &switchTestError{}
 type switchTestError struct{}
 
 func (*switchTestError) Error() string { return "installer failed" }
+
+func postSwitchAuth(t *testing.T, s *api.Server, target string, authType kyberv1.AgentAuthType) *httptest.ResponseRecorder {
+	t.Helper()
+	body := `{"runtime":"` + target + `","authType":"` + string(authType) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/switch-test/switch-runtime", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	return rr
+}
+
+// A subscription agent can move to a harness that only takes an API key by
+// choosing that harness's mode, and come back to its untouched subscription.
+func TestSwitchRuntimeChangesAuthModeAndBack(t *testing.T) {
+	runner := &fakeRuntimeRepairRunner{}
+	s, original := switchTestServer(t, "codex", runner)
+	key := types.NamespacedName{Name: original.Name, Namespace: original.Namespace}
+	source := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: original.Name + "-codex-auth", Namespace: original.Namespace}, Data: map[string][]byte{"auth.json": []byte(`{"saved":true}`)}}
+	if err := s.K8sClient.Create(context.Background(), source); err != nil {
+		t.Fatal(err)
+	}
+
+	rr := postSwitchAuth(t, s, "hermes", kyberv1.AgentAuthTypeAPIKey)
+	if rr.Code != http.StatusAccepted || !strings.Contains(rr.Body.String(), `"authType":"api-key"`) {
+		t.Fatalf("to hermes: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	current := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Spec.Runtime != "hermes" || current.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeAPIKey || current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth {
+		t.Fatalf("to hermes spec: runtime=%q auth=%q desired=%q", current.Spec.Runtime, current.Spec.Secrets.AuthType, current.Spec.DesiredPhase)
+	}
+
+	current.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	if err := s.K8sClient.Update(context.Background(), current); err != nil {
+		t.Fatal(err)
+	}
+	if rr := postSwitchAuth(t, s, "codex", kyberv1.AgentAuthTypeOAuth); rr.Code != http.StatusAccepted {
+		t.Fatalf("back to codex: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if err := s.K8sClient.Get(context.Background(), key, current); err != nil {
+		t.Fatal(err)
+	}
+	if current.Spec.Runtime != "codex" || current.Spec.Secrets.AuthType != kyberv1.AgentAuthTypeOAuth {
+		t.Fatalf("back to codex spec: runtime=%q auth=%q", current.Spec.Runtime, current.Spec.Secrets.AuthType)
+	}
+	if err := s.K8sClient.Get(context.Background(), client.ObjectKeyFromObject(source), source); err != nil || string(source.Data["auth.json"]) != `{"saved":true}` {
+		t.Fatalf("subscription credential not preserved: err=%v", err)
+	}
+}
+
+func TestSwitchRuntimeValidatesTargetAuthMode(t *testing.T) {
+	runner := &fakeRuntimeRepairRunner{}
+	s, original := switchTestServer(t, "codex", runner)
+
+	// Omitted mode keeps the current one, which Hermes lacks: the error names what it offers.
+	rr := postSwitch(t, s, "hermes")
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "choose one of: api-key") {
+		t.Fatalf("omitted: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if rr := postSwitchAuth(t, s, "claude-code", "bogus"); rr.Code != http.StatusBadRequest {
+		t.Fatalf("unknown mode: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+
+	// Channels are checked against the chosen mode, not the current one.
+	stored := &kyberv1.Agent{}
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Name: original.Name, Namespace: original.Namespace}, stored); err != nil {
+		t.Fatal(err)
+	}
+	stored.Spec.Secrets.TelegramEnabled = true
+	if err := s.K8sClient.Update(context.Background(), stored); err != nil {
+		t.Fatal(err)
+	}
+	rr = postSwitchAuth(t, s, "claude-code", kyberv1.AgentAuthTypeAPIKey)
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "telegram") {
+		t.Fatalf("channel: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if runner.calls != 0 {
+		t.Fatalf("preparation ran for a rejected switch: calls=%d", runner.calls)
+	}
+}
