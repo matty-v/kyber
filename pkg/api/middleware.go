@@ -88,7 +88,7 @@ func loggingMiddleware(next http.Handler) http.Handler {
 		next.ServeHTTP(rw, r)
 		slog.Info("http request",
 			"method", r.Method,
-			"path", r.URL.Path,
+			"path", redactArchiveDownloadPath(r.URL.Path),
 			"status", rw.status,
 			"duration_ms", time.Since(start).Milliseconds(),
 			"request_id", w.Header().Get(RequestIDHeader),

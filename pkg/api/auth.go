@@ -45,6 +45,11 @@ const (
 	ScopeTasksPlatformAdmin Scope = "tasks:platform-admin"
 	ScopeCapabilitiesRead   Scope = "capabilities:read"
 	ScopeCapabilitiesWrite  Scope = "capabilities:write"
+	// ScopeArchivesAdmin permits exporting an agent's disk, downloading the
+	// archive, and creating agents from archives (MAT-87/MAT-88). A disk
+	// archive can contain local credentials, so this is its own grant and is
+	// not implied by any lifecycle scope.
+	ScopeArchivesAdmin Scope = "archives:admin"
 )
 
 // ScopeSet is the set of scopes a Caller holds. A full-scope set (the legacy
@@ -204,7 +209,7 @@ func validScope(sc Scope) bool {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
 		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
-		ScopeCapabilitiesRead, ScopeCapabilitiesWrite:
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeArchivesAdmin:
 		return true
 	default:
 		return false

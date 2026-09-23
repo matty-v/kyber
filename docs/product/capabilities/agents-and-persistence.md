@@ -41,6 +41,37 @@ already has its own resumable transcript on disk. If scheduled jobs use
 `exclusive` or `clearContextAfter` and the target lacks job turn hooks, those
 flags are inert; the switch response and console call this out.
 
+## Export an agent's disk
+
+Agent Detail's **Disk export** card, or `POST /api/v1/agents/{name}/exports`,
+starts an export of the agent's whole persistent disk: its durable root, home
+directory, identity checkout, skills, local work and retained sessions. The
+request returns at once with a job to poll. A running agent is stopped while
+its disk is read, then returned to what it was doing before (Kyber keeps any
+newer instruction you gave it in the meantime), and the export can be
+canceled at any point. A failed or canceled export always releases the agent.
+
+When the job completes, Kyber has checked every file in the archive against
+its manifest. Download it as a ZIP from the card, or mint a link with
+`POST /api/v1/agents/{name}/exports/{id}/download-link`; links expire after
+ten minutes and completed archives after the installation's retention window
+(72 hours by default).
+
+The archive's `kyber-export/manifest.json` records the source agent and
+runtime, the source volume, a non-secret copy of the agent's settings, every
+file's path, type, size, ownership, permissions, timestamps and checksum, and
+every mount the agent could see with whether it was archived and why.
+Kubernetes Secrets, the agent's credential Secrets, platform-rendered
+configuration and ephemeral mounts are never in the archive; the manifest and
+the console list them as not included. Sockets and other special files are
+listed as left out rather than dropped silently. An archive can still contain
+local credential files from the disk itself, so exporting and downloading need
+the dedicated `archives:admin` permission.
+
+Archives are stored encrypted by the installation, in Kyber's own archive
+store by default (on every installation target) or in the object storage the
+operator configures. See [agent disk archives](../../operator/agent-disk-archives.md).
+
 ## Curate what an agent promises publicly
 
 An operator can publish a versioned capability manifest for an agent from its

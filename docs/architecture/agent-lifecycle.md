@@ -123,7 +123,7 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
 `RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
 `MachineReady`, `OAuthRefreshFailed`, `AuthServiceFailed`,
-`CredentialSyncFailed`, `OOMKilled`, `IdentityRepoReady`.
+`CredentialSyncFailed`, `OOMKilled`, `IdentityRepoReady`, `RestoreComplete`.
 
 `IdentityRepoReady` builds the first pod of an agent that was held back for
 its identity repository. An agent with `spec.identityRepo.template` and no
@@ -134,6 +134,16 @@ sets the `AwaitingIdentityRepo` condition, and reports scaffolding as
 GitHub failures retry after a minute; a missing GitHub App or repo owner is
 reported and not polled. Once `.repo` is patched, `IdentityRepoReady` creates
 the pod and the condition is cleared.
+
+The `kyber.io/archive-hold` annotation names a disk export or restore job that
+owns the agent's volume (MAT-87/MAT-88). While it is present `createPod`
+refuses to build an agent pod whatever `desiredPhase` says, and the API
+refuses every lifecycle verb except Stop. An export stops a running agent
+through `desiredPhase` before it sets the hold, so the ordinary Stop path
+removes the pod. A new agent created from an archive starts with the hold:
+the reconciler moves it to `Creating` with the `AwaitingRestore` condition and
+no pod, and `RestoreComplete` builds the first pod once the job removes the
+annotation.
 
 `MachineUnavailable` is the provider-neutral capacity-loss event. Active and
 retrying Agents park in `WaitingForMachine` without consuming restart retries;
@@ -174,6 +184,7 @@ stateDiagram-v2
     [*] --> Creating: CRDCreated
 
     Creating --> Creating: IdentityRepoReady
+    Creating --> Creating: RestoreComplete
     Creating --> Starting: PodScheduled
     Creating --> Failed: PodScheduleFailed
 
@@ -253,6 +264,7 @@ is the authoritative table; it mirrors the `transitions` map in
 |---|---|---|---|
 | *(none)* | `CRDCreated` | `CreatePVAndPod` | `Creating` |
 | `Creating` | `IdentityRepoReady` | `CreatePVAndPod` | `Creating` |
+| `Creating` | `RestoreComplete` | `CreatePVAndPod` | `Creating` |
 | `Creating` | `PodScheduled` | `WaitForStart` | `Starting` |
 | `Creating` | `PodScheduleFailed` | `LogAndEmitEvent` | `Failed` |
 | `Starting` | `PodReady` | `UpdateStatus` | `Running` |

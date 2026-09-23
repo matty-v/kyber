@@ -62,6 +62,9 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
+	if rejectArchiveHeld(w, agent) {
+		return
+	}
 	if agent.Status.Phase != kyberv1.AgentPhaseBrokenRuntime {
 		writeJSONError(w, http.StatusConflict, "invalid_phase",
 			fmt.Sprintf("runtime repair requires BrokenRuntime (current phase: %s)", agent.Status.Phase))

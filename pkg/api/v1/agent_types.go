@@ -102,6 +102,12 @@ const (
 	// is created. See MAT-53.
 	AgentConditionAwaitingIdentityRepo = "AwaitingIdentityRepo"
 
+	// AgentConditionAwaitingRestore is set True while a new agent created from
+	// a disk archive (MAT-88) sits in Creating with no pod because its volume
+	// is still being restored. It is what lets the state machine build the
+	// first pod once the archive hold is released (EventRestoreComplete).
+	AgentConditionAwaitingRestore = "AwaitingRestore"
+
 	// AgentConditionTelegramUnavailable is set True when the agent has
 	// spec.secrets.telegramEnabled but the install has not pinned
 	// image.telegramSidecar.tag, so no Telegram sidecar can be injected.
@@ -158,6 +164,13 @@ const (
 	AgentAuthTypeOAuth  AgentAuthType = "oauth"
 	AgentAuthTypeAPIKey AgentAuthType = "api-key"
 )
+
+// AnnotationArchiveHold names the disk export or import job (MAT-87/MAT-88)
+// that currently owns the agent's volume. While it is present the controller
+// never creates an agent pod, whatever spec.desiredPhase says: an export needs
+// the volume quiescent, and a restore must finish before anything boots from
+// it. The job that set it removes it.
+const AnnotationArchiveHold = "kyber.io/archive-hold"
 
 // AgentResources specifies compute resource requests for an agent pod.
 type AgentResources struct {

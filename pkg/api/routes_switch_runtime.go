@@ -62,6 +62,9 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to read agent")
 		return
 	}
+	if rejectArchiveHeld(w, agent) {
+		return
+	}
 	if req.Runtime == agent.Spec.Runtime {
 		writeJSONError(w, http.StatusConflict, "same_runtime", "agent already uses this runtime")
 		return

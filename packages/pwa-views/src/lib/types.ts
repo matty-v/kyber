@@ -921,6 +921,65 @@ export type ComputeConfig = {
     repoOwner: string
     unavailableReason?: string
   }
+  // Agent disk export / create-from-export (MAT-87/MAT-88). Mirrors
+  // ConfigArchives in pkg/api/routes_config.go; absent on older control
+  // planes, which treat it as unavailable.
+  archives?: ArchivesCapability
+}
+
+export interface ArchivesCapability {
+  available: boolean
+  unavailableReason?: string
+  store?: string
+  maxArchiveBytes?: number
+  retentionSeconds?: number
+}
+
+// One disk export or import job. Mirrors archiveJobView in
+// pkg/api/routes_archives.go.
+export type ArchiveJobState = 'queued' | 'running' | 'completed' | 'failed' | 'canceled' | 'expired'
+
+export interface ArchiveMount {
+  path: string
+  kind: string
+  archived: boolean
+  reason: string
+}
+
+export interface ArchiveSummary {
+  formatVersion: string
+  exportedAt: string
+  source: { agent: string; runtime: string; runtimeVersion?: string; model?: string; machine?: string }
+  mounts: ArchiveMount[]
+  excluded?: { path: string; reason: string }[]
+  totals: { entries: number; files: number; dirs: number; symlinks: number; bytes: number }
+  sensitive?: string[]
+}
+
+export interface ArchiveJob {
+  id: string
+  kind: 'export' | 'import'
+  agent: string
+  state: ArchiveJobState
+  step?: string
+  message?: string
+  error?: string
+  bytesDone: number
+  sizeBytes?: number
+  createdAt: string
+  startedAt?: string
+  completedAt?: string
+  expiresAt?: string
+  cancelable: boolean
+  downloadable: boolean
+  requestedBy?: string
+  summary?: ArchiveSummary
+}
+
+export interface ArchiveDownloadLink {
+  url: string
+  expiresAt: string
+  filename: string
 }
 
 // Identity-repo modes POST /api/v1/agents accepts. Mirrors the

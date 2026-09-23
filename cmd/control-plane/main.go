@@ -41,6 +41,7 @@ import (
 	"github.com/matty-v/kyber/pkg/adapters"
 	internalapi "github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/archivejob"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/contextwindowmap"
@@ -208,6 +209,7 @@ func main() {
 	// has no skills", which is the false-healthy state the tab exists to kill.
 	var briefStore briefstore.BriefStore
 	var skillStore skillstore.Store
+	var archiveJobs archivejob.Store
 	var agentTaskStore taskstore.Store
 	taskLimits, taskConfigErr := loadTaskLimits()
 	if taskConfigErr != nil {
@@ -277,6 +279,21 @@ func main() {
 		}
 		agentTaskStore = pgTasks
 		setupLog.Info("TaskStore: using Postgres")
+
+		// Disk archive jobs (MAT-87/MAT-88) share the pool; without Postgres
+		// the feature reports itself unavailable rather than losing jobs on
+		// restart.
+		pgArchives := archivejob.NewPostgresStore(db)
+		archiveMigrateCtx, cancelArchives := context.WithTimeout(ctx, 2*time.Minute+30*time.Second)
+		archiveErr := briefstore.MigrateWithRetry(archiveMigrateCtx, pgArchives.Migrate,
+			2*time.Minute, 5*time.Second, setupLog.Info)
+		cancelArchives()
+		if archiveErr != nil {
+			setupLog.Error(archiveErr, "archive job store migration never succeeded within the retry budget — exiting so Kubernetes restarts the pod")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		archiveJobs = pgArchives
 	} else {
 		setupLog.Info("BriefStore: KYBER_POSTGRES_URL not set — using in-memory store (briefs will not survive pod restart)")
 		briefStore = briefstore.NewMemoryStore()
@@ -689,7 +706,20 @@ func main() {
 	// Start the internal HTTP API on port 8082.
 	// It shares the BriefStore with the reconciler so init containers can fetch briefs.
 	// WithKubeClient gives the rotation endpoint access to Secrets for OAuth token updates.
+	archiveService := buildArchiveService(ctx, mgr.GetClient(), kyberNamespace, archiveJobs, internalSigningKey,
+		resolveDisplayVersion(), mgr.GetEventRecorderFor("kyber-archives"))
+	if ok, reason := archiveService.Available(); ok {
+		setupLog.Info("disk archives: enabled", "store", archiveService.Store.Name())
+		if err := mgr.Add(archiveService); err != nil {
+			setupLog.Error(err, "unable to register the disk archive worker")
+			os.Exit(1)
+		}
+	} else {
+		setupLog.Info("disk archives: unavailable", "reason", reason)
+	}
+
 	internalOpts := []internalapi.InternalServerOption{
+		internalapi.WithArchiveService(archiveService),
 		internalapi.WithKubeClient(mgr.GetClient(), kyberNamespace),
 		internalapi.WithTokenStore(tokenStore),
 		internalapi.WithTokenAccumulator(tokenAccumulator),
@@ -1436,6 +1466,7 @@ func main() {
 		RequestStore:           agentRequestStore,
 		TaskStore:              agentTaskStore,
 		TaskObjectStore:        agentTaskObjectStore,
+		Archives:               archiveService,
 		TasksEnabled:           os.Getenv("KYBER_TASKS_ENABLED") == "true",
 		A2AEnabled:             os.Getenv("KYBER_A2A_ENABLED") == "true",
 		AnthropicKeySecretName: os.Getenv("KYBER_ANTHROPIC_KEY_SECRET_NAME"),

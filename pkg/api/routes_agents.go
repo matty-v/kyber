@@ -819,6 +819,12 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Disk export (MAT-87): async jobs that archive the agent's volume.
+	if action == "exports" || strings.HasPrefix(action, "exports/") {
+		s.handleAgentExports(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "exports"), "/"))
+		return
+	}
+
 	if action == "tasks" || strings.HasPrefix(action, "tasks/") {
 		s.handleAgentTasks(w, r, name, strings.TrimPrefix(strings.TrimPrefix(action, "tasks"), "/"))
 		return
@@ -1988,6 +1994,13 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		}
 		slog.Error("failed to get agent", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
+		return
+	}
+
+	// A disk export or restore owns the volume (MAT-87/MAT-88); the controller
+	// would refuse to build the pod anyway. Stop stays allowed: it is the
+	// kill switch and never touches the volume.
+	if phase != kyberv1.AgentPhaseStopped && rejectArchiveHeld(w, agent) {
 		return
 	}
 

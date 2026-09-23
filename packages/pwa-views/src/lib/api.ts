@@ -55,6 +55,8 @@ import type {
   UpdateStatus,
   UpdatePolicyPatch,
   UpdateRun,
+  ArchiveJob,
+  ArchiveDownloadLink,
 } from './types'
 import type { Cluster } from './cluster-context'
 
@@ -300,6 +302,24 @@ export function createApiClient(cluster: Cluster) {
 
     switchAgentRuntime: (name: string, runtime: string): Promise<SwitchRuntimeResponse> =>
       request<SwitchRuntimeResponse>('POST', `/api/v1/agents/${encodeURIComponent(name)}/switch-runtime`, { runtime }),
+
+    // Disk export (MAT-87). Start returns immediately with a job to poll.
+    startAgentExport: (name: string): Promise<ArchiveJob> =>
+      request<ArchiveJob>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports`),
+
+    listAgentExports: async (name: string): Promise<ArchiveJob[]> =>
+      (await request<{ exports: ArchiveJob[] }>('GET', `/api/v1/agents/${encodeURIComponent(name)}/exports`)).exports,
+
+    cancelAgentExport: (name: string, id: string): Promise<ArchiveJob> =>
+      request<ArchiveJob>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/cancel`),
+
+    // The returned URL is relative to the cluster and carries its own
+    // short-lived credential, so the browser can stream a large archive by
+    // plain navigation instead of buffering it through fetch.
+    createExportDownloadLink: async (name: string, id: string): Promise<ArchiveDownloadLink> => {
+      const link = await request<ArchiveDownloadLink>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/download-link`)
+      return { ...link, url: `${baseURL}${link.url}` }
+    },
 
     setAgentModel: (name: string, model: string): Promise<Agent> => {
       const req: SetModelRequest = { model }

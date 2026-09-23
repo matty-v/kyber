@@ -459,6 +459,71 @@ spec:
             # init-container args — avoids hardcoding the Helm-rendered Service name.
             - name: KYBER_CONTROL_PLANE_INTERNAL_URL
               value: "http://{{ include "kyber.fullname" . }}-control-plane.{{ include "kyber.namespace" . }}.svc:{{ .Values.api.service.internalPort }}"
+            # Agent disk archives (MAT-87/MAT-88). The export/restore pods run
+            # this same image (kyber-disk-archive).
+            {{- $archives := .Values.agentArchives }}
+            - name: KYBER_ARCHIVE_STORE_BACKEND
+              value: {{ ternary $archives.storage.backend "disabled" (and $archives.enabled true) | quote }}
+            - name: KYBER_ARCHIVE_TOOL_IMAGE
+              value: {{ include "kyber.image" (dict "repo" .Values.image.controlPlane.repository "tag" .Values.image.controlPlane.tag) | quote }}
+            - name: KYBER_ARCHIVE_MAX_BYTES
+              value: {{ $archives.maxArchiveBytes | int64 | toString | quote }}
+            - name: KYBER_ARCHIVE_PAUSE_TIMEOUT
+              value: {{ $archives.pauseTimeout | quote }}
+            - name: KYBER_ARCHIVE_JOB_TIMEOUT
+              value: {{ $archives.jobTimeout | quote }}
+            - name: KYBER_ARCHIVE_RETENTION
+              value: {{ $archives.retention | quote }}
+            - name: KYBER_ARCHIVE_MAX_CONCURRENT_JOBS
+              value: {{ $archives.maxConcurrentJobs | quote }}
+            {{- if and $archives.enabled (eq $archives.storage.backend "builtin") }}
+            - name: KYBER_ARCHIVE_STORE_URL
+              value: "http://{{ include "kyber.fullname" . }}-archive-store.{{ include "kyber.namespace" . }}.svc:8090"
+            - name: KYBER_ARCHIVE_STORE_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $archives.storage.builtin.existingSecret | default (printf "%s-archive-store" (include "kyber.fullname" .)) }}
+                  key: token
+            {{- else if and $archives.enabled (eq $archives.storage.backend "s3") }}
+            - name: KYBER_ARCHIVE_PREFIX
+              value: {{ $archives.storage.prefix | quote }}
+            {{- with $archives.storage.s3 }}
+            {{- if .endpoint }}
+            - name: KYBER_ARCHIVE_S3_ENDPOINT
+              value: {{ .endpoint | quote }}
+            {{- end }}
+            {{- if .bucket }}
+            - name: KYBER_ARCHIVE_S3_BUCKET
+              value: {{ .bucket | quote }}
+            {{- end }}
+            {{- if .region }}
+            - name: KYBER_ARCHIVE_S3_REGION
+              value: {{ .region | quote }}
+            {{- end }}
+            - name: KYBER_ARCHIVE_S3_USE_TLS
+              value: {{ .useTLS | quote }}
+            {{- end }}
+            {{- $credSecret := $archives.storage.s3.existingCredentialsSecret | default .Values.logShipper.existingCredentialsSecret }}
+            {{- if $credSecret }}
+            - name: KYBER_ARCHIVE_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credSecret }}
+                  key: access-key-id
+            - name: KYBER_ARCHIVE_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $credSecret }}
+                  key: secret-access-key
+            {{- end }}
+            {{- else if and $archives.enabled (eq $archives.storage.backend "gcs") }}
+            - name: KYBER_ARCHIVE_PREFIX
+              value: {{ $archives.storage.prefix | quote }}
+            {{- if $archives.storage.gcs.bucket }}
+            - name: KYBER_ARCHIVE_GCS_BUCKET
+              value: {{ $archives.storage.gcs.bucket | quote }}
+            {{- end }}
+            {{- end }}
             - name: KYBER_TASK_RESULTS_ROOT
               valueFrom:
                 configMapKeyRef:

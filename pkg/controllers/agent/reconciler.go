@@ -513,6 +513,19 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{RequeueAfter: identityRequeue}, nil
 	}
 
+	// 3d. Hold a new agent created from a disk archive (MAT-88) in Creating,
+	// with no pod, until its volume restore finishes and the job releases the
+	// hold. An existing agent held by an export (MAT-87) is not gated here: it
+	// was stopped through desiredPhase and createPod refuses to rebuild it.
+	if archiveHold(agent) != "" && (agent.Status.Phase == "" || agent.Status.Phase == kyberv1.AgentPhaseCreating) {
+		logger.Info("waiting for disk archive restore before creating pod",
+			"agent", agent.Name, "job", archiveHold(agent))
+		if err := r.markAwaitingRestore(ctx, agent); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
 	// 4. Check if the retry counter should be reset (agent stable in Running for 5 min).
 	if agent.Status.StartTime != nil {
 		if ShouldResetRetryCount(agent.Status.Phase, agent.Status.StartTime.Time) &&
@@ -1158,6 +1171,11 @@ func (r *AgentReconciler) classifyEvent(
 			// Creating forever, because nothing else creates a pod from there.
 			if awaitingIdentityRepo(agent) && !identityRepoScaffoldPending(agent) {
 				return EventIdentityRepoReady, nil
+			}
+			// Held back for a disk archive restore and the job has released
+			// the hold: the volume is complete, so build the first pod.
+			if awaitingRestore(agent) && archiveHold(agent) == "" {
+				return EventRestoreComplete, nil
 			}
 			// Pod not yet created or still being applied — requeue.
 			return "", nil
@@ -2158,6 +2176,12 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		return fmt.Errorf("agent %s/%s: identity repo from template %q is not created yet",
 			agent.Namespace, agent.Name, agent.Spec.IdentityRepo.Template)
 	}
+	// A disk export or restore owns the volume (MAT-87/MAT-88). Booting the
+	// agent now would write to a disk that is being archived, or start from a
+	// half-restored one.
+	if job := archiveHold(agent); job != "" {
+		return fmt.Errorf("agent %s/%s: volume is held by disk archive job %s", agent.Namespace, agent.Name, job)
+	}
 	adapter, err := r.resolveAdapter(agent)
 	if err != nil {
 		return err
@@ -2402,11 +2426,12 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	// The identity-repo wait is over once a pod exists. Best-effort like the
 	// stamp above: a stale mark on an agent that has a pod changes nothing,
 	// because classifyEvent only reads it when there is no pod.
-	if awaitingIdentityRepo(agent) {
+	if awaitingIdentityRepo(agent) || awaitingRestore(agent) {
 		patch := client.MergeFrom(agent.DeepCopy())
 		meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionAwaitingIdentityRepo)
+		meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionAwaitingRestore)
 		if err := r.Status().Patch(ctx, agent, patch); err != nil {
-			log.FromContext(ctx).Error(err, "clearing AwaitingIdentityRepo after pod create", "agent", agent.Name)
+			log.FromContext(ctx).Error(err, "clearing pod-creation wait conditions after pod create", "agent", agent.Name)
 		}
 	}
 	return nil

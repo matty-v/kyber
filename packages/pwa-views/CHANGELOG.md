@@ -1,5 +1,16 @@
 # @matty-v/kyber-pwa-views
 
+## 0.54.0
+
+- Agent Detail has a Disk export card. It starts an export of the agent's
+  persistent disk, shows its progress, and offers a download once the
+  archive is verified. The operator confirms first, because the agent stops
+  while its disk is read and the archive can hold credentials.
+- Each finished export lists what the archive contains, which mounts it does
+  not include and why, and which files look like credentials.
+- `ComputeConfig.archives` reports whether the control plane supports disk
+  export; against an older control plane the card says it is unavailable.
+
 ## 0.53.0
 
 - Agent Detail can switch an existing agent to another configured harness on
