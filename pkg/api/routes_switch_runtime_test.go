@@ -142,6 +142,33 @@ func TestSwitchRuntimeLegacyObservationLooksTransient(t *testing.T) {
 	}
 }
 
+// After a switch the controller reaches NeedsAuth without creating a pod, so
+// observedGeneration stays behind. The view must still say NeedsAuth, or the
+// PWA never offers the target's authorization and the agent is stuck.
+func TestSwitchRuntimeShowsNeedsAuthOnceControllerReachesIt(t *testing.T) {
+	s := newTestPublicServer(t, testAPIKey)
+	agent := sampleAgentCRD("switched")
+	agent.Generation = 56
+	agent.Spec.Runtime = "codex"
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	agent.Status.ObservedGeneration = 55
+	agent.Status.CurrentModel = "source-model"
+	if err := s.K8sClient.Create(t.Context(), agent); err != nil {
+		t.Fatal(err)
+	}
+	req := scopedRequest(http.MethodGet, "/api/v1/agents/"+agent.Name, testAPIKey)
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	var view api.AgentResponse
+	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &view) != nil {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if view.Phase != kyberv1.AgentPhaseNeedsAuth || view.CurrentModel != "" {
+		t.Fatalf("phase=%q currentModel=%q, want NeedsAuth with no source model", view.Phase, view.CurrentModel)
+	}
+}
+
 func TestSwitchRuntimeRejectsQueuedStop(t *testing.T) {
 	runner := &fakeRuntimeRepairRunner{}
 	s, original := switchTestServer(t, "codex", runner)
