@@ -1399,8 +1399,12 @@ export interface UpdateStatus {
 // and removed by talking to the agent, which writes them into its identity repo
 // and pushes. There is no write path from the UI or the API.
 
-/** Where a skill came from. */
-export type AgentSkillSource = 'identity' | 'vendor' | 'platform'
+/**
+ * Where a skill came from. 'local' is a skill an agent with an identity repo
+ * keeps only on its disk, in a runtime skills home; it always carries an
+ * 'unmanaged' warning.
+ */
+export type AgentSkillSource = 'identity' | 'vendor' | 'local' | 'platform'
 
 /**
  * How much a finding matters. 'error' means the skill does not work; 'warning'
@@ -1425,7 +1429,7 @@ export interface AgentSkill {
   source: AgentSkillSource
   /** Vendor package name; only set when source is 'vendor'. */
   sourcePackage?: string
-  /** Repo-relative for identity/vendor skills, absolute for platform ones. */
+  /** Repo-relative for identity/vendor skills, absolute for local and platform ones. */
   path: string
   /** Runtimes this skill is genuinely loadable in. Empty means it is dead. */
   linked: string[]

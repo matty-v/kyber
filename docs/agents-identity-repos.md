@@ -113,11 +113,11 @@ The linker walks identity first and vendor second, and each pass replaces the li
 
 | Command | What it does |
 |---|---|
-| `kyber-skills install [--from PATH]` | Normalize the skill into `<repo>/skills/<name>/`, link it into both runtimes so it is live immediately, commit, push, then report. Idempotent. |
+| `kyber-skills install [PATH \| --from PATH]` | Normalize the skill into `<repo>/skills/<name>/`, link it into both runtimes so it is live immediately, commit, push, then report. Idempotent. |
 | `kyber-skills list [--json]` | Print what the agent has, and what is wrong with it. |
 | `kyber-skills report` | Converge and report on a loop (default every 2 minutes, `KYBER_SKILLS_REPORT_INTERVAL`): relink every repo skill into both runtime homes, scan, and push the result. Started at boot; `--once` does a single pass and is what the identity sync runs. |
 
-A skill written straight into a runtime home works until the pod is reprovisioned and is committed nowhere; that state is reported as `unmanaged`.
+A skill written straight into a runtime home works until the pod is reprovisioned and is committed nowhere. It is listed with source `local` and the runtimes it loads in, and carries an `unmanaged` warning. Only a directory with a top-level `SKILL.md` counts as a skill; other folders in a runtime home, such as Claude Code's own `synced` folder, are not reported.
 
 **Convergence is the platform's job, not the agent's memory.** An agent asked to save a skill does the obvious thing — write `skills/<name>/SKILL.md`, then sync its identity. If linking only ran at boot, that skill would be committed, pushed, invisible to the UI, and *not loadable in the session that created it*. So the reporter runs as a loop: it relinks, rescans, and reports every couple of minutes, and only POSTs when something actually changed. `kyber-skills install` remains the make-it-live-right-now fast path, not the only path.
 

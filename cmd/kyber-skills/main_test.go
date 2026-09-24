@@ -263,6 +263,46 @@ func TestInstall_FromDirectoryAndFile(t *testing.T) {
 	}
 }
 
+// MAT-90 G14: `kyber-skills install /tmp/x` used to ignore the path, link and
+// push what was already there, and report success without importing anything.
+func TestInstall_PositionalPathImports(t *testing.T) {
+	f := newRepoFixture(t)
+	sidecar, _ := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	src := filepath.Join(t.TempDir(), "downloaded")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte(skillBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flags on both sides of the path, as an agent is likely to type them.
+	if code := runInstall([]string{"--repo-dir", f.repoDir, src, "--home", f.home, "--no-push", "--name", "positional"}); code != 0 {
+		t.Fatalf("install PATH exit code = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(f.repoDir, "skills", "positional", "SKILL.md")); err != nil {
+		t.Fatalf("the positional path was not imported: %v", err)
+	}
+}
+
+func TestInstall_RejectsAmbiguousPaths(t *testing.T) {
+	f := newRepoFixture(t)
+	a, b := t.TempDir(), t.TempDir()
+	base := []string{"--repo-dir", f.repoDir, "--home", f.home, "--no-push"}
+	for name, extra := range map[string][]string{
+		"two positional paths":        {a, b},
+		"--from and a different path": {"--from", a, b},
+	} {
+		if code := runInstall(append(append([]string{}, base...), extra...)); code != 2 {
+			t.Errorf("%s: exit code = %d, want 2", name, code)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.repoDir, "skills")); len(entries) != 0 {
+		t.Errorf("a rejected install still imported: %v", entries)
+	}
+}
+
 // A bare SKILL.md carries no name of its own, and guessing "SKILL" would
 // publish a command called SKILL.
 func TestInstall_BareSkillMdNeedsAnExplicitName(t *testing.T) {
@@ -788,14 +828,20 @@ func TestConverge_SharedUnmanagedSkillIsReportedOnce(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(f.home, ".hermes", "skills", "handmade")); err != nil {
 		t.Fatalf("unmanaged skill not shared: %v", err)
 	}
+	// MAT-90 G14: the skill is listed as local, loadable in every runtime,
+	// with exactly one unmanaged warning of its own.
+	rep := (*reports)[0]
+	if len(rep.Skills) != 1 || rep.Skills[0].Source != skillscan.SourceLocal || len(rep.Skills[0].Linked) != 3 {
+		t.Fatalf("skills = %+v, want handmade as a local skill linked in all three runtimes", rep.Skills)
+	}
 	var unmanaged int
-	for _, issue := range (*reports)[0].Issues {
+	for _, issue := range append(rep.Issues, rep.Skills[0].Issues...) {
 		if issue.Code == skillscan.IssueUnmanaged {
 			unmanaged++
 		}
 	}
 	if unmanaged != 1 {
-		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v", unmanaged, (*reports)[0].Issues)
+		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v / %+v", unmanaged, rep.Issues, rep.Skills[0].Issues)
 	}
 }
 

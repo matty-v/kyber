@@ -55,12 +55,14 @@ function formatTimestamp(iso: string | undefined): string {
 const SOURCE_LABEL: Record<AgentSkillSource, string> = {
   identity: 'Own',
   vendor: 'Vendored',
+  local: 'Local',
   platform: 'Platform',
 }
 
 const SOURCE_HINT: Record<AgentSkillSource, string> = {
   identity: "This agent's own skill, in its identity repo",
   vendor: 'Vendored into the identity repo from a shared package',
+  local: "On this agent's disk only, not in its identity repo",
   platform: 'Built into the runtime image',
 }
 

@@ -47,7 +47,16 @@ const (
 	// (see the Telegram/Discord blocks in images/*/start-*.sh). It is not in
 	// the identity repo and is not the agent's to edit.
 	SourcePlatform = "platform"
+	// SourceLocal is a skill an agent WITH an identity repo keeps only in a
+	// runtime skills home. It loads today and is committed nowhere, so it
+	// always carries an IssueUnmanaged warning saying so.
+	SourceLocal = "local"
 )
+
+// runtimeOwnedDirs are directories a runtime keeps in its own skills home for
+// its own purposes. Claude Code syncs account-level skills into `synced`;
+// nothing in Kyber creates it, and it is not a skill.
+var runtimeOwnedDirs = map[string]bool{"synced": true}
 
 // DefaultPlatformDir is where the runtime images install their bundled skills.
 // Overridable in the images via KYBER_PLATFORM_SKILLS_DIR.
@@ -137,7 +146,7 @@ type Skill struct {
 	// Description comes from the SKILL.md frontmatter. Empty when the
 	// frontmatter is missing or has no description.
 	Description string `json:"description"`
-	// Source is SourceIdentity, SourceVendor, or SourcePlatform.
+	// Source is SourceIdentity, SourceVendor, SourceLocal, or SourcePlatform.
 	Source string `json:"source"`
 	// SourcePackage is the vendor package directory name; empty for
 	// identity-owned skills.
@@ -320,9 +329,9 @@ func Scan(opts Options) (*Report, error) {
 		return skills[i].Name < skills[j].Name
 	})
 	platform, issues := scanRuntimeHomes(opts)
-	// Platform skills are appended after the repo sort and then re-sorted, so
-	// the final order is identity, vendor, platform — the order an operator
-	// cares about, most-owned first.
+	// Runtime-home skills are appended after the repo sort and then re-sorted,
+	// so the final order is identity, vendor, local, platform — the order an
+	// operator cares about, most-owned first.
 	skills = append(skills, platform...)
 	sort.SliceStable(skills, func(i, j int) bool {
 		return sourceRank(skills[i].Source) < sourceRank(skills[j].Source)
@@ -349,8 +358,10 @@ func sourceRank(source string) int {
 		return 0
 	case SourceVendor:
 		return 1
-	default:
+	case SourceLocal:
 		return 2
+	default:
+		return 3
 	}
 }
 
@@ -535,13 +546,20 @@ func extractFrontmatter(body string) (string, bool) {
 // else — a real directory, or a link pointing somewhere unmanaged — is state
 // that works today and is committed nowhere, so it disappears the moment the
 // pod is reprovisioned. That last case is the quiet one: it looks completely
-// healthy from inside the pod, right up until the skill is gone.
+// healthy from inside the pod, right up until the skill is gone. When such
+// state holds a skill, it is returned as a SourceLocal skill carrying that
+// warning, so it shows up where operators look for skills, with the runtimes
+// it is live in, rather than only as a stray finding.
 func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 	var issues []Issue
 	// Platform skills appear once per runtime home; collapse them into one
 	// entry carrying the set of runtimes they are live in.
 	platform := map[string]*Skill{}
 	var order []string
+	// Disk-only skills of an agent that has an identity repo. Kept apart from
+	// platform so a name clash cannot merge the two.
+	local := map[string]*Skill{}
+	var localOrder []string
 
 	for _, rh := range runtimeHomes {
 		dir := filepath.Join(opts.HomeDir, rh.dir)
@@ -577,28 +595,37 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 			}
 			isLink := li.Mode()&os.ModeSymlink != 0
 			if !isLink {
-				if e.IsDir() && hermesManagedCategories[e.Name()] {
+				if !e.IsDir() || runtimeOwnedDirs[e.Name()] || hermesManagedCategories[e.Name()] {
 					continue
 				}
-				if e.IsDir() && compatWrapperUnderRepo(full, opts.RepoDir) {
+				if compatWrapperUnderRepo(full, opts.RepoDir) {
 					continue
 				}
-				if e.IsDir() && opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), full, rh.runtime) {
+				// Only a directory holding a skill is one. Anything else in
+				// a skills home (a runtime's own folder, notes) is not the
+				// skills report's business.
+				if !holdsSkill(full, rh.runtime) {
 					continue
 				}
-				if e.IsDir() {
-					detail := fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
+				if opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), full, rh.runtime, SourceIdentity) {
+					continue
+				}
+				if opts.RepoDir != "" && addLocalSkill(local, &localOrder, e.Name(), full, rh.runtime, SourceLocal) {
+					continue
+				}
+				// A Hermes category directory of nested skills that Hermes'
+				// manifest does not vouch for.
+				detail := fmt.Sprintf("~/%s/%s is a real directory, not a link into the identity repo — it is committed nowhere and will not survive a reprovision",
+					rh.dir, e.Name())
+				if opts.RepoDir == "" {
+					detail = fmt.Sprintf("~/%s/%s is kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
 						rh.dir, e.Name())
-					if opts.RepoDir == "" {
-						detail = fmt.Sprintf("~/%s/%s is kept on this agent's disk only (the agent has no identity repository) — it survives restarts, but not a lost disk or a recreated agent",
-							rh.dir, e.Name())
-					}
-					issues = append(issues, Issue{
-						Code:     IssueUnmanaged,
-						Severity: SeverityWarning,
-						Detail:   detail,
-					})
 				}
+				issues = append(issues, Issue{
+					Code:     IssueUnmanaged,
+					Severity: SeverityWarning,
+					Detail:   detail,
+				})
 				continue
 			}
 			target, err := filepath.EvalSymlinks(full)
@@ -631,7 +658,10 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 				}
 				continue
 			}
-			if opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), target, rh.runtime) {
+			if opts.RepoDir == "" && addLocalSkill(platform, &order, e.Name(), target, rh.runtime, SourceIdentity) {
+				continue
+			}
+			if opts.RepoDir != "" && addLocalSkill(local, &localOrder, e.Name(), target, rh.runtime, SourceLocal) {
 				continue
 			}
 			// kyber-skills shares a real skill directory from one runtime home
@@ -655,7 +685,18 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 	}
 
 	sort.Strings(order)
-	out := make([]Skill, 0, len(order))
+	sort.Strings(localOrder)
+	out := make([]Skill, 0, len(order)+len(localOrder))
+	for _, name := range localOrder {
+		sk := local[name]
+		sk.Issues = append(sk.Issues, Issue{
+			Code:     IssueUnmanaged,
+			Severity: SeverityWarning,
+			Detail: fmt.Sprintf("%s is on this agent's disk only, not in the identity repo — it loads today and will not survive a reprovision; move it to skills/%s and run `kyber-skills install`",
+				homeRelative(sk.Path, opts.HomeDir), sk.Name),
+		})
+		out = append(out, *sk)
+	}
 	for _, name := range order {
 		out = append(out, *platform[name])
 	}
@@ -666,6 +707,38 @@ func scanRuntimeHomes(opts Options) ([]Skill, []Issue) {
 		return issues[i].Detail < issues[j].Detail
 	})
 	return out, issues
+}
+
+// holdsSkill reports whether a real directory in a runtime home is a skill: it
+// has a top-level SKILL.md, or, in the Hermes home, it is a category of nested
+// skills (Hermes' own category/name/SKILL.md layout).
+func holdsSkill(dir, runtime string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err == nil {
+		return true
+	}
+	if runtime != RuntimeHermes {
+		return false
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), "SKILL.md")); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// homeRelative renders path as ~/... when it is under homeDir.
+func homeRelative(path, homeDir string) string {
+	if rel, err := filepath.Rel(homeDir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, "../") {
+		return "~/" + rel
+	}
+	return path
 }
 
 // inRuntimeHome reports whether path is an entry directly inside one of the
@@ -680,20 +753,26 @@ func inRuntimeHome(path, homeDir string) bool {
 	return false
 }
 
-// addLocalSkill records a skill an agent WITHOUT an identity repo keeps in a
-// runtime skills home. For such an agent that is the only place its own skills
-// can live (kyber-skills install has nowhere to push), so they are its skills,
-// not stray state: reporting them as unmanaged would put a permanent warning
-// on every skill it has, with no remedy. Their disk-only durability is a fact
-// about the agent, stated once by the report's consumer. Returns false when dir
-// holds no SKILL.md, leaving the caller to report it as unmanaged.
-func addLocalSkill(skills map[string]*Skill, order *[]string, name, dir, runtime string) bool {
+// addLocalSkill records a skill kept in a runtime skills home rather than the
+// identity repo, under the given source.
+//
+// For an agent WITHOUT an identity repo (SourceIdentity) that is the only
+// place its own skills can live (kyber-skills install has nowhere to push), so
+// they are its skills, not stray state: reporting them as unmanaged would put a
+// permanent warning on every skill it has, with no remedy. Their disk-only
+// durability is a fact about the agent, stated once by the report's consumer.
+//
+// For an agent WITH one (SourceLocal) the skill still loads and belongs in the
+// list with the runtimes it is live in; the caller attaches the warning that it
+// is committed nowhere. Returns false when dir holds no SKILL.md, leaving the
+// caller to report it as unmanaged.
+func addLocalSkill(skills map[string]*Skill, order *[]string, name, dir, runtime, source string) bool {
 	if _, err := os.Stat(filepath.Join(dir, "SKILL.md")); err != nil {
 		return false
 	}
 	sk, ok := skills[name]
 	if !ok {
-		sk = &Skill{Name: name, Source: SourceIdentity, Path: dir, Linked: []string{}}
+		sk = &Skill{Name: name, Source: source, Path: dir, Linked: []string{}}
 		readSkillMD(filepath.Join(dir, "SKILL.md"), sk)
 		skills[name] = sk
 		*order = append(*order, name)

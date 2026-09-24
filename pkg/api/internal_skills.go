@@ -43,6 +43,7 @@ var validSkillSources = map[string]bool{
 	skillscan.SourceIdentity: true,
 	skillscan.SourceVendor:   true,
 	skillscan.SourcePlatform: true,
+	skillscan.SourceLocal:    true,
 }
 
 // validLinkedRuntimes is the closed set of runtime identifiers a skill may

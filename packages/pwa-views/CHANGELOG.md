@@ -10,6 +10,9 @@
   `/user-secrets/<key>.bin`.
 - `validateUserSecretKey(key, kind?)` takes the secret kind, defaulting to
   `kv`, and the new `userSecretFilePath(key)` returns a file key's mount path.
+- The Skills tab lists a skill that an agent with an identity repo keeps only
+  on its disk, badged Local, with the runtimes it loads in and its
+  not-in-the-repo warning. `AgentSkillSource` gains `'local'`.
 
 ## 0.58.0
 
