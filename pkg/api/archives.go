@@ -397,12 +397,17 @@ func (a *ArchiveService) event(j *archivejob.Job, typ, reason, msg string) {
 // expire deletes a completed archive whose retention has lapsed (ListActive
 // returns completed jobs only once they have).
 func (a *ArchiveService) expire(ctx context.Context, j *archivejob.Job) error {
+	return a.shred(ctx, j, "Expired")
+}
+
+// shred deletes a completed archive's object and discards its key.
+func (a *ArchiveService) shred(ctx context.Context, j *archivejob.Job, message string) error {
 	a.dropReader(j.ID)
 	if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
-		return fmt.Errorf("deleting expired archive: %w", err)
+		return fmt.Errorf("deleting archive: %w", err)
 	}
 	j.State = archivejob.StateExpired
-	j.Message = "Expired"
+	j.Message = message
 	j.WrappedKey = nil
 	return a.Jobs.Update(ctx, j)
 }

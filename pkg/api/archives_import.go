@@ -796,6 +796,13 @@ func (s *Server) handleArchiveUploads(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeJSON(w, http.StatusOK, viewArchiveJob(j))
+	case id != "" && r.Method == http.MethodDelete:
+		j, err := a.Jobs.Get(r.Context(), id)
+		if err != nil || j.Kind != archivejob.KindUpload {
+			writeJSONError(w, http.StatusNotFound, "not_found", "upload not found")
+			return
+		}
+		s.deleteArchive(w, r, j)
 	default:
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 	}

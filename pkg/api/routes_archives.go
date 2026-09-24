@@ -147,6 +147,8 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 		switch {
 		case action == "" && r.Method == http.MethodGet:
 			writeJSON(w, http.StatusOK, viewArchiveJob(j))
+		case action == "" && r.Method == http.MethodDelete:
+			s.deleteArchive(w, r, j)
 		case action == "cancel" && r.Method == http.MethodPost:
 			if j.State.Terminal() {
 				writeJSONError(w, http.StatusConflict, "export_finished", "the export has already finished")
