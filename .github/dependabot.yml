@@ -20,6 +20,10 @@ updates:
         exclude-patterns:
           - "k8s.io/*"
           - "sigs.k8s.io/*"
+          # The A2A SDK is pinned by checksum in conformance/a2a/1.0/pins.json,
+          # so a bump needs a pinned-TCK re-run and new evidence. Keeping it out
+          # of this group gives it its own PR instead of blocking eleven others.
+          - "github.com/a2aproject/*"
 
   - package-ecosystem: npm
     directory: "/"
