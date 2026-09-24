@@ -708,6 +708,7 @@ func main() {
 	// WithKubeClient gives the rotation endpoint access to Secrets for OAuth token updates.
 	archiveService := buildArchiveService(ctx, mgr.GetClient(), kyberNamespace, archiveJobs, internalSigningKey,
 		resolveDisplayVersion(), mgr.GetEventRecorderFor("kyber-archives"))
+	archiveService.Avatars = agentTaskObjectStore
 	if ok, reason := archiveService.Available(); ok {
 		setupLog.Info("disk archives: enabled", "store", archiveService.Store.Name())
 		if err := mgr.Add(archiveService); err != nil {

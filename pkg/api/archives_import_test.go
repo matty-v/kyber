@@ -29,7 +29,7 @@ const restoredAgent = "restored"
 func (h *exportHarness) completedExport() (string, []byte) {
 	h.t.Helper()
 	id := h.runToArchiving()
-	data := sampleDisk(h.t)
+	data := sampleDiskFrom(h.t, *h.job(id).Source)
 	if rr := h.upload(id, h.podToken(id), bytes.NewReader(data)); rr.Code != http.StatusNoContent {
 		h.t.Fatalf("upload = %d", rr.Code)
 	}
@@ -223,7 +223,7 @@ func TestImportFromExportEndToEnd(t *testing.T) {
 	rr = h.do(http.MethodGet, "/api/v1/agent-imports/"+id, testAPIKey)
 	var v struct{ Cutover []string }
 	json.Unmarshal(rr.Body.Bytes(), &v)
-	if rr.Code != http.StatusOK || len(v.Cutover) == 0 || !strings.Contains(strings.Join(v.Cutover, " "), "look like credentials were not restored") {
+	if rr.Code != http.StatusOK || len(v.Cutover) == 0 || !strings.Contains(strings.Join(v.Cutover, " "), "Harness login files are never restored") {
 		t.Errorf("import view = %d %s", rr.Code, rr.Body.String())
 	}
 }

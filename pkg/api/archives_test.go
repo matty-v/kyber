@@ -175,13 +175,20 @@ func (h *exportHarness) upload(id, token string, body io.Reader) *httptest.Respo
 
 func sampleDisk(t *testing.T) []byte {
 	t.Helper()
+	return sampleDiskFrom(t, diskarchive.Source{Agent: exportAgent})
+}
+
+// sampleDiskFrom is sampleDisk with the manifest source the export pod would
+// write.
+func sampleDiskFrom(t *testing.T, src diskarchive.Source) []byte {
+	t.Helper()
 	root := t.TempDir()
 	os.MkdirAll(filepath.Join(root, "agentroot/home/kyber/dev/identity/skills/s"), 0o755)
 	os.MkdirAll(filepath.Join(root, "agentroot/home/kyber/.claude"), 0o700)
 	os.WriteFile(filepath.Join(root, "agentroot/home/kyber/dev/identity/skills/s/SKILL.md"), []byte("# s\n"), 0o644)
 	os.WriteFile(filepath.Join(root, "agentroot/home/kyber/.claude/.credentials.json"), []byte("{}"), 0o600)
 	var buf bytes.Buffer
-	if _, err := diskarchive.Write(context.Background(), root, &buf, diskarchive.WriteOptions{Source: diskarchive.Source{Agent: exportAgent}}); err != nil {
+	if _, err := diskarchive.Write(context.Background(), root, &buf, diskarchive.WriteOptions{Source: src}); err != nil {
 		t.Fatal(err)
 	}
 	return buf.Bytes()

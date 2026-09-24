@@ -20,6 +20,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 		},
 		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature},
 		TranscriptPath:     ".claude/projects",
+		LoginFiles:         []string{".claude/.credentials.json"},
 		TranscriptExchange: `select((.isSidechain // false) | not) | select(.type == "user" or .type == "assistant") | {role: .type, timestamp: (.timestamp // ""), content: (.message.content as $c | if ($c | type) == "string" then $c elif ($c | type) == "array" then ([$c[] | select(.type == "text") | .text] | join("\n")) else "" end)}`,
 	}
 }

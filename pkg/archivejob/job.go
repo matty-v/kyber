@@ -188,6 +188,8 @@ type Summary struct {
 	Excluded      []diskarchive.Exclusion `json:"excluded,omitempty"`
 	Totals        diskarchive.Totals      `json:"totals"`
 	Sensitive     []string                `json:"sensitive,omitempty"`
+	// Login lists the harness login files, which are never restored.
+	Login []string `json:"login,omitempty"`
 	// Cron lists crontabs the agent installed itself; a restored copy runs
 	// them as well.
 	Cron []string `json:"cron,omitempty"`
@@ -203,6 +205,7 @@ func SummaryOf(m *diskarchive.Manifest) *Summary {
 		Excluded:      m.Excluded,
 		Totals:        m.Totals,
 		Sensitive:     diskarchive.SensitivePaths(m),
+		Login:         diskarchive.LoginPaths(m),
 		Cron:          diskarchive.CronPaths(m),
 	}
 }

@@ -26,9 +26,11 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -89,14 +91,13 @@ func runExport(ctx context.Context, root string) error {
 	if url == "" || token == "" {
 		return errors.New("KYBER_ARCHIVE_UPLOAD_URL and KYBER_ARCHIVE_TOKEN are required")
 	}
-	var desc struct {
-		Source diskarchive.Source  `json:"source"`
-		Mounts []diskarchive.Mount `json:"mounts"`
+	desc, err := fetchDescription(ctx, os.Getenv("KYBER_ARCHIVE_DESCRIPTION_URL"), token)
+	if err != nil {
+		return err
 	}
-	if raw := os.Getenv("KYBER_ARCHIVE_DESCRIPTION"); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &desc); err != nil {
-			return fmt.Errorf("decoding archive description: %w", err)
-		}
+	image, err := loadImageManifest(root)
+	if err != nil {
+		return err
 	}
 	maxBytes, _ := strconv.ParseInt(os.Getenv("KYBER_ARCHIVE_MAX_BYTES"), 10, 64)
 	maxEntries, _ := strconv.Atoi(os.Getenv("KYBER_ARCHIVE_MAX_ENTRIES"))
@@ -108,6 +109,7 @@ func runExport(ctx context.Context, root string) error {
 			Scan:   diskarchive.ScanOptions{Exclude: diskarchive.DefaultExclusions(), MaxBytes: maxBytes, MaxEntries: maxEntries},
 			Source: desc.Source,
 			Mounts: desc.Mounts,
+			Image:  image,
 		})
 		if err == nil {
 			fmt.Fprintf(os.Stderr, "kyber-disk-archive: archived %d entries, %d bytes\n", m.Totals.Entries, m.Totals.Bytes)
@@ -145,6 +147,53 @@ func runExport(ctx context.Context, root string) error {
 		return fmt.Errorf("archiving: %w", werr)
 	}
 	return nil
+}
+
+type archiveDescription struct {
+	Source diskarchive.Source  `json:"source"`
+	Mounts []diskarchive.Mount `json:"mounts"`
+}
+
+// fetchDescription reads the manifest's source description from the job's
+// endpoint. It carries the agent's configuration, which is too large for the
+// environment.
+func fetchDescription(ctx context.Context, url, token string) (archiveDescription, error) {
+	var desc archiveDescription
+	if url == "" {
+		return desc, errors.New("KYBER_ARCHIVE_DESCRIPTION_URL is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return desc, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return desc, fmt.Errorf("reading archive description: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return desc, fmt.Errorf("reading archive description: HTTP %d", resp.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 16<<20)).Decode(&desc); err != nil {
+		return desc, fmt.Errorf("decoding archive description: %w", err)
+	}
+	return desc, nil
+}
+
+// loadImageManifest reads kyber-rootfs's record of the base image from the
+// volume, keyed by archive path under the durable root. A volume without one
+// (not rootfs persistence, or a root that predates it) returns nil, and
+// classification falls back to paths alone.
+func loadImageManifest(root string) (map[string]diskarchive.ImageFile, error) {
+	f, err := os.Open(filepath.Join(root, diskarchive.ImageManifestPath))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("reading the image manifest: %w", err)
+	}
+	defer f.Close()
+	return diskarchive.ParseImageManifest(f, diskarchive.RootfsDir+"/")
 }
 
 // summaryListCap bounds the exclusion and credential lists in a summary; the
@@ -308,6 +357,11 @@ func runRestore(ctx context.Context, root string) error {
 	// was truncated. Both default to leaving the files out.
 	skipCredentials := os.Getenv("KYBER_ARCHIVE_SKIP_CREDENTIALS") != "false"
 	skipCrontabs := os.Getenv("KYBER_ARCHIVE_SKIP_CRONTABS") != "false"
+	// Harness login files are always left out, whatever the options say.
+	var loginFiles []string
+	if v := os.Getenv("KYBER_ARCHIVE_LOGIN_FILES"); v != "" {
+		loginFiles = strings.Split(v, ",")
+	}
 	skip := map[string]bool{}
 	ra, err := newHTTPReaderAt(ctx, url, token)
 	if err != nil {
@@ -331,7 +385,8 @@ func runRestore(ctx context.Context, root string) error {
 		Allowed:           allowed,
 		Skip:              skip,
 		SkipIf: func(e diskarchive.Entry) bool {
-			return skipCredentials && diskarchive.IsSensitive(e) || skipCrontabs && diskarchive.IsAgentCrontab(e)
+			return e.Type == diskarchive.EntryFile && diskarchive.IsLoginPath(e.Path, loginFiles) ||
+				skipCredentials && diskarchive.IsSensitive(e) || skipCrontabs && diskarchive.IsAgentCrontab(e)
 		},
 	})
 	if err != nil {

@@ -451,3 +451,49 @@ func TestSkipIfRequiresSkipMap(t *testing.T) {
 		t.Fatal("Extract accepted SkipIf without a Skip map")
 	}
 }
+
+func TestParseImageManifest(t *testing.T) {
+	in := "#kyber-rootfs-manifest v2\n" +
+		"d\t-\t-\t755\t./etc\n" +
+		"f\t188\t1770985020.5000000000\t644\t./etc/cron.d/e2scrub_all\n" +
+		"l\t7\t1776674791.0000000000\t777\t./bin\n" +
+		"f\tbad\t1\t644\t./skipped\n"
+	got, err := ParseImageManifest(strings.NewReader(in), "agentroot/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f, ok := got["agentroot/etc/cron.d/e2scrub_all"]
+	if len(got) != 1 || !ok || f.Size != 188 || !f.ModTime.Equal(time.Unix(1770985020, 500000000)) {
+		t.Fatalf("parsed = %+v", got)
+	}
+	e := Entry{Type: EntryFile, Size: 188, ModTime: time.Unix(1770985020, 500000000)}
+	if !f.Matches(e) {
+		t.Error("the image's own copy does not match")
+	}
+	for _, changed := range []Entry{
+		{Type: EntryFile, Size: 189, ModTime: e.ModTime},
+		{Type: EntryFile, Size: 188, ModTime: e.ModTime.Add(time.Nanosecond)},
+		{Type: EntrySymlink, Size: 188, ModTime: e.ModTime},
+	} {
+		if f.Matches(changed) {
+			t.Errorf("changed entry %+v matches the image", changed)
+		}
+	}
+	if (ImageFile{}).Matches(e) {
+		t.Error("a file missing from the image matches")
+	}
+}
+
+func TestIsLoginPath(t *testing.T) {
+	login := []string{".claude/.credentials.json", ".codex/auth.json"}
+	for p, want := range map[string]bool{
+		"agentroot/home/kyber/.claude/.credentials.json":  true,
+		"agentroot/home/kyber/.codex/auth.json":           true,
+		"agentroot/home/kyber/x.claude/.credentials.json": false,
+		"agentroot/home/kyber/.claude/settings.json":      false,
+	} {
+		if got := IsLoginPath(p, login); got != want {
+			t.Errorf("IsLoginPath(%s) = %v", p, got)
+		}
+	}
+}

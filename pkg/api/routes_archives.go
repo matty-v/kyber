@@ -59,7 +59,7 @@ func viewArchiveJob(j *archivejob.Job) archiveJobView {
 		Cancelable:   !j.State.Terminal() && !j.CancelRequested,
 		Downloadable: j.Kind == archivejob.KindExport && j.State == archivejob.StateCompleted,
 		RequestedBy:  j.RequestedBy,
-		Summary:      j.Summary,
+		Summary:      summaryView(j.Summary),
 		SourceID:     j.SourceJobID,
 		Restored:     j.Restored,
 		Skipped:      j.Skip,
@@ -78,6 +78,19 @@ func viewArchiveJob(j *archivejob.Job) archiveJobView {
 		v.Message = "Canceling"
 	}
 	return v
+}
+
+// summaryView leaves the avatar image out of API views: it travels in the
+// archive, but every job listing would otherwise repeat up to a megabyte.
+func summaryView(s *archivejob.Summary) *archivejob.Summary {
+	if s == nil || s.Source.Config == nil || s.Source.Config.Profile == nil || len(s.Source.Config.Profile.Avatar) == 0 {
+		return s
+	}
+	cp, cfg, prof := *s, *s.Source.Config, *s.Source.Config.Profile
+	prof.Avatar, prof.HasAvatar = nil, true
+	cfg.Profile = &prof
+	cp.Source.Config = &cfg
+	return &cp
 }
 
 // handleAgentExports serves /api/v1/agents/{name}/exports[/{id}[/cancel|/download-link]].

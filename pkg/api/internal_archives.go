@@ -27,6 +27,7 @@ func WithArchiveService(a *ArchiveService) InternalServerOption {
 
 // handleArchiveJobRoutes serves the archive pods, one job each:
 //
+//	GET  /internal/archive-jobs/{id}/description  export pod's manifest source and mounts
 //	PUT  /internal/archive-jobs/{id}/upload   export pod's archive stream
 //	GET  /internal/archive-jobs/{id}/archive  ranged plaintext reads (verify, restore)
 //	POST /internal/archive-jobs/{id}/summary  verify pod's result
@@ -51,6 +52,8 @@ func (s *InternalServer) handleArchiveJobRoutes(w http.ResponseWriter, r *http.R
 	}
 	verifying := j.Step == archivejob.StepVerifying && j.Kind != archivejob.KindImport
 	switch {
+	case action == "description" && r.Method == http.MethodGet && j.Kind == archivejob.KindExport && j.Step == archivejob.StepArchiving:
+		writeJSON(w, http.StatusOK, exportDescription(j))
 	case action == "upload" && r.Method == http.MethodPut && j.Kind == archivejob.KindExport && j.Step == archivejob.StepArchiving:
 		a.receiveExport(w, r, j)
 	case action == "archive" && (r.Method == http.MethodGet || r.Method == http.MethodHead) && verifying:

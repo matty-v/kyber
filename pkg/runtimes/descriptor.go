@@ -43,24 +43,28 @@ var runtimeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 // Descriptor is trusted, code-owned integration metadata. It declares support,
 // not observed readiness or provider availability. No credentials belong here.
 type Descriptor struct {
-	ID                            string     `json:"id"`
-	Name                          string     `json:"name"`
-	ContractVersion               string     `json:"contractVersion"`
-	Profile                       string     `json:"profile"`
-	AuthModes                     []AuthMode `json:"authModes"`
-	Features                      []Feature  `json:"features"`
-	Cancellation                  string     `json:"cancellation"`
-	ModelPrefix                   string     `json:"-"`
-	LegacyCatalogKey              string     `json:"legacyCatalogKey,omitempty"`
-	LegacyVersionsKey             string     `json:"legacyVersionsKey,omitempty"`
-	LegacyDefaultsKey             string     `json:"-"`
-	HelmKey                       string     `json:"-"`
-	TranscriptPath                string     `json:"-"` // relative to persisted HOME
-	TranscriptExchange            string     `json:"-"` // trusted jq expression yielding one exchange
-	RequireCatalogContext         bool       `json:"-"`
-	AuthFailureExitCode           int32      `json:"-"`
-	AuthServiceFailureExitCode    int32      `json:"-"`
-	CredentialSyncFailureExitCode int32      `json:"-"`
+	ID                 string     `json:"id"`
+	Name               string     `json:"name"`
+	ContractVersion    string     `json:"contractVersion"`
+	Profile            string     `json:"profile"`
+	AuthModes          []AuthMode `json:"authModes"`
+	Features           []Feature  `json:"features"`
+	Cancellation       string     `json:"cancellation"`
+	ModelPrefix        string     `json:"-"`
+	LegacyCatalogKey   string     `json:"legacyCatalogKey,omitempty"`
+	LegacyVersionsKey  string     `json:"legacyVersionsKey,omitempty"`
+	LegacyDefaultsKey  string     `json:"-"`
+	HelmKey            string     `json:"-"`
+	TranscriptPath     string     `json:"-"` // relative to persisted HOME
+	TranscriptExchange string     `json:"-"` // trusted jq expression yielding one exchange
+	// LoginFiles are the harness's own login files, relative to the persisted
+	// HOME. A disk restore never copies them, so a restored agent cannot act
+	// on its source's login.
+	LoginFiles                    []string `json:"-"`
+	RequireCatalogContext         bool     `json:"-"`
+	AuthFailureExitCode           int32    `json:"-"`
+	AuthServiceFailureExitCode    int32    `json:"-"`
+	CredentialSyncFailureExitCode int32    `json:"-"`
 }
 type AuthMode struct {
 	ID                  kyberv1.AgentAuthType `json:"id"`
@@ -187,6 +191,24 @@ func Describe(id string) (Descriptor, bool) {
 	d.Features = append([]Feature{}, d.Features...)
 	return d, true
 }
+
+// LoginFiles is every registered harness's login files, sorted. A restore
+// skips all of them whatever runtime the archive came from.
+func LoginFiles() []string {
+	seen := map[string]bool{}
+	for _, d := range Descriptors() {
+		for _, f := range d.LoginFiles {
+			seen[f] = true
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for f := range seen {
+		out = append(out, f)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func Descriptors() []Descriptor {
 	out := []Descriptor{}
 	for _, rt := range All() {

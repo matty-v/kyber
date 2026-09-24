@@ -21,20 +21,37 @@ func TestExportStreamsVerifiableArchive(t *testing.T) {
 	os.MkdirAll(filepath.Join(root, "agentroot/home/kyber"), 0o755)
 	os.WriteFile(filepath.Join(root, "agentroot/home/kyber/notes.md"), []byte("hello"), 0o644)
 
+	m := exportWith(t, root, `{"source":{"agent":"han","runtime":"codex","config":{"version":2,"startupPrompt":"`+strings.Repeat("x", 200<<10)+`"}},"mounts":[{"path":"/persist","kind":"pvc","archived":true,"reason":"disk"}]}`)
+	// The description is larger than any one environment variable may be.
+	if m.Source.Agent != "han" || len(m.Mounts) != 1 || m.Totals.Files != 1 || len(m.Source.Config.StartupPrompt) != 200<<10 {
+		t.Errorf("manifest = %+v", m.Totals)
+	}
+}
+
+// exportWith runs an export against a fake control plane serving desc, and
+// returns the verified manifest of what was uploaded.
+func exportWith(t *testing.T, root, desc string) *diskarchive.Manifest {
+	t.Helper()
 	var got []byte
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPut || r.Header.Get("Authorization") != "Bearer tok" {
+		if r.Header.Get("Authorization") != "Bearer tok" {
 			http.Error(w, "forbidden", http.StatusForbidden)
 			return
 		}
-		got, _ = io.ReadAll(r.Body)
-		w.WriteHeader(http.StatusNoContent)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/description":
+			io.WriteString(w, desc)
+		case r.Method == http.MethodPut && r.URL.Path == "/upload":
+			got, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			http.Error(w, "forbidden", http.StatusForbidden)
+		}
 	}))
 	defer srv.Close()
-	t.Setenv("KYBER_ARCHIVE_UPLOAD_URL", srv.URL)
+	t.Setenv("KYBER_ARCHIVE_UPLOAD_URL", srv.URL+"/upload")
+	t.Setenv("KYBER_ARCHIVE_DESCRIPTION_URL", srv.URL+"/description")
 	t.Setenv("KYBER_ARCHIVE_TOKEN", "tok")
-	t.Setenv("KYBER_ARCHIVE_DESCRIPTION", `{"source":{"agent":"han","runtime":"codex"},"mounts":[{"path":"/persist","kind":"pvc","archived":true,"reason":"disk"}]}`)
-
 	if err := runExport(context.Background(), root); err != nil {
 		t.Fatalf("runExport: %v", err)
 	}
@@ -42,8 +59,36 @@ func TestExportStreamsVerifiableArchive(t *testing.T) {
 	if err != nil {
 		t.Fatalf("uploaded archive does not verify: %v", err)
 	}
-	if m.Source.Agent != "han" || len(m.Mounts) != 1 || m.Totals.Files != 1 {
-		t.Errorf("manifest = %+v", m)
+	return m
+}
+
+func TestExportMarksImageFiles(t *testing.T) {
+	root := t.TempDir()
+	write := func(p, body string, mtime time.Time) {
+		full := filepath.Join(root, p)
+		os.MkdirAll(filepath.Dir(full), 0o755)
+		os.WriteFile(full, []byte(body), 0o644)
+		os.Chtimes(full, mtime, mtime)
+	}
+	shipped := time.Unix(1770985020, 0)
+	write("agentroot/etc/cron.d/e2scrub_all", strings.Repeat("c", 188), shipped)
+	write("agentroot/usr/lib/node_modules/npm/.npmrc", "", shipped)
+	write("agentroot/usr/lib/node_modules/x/.npmrc", "registry=a\n", shipped)
+	write("agentroot/etc/cron.d/agent-job", "* * * * * x\n", shipped)
+	// Same size as the image's copy, but written by the agent later.
+	write("agentroot/usr/lib/node_modules/y/.npmrc", "//r/:_authToken=t", shipped.Add(time.Hour))
+	write(diskarchive.ImageManifestPath, "#kyber-rootfs-manifest v2\n"+
+		"f\t188\t1770985020.0000000000\t644\t./etc/cron.d/e2scrub_all\n"+
+		"f\t0\t1770985020.0000000000\t644\t./usr/lib/node_modules/npm/.npmrc\n"+
+		"f\t11\t1770985020.0000000000\t644\t./usr/lib/node_modules/x/.npmrc\n"+
+		"f\t17\t1770985020.0000000000\t644\t./usr/lib/node_modules/y/.npmrc\n", shipped)
+
+	m := exportWith(t, root, `{"source":{"agent":"han"}}`)
+	if got := diskarchive.SensitivePaths(m); len(got) != 1 || got[0] != "agentroot/usr/lib/node_modules/y/.npmrc" {
+		t.Errorf("sensitive = %v, want only the agent-changed .npmrc", got)
+	}
+	if got := diskarchive.CronPaths(m); len(got) != 1 || got[0] != "agentroot/etc/cron.d/agent-job" {
+		t.Errorf("cron = %v, want only the agent's crontab", got)
 	}
 }
 
@@ -54,6 +99,7 @@ func TestExportReportsRejectionAndWalkFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 	t.Setenv("KYBER_ARCHIVE_UPLOAD_URL", srv.URL)
+	t.Setenv("KYBER_ARCHIVE_DESCRIPTION_URL", srv.URL)
 	t.Setenv("KYBER_ARCHIVE_TOKEN", "tok")
 	if err := runExport(context.Background(), root); err == nil || !strings.Contains(err.Error(), "403") {
 		t.Errorf("rejected upload = %v, want HTTP 403", err)
@@ -62,6 +108,10 @@ func TestExportReportsRejectionAndWalkFailure(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "big"), bytes.Repeat([]byte("x"), 100), 0o644)
 	t.Setenv("KYBER_ARCHIVE_MAX_BYTES", "10")
 	ok := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			io.WriteString(w, "{}")
+			return
+		}
 		if _, err := io.ReadAll(r.Body); err != nil {
 			return // the walk aborted the stream
 		}
@@ -69,6 +119,7 @@ func TestExportReportsRejectionAndWalkFailure(t *testing.T) {
 	}))
 	defer ok.Close()
 	t.Setenv("KYBER_ARCHIVE_UPLOAD_URL", ok.URL)
+	t.Setenv("KYBER_ARCHIVE_DESCRIPTION_URL", ok.URL)
 	if err := runExport(context.Background(), root); err == nil || !strings.Contains(err.Error(), "archiving") {
 		t.Errorf("oversized walk = %v, want an archiving error", err)
 	}
@@ -165,14 +216,20 @@ func TestRestoreExtractsAndVerifiesWithSkips(t *testing.T) {
 		t.Error("restore into a non-empty volume succeeded")
 	}
 
-	// Opting in restores them.
+	// Opting in restores them, except the harness login, which never travels.
 	t.Setenv("KYBER_ARCHIVE_SKIP_CREDENTIALS", "false")
 	t.Setenv("KYBER_ARCHIVE_SKIP_CRONTABS", "false")
+	t.Setenv("KYBER_ARCHIVE_LOGIN_FILES", ".claude/.credentials.json,.codex/auth.json")
 	all := t.TempDir()
 	if err := runRestore(context.Background(), all); err != nil {
 		t.Fatalf("runRestore keeping everything: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(all, "agentroot/var/spool/cron/crontabs/kyber")); err != nil {
-		t.Errorf("opted-in crontab missing: %v", err)
+	for _, p := range []string{"agentroot/var/spool/cron/crontabs/kyber", "agentroot/home/kyber/.ssh/id_ed25519"} {
+		if _, err := os.Stat(filepath.Join(all, p)); err != nil {
+			t.Errorf("opted-in %s missing: %v", p, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(all, "agentroot/home/kyber/.claude/.credentials.json")); !os.IsNotExist(err) {
+		t.Errorf("harness login restored with keepCredentialFiles: %v", err)
 	}
 }

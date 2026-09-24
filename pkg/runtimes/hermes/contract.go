@@ -12,12 +12,15 @@ const openRouterInputField = "openrouterApiKey"
 
 func (*runtime) Descriptor() runtimes.Descriptor {
 	return runtimes.Descriptor{
-		ID:                    Type,
-		Name:                  "Hermes",
-		ContractVersion:       runtimes.ContractVersion,
-		Profile:               runtimes.InteractiveProfile,
-		HelmKey:               Type,
-		Cancellation:          "notify_only",
+		ID:              Type,
+		Name:            "Hermes",
+		ContractVersion: runtimes.ContractVersion,
+		Profile:         runtimes.InteractiveProfile,
+		HelmKey:         Type,
+		Cancellation:    "notify_only",
+		// Hermes keeps OAuth logins in auth.json and provider keys in .env
+		// (https://hermes-agent.nousresearch.com/docs/reference/environment-variables).
+		LoginFiles:            []string{".hermes/auth.json", ".hermes/.env"},
 		LegacyVersionsKey:     "hermesVersions",
 		AuthFailureExitCode:   42,
 		RequireCatalogContext: true,

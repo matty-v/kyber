@@ -30,6 +30,7 @@ import (
 	"github.com/matty-v/kyber/pkg/archivestore"
 	agentctrl "github.com/matty-v/kyber/pkg/controllers/agent"
 	"github.com/matty-v/kyber/pkg/diskarchive"
+	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 )
 
 // importBootTimeout bounds how long a restored agent may take to reach
@@ -104,6 +105,8 @@ type agentImportRequest struct {
 	// KeepCrontabs restores crontabs the agent installed itself. Off by
 	// default, so the same work does not run on both agents.
 	KeepCrontabs bool `json:"keepCrontabs,omitempty"`
+	// Apply chooses what of the archive's configuration the new agent gets.
+	Apply importApply `json:"apply,omitempty"`
 }
 
 // importSource resolves and checks the archive an import reads.
@@ -139,36 +142,68 @@ func requiredDiskBytes(s *archivejob.Summary) int64 {
 }
 
 // cutoverChecklist lists what the operator must reconcile by hand while the
-// source and the new agent coexist. Nothing on it is activated automatically.
-func cutoverChecklist(src *archivejob.Job, req agentImportRequest) []string {
+// source and the new agent coexist: what the import carried in an inactive
+// state, and what it could not carry. Nothing on it is activated
+// automatically.
+func cutoverChecklist(src *archivejob.Job, req agentImportRequest, p *importPlan) []string {
 	var out []string
 	cfg := src.Summary.Source.Config
+	if cfg == nil {
+		cfg = &diskarchive.Config{}
+	}
 	sourceName := src.Summary.Source.Agent
-	if jobs, ok := cfg["jobs"].([]any); ok && len(jobs) > 0 {
-		names := make([]string, 0, len(jobs))
-		for _, j := range jobs {
-			if m, ok := j.(map[string]any); ok {
-				names = append(names, fmt.Sprint(m["name"]))
-			}
-		}
-		out = append(out, fmt.Sprintf("Scheduled jobs on %s were not copied (%s). Add them to the new agent once %s no longer runs them.",
-			sourceName, strings.Join(names, ", "), sourceName))
-	}
-	if ch, ok := cfg["channels"].(map[string]any); ok {
-		for _, name := range []string{"telegram", "slack", "discord"} {
-			if on, _ := ch[name].(bool); on {
-				out = append(out, fmt.Sprintf("%s had %s enabled. Enable it on the new agent only after disabling it on %s, or both agents will answer.",
-					sourceName, channelTitle[name], sourceName))
-			}
+	applied := p.configOn()
+	if cfg.Version > 0 || len(cfg.Jobs) > 0 || cfg.Runtime != "" {
+		switch {
+		case !applied:
+			out = append(out, "The archive's configuration was not applied; the new agent has only what the create request set.")
+		case cfg.Version < diskarchive.ConfigVersion:
+			out = append(out, "The archive predates full configuration capture: its profile, public capabilities, A2A peers, webhook binding definitions and user secret list were not recorded. Set them on the new agent by hand.")
 		}
 	}
-	if b, ok := cfg["inboundBindings"].([]any); ok && len(b) > 0 {
-		out = append(out, fmt.Sprintf("%s has %d inbound webhook binding(s). They were not copied; move the sender to the new agent's URL when you cut over.", sourceName, len(b)))
+	if len(cfg.Jobs) > 0 {
+		names := make([]string, 0, len(cfg.Jobs))
+		for _, jb := range cfg.Jobs {
+			names = append(names, jb.Name)
+		}
+		if applied && p.apply.Jobs == applyPaused {
+			out = append(out, fmt.Sprintf("Scheduled jobs were restored paused (%s). Unpause them on the new agent once %s no longer runs them.",
+				strings.Join(names, ", "), sourceName))
+		} else {
+			out = append(out, fmt.Sprintf("Scheduled jobs on %s were not copied (%s). Add them to the new agent once %s no longer runs them.",
+				sourceName, strings.Join(names, ", "), sourceName))
+		}
 	}
-	if repo, _ := cfg["identityRepo"].(string); repo != "" {
-		note := "The identity repo checkout from " + repo + " is restored on disk."
-		if req.Agent.IdentityRepo.Repo == repo {
+	for _, name := range []string{"telegram", "slack", "discord"} {
+		if cfg.Channels[name] {
+			out = append(out, fmt.Sprintf("%s had %s enabled. Enable it on the new agent only after disabling it on %s, or both agents will answer.",
+				sourceName, channelTitle[name], sourceName))
+		}
+	}
+	if n := len(cfg.InboundBindings); n > 0 {
+		names := strings.Join(cfg.InboundBindings, ", ")
+		if applied && p.apply.Bindings == applyDisabled && len(cfg.InboundBindingSpecs) > 0 {
+			out = append(out, fmt.Sprintf("Inbound webhook bindings were restored disabled with new signing secrets (%s). When you cut over, give each sender the new agent's URL and secret, then enable the binding.", names))
+		} else {
+			out = append(out, fmt.Sprintf("%s has %d inbound webhook binding(s) that were not copied (%s); recreate them and move each sender to the new agent's URL when you cut over.", sourceName, n, names))
+		}
+	}
+	if len(cfg.UserSecrets) > 0 && applied {
+		if p.sourceSecrets != nil {
+			out = append(out, "User secrets were copied from "+sourceName+": "+secretList(cfg.UserSecrets)+". Both agents now hold them; rotate any they should not share.")
+		} else {
+			out = append(out, "User secrets were not copied because "+sourceName+" is not on this installation or copying was turned off. Set their values on the new agent: "+secretList(cfg.UserSecrets)+".")
+		}
+	}
+	if len(p.missingPeerSecrets) > 0 {
+		out = append(out, "A2A peers whose credential Secret does not exist here were left off: "+strings.Join(p.missingPeerSecrets, ", ")+". Create the Secret and add the peer.")
+	}
+	if cfg.IdentityRepo != "" {
+		note := "The identity repo checkout from " + cfg.IdentityRepo + " is restored on disk."
+		if req.Agent.IdentityRepo.Repo == cfg.IdentityRepo {
 			note += " Both agents now use it; stop one before either pushes."
+		} else if p.identityRepoUnlinked {
+			note += " It was not linked because this installation has no GitHub App; link it once one is configured."
 		}
 		out = append(out, note)
 	}
@@ -181,17 +216,45 @@ func cutoverChecklist(src *archivejob.Job, req agentImportRequest) []string {
 				n, sourceName, strings.Join(src.Summary.Cron, ", "), sourceName))
 		}
 	}
-	if n := len(src.Summary.Sensitive); n > 0 {
+	login, sensitive := splitLoginFiles(src.Summary)
+	if len(login) > 0 {
+		out = append(out, "Harness login files are never restored ("+strings.Join(login, ", ")+"). Authorize the new agent with its own credential.")
+	}
+	if len(sensitive) > 0 {
 		if req.KeepCredentialFiles {
-			out = append(out, "Files that look like credentials were restored as they were: "+strings.Join(src.Summary.Sensitive, ", ")+". Both agents now hold them; rotate any they should not share.")
+			out = append(out, "Files that look like credentials were restored as they were: "+strings.Join(sensitive, ", ")+". Both agents now hold them; rotate any they should not share.")
 		} else {
-			out = append(out, "Files that look like credentials were not restored ("+strings.Join(src.Summary.Sensitive, ", ")+"). Authorize the new agent and give it its own credentials.")
+			out = append(out, "Files that look like credentials were not restored ("+strings.Join(sensitive, ", ")+"). Give the new agent its own credentials.")
 		}
 	}
-	if src.Summary.Source.Runtime != "" && src.Summary.Source.Runtime != req.Agent.Runtime {
-		out = append(out, fmt.Sprintf("The archive came from a %s agent and the new agent runs %s. Its sessions will not resume.", src.Summary.Source.Runtime, req.Agent.Runtime))
+	if !p.sameRuntime {
+		note := fmt.Sprintf("The archive came from a %s agent and the new agent runs %s. Its sessions will not resume", src.Summary.Source.Runtime, req.Agent.Runtime)
+		if applied && cfg.Model != "" {
+			note += " and its model (" + cfg.Model + ") was not carried over"
+		}
+		out = append(out, note+".")
+	}
+	for _, f := range p.failed {
+		out = append(out, "Not carried over: "+f+".")
 	}
 	return out
+}
+
+// splitLoginFiles separates the harness login files, which a restore always
+// leaves out, from the other credential-like files. An archive from before
+// login files were recorded lists them among its sensitive files, so those
+// are sorted by this installation's runtimes.
+func splitLoginFiles(s *archivejob.Summary) (login, sensitive []string) {
+	login = append(login, s.Login...)
+	known := pkgruntimes.LoginFiles()
+	for _, p := range s.Sensitive {
+		if diskarchive.IsLoginPath(p, known) {
+			login = append(login, p)
+		} else {
+			sensitive = append(sensitive, p)
+		}
+	}
+	return login, sensitive
 }
 
 // startImport validates an import, creates the held Agent through the normal
@@ -237,6 +300,15 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 	if req.Agent.Runtime == "" {
 		req.Agent.Runtime = src.Summary.Source.Runtime
 	}
+	plan, err := s.planImport(r.Context(), src, req)
+	if err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "apply")
+		return
+	}
+	if err := s.mergeArchiveConfig(r.Context(), plan, &req.Agent); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal_error", err.Error())
+		return
+	}
 	need := requiredDiskBytes(src.Summary)
 	if req.Agent.Resources.Disk == "" {
 		// The source's own disk size where it is known, so the copy keeps the
@@ -271,11 +343,10 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 
 	// What the restore will leave out. The restore pod applies the same rule
 	// to the full manifest; this list (from the summary) is for display.
-	var skipped []string
-	for _, p := range src.Summary.Sensitive {
-		if !req.KeepCredentialFiles {
-			skipped = append(skipped, p)
-		}
+	login, sensitive := splitLoginFiles(src.Summary)
+	skipped := append([]string(nil), login...)
+	if !req.KeepCredentialFiles {
+		skipped = append(skipped, sensitive...)
 	}
 	for _, p := range src.Summary.Cron {
 		if !req.KeepCrontabs {
@@ -294,7 +365,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 		RequestedBy: caller.Name, SourceJobID: src.ID, Machine: req.Agent.Machine,
 		Skip: skipped, Summary: src.Summary, HoldApplied: true, BytesTotal: src.PlainSize,
 		KeepCredentialFiles: req.KeepCredentialFiles, KeepCrontabs: req.KeepCrontabs,
-		Cutover: cutoverChecklist(src, req),
+		Cutover: cutoverChecklist(src, req, plan),
 	}
 	if err := a.Jobs.Create(r.Context(), j, a.limits().MaxConcurrentJobs); err != nil {
 		switch {
@@ -342,8 +413,12 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 
 	// Record what was created. The UID and Secret names come from the create
 	// itself, not a read-back through the (possibly stale) cache.
-	uid, secrets := string(hold.uid), hold.secrets
-	j.AgentUID, j.CreatedSecrets, j.Message = uid, secrets, "Queued"
+	// Carry what the create request cannot express onto the held agent, then
+	// rewrite the checklist with what actually carried.
+	s.applyArchiveToAgent(r.Context(), name, hold.uid, plan)
+	uid, secrets := string(hold.uid), append(hold.secrets, plan.createdSecrets...)
+	cutover := cutoverChecklist(src, req, plan)
+	j.AgentUID, j.CreatedSecrets, j.Cutover, j.Message = uid, secrets, cutover, "Queued"
 	err = a.Jobs.Update(r.Context(), j)
 	// The worker may have adopted this agent by its hold in the meantime (it
 	// cannot tell a slow handler from one that stopped). That is the same
@@ -354,7 +429,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 		if gerr != nil || cur.State.Terminal() || cur.Finishing != "" || cur.CancelRequested || cur.AgentUID != "" && cur.AgentUID != uid {
 			break
 		}
-		cur.AgentUID, cur.CreatedSecrets = uid, secrets
+		cur.AgentUID, cur.CreatedSecrets, cur.Cutover = uid, secrets, cutover
 		if cur.State == archivejob.StateQueued {
 			cur.Message = "Queued"
 		}
@@ -526,6 +601,7 @@ func (a *ArchiveService) createRestorePod(ctx context.Context, j *archivejob.Job
 		{Name: "KYBER_ARCHIVE_SOURCE_URL", Value: strings.TrimRight(a.InternalURL, "/") + "/internal/archive-jobs/" + j.ID + "/archive"},
 		{Name: "KYBER_ARCHIVE_SKIP_CREDENTIALS", Value: strconv.FormatBool(!j.KeepCredentialFiles)},
 		{Name: "KYBER_ARCHIVE_SKIP_CRONTABS", Value: strconv.FormatBool(!j.KeepCrontabs)},
+		{Name: "KYBER_ARCHIVE_LOGIN_FILES", Value: strings.Join(pkgruntimes.LoginFiles(), ",")},
 		{Name: "KYBER_ARCHIVE_MAX_BYTES", Value: fmt.Sprint(a.limits().MaxArchiveBytes)},
 		{Name: "KYBER_ARCHIVE_MAX_ENTRIES", Value: fmt.Sprint(a.limits().MaxEntries)},
 	}
