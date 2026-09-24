@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -381,7 +382,8 @@ func (c *Client) gitData(ctx context.Context, token, method, url string, in, out
 	defer resp.Body.Close()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if resp.StatusCode != want {
-		return fmt.Errorf("%s %s: HTTP %d: %s", method, strings.TrimPrefix(url, c.baseURL), resp.StatusCode, bytes.TrimSpace(respBody))
+		return &gitDataError{status: resp.StatusCode,
+			msg: fmt.Sprintf("%s %s: HTTP %d: %s", method, strings.TrimPrefix(url, c.baseURL), resp.StatusCode, bytes.TrimSpace(respBody))}
 	}
 	if out != nil {
 		if err := json.Unmarshal(respBody, out); err != nil {
@@ -390,6 +392,14 @@ func (c *Client) gitData(ctx context.Context, token, method, url string, in, out
 	}
 	return nil
 }
+
+// gitDataError is a Git Data API call answered with an unexpected status.
+type gitDataError struct {
+	status int
+	msg    string
+}
+
+func (e *gitDataError) Error() string { return e.msg }
 
 // getRefSHA returns the commit SHA the branch points at.
 func (c *Client) getRefSHA(ctx context.Context, token, owner, repo, branch string) (string, error) {
@@ -410,8 +420,26 @@ func (c *Client) getRefSHA(ctx context.Context, token, owner, repo, branch strin
 func (c *Client) substituteBlob(ctx context.Context, token, owner, repo string, item treeItem, params ScaffoldParams) (string, error) {
 	var blob blobResponse
 	url := fmt.Sprintf("%s/repos/%s/%s/git/blobs/%s", c.baseURL, owner, repo, item.SHA)
-	if err := c.gitData(ctx, token, http.MethodGet, url, nil, &blob, http.StatusOK); err != nil {
-		return "", err
+	// A just-generated repo serves its tree before every replica can serve
+	// its blobs, so a blob the tree names may 404 for a moment.
+	const (
+		maxAttempts = 12
+		backoff     = 500 * time.Millisecond
+	)
+	for attempt := 1; ; attempt++ {
+		err := c.gitData(ctx, token, http.MethodGet, url, nil, &blob, http.StatusOK)
+		var gerr *gitDataError
+		if err == nil {
+			break
+		}
+		if !errors.As(err, &gerr) || gerr.status != http.StatusNotFound || attempt == maxAttempts {
+			return "", err
+		}
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(backoff):
+		}
 	}
 	if blob.Encoding != "" && blob.Encoding != "base64" {
 		return "", nil
