@@ -3,6 +3,7 @@ package diskarchive
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"compress/flate"
 	"context"
 	"encoding/json"
@@ -87,11 +88,23 @@ func Write(ctx context.Context, rootDir string, w io.Writer, opts WriteOptions) 
 			if err != nil {
 				return fmt.Errorf("writing %s: %w", e.Path, err)
 			}
-			sum, err := hashFile(root, item, fw)
+			// Package-manager config files are credentials only when they
+			// carry auth settings; most just name a registry. Their content
+			// is read as it is archived, so the check sees the archived bytes.
+			var cfg *bytes.Buffer
+			dst := io.Writer(fw)
+			if isPackageConfig(e.Path) && e.Size <= maxPackageConfigBytes {
+				cfg = &bytes.Buffer{}
+				dst = io.MultiWriter(fw, cfg)
+			}
+			sum, err := hashFile(root, item, dst)
 			if err != nil {
 				return err
 			}
 			e.SHA256 = sum
+			if cfg != nil {
+				e.NoCredentials = !packageConfigHasCredentials(cfg.Bytes())
+			}
 			e.Image = opts.Image[e.Path].Matches(e)
 			m.Totals.Files++
 			m.Totals.Bytes += e.Size

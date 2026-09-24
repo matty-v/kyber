@@ -497,3 +497,40 @@ func TestIsLoginPath(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageConfigCredentials(t *testing.T) {
+	for body, want := range map[string]bool{
+		"registry=https://registry.npmjs.org/\n":                   false,
+		"# comment\n@scope:registry=https://npm.example/\n":        false,
+		"//registry.npmjs.org/:_authToken=x\n":                     true,
+		"_auth = x\n":                                              true,
+		"//npm.example/:username=me\n//npm.example/:_password=x\n": true,
+		"[distutils]\nindex-servers = pypi\n[pypi]\nrepository = https://upload.pypi.org/legacy/\n": false,
+		"[pypi]\npassword = x\n": true,
+	} {
+		if got := packageConfigHasCredentials([]byte(body)); got != want {
+			t.Errorf("packageConfigHasCredentials(%q) = %v, want %v", body, got, want)
+		}
+	}
+}
+
+// A plugin's registry-only .npmrc is archived but not flagged; one that
+// carries a token still is.
+func TestWriteChecksPackageConfigContent(t *testing.T) {
+	root := t.TempDir()
+	for p, body := range map[string]string{
+		"home/.claude/plugins/p/.npmrc": "registry=https://registry.npmjs.org/\n",
+		"home/.npmrc":                   "//registry.npmjs.org/:_authToken=x\n",
+	} {
+		os.MkdirAll(filepath.Join(root, filepath.Dir(p)), 0o755)
+		os.WriteFile(filepath.Join(root, p), []byte(body), 0o600)
+	}
+	var buf bytes.Buffer
+	m, err := Write(context.Background(), root, &buf, WriteOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := SensitivePaths(m); len(got) != 1 || got[0] != "home/.npmrc" {
+		t.Errorf("sensitive = %v, want only the .npmrc with a token", got)
+	}
+}
