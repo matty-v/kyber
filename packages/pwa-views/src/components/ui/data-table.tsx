@@ -3,30 +3,63 @@ import type { ReactNode } from 'react'
 import {
   type ColumnDef,
   type ExpandedState,
-  type SortingState,
-  flexRender,
-  getCoreRowModel,
-  getExpandedRowModel,
-  getSortedRowModel,
   type Row,
-  useReactTable,
+  type RowData,
+  type SortingState,
+  columnVisibilityFeature,
+  createExpandedRowModel,
+  createSortedRowModel,
+  flexRender,
+  rowExpandingFeature,
+  rowSortingFeature,
+  sortFn_alphanumeric,
+  sortFn_basic,
+  sortFn_datetime,
+  sortFn_text,
+  tableFeatures,
+  useTable,
 } from '@tanstack/react-table'
 import { ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
-interface Props<T> {
-  columns: ColumnDef<T, unknown>[]
+// The table features every DataTable uses. TanStack Table v9 bundles nothing
+// by default: sorting and row expansion are registered here with their row
+// models, and the sort functions v8 bundled for auto-detected column types
+// (alphanumeric, text, datetime, basic) keep sorting behaviour unchanged.
+// Column visibility provides the visible-column and visible-cell accessors
+// the markup reads.
+export const dataTableFeatures = tableFeatures({
+  columnVisibilityFeature,
+  rowSortingFeature,
+  rowExpandingFeature,
+  sortedRowModel: createSortedRowModel(),
+  expandedRowModel: createExpandedRowModel(),
+  sortFns: {
+    alphanumeric: sortFn_alphanumeric,
+    text: sortFn_text,
+    datetime: sortFn_datetime,
+    basic: sortFn_basic,
+  },
+})
+
+export type DataTableFeatures = typeof dataTableFeatures
+
+// DataTableColumn is the column definition type pages pass to DataTable.
+export type DataTableColumn<T extends RowData> = ColumnDef<DataTableFeatures, T, unknown>
+
+interface Props<T extends RowData> {
+  columns: DataTableColumn<T>[]
   data: T[]
   onRowClick?: (row: T) => void
   getRowId?: (row: T) => string
   emptyState?: ReactNode
   className?: string
   initialSorting?: SortingState
-  renderExpandedRow?: (row: Row<T>) => ReactNode
+  renderExpandedRow?: (row: Row<DataTableFeatures, T>) => ReactNode
   columnWidths?: readonly string[]
 }
 
-export function DataTable<T>({
+export function DataTable<T extends RowData>({
   columns,
   data,
   onRowClick,
@@ -39,15 +72,13 @@ export function DataTable<T>({
 }: Props<T>) {
   const [sorting, setSorting] = useState<SortingState>(initialSorting ?? [])
   const [expanded, setExpanded] = useState<ExpandedState>({})
-  const table = useReactTable({
+  const table = useTable({
+    features: dataTableFeatures,
     data,
     columns,
     state: { sorting, expanded },
     onSortingChange: setSorting,
     onExpandedChange: setExpanded,
-    getCoreRowModel: getCoreRowModel(),
-    getExpandedRowModel: getExpandedRowModel(),
-    getSortedRowModel: getSortedRowModel(),
     getRowId,
     getRowCanExpand: () => Boolean(renderExpandedRow),
   })

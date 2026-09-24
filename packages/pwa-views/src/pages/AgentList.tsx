@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { Bot, ChevronDown, ChevronRight, Plus, Trash2, MoreHorizontal } from 'lucide-react'
-import type { ColumnDef } from '@tanstack/react-table'
 import {
   useAgents,
   useStartAgent,
@@ -31,7 +30,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { DataTable } from '@/components/ui/data-table'
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
 import type { Agent } from '../lib/types'
 import {
@@ -106,7 +105,7 @@ export function AgentList() {
     setPending({ kind, agent })
   }
 
-  const columns = useMemo<ColumnDef<Agent, unknown>[]>(
+  const columns = useMemo<DataTableColumn<Agent>[]>(
     () => [
       {
         accessorKey: 'id',

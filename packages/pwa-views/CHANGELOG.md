@@ -1,5 +1,14 @@
 # @matty-v/kyber-pwa-views
 
+## 0.61.0
+
+- The agent and machine tables run on TanStack Table v9. Sorting and row
+  expansion behave as before, except that names containing numbers now sort
+  naturally (agent-2 before agent-10): v8 picked its sort function from the
+  wrong sample rows and compared short tables as plain strings.
+- New `DataTableColumn<T>` type for column definitions passed to
+  `DataTable`.
+
 ## 0.60.0
 
 - Built and tested against React 19. The peer range is now
