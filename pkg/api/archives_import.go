@@ -192,7 +192,7 @@ func cutoverChecklist(src *archivejob.Job, req agentImportRequest, p *importPlan
 		if p.sourceSecrets != nil {
 			out = append(out, "User secrets were copied from "+sourceName+": "+secretList(cfg.UserSecrets)+". Both agents now hold them; rotate any they should not share.")
 		} else {
-			out = append(out, "User secrets were not copied because "+sourceName+" is not on this installation or copying was turned off. Set their values on the new agent: "+secretList(cfg.UserSecrets)+".")
+			out = append(out, "User secrets were not copied ("+p.secretsNotCopied+"). Set their values on the new agent: "+secretList(cfg.UserSecrets)+".")
 		}
 	}
 	if len(p.missingPeerSecrets) > 0 {

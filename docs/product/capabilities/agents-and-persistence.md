@@ -106,9 +106,10 @@ values), and the wizard prefills the new agent from it. Your edits win.
 
 Nothing that would make two agents act at once is turned on. Scheduled jobs
 arrive **paused** and webhook bindings arrive **disabled**, each with a new
-signing secret, so neither fires until you enable it on the new agent. When the
-source agent is on the same installation, user-secret values are copied inside
-the cluster; otherwise each key is listed for you to re-enter. A2A peers whose
+signing secret, so neither fires until you enable it on the new agent. When you
+create from an export whose agent is still on the installation, user-secret
+values are copied inside the cluster; otherwise (an upload, or the agent is
+gone) each key is listed for you to re-enter. A2A peers whose
 credential Secret does not exist on the new installation are left off. Each of
 these can be left out instead from the wizard's **From the archive** section.
 Kyber lists everything you still have to do on the new agent's page as a

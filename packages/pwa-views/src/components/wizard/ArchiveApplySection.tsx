@@ -98,7 +98,7 @@ export function ArchiveApplySection({ summary, state, set }: { summary: ArchiveS
         <div className="flex flex-wrap items-center justify-between gap-2" data-testid="archive-apply-secrets">
           <span>
             {secrets.length} user secret{secrets.length === 1 ? '' : 's'}: {secrets.map((s) => `${s.key} (${s.kind})`).join(', ')}
-            <span className="block text-text-muted">Values are copied inside the cluster when {summary.source.agent} is on this installation; otherwise re-enter them.</span>
+            <span className="block text-text-muted">Values are copied inside the cluster from an export whose agent ({summary.source.agent}) is still on this installation; from an upload, re-enter them.</span>
           </span>
           <Choice label="User secrets" value={apply.secrets} disabled={off} onChange={(v) => update({ secrets: v })}
             options={[['copy-if-local', 'Copy values'], ['skip', 'Leave out']]} />

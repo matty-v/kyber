@@ -132,7 +132,7 @@ get `429` with `Retry-After`.
    | `config` | `true` | Fill create fields the request leaves empty (model if the runtime matches, startup prompt, CPU and memory, session resume, request-reply, soul, identity repo if the GitHub App can link it, A2A peers whose credential Secret exists here), and restore profile, avatar and public capabilities |
    | `jobs` | `paused` | Restore scheduled jobs paused, or `skip` |
    | `bindings` | `disabled` | Restore webhook bindings disabled with new signing secrets, or `skip` |
-   | `secrets` | `copy-if-local` | Copy user-secret values server-side when the source agent still exists on this installation, or `skip` |
+   | `secrets` | `copy-if-local` | Copy user-secret values server-side when the source is an export whose agent still exists on this installation, or `skip`. An upload never copies values: its manifest is uploader-supplied, so it cannot authorize reading another agent's secrets |
 
    A paused job is not scheduled and "Run now" refuses it; a disabled binding
    authenticates deliveries and answers `409 binding_disabled`. Archives

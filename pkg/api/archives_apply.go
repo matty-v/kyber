@@ -87,6 +87,8 @@ type importPlan struct {
 	// missingPeerSecrets names A2A peers left off because the Secret their
 	// credential references does not exist on this installation.
 	missingPeerSecrets []string
+	// secretsNotCopied says why user-secret values were not copied.
+	secretsNotCopied string
 	// sourceSecrets is set when user-secret values will be copied from a
 	// source agent on this installation.
 	sourceSecrets *kyberv1.Agent
@@ -114,11 +116,21 @@ func (s *Server) planImport(ctx context.Context, src *archivejob.Job, req agentI
 	if !p.configOn() {
 		return p, nil
 	}
-	if apply.Secrets == applyCopyIfLocal && len(p.cfg.UserSecrets) > 0 {
+	switch {
+	case len(p.cfg.UserSecrets) == 0:
+	case apply.Secrets != applyCopyIfLocal:
+		p.secretsNotCopied = "copying was turned off"
+	case src.Kind != archivejob.KindExport:
+		// An upload's manifest is whatever the uploader wrote, so its claim
+		// to come from an agent here cannot authorize reading that agent's
+		// secrets. Only an export this installation made can.
+		p.secretsNotCopied = "values are copied only from an export made on this installation, not from an upload"
+	default:
+		p.secretsNotCopied = src.Summary.Source.Agent + " is no longer on this installation"
 		srcAgent := &kyberv1.Agent{}
 		err := s.K8sClient.Get(ctx, types.NamespacedName{Name: src.Summary.Source.Agent, Namespace: s.Namespace}, srcAgent)
 		if err == nil && (src.Summary.Source.UID == "" || string(srcAgent.UID) == src.Summary.Source.UID) {
-			p.sourceSecrets = srcAgent
+			p.sourceSecrets, p.secretsNotCopied = srcAgent, ""
 		} else if err != nil && !k8serrors.IsNotFound(err) {
 			return nil, fmt.Errorf("checking the source agent: %w", err)
 		}
@@ -200,6 +212,10 @@ func (s *Server) applyArchiveToAgent(ctx context.Context, name string, uid types
 			p.failed = append(p.failed, "inbound bindings: the archive's definitions could not be read")
 		}
 		for _, b := range specs {
+			if err := validateArchivedBinding(b); err != nil {
+				p.failed = append(p.failed, fmt.Sprintf("inbound binding %s: %v", b.Name, err))
+				continue
+			}
 			secretName, _, err := s.createBindingSecret(ctx, name, b.Name)
 			if err != nil {
 				p.failed = append(p.failed, fmt.Sprintf("inbound binding %s: %v", b.Name, err))
@@ -208,6 +224,24 @@ func (s *Server) applyArchiveToAgent(ctx context.Context, name string, uid types
 			p.createdSecrets = append(p.createdSecrets, secretName)
 			b.ExistingSecret, b.Disabled = secretName, true
 			bindings = append(bindings, b)
+		}
+	}
+	// Jobs pass the same checks as PATCH /jobs; an upload's are untrusted.
+	var jobs []kyberv1.AgentJob
+	if p.apply.Jobs == applyPaused {
+		seen := map[string]bool{}
+		for _, jb := range c.Jobs {
+			valid, err := validateJobsRequest([]AgentJobRequest{{Name: jb.Name, Schedule: jb.Schedule, Prompt: jb.Prompt,
+				Exclusive: jb.Exclusive, ClearContextAfter: jb.ClearContextAfter, Paused: true}})
+			if err == nil && seen[jb.Name] {
+				err = errors.New("duplicate name")
+			}
+			if err != nil {
+				p.failed = append(p.failed, fmt.Sprintf("scheduled job %s: %v", jb.Name, err))
+				continue
+			}
+			seen[jb.Name] = true
+			jobs = append(jobs, valid...)
 		}
 	}
 	var caps *kyberv1.AgentPublicCapabilities
@@ -249,15 +283,7 @@ func (s *Server) applyArchiveToAgent(ctx context.Context, name string, uid types
 		if agent.UID != uid {
 			return errStaleAgent
 		}
-		if p.apply.Jobs == applyPaused {
-			agent.Spec.Jobs = nil
-			for _, jb := range c.Jobs {
-				agent.Spec.Jobs = append(agent.Spec.Jobs, kyberv1.AgentJob{
-					Name: jb.Name, Schedule: jb.Schedule, Prompt: jb.Prompt,
-					Exclusive: jb.Exclusive, ClearContextAfter: jb.ClearContextAfter, Paused: true,
-				})
-			}
-		}
+		agent.Spec.Jobs = jobs
 		agent.Spec.InboundBindings = bindings
 		agent.Spec.PublicCapabilities = caps
 		if c.Profile != nil {
@@ -333,6 +359,20 @@ func (s *Server) copyUserSecrets(ctx context.Context, p *importPlan, source stri
 		if err != nil {
 			return fmt.Errorf("copying %s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// validateArchivedBinding applies the inbound-bindings route's checks to a
+// binding definition from an archive.
+func validateArchivedBinding(b kyberv1.AgentInboundBinding) error {
+	switch {
+	case len(b.Name) > 63 || !bindingNameRe.MatchString(b.Name):
+		return errors.New("name must be lowercase alphanumeric + hyphens, 1-63 chars")
+	case b.SignatureHeader == "":
+		return errors.New("signatureHeader is required")
+	case b.Action == "":
+		return errors.New("action is required")
 	}
 	return nil
 }

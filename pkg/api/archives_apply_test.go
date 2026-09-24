@@ -48,7 +48,7 @@ func (h *exportHarness) configureSource() {
 	}
 	a.Spec.InboundBindings = []kyberv1.AgentInboundBinding{{
 		Name: "github", ExistingSecret: exportAgent + "-github-hmac", SignatureHeader: "X-Hub-Signature-256",
-		SignaturePrefix: "sha256=", EventHeader: "X-GitHub-Event", MatchEvents: []string{"push"},
+		SignaturePrefix: "sha256=", EventHeader: "X-GitHub-Event", MatchEvents: []string{"push"}, Action: "Handle the push.",
 	}}
 	a.Spec.PublicCapabilities = &kyberv1.AgentPublicCapabilities{
 		SchemaVersion: capabilities.SchemaV1Alpha1,
@@ -289,7 +289,7 @@ func TestImportWithSourceGoneListsSecrets(t *testing.T) {
 	if _, err := h.secret(restoredAgent + "-user-secrets-kv"); !k8serrors.IsNotFound(err) {
 		t.Errorf("secrets copied from a deleted source: %v", err)
 	}
-	mustContain(t, cutover, "not on this installation", "API_TOKEN (kv), CERT (file)")
+	mustContain(t, cutover, "exporter is no longer on this installation", "API_TOKEN (kv), CERT (file)")
 }
 
 func TestImportRejectsBadApply(t *testing.T) {
@@ -410,4 +410,63 @@ func TestExportPodReadsItsDescriptionFromTheJob(t *testing.T) {
 	if rr.Code != http.StatusOK || d.Source.Agent != exportAgent || d.Source.Config == nil || !bytes.Equal(d.Source.Config.Profile.Avatar, testAvatar) {
 		t.Errorf("description = %d %.200s", rr.Code, rr.Body.String())
 	}
+}
+
+// An upload's manifest can claim any source agent, so it never authorizes
+// copying that agent's secret values.
+func TestImportFromUploadNeverCopiesSecrets(t *testing.T) {
+	h := newExportHarness(t)
+	h.configureSource()
+	ctx := context.Background()
+	exportID, data := h.completedExport()
+	_ = exportID
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/archive-uploads", bytes.NewReader(data))
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	rr := httptest.NewRecorder()
+	h.server.BuildHandler().ServeHTTP(rr, req)
+	var up struct{ ID string }
+	json.Unmarshal(rr.Body.Bytes(), &up)
+	h.svc.Tick(ctx)
+	h.playVerifyPod(up.ID)
+	h.svc.Tick(ctx)
+	if j := h.job(up.ID); j.State != archivejob.StateCompleted || j.Summary.Source.Config == nil {
+		t.Fatalf("upload = %s", j.State)
+	}
+	_, cutover := h.importID(h.importWith(map[string]string{"uploadId": up.ID}, nil))
+	if _, err := h.secret(restoredAgent + "-user-secrets-kv"); !k8serrors.IsNotFound(err) {
+		t.Errorf("secrets copied on the strength of an upload: %v", err)
+	}
+	mustContain(t, cutover, "only from an export made on this installation", "API_TOKEN (kv)")
+	// Everything else still applies.
+	a, _ := h.newAgent()
+	if len(a.Spec.Jobs) != 2 || len(a.Spec.InboundBindings) != 1 {
+		t.Errorf("upload import did not apply jobs/bindings: %+v", a.Spec)
+	}
+}
+
+// Archived jobs and bindings pass the same checks as the API routes; an
+// invalid one is left off and listed, and the rest still apply.
+func TestImportSkipsInvalidArchivedJobsAndBindings(t *testing.T) {
+	h := newExportHarness(t)
+	exportID, _ := h.completedExport()
+	src := h.job(exportID)
+	src.Summary.Source.Config = &diskarchive.Config{Version: diskarchive.ConfigVersion, Runtime: "claude-code",
+		Jobs: []diskarchive.ConfigJob{
+			{Name: "good", Schedule: "0 9 * * *", Prompt: "p"},
+			{Name: "Bad Name", Schedule: "0 9 * * *", Prompt: "p"},
+			{Name: "noschedule", Schedule: "nope", Prompt: "p"},
+			{Name: "good", Schedule: "0 9 * * *", Prompt: "dup"},
+		},
+		InboundBindings:     []string{"ok", "noaction"},
+		InboundBindingSpecs: json.RawMessage(`[{"name":"ok","existingSecret":"","signatureHeader":"X-Sig","action":"do it"},{"name":"noaction","existingSecret":"","signatureHeader":"X-Sig"}]`),
+	}
+	if err := h.svc.Jobs.Update(context.Background(), src); err != nil {
+		t.Fatal(err)
+	}
+	_, cutover := h.importID(h.importWith(map[string]string{"exportId": exportID}, nil))
+	a, _ := h.newAgent()
+	if len(a.Spec.Jobs) != 1 || a.Spec.Jobs[0].Name != "good" || len(a.Spec.InboundBindings) != 1 || a.Spec.InboundBindings[0].Name != "ok" {
+		t.Errorf("jobs=%+v bindings=%+v", a.Spec.Jobs, a.Spec.InboundBindings)
+	}
+	mustContain(t, cutover, "scheduled job Bad Name", "scheduled job noschedule", "duplicate name", "inbound binding noaction: action is required")
 }
