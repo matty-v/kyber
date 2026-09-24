@@ -95,3 +95,27 @@ func TestRunNowReportsDispatchOutcome(t *testing.T) {
 		})
 	}
 }
+
+// An agent image from before --run-now rejects the flag with a usage error;
+// run-now falls back to the --stdin form that image understands.
+func TestRunNowFallsBackForOlderAgentImages(t *testing.T) {
+	job := kyberv1.AgentJob{Name: "weekly", Schedule: "0 3 * * 0", Prompt: "summarize", Exclusive: true}
+	s, _ := runNowServer(t, job, "", nil)
+	var calls [][]string
+	var stdins []string
+	s.jobDispatchExec = func(_ context.Context, _ string, args []string, stdin io.Reader) (string, string, error) {
+		body, _ := io.ReadAll(stdin)
+		calls, stdins = append(calls, append([]string(nil), args...)), append(stdins, string(body))
+		if args[0] == "--run-now" {
+			return "", "kyber-job-dispatch: unknown flag --run-now\n", utilexec.CodeExitError{Err: errors.New("exit"), Code: 2}
+		}
+		return "", "", nil
+	}
+	rr := postRunNow(s, "weekly")
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if len(calls) != 2 || strings.Join(calls[1], " ") != "--stdin --exclusive weekly" || stdins[1] != "summarize" {
+		t.Fatalf("calls=%q stdins=%q", calls, stdins)
+	}
+}

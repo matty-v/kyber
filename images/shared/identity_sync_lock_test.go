@@ -168,3 +168,27 @@ func TestSync_KeepsALockWhileAGitProcessIsRunningInTheRepo(t *testing.T) {
 		t.Errorf("keeping the lock was not explained:\n%s", out)
 	}
 }
+
+// A git working on the repo from elsewhere (--git-dir, a trailing slash)
+// also holds it; only matching the exact path as cwd or argument missed it.
+func TestSync_KeepsALockForAGitNamingTheRepoIndirectly(t *testing.T) {
+	f := newSyncFixture(t)
+	lock := f.writeLock(t, 5*time.Minute)
+
+	live := exec.Command("git", "--git-dir="+f.repoDir+"/.git", "cat-file", "--batch")
+	live.Dir = t.TempDir()
+	live.Env = f.env
+	stdin, err := live.StdinPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := live.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = stdin.Close(); _ = live.Wait() })
+
+	out := f.sync(t)
+	if _, err := os.Stat(lock); err != nil {
+		t.Fatalf("a lock was removed while git --git-dir was working on the repo: %v\n%s", err, out)
+	}
+}

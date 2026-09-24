@@ -94,6 +94,18 @@ func TestReauthorize_RetriesStartPatchConflict(t *testing.T) {
 	}
 }
 
+// The conflicting write is often one the cache-backed client has not seen,
+// so retries must span more than a handful of immediate attempts.
+func TestReauthorize_OutlastsASlowCache(t *testing.T) {
+	h, _, patches, code := oauthStartHarness(t, kyberv1.AgentPhaseNeedsAuth, 7)
+	if rr := postOAuth(t, h, code); rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s, want 204 after 7 conflicts", rr.Code, rr.Body.String())
+	}
+	if *patches != 8 {
+		t.Fatalf("agent patches=%d, want 8", *patches)
+	}
+}
+
 func TestReauthorize_AlreadyRunningNeedsNoPatch(t *testing.T) {
 	h, _, patches, code := oauthStartHarness(t, kyberv1.AgentPhaseRunning, 99)
 	rr := postOAuth(t, h, code)

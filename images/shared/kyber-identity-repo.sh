@@ -276,11 +276,17 @@ RUN() { if [ "$(id -u)" = "0" ]; then sudo -u kyber "$@"; else "$@"; fi; }
 # agent silently stops syncing (MAT-90 G12). Clear the lock only when it is
 # provably abandoned: older than 60s AND no git process is working in this
 # repo. A lock that is fresh, or held by a live git, belongs to someone.
+# Errs toward "running": a git whose working directory this user cannot read,
+# or whose arguments mention the repo in any form (-C dir/, --git-dir=…,
+# the resolved path behind a symlink), counts as working in it.
 git_running_in_repo() {
+    local real cwd
+    real=$(readlink -f "$REPO_DIR" 2>/dev/null || printf '%s' "$REPO_DIR")
     for p in /proc/[0-9]*; do
         [ "$(cat "$p/comm" 2>/dev/null)" = "git" ] || continue
-        case "$(readlink "$p/cwd" 2>/dev/null)/" in "$REPO_DIR"/*) return 0 ;; esac
-        tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qxF -- "$REPO_DIR" && return 0
+        cwd=$(readlink -f "$p/cwd" 2>/dev/null) || return 0
+        case "$cwd/" in "$REPO_DIR"/*|"$real"/*) return 0 ;; esac
+        tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qF -e "$REPO_DIR" -e "$real" && return 0
     done
     return 1
 }

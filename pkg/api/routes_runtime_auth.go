@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/runtimes"
@@ -12,6 +13,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -96,11 +98,20 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 		return
 	}
 	s.startAfterAuthorization(w, r, types.NamespacedName{Name: name, Namespace: s.Namespace}, func(current *kyberv1.Agent) bool {
-		return current.UID == agent.UID && current.Spec.Runtime == agent.Spec.Runtime && current.Spec.Secrets.AuthType == agent.Spec.Secrets.AuthType &&
-			current.Status.Phase == kyberv1.AgentPhaseNeedsAuth &&
-			(current.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth || current.Spec.DesiredPhase == kyberv1.AgentPhaseRunning)
+		if current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType {
+			return false
+		}
+		// An agent whose intent is already Running may have left NeedsAuth on
+		// the new credential before this read; that is success, not a change.
+		return current.Spec.DesiredPhase == kyberv1.AgentPhaseRunning ||
+			current.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth && current.Status.Phase == kyberv1.AgentPhaseNeedsAuth
 	})
 }
+
+// startAfterAuthBackoff spans a few seconds: the conflicting write is usually
+// one the (cache-backed) client has not seen yet, and a retry only succeeds
+// once the cache catches up.
+var startAfterAuthBackoff = wait.Backoff{Steps: 10, Duration: 50 * time.Millisecond, Factor: 1.5, Jitter: 0.1}
 
 // startAfterAuthorization requests desiredPhase=Running once a new credential
 // is stored. Storing the Secret wakes the controller, whose status writes bump
@@ -111,7 +122,7 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 func (s *Server) startAfterAuthorization(w http.ResponseWriter, r *http.Request, key types.NamespacedName, unchanged func(*kyberv1.Agent) bool) {
 	var status int
 	var code, message string
-	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+	err := retry.RetryOnConflict(startAfterAuthBackoff, func() error {
 		status, code, message = 0, "", ""
 		current := &kyberv1.Agent{}
 		if err := s.K8sClient.Get(r.Context(), key, current); err != nil {

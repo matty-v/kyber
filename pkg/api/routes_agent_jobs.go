@@ -105,6 +105,14 @@ func (s *Server) handleAgentJobAction(w http.ResponseWriter, r *http.Request, ag
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	stdout, stderr, err := exec(ctx, "agent-"+agentName, args, strings.NewReader(job.Prompt))
+	if isOldDispatcher(err, stderr) {
+		// The agent's image predates --run-now: runtime images are pinned per
+		// cluster, so the control plane routinely runs ahead of them. Its
+		// dispatcher takes the prompt with --stdin, but cannot report a
+		// failed delivery.
+		args[0] = "--stdin"
+		stdout, stderr, err = exec(ctx, "agent-"+agentName, args, strings.NewReader(job.Prompt))
+	}
 	if err != nil {
 		var exitErr utilexec.ExitError
 		if errors.As(err, &exitErr) {
@@ -135,6 +143,13 @@ func (s *Server) handleAgentJobAction(w http.ResponseWriter, r *http.Request, ag
 		"stdout": stdout,
 		"stderr": stderr,
 	})
+}
+
+// isOldDispatcher reports the usage error an agent image from before
+// --run-now answers with.
+func isOldDispatcher(err error, stderr string) bool {
+	var exitErr utilexec.ExitError
+	return errors.As(err, &exitErr) && exitErr.ExitStatus() == 2 && strings.Contains(stderr, "unknown flag --run-now")
 }
 
 // ExecRunJobStdin is the exported alias for execRunJobStdin — main.go's

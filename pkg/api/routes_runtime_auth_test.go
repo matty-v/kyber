@@ -8,7 +8,9 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
@@ -104,5 +106,40 @@ func TestRuntimeAPIKeyAuthorizationUsesInferenceCredential(t *testing.T) {
 	}
 	if err := s.K8sClient.Get(t.Context(), types.NamespacedName{Name: "endpoint-target-openrouter", Namespace: s.Namespace}, &corev1.Secret{}); err == nil {
 		t.Fatal("unused provider credential was created")
+	}
+}
+
+// An agent whose intent is already Running may leave NeedsAuth on the new
+// credential before the handler reads it back; that is success, not a 409.
+func TestRuntimeAPIKeyAuthorizationAgentAlreadyStarting(t *testing.T) {
+	agent := sampleAgentCRD("quick")
+	agent.UID = types.UID("quick-uid")
+	agent.Spec.Runtime = "hermes"
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	agent.Status.Phase = kyberv1.AgentPhaseNeedsAuth
+	stored := false
+	s := newTestPublicServer(t, testAPIKey)
+	s.K8sClient = fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithStatusSubresource(agent).WithObjects(agent).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
+				if _, ok := obj.(*corev1.Secret); ok {
+					stored = true
+				}
+				return c.Create(ctx, obj, opts...)
+			},
+			Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+				err := c.Get(ctx, key, obj, opts...)
+				if a, ok := obj.(*kyberv1.Agent); ok && err == nil && stored {
+					a.Status.Phase = kyberv1.AgentPhaseCreating // the controller moved on
+				}
+				return err
+			},
+		}).Build()
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/quick/auth", map[string]string{"apiKey": "new-provider-key"})
+	rr := httptest.NewRecorder()
+	buildTestHandler(s).ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s, want 204", rr.Code, rr.Body.String())
 	}
 }
