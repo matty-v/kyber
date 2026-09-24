@@ -40,6 +40,10 @@ type scaffoldServer struct {
 	// is served. Simulates the async delay between POST /generate returning
 	// and GitHub actually populating the tree.
 	treeEmptyResponses int
+	// blobMissingResponses is the number of initial GET /git/blobs calls that
+	// answer 404: a freshly generated repo serves its tree before every
+	// replica can serve its blobs.
+	blobMissingResponses int
 
 	// Observed
 	generateCalled bool
@@ -206,6 +210,9 @@ func (s *scaffoldServer) handler() http.Handler {
 		case r.Method == http.MethodGet && rest == "ref/heads/"+s.defaultBranch:
 			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": s.head, "type": "commit"}})
 
+		case r.Method == http.MethodGet && strings.HasPrefix(rest, "blobs/") && s.blobMissingResponses > 0:
+			s.blobMissingResponses--
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		case r.Method == http.MethodGet && strings.HasPrefix(rest, "blobs/"):
 			content, ok := s.blobs[strings.TrimPrefix(rest, "blobs/")]
 			if !ok {
@@ -514,6 +521,20 @@ func TestCreateFromTemplate_EmptyRepoRetriedUntilPopulated(t *testing.T) {
 	}
 	if got, _ := s.fileAtHead("CLAUDE.md"); got != "# newbot\n" {
 		t.Errorf("CLAUDE.md = %q", got)
+	}
+}
+
+// Seen live on kyber-dev: the tree of a just-generated repo is served while
+// its blobs still 404 for a moment. The scaffold waits them out instead of
+// failing the attempt.
+func TestCreateFromTemplate_BlobNotYetReplicatedRetried(t *testing.T) {
+	s := newScaffoldServer(fakeFile{path: ".mcp.json", content: `{"name":"{{ .AgentName }}"}`})
+	s.blobMissingResponses = 3
+	if _, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot"}); err != nil {
+		t.Fatalf("CreateFromTemplate: %v", err)
+	}
+	if got, _ := s.fileAtHead(".mcp.json"); got != `{"name":"newbot"}` {
+		t.Errorf(".mcp.json = %q", got)
 	}
 }
 
