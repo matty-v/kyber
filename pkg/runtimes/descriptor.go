@@ -58,8 +58,8 @@ type Descriptor struct {
 	TranscriptPath     string     `json:"-"` // relative to persisted HOME
 	TranscriptExchange string     `json:"-"` // trusted jq expression yielding one exchange
 	// LoginFiles are the harness's own login files, relative to the persisted
-	// HOME. A disk restore never copies them, so a restored agent cannot act
-	// on its source's login.
+	// HOME; an entry ending in "/" covers a whole directory. A disk restore
+	// never copies them, so a restored agent cannot act on its source's login.
 	LoginFiles                    []string `json:"-"`
 	RequireCatalogContext         bool     `json:"-"`
 	AuthFailureExitCode           int32    `json:"-"`

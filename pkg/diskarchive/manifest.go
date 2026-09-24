@@ -251,11 +251,19 @@ func IsSensitive(e Entry) bool {
 }
 
 // IsLoginPath reports whether an archive path is one of the harness login
-// files (home-relative, as in Source.LoginFiles).
+// files (home-relative, as in Source.LoginFiles). An entry ending in "/"
+// names a directory whose files all count.
 func IsLoginPath(p string, loginFiles []string) bool {
 	p = "/" + p
 	for _, lf := range loginFiles {
-		if lf != "" && strings.HasSuffix(p, "/"+strings.TrimPrefix(lf, "/")) {
+		lf = "/" + strings.TrimPrefix(lf, "/")
+		switch {
+		case lf == "/":
+		case strings.HasSuffix(lf, "/"):
+			if strings.Contains(p, lf) {
+				return true
+			}
+		case strings.HasSuffix(p, lf):
 			return true
 		}
 	}
