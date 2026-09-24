@@ -76,8 +76,19 @@ func TestContract_AgentImports(t *testing.T) {
 			Source: diskarchive.Source{Agent: "source", Runtime: "claude-code"},
 			Totals: diskarchive.Totals{Entries: 1, Dirs: 1}},
 	}
-	if err := jobs.Create(context.Background(), export, 0); err != nil {
-		t.Fatal(err)
+	upload := &archivejob.Job{
+		ID: "upload1", Kind: archivejob.KindUpload, State: archivejob.StateCompleted,
+		CreatedAt: now, UpdatedAt: now, ExpiresAt: &expires, ObjectKey: "uploads/upload1/archive.sealed",
+		Summary: export.Summary,
+	}
+	running := &archivejob.Job{
+		ID: "export2", Kind: archivejob.KindExport, Agent: "other", State: archivejob.StateRunning,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	for _, j := range []*archivejob.Job{export, upload, running} {
+		if err := jobs.Create(context.Background(), j, 0); err != nil {
+			t.Fatal(err)
+		}
 	}
 	srv := &api.Server{K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
 		Client: c, Namespace: contractNS, Store: store, Jobs: jobs, SigningKey: []byte("k"), ToolImage: "kyber/control-plane:test",
@@ -92,6 +103,7 @@ func TestContract_AgentImports(t *testing.T) {
 			"resources": map[string]string{"cpu": "1", "memory": "2Gi", "disk": "20Gi"},
 			"secrets":   map[string]string{"authType": "oauth"},
 		},
+		"apply": map[string]any{"config": true, "jobs": "paused", "bindings": "disabled", "secrets": "copy-if-local"},
 	}))
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("create from archive = %d %s", rr.Code, rr.Body.String())
@@ -102,6 +114,22 @@ func TestContract_AgentImports(t *testing.T) {
 	_ = json.Unmarshal(rr.Body.Bytes(), &created)
 	validateContract(t, h, authedReq(t, http.MethodGet, "/api/v1/agent-imports?agent=restored", nil))
 	validateContract(t, h, authedReq(t, http.MethodGet, "/api/v1/agent-imports/"+created.Import.ID, nil))
+
+	// Deleting archives (MAT-90): one an import reads, one still running, a
+	// finished upload, and one that does not exist.
+	for _, tc := range []struct {
+		path string
+		want int
+	}{
+		{"/api/v1/agents/source/exports/export1", http.StatusConflict},
+		{"/api/v1/agents/other/exports/export2", http.StatusConflict},
+		{"/api/v1/archive-uploads/upload1", http.StatusNoContent},
+		{"/api/v1/archive-uploads/nope", http.StatusNotFound},
+	} {
+		if rr := validateContract(t, h, authedReq(t, http.MethodDelete, tc.path, nil)); rr.Code != tc.want {
+			t.Errorf("DELETE %s = %d %s, want %d", tc.path, rr.Code, rr.Body.String(), tc.want)
+		}
+	}
 	validateContract(t, h, authedReq(t, http.MethodPost, "/api/v1/agent-imports/"+created.Import.ID+"/cancel", nil))
 }
 

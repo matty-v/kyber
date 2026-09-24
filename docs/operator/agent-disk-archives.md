@@ -58,7 +58,12 @@ every sync.
   the URL path, which the control plane redacts from its request log. Treat a
   downloaded archive as sensitive: it can contain local credential files
   (`~/.claude/.credentials.json`, `~/.codex/auth.json`, SSH keys). The console
-  lists files that look like credentials.
+  lists files that look like credentials, and the harness login files
+  separately. Delete an archive you no longer need rather than waiting for
+  retention (see below).
+- The manifest records the agent's non-secret configuration. User secrets are
+  listed by key, kind and size only; binding definitions omit their signing
+  Secret.
 - Kubernetes Secrets are never exported.
 
 ## What an export does to the agent
@@ -92,7 +97,12 @@ runtime repair and harness switching with `409 archive_in_progress`. Stop is
 always allowed. Canceling, failing, or reaching `agentArchives.jobTimeout`
 (2 hours) releases the agent the same way and deletes any partial bytes.
 
-Completed archives are deleted after `agentArchives.retention` (72 hours).
+Completed archives are deleted after `agentArchives.retention` (72 hours), or
+earlier with `DELETE /api/v1/agents/{name}/exports/{id}` or
+`DELETE /api/v1/archive-uploads/{id}` (`archives:admin`; the console has a
+Delete button on the export card and in the archive picker). Deleting removes
+the stored object and discards its key, so download links stop working at
+once. A running job, or an archive an active import is reading, answers `409`.
 `agentArchives.maxConcurrentJobs` (2) bounds exports running at once; more
 get `429` with `Retry-After`.
 
@@ -103,10 +113,31 @@ get `429` with `Retry-After`.
    grant). An upload is verified like an export before it can be used. See
    [Uploading in parts](#uploading-in-parts).
 2. `POST /api/v1/agent-imports` with `source` (`exportId` or `uploadId`),
-   `agent` (an ordinary create request) and optionally `keepCredentialFiles`
-   and `keepCrontabs`. By default the restore leaves out every file that looks
-   like a credential and every crontab the agent installed itself; the
-   restore pod decides this against the full manifest.
+   `agent` (an ordinary create request) and optionally `keepCredentialFiles`,
+   `keepCrontabs` and `apply`. By default the restore leaves out every file
+   that looks like a credential and every crontab the agent installed itself;
+   the restore pod decides this against the full manifest. Harness login files
+   (each runtime declares its own, such as `~/.claude/.credentials.json`,
+   `~/.codex/auth.json`, `~/.hermes/auth.json` and `~/.hermes/.env`) are left
+   out even with `keepCredentialFiles`. On rootfs installs the export reads
+   `/persist/kyber/rootfs-image-manifest.tsv`, so a file the base image shipped
+   and the agent never changed (npm's bundled `.npmrc`,
+   `/etc/cron.d/e2scrub_all`) is not flagged.
+
+   `apply` chooses what of the archived configuration the new agent gets;
+   every field is optional:
+
+   | Field | Default | Effect |
+   |---|---|---|
+   | `config` | `true` | Fill create fields the request leaves empty (model if the runtime matches, startup prompt, CPU and memory, session resume, request-reply, soul, identity repo if the GitHub App can link it, A2A peers whose credential Secret exists here), and restore profile, avatar and public capabilities |
+   | `jobs` | `paused` | Restore scheduled jobs paused, or `skip` |
+   | `bindings` | `disabled` | Restore webhook bindings disabled with new signing secrets, or `skip` |
+   | `secrets` | `copy-if-local` | Copy user-secret values server-side when the source agent still exists on this installation, or `skip` |
+
+   A paused job is not scheduled and "Run now" refuses it; a disabled binding
+   authenticates deliveries and answers `409 binding_disabled`. Archives
+   exported before configuration capture (manifest config version below 2)
+   still import; the checklist names what they did not record.
    The caller needs the new agent, and for an export the source agent, in its
    `agentResources`. The disk must hold the archived bytes plus 10% and 1 GiB.
 3. Kyber creates the Agent through the normal create path, held by
@@ -129,8 +160,11 @@ an agent's finalizer never deletes a same-named volume another object owns.
 A source is not deleted by retention while a restore is reading it.
 Canceling or failing before the disk is complete deletes the new agent and
 its volume; the source agent is never touched. The new agent's cutover
-checklist (Agent Detail, or `GET /api/v1/agent-imports/{id}`) lists what you
-must move by hand.
+checklist (Agent Detail, or `GET /api/v1/agent-imports/{id}`) lists what the
+import carried in an inactive state and what it could not carry, each with
+the action to take: resume jobs, enable bindings, re-enter secrets, add peers,
+authorize the agent. Secrets and binding signing Secrets the import created
+are removed if the restore is abandoned.
 
 ## Uploading in parts
 
