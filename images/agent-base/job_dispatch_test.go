@@ -685,3 +685,50 @@ func TestKyberJobDispatch_RejectsMissingCapabilityProbe(t *testing.T) {
 		t.Fatal("unverified job was delivered")
 	}
 }
+
+// MAT-90 G10: "Run now" sends the prompt from spec.jobs over stdin, because
+// the projected prompt file lags a just-saved job. It is still a named
+// operator job: completion marker, pending marker and --exclusive all apply.
+func TestKyberJobDispatch_RunNowUsesStdinPromptAsNamedJob(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	// Deliberately no writePrompt: the ConfigMap has not synced yet.
+	out, code := h.runStdin([]string{"--run-now", "--clear-context-after", "fresh-job"}, "summarize the week\n")
+	if code != 0 {
+		t.Fatalf("exit code: got %d, want 0 (output: %s)", code, out)
+	}
+	if !strings.Contains(out, "outcome=success") {
+		t.Errorf("run-now must report its outcome, got: %s", out)
+	}
+	if strings.Contains(h.logContents(), "prompt_file_missing") {
+		t.Errorf("run-now must not need the prompt file, log:\n%s", h.logContents())
+	}
+	if _, err := os.Stat(filepath.Join(h.pendDir, "fresh-job")); err != nil {
+		t.Errorf("run-now of a clear-context job must write its pending marker: %v", err)
+	}
+}
+
+func TestKyberJobDispatch_RunNowExclusiveSkipsWhileBusyNonZero(t *testing.T) {
+	h := setupDispatchHarness(t)
+	h.enablePostrun()
+	h.writePendingMarker("work-tick", "started_at=2026-08-24T10:00:00Z\nclear_context=false\n")
+	out, code := h.runStdin([]string{"--run-now", "--exclusive", "work-tick"}, "run your work tick\n")
+	if code != 5 || !strings.Contains(out, "outcome=skipped reason=agent_busy") {
+		t.Fatalf("exit=%d out=%q, want 5 with outcome=skipped reason=agent_busy", code, out)
+	}
+}
+
+func TestKyberJobDispatch_RunNowFailureIsNonZero(t *testing.T) {
+	h := setupDispatchHarness(t)
+	out, code := h.runStdin([]string{"--run-now", "morning"}, "hi\n", "TMUX_STUB_MODE=absent")
+	if code != 3 || !strings.Contains(out, "outcome=failed reason=tmux_session_absent") {
+		t.Fatalf("exit=%d out=%q, want 3 with outcome=failed reason=tmux_session_absent", code, out)
+	}
+}
+
+func TestKyberJobDispatch_RunNowAndStdinAreExclusive(t *testing.T) {
+	h := setupDispatchHarness(t)
+	if _, code := h.runStdin([]string{"--run-now", "--stdin", "x"}, "hi\n"); code != 2 {
+		t.Fatalf("exit=%d, want 2 for conflicting modes", code)
+	}
+}
