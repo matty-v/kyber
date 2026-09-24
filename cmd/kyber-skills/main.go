@@ -858,10 +858,16 @@ func commitAndPush(repoDir string) error {
 	return nil
 }
 
+// git runs with GIT_OPTIONAL_LOCKS=0. Without it every reconcile tick's
+// `git status` refreshes and rewrites the index under index.lock, which races
+// the identity sync's checkout/merge on the same repo and fails it with
+// "index.lock exists" (MAT-90 G12). Only optional locks are skipped: add and
+// commit still take the locks they need.
 func git(repoDir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf

@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/skillscan"
 )
@@ -584,6 +585,60 @@ func TestConverge_FlagsASkillThatIsNotInGitHubYet(t *testing.T) {
 	sk = (*reports)[2].Skills[0]
 	if hasIssueCode(sk.Issues, skillscan.IssueNotPushed) {
 		t.Errorf("a pushed skill must not be flagged; got %+v", sk.Issues)
+	}
+}
+
+// MAT-90 G12: the reconcile loop runs `git status` on the identity repo every
+// tick. A plain status refreshes stat info and rewrites the index under
+// index.lock, so a tick that coincided with the identity sync's checkout or
+// merge failed the sync with "index.lock exists". kyber-skills only reads the
+// repo here and must never take that lock.
+func TestUnpushedPaths_DoesNotRewriteTheIndex(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "deploy", skillBody)
+	runGit(t, f.home, f.repoDir, "add", "-A")
+	runGit(t, f.home, f.repoDir, "commit", "-m", "deploy")
+	runGit(t, f.home, f.repoDir, "push", "origin", "main")
+
+	// Stat-dirty but content-clean: exactly what makes a plain status refresh
+	// and write the index back.
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(f.repoDir, "skills", "deploy", "SKILL.md"), future, future); err != nil {
+		t.Fatal(err)
+	}
+	f.writeSkill(t, "draft", "---\nname: draft\ndescription: Not saved yet.\n---\nbody\n")
+	index := filepath.Join(f.repoDir, ".git", "index")
+	before, err := os.Stat(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unpushedPaths(f.repoDir); len(got) != 1 || got[0] != "skills/draft/SKILL.md" {
+		t.Fatalf("unpushedPaths = %v, want [skills/draft/SKILL.md]", got)
+	}
+	after, err := os.Stat(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) {
+		t.Error("unpushedPaths rewrote .git/index, so it took index.lock and can collide with the identity sync")
+	}
+}
+
+// A lock someone else holds must neither break the read nor be disturbed.
+func TestUnpushedPaths_WorksWhileAnotherProcessHoldsIndexLock(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "draft", "---\nname: draft\ndescription: Not saved yet.\n---\nbody\n")
+	lock := filepath.Join(f.repoDir, ".git", "index.lock")
+	if err := os.WriteFile(lock, []byte("held"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unpushedPaths(f.repoDir); len(got) != 1 || got[0] != "skills/draft/SKILL.md" {
+		t.Fatalf("unpushedPaths with a held lock = %v, want [skills/draft/SKILL.md]", got)
+	}
+	if b, err := os.ReadFile(lock); err != nil || string(b) != "held" {
+		t.Errorf("the held index.lock was disturbed: %q, %v", b, err)
 	}
 }
 
