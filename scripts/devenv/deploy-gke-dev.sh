@@ -101,8 +101,16 @@ for entry in "${IMAGES[@]}"; do
   SETS+=(--set "image.$key.tag=$tag")
 done
 CP_TAG=$(printf '%s\n' "${SETS[@]}" | sed -n 's/^image\.controlPlane\.tag=//p')
-CP_SHA="$BASE_SHA"; [ "$CP_TAG" = "$HEAD_TAG" ] && CP_SHA="$SHA"
+# The control plane reports the commit its image was BUILT from. A main commit
+# that did not change it gets a retag of an older build, so read the build SHA
+# off the full-SHA tag GHCR lists on the same image version.
+CP_SHA=$(gh api "/users/$REGISTRY_OWNER/packages/container/kyber-control-plane/versions?per_page=100" \
+  --jq ".[] | select(.metadata.container.tags | index(\"$CP_TAG\")) | .metadata.container.tags[] | select(test(\"^[0-9a-f]{40}$\"))" 2>/dev/null | head -1)
+if [ -z "$CP_SHA" ]; then
+  CP_SHA="$BASE_SHA"; [ "$CP_TAG" = "$HEAD_TAG" ] && CP_SHA="$SHA"
+fi
 
+log "control plane will report build ${CP_SHA:0:7}"
 [ -n "$DRY_RUN" ] && { log "dry run — nothing changed"; exit 0; }
 
 WORK=$(mktemp -d)
