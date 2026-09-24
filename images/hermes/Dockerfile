@@ -1,6 +1,6 @@
 ARG BASE_IMAGE=kyber/runtime-base:local
 
-FROM debian:13.4 AS sqlite-builder
+FROM debian:13.7 AS sqlite-builder
 ARG SQLITE_AUTOCONF_VERSION=3530400
 ARG SQLITE_SHA256=0e9483900e92cd5de8fd48d16bf9200145a61f7fd5be542a5ac81d8a9516eb9c
 RUN apt-get -o Acquire::Retries=3 update && \
