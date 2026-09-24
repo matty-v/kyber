@@ -371,8 +371,8 @@ export function createApiClient(cluster: Cluster) {
     // uploadArchive sends a ZIP in fixed-size parts, so an archive the size of
     // an agent's disk passes proxies that cap request bodies (Cloudflare:
     // 100 MB). Each part is retried on its own; progress covers the whole
-    // file, and the server seals parts as they land, so it can sit near 100%
-    // only for the short stitch at the end.
+    // file. complete only queues the join; the upload's job reports
+    // assembling and verifying while the picker polls it.
     uploadArchive: async (file: Blob, onProgress?: (loaded: number, total: number) => void): Promise<ArchiveJob> => {
       const plan = await request<ArchiveJob>('POST', '/api/v1/archive-uploads', { size: file.size })
       const partSize = plan.partSize ?? 0

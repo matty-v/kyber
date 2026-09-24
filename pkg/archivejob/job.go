@@ -64,9 +64,12 @@ const (
 	StepVerifying Step = "verifying"
 	// Import steps.
 	StepReceiving Step = "receiving"
-	StepReady     Step = "ready"
-	StepRestoring Step = "restoring"
-	StepStarting  Step = "starting"
+	// StepAssembling joins an upload's parts; the worker owns it, so the join
+	// outlives the request that asked for it.
+	StepAssembling Step = "assembling"
+	StepReady      Step = "ready"
+	StepRestoring  Step = "restoring"
+	StepStarting   Step = "starting"
 )
 
 var (

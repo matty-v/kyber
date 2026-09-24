@@ -145,9 +145,12 @@ allows 100 MB). Scripts can do the same:
    Parts may arrive in any order and on any control-plane replica, and a part
    sent again replaces the first copy, so retry a failed part as is. The job's
    `partsReceived` lists what has landed.
-3. `POST /api/v1/archive-uploads/{id}/complete` once every part is in. The
-   store joins the parts into one archive (natively for `s3` and `gcs`,
-   by copying for `builtin`) and verification starts as for any upload.
+3. `POST /api/v1/archive-uploads/{id}/complete` once every part is in. It
+   answers `202` at once with the job in the `assembling` step. The worker
+   then joins the parts into one archive (natively for `s3` and `gcs`, by
+   copying for `builtin`), so a large join never depends on the request
+   staying open behind a proxy. Verification follows as for any upload;
+   poll the job until it completes.
 
 Each part is sealed as it arrives, so parts are never stored in the clear.
 An upload that receives no part for 30 minutes fails and its parts are

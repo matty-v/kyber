@@ -79,10 +79,12 @@ func (a *ArchiveService) advanceUpload(ctx context.Context, j *archivejob.Job) e
 		return a.fail(ctx, j, "upload exceeded its time limit")
 	case a.uploadIdle(j):
 		return a.fail(ctx, j, "upload stopped: no part arrived for "+uploadPartIdleTimeout.String())
+	case j.Step == archivejob.StepAssembling:
+		return a.assembleUpload(ctx, j)
 	case j.Step == archivejob.StepVerifying:
 		return a.verifyStored(ctx, j, "Ready to import")
 	}
-	return nil // still receiving; the request handler owns this step
+	return nil // still receiving; the request handlers own this step
 }
 
 // --- imports ---

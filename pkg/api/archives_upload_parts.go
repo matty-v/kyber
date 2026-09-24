@@ -237,7 +237,7 @@ func (s *Server) receivePart(w http.ResponseWriter, r *http.Request, id, number 
 		// in progress owns the parts (and deletes them when done): this
 		// retry replaced its part with an equivalent one, and deleting it
 		// would break the join.
-		joining := cur != nil && cur.UploadClaimed && cur.State == archivejob.StateRunning && cur.Step == archivejob.StepReceiving
+		joining := cur != nil && cur.State == archivejob.StateRunning && cur.Step == archivejob.StepAssembling
 		if err != nil || !joining {
 			_ = a.Store.Delete(bg, partKey)
 		}
@@ -267,55 +267,42 @@ func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request, id strin
 		return
 	}
 	// Claim the join with the version check so a second complete, or a late
-	// part, cannot race it.
+	// part, cannot race it. The worker joins the parts: on a large archive
+	// that outlasts any proxy's request timeout, and a dropped connection
+	// must not abandon it.
 	claimed, ok, err := a.updateUpload(r.Context(), id, func(c *archivejob.Job) error {
 		c.UploadClaimed = true
-		c.Message = "Assembling the archive"
+		c.Step, c.Message = archivejob.StepAssembling, "Assembling the archive"
 		return nil
 	})
 	if err != nil || !ok {
 		writeJSONError(w, http.StatusConflict, "upload_changed", "the upload is no longer receiving parts")
 		return
 	}
-	parts := make([]string, uploadPartCount(claimed.UploadSize, claimed.PartSize))
+	writeJSON(w, http.StatusAccepted, viewArchiveJob(claimed))
+}
+
+// assembleUpload joins an upload's parts into its archive object and hands it
+// to verification. Joining again after a restart rewrites the same object.
+func (a *ArchiveService) assembleUpload(ctx context.Context, j *archivejob.Job) error {
+	parts := make([]string, uploadPartCount(j.UploadSize, j.PartSize))
 	for n := range parts {
-		parts[n] = uploadPartKey(claimed.ID, n)
+		parts[n] = uploadPartKey(j.ID, n)
 	}
-	deadline := time.Now().Add(a.limits().JobTimeout)
-	rc := http.NewResponseController(w)
-	_ = rc.SetWriteDeadline(deadline)
-	ctx, cancel := context.WithDeadline(r.Context(), deadline)
-	defer cancel()
-	stored, err := archivestore.Compose(ctx, a.Store, claimed.ObjectKey, parts)
-	bg := context.WithoutCancel(ctx)
-	if err == nil && stored != archivestore.SealedLength(claimed.UploadSize) {
-		err = fmt.Errorf("assembled %d bytes, expected %d", stored, archivestore.SealedLength(claimed.UploadSize))
+	stored, err := archivestore.Compose(ctx, a.Store, j.ObjectKey, parts)
+	if err == nil && stored != archivestore.SealedLength(j.UploadSize) {
+		err = fmt.Errorf("assembled %d bytes, expected %d", stored, archivestore.SealedLength(j.UploadSize))
 	}
 	if err != nil {
-		reason := "upload could not be assembled: " + err.Error()
-		if cur, gerr := a.Jobs.Get(bg, id); gerr == nil && !cur.State.Terminal() {
-			_ = a.fail(bg, cur, reason)
+		if ctx.Err() != nil {
+			return err // shutting down; the next leader joins again
 		}
-		writeJSONError(w, http.StatusInternalServerError, "upload_failed", reason)
-		return
+		return a.fail(ctx, j, "upload could not be assembled: "+err.Error())
 	}
-	_ = a.deleteUploadParts(bg, claimed)
-	for attempt := 0; attempt < 5; attempt++ {
-		cur, gerr := a.Jobs.Get(bg, id)
-		if gerr != nil || cur.State != archivejob.StateRunning || cur.Finishing != "" || cur.CancelRequested || cur.Step != archivejob.StepReceiving {
-			break
-		}
-		cur.Uploaded, cur.PlainSize, cur.SealedSize, cur.BytesDone = true, cur.UploadSize, stored, cur.UploadSize
-		cur.Step, cur.Message = archivejob.StepVerifying, "Verifying the archive"
-		err = a.Jobs.Update(bg, cur)
-		if err == nil {
-			writeJSON(w, http.StatusAccepted, viewArchiveJob(cur))
-			return
-		}
-		if !errors.Is(err, archivejob.ErrConflict) {
-			break
-		}
+	j.Uploaded, j.PlainSize, j.SealedSize, j.BytesDone = true, j.UploadSize, stored, j.UploadSize
+	j.Step, j.Message = archivejob.StepVerifying, "Verifying the archive"
+	if err := a.Jobs.Update(ctx, j); err != nil {
+		return err // canceled meanwhile; finishing deletes the parts and object
 	}
-	_ = a.Store.Delete(bg, claimed.ObjectKey)
-	writeJSONError(w, http.StatusConflict, "upload_changed", "the upload was canceled or timed out while it was assembled; retry")
+	return a.deleteUploadParts(ctx, j)
 }

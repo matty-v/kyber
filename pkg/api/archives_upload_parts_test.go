@@ -103,6 +103,14 @@ func TestUploadInPartsThenImport(t *testing.T) {
 	if rr := h.post("/api/v1/archive-uploads/"+up.ID+"/complete", testAPIKey, nil); rr.Code != http.StatusConflict {
 		t.Fatalf("second complete = %d, want 409", rr.Code)
 	}
+	// The worker joins the parts, not the request.
+	if j := h.job(up.ID); j.Step != archivejob.StepAssembling || j.Uploaded {
+		t.Fatalf("after complete: step=%s uploaded=%v", j.Step, j.Uploaded)
+	}
+	h.svc.Tick(ctx)
+	if j := h.job(up.ID); j.Step != archivejob.StepVerifying || !j.Uploaded {
+		t.Fatalf("after assembling: step=%s uploaded=%v (%s)", j.Step, j.Uploaded, j.Error)
+	}
 	for n := range up.PartCount {
 		if _, err := h.store.Size(ctx, fmt.Sprintf("uploads/%s/parts/%06d.sealed", up.ID, n)); err != archivestore.ErrNotFound {
 			t.Errorf("part %d left in the store: %v", n, err)
@@ -209,7 +217,7 @@ func TestLatePartDoesNotDeleteAPartBeingJoined(t *testing.T) {
 		}
 		// complete claims the join while this retry is being stored.
 		j := h.job(up.ID)
-		j.UploadClaimed = true
+		j.UploadClaimed, j.Step = true, archivejob.StepAssembling
 		if err := h.svc.Jobs.Update(ctx, j); err != nil {
 			t.Fatal(err)
 		}
@@ -219,5 +227,36 @@ func TestLatePartDoesNotDeleteAPartBeingJoined(t *testing.T) {
 	}
 	if _, err := h.store.Size(ctx, key); err != nil {
 		t.Fatalf("the late part's cleanup deleted a part being joined: %v", err)
+	}
+}
+
+func TestUploadAssemblyFailureFailsTheUpload(t *testing.T) {
+	h := newExportHarness(t)
+	h.svc.Limits.UploadPartBytes = archivestore.ChunkSize
+	ctx := context.Background()
+	data := largeSampleDisk(t)
+	up := h.startPartUpload(len(data))
+	for n := range up.PartCount {
+		if rr := h.putPart(up.ID, n, part(data, up.PartSize, n)); rr.Code != http.StatusOK {
+			t.Fatalf("part %d = %d", n, rr.Code)
+		}
+	}
+	if rr := h.post("/api/v1/archive-uploads/"+up.ID+"/complete", testAPIKey, nil); rr.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d", rr.Code)
+	}
+	// A part vanishes from the store before the worker joins them.
+	if err := h.store.Delete(ctx, fmt.Sprintf("uploads/%s/parts/%06d.sealed", up.ID, 1)); err != nil {
+		t.Fatal(err)
+	}
+	h.svc.Tick(ctx)
+	h.svc.Tick(ctx)
+	j := h.job(up.ID)
+	if j.State != archivejob.StateFailed {
+		t.Fatalf("state = %s, want failed", j.State)
+	}
+	for n := range up.PartCount {
+		if _, err := h.store.Size(ctx, fmt.Sprintf("uploads/%s/parts/%06d.sealed", up.ID, n)); err != archivestore.ErrNotFound {
+			t.Errorf("part %d left behind: %v", n, err)
+		}
 	}
 }

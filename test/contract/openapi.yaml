@@ -1094,7 +1094,7 @@ paths:
       tags: [agents]
       responses:
         '202':
-          description: Parts assembled; verification queued
+          description: Every part received; the worker assembles the parts, then verifies the archive
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ArchiveJob'}
