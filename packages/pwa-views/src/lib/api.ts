@@ -361,6 +361,14 @@ export function createApiClient(cluster: Cluster) {
     cancelAgentExport: (name: string, id: string): Promise<ArchiveJob> =>
       request<ArchiveJob>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/cancel`),
 
+    // Delete a finished export's archive before its retention ends (MAT-90).
+    // 409 while the export runs or an import is reading it.
+    deleteAgentExport: (name: string, id: string): Promise<void> =>
+      request<void>('DELETE', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}`),
+
+    deleteArchiveUpload: (id: string): Promise<void> =>
+      request<void>('DELETE', `/api/v1/archive-uploads/${encodeURIComponent(id)}`),
+
     // Create from archive (MAT-88).
     listArchives: async (): Promise<ArchiveJob[]> =>
       (await request<{ archives: ArchiveJob[] }>('GET', '/api/v1/archives')).archives,

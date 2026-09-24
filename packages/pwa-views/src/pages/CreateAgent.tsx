@@ -332,6 +332,7 @@ export function CreateAgent() {
           agent: agentRequest,
           keepCredentialFiles: state.keepCredentialFiles || undefined,
           keepCrontabs: state.keepCrontabs || undefined,
+          apply: state.archiveApply,
         })
       } else {
         await createAgent.mutateAsync(agentRequest)

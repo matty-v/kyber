@@ -134,6 +134,7 @@ function makeBinding(overrides: Partial<InboundBindingWithStats> = {}): InboundB
         'unmatched-event': 0,
         'filter-rejected': 0,
         dedup: 0,
+        disabled: 0,
       },
     },
     ...overrides,
@@ -187,6 +188,32 @@ describe('WebhooksTab — populated state', () => {
     expect(screen.getByLabelText(/signature header/i)).toHaveValue('X-Hub-Signature-256')
   })
 
+  it('marks a disabled binding and enables it through PATCH (MAT-90)', async () => {
+    const user = userEvent.setup()
+    setupMocks({ bindings: [makeBinding({ disabled: true })] })
+    const update = newMutationMock()
+    vi.mocked(useAPIModule.useUpdateInboundBinding).mockReturnValue(
+      update as unknown as ReturnType<typeof useAPIModule.useUpdateInboundBinding>,
+    )
+    renderWithQuery(<WebhooksTab agentName="my-agent" />)
+    expect(screen.getByTestId('binding-disabled')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Enable webhook' }))
+    expect(update.mutate).toHaveBeenCalledWith({ name: 'my-agent', bindingName: 'github-prs', body: { disabled: false } })
+  })
+
+  it('disables an enabled binding', async () => {
+    const user = userEvent.setup()
+    setupMocks({ bindings: [makeBinding()] })
+    const update = newMutationMock()
+    vi.mocked(useAPIModule.useUpdateInboundBinding).mockReturnValue(
+      update as unknown as ReturnType<typeof useAPIModule.useUpdateInboundBinding>,
+    )
+    renderWithQuery(<WebhooksTab agentName="my-agent" />)
+    expect(screen.queryByTestId('binding-disabled')).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Disable webhook' }))
+    expect(update.mutate).toHaveBeenCalledWith({ name: 'my-agent', bindingName: 'github-prs', body: { disabled: true } })
+  })
+
   it('shows a drop badge when dropped total > 5', () => {
     const noisy = makeBinding({
       stats: {
@@ -199,6 +226,7 @@ describe('WebhooksTab — populated state', () => {
           'unmatched-event': 0,
           'filter-rejected': 0,
           dedup: 0,
+          disabled: 0,
         },
       },
     })
@@ -220,6 +248,7 @@ describe('WebhooksTab — populated state', () => {
           'unmatched-event': 0,
           'filter-rejected': 0,
           dedup: 0,
+          disabled: 0,
         },
       },
     })

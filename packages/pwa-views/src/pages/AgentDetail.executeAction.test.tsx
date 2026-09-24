@@ -43,6 +43,7 @@ vi.mock('../hooks/useAPI', () => ({
   useStartAgentExport: idleMutation,
   useCancelAgentExport: idleMutation,
   useExportDownloadLink: idleMutation,
+  useDeleteArchive: idleMutation,
   useAgentImports: () => ({ data: [], isLoading: false }),
   useCancelAgentImport: idleMutation,
   useSetAgentModel: idleMutation,

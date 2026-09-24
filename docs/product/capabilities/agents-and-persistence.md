@@ -98,14 +98,35 @@ checked against the archive. Ownership, permissions, timestamps and links
 are restored as they were. The source agent is never touched, and a failed or
 canceled restore deletes the new agent and its volume.
 
-Nothing that would make two agents act at once is copied or turned on. Kyber
-lists these on the new agent's page as a cutover checklist: scheduled jobs,
-chat channels, webhook bindings, crontabs the agent installed itself, and a
-shared identity repo. Kubernetes Secrets are never copied. Files that look
-like credentials (harness logins, SSH keys, Git, cloud and registry
-credentials) and crontabs the agent installed itself are left out by default,
-so the new agent authorizes itself and scheduled work does not run twice;
-each can be restored on request.
+The whole agent moves, not only its disk. An archive records the agent's
+configuration (model, startup prompt, resources, session resume, soul, identity
+repo, profile and avatar, public capabilities, A2A peers, scheduled jobs,
+webhook binding definitions, and the names of its user secrets, never their
+values), and the wizard prefills the new agent from it. Your edits win.
+
+Nothing that would make two agents act at once is turned on. Scheduled jobs
+arrive **paused** and webhook bindings arrive **disabled**, each with a new
+signing secret, so neither fires until you enable it on the new agent. When you
+create from an export whose agent is still on the installation, user-secret
+values are copied inside the cluster; otherwise (an upload, or the agent is
+gone) each key is listed for you to re-enter. A2A peers whose
+credential Secret does not exist on the new installation are left off. Each of
+these can be left out instead from the wizard's **From the archive** section.
+Kyber lists everything you still have to do on the new agent's page as a
+cutover checklist: jobs to resume, bindings to enable (once the sender uses the
+new URL and secret), chat channels, secrets to re-enter, crontabs the agent
+installed itself, and a shared identity repo.
+
+The harness login (for example `~/.claude/.credentials.json` or
+`~/.codex/auth.json`) is never restored, so the new agent always signs in with
+its own credential and cannot sign the source out. Other files that look like
+credentials (SSH keys, Git, cloud and registry credentials) and crontabs the
+agent installed itself are left out by default and can be restored on request.
+Files the base image shipped, and the agent never changed, are not flagged.
+
+Completed exports and uploads can be deleted early from the Disk export card
+or the archive picker (`DELETE /api/v1/agents/{name}/exports/{id}`,
+`DELETE /api/v1/archive-uploads/{id}`). Download links stop working at once.
 
 ## Curate what an agent promises publicly
 

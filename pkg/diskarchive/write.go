@@ -20,6 +20,9 @@ type WriteOptions struct {
 	Mounts []Mount
 	// Now is the export timestamp; zero means time.Now.
 	Now time.Time
+	// Image lists the base image's files by archive path (see
+	// ParseImageManifest), so entries the image provided are marked.
+	Image map[string]ImageFile
 }
 
 // DefaultExclusions are paths under a volume root that are filesystem
@@ -89,6 +92,7 @@ func Write(ctx context.Context, rootDir string, w io.Writer, opts WriteOptions) 
 				return err
 			}
 			e.SHA256 = sum
+			e.Image = opts.Image[e.Path].Matches(e)
 			m.Totals.Files++
 			m.Totals.Bytes += e.Size
 		}

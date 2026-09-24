@@ -382,6 +382,19 @@ describe('disk export', () => {
     ])
   })
 
+  it('deletes exports and uploads on their encoded paths', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 204, json: async () => undefined }) as unknown as typeof fetch
+    vi.stubGlobal('fetch', fetchMock)
+    const api = createApiClient(mockCluster)
+    await api.deleteAgentExport('han solo', 'j1')
+    await api.deleteArchiveUpload('u 1')
+    const calls = (fetchMock as unknown as { mock: { calls: [string, RequestInit][] } }).mock.calls
+    expect(calls.map(([url, init]) => `${init.method} ${url}`)).toEqual([
+      'DELETE http://localhost:8080/api/v1/agents/han%20solo/exports/j1',
+      'DELETE http://localhost:8080/api/v1/archive-uploads/u%201',
+    ])
+  })
+
   it('resolves the download link against the cluster base URL', async () => {
     mockFetch({ url: '/api/v1/archive-downloads/tok', expiresAt: '2026-09-22T00:10:00Z', filename: 'han-disk.zip' })
     const link = await createApiClient(mockCluster).createExportDownloadLink('han', 'j1')

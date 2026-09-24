@@ -168,6 +168,7 @@ type AgentJobRequest struct {
 	Prompt            string `json:"prompt"`
 	Exclusive         bool   `json:"exclusive,omitempty"`
 	ClearContextAfter bool   `json:"clearContextAfter,omitempty"`
+	Paused            bool   `json:"paused,omitempty"`
 }
 
 // SetRuntimeVersionRequest is the JSON body for POST
@@ -401,6 +402,7 @@ type agentJobResponse struct {
 	Prompt            string `json:"prompt"`
 	Exclusive         bool   `json:"exclusive,omitempty"`
 	ClearContextAfter bool   `json:"clearContextAfter,omitempty"`
+	Paused            bool   `json:"paused,omitempty"`
 }
 
 type agentJobRunResponse struct {
@@ -628,6 +630,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			Prompt:            j.Prompt,
 			Exclusive:         j.Exclusive,
 			ClearContextAfter: j.ClearContextAfter,
+			Paused:            j.Paused,
 		})
 	}
 	// Collapse status.jobs[] to "last run per name" for the response — full
@@ -1889,6 +1892,7 @@ func validateJobsRequest(reqs []AgentJobRequest) ([]kyberv1.AgentJob, error) {
 			Prompt:            j.Prompt,
 			Exclusive:         j.Exclusive,
 			ClearContextAfter: j.ClearContextAfter,
+			Paused:            j.Paused,
 		})
 	}
 	return out, nil

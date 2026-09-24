@@ -436,6 +436,23 @@ export function useCancelAgentExport() {
   })
 }
 
+// useDeleteArchive deletes a finished export (agent set) or upload (agent
+// unset) before its retention ends. Both refresh the archive picker.
+export function useDeleteArchive() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ agent, id }: { agent?: string; id: string }) =>
+      agent ? api.deleteAgentExport(agent, id) : api.deleteArchiveUpload(id),
+    onSuccess: (_data, { agent }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'archives'] })
+      if (agent) void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', agent] })
+    },
+    meta: { successMessage: 'Archive deleted', errorPrefix: 'Failed to delete the archive' },
+  })
+}
+
 // ---- Create from archive (MAT-88) ----
 
 export function useArchives(enabled: boolean = true) {

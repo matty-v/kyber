@@ -3,7 +3,7 @@
 // for protocol and reference implementation context.
 
 import { useState } from 'react'
-import { Clock, Play, Pencil, Plus, Trash2 } from 'lucide-react'
+import { CirclePlay, Clock, Pause, Play, Pencil, Plus, Trash2 } from 'lucide-react'
 import { useAgent } from '../hooks/useAPI'
 import { usePatchAgentJobs, useRunAgentJob } from '../hooks/useAPI'
 import type { AgentJob, AgentJobRun } from '../lib/types'
@@ -70,6 +70,18 @@ function OutcomeBadge({ run }: { run: AgentJobRun | undefined }) {
   )
 }
 
+// A paused job keeps its definition but neither runs on schedule nor by
+// hand. Imported jobs arrive paused so they do not run on two agents.
+function PausedBadge() {
+  return (
+    <span className="rounded bg-warn/15 px-1 text-[10px] font-medium uppercase text-warn" data-testid="job-paused">
+      paused
+    </span>
+  )
+}
+
+const PAUSED_RUN_TITLE = 'Paused; resume the job to run it'
+
 function truncate(s: string, n: number): string {
   if (s.length <= n) return s
   return s.slice(0, n - 1) + '…'
@@ -85,14 +97,18 @@ function JobCard({
   job,
   lastRun,
   runDisabled,
+  toggleDisabled,
   onRun,
+  onTogglePaused,
   onEdit,
   onDelete,
 }: {
   job: AgentJob
   lastRun: AgentJobRun | undefined
   runDisabled: boolean
+  toggleDisabled: boolean
   onRun: () => void
+  onTogglePaused: () => void
   onEdit: () => void
   onDelete: () => void
 }) {
@@ -104,6 +120,7 @@ function JobCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-mono text-sm text-text-primary truncate">{job.name}</span>
+            {job.paused ? <PausedBadge /> : null}
             {job.exclusive ? (
               <span className="rounded bg-surface-subtle px-1 text-[10px] uppercase text-text-secondary">
                 exclusive
@@ -143,10 +160,20 @@ function JobCard({
             variant="secondary"
             size="sm"
             onClick={onRun}
-            disabled={runDisabled}
+            disabled={runDisabled || !!job.paused}
             aria-label="Run now"
+            title={job.paused ? PAUSED_RUN_TITLE : 'Run now'}
           >
             <Play className="h-4 w-4" />
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onTogglePaused}
+            disabled={toggleDisabled}
+            aria-label={job.paused ? 'Resume' : 'Pause'}
+          >
+            {job.paused ? <CirclePlay className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
           </Button>
           <Button variant="secondary" size="sm" onClick={onEdit} aria-label="Edit">
             <Pencil className="h-4 w-4" />
@@ -230,6 +257,8 @@ export function JobsTab({ agentName }: Props) {
       prompt: draft.prompt,
       exclusive: draft.exclusive || undefined,
       clearContextAfter: draft.clearContextAfter || undefined,
+      // Editing a job never changes whether it is paused.
+      paused: editing.mode === 'edit' ? jobs[editing.index].paused || undefined : undefined,
     }
     if (editing.mode === 'create') {
       next.push(rendered)
@@ -242,6 +271,11 @@ export function JobsTab({ agentName }: Props) {
     } catch (e) {
       setFormError(e instanceof Error ? e.message : 'Update failed')
     }
+  }
+
+  function togglePaused(index: number) {
+    const next = jobs.map((j, i) => (i === index ? { ...j, paused: j.paused ? undefined : true } : j))
+    patchJobs.mutate({ name: agentName, jobs: next })
   }
 
   async function confirmDelete() {
@@ -299,7 +333,9 @@ export function JobsTab({ agentName }: Props) {
                 job={j}
                 lastRun={last}
                 runDisabled={runJob.isPending}
+                toggleDisabled={patchJobs.isPending}
                 onRun={() => runJob.mutate({ name: agentName, jobName: j.name })}
+                onTogglePaused={() => togglePaused(i)}
                 onEdit={() => openEdit(i)}
                 onDelete={() => setPendingDelete(i)}
               />
@@ -325,7 +361,10 @@ export function JobsTab({ agentName }: Props) {
                 const human = humanizeCron(j.schedule)
                 return (
                   <tr key={j.name} className="border-b border-border last:border-b-0">
-                    <td className="p-3 font-mono">{j.name}</td>
+                    <td className="p-3 font-mono">
+                      {j.name}
+                      {j.paused ? <span className="ml-2"><PausedBadge /></span> : null}
+                    </td>
                     <td className="p-3 text-xs" title={j.schedule}>
                       <div>{human ?? <span className="font-mono">{j.schedule}</span>}</div>
                       {human && (
@@ -357,10 +396,19 @@ export function JobsTab({ agentName }: Props) {
                           variant="ghost"
                           size="sm"
                           onClick={() => runJob.mutate({ name: agentName, jobName: j.name })}
-                          disabled={runJob.isPending}
-                          title="Run now"
+                          disabled={runJob.isPending || !!j.paused}
+                          title={j.paused ? PAUSED_RUN_TITLE : 'Run now'}
                         >
                           <Play className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => togglePaused(i)}
+                          disabled={patchJobs.isPending}
+                          title={j.paused ? 'Resume' : 'Pause'}
+                        >
+                          {j.paused ? <CirclePlay className="h-4 w-4" /> : <Pause className="h-4 w-4" />}
                         </Button>
                         <Button variant="ghost" size="sm" onClick={() => openEdit(i)} title="Edit">
                           <Pencil className="h-4 w-4" />

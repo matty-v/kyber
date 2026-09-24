@@ -96,6 +96,9 @@ func RenderJobsConfigMapData(agent *kyberv1.Agent) map[string]string {
 	crontab.WriteString("\n")
 
 	for _, j := range jobs {
+		if j.Paused {
+			continue
+		}
 		// Flags precede the job name; the dispatcher stops flag parsing at the
 		// first non-flag argument.
 		args := ""

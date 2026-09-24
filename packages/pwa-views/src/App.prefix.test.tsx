@@ -81,6 +81,7 @@ vi.mock('./hooks/useAPI', () => {
     useCancelAgentImport: () => mutation,
     useArchives: () => emptyList,
     useArchiveUpload: () => empty,
+    useDeleteArchive: () => mutation,
     useUploadArchive: () => mutation,
     useCreateAgentFromArchive: () => mutation,
     useCompactAgentSession: () => mutation,

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Card } from './Card'
 import { Button } from './Button'
 import { ConfirmDialog } from './ConfirmDialog'
-import { useAgentExports, useCancelAgentExport, useExportDownloadLink, useStartAgentExport } from '../hooks/useAPI'
+import { useAgentExports, useCancelAgentExport, useDeleteArchive, useExportDownloadLink, useStartAgentExport } from '../hooks/useAPI'
 import type { ArchiveJob, ArchivesCapability } from '../lib/types'
 
 // Phases an export can start from. Mirrors exportablePhases in
@@ -33,7 +33,9 @@ export function DiskExportCard({ agentName, phase, capability }: { agentName: st
   const start = useStartAgentExport()
   const cancel = useCancelAgentExport()
   const link = useExportDownloadLink()
+  const remove = useDeleteArchive()
   const [confirming, setConfirming] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<ArchiveJob | null>(null)
   const [showDetails, setShowDetails] = useState<string | null>(null)
 
   const jobs = exports.data ?? []
@@ -96,6 +98,9 @@ export function DiskExportCard({ agentName, phase, capability }: { agentName: st
                       {showDetails === job.id ? 'Hide contents' : 'Contents'}
                     </Button>
                   )}
+                  {job.state === 'completed' && (
+                    <Button size="sm" variant="ghost" onClick={() => setPendingDelete(job)}>Delete</Button>
+                  )}
                   {job.cancelable && (
                     <Button size="sm" variant="ghost" loading={cancel.isPending} onClick={() => cancel.mutate({ name: agentName, id: job.id })}>Cancel</Button>
                   )}
@@ -127,6 +132,19 @@ export function DiskExportCard({ agentName, phase, capability }: { agentName: st
         }}
         onCancel={() => setConfirming(false)}
       />
+      <ConfirmDialog
+        open={pendingDelete !== null}
+        title="Delete this export?"
+        message="The archive is deleted now rather than when its retention ends. Download links stop working, and it can no longer be imported. An import that is reading it must finish first."
+        confirmLabel="Delete export"
+        dangerous
+        loading={remove.isPending}
+        onConfirm={() => {
+          const job = pendingDelete!
+          remove.mutate({ agent: agentName, id: job.id }, { onSettled: () => setPendingDelete(null) })
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </Card>
   )
 }
@@ -157,6 +175,14 @@ function ExportContents({ job }: { job: ArchiveJob }) {
             {s.excluded!.slice(0, 20).map((x) => (
               <li key={x.path}><span className="font-mono text-text-primary">{x.path}</span> <span className="text-text-muted">— {x.reason}</span></li>
             ))}
+          </ul>
+        </div>
+      )}
+      {(s.login?.length ?? 0) > 0 && (
+        <div>
+          <h3 className="mb-1 font-medium text-text-primary">Harness login (never restored)</h3>
+          <ul className="space-y-1 font-mono text-text-primary">
+            {s.login!.slice(0, 20).map((p) => <li key={p}>{p}</li>)}
           </ul>
         </div>
       )}

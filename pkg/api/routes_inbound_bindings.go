@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -102,6 +103,7 @@ type UpdateInboundBindingRequest struct {
 	Fields          *[]inboundBindingFieldRequest  `json:"fields,omitempty"`
 	Action          *string                        `json:"action,omitempty"`
 	Limits          *inboundBindingLimitsRequest   `json:"limits,omitempty"`
+	Disabled        *bool                          `json:"disabled,omitempty"`
 }
 
 // updateInboundBindingRawRequest is the decode-target for PATCH bodies.
@@ -132,6 +134,7 @@ type inboundBindingResponse struct {
 	Fields          []inboundBindingFieldRequest  `json:"fields,omitempty"`
 	Action          string                        `json:"action"`
 	Limits          *inboundBindingLimitsRequest  `json:"limits,omitempty"`
+	Disabled        bool                          `json:"disabled,omitempty"`
 	// URL is the externally-reachable webhook URL. Computed from the
 	// server's PublicURL — omitted when PublicURL is unset (dev/test).
 	URL string `json:"url,omitempty"`
@@ -330,37 +333,8 @@ func (s *Server) createInboundBinding(w http.ResponseWriter, r *http.Request, ag
 		}
 	}
 
-	// Generate 32 random bytes, hex-encode, and store the HEX STRING (as
-	// ASCII bytes) in the K8s Secret. The hex string IS the HMAC key —
-	// upstream providers (GitHub, Stripe, etc.) treat the user-pasted
-	// secret as a literal byte sequence for HMAC, so the verifier and the
-	// pasted value must agree on those exact bytes. Storing raw bytes
-	// would force the operator to hex-decode before pasting, which neither
-	// GitHub nor any other provider supports.
-	secretBytes := make([]byte, webhookSecretRandomBytes)
-	if _, err := rand.Read(secretBytes); err != nil {
-		slog.Error("inbound-bindings: rand.Read failed", "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to generate secret")
-		return
-	}
-	secretHex := hex.EncodeToString(secretBytes)
-	secretAtRest := []byte(secretHex)
-
-	secretName := bindingSecretName(agentName, req.Name)
-	secretObj := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: s.Namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "kyber-api",
-				"kyber.io/agent":               agentName,
-				"kyber.io/binding":             req.Name,
-			},
-		},
-		Type: corev1.SecretTypeOpaque,
-		Data: map[string][]byte{webhookSecretKey: secretAtRest},
-	}
-	if err := s.K8sClient.Create(r.Context(), secretObj); err != nil {
+	secretName, secretHex, err := s.createBindingSecret(r.Context(), agentName, req.Name)
+	if err != nil {
 		if k8serrors.IsAlreadyExists(err) {
 			writeJSONError(w, http.StatusConflict, "conflict",
 				"secret '"+secretName+"' already exists; a prior create may have failed mid-flow — delete it and retry")
@@ -641,6 +615,9 @@ func applyBindingUpdate(cur kyberv1.AgentInboundBinding, req UpdateInboundBindin
 	if req.Limits != nil {
 		out.Limits = &kyberv1.AgentInboundLimits{MaxPerMinute: req.Limits.MaxPerMinute}
 	}
+	if req.Disabled != nil {
+		out.Disabled = *req.Disabled
+	}
 	return out
 }
 
@@ -819,6 +796,7 @@ func (s *Server) bindingToResponse(agentName string, b kyberv1.AgentInboundBindi
 		EventPath:       b.EventPath,
 		MatchEvents:     b.MatchEvents,
 		Action:          b.Action,
+		Disabled:        b.Disabled,
 		URL:             s.bindingURL(agentName, b.Name),
 		Stats:           computeInboundBindingStats(b.Name, runs),
 	}
@@ -862,6 +840,7 @@ func computeInboundBindingStats(bindingName string, runs []kyberv1.AgentInboundR
 			inboundDropUnmatchedEvent: 0,
 			inboundDropFilterRejected: 0,
 			inboundDropDedup:          0,
+			inboundDropDisabled:       0,
 		},
 	}
 	var lastStarted *metav1.Time
@@ -888,4 +867,31 @@ func computeInboundBindingStats(bindingName string, runs []kyberv1.AgentInboundR
 		stats.LastReceivedAt = lastStarted.UTC().Format(time.RFC3339)
 	}
 	return stats
+}
+
+// createBindingSecret mints a binding's HMAC secret: 32 random bytes,
+// hex-encoded. The hex string itself is the key — upstream providers (GitHub,
+// Stripe, etc.) treat the pasted secret as literal bytes, so the verifier and
+// the pasted value must agree on those exact bytes.
+func (s *Server) createBindingSecret(ctx context.Context, agentName, bindingName string) (name, secretHex string, err error) {
+	secretBytes := make([]byte, webhookSecretRandomBytes)
+	if _, err := rand.Read(secretBytes); err != nil {
+		return "", "", fmt.Errorf("generating secret: %w", err)
+	}
+	secretHex = hex.EncodeToString(secretBytes)
+	name = bindingSecretName(agentName, bindingName)
+	secretObj := &corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      name,
+			Namespace: s.Namespace,
+			Labels: map[string]string{
+				"app.kubernetes.io/managed-by": "kyber-api",
+				"kyber.io/agent":               agentName,
+				"kyber.io/binding":             bindingName,
+			},
+		},
+		Type: corev1.SecretTypeOpaque,
+		Data: map[string][]byte{webhookSecretKey: []byte(secretHex)},
+	}
+	return name, secretHex, s.K8sClient.Create(ctx, secretObj)
 }

@@ -224,6 +224,12 @@ spec:
                         boundary.
                       minLength: 1
                       type: string
+                    disabled:
+                      description: |-
+                        Disabled keeps the binding defined but refuses deliveries with 409. A
+                        binding restored from a disk archive arrives disabled until the sender
+                        is moved to it at cutover.
+                      type: boolean
                     eventHeader:
                       description: |-
                         EventHeader names the request header that carries the event identifier.
@@ -465,6 +471,12 @@ spec:
                       minLength: 1
                       pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
                       type: string
+                    paused:
+                      description: |-
+                        Paused keeps the job defined but off the schedule: it is not rendered
+                        into cron and cannot be run by hand until resumed. A job restored from
+                        a disk archive arrives paused so it never fires on both agents.
+                      type: boolean
                     prompt:
                       description: |-
                         Prompt is the text delivered into the agent's tmux session when the job
@@ -1063,7 +1075,8 @@ spec:
                       description: |-
                         DropReason explains why a "dropped" run was rejected. One of:
                         sig-mismatch | missing-secret | unmatched-event | filter-rejected |
-                        rate-limited | queue-full | dedup. Empty when Outcome is "dispatched".
+                        rate-limited | queue-full | dedup | disabled. Empty when Outcome is
+                        "dispatched".
                       type: string
                     error:
                       description: |-

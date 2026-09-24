@@ -781,3 +781,34 @@ func TestInbound_EnvelopeCacheWriteOnRateLimit(t *testing.T) {
 		t.Errorf("envelope is the wrong one; got %q", envelope)
 	}
 }
+
+// A disabled binding refuses a correctly signed delivery with 409 and records
+// the drop (MAT-90). An unsigned request still gets the ordinary 401, so the
+// binding's existence is not revealed to unauthenticated callers.
+func TestInbound_DisabledBindingRefusesAfterAuth(t *testing.T) {
+	const secret = "s3cret"
+	body := validPushBody()
+	agent := inboundAgent("dave", "github", "dave-github-hmac", "X-Hub-Signature-256", "sha256=")
+	agent.Spec.InboundBindings[0].Disabled = true
+	h := buildInboundHarness(t, inboundHarnessConfig{}, agent, inboundSecret("dave-github-hmac", []byte(secret)))
+
+	rr := postInbound(t, h, "dave", "github", body, map[string]string{
+		"X-Hub-Signature-256": "sha256=00",
+		"X-GitHub-Event":      "push",
+		"Content-Type":        "application/json",
+	})
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("bad signature on a disabled binding: got %d, want 401", rr.Code)
+	}
+	rr = postInbound(t, h, "dave", "github", body, map[string]string{
+		"X-Hub-Signature-256": signBody([]byte(secret), body, "sha256="),
+		"X-GitHub-Event":      "push",
+		"Content-Type":        "application/json",
+	})
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "binding_disabled") {
+		t.Fatalf("signed delivery to a disabled binding: got %d %s, want 409 binding_disabled", rr.Code, rr.Body.String())
+	}
+	if got := len(h.recordedJobs()); got != 0 {
+		t.Fatalf("disabled binding dispatched %d job(s)", got)
+	}
+}

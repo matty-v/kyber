@@ -3,7 +3,8 @@ import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ArchiveJob } from '../lib/types'
 
-const { exportsQuery, startExport, cancelExport, downloadLink } = vi.hoisted(() => ({
+const { exportsQuery, startExport, cancelExport, downloadLink, deleteArchive } = vi.hoisted(() => ({
+  deleteArchive: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   exportsQuery: { data: [] as ArchiveJob[], isLoading: false },
   startExport: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
   cancelExport: { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false },
@@ -15,6 +16,7 @@ vi.mock('../hooks/useAPI', () => ({
   useStartAgentExport: () => startExport,
   useCancelAgentExport: () => cancelExport,
   useExportDownloadLink: () => downloadLink,
+  useDeleteArchive: () => deleteArchive,
 }))
 
 import { DiskExportCard } from './DiskExportCard'
@@ -41,6 +43,29 @@ describe('DiskExportCard', () => {
   beforeEach(() => {
     exportsQuery.data = []
     vi.clearAllMocks()
+  })
+
+  it('deletes a completed export after confirmation (MAT-90)', async () => {
+    exportsQuery.data = [completed]
+    render(<DiskExportCard agentName="han" phase="Running" capability={available} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(deleteArchive.mutate).not.toHaveBeenCalled()
+    expect(screen.getByText(/Download links stop working/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Delete export' }))
+    expect(deleteArchive.mutate).toHaveBeenCalledWith({ agent: 'han', id: 'j1' }, expect.anything())
+  })
+
+  it('offers no delete while an export runs', () => {
+    exportsQuery.data = [{ ...completed, state: 'running', cancelable: true, downloadable: false }]
+    render(<DiskExportCard agentName="han" phase="Running" capability={available} />)
+    expect(screen.queryByRole('button', { name: 'Delete' })).not.toBeInTheDocument()
+  })
+
+  it('lists harness login files separately as never restored', async () => {
+    exportsQuery.data = [{ ...completed, summary: { ...completed.summary!, sensitive: [], login: ['agentroot/home/kyber/.claude/.credentials.json'] } }]
+    render(<DiskExportCard agentName="han" phase="Running" capability={available} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Contents' }))
+    expect(screen.getByTestId('export-contents')).toHaveTextContent('Harness login (never restored)')
   })
 
   it('explains why export is unavailable', () => {

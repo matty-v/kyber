@@ -323,3 +323,19 @@ func TestRenderJobsConfigMapData_ClearContextAfterFlag(t *testing.T) {
 		}
 	}
 }
+
+// A paused job stays in the spec but never reaches cron (MAT-90): a job
+// restored from a disk archive must not fire on both agents.
+func TestRenderJobsConfigMapData_SkipsPausedJobs(t *testing.T) {
+	agent := newJobsTestAgent("chewie", []kyberv1.AgentJob{
+		{Name: "live", Schedule: "0 9 * * *", Prompt: "run"},
+		{Name: "held", Schedule: "0 10 * * *", Prompt: "wait", Paused: true},
+	})
+	data := RenderJobsConfigMapData(agent)
+	if !strings.Contains(data["crontab"], "kyber-job-dispatch live") {
+		t.Fatalf("active job missing from crontab:\n%s", data["crontab"])
+	}
+	if strings.Contains(data["crontab"], "held") {
+		t.Fatalf("paused job rendered into crontab:\n%s", data["crontab"])
+	}
+}

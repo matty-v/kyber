@@ -905,6 +905,26 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
 
+    delete:
+      operationId: deleteAgentExport
+      summary: Delete a finished export's archive before its retention ends
+      description: >-
+        Deletes the stored object and discards its key, as retention would.
+        Download links stop working and the export can no longer be imported.
+        Deleting an export that is already gone succeeds.
+      tags: [agents]
+      responses:
+        '204': {description: Deleted}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The export is still running (archive_running) or an active import is reading it (archive_in_use)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+
   /api/v1/agents/{name}/exports/{id}/cancel:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1054,6 +1074,21 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+    delete:
+      operationId: deleteArchiveUpload
+      summary: Delete a finished upload's archive before its retention ends
+      tags: [agents]
+      responses:
+        '204': {description: Deleted}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409':
+          description: The upload is still running (archive_running) or an active import is reading it (archive_in_use)
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
 
   /api/v1/archive-uploads/{id}/parts/{n}:
     parameters:
@@ -2087,6 +2122,31 @@ components:
         keepCrontabs:
           type: boolean
           description: Restore crontabs the source agent installed itself instead of leaving them out
+        apply:
+          type: object
+          description: >-
+            What the import carries from the archive beyond the disk. Omitted
+            fields take the defaults shown. Harness login files are never
+            restored, whatever keepCredentialFiles says.
+          properties:
+            config:
+              type: boolean
+              default: true
+              description: Apply the archived configuration; explicit agent fields in the request win
+            jobs:
+              type: string
+              enum: [paused, skip]
+              default: paused
+            bindings:
+              type: string
+              enum: [disabled, skip]
+              default: disabled
+              description: Restored bindings get new signing secrets
+            secrets:
+              type: string
+              enum: [copy-if-local, skip]
+              default: copy-if-local
+              description: Copy user-secret values server-side when the source agent is on this installation
 
     ArchiveSummary:
       type: object
@@ -2097,6 +2157,18 @@ components:
         source:
           type: object
           additionalProperties: true
+          properties:
+            agent: {type: string}
+            uid: {type: string}
+            runtime: {type: string}
+            runtimeVersion: {type: string}
+            model: {type: string}
+            machine: {type: string}
+            loginFiles:
+              type: array
+              description: Harness login files, relative to a home directory, that a restore never copies
+              items: {type: string}
+            config: {$ref: '#/components/schemas/ArchiveConfig'}
         mounts:
           type: array
           nullable: true
@@ -2128,9 +2200,80 @@ components:
         sensitive:
           type: array
           items: {type: string}
+        login:
+          type: array
+          description: Harness login files in the archive; never restored
+          items: {type: string}
         cron:
           type: array
           items: {type: string}
+
+    ArchiveConfig:
+      type: object
+      description: >-
+        The source agent's non-secret configuration. Version 2 adds
+        soulDescription through userSecrets; older archives omit them. User
+        secrets are listed by key, never by value.
+      additionalProperties: true
+      properties:
+        version: {type: integer}
+        runtime: {type: string}
+        runtimeVersion: {type: string}
+        model: {type: string}
+        machine: {type: string}
+        resources:
+          type: object
+          properties:
+            cpu: {type: string}
+            memory: {type: string}
+            disk: {type: string}
+        startupPrompt: {type: string}
+        sessionResume: {type: boolean}
+        requestReplyEnabled: {type: boolean}
+        identityRepo: {type: string}
+        authType: {type: string}
+        channels: {type: object, additionalProperties: {type: boolean}}
+        jobs:
+          type: array
+          items:
+            type: object
+            required: [name, schedule, prompt]
+            properties:
+              name: {type: string}
+              schedule: {type: string}
+              prompt: {type: string}
+              exclusive: {type: boolean}
+              clearContextAfter: {type: boolean}
+              paused: {type: boolean}
+        inboundBindings:
+          type: array
+          items: {type: string}
+        soulDescription: {type: string}
+        profile:
+          type: object
+          properties:
+            alias: {type: string}
+            description: {type: string}
+            avatarContentType: {type: string}
+            hasAvatar: {type: boolean, description: API views leave the avatar bytes out and set this instead}
+        publicCapabilities: {type: object, additionalProperties: true}
+        a2aPeers:
+          type: array
+          items: {type: object, additionalProperties: true}
+        inboundBindingSpecs:
+          type: array
+          description: Full binding definitions without their signing Secret
+          items: {type: object, additionalProperties: true}
+        userSecrets:
+          type: array
+          items:
+            type: object
+            required: [key, kind, size]
+            properties:
+              key: {type: string}
+              kind: {type: string}
+              size: {type: integer}
+              sha256Prefix: {type: string}
 
     ArchivesCapability:
       type: object

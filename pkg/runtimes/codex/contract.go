@@ -21,6 +21,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 		},
 		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature, runtimes.CustomInferenceEndpoint},
 		TranscriptPath:     ".codex/sessions",
+		LoginFiles:         []string{".codex/auth.json"},
 		TranscriptExchange: `select(.type == "event_msg") | select(.payload.type == "user_message" or .payload.type == "agent_message") | {role: (if .payload.type == "user_message" then "user" else "assistant" end), timestamp: (.timestamp // ""), content: ((.payload.message // "") | tostring)}`,
 	}
 }

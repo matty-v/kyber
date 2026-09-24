@@ -93,10 +93,15 @@ type Source struct {
 	// "rootfs", where /persist/agentroot is the agent's whole root).
 	PersistenceMode string `json:"persistenceMode,omitempty"`
 	Disk            Disk   `json:"disk"`
+	// LoginFiles are the harness login files, relative to a home directory,
+	// that a restore never copies: a new agent always signs in with its own
+	// Kyber-managed credential. Recorded so the archive describes them
+	// wherever it is imported.
+	LoginFiles []string `json:"loginFiles,omitempty"`
 	// Config is the Agent spec with Secret values excluded by construction:
-	// only names and non-secret settings are copied. Restore treats it as a
-	// suggestion shown to the operator, never as authorization.
-	Config map[string]any `json:"config,omitempty"`
+	// only names and non-secret settings are copied. An import applies it on
+	// request; it is never authorization.
+	Config *Config `json:"config,omitempty"`
 }
 
 // Disk records the source volume's characteristics.
@@ -144,6 +149,10 @@ type Entry struct {
 	ModTime time.Time `json:"modTime"`
 	Target  string    `json:"target,omitempty"`
 	SHA256  string    `json:"sha256,omitempty"`
+	// Image is set when the file is the base image's own copy, unchanged
+	// since the image put it there (see ImageFile). Such a file is neither a
+	// credential nor a crontab the agent installed.
+	Image bool `json:"image,omitempty"`
 }
 
 // ZipName is the ZIP entry name for e.
@@ -218,9 +227,9 @@ var sensitiveSuffixes = []string{
 
 // IsSensitive reports whether an entry is a regular file that looks like a
 // local credential: the well-known files above, SSH private keys, and
-// *.pem/*.key files.
+// *.pem/*.key files. The image's own unchanged files are never credentials.
 func IsSensitive(e Entry) bool {
-	if e.Type != EntryFile {
+	if e.Type != EntryFile || e.Image {
 		return false
 	}
 	p := "/" + e.Path
@@ -237,11 +246,35 @@ func IsSensitive(e Entry) bool {
 	return false
 }
 
-// SensitivePaths lists the entries IsSensitive matches.
+// IsLoginPath reports whether an archive path is one of the harness login
+// files (home-relative, as in Source.LoginFiles).
+func IsLoginPath(p string, loginFiles []string) bool {
+	p = "/" + p
+	for _, lf := range loginFiles {
+		if lf != "" && strings.HasSuffix(p, "/"+strings.TrimPrefix(lf, "/")) {
+			return true
+		}
+	}
+	return false
+}
+
+// LoginPaths lists the regular files that are harness login files.
+func LoginPaths(m *Manifest) []string {
+	var out []string
+	for _, e := range m.Entries {
+		if e.Type == EntryFile && IsLoginPath(e.Path, m.Source.LoginFiles) {
+			out = append(out, e.Path)
+		}
+	}
+	return out
+}
+
+// SensitivePaths lists the entries IsSensitive matches, other than harness
+// login files (see LoginPaths).
 func SensitivePaths(m *Manifest) []string {
 	var out []string
 	for _, e := range m.Entries {
-		if IsSensitive(e) {
+		if IsSensitive(e) && !IsLoginPath(e.Path, m.Source.LoginFiles) {
 			out = append(out, e.Path)
 		}
 	}
@@ -253,7 +286,7 @@ func SensitivePaths(m *Manifest) []string {
 // kyber-jobs, which the platform regenerates from the Agent spec at every
 // boot. A restored copy of the disk would run it too.
 func IsAgentCrontab(e Entry) bool {
-	if e.Type != EntryFile || e.Size == 0 {
+	if e.Type != EntryFile || e.Size == 0 || e.Image {
 		return false
 	}
 	p := "/" + e.Path

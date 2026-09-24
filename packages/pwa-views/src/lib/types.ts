@@ -289,6 +289,9 @@ export interface AgentJob {
   prompt: string
   exclusive?: boolean
   clearContextAfter?: boolean
+  // A paused job keeps its definition but is not scheduled, and run-now
+  // refuses it. Imported jobs arrive paused (MAT-90).
+  paused?: boolean
 }
 
 export type AgentJobOutcome = 'success' | 'failed' | 'skipped'
@@ -334,6 +337,9 @@ export interface AgentInboundBinding {
   fields?: AgentInboundField[]
   action: string
   limits?: AgentInboundLimits
+  // A disabled binding authenticates deliveries but refuses them with 409.
+  // Imported bindings arrive disabled (MAT-90).
+  disabled?: boolean
 }
 
 export type AgentInboundRunOutcome = 'dispatched' | 'dropped'
@@ -347,6 +353,7 @@ export type AgentInboundDropReason =
   | 'unmatched-event'
   | 'filter-rejected'
   | 'dedup'
+  | 'disabled'
 
 export interface AgentInboundRun {
   bindingName: string
@@ -946,14 +953,67 @@ export interface ArchiveMount {
   reason: string
 }
 
+// The agent's non-secret configuration recorded in an archive. Mirrors
+// diskarchive.Config (pkg/diskarchive/config.go). Version 2 added
+// everything from soulDescription down; older archives omit those fields.
+export interface ArchiveConfigJob {
+  name: string
+  schedule: string
+  prompt: string
+  exclusive?: boolean
+  clearContextAfter?: boolean
+  paused?: boolean
+}
+
+export interface ArchiveConfigSecret {
+  key: string
+  kind: 'kv' | 'file' | string
+  size: number
+  sha256Prefix?: string
+}
+
+export interface ArchiveConfig {
+  version?: number
+  runtime?: string
+  runtimeVersion?: string
+  model?: string
+  machine?: string
+  resources?: { cpu?: string; memory?: string; disk?: string }
+  startupPrompt?: string
+  sessionResume?: boolean
+  requestReplyEnabled?: boolean
+  identityRepo?: string
+  authType?: string
+  channels?: Record<string, boolean>
+  jobs?: ArchiveConfigJob[]
+  inboundBindings?: string[]
+  soulDescription?: string
+  // API views leave the avatar bytes out and set hasAvatar instead.
+  profile?: { alias?: string; description?: string; avatarContentType?: string; hasAvatar?: boolean }
+  publicCapabilities?: PublicCapabilitiesManifest
+  a2aPeers?: AgentA2APeer[]
+  inboundBindingSpecs?: AgentInboundBinding[]
+  userSecrets?: ArchiveConfigSecret[]
+}
+
 export interface ArchiveSummary {
   formatVersion: string
   exportedAt: string
-  source: { agent: string; runtime: string; runtimeVersion?: string; model?: string; machine?: string }
+  source: {
+    agent: string
+    runtime: string
+    runtimeVersion?: string
+    model?: string
+    machine?: string
+    loginFiles?: string[]
+    config?: ArchiveConfig
+  }
   mounts: ArchiveMount[]
   excluded?: { path: string; reason: string }[]
   totals: { entries: number; files: number; dirs: number; symlinks: number; bytes: number }
   sensitive?: string[]
+  // Harness login files: never restored, whatever keepCredentialFiles says.
+  login?: string[]
   cron?: string[]
 }
 
@@ -989,11 +1049,22 @@ export interface ArchiveJob {
 
 // POST /api/v1/agent-imports. Mirrors agentImportRequest in
 // pkg/api/archives_import.go.
+// What an import carries from the archive beyond the disk. Omitted fields
+// take the server defaults: config on, jobs paused, bindings disabled,
+// secrets copied when the source agent is on this installation.
+export interface AgentImportApply {
+  config?: boolean
+  jobs?: 'paused' | 'skip'
+  bindings?: 'disabled' | 'skip'
+  secrets?: 'copy-if-local' | 'skip'
+}
+
 export interface AgentImportRequest {
   source: { exportId?: string; uploadId?: string }
   agent: CreateAgentRequest
   keepCredentialFiles?: boolean
   keepCrontabs?: boolean
+  apply?: AgentImportApply
 }
 
 export interface AgentImportResponse {

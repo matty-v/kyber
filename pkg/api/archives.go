@@ -17,6 +17,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,6 +37,7 @@ import (
 	agentctrl "github.com/matty-v/kyber/pkg/controllers/agent"
 	"github.com/matty-v/kyber/pkg/diskarchive"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/taskobject"
 )
 
 // ArchiveLimits bound disk archive jobs. Zero values take the defaults below.
@@ -117,6 +119,9 @@ type ArchiveService struct {
 	// ImagePullSecrets are attached to archive pods; they run the control
 	// plane's image, which may come from a private registry.
 	ImagePullSecrets []string
+	// Avatars is the object store holding agent profile avatars, so an export
+	// can carry the image and an import can restore it. Nil leaves avatars out.
+	Avatars taskobject.ObjectStore
 
 	// Now is overridable in tests.
 	Now func() time.Time
@@ -392,12 +397,17 @@ func (a *ArchiveService) event(j *archivejob.Job, typ, reason, msg string) {
 // expire deletes a completed archive whose retention has lapsed (ListActive
 // returns completed jobs only once they have).
 func (a *ArchiveService) expire(ctx context.Context, j *archivejob.Job) error {
+	return a.shred(ctx, j, "Expired")
+}
+
+// shred deletes a completed archive's object and discards its key.
+func (a *ArchiveService) shred(ctx context.Context, j *archivejob.Job, message string) error {
 	a.dropReader(j.ID)
 	if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
-		return fmt.Errorf("deleting expired archive: %w", err)
+		return fmt.Errorf("deleting archive: %w", err)
 	}
 	j.State = archivejob.StateExpired
-	j.Message = "Expired"
+	j.Message = message
 	j.WrappedKey = nil
 	return a.Jobs.Update(ctx, j)
 }
@@ -570,14 +580,7 @@ func (a *ArchiveService) createExportPod(ctx context.Context, j *archivejob.Job,
 	if err := a.Jobs.Update(ctx, j); err != nil {
 		return err
 	}
-	var source diskarchive.Source
-	if j.Source != nil {
-		source = *j.Source
-	}
-	pod, err := a.exportPod(j, agent, j.NodeName, source, j.Mounts)
-	if err != nil {
-		return a.fail(ctx, j, err.Error())
-	}
+	pod := a.exportPod(j, agent, j.NodeName)
 	if err := a.Client.Create(ctx, pod); err != nil && !k8serrors.IsAlreadyExists(err) {
 		return a.fail(ctx, j, "creating export pod: "+err.Error())
 	}
@@ -905,8 +908,13 @@ func (a *ArchiveService) describeSource(ctx context.Context, agent *kyberv1.Agen
 		Machine:         spec.Machine,
 		KyberVersion:    a.KyberVersion,
 		PersistenceMode: a.PersistenceMode,
-		Config:          archiveConfig(agent),
+		LoginFiles:      pkgruntimes.LoginFiles(),
 	}
+	cfg, err := a.archiveConfig(ctx, agent)
+	if err != nil {
+		return src, err
+	}
+	src.Config = cfg
 	pvc := &corev1.PersistentVolumeClaim{}
 	pvcName := agentctrl.PVCName(agent.Name)
 	if err := a.Client.Get(ctx, types.NamespacedName{Name: pvcName, Namespace: a.Namespace}, pvc); err != nil {
@@ -1010,41 +1018,121 @@ func (a *ArchiveService) podSpecForInventory(ctx context.Context, agent *kyberv1
 	return spec, false, err
 }
 
-// archiveConfig is the non-secret subset of the spec a create-from-export
-// flow can offer as defaults. Secret names, key material, peers and inference
-// endpoints are deliberately absent.
-func archiveConfig(agent *kyberv1.Agent) map[string]any {
+// archiveConfig records every non-secret setting an import needs to rebuild
+// the agent. Secret values never appear: user secrets are listed by key and
+// Secret references keep only their names (inbound bindings drop theirs; the
+// import mints a fresh HMAC secret).
+func (a *ArchiveService) archiveConfig(ctx context.Context, agent *kyberv1.Agent) (*diskarchive.Config, error) {
 	s := agent.Spec
-	jobs := make([]map[string]any, 0, len(s.Jobs))
-	for _, jb := range s.Jobs {
-		jobs = append(jobs, map[string]any{
-			"name": jb.Name, "schedule": jb.Schedule, "prompt": jb.Prompt,
-			"exclusive": jb.Exclusive, "clearContextAfter": jb.ClearContextAfter,
-		})
-	}
-	bindings := make([]string, 0, len(s.InboundBindings))
-	for _, b := range s.InboundBindings {
-		bindings = append(bindings, b.Name)
-	}
-	return map[string]any{
-		"runtime":             s.Runtime,
-		"runtimeVersion":      s.RuntimeVersion,
-		"model":               s.Model,
-		"machine":             s.Machine,
-		"resources":           map[string]string{"cpu": s.Resources.CPU.String(), "memory": s.Resources.Memory.String(), "disk": s.Resources.Disk.String()},
-		"startupPrompt":       s.StartupPrompt,
-		"sessionResume":       s.SessionResume,
-		"requestReplyEnabled": s.RequestReplyEnabled,
-		"identityRepo":        s.IdentityRepo.Repo,
-		"authType":            string(s.Secrets.AuthType),
-		"channels": map[string]bool{
+	cfg := &diskarchive.Config{
+		Version:        diskarchive.ConfigVersion,
+		Runtime:        s.Runtime,
+		RuntimeVersion: s.RuntimeVersion,
+		Model:          s.Model,
+		Machine:        s.Machine,
+		Resources: diskarchive.ConfigResources{
+			CPU: s.Resources.CPU.String(), Memory: s.Resources.Memory.String(), Disk: s.Resources.Disk.String(),
+		},
+		StartupPrompt:       s.StartupPrompt,
+		SessionResume:       s.SessionResume,
+		RequestReplyEnabled: s.RequestReplyEnabled,
+		IdentityRepo:        s.IdentityRepo.Repo,
+		AuthType:            string(s.Secrets.AuthType),
+		Channels: map[string]bool{
 			"telegram": s.Secrets.TelegramEnabled,
 			"slack":    s.Secrets.SlackEnabled,
 			"discord":  s.Secrets.DiscordEnabled,
 		},
-		"jobs":            jobs,
-		"inboundBindings": bindings,
+		SoulDescription: s.Identity.SoulDescription,
 	}
+	for _, jb := range s.Jobs {
+		cfg.Jobs = append(cfg.Jobs, diskarchive.ConfigJob{
+			Name: jb.Name, Schedule: jb.Schedule, Prompt: jb.Prompt,
+			Exclusive: jb.Exclusive, ClearContextAfter: jb.ClearContextAfter, Paused: jb.Paused,
+		})
+	}
+	if len(s.InboundBindings) > 0 {
+		specs := make([]kyberv1.AgentInboundBinding, 0, len(s.InboundBindings))
+		for _, b := range s.InboundBindings {
+			cfg.InboundBindings = append(cfg.InboundBindings, b.Name)
+			b.ExistingSecret = ""
+			specs = append(specs, b)
+		}
+		raw, err := json.Marshal(specs)
+		if err != nil {
+			return nil, fmt.Errorf("recording inbound bindings: %w", err)
+		}
+		cfg.InboundBindingSpecs = raw
+	}
+	if s.PublicCapabilities != nil {
+		raw, err := json.Marshal(s.PublicCapabilities)
+		if err != nil {
+			return nil, fmt.Errorf("recording public capabilities: %w", err)
+		}
+		cfg.PublicCapabilities = raw
+	}
+	if len(s.A2APeers) > 0 {
+		raw, err := json.Marshal(s.A2APeers)
+		if err != nil {
+			return nil, fmt.Errorf("recording A2A peers: %w", err)
+		}
+		cfg.A2APeers = raw
+	}
+	if p := s.Profile; p.Alias != "" || p.Description != "" || p.AvatarKey != "" {
+		cfg.Profile = &diskarchive.ConfigProfile{Alias: p.Alias, Description: p.Description}
+		if p.AvatarKey != "" && a.Avatars != nil {
+			img, err := readAvatar(ctx, a.Avatars, p.AvatarKey)
+			if err != nil {
+				return nil, fmt.Errorf("reading the profile avatar: %w", err)
+			}
+			cfg.Profile.Avatar, cfg.Profile.AvatarContentType = img, p.AvatarContentType
+		}
+	}
+	secrets, err := userSecretInventory(ctx, a.Client, a.Namespace, agent.Name)
+	if err != nil {
+		return nil, fmt.Errorf("listing user secrets: %w", err)
+	}
+	cfg.UserSecrets = secrets
+	return cfg, nil
+}
+
+// readAvatar reads a profile avatar, refusing anything over the API's cap.
+func readAvatar(ctx context.Context, store taskobject.ObjectStore, key string) ([]byte, error) {
+	obj, err := store.Open(ctx, key, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer obj.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(obj.Body, maxAgentAvatarBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > maxAgentAvatarBytes {
+		return nil, fmt.Errorf("avatar exceeds %d bytes", maxAgentAvatarBytes)
+	}
+	return data, nil
+}
+
+// userSecretInventory lists an agent's user secrets without their values.
+func userSecretInventory(ctx context.Context, c client.Client, namespace, agentName string) ([]diskarchive.ConfigSecret, error) {
+	var out []diskarchive.ConfigSecret
+	for _, kind := range []userSecretKind{userSecretKindKV, userSecretKindFile} {
+		sec := &corev1.Secret{}
+		if err := c.Get(ctx, types.NamespacedName{Name: userSecretsSecretName(agentName, kind), Namespace: namespace}, sec); err != nil {
+			if k8serrors.IsNotFound(err) {
+				continue
+			}
+			return nil, err
+		}
+		meta := readUserSecretMetadata(sec)
+		for key, dataKey := range enumerateUserSecretKeys(sec, kind) {
+			out = append(out, diskarchive.ConfigSecret{
+				Key: key, Kind: string(kind), Size: len(sec.Data[dataKey]), SHA256Prefix: meta[key].Sha256Prefix,
+			})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
+	return out, nil
 }
 
 func archivePodLabels(j *archivejob.Job) map[string]string {
@@ -1073,22 +1161,34 @@ func archiveTokenSecretName(j *archivejob.Job) string {
 // exportPod builds the pod that archives the agent volume. It mounts the
 // volume read-only, has no service-account token, and can do nothing but
 // read the disk and upload to its own job's endpoint.
-func (a *ArchiveService) exportPod(j *archivejob.Job, agent *kyberv1.Agent, node string, src diskarchive.Source, mounts []diskarchive.Mount) (*corev1.Pod, error) {
-	desc, err := json.Marshal(struct {
-		Source diskarchive.Source  `json:"source"`
-		Mounts []diskarchive.Mount `json:"mounts"`
-	}{src, mounts})
-	if err != nil {
-		return nil, err
-	}
+// The manifest's source description is fetched from the job's endpoint, not
+// passed in the environment: with the agent's config and avatar it outgrows
+// what one environment variable can hold.
+func (a *ArchiveService) exportPod(j *archivejob.Job, agent *kyberv1.Agent, node string) *corev1.Pod {
+	base := strings.TrimRight(a.InternalURL, "/") + "/internal/archive-jobs/" + j.ID
 	env := []corev1.EnvVar{
-		{Name: "KYBER_ARCHIVE_UPLOAD_URL", Value: strings.TrimRight(a.InternalURL, "/") + "/internal/archive-jobs/" + j.ID + "/upload"},
-		{Name: "KYBER_ARCHIVE_DESCRIPTION", Value: string(desc)},
+		{Name: "KYBER_ARCHIVE_UPLOAD_URL", Value: base + "/upload"},
+		{Name: "KYBER_ARCHIVE_DESCRIPTION_URL", Value: base + "/description"},
 		{Name: "KYBER_ARCHIVE_MAX_BYTES", Value: fmt.Sprint(a.limits().MaxArchiveBytes)},
 		{Name: "KYBER_ARCHIVE_MAX_ENTRIES", Value: fmt.Sprint(a.limits().MaxEntries)},
 	}
 	caps := []corev1.Capability{"DAC_READ_SEARCH"}
-	return a.archivePod(j, agent, node, "export", env, true, caps), nil
+	return a.archivePod(j, agent, node, "export", env, true, caps)
+}
+
+// archiveDescription is what the export pod writes into the manifest besides
+// the entries.
+type archiveDescription struct {
+	Source diskarchive.Source  `json:"source"`
+	Mounts []diskarchive.Mount `json:"mounts"`
+}
+
+func exportDescription(j *archivejob.Job) archiveDescription {
+	d := archiveDescription{Mounts: j.Mounts}
+	if j.Source != nil {
+		d.Source = *j.Source
+	}
+	return d
 }
 
 // archivePod builds an export, restore or verify pod. Export and restore run
