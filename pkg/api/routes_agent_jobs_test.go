@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -237,3 +238,45 @@ func readAll(t *testing.T, resp *http.Response) string {
 
 // Prevent unused import when resource{} isn't referenced by this file.
 var _ = resource.Quantity{}
+
+// A paused job cannot be run by hand (MAT-90): it would fire the same work
+// the source agent still runs.
+func TestAgentAPI_RunJob_RejectsPausedJob(t *testing.T) {
+	agent := sampleAgentCRD("chewie")
+	agent.Spec.Jobs = []kyberv1.AgentJob{{Name: "held", Schedule: "0 9 * * *", Prompt: "wait", Paused: true}}
+	handler, _ := buildAgentHandler(t, agent)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/api/v1/agents/chewie/jobs/held/run", nil)
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close()
+	if body := readAll(t, resp); resp.StatusCode != http.StatusConflict || !strings.Contains(body, "job_paused") {
+		t.Fatalf("status %d body %s, want 409 job_paused", resp.StatusCode, body)
+	}
+}
+
+func TestAgentAPI_PatchJobs_RoundTripsPaused(t *testing.T) {
+	agent := sampleAgentCRD("chewie")
+	handler, _ := buildAgentHandler(t, agent)
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	body := `{"jobs":[{"name":"held","schedule":"0 9 * * *","prompt":"wait","paused":true}]}`
+	req, _ := http.NewRequest(http.MethodPatch, ts.URL+"/api/v1/agents/chewie", strings.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+testAPIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("PATCH: %v", err)
+	}
+	defer resp.Body.Close()
+	got := readAll(t, resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(got, `"paused":true`) {
+		t.Fatalf("status %d body %s, want the job returned paused", resp.StatusCode, got)
+	}
+}

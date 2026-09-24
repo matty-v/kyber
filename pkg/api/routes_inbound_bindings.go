@@ -102,6 +102,7 @@ type UpdateInboundBindingRequest struct {
 	Fields          *[]inboundBindingFieldRequest  `json:"fields,omitempty"`
 	Action          *string                        `json:"action,omitempty"`
 	Limits          *inboundBindingLimitsRequest   `json:"limits,omitempty"`
+	Disabled        *bool                          `json:"disabled,omitempty"`
 }
 
 // updateInboundBindingRawRequest is the decode-target for PATCH bodies.
@@ -132,6 +133,7 @@ type inboundBindingResponse struct {
 	Fields          []inboundBindingFieldRequest  `json:"fields,omitempty"`
 	Action          string                        `json:"action"`
 	Limits          *inboundBindingLimitsRequest  `json:"limits,omitempty"`
+	Disabled        bool                          `json:"disabled,omitempty"`
 	// URL is the externally-reachable webhook URL. Computed from the
 	// server's PublicURL — omitted when PublicURL is unset (dev/test).
 	URL string `json:"url,omitempty"`
@@ -641,6 +643,9 @@ func applyBindingUpdate(cur kyberv1.AgentInboundBinding, req UpdateInboundBindin
 	if req.Limits != nil {
 		out.Limits = &kyberv1.AgentInboundLimits{MaxPerMinute: req.Limits.MaxPerMinute}
 	}
+	if req.Disabled != nil {
+		out.Disabled = *req.Disabled
+	}
 	return out
 }
 
@@ -819,6 +824,7 @@ func (s *Server) bindingToResponse(agentName string, b kyberv1.AgentInboundBindi
 		EventPath:       b.EventPath,
 		MatchEvents:     b.MatchEvents,
 		Action:          b.Action,
+		Disabled:        b.Disabled,
 		URL:             s.bindingURL(agentName, b.Name),
 		Stats:           computeInboundBindingStats(b.Name, runs),
 	}
@@ -862,6 +868,7 @@ func computeInboundBindingStats(bindingName string, runs []kyberv1.AgentInboundR
 			inboundDropUnmatchedEvent: 0,
 			inboundDropFilterRejected: 0,
 			inboundDropDedup:          0,
+			inboundDropDisabled:       0,
 		},
 	}
 	var lastStarted *metav1.Time

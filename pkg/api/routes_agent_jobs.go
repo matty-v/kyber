@@ -50,16 +50,21 @@ func (s *Server) handleAgentJobAction(w http.ResponseWriter, r *http.Request, ag
 
 	// Job must be declared on spec.jobs — run-now is an operator convenience
 	// for scheduled jobs, not an arbitrary command-execution backdoor.
-	found := false
-	for _, j := range agent.Spec.Jobs {
-		if j.Name == jobName {
-			found = true
+	var job *kyberv1.AgentJob
+	for i := range agent.Spec.Jobs {
+		if agent.Spec.Jobs[i].Name == jobName {
+			job = &agent.Spec.Jobs[i]
 			break
 		}
 	}
-	if !found {
+	if job == nil {
 		writeJSONError(w, http.StatusNotFound, "not_found",
 			"agent '"+agentName+"' has no job named '"+jobName+"'")
+		return
+	}
+	if job.Paused {
+		writeJSONError(w, http.StatusConflict, "job_paused",
+			"job '"+jobName+"' is paused; resume it before running it")
 		return
 	}
 

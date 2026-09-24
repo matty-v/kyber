@@ -945,3 +945,23 @@ func TestInboundBindings_PATCH_UnknownField(t *testing.T) {
 		t.Errorf("want 400 on unknown field, got %d: %s", rr.Code, rr.Body.String())
 	}
 }
+
+// Disabling and re-enabling a binding round-trips through PATCH and leaves
+// the rest of its definition untouched (MAT-90: restored bindings arrive
+// disabled and are enabled at cutover).
+func TestInboundBindings_PATCH_TogglesDisabled(t *testing.T) {
+	h := buildBindingsHarness(t, agentWithBindings("dave"))
+	for _, want := range []bool{true, false} {
+		req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave/inbound-bindings/ci-watch", map[string]any{"disabled": want})
+		rr := httptest.NewRecorder()
+		h.handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("disabled=%v: want 200, got %d: %s", want, rr.Code, rr.Body.String())
+		}
+		for _, b := range h.fetchAgent(t, "dave").Spec.InboundBindings {
+			if b.Name == "ci-watch" && (b.Disabled != want || b.SignatureHeader != "X-Hub-Signature-256") {
+				t.Fatalf("disabled=%v: stored binding %+v", want, b)
+			}
+		}
+	}
+}

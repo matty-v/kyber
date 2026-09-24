@@ -410,6 +410,12 @@ type AgentJob struct {
 	// rather than half-working.
 	// +optional
 	ClearContextAfter bool `json:"clearContextAfter,omitempty"`
+
+	// Paused keeps the job defined but off the schedule: it is not rendered
+	// into cron and cannot be run by hand until resumed. A job restored from
+	// a disk archive arrives paused so it never fires on both agents.
+	// +optional
+	Paused bool `json:"paused,omitempty"`
 }
 
 // AgentJobOutcome reports the terminal state of a single job dispatch attempt.
@@ -517,6 +523,12 @@ type AgentInboundBinding struct {
 	// Limits applies per-binding rate limiting. Defaults: maxPerMinute=10.
 	// +optional
 	Limits *AgentInboundLimits `json:"limits,omitempty"`
+
+	// Disabled keeps the binding defined but refuses deliveries with 409. A
+	// binding restored from a disk archive arrives disabled until the sender
+	// is moved to it at cutover.
+	// +optional
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // AgentInboundFilter is a single conditional clause evaluated against the
@@ -593,7 +605,8 @@ type AgentInboundRun struct {
 
 	// DropReason explains why a "dropped" run was rejected. One of:
 	// sig-mismatch | missing-secret | unmatched-event | filter-rejected |
-	// rate-limited | queue-full | dedup. Empty when Outcome is "dispatched".
+	// rate-limited | queue-full | dedup | disabled. Empty when Outcome is
+	// "dispatched".
 	// +optional
 	DropReason string `json:"dropReason,omitempty"`
 

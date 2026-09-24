@@ -25,6 +25,7 @@ import (
 const (
 	inboundDropSigMismatch    = "sig-mismatch"
 	inboundDropMissingSecret  = "missing-secret"
+	inboundDropDisabled       = "disabled"
 	inboundDropDedup          = "dedup"
 	inboundDropUnmatchedEvent = "unmatched-event"
 	inboundDropFilterRejected = "filter-rejected"
@@ -349,6 +350,15 @@ func (s *Server) handleInbound(w http.ResponseWriter, r *http.Request) {
 	if matchedSecret == "prev" {
 		slog.Info("inbound: signature matched previous secret (rotation grace active)",
 			"agent", agentName, "binding", bindingName, "request_id", requestID)
+	}
+
+	// Checked only after the signature, so an unauthenticated caller cannot
+	// learn that a disabled binding exists.
+	if binding.Disabled {
+		s.recordInboundRun(r.Context(), agentName, bindingName, requestID, &startedAt,
+			inboundOutcomeDropped, inboundDropDisabled, "")
+		writeJSONError(w, http.StatusConflict, "binding_disabled", "this binding is disabled; enable it on the agent to accept deliveries")
+		return
 	}
 
 	// Dedup. Treat any deduper error as fail-open (log + continue) so a
