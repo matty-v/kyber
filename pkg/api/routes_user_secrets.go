@@ -158,7 +158,7 @@ func (s *Server) listUserSecrets(w http.ResponseWriter, r *http.Request, agentNa
 // getUserSecret handles GET /api/v1/agents/{name}/secrets/{key}.
 // Returns text/plain for kv, application/octet-stream for file.
 func (s *Server) getUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
-	if err := usersecrets.ValidateKey(key); err != nil {
+	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return
 	}
@@ -194,7 +194,7 @@ func (s *Server) getUserSecret(w http.ResponseWriter, r *http.Request, agentName
 // Creating a new entry never rolls the agent; replacing an env-projected entry
 // or changing an entry's kind rolls a live agent so stale env state is removed.
 func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
-	if err := usersecrets.ValidateKey(key); err != nil {
+	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return
 	}
@@ -208,6 +208,14 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "validation_error", err.Error())
 		return
+	}
+	// The pre-check above accepted any file key; a kv key must also be a
+	// valid environment variable name.
+	if kind == userSecretKindKV {
+		if err := usersecrets.ValidateKey(key); err != nil {
+			writeUserSecretValidationError(w, "key", err)
+			return
+		}
 	}
 
 	if err := usersecrets.ValidateEntrySize(len(value)); err != nil {
@@ -273,7 +281,7 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 // Looks in both kv and file; removes whichever holds the key. Rolls the agent
 // on success.
 func (s *Server) deleteUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
-	if err := usersecrets.ValidateKey(key); err != nil {
+	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return
 	}
@@ -578,7 +586,7 @@ func writeUserSecretValue(w http.ResponseWriter, key string, kind userSecretKind
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write(value)
 	case userSecretKindFile:
-		filename := strings.ToLower(key) + ".bin"
+		filename := usersecrets.FileName(key)
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 		w.WriteHeader(http.StatusOK)
@@ -591,7 +599,8 @@ func writeUserSecretValue(w http.ResponseWriter, key string, kind userSecretKind
 func writeUserSecretValidationError(w http.ResponseWriter, field string, err error) {
 	code := "validation_error"
 	switch {
-	case errors.Is(err, usersecrets.ErrKeyEmpty), errors.Is(err, usersecrets.ErrKeyTooLong), errors.Is(err, usersecrets.ErrKeyBadGrammar):
+	case errors.Is(err, usersecrets.ErrKeyEmpty), errors.Is(err, usersecrets.ErrKeyTooLong), errors.Is(err, usersecrets.ErrKeyBadGrammar),
+		errors.Is(err, usersecrets.ErrFileKeyBadGrammar), errors.Is(err, usersecrets.ErrFileKeyLegacyForm):
 		code = "invalid_key"
 	case errors.Is(err, usersecrets.ErrKeyReservedPrefix):
 		code = "reserved_prefix"
@@ -615,13 +624,13 @@ func userSecretsSecretName(agentName string, kind userSecretKind) string {
 
 // userSecretDataKey returns the map key used inside the Secret.Data for the
 // given user-facing key. kv keeps the raw uppercase form (projected verbatim
-// as env vars); file lowercases and suffixes with .bin so the mount path
-// matches #75's spec (/user-secrets/{key.lower()}.bin).
+// as env vars); file uses the key's filename under /user-secrets — the key
+// itself for a filename-style key, {key.lower()}.bin for an env-style one (#75).
 func userSecretDataKey(key string, kind userSecretKind) string {
 	if kind == userSecretKindKV {
 		return key
 	}
-	return strings.ToLower(key) + ".bin"
+	return usersecrets.FileName(key)
 }
 
 // enumerateUserSecretKeys yields user-facing keys and their corresponding
@@ -645,10 +654,7 @@ func userKeyFromDataKey(dk string, kind userSecretKind) string {
 	if kind == userSecretKindKV {
 		return dk
 	}
-	if !strings.HasSuffix(dk, ".bin") {
-		return ""
-	}
-	return strings.ToUpper(strings.TrimSuffix(dk, ".bin"))
+	return usersecrets.FileKey(dk)
 }
 
 // readUserSecretMetadata decodes the per-entry metadata annotation. Returns

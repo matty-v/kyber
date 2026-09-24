@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   MAX_USER_SECRET_ENTRY_BYTES,
   parseUserSecretImport,
+  userSecretFilePath,
+  validateUserSecretKey,
 } from './userSecretImport'
 
 describe('parseUserSecretImport', () => {
@@ -33,5 +35,26 @@ describe('parseUserSecretImport', () => {
     expect(() => parseUserSecretImport(`FOO=${'x'.repeat(MAX_USER_SECRET_ENTRY_BYTES + 1)}`)).toThrow(
       `FOO exceeds ${MAX_USER_SECRET_ENTRY_BYTES} bytes`,
     )
+  })
+})
+
+// Mirrors pkg/usersecrets TestKeyGrammarPerKind (MAT-90 G13).
+describe('validateUserSecretKey per kind', () => {
+  it.each([
+    ['vault-cert.pem', false, true, '/user-secrets/vault-cert.pem'],
+    ['id_ed25519', false, true, '/user-secrets/id_ed25519'],
+    ['APP_PEM', true, true, '/user-secrets/app_pem.bin'],
+    ['../x', false, false, ''],
+    ['a..b', false, false, ''],
+    ['.hidden', false, false, ''],
+    ['app_pem.bin', false, false, ''],
+    ['App_Pem.bin', false, true, '/user-secrets/App_Pem.bin'],
+    ['KYBER_TOKEN', false, false, ''],
+    ['a'.repeat(253), false, true, `/user-secrets/${'a'.repeat(253)}`],
+    ['a'.repeat(254), false, false, ''],
+  ])('%s: kv valid=%s, file valid=%s', (key, kvValid, fileValid, path) => {
+    expect(validateUserSecretKey(key, 'kv') === null).toBe(kvValid)
+    expect(validateUserSecretKey(key, 'file') === null).toBe(fileValid)
+    if (fileValid) expect(userSecretFilePath(key)).toBe(path)
   })
 })

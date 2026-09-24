@@ -18,7 +18,8 @@ describe('SecretsHelpContent', () => {
 
   it('describes the file mount path convention', () => {
     render(<SecretsHelpContent />)
-    expect(screen.getByText('/user-secrets/<key>.bin')).toBeInTheDocument()
+    expect(screen.getByText('/user-secrets/vault-cert.pem')).toBeInTheDocument()
+    expect(screen.getByText('/user-secrets/app_pem.bin')).toBeInTheDocument()
   })
 
   it('mentions the 256 KiB aggregate limit', () => {

@@ -1,5 +1,16 @@
 # @matty-v/kyber-pwa-views
 
+## 0.59.0
+
+- A file secret keeps its own file name. Picking a file in Add secret fills
+  the key with the file's name, the key is no longer forced to uppercase in
+  file mode, and the dialog shows the path the file mounts at, such as
+  `/user-secrets/vault-cert.pem`. Key/value secrets still need an
+  environment-variable name, and an uppercase file key still mounts at
+  `/user-secrets/<key>.bin`.
+- `validateUserSecretKey(key, kind?)` takes the secret kind, defaulting to
+  `kv`, and the new `userSecretFilePath(key)` returns a file key's mount path.
+
 ## 0.58.0
 
 - Create Agent from an archive prefills the new agent from the archived
