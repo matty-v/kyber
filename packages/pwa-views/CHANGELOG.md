@@ -1,5 +1,27 @@
 # @matty-v/kyber-pwa-views
 
+## 0.58.0
+
+- Create Agent from an archive prefills the new agent from the archived
+  configuration (model on the same runtime, startup prompt, CPU and memory,
+  soul, identity repo where the installation can link it) and adds a
+  **From the archive** section: apply the configuration or not, restore jobs
+  paused or leave them out, restore webhook bindings disabled or leave them
+  out, copy user secrets or leave them out. It lists the jobs, bindings, user
+  secrets and harness login files involved. `AgentImportRequest.apply`,
+  `ArchiveConfig`, `ArchiveSummary.login` and `source.config` are typed.
+- Jobs can be paused and resumed from the Jobs tab. A paused job shows a
+  "paused" badge and "Run now" is disabled for it; editing a job keeps it
+  paused. `AgentJob.paused` is typed.
+- Webhook bindings can be disabled and enabled from the Webhooks tab, with a
+  "disabled" badge. `AgentInboundBinding.disabled` and the `disabled` drop
+  reason are typed.
+- Completed exports can be deleted from the Disk export card, and exports or
+  uploads from the archive picker, after a confirmation.
+  `deleteAgentExport(name, id)`, `deleteArchiveUpload(id)` and
+  `useDeleteArchive()` are new. The export contents list harness login files
+  separately as never restored.
+
 ## 0.57.0
 
 - Archive uploads are sent in parts, so a ZIP the size of an agent's disk gets

@@ -18,6 +18,7 @@ vi.mock('../hooks/useAPI', () => ({
   useCreateAgentFromArchive: vi.fn(() => ({ mutateAsync: vi.fn(), isPending: false })),
   useArchives: vi.fn(() => ({ data: [], isLoading: false })),
   useArchiveUpload: vi.fn(() => ({ data: undefined })),
+  useDeleteArchive: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   useUploadArchive: vi.fn(() => ({ mutate: vi.fn(), isPending: false })),
   usePutDiscordComms: vi.fn(),
   useGitHubRepos: vi.fn(),

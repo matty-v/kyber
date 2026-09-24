@@ -1,5 +1,5 @@
 import type { RuntimeDescriptor } from '../../lib/types'
-import type { ArchiveSummary, IdentityRepoMode, ModelInfo } from '../../lib/types'
+import type { AgentImportApply, ArchiveSummary, IdentityRepoMode, ModelInfo } from '../../lib/types'
 
 /**
  * IdentityRepoMode: which of the three identity-repo flows the operator picked.
@@ -84,6 +84,10 @@ export interface WizardState {
   // installed itself (both off by default).
   keepCredentialFiles: boolean
   keepCrontabs: boolean
+  // What the import carries beyond the disk (MAT-90). Defaults match the
+  // server's: apply the config, jobs paused, bindings disabled, secrets
+  // copied when the source agent is on this installation.
+  archiveApply: Required<AgentImportApply>
 }
 
 export interface ArchiveSourceChoice {
@@ -111,6 +115,7 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
   return {
     keepCredentialFiles: false,
     keepCrontabs: false,
+    archiveApply: defaultArchiveApply(),
     name: '',
     machine: '',
     runtime: 'claude-code',
@@ -151,4 +156,8 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     identityRepoExisting: '',
     identityRepoCollision: false,
   }
+}
+
+export function defaultArchiveApply(): Required<AgentImportApply> {
+  return { config: true, jobs: 'paused', bindings: 'disabled', secrets: 'copy-if-local' }
 }

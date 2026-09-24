@@ -19,6 +19,8 @@ import {
   Pencil,
   Play,
   Plus,
+  Power,
+  PowerOff,
   RefreshCw,
   Trash2,
 } from 'lucide-react'
@@ -28,6 +30,7 @@ import {
   useInboundBindings,
   useReplayInboundRun,
   useRotateInboundSecret,
+  useUpdateInboundBinding,
 } from '../hooks/useAPI'
 import type {
   AgentInboundDropReason,
@@ -55,6 +58,7 @@ const DROP_REASONS: AgentInboundDropReason[] = [
   'unmatched-event',
   'filter-rejected',
   'dedup',
+  'disabled',
 ]
 
 // Threshold above which the drop badge shows next to the binding name. The
@@ -203,6 +207,7 @@ export function WebhooksTab({ agentName }: Props) {
   const deleteBinding = useDeleteInboundBinding()
   const rotateSecret = useRotateInboundSecret()
   const replayRun = useReplayInboundRun()
+  const updateBinding = useUpdateInboundBinding()
 
   const [showAdd, setShowAdd] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<InboundBindingWithStats | null>(null)
@@ -375,6 +380,10 @@ export function WebhooksTab({ agentName }: Props) {
                           if (b.url) void copyToClipboard(b.url, 'URL')
                         }}
                         onRotate={() => setPendingRotate(b)}
+                        togglePending={updateBinding.isPending}
+                        onToggleDisabled={() =>
+                          updateBinding.mutate({ name: agentName, bindingName: b.name, body: { disabled: !b.disabled } })
+                        }
                         onDelete={() => setPendingDelete(b)}
                         onEdit={() => setPendingEdit(b)}
                         onReplay={(requestId) =>
@@ -490,6 +499,8 @@ function BindingRows({
   onToggle,
   onCopyUrl,
   onRotate,
+  togglePending,
+  onToggleDisabled,
   onDelete,
   onEdit,
   onReplay,
@@ -503,6 +514,8 @@ function BindingRows({
   onToggle: () => void
   onCopyUrl: () => void
   onRotate: () => void
+  togglePending: boolean
+  onToggleDisabled: () => void
   onDelete: () => void
   onEdit: () => void
   onReplay: (requestId: string) => void
@@ -528,6 +541,15 @@ function BindingRows({
         </td>
         <td className="p-3 font-mono">
           {b.name}
+          {b.disabled && (
+            <span
+              className="ml-2 rounded bg-warn/15 px-1 text-[10px] font-medium uppercase text-warn"
+              data-testid="binding-disabled"
+              title="Deliveries are authenticated, then refused with 409"
+            >
+              disabled
+            </span>
+          )}
           <DropBadge count={droppedTotal} />
         </td>
         <td className="p-3 text-xs text-text-muted">
@@ -571,6 +593,20 @@ function BindingRows({
                 </Button>
               </TooltipTrigger>
               <TooltipContent>Edit webhook</TooltipContent>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={onToggleDisabled}
+                  disabled={togglePending}
+                  aria-label={b.disabled ? 'Enable webhook' : 'Disable webhook'}
+                >
+                  {b.disabled ? <Power className="h-3.5 w-3.5" /> : <PowerOff className="h-3.5 w-3.5" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>{b.disabled ? 'Enable webhook' : 'Disable webhook'}</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger asChild>

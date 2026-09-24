@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
-import { Upload } from 'lucide-react'
-import { useArchives, useArchiveUpload, useUploadArchive } from '../../hooks/useAPI'
+import { Trash2, Upload } from 'lucide-react'
+import { useArchives, useArchiveUpload, useDeleteArchive, useUploadArchive } from '../../hooks/useAPI'
 import { formatArchiveBytes } from '../DiskExportCard'
+import { ConfirmDialog } from '../ConfirmDialog'
 import type { ArchiveJob, ArchivesCapability } from '../../lib/types'
-import type { WizardSetter, WizardState } from './types'
+import { defaultArchiveApply, type WizardSetter, type WizardState } from './types'
+import { ArchiveApplySection, prefillFromArchive } from './ArchiveApplySection'
 
 // requiredDiskGi mirrors requiredDiskBytes in pkg/api/archives_import.go: the
 // archived bytes plus 10% and 1 GiB, rounded up to whole GiB.
@@ -41,6 +43,8 @@ export function ArchiveSourcePicker({ state, set, capability }: { state: WizardS
   const [uploadId, setUploadId] = useState<string>()
   const [progress, setProgress] = useState<number | null>(null)
   const uploaded = useArchiveUpload(uploadId)
+  const deleteArchive = useDeleteArchive()
+  const [confirmDelete, setConfirmDelete] = useState<ArchiveJob>()
 
   function choose(job: ArchiveJob | undefined) {
     if (!job) {
@@ -53,14 +57,20 @@ export function ArchiveSourcePicker({ state, set, capability }: { state: WizardS
       label: archiveLabel(job),
       summary: job.summary,
     })
+    set('archiveApply', defaultArchiveApply())
+    let runtime = state.runtime
     if (job.summary?.source.runtime && state.runtimes?.some((r) => r.id === job.summary!.source.runtime)) {
-      set('runtime', job.summary.source.runtime)
+      runtime = job.summary.source.runtime
+      set('runtime', runtime)
     }
     if (job.summary) {
+      prefillFromArchive(job.summary, state, set, runtime)
       const need = requiredDiskGi(job.summary.totals.bytes)
       if (diskGi(state.disk) < need) set('disk', `${need}Gi`)
     }
   }
+
+  const selected = (archives.data ?? []).find((j) => j.id === (state.archiveSource?.exportId ?? state.archiveSource?.uploadId))
 
   // Select an upload as soon as it has been verified.
   useEffect(() => {
@@ -87,17 +97,46 @@ export function ArchiveSourcePicker({ state, set, capability }: { state: WizardS
       </label>
       {fromArchive && (
         <div className="space-y-3 rounded-lg border border-border-subtle p-3">
-          <select
-            aria-label="Archive"
-            className="w-full rounded-lg border border-border-default bg-surface-base px-3 py-2 text-sm text-text-primary"
-            value={selectedId}
-            onChange={(e) => choose((archives.data ?? []).find((j) => j.id === e.target.value))}
-          >
-            <option value="">{archives.isLoading ? 'Loading archives…' : 'Choose an export or upload'}</option>
-            {(archives.data ?? []).map((j) => (
-              <option key={j.id} value={j.id}>{archiveLabel(j)}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              aria-label="Archive"
+              className="w-full rounded-lg border border-border-default bg-surface-base px-3 py-2 text-sm text-text-primary"
+              value={selectedId}
+              onChange={(e) => choose((archives.data ?? []).find((j) => j.id === e.target.value))}
+            >
+              <option value="">{archives.isLoading ? 'Loading archives…' : 'Choose an export or upload'}</option>
+              {(archives.data ?? []).map((j) => (
+                <option key={j.id} value={j.id}>{archiveLabel(j)}</option>
+              ))}
+            </select>
+            {selected && (
+              <button
+                type="button"
+                aria-label="Delete archive"
+                title="Delete this archive now"
+                className="rounded-lg border border-border-default p-2 text-text-secondary hover:text-danger"
+                onClick={() => setConfirmDelete(selected)}
+              >
+                <Trash2 className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <ConfirmDialog
+            open={confirmDelete !== undefined}
+            title="Delete archive?"
+            message={confirmDelete ? `${archiveLabel(confirmDelete)} is deleted now rather than when its retention ends. Download links stop working, and it cannot be imported again.` : ''}
+            confirmLabel="Delete"
+            dangerous
+            loading={deleteArchive.isPending}
+            onCancel={() => setConfirmDelete(undefined)}
+            onConfirm={() => {
+              const job = confirmDelete!
+              deleteArchive.mutate(
+                { agent: job.kind === 'export' ? job.agent : undefined, id: job.id },
+                { onSuccess: () => choose(undefined), onSettled: () => setConfirmDelete(undefined) },
+              )
+            }}
+          />
           <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-dashed border-border-default px-3 py-2 text-xs text-text-secondary">
             <Upload className="h-4 w-4" />
             {progress !== null ? `Uploading… ${progress}%` : uploaded.data && uploaded.data.state !== 'completed' ? (uploaded.data.error ?? uploaded.data.message ?? 'Verifying…') : 'Upload a Kyber disk archive (.zip)'}
@@ -137,7 +176,7 @@ export function ArchiveSourcePicker({ state, set, capability }: { state: WizardS
                 <span>
                   Also restore files that look like credentials{summary.sensitive?.length ? ` (${summary.sensitive.length})` : ''}
                   <span className="block text-text-muted">
-                    Off by default: the new agent gets its own logins and keys, and two agents sharing one login sign each other out.
+                    Off by default: the new agent gets its own keys. The harness login is never restored either way, since two agents sharing one login sign each other out.
                   </span>
                 </span>
               </label>
@@ -155,6 +194,7 @@ export function ArchiveSourcePicker({ state, set, capability }: { state: WizardS
                   </span>
                 </label>
               )}
+              <ArchiveApplySection summary={summary} state={state} set={set} />
             </div>
           )}
         </div>

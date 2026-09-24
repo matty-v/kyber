@@ -57,6 +57,7 @@ function makeBinding(name = 'github-prs'): InboundBindingWithStats {
         'unmatched-event': 0,
         'filter-rejected': 0,
         dedup: 0,
+        disabled: 0,
       },
     },
   }
