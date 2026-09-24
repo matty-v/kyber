@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { Plus, Play, Server, Square, RotateCcw, Trash2, Zap, MoreHorizontal } from 'lucide-react'
-import type { ColumnDef } from '@tanstack/react-table'
 import { useAgents, useComputeConfig, useMachines, useStartMachine, useStopMachine, useRebootMachine, useDeleteMachine, useRestartMachineAgents } from '../hooks/useAPI'
 import { machineCapacity, parseCpu, parseMemoryGi } from '../lib/machineTypes'
 import { capacityBand, pctUsed, BAND_BG_CLASS } from '../lib/capacityBars'
@@ -19,7 +18,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
-import { DataTable } from '@/components/ui/data-table'
+import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
 import type { Agent, Machine } from '../lib/types'
 
@@ -49,7 +48,7 @@ export function MachineList() {
     setPending({ kind, machine })
   }
 
-  const columns = useMemo<ColumnDef<Machine, unknown>[]>(
+  const columns = useMemo<DataTableColumn<Machine>[]>(
     () => [
       {
         accessorKey: 'id',
