@@ -12,6 +12,7 @@ import (
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -94,22 +95,52 @@ func (s *Server) handleAPIKeyReauthorize(w http.ResponseWriter, r *http.Request,
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm authorization recovery")
 		return
 	}
-	current := &kyberv1.Agent{}
-	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: s.Namespace}, current); err != nil ||
-		current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType ||
-		current.Status.Phase != kyberv1.AgentPhaseNeedsAuth ||
-		current.Spec.DesiredPhase != kyberv1.AgentPhaseNeedsAuth && current.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
-		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
+	s.startAfterAuthorization(w, r, types.NamespacedName{Name: name, Namespace: s.Namespace}, func(current *kyberv1.Agent) bool {
+		return current.UID == agent.UID && current.Spec.Runtime == agent.Spec.Runtime && current.Spec.Secrets.AuthType == agent.Spec.Secrets.AuthType &&
+			current.Status.Phase == kyberv1.AgentPhaseNeedsAuth &&
+			(current.Spec.DesiredPhase == kyberv1.AgentPhaseNeedsAuth || current.Spec.DesiredPhase == kyberv1.AgentPhaseRunning)
+	})
+}
+
+// startAfterAuthorization requests desiredPhase=Running once a new credential
+// is stored. Storing the Secret wakes the controller, whose status writes bump
+// the Agent's resourceVersion and make an optimistic patch conflict within
+// milliseconds, so conflicts are retried. The credential is already saved and
+// a one-time authorization code cannot be replayed, so this never answers
+// 500: success is 204, and a changed or held agent is a 409 saying so.
+func (s *Server) startAfterAuthorization(w http.ResponseWriter, r *http.Request, key types.NamespacedName, unchanged func(*kyberv1.Agent) bool) {
+	var status int
+	var code, message string
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		status, code, message = 0, "", ""
+		current := &kyberv1.Agent{}
+		if err := s.K8sClient.Get(r.Context(), key, current); err != nil {
+			return err
+		}
+		if !unchanged(current) {
+			status, code, message = http.StatusConflict, "agent_changed", "credential saved, but the agent changed during authorization; start it when ready"
+			return nil
+		}
+		if current.Annotations[kyberv1.AnnotationArchiveHold] != "" {
+			status, code, message = http.StatusConflict, "archive_in_progress", "credential saved; start the agent once the disk archive job on its volume finishes"
+			return nil
+		}
+		// The new Secret already reopens NeedsAuth's recovery gate, so an
+		// agent whose intent is already Running needs no spec write.
+		if current.Spec.DesiredPhase == kyberv1.AgentPhaseRunning {
+			return nil
+		}
+		patch := client.MergeFromWithOptions(current.DeepCopy(), client.MergeFromWithOptimisticLock{})
+		current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+		return s.K8sClient.Patch(r.Context(), current, patch)
+	})
+	if err != nil {
+		slog.Error("credential saved but the agent could not be set to start", "agent", key.Name, "error", err)
+		writeJSONError(w, http.StatusConflict, "start_pending", "credential saved, but the agent could not be started; start it again")
 		return
 	}
-	// The credential is saved; starting waits for the disk archive job.
-	if rejectArchiveHeld(w, current) {
-		return
-	}
-	before := current.DeepCopy()
-	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := s.K8sClient.Patch(r.Context(), current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
-		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
+	if status != 0 {
+		writeJSONError(w, status, code, message)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
