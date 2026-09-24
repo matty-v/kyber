@@ -9,6 +9,7 @@ package usersecrets
 import (
 	"errors"
 	"regexp"
+	"strings"
 )
 
 // Size limits, per issue #75.
@@ -26,7 +27,21 @@ const (
 // kv entries, so operator-supplied keys must not already start with it.
 var reservedPrefixes = []string{"KYBER_", "USER_"}
 
+// keyGrammar is the kv (environment variable) grammar.
 var keyGrammar = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+
+// fileKeyGrammar is the grammar for a file key that is its own filename under
+// /user-secrets: a Kubernetes Secret data key with no path separator and no
+// leading dot. MaxFileKeyLength bounds it at the Secret key limit.
+var fileKeyGrammar = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$`)
+
+// MaxFileKeyLength is the upper bound on a filename-style file key.
+const MaxFileKeyLength = 253
+
+// legacyFileSuffix is appended to the lowercased key of an env-style file key
+// (#75: FOO mounts at /user-secrets/foo.bin). Kept so existing entries and the
+// agents that read them keep their paths.
+const legacyFileSuffix = ".bin"
 
 // Validation errors. These are typed so the API layer can map each to a
 // specific 400 error code without string-matching.
@@ -35,6 +50,8 @@ var (
 	ErrKeyTooLong        = errors.New("usersecrets: key exceeds maximum length")
 	ErrKeyBadGrammar     = errors.New("usersecrets: key must match [A-Z][A-Z0-9_]*")
 	ErrKeyReservedPrefix = errors.New("usersecrets: key uses a reserved prefix (KYBER_ or USER_)")
+	ErrFileKeyBadGrammar = errors.New("usersecrets: file key must be a filename: [A-Za-z0-9] then [A-Za-z0-9._-], at most 253 characters, with no path and no \"..\"")
+	ErrFileKeyLegacyForm = errors.New("usersecrets: a lowercase name.bin file key is the mount name of the key NAME; use NAME instead")
 	ErrValueTooLarge     = errors.New("usersecrets: value exceeds per-entry size limit")
 	ErrAggregateTooLarge = errors.New("usersecrets: aggregate size exceeds per-agent limit")
 )
@@ -58,6 +75,68 @@ func ValidateKey(key string) error {
 		}
 	}
 	return nil
+}
+
+// ValidateFileKey enforces the file-key rules. A file key is either an
+// env-style key (validated exactly as ValidateKey, mounted as
+// /user-secrets/<lowercase>.bin for compatibility with #75) or a filename such
+// as vault-cert.pem, mounted under that name. Every valid kv key is therefore a
+// valid file key, which makes this the check for a request whose kind is not
+// yet known.
+//
+// A lowercase "name.bin" filename is refused: it is the mount name the
+// env-style key NAME already produces, and accepting it would make two keys
+// share one file.
+func ValidateFileKey(key string) error {
+	if key == "" {
+		return ErrKeyEmpty
+	}
+	if keyGrammar.MatchString(key) {
+		return ValidateKey(key)
+	}
+	if len(key) > MaxFileKeyLength {
+		return ErrKeyTooLong
+	}
+	if !fileKeyGrammar.MatchString(key) || strings.Contains(key, "..") {
+		return ErrFileKeyBadGrammar
+	}
+	if legacyKeyFromFileName(key) != "" {
+		return ErrFileKeyLegacyForm
+	}
+	return nil
+}
+
+// FileName returns the filename under /user-secrets (and the Secret data key)
+// for a valid file key.
+func FileName(key string) string {
+	if keyGrammar.MatchString(key) {
+		return strings.ToLower(key) + legacyFileSuffix
+	}
+	return key
+}
+
+// FileKey inverts FileName. It returns "" for a name FileName never produces,
+// such as one hand-edited into the Secret.
+func FileKey(name string) string {
+	if key := legacyKeyFromFileName(name); key != "" {
+		return key
+	}
+	if keyGrammar.MatchString(name) || !fileKeyGrammar.MatchString(name) || strings.Contains(name, "..") {
+		return ""
+	}
+	return name
+}
+
+func legacyKeyFromFileName(name string) string {
+	stem, ok := strings.CutSuffix(name, legacyFileSuffix)
+	if !ok || stem != strings.ToLower(stem) {
+		return ""
+	}
+	key := strings.ToUpper(stem)
+	if len(key) > MaxKeyLength || !keyGrammar.MatchString(key) {
+		return ""
+	}
+	return key
 }
 
 // ValidateEntrySize checks that a single entry's byte size is within the per-entry limit.

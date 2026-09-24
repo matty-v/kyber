@@ -203,6 +203,25 @@ func TestSkillsReport_PlatformSourceAccepted(t *testing.T) {
 	}
 }
 
+// MAT-90 G14: a repo agent's disk-only skill is reported as source "local".
+// The closed source set must accept it, or the whole report is dropped.
+func TestSkillsReport_LocalSourceAccepted(t *testing.T) {
+	store := skillstore.NewMemoryStore()
+	internal := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithSkillStore(store))
+	body := `{"version":1,"skills":[{"name":"handmade","source":"local","path":"/home/kyber/.claude/skills/handmade","linked":["claude-code","codex"],
+	  "issues":[{"code":"unmanaged","severity":"warning","detail":"~/.claude/skills/handmade is on this agent's disk only"}]}]}`
+	if rr := postSkills(t, internal, "dave", body); rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", rr.Code, rr.Body.String())
+	}
+	rep, err := store.Get(context.Background(), "dave")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Skills) != 1 || rep.Skills[0].Source != skillscan.SourceLocal {
+		t.Fatalf("stored = %+v", rep.Skills)
+	}
+}
+
 func TestSkillsReport_NoStoreConfiguredIs503(t *testing.T) {
 	internal := api.NewInternalServer(briefstore.NewMemoryStore())
 	if rr := postSkills(t, internal, "dave", oneHealthySkill); rr.Code != http.StatusServiceUnavailable {

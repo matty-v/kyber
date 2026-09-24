@@ -14,6 +14,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -285,6 +286,10 @@ type Server struct {
 	// RuntimeRepairRunner executes a repair plan. Nil selects the Kubernetes
 	// maintenance-pod implementation; tests may inject a deterministic runner.
 	RuntimeRepairRunner RuntimeRepairRunner
+
+	// jobDispatchExec runs kyber-job-dispatch with args in an agent pod. Nil
+	// selects the Kubernetes exec implementation; tests inject a fake.
+	jobDispatchExec func(ctx context.Context, podName string, args []string, stdin io.Reader) (string, string, error)
 
 	// ComputeProvider identifies which ComputeAdapter backs this control plane.
 	// Populated from the KYBER_COMPUTE_PROVIDER env var at startup. Exposed

@@ -131,6 +131,38 @@ describe('SkillsTab', () => {
     expect(screen.getByText(/Loadable in Claude Code, Hermes/)).toBeInTheDocument()
   })
 
+  // MAT-90 G14: a repo agent's disk-only skill is in the list, with the
+  // runtimes it is live in and its own not-in-repo warning.
+  it('lists a disk-only skill as local, with its runtimes and warning', () => {
+    mockSkills(
+      report({
+        skills: [
+          skill({
+            name: 'handmade',
+            source: 'local',
+            path: '/home/kyber/.claude/skills/handmade',
+            linked: ['claude-code', 'codex', 'hermes'],
+            issues: [
+              {
+                code: 'unmanaged',
+                severity: 'warning',
+                detail: "~/.claude/skills/handmade is on this agent's disk only, not in the identity repo",
+              },
+            ],
+          }),
+        ],
+      }),
+    )
+    renderWithQuery(<SkillsTab agentName="dave" />)
+
+    expect(screen.getByText('handmade')).toBeInTheDocument()
+    expect(screen.getByText('Local')).toHaveAttribute('title', "On this agent's disk only, not in its identity repo")
+    expect(screen.getByText('unmanaged')).toBeInTheDocument()
+    expect(screen.queryByText('Skill state outside the identity repo')).not.toBeInTheDocument()
+    // A skill with a warning opens by default.
+    expect(screen.getByText(/Loadable in Claude Code, Codex, Hermes/)).toBeInTheDocument()
+  })
+
   // State written straight into a runtime skills home works right now and is
   // committed nowhere, so it dies at the next reprovision. That needs to be
   // visible, not silent.

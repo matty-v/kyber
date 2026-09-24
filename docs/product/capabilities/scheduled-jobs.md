@@ -4,7 +4,7 @@ Agents can put themselves on schedules and hand work to each other. You can decl
 
 ## Scheduled prompts from the console
 
-The agent detail view's Jobs tab manages declared jobs: each one is a named prompt delivered into the agent's live session on a standard cron schedule, interpreted in the agent's timezone. You can list, create, edit, delete, and run a job immediately from the same tab, and mark a job exclusive so a new fire is skipped while a previous run of the same job is still going. Each dispatch records an outcome, so you can see whether a job fired, was skipped, or failed to deliver.
+The agent detail view's Jobs tab manages declared jobs: each one is a named prompt delivered into the agent's live session on a standard cron schedule, interpreted in the agent's timezone. You can list, create, edit, delete, and run a job immediately from the same tab, and mark a job exclusive so a new fire is skipped while a previous run of the same job is still going. Each dispatch records an outcome, so you can see whether a job fired, was skipped, or failed to deliver. Running a job immediately uses the prompt as saved, even one saved seconds earlier, applies the job's own exclusive and clear-context settings, and answers with the real outcome: `409` when it was skipped (for example `agent_busy`) and `503` when it could not be delivered (for example `tmux_session_absent`).
 
 This is the difference between cron running a script and cron running judgment: the schedule delivers a prompt, and the agent brings everything it knows to the work.
 

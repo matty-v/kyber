@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/matty-v/kyber/pkg/skillscan"
 )
@@ -259,6 +260,46 @@ func TestInstall_FromDirectoryAndFile(t *testing.T) {
 				t.Errorf("imported skill was not linked for Codex: %v", err)
 			}
 		})
+	}
+}
+
+// MAT-90 G14: `kyber-skills install /tmp/x` used to ignore the path, link and
+// push what was already there, and report success without importing anything.
+func TestInstall_PositionalPathImports(t *testing.T) {
+	f := newRepoFixture(t)
+	sidecar, _ := captureSidecar(t, http.StatusNoContent)
+	t.Setenv("KYBER_SIDECAR_URL", sidecar.URL)
+	src := filepath.Join(t.TempDir(), "downloaded")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte(skillBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Flags on both sides of the path, as an agent is likely to type them.
+	if code := runInstall([]string{"--repo-dir", f.repoDir, src, "--home", f.home, "--no-push", "--name", "positional"}); code != 0 {
+		t.Fatalf("install PATH exit code = %d, want 0", code)
+	}
+	if _, err := os.Stat(filepath.Join(f.repoDir, "skills", "positional", "SKILL.md")); err != nil {
+		t.Fatalf("the positional path was not imported: %v", err)
+	}
+}
+
+func TestInstall_RejectsAmbiguousPaths(t *testing.T) {
+	f := newRepoFixture(t)
+	a, b := t.TempDir(), t.TempDir()
+	base := []string{"--repo-dir", f.repoDir, "--home", f.home, "--no-push"}
+	for name, extra := range map[string][]string{
+		"two positional paths":        {a, b},
+		"--from and a different path": {"--from", a, b},
+	} {
+		if code := runInstall(append(append([]string{}, base...), extra...)); code != 2 {
+			t.Errorf("%s: exit code = %d, want 2", name, code)
+		}
+	}
+	if entries, _ := os.ReadDir(filepath.Join(f.repoDir, "skills")); len(entries) != 0 {
+		t.Errorf("a rejected install still imported: %v", entries)
 	}
 }
 
@@ -587,6 +628,60 @@ func TestConverge_FlagsASkillThatIsNotInGitHubYet(t *testing.T) {
 	}
 }
 
+// MAT-90 G12: the reconcile loop runs `git status` on the identity repo every
+// tick. A plain status refreshes stat info and rewrites the index under
+// index.lock, so a tick that coincided with the identity sync's checkout or
+// merge failed the sync with "index.lock exists". kyber-skills only reads the
+// repo here and must never take that lock.
+func TestUnpushedPaths_DoesNotRewriteTheIndex(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "deploy", skillBody)
+	runGit(t, f.home, f.repoDir, "add", "-A")
+	runGit(t, f.home, f.repoDir, "commit", "-m", "deploy")
+	runGit(t, f.home, f.repoDir, "push", "origin", "main")
+
+	// Stat-dirty but content-clean: exactly what makes a plain status refresh
+	// and write the index back.
+	future := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(f.repoDir, "skills", "deploy", "SKILL.md"), future, future); err != nil {
+		t.Fatal(err)
+	}
+	f.writeSkill(t, "draft", "---\nname: draft\ndescription: Not saved yet.\n---\nbody\n")
+	index := filepath.Join(f.repoDir, ".git", "index")
+	before, err := os.Stat(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unpushedPaths(f.repoDir); len(got) != 1 || got[0] != "skills/draft/SKILL.md" {
+		t.Fatalf("unpushedPaths = %v, want [skills/draft/SKILL.md]", got)
+	}
+	after, err := os.Stat(index)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(before, after) || !after.ModTime().Equal(before.ModTime()) {
+		t.Error("unpushedPaths rewrote .git/index, so it took index.lock and can collide with the identity sync")
+	}
+}
+
+// A lock someone else holds must neither break the read nor be disturbed.
+func TestUnpushedPaths_WorksWhileAnotherProcessHoldsIndexLock(t *testing.T) {
+	f := newRepoFixture(t)
+	f.writeSkill(t, "draft", "---\nname: draft\ndescription: Not saved yet.\n---\nbody\n")
+	lock := filepath.Join(f.repoDir, ".git", "index.lock")
+	if err := os.WriteFile(lock, []byte("held"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := unpushedPaths(f.repoDir); len(got) != 1 || got[0] != "skills/draft/SKILL.md" {
+		t.Fatalf("unpushedPaths with a held lock = %v, want [skills/draft/SKILL.md]", got)
+	}
+	if b, err := os.ReadFile(lock); err != nil || string(b) != "held" {
+		t.Errorf("the held index.lock was disturbed: %q, %v", b, err)
+	}
+}
+
 // A steady state must be silent. An endless drip of identical reports would
 // bury the one tick that matters, and writes to the store for no reason.
 func TestConverge_SnapshotIsStableWhenNothingChanges(t *testing.T) {
@@ -733,14 +828,20 @@ func TestConverge_SharedUnmanagedSkillIsReportedOnce(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(f.home, ".hermes", "skills", "handmade")); err != nil {
 		t.Fatalf("unmanaged skill not shared: %v", err)
 	}
+	// MAT-90 G14: the skill is listed as local, loadable in every runtime,
+	// with exactly one unmanaged warning of its own.
+	rep := (*reports)[0]
+	if len(rep.Skills) != 1 || rep.Skills[0].Source != skillscan.SourceLocal || len(rep.Skills[0].Linked) != 3 {
+		t.Fatalf("skills = %+v, want handmade as a local skill linked in all three runtimes", rep.Skills)
+	}
 	var unmanaged int
-	for _, issue := range (*reports)[0].Issues {
+	for _, issue := range append(rep.Issues, rep.Skills[0].Issues...) {
 		if issue.Code == skillscan.IssueUnmanaged {
 			unmanaged++
 		}
 	}
 	if unmanaged != 1 {
-		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v", unmanaged, (*reports)[0].Issues)
+		t.Fatalf("unmanaged issues = %d, want exactly the one for the real directory: %+v / %+v", unmanaged, rep.Issues, rep.Skills[0].Issues)
 	}
 }
 

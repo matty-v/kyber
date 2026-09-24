@@ -6,12 +6,27 @@ export interface ImportedUserSecret {
 // Mirrors pkg/usersecrets validation so imports fail before the first API call.
 // The server remains authoritative; keep these grammar and size limits in sync.
 const KEY_PATTERN = /^[A-Z][A-Z0-9_]{0,63}$/
+const ENV_STYLE_PATTERN = /^[A-Z][A-Z0-9_]*$/
+// A file key is its own filename under /user-secrets (a Secret data key with
+// no path and no leading dot). Env-style keys stay valid for files and keep
+// their /user-secrets/<key>.bin mount name.
+const FILE_KEY_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,252}$/
+const LEGACY_FILE_NAME_PATTERN = /^[a-z][a-z0-9_]{0,63}\.bin$/
 const RESERVED_PREFIXES = ['USER_', 'KYBER_']
 export const MAX_USER_SECRET_ENTRY_BYTES = 64 * 1024
 export const MAX_USER_SECRETS_AGGREGATE_BYTES = 256 * 1024
 
-export function validateUserSecretKey(key: string): string | null {
+export function validateUserSecretKey(key: string, kind: 'kv' | 'file' = 'kv'): string | null {
   if (!key) return 'Key is required'
+  if (kind === 'file' && !ENV_STYLE_PATTERN.test(key)) {
+    if (!FILE_KEY_PATTERN.test(key) || key.includes('..')) {
+      return 'File name must start with a letter or digit, then letters, digits, ".", "_" or "-" (no "/" or "..", at most 253 characters)'
+    }
+    if (LEGACY_FILE_NAME_PATTERN.test(key)) {
+      return `${key} is where the key ${key.slice(0, -4).toUpperCase()} is mounted; use that key instead`
+    }
+    return null
+  }
   if (!KEY_PATTERN.test(key)) {
     return 'Key must match ^[A-Z][A-Z0-9_]{0,63}$ (start with A-Z, then A-Z/0-9/_)'
   }
@@ -19,6 +34,11 @@ export function validateUserSecretKey(key: string): string | null {
     if (key.startsWith(prefix)) return `Key must not start with reserved prefix ${prefix}`
   }
   return null
+}
+
+/** The path a file secret is mounted at inside the agent. Mirrors usersecrets.FileName. */
+export function userSecretFilePath(key: string): string {
+  return ENV_STYLE_PATTERN.test(key) ? `/user-secrets/${key.toLowerCase()}.bin` : `/user-secrets/${key}`
 }
 
 /** Parse a conservative dotenv-style KEY=VALUE file without expanding values. */

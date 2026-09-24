@@ -79,6 +79,23 @@ var schedulingEventReasons = map[string]struct{}{
 // the reconcile loop's existing flow lets us batch multiple field
 // updates into one Status().Patch call.
 func populateSchedulingStatus(ctx context.Context, c client.Client, pod *corev1.Pod, agent *kyberv1.Agent) bool {
+	// A container the kubelet cannot even create (a missing Secret or
+	// ConfigMap, an invalid reference) is deterministic, not a slow boot, and
+	// emits no event this file classifies. Report it at once instead of after
+	// the ten-minute fallback, with the kubelet's own message.
+	if message := containerConfigError(pod); message != "" {
+		if agent.Status.Scheduling != nil && agent.Status.Scheduling.LastError == message {
+			return false
+		}
+		firstObserved := metav1.NewTime(pod.CreationTimestamp.UTC())
+		agent.Status.Scheduling = &kyberv1.AgentSchedulingStatus{
+			Category:        "Other",
+			LastError:       message,
+			FirstObservedAt: &firstObserved,
+		}
+		return true
+	}
+
 	// Don't false-positive on a routine cold start. Pod creation timestamp
 	// is the right anchor — phase transitions can flap during boot.
 	if time.Since(pod.CreationTimestamp.Time) < schedulingGracePeriod {
@@ -190,6 +207,24 @@ func populateSchedulingStatus(ctx context.Context, c client.Client, pod *corev1.
 		FirstObservedAt: &firstObserved,
 	}
 	return true
+}
+
+// containerConfigError returns the kubelet's message for the first container
+// waiting on CreateContainerConfigError or CreateContainerError, or "".
+func containerConfigError(pod *corev1.Pod) string {
+	for _, cs := range append(append([]corev1.ContainerStatus{},
+		pod.Status.InitContainerStatuses...), pod.Status.ContainerStatuses...) {
+		w := cs.State.Waiting
+		if w == nil || (w.Reason != "CreateContainerConfigError" && w.Reason != "CreateContainerError") {
+			continue
+		}
+		msg := "container " + cs.Name + " cannot be created (" + w.Reason
+		if w.Message != "" {
+			msg += ": " + w.Message
+		}
+		return msg + ")."
+	}
+	return ""
 }
 
 // describeStalledPod renders what can be seen about a Pod that has made no

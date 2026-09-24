@@ -656,6 +656,80 @@ func TestUserSecrets_Put_UnsupportedContentType(t *testing.T) {
 	}
 }
 
+// MAT-90 G13: a file secret is mounted under its own name, so it must be
+// nameable like a file. vault-cert.pem was rejected because both kinds shared
+// the environment-variable grammar.
+func TestUserSecrets_FileKeyIsAFilename(t *testing.T) {
+	h, c := buildUserSecretsHandler(t, "dave")
+	payload := []byte("-----BEGIN CERTIFICATE-----\n")
+
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedMultipartRequest(t, "/api/v1/agents/dave/secrets/vault-cert.pem", payload))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("file PUT vault-cert.pem: want 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := getSecret(t, c, "dave-user-secrets-files").Data["vault-cert.pem"]; !bytes.Equal(got, payload) {
+		t.Fatalf("want /user-secrets/vault-cert.pem to hold the upload, got %q", got)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave/secrets", nil))
+	var list struct {
+		Items []struct{ Key, Kind string } `json:"items"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &list); err != nil {
+		t.Fatalf("decoding list: %v: %s", err, rr.Body.String())
+	}
+	if len(list.Items) != 1 || list.Items[0].Key != "vault-cert.pem" || list.Items[0].Kind != "file" {
+		t.Fatalf("list = %+v, want the one file entry vault-cert.pem", list.Items)
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave/secrets/vault-cert.pem", nil))
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Header().Get("Content-Disposition"), `filename="vault-cert.pem"`) {
+		t.Fatalf("readback: status %d, Content-Disposition %q", rr.Code, rr.Header().Get("Content-Disposition"))
+	}
+
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodDelete, "/api/v1/agents/dave/secrets/vault-cert.pem", nil))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("delete: want 204, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+// A kv entry becomes an environment variable, so it keeps that grammar.
+func TestUserSecrets_KVKeyStillNeedsEnvGrammar(t *testing.T) {
+	h, c := buildUserSecretsHandler(t, "dave")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedJSONRequest(t, http.MethodPut, "/api/v1/agents/dave/secrets/vault-cert.pem",
+		map[string]string{"kind": "kv", "value": "x"}))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "invalid_key") {
+		t.Fatalf("kv PUT vault-cert.pem: want 400 invalid_key, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if sec := getSecret(t, c, "dave-user-secrets-kv"); len(sec.Data) != 0 {
+		t.Errorf("rejected kv key was written: %v", keys(sec.Data))
+	}
+}
+
+// app_pem.bin is where the key APP_PEM already mounts; accepting it as its own
+// key would let two keys fight over one file.
+func TestUserSecrets_FileKeyCannotShadowAnEnvStyleKey(t *testing.T) {
+	h, c := buildUserSecretsHandler(t, "dave")
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedMultipartRequest(t, "/api/v1/agents/dave/secrets/APP_PEM", []byte("one")))
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("PUT APP_PEM: %d %s", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedMultipartRequest(t, "/api/v1/agents/dave/secrets/app_pem.bin", []byte("two")))
+	if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "invalid_key") {
+		t.Fatalf("PUT app_pem.bin: want 400 invalid_key, got %d: %s", rr.Code, rr.Body.String())
+	}
+	if got := string(getSecret(t, c, "dave-user-secrets-files").Data["app_pem.bin"]); got != "one" {
+		t.Errorf("APP_PEM's file was overwritten: %q", got)
+	}
+}
+
 func keys(m map[string][]byte) []string {
 	out := make([]string, 0, len(m))
 	for k := range m {

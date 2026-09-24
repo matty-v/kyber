@@ -91,10 +91,10 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `kyber-skills — manage and report this agent's skills
 
-  kyber-skills install [--from PATH] [--name NAME] [--no-push]
+  kyber-skills install [PATH | --from PATH] [--name NAME] [--no-push]
         Link every skill in the identity repo into every runtime home, commit
         and push anything new under skills/, then report to the control plane.
-        With --from, first copy a skill directory (or a single SKILL.md /
+        With PATH or --from, first copy a skill directory (or a single SKILL.md /
         <name>.md file) into the identity repo at skills/<name>/SKILL.md.
         Idempotent — safe to re-run.
 
@@ -320,8 +320,29 @@ func runInstall(args []string) int {
 	name := fs.String("name", "", "skill name (default: derived from --from)")
 	noPush := fs.Bool("no-push", false, "link and report, but do not commit or push")
 	addPathFlags(fs, &p)
-	if err := fs.Parse(args); err != nil {
+	// `install PATH` means `install --from PATH`. The flag package stops at
+	// the first positional argument, so keep parsing after it to allow flags on
+	// either side. It used to be ignored silently: install linked and pushed,
+	// and reported success without importing anything (MAT-90 G14).
+	var positional []string
+	for rest := args; ; rest = fs.Args()[1:] {
+		if err := fs.Parse(rest); err != nil {
+			return 2
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+	}
+	switch {
+	case len(positional) > 1:
+		fmt.Fprintf(os.Stderr, "kyber-skills: install takes at most one skill path, got %d: %s\n", len(positional), strings.Join(positional, " "))
 		return 2
+	case len(positional) == 1 && *from != "" && *from != positional[0]:
+		fmt.Fprintf(os.Stderr, "kyber-skills: both --from %s and the path %s were given; pass one\n", *from, positional[0])
+		return 2
+	case len(positional) == 1:
+		*from = positional[0]
 	}
 	if err := p.resolve(); err != nil {
 		fmt.Fprintf(os.Stderr, "kyber-skills: %v\n", err)
@@ -858,10 +879,16 @@ func commitAndPush(repoDir string) error {
 	return nil
 }
 
+// git runs with GIT_OPTIONAL_LOCKS=0. Without it every reconcile tick's
+// `git status` refreshes and rewrites the index under index.lock, which races
+// the identity sync's checkout/merge on the same repo and fails it with
+// "index.lock exists" (MAT-90 G12). Only optional locks are skipped: add and
+// commit still take the locks they need.
 func git(repoDir string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", repoDir}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_OPTIONAL_LOCKS=0")
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
@@ -965,6 +992,8 @@ func printReport(w io.Writer, rep *skillscan.Report, repoDir string) {
 			origin = "vendor:" + s.SourcePackage
 		case skillscan.SourcePlatform:
 			origin = "platform"
+		case skillscan.SourceLocal:
+			origin = "local"
 		}
 		status := "ok"
 		switch {

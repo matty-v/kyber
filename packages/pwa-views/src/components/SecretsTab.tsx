@@ -17,6 +17,7 @@ import {
   MAX_USER_SECRET_ENTRY_BYTES,
   MAX_USER_SECRETS_AGGREGATE_BYTES,
   parseUserSecretImport,
+  userSecretFilePath,
   validateUserSecretKey,
 } from '../lib/userSecretImport'
 import { Button } from './Button'
@@ -299,7 +300,8 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
     return () => window.removeEventListener('keydown', onKey)
   }, [busy, onClose])
 
-  const keyError = useMemo(() => (key ? validateUserSecretKey(key) : null), [key])
+  const keyKind: AgentSecretKind = mode === 'file' ? 'file' : 'kv'
+  const keyError = useMemo(() => (key ? validateUserSecretKey(key, keyKind) : null), [key, keyKind])
 
   const existingKey = useMemo(
     () => existing.find((s) => s.key === key),
@@ -344,7 +346,7 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
       return
     }
 
-    const err = validateUserSecretKey(key)
+    const err = validateUserSecretKey(key, keyKind)
     if (err) {
       setSubmitErr(err)
       return
@@ -450,14 +452,19 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
               ref={keyInputRef}
               type="text"
               value={key}
-              onChange={(e) => setKey(e.target.value.toUpperCase())}
-              placeholder="MY_TOKEN"
-              autoCapitalize="characters"
+              onChange={(e) => setKey(mode === 'kv' ? e.target.value.toUpperCase() : e.target.value)}
+              placeholder={mode === 'kv' ? 'MY_TOKEN' : 'vault-cert.pem'}
+              autoCapitalize={mode === 'kv' ? 'characters' : 'off'}
               spellCheck={false}
               className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm font-mono text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
             />
             {keyError && (
               <p className="mt-1 text-xs text-danger">{keyError}</p>
+            )}
+            {!keyError && key && mode === 'file' && (
+              <p className="mt-1 text-xs text-text-muted">
+                Mounted at <code className="text-text-primary">{userSecretFilePath(key)}</code>
+              </p>
             )}
             {!keyError && existingKey && (
               <p className="mt-1 text-xs text-warn">
@@ -497,7 +504,12 @@ function AddSecretDialog({ agentName, existing, onClose }: AddProps) {
                 <input
                   type="file"
                   className="hidden"
-                  onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+                  onChange={(e) => {
+                    const picked = e.target.files?.[0] ?? null
+                    setFile(picked)
+                    // A file secret keeps its own name unless the operator typed one.
+                    if (picked && mode === 'file' && !key) setKey(picked.name)
+                  }}
                 />
               </label>
               {file && file.size > (mode === 'env-file' ? MAX_USER_SECRETS_AGGREGATE_BYTES : MAX_USER_SECRET_ENTRY_BYTES) && (

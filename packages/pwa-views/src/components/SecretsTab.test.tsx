@@ -60,8 +60,9 @@ function setupMocks(secrets: AgentSecret[] | null, loading = false, error: Error
   const importMutation = newMutationMock()
   vi.mocked(useAPIModule.useImportAgentSecretsKV).mockReturnValue(importMutation as unknown as ReturnType<typeof useAPIModule.useImportAgentSecretsKV>)
   vi.mocked(useAPIModule.usePutAgentSecretKV).mockReturnValue(newMutationMock() as unknown as ReturnType<typeof useAPIModule.usePutAgentSecretKV>)
-  vi.mocked(useAPIModule.usePutAgentSecretFile).mockReturnValue(newMutationMock() as unknown as ReturnType<typeof useAPIModule.usePutAgentSecretFile>)
-  return { importMutation }
+  const putFileMutation = newMutationMock()
+  vi.mocked(useAPIModule.usePutAgentSecretFile).mockReturnValue(putFileMutation as unknown as ReturnType<typeof useAPIModule.usePutAgentSecretFile>)
+  return { importMutation, putFileMutation }
 }
 
 // ---- tests ----
@@ -108,6 +109,45 @@ describe('SecretsTab — empty state', () => {
         expect.any(Object),
       )
     })
+  })
+
+  // MAT-90 G13: a file secret keeps its filename. The dialog used to force the
+  // key to uppercase and validate it as an environment variable.
+  it('saves a file secret under the picked file name', async () => {
+    const { putFileMutation } = setupMocks([])
+    const user = userEvent.setup()
+    const { container } = renderWithQuery(<SecretsTab agentName="my-agent" />)
+
+    await user.click(screen.getByRole('button', { name: /add secret/i }))
+    await user.click(screen.getByRole('button', { name: /file \(\/user-secrets\)/i }))
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    const cert = new File(['-----BEGIN CERTIFICATE-----'], 'vault-cert.pem', { type: 'application/x-pem-file' })
+    await user.upload(input, cert)
+
+    expect(screen.getByDisplayValue('vault-cert.pem')).toBeInTheDocument()
+    expect(screen.getByText('/user-secrets/vault-cert.pem')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    expect(putFileMutation.mutate).toHaveBeenCalledWith(
+      { name: 'my-agent', key: 'vault-cert.pem', file: cert },
+      expect.any(Object),
+    )
+  })
+
+  it('does not uppercase a typed file name, and still rejects a path', async () => {
+    setupMocks([])
+    const user = userEvent.setup()
+    renderWithQuery(<SecretsTab agentName="my-agent" />)
+
+    await user.click(screen.getByRole('button', { name: /add secret/i }))
+    await user.click(screen.getByRole('button', { name: /file \(\/user-secrets\)/i }))
+    const keyInput = screen.getByPlaceholderText('vault-cert.pem')
+    await user.type(keyInput, 'id_ed25519')
+    expect(keyInput).toHaveValue('id_ed25519')
+    expect(screen.queryByText(/File name must/)).not.toBeInTheDocument()
+
+    await user.clear(keyInput)
+    await user.type(keyInput, '../x')
+    expect(screen.getByText(/File name must/)).toBeInTheDocument()
   })
 
   it('disclosure trigger is present and toggles aria-expanded on click', async () => {

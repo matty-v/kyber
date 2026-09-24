@@ -11,8 +11,10 @@ export function SecretsHelpContent() {
           <code className="text-text-primary">$USER_&lt;KEY&gt;</code> env vars.
         </p>
         <p>
-          File entries mount at{' '}
-          <code className="text-text-primary">/user-secrets/&lt;key&gt;.bin</code>.
+          File entries mount under their own name, such as{' '}
+          <code className="text-text-primary">/user-secrets/vault-cert.pem</code>.
+          An uppercase key like <code className="text-text-primary">APP_PEM</code>{' '}
+          mounts at <code className="text-text-primary">/user-secrets/app_pem.bin</code>.
         </p>
         <p>
           Import a key=value file to create multiple environment entries at

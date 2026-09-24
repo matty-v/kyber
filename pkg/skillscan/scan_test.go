@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -364,22 +365,59 @@ func TestScan_VendorShadowsIdentitySkill(t *testing.T) {
 // A skill the agent hand-wrote straight into ~/.claude/skills works right now
 // and is invisible to git, so it dies at the next reprovision. That is the
 // exact shape that hid a missing platform fix on hk-47.
+//
+// MAT-90 G14: it used to appear only as a report-level warning, so the skills
+// list of a repo agent omitted a skill the agent could actually invoke. It is
+// listed as a local skill, with the runtimes it is live in, and carries the
+// warning itself.
 func TestScan_UnmanagedDirectoryInRuntimeHome(t *testing.T) {
 	f := newFixture(t)
 	stray := filepath.Join(f.home, ".claude", "skills", "handwritten")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(stray, "SKILL.md"), []byte(goodFrontmatter), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(stray, "SKILL.md"),
+		[]byte("---\nname: handwritten\ndescription: Hand-written.\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	f.link("handwritten", stray, ".codex")
+
+	rep := f.scan()
+	sk := findSkill(t, rep, "handwritten")
+	if sk.Source != skillscan.SourceLocal || sk.Path != stray {
+		t.Errorf("skill = %+v, want source local at %s", sk, stray)
+	}
+	if len(sk.Linked) != 2 || !slices.Contains(sk.Linked, skillscan.RuntimeClaudeCode) || !slices.Contains(sk.Linked, skillscan.RuntimeCodex) {
+		t.Errorf("Linked = %v, want claude-code and codex", sk.Linked)
+	}
+	if len(sk.Issues) != 1 || sk.Issues[0].Code != skillscan.IssueUnmanaged || sk.Broken() ||
+		!strings.Contains(sk.Issues[0].Detail, "~/.claude/skills/handwritten") {
+		t.Errorf("issues = %+v, want one unmanaged warning naming the directory", sk.Issues)
+	}
+	if len(rep.Issues) != 0 {
+		t.Errorf("the skill's warning was also reported at report level: %+v", rep.Issues)
+	}
+}
+
+// Claude Code keeps account-synced skills in ~/.claude/skills/synced, and a
+// skills home may hold other folders that are not skills. None of it is the
+// agent's state to warn about.
+func TestScan_DirectoriesWithoutASkillAreNotReported(t *testing.T) {
+	f := newFixture(t)
+	nested := filepath.Join(f.home, ".claude", "skills", "synced", "bucket-1", "some-skill")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(nested, "SKILL.md"), []byte(goodFrontmatter), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(f.home, ".codex", "skills", "scratch-notes"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
 	rep := f.scan()
-	if !hasCode(rep.Issues, skillscan.IssueUnmanaged) {
-		t.Fatalf("expected report-level %s, got %v", skillscan.IssueUnmanaged, codes(rep.Issues))
-	}
-	if len(rep.Skills) != 0 {
-		t.Errorf("an unmanaged dir is not a repo skill; got %v", names(rep))
+	if len(rep.Issues) != 0 || len(rep.Skills) != 0 {
+		t.Fatalf("non-skill directories were reported: skills=%v issues=%+v", names(rep), rep.Issues)
 	}
 }
 
@@ -444,10 +482,8 @@ func TestScan_NoRepoDirStillReportsPlatformAndUnmanagedSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.link("telegram-messaging", tg, ".claude")
-	stray := filepath.Join(f.home, ".codex", "skills", "handwritten")
-	if err := os.MkdirAll(stray, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	// A link to somewhere that holds no skill is still stray state.
+	f.link("handwritten", t.TempDir(), ".codex")
 	// MAT-53: a repo-less agent's own skill lives in a runtime home. It is a
 	// skill, not stray state.
 	own := filepath.Join(f.home, ".claude", "skills", "notes")
@@ -736,6 +772,9 @@ func TestScan_EveryIssueCarriesASeverity(t *testing.T) {
 	f.vendorSkill("pkg", "dupe", "---\nname: dupe\ndescription: x\n---\n")
 	stray := filepath.Join(f.home, ".claude", "skills", "handwritten")
 	if err := os.MkdirAll(stray, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stray, "SKILL.md"), []byte(goodFrontmatter), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	gone := f.skill("gone", goodFrontmatter)

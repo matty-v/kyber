@@ -2,9 +2,16 @@
 # kyber-job-dispatch — invoked from /etc/cron.d/kyber-jobs to deliver a
 # scheduled prompt into the agent's tmux session. One invocation per fire.
 #
-# Usage:  kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin] <job-name>
+# Usage:  kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin|--run-now] <job-name>
 #
 # Contract:
+#   - If --run-now is set (the operator's "Run now"), the prompt comes from
+#     standard input, sent by the control plane from spec.jobs, because the
+#     projected prompt file can lag a just-saved job by up to a minute.
+#     Otherwise the fire is a named scheduled job in every respect (markers,
+#     --exclusive, --clear-context-after). Its outcome is also the exit
+#     status: 0 success, 3 failed, 5 skipped, with one line
+#     "kyber-job-dispatch: outcome=<outcome> reason=<reason>" on stdout.
 #   - Reads the prompt from /kyber/jobs-src/prompt-<name> (a file projected
 #     from the per-agent <name>-jobs ConfigMap — content updates without a
 #     pod restart when the operator edits spec.jobs).
@@ -39,7 +46,7 @@
 #     endpoint so status.jobs[] on the CR can surface last-run state.
 #     Failures to POST are logged locally but do not fail the dispatch.
 #
-# Exit status: always 0 unless the invocation itself was malformed. The
+# Exit status (except --run-now, above): always 0 unless the invocation itself was malformed. The
 # outcome of the dispatch (success/failed/skipped) lives in the log line
 # and in the POSTed event, not in the exit code — cron doesn't retry on
 # non-zero anyway, and a non-zero exit would produce noisy mail output.
@@ -112,12 +119,14 @@ fi
 # ---- Argument parsing ----
 EXCLUSIVE=false
 STDIN_MODE=false
+RUN_NOW=false
 CLEAR_CONTEXT_AFTER=false
 while [ $# -gt 0 ]; do
     case "$1" in
         --exclusive) EXCLUSIVE=true; shift ;;
         --clear-context-after) CLEAR_CONTEXT_AFTER=true; shift ;;
         --stdin) STDIN_MODE=true; shift ;;
+        --run-now) RUN_NOW=true; shift ;;
         --) shift; break ;;
         -*)
             echo "kyber-job-dispatch: unknown flag $1" >&2
@@ -126,8 +135,8 @@ while [ $# -gt 0 ]; do
         *) break ;;
     esac
 done
-if [ $# -ne 1 ]; then
-    echo "usage: kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin] <job-name>" >&2
+if [ $# -ne 1 ] || { [ "$STDIN_MODE" = true ] && [ "$RUN_NOW" = true ]; }; then
+    echo "usage: kyber-job-dispatch [--exclusive] [--clear-context-after] [--stdin|--run-now] <job-name>" >&2
     exit 2
 fi
 JOB_NAME="$1"
@@ -145,6 +154,28 @@ PROMPT_FILE="$JOBS_SRC/prompt-$JOB_NAME"
 JOB_LOCK="$LOCK_DIR/job-$JOB_NAME.lock"
 PENDING_MARKER="$CRON_PENDING_DIR/$JOB_NAME"
 STARTED_AT="$(date -Iseconds)"
+
+# Run-now reports its outcome as the exit status. Outcomes are recorded in a
+# file, not a variable, because --exclusive dispatches inside a subshell.
+RUN_OUTCOME_FILE=""
+kyber_run_now_exit() {
+    local rc=$? outcome="" reason=""
+    if [ -s "$RUN_OUTCOME_FILE" ]; then
+        read -r outcome reason < "$RUN_OUTCOME_FILE"
+    fi
+    rm -f "$RUN_OUTCOME_FILE"
+    [ -n "$outcome" ] || exit "$rc"
+    echo "kyber-job-dispatch: outcome=$outcome reason=${reason:-none}"
+    case "$outcome" in
+        success) exit 0 ;;
+        skipped) exit 5 ;;
+        *) exit 3 ;;
+    esac
+}
+if [ "$RUN_NOW" = true ]; then
+    RUN_OUTCOME_FILE="$(mktemp)"
+    trap kyber_run_now_exit EXIT
+fi
 
 # Pending markers are only meaningful when something will clear them. Inbound
 # (--stdin) dispatches are excluded for the same reason they leave no completion
@@ -175,6 +206,7 @@ pending_marker_is_live() {
 AGENT_NAME="${AGENT_NAME:-}"
 if [ -z "$AGENT_NAME" ]; then
     echo "ts=$STARTED_AT job=$JOB_NAME event=failed reason=AGENT_NAME_unset" >> "$LOG_FILE"
+    [ -z "$RUN_OUTCOME_FILE" ] || printf 'failed AGENT_NAME_unset\n' > "$RUN_OUTCOME_FILE"
     exit 0
 fi
 
@@ -188,6 +220,7 @@ emit_event() {
     local err="${2:-}"
     local finished_at="$(date -Iseconds)"
     echo "ts=$finished_at job=$JOB_NAME event=$outcome${err:+ error=$err}" >> "$LOG_FILE"
+    [ -z "$RUN_OUTCOME_FILE" ] || printf '%s %s\n' "$outcome" "$err" > "$RUN_OUTCOME_FILE"
     if [ -z "$CONTROL_PLANE_URL" ]; then
         return 0
     fi
@@ -262,7 +295,7 @@ fi
 # mode we leave PROMPT_BODY empty and dispatch() will cat the file at
 # send time, preserving the prior behavior byte-for-byte.
 PROMPT_BODY=""
-if [ "$STDIN_MODE" = true ]; then
+if [ "$STDIN_MODE" = true ] || [ "$RUN_NOW" = true ]; then
     # `cat` with no args reads stdin until EOF. Command-substitution strips
     # trailing newlines, which matches the prior file-mode behavior — the
     # final Enter keystroke supplies the submit newline either way.
@@ -292,7 +325,7 @@ dispatch() {
     # Keep the prompt in data channels (stdin → tmux buffer), never shell code,
     # then deliver Enter separately so the interactive runtime submits it.
     local prompt
-    if [ "$STDIN_MODE" = true ]; then
+    if [ "$STDIN_MODE" = true ] || [ "$RUN_NOW" = true ]; then
         prompt="$PROMPT_BODY"
     else
         prompt="$(cat "$PROMPT_FILE")"

@@ -9,7 +9,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/oauth"
@@ -120,25 +119,8 @@ func (s *Server) handleReauthorize(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	// Set desiredPhase=Running to trigger a restart with the new credentials.
-	current := &kyberv1.Agent{}
-	if err := s.K8sClient.Get(r.Context(), key, current); err != nil ||
-		current.UID != agent.UID || current.Spec.Runtime != agent.Spec.Runtime || current.Spec.Secrets.AuthType != agent.Spec.Secrets.AuthType ||
-		current.Spec.DesiredPhase == kyberv1.AgentPhaseStopped || current.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting {
-		writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during authorization; retry")
-		return
-	}
-	// The credential is saved; starting waits for the disk archive job.
-	if rejectArchiveHeld(w, current) {
-		return
-	}
-	patch := client.MergeFromWithOptions(current.DeepCopy(), client.MergeFromWithOptimisticLock{})
-	current.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {
-		slog.Error("failed to patch agent desired phase for reauthorize", "name", name, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
-		return
-	}
-
-	w.WriteHeader(http.StatusNoContent)
+	s.startAfterAuthorization(w, r, key, func(current *kyberv1.Agent) bool {
+		return current.UID == agent.UID && current.Spec.Runtime == agent.Spec.Runtime && current.Spec.Secrets.AuthType == agent.Spec.Secrets.AuthType &&
+			current.Spec.DesiredPhase != kyberv1.AgentPhaseStopped && current.Spec.DesiredPhase != kyberv1.AgentPhaseRestarting
+	})
 }

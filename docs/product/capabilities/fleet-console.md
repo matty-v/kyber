@@ -42,7 +42,7 @@ Very large reads come back truncated rather than unbounded, and the API says so 
 
 ## Secrets, model changes, and webhooks
 
-The Secrets tab manages an agent's own secrets. Adding a brand-new key never interrupts a running agent; the value becomes available at the agent's next natural pod start. Replacing an existing value, moving a key between the text and file kinds, or deleting a key restarts the agent's pod automatically so a stale value never lingers.
+The Secrets tab manages an agent's own secrets. A text secret becomes an environment variable, so its key is an environment-variable name. A file secret keeps its own name, so a certificate uploaded as `vault-cert.pem` appears in the agent at `/user-secrets/vault-cert.pem`. Adding a brand-new key never interrupts a running agent; the value becomes available at the agent's next natural pod start. Replacing an existing value, moving a key between the text and file kinds, or deleting a key restarts the agent's pod automatically so a stale value never lingers.
 
 Changing an agent's model from its detail page restarts a live agent's pod so the new model takes effect right away. The restart takes around half a minute, and a message that arrives during that window is held and delivered once the agent is back up. A stopped agent keeps the new model for its next start, and a failed agent is started fresh on it. The model list comes from the catalog the agent's own authenticated runtime reports, so it shows what your subscription actually offers; a newly created agent's list fills in once its runtime has reported.
 

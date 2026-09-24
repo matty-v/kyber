@@ -271,6 +271,36 @@ HELPER_EOF
 [ -d "$REPO_DIR/.git" ] || { echo "[kyber] sync: no repo at $REPO_DIR — skip"; exit 0; }
 # git as the repo owner (kyber) regardless of caller (root under nsenter on a restart).
 RUN() { if [ "$(id -u)" = "0" ]; then sudo -u kyber "$@"; else "$@"; fi; }
+# A git killed mid-operation (OOM, pod eviction) leaves .git/index.lock behind,
+# and every later checkout and merge then fails with "index.lock exists" — the
+# agent silently stops syncing (MAT-90 G12). Clear the lock only when it is
+# provably abandoned: older than 60s AND no git process is working in this
+# repo. A lock that is fresh, or held by a live git, belongs to someone.
+# Errs toward "running": a git whose working directory this user cannot read,
+# or whose arguments mention the repo in any form (-C dir/, --git-dir=…,
+# the resolved path behind a symlink), counts as working in it.
+git_running_in_repo() {
+    local real cwd
+    real=$(readlink -f "$REPO_DIR" 2>/dev/null || printf '%s' "$REPO_DIR")
+    for p in /proc/[0-9]*; do
+        [ "$(cat "$p/comm" 2>/dev/null)" = "git" ] || continue
+        cwd=$(readlink -f "$p/cwd" 2>/dev/null) || return 0
+        case "$cwd/" in "$REPO_DIR"/*|"$real"/*) return 0 ;; esac
+        tr '\0' '\n' < "$p/cmdline" 2>/dev/null | grep -qF -e "$REPO_DIR" -e "$real" && return 0
+    done
+    return 1
+}
+INDEX_LOCK="$REPO_DIR/.git/index.lock"
+if [ -e "$INDEX_LOCK" ]; then
+    lock_age=$(( $(date +%s) - $(stat -c %Y "$INDEX_LOCK" 2>/dev/null || date +%s) ))
+    if [ "$lock_age" -lt 60 ]; then
+        echo "[kyber] sync: $INDEX_LOCK is ${lock_age}s old — leaving it (a git operation may be in progress)"
+    elif git_running_in_repo; then
+        echo "[kyber] sync: $INDEX_LOCK is held by a running git process — leaving it"
+    elif rm -f "$INDEX_LOCK" 2>/dev/null || RUN rm -f "$INDEX_LOCK"; then
+        echo "[kyber] sync: removed stale $INDEX_LOCK (${lock_age}s old, no git process in the repo)"
+    fi
+fi
 # The identity repo is App-managed: obtain a short-lived, repo-scoped token from
 # the control plane via the Kyber Platform GitHub App (the same path the git
 # credential helper uses). NO PAT — a read of the identity repo must not ride the

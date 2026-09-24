@@ -7,14 +7,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/matty-v/kyber/pkg/githubapp"
 )
 
-// scaffoldServer is a minimal fake GitHub API for CreateFromTemplate tests.
-// It tracks which requests were made so tests can assert without extra fields.
+// scaffoldServer is a minimal fake GitHub for CreateFromTemplate tests. It
+// models the generated repo as real git objects (blobs, trees, commits, one
+// branch) behind the Git Data API, and also serves the Contents API, where —
+// as on GitHub — every PUT is a commit of its own. Tests assert on what the
+// repo looks like afterwards and on how many commits it took to get there.
 type scaffoldServer struct {
 	t *testing.T
 
@@ -38,14 +43,82 @@ type scaffoldServer struct {
 
 	// Observed
 	generateCalled bool
-	putPaths       []string // paths where PUT /contents was called
 	treeCalls      int      // number of times the tree endpoint was hit
+	blobCreates    int      // POST /git/blobs
+	commits        []string // messages of every commit made, by any API
+	refUpdates     int      // PATCH /git/refs
+
+	mu        sync.Mutex
+	init      bool
+	head      string            // commit SHA the branch points at
+	commitsBy map[string]commit // commit SHA → commit
+	trees     map[string]map[string]entry
+	blobs     map[string]string // blob SHA → content
+	seq       int
 }
 
 type fakeFile struct {
 	path    string
 	content string // raw UTF-8 (will be base64-encoded for the API)
-	isBinary bool   // if true, the file is skipped in the tree (reported as non-blob)
+	mode    string // defaults to 100644
+}
+
+type commit struct{ tree, parent string }
+
+type entry struct{ mode, sha string }
+
+func (s *scaffoldServer) newSHA(kind string) string {
+	s.seq++
+	return fmt.Sprintf("%s%04d", kind, s.seq)
+}
+
+// setup seeds the repo with one commit holding s.files.
+func (s *scaffoldServer) setup() {
+	if s.init {
+		return
+	}
+	s.init = true
+	s.commitsBy = map[string]commit{}
+	s.trees = map[string]map[string]entry{}
+	s.blobs = map[string]string{}
+	root := map[string]entry{}
+	for _, f := range s.files {
+		sha := s.newSHA("blob")
+		s.blobs[sha] = f.content
+		mode := f.mode
+		if mode == "" {
+			mode = "100644"
+		}
+		root[f.path] = entry{mode, sha}
+	}
+	treeSHA := s.newSHA("tree")
+	s.trees[treeSHA] = root
+	s.head = s.newSHA("commit")
+	s.commitsBy[s.head] = commit{tree: treeSHA}
+}
+
+// fileAtHead returns a file's content in the branch's current tree.
+func (s *scaffoldServer) fileAtHead(path string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.setup()
+	e, ok := s.trees[s.commitsBy[s.head].tree][path]
+	if !ok {
+		return "", false
+	}
+	return s.blobs[e.sha], true
+}
+
+func (s *scaffoldServer) modeAtHead(path string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.trees[s.commitsBy[s.head].tree][path].mode
+}
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(v)
 }
 
 func (s *scaffoldServer) handler() http.Handler {
@@ -95,91 +168,173 @@ func (s *scaffoldServer) handler() http.Handler {
 			s.newOwner, s.newRepo, s.defaultBranch)
 	})
 
-	treePath := fmt.Sprintf("/repos/%s/%s/git/trees/%s", s.newOwner, s.newRepo, s.defaultBranch)
-	mux.HandleFunc(treePath, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			w.WriteHeader(http.StatusMethodNotAllowed)
-			return
-		}
-		s.treeCalls++
-		if s.treeEmptyResponses > 0 {
-			s.treeEmptyResponses--
-			w.WriteHeader(http.StatusConflict)
-			fmt.Fprint(w, `{"message":"Git Repository is empty."}`)
-			return
-		}
-		type item struct {
-			Path string `json:"path"`
-			Type string `json:"type"`
-			SHA  string `json:"sha"`
-		}
-		items := make([]item, 0, len(s.files))
-		for i, f := range s.files {
-			typ := "blob"
-			if f.isBinary {
-				// Report binary files as tree nodes to test they're skipped
-				// even if they sneak through as blobs with binary extensions.
-				typ = "blob" // test isBinaryPath skip, not tree-type skip
+	git := repoPath + "/git/"
+	mux.HandleFunc(git, func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.setup()
+		rest := strings.TrimPrefix(r.URL.Path, git)
+		switch {
+		case r.Method == http.MethodGet && strings.HasPrefix(rest, "trees/"):
+			s.treeCalls++
+			if s.treeEmptyResponses > 0 {
+				s.treeEmptyResponses--
+				writeJSON(w, http.StatusConflict, map[string]string{"message": "Git Repository is empty."})
+				return
 			}
-			items = append(items, item{
-				Path: f.path,
-				Type: typ,
-				SHA:  fmt.Sprintf("sha%d", i),
-			})
+			ref := strings.TrimPrefix(rest, "trees/")
+			if ref == s.defaultBranch {
+				ref = s.head
+			}
+			c, ok := s.commitsBy[ref]
+			if !ok {
+				writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+				return
+			}
+			paths := make([]string, 0, len(s.trees[c.tree]))
+			for p := range s.trees[c.tree] {
+				paths = append(paths, p)
+			}
+			sort.Strings(paths)
+			items := []map[string]string{}
+			for _, p := range paths {
+				e := s.trees[c.tree][p]
+				items = append(items, map[string]string{"path": p, "mode": e.mode, "type": "blob", "sha": e.sha})
+			}
+			writeJSON(w, http.StatusOK, map[string]any{"sha": c.tree, "tree": items})
+
+		case r.Method == http.MethodGet && rest == "ref/heads/"+s.defaultBranch:
+			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": s.head, "type": "commit"}})
+
+		case r.Method == http.MethodGet && strings.HasPrefix(rest, "blobs/"):
+			content, ok := s.blobs[strings.TrimPrefix(rest, "blobs/")]
+			if !ok {
+				writeJSON(w, http.StatusNotFound, map[string]string{"message": "Not Found"})
+				return
+			}
+			// GitHub wraps base64 at 60 columns; make sure the client copes.
+			enc := base64.StdEncoding.EncodeToString([]byte(content))
+			var wrapped strings.Builder
+			for len(enc) > 60 {
+				wrapped.WriteString(enc[:60] + "\n")
+				enc = enc[60:]
+			}
+			wrapped.WriteString(enc)
+			writeJSON(w, http.StatusOK, map[string]string{"content": wrapped.String(), "encoding": "base64"})
+
+		case r.Method == http.MethodPost && rest == "blobs":
+			var in struct{ Content, Encoding string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			raw, err := base64.StdEncoding.DecodeString(in.Content)
+			if in.Encoding != "base64" || err != nil {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "bad blob"})
+				return
+			}
+			s.blobCreates++
+			sha := s.newSHA("blob")
+			s.blobs[sha] = string(raw)
+			writeJSON(w, http.StatusCreated, map[string]string{"sha": sha})
+
+		case r.Method == http.MethodPost && rest == "trees":
+			var in struct {
+				BaseTree string `json:"base_tree"`
+				Tree     []struct{ Path, Mode, Type, SHA string }
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			base, ok := s.trees[in.BaseTree]
+			if !ok {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "base_tree not found"})
+				return
+			}
+			next := map[string]entry{}
+			for p, e := range base {
+				next[p] = e
+			}
+			for _, e := range in.Tree {
+				if _, ok := s.blobs[e.SHA]; !ok || e.Type != "blob" || e.Mode == "" {
+					writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "bad tree entry " + e.Path})
+					return
+				}
+				next[e.Path] = entry{e.Mode, e.SHA}
+			}
+			sha := s.newSHA("tree")
+			s.trees[sha] = next
+			writeJSON(w, http.StatusCreated, map[string]string{"sha": sha})
+
+		case r.Method == http.MethodPost && rest == "commits":
+			var in struct {
+				Message string
+				Tree    string
+				Parents []string
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			if _, ok := s.trees[in.Tree]; !ok || len(in.Parents) != 1 {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "bad commit"})
+				return
+			}
+			s.commits = append(s.commits, in.Message)
+			sha := s.newSHA("commit")
+			s.commitsBy[sha] = commit{tree: in.Tree, parent: in.Parents[0]}
+			writeJSON(w, http.StatusCreated, map[string]string{"sha": sha})
+
+		case r.Method == http.MethodPatch && rest == "refs/heads/"+s.defaultBranch:
+			var in struct {
+				SHA   string
+				Force bool
+			}
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			c, ok := s.commitsBy[in.SHA]
+			if !ok || (!in.Force && c.parent != s.head) {
+				writeJSON(w, http.StatusUnprocessableEntity, map[string]string{"message": "Update is not a fast forward"})
+				return
+			}
+			s.refUpdates++
+			s.head = in.SHA
+			writeJSON(w, http.StatusOK, map[string]any{"object": map[string]string{"sha": s.head}})
+
+		default:
+			w.WriteHeader(http.StatusNotFound)
 		}
-		out, _ := json.Marshal(map[string]any{
-			"sha":  "treesha",
-			"tree": items,
-		})
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		w.Write(out)
 	})
 
-	contentsPrefix := fmt.Sprintf("/repos/%s/%s/contents/", s.newOwner, s.newRepo)
+	// The Contents API: each PUT is a commit on the branch.
+	contentsPrefix := repoPath + "/contents/"
 	mux.HandleFunc(contentsPrefix, func(w http.ResponseWriter, r *http.Request) {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.setup()
 		path := strings.TrimPrefix(r.URL.Path, contentsPrefix)
-
-		var file *fakeFile
-		for i := range s.files {
-			if s.files[i].path == path {
-				file = &s.files[i]
-				break
-			}
-		}
-		if file == nil {
+		root := s.trees[s.commitsBy[s.head].tree]
+		e, ok := root[path]
+		if !ok {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-
 		switch r.Method {
 		case http.MethodGet:
-			encoded := base64.StdEncoding.EncodeToString([]byte(file.content))
-			out, _ := json.Marshal(map[string]any{
-				"content":  encoded,
-				"sha":      "blobsha-" + path,
+			writeJSON(w, http.StatusOK, map[string]string{
+				"content":  base64.StdEncoding.EncodeToString([]byte(s.blobs[e.sha])),
+				"sha":      e.sha,
 				"encoding": "base64",
 			})
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(out)
 		case http.MethodPut:
-			s.putPaths = append(s.putPaths, path)
-			// Decode the new content and store it back so idempotency tests work.
-			var body struct {
-				Content string `json:"content"`
+			var in struct{ Message, Content, SHA string }
+			_ = json.NewDecoder(r.Body).Decode(&in)
+			raw, _ := base64.StdEncoding.DecodeString(in.Content)
+			blob := s.newSHA("blob")
+			s.blobs[blob] = string(raw)
+			next := map[string]entry{}
+			for p, old := range root {
+				next[p] = old
 			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			decoded, _ := base64.StdEncoding.DecodeString(body.Content)
-			file.content = string(decoded)
-
-			out, _ := json.Marshal(map[string]any{
-				"content": map[string]any{"path": path},
-				"commit":  map[string]any{"sha": "commitsha"},
-			})
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-			w.Write(out)
+			next[path] = entry{e.mode, blob}
+			tree := s.newSHA("tree")
+			s.trees[tree] = next
+			sha := s.newSHA("commit")
+			s.commitsBy[sha] = commit{tree: tree, parent: s.head}
+			s.head = sha
+			s.commits = append(s.commits, in.Message)
+			writeJSON(w, http.StatusOK, map[string]any{"commit": map[string]string{"sha": sha}})
 		default:
 			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
@@ -201,30 +356,37 @@ func newScaffoldClient(t *testing.T, srv *httptest.Server) *githubapp.Client {
 	return c
 }
 
-func TestCreateFromTemplate_HappyPath(t *testing.T) {
-	s := &scaffoldServer{
+func newScaffoldServer(files ...fakeFile) *scaffoldServer {
+	return &scaffoldServer{
 		templateOwner: "matty-v",
 		templateRepo:  "kyber-agent-template",
 		newOwner:      "matty-v",
 		newRepo:       "newbot-agent",
 		defaultBranch: "main",
-		files: []fakeFile{
-			{path: "CLAUDE.md", content: "# {{ .AgentName }}\n{{ .Description }}\n"},
-			{path: "IDENTITY.md", content: "Identity for {{ .AgentName }}."},
-			{path: "README.md", content: "No placeholders here."},
-		},
+		files:         files,
 	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
+}
 
-	c := newScaffoldClient(t, srv)
-	fullName, err := c.CreateFromTemplate(
+func scaffold(t *testing.T, s *scaffoldServer, params githubapp.ScaffoldParams) (string, error) {
+	t.Helper()
+	srv := httptest.NewServer(s.handler())
+	t.Cleanup(srv.Close)
+	return newScaffoldClient(t, srv).CreateFromTemplate(
 		context.Background(),
 		"ghs_faketoken",
 		"matty-v", "kyber-agent-template",
 		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: "My new bot"},
+		params,
 	)
+}
+
+func TestCreateFromTemplate_HappyPath(t *testing.T) {
+	s := newScaffoldServer(
+		fakeFile{path: "CLAUDE.md", content: "# {{ .AgentName }}\n{{ .Description }}\n"},
+		fakeFile{path: "IDENTITY.md", content: "Identity for {{ .AgentName }}."},
+		fakeFile{path: "README.md", content: "No placeholders here."},
+	)
+	fullName, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot", Description: "My new bot"})
 	if err != nil {
 		t.Fatalf("CreateFromTemplate: %v", err)
 	}
@@ -234,38 +396,61 @@ func TestCreateFromTemplate_HappyPath(t *testing.T) {
 	if !s.generateCalled {
 		t.Error("generate endpoint not called")
 	}
-	// README.md has no placeholders → no PUT. CLAUDE.md and IDENTITY.md do → 2 PUTs.
-	if len(s.putPaths) != 2 {
-		t.Errorf("PUT paths: got %v, want exactly 2 (files with placeholders)", s.putPaths)
-	}
-	// Verify substitution happened.
-	for _, f := range s.files {
-		if strings.Contains(f.content, "{{ .") {
-			t.Errorf("file %s still has unsubstituted placeholder: %q", f.path, f.content)
+	for path, want := range map[string]string{
+		"CLAUDE.md":   "# newbot\nMy new bot\n",
+		"IDENTITY.md": "Identity for newbot.",
+		"README.md":   "No placeholders here.",
+	} {
+		if got, _ := s.fileAtHead(path); got != want {
+			t.Errorf("%s at head = %q, want %q", path, got, want)
 		}
 	}
 }
 
-func TestCreateFromTemplate_TemplateMissing(t *testing.T) {
-	s := &scaffoldServer{
-		templateOwner:  "matty-v",
-		templateRepo:   "kyber-agent-template",
-		newOwner:       "matty-v",
-		newRepo:        "newbot-agent",
-		defaultBranch:  "main",
-		generateStatus: http.StatusNotFound,
+// MAT-90 G15: scaffolding used the Contents API, one PUT (and so one commit)
+// per templated file — nine "Scaffold identity" commits at the base of every
+// identity repo. It must land as one commit: a blob per changed file, one tree
+// on the generated base, one commit, one ref update.
+func TestCreateFromTemplate_SubstitutesInOneCommit(t *testing.T) {
+	var files []fakeFile
+	for i := 0; i < 9; i++ {
+		files = append(files, fakeFile{path: fmt.Sprintf("docs/f%d.md", i), content: fmt.Sprintf("file %d of {{ .AgentName }}\n", i)})
 	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
-
-	c := newScaffoldClient(t, srv)
-	_, err := c.CreateFromTemplate(
-		context.Background(),
-		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: ""},
+	files = append(files,
+		fakeFile{path: "bin/start.sh", content: "#!/bin/sh\necho {{ .AgentName }}\n", mode: "100755"},
+		fakeFile{path: "LICENSE", content: "untouched"},
 	)
+	s := newScaffoldServer(files...)
+
+	if _, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot"}); err != nil {
+		t.Fatalf("CreateFromTemplate: %v", err)
+	}
+	if len(s.commits) != 1 || s.refUpdates != 1 {
+		t.Fatalf("commits = %d %q, ref updates = %d; want exactly one of each", len(s.commits), s.commits, s.refUpdates)
+	}
+	if s.commits[0] != "Scaffold identity for newbot" {
+		t.Errorf("commit message = %q", s.commits[0])
+	}
+	if s.blobCreates != 10 {
+		t.Errorf("blob creates = %d, want 10 (one per templated file)", s.blobCreates)
+	}
+	for i := 0; i < 9; i++ {
+		if got, _ := s.fileAtHead(fmt.Sprintf("docs/f%d.md", i)); got != fmt.Sprintf("file %d of newbot\n", i) {
+			t.Errorf("docs/f%d.md = %q", i, got)
+		}
+	}
+	if got, _ := s.fileAtHead("LICENSE"); got != "untouched" {
+		t.Errorf("an unchanged file was lost from the base tree: %q", got)
+	}
+	if mode := s.modeAtHead("bin/start.sh"); mode != "100755" {
+		t.Errorf("bin/start.sh mode = %q, want the executable bit kept", mode)
+	}
+}
+
+func TestCreateFromTemplate_TemplateMissing(t *testing.T) {
+	s := newScaffoldServer()
+	s.generateStatus = http.StatusNotFound
+	_, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot"})
 	if err == nil {
 		t.Fatal("expected error for missing template, got nil")
 	}
@@ -276,72 +461,34 @@ func TestCreateFromTemplate_TemplateMissing(t *testing.T) {
 
 func TestCreateFromTemplate_RepoAlreadyExists_ContinuesToSubstitution(t *testing.T) {
 	// 422 "Name already exists" → not an error; proceeds to substitution.
-	s := &scaffoldServer{
-		templateOwner:  "matty-v",
-		templateRepo:   "kyber-agent-template",
-		newOwner:       "matty-v",
-		newRepo:        "newbot-agent",
-		defaultBranch:  "main",
-		generateStatus: http.StatusUnprocessableEntity,
-		generateBody:   `{"message":"Repository creation failed: Name already exists on this account"}`,
-		files: []fakeFile{
-			{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"},
-		},
-	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
+	s := newScaffoldServer(fakeFile{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"})
+	s.generateStatus = http.StatusUnprocessableEntity
+	s.generateBody = `{"message":"Repository creation failed: Name already exists on this account"}`
 
-	c := newScaffoldClient(t, srv)
-	fullName, err := c.CreateFromTemplate(
-		context.Background(),
-		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: "retry test"},
-	)
+	fullName, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot", Description: "retry test"})
 	if err != nil {
 		t.Fatalf("CreateFromTemplate: %v (expected idempotent success)", err)
 	}
 	if fullName != "matty-v/newbot-agent" {
 		t.Errorf("fullName: got %q, want matty-v/newbot-agent", fullName)
 	}
-	// Substitution should still run.
-	if len(s.putPaths) != 1 {
-		t.Errorf("PUT paths: got %v, want 1", s.putPaths)
+	if got, _ := s.fileAtHead("CLAUDE.md"); got != "# newbot\n" {
+		t.Errorf("substitution did not run: CLAUDE.md = %q", got)
 	}
 }
 
 func TestCreateFromTemplate_SubstitutionIdempotency(t *testing.T) {
-	// Files that have already been substituted (no {{ . }} left) must not trigger PUTs.
-	s := &scaffoldServer{
-		templateOwner: "matty-v",
-		templateRepo:  "kyber-agent-template",
-		newOwner:      "matty-v",
-		newRepo:       "newbot-agent",
-		defaultBranch: "main",
-		files: []fakeFile{
-			// Already substituted — no placeholders remain.
-			{path: "CLAUDE.md", content: "# newbot\nMy new bot\n"},
-			// Also no placeholders.
-			{path: "README.md", content: "No placeholders here."},
-		},
-	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
-
-	c := newScaffoldClient(t, srv)
-	_, err := c.CreateFromTemplate(
-		context.Background(),
-		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: "My new bot"},
+	// Files that have already been substituted (no {{ . }} left) must not
+	// produce a commit, so a retry after success changes nothing.
+	s := newScaffoldServer(
+		fakeFile{path: "CLAUDE.md", content: "# newbot\nMy new bot\n"},
+		fakeFile{path: "README.md", content: "No placeholders here."},
 	)
-	if err != nil {
+	if _, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot", Description: "My new bot"}); err != nil {
 		t.Fatalf("CreateFromTemplate: %v", err)
 	}
-	if len(s.putPaths) != 0 {
-		t.Errorf("PUT paths: got %v, want none (files already substituted)", s.putPaths)
+	if len(s.commits) != 0 || s.refUpdates != 0 || s.blobCreates != 0 {
+		t.Errorf("commits=%v refUpdates=%d blobs=%d, want nothing written", s.commits, s.refUpdates, s.blobCreates)
 	}
 }
 
@@ -350,30 +497,12 @@ func TestCreateFromTemplate_SubstitutionIdempotency(t *testing.T) {
 // returns 200 before the tree is populated, so GET /git/trees returns
 // 409 "Git Repository is empty". listTree must retry rather than bail.
 func TestCreateFromTemplate_EmptyRepoRetriedUntilPopulated(t *testing.T) {
-	s := &scaffoldServer{
-		templateOwner: "matty-v",
-		templateRepo:  "kyber-agent-template",
-		newOwner:      "matty-v",
-		newRepo:       "newbot-agent",
-		defaultBranch: "main",
-		// Simulate the real-world race: first 3 tree calls land 409, then
-		// GitHub finishes populating and the 4th succeeds.
-		treeEmptyResponses: 3,
-		files: []fakeFile{
-			{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"},
-		},
-	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
+	s := newScaffoldServer(fakeFile{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"})
+	// Simulate the real-world race: first 3 tree calls land 409, then
+	// GitHub finishes populating and the 4th succeeds.
+	s.treeEmptyResponses = 3
 
-	c := newScaffoldClient(t, srv)
-	full, err := c.CreateFromTemplate(
-		context.Background(),
-		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: "retry test"},
-	)
+	full, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot", Description: "retry test"})
 	if err != nil {
 		t.Fatalf("CreateFromTemplate: %v", err)
 	}
@@ -383,41 +512,28 @@ func TestCreateFromTemplate_EmptyRepoRetriedUntilPopulated(t *testing.T) {
 	if s.treeCalls < 4 {
 		t.Errorf("treeCalls: got %d, want >= 4 (3 empty + 1 populated)", s.treeCalls)
 	}
-	if len(s.putPaths) != 1 || s.putPaths[0] != "CLAUDE.md" {
-		t.Errorf("PUT paths: got %v, want [CLAUDE.md]", s.putPaths)
+	if got, _ := s.fileAtHead("CLAUDE.md"); got != "# newbot\n" {
+		t.Errorf("CLAUDE.md = %q", got)
 	}
 }
 
 func TestCreateFromTemplate_BinaryFileSkipped(t *testing.T) {
-	s := &scaffoldServer{
-		templateOwner: "matty-v",
-		templateRepo:  "kyber-agent-template",
-		newOwner:      "matty-v",
-		newRepo:       "newbot-agent",
-		defaultBranch: "main",
-		files: []fakeFile{
-			{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"},
-			// Binary extensions — isBinaryPath should return true.
-			{path: "avatar.png", content: "binarydata"},
-			{path: "doc.pdf", content: "binarydata"},
-		},
-	}
-	srv := httptest.NewServer(s.handler())
-	defer srv.Close()
-
-	c := newScaffoldClient(t, srv)
-	_, err := c.CreateFromTemplate(
-		context.Background(),
-		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
-		githubapp.ScaffoldParams{AgentName: "newbot", Description: "binary test"},
+	s := newScaffoldServer(
+		fakeFile{path: "CLAUDE.md", content: "# {{ .AgentName }}\n"},
+		// Binary extensions — isBinaryPath should return true, so the bytes
+		// are never read or rewritten even though they look like a placeholder.
+		fakeFile{path: "avatar.png", content: "{{ .AgentName }}binarydata"},
+		fakeFile{path: "doc.pdf", content: "{{ .AgentName }}binarydata"},
 	)
-	if err != nil {
+	if _, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "newbot", Description: "binary test"}); err != nil {
 		t.Fatalf("CreateFromTemplate: %v", err)
 	}
-	// Only CLAUDE.md should have been PUT (binary files skipped).
-	if len(s.putPaths) != 1 || s.putPaths[0] != "CLAUDE.md" {
-		t.Errorf("PUT paths: got %v, want [CLAUDE.md]", s.putPaths)
+	for _, p := range []string{"avatar.png", "doc.pdf"} {
+		if got, _ := s.fileAtHead(p); got != "{{ .AgentName }}binarydata" {
+			t.Errorf("binary file %s was rewritten: %q", p, got)
+		}
+	}
+	if got, _ := s.fileAtHead("CLAUDE.md"); got != "# newbot\n" {
+		t.Errorf("CLAUDE.md = %q", got)
 	}
 }
