@@ -16,7 +16,7 @@ RUN apt-get -o Acquire::Retries=3 update && \
         ./configure --prefix=/opt/sqlite-fixed --disable-static && \
     make -j"$(nproc)" && make install
 
-FROM golang:1.26-alpine AS tools-builder
+FROM golang:1.27-alpine AS tools-builder
 WORKDIR /build
 COPY go.mod go.sum ./
 RUN go mod download
