@@ -15,7 +15,8 @@
 # with the head SHA; every other image falls back to the merge-base's main tag.
 #
 # The chart comes from the checked-out tree at the resolved commit, and the
-# release's existing values are reused. Only image tags are overridden.
+# release's existing values are reused. Only image tags are overridden. The
+# chart's CRDs are applied before the upgrade, since Helm never upgrades them.
 #
 # Env overrides: KYBER_DEV_PROJECT, KYBER_DEV_LOCATION, KYBER_DEV_CLUSTER,
 # KYBER_DEV_RELEASE, KYBER_DEV_NAMESPACE, KYBER_DEV_URL.
@@ -124,6 +125,13 @@ log "fetching credentials for $CLUSTER"
 gcloud container clusters get-credentials "$CLUSTER" --location "$LOCATION" --project "$PROJECT" >/dev/null 2>&1 \
   || die "gcloud get-credentials failed — run: gcloud auth login"
 git archive "$SHA" deploy/helm/kyber | tar -x -C "$CHART_DIR"
+# Helm installs crds/ once and never upgrades them, so a build with a schema
+# change would run against the old CRDs and the API server would silently
+# prune its new fields. Apply them first, the way the self-upgrade Job does
+# (docs/upgrading.md): server-side, as the same field manager.
+log "applying the chart's CRDs"
+kubectl --context "$CONTEXT" apply --server-side --force-conflicts --field-manager=kyber-upgrade \
+  -f "$CHART_DIR/deploy/helm/kyber/crds/" >/dev/null || die "applying CRDs failed"
 helm --kube-context "$CONTEXT" -n "$NAMESPACE" get values "$RELEASE" -o yaml > "$VALUES"
 
 log "helm upgrade $RELEASE on $CONTEXT"
