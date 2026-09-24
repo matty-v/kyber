@@ -60,22 +60,27 @@ type treeResponse struct {
 
 type treeItem struct {
 	Path string `json:"path"`
-	Type string `json:"type"` // "blob" or "tree"
+	Mode string `json:"mode,omitempty"` // e.g. "100644", "100755"
+	Type string `json:"type"`           // "blob" or "tree"
 	SHA  string `json:"sha"`
 }
 
-// contentsResponse is a subset of the GitHub contents API response.
-type contentsResponse struct {
+// blobResponse is a subset of GET /repos/{owner}/{repo}/git/blobs/{sha}.
+type blobResponse struct {
 	Content  string `json:"content"`  // base64-encoded, may include newlines
-	SHA      string `json:"sha"`      // blob SHA — required for PUT
 	Encoding string `json:"encoding"` // "base64"
 }
 
-// contentsUpdateBody is the request body for PUT /repos/{owner}/{repo}/contents/{path}.
-type contentsUpdateBody struct {
-	Message string `json:"message"`
-	Content string `json:"content"` // base64-encoded
-	SHA     string `json:"sha"`     // current blob SHA — required
+// refResponse is a subset of GET /repos/{owner}/{repo}/git/ref/{ref}.
+type refResponse struct {
+	Object struct {
+		SHA string `json:"sha"`
+	} `json:"object"`
+}
+
+// shaResponse is the part of a Git Data create response the scaffold uses.
+type shaResponse struct {
+	SHA string `json:"sha"`
 }
 
 // repoResponse is a subset of GET /repos/{owner}/{repo}.
@@ -86,14 +91,19 @@ type repoResponse struct {
 
 // CreateFromTemplate creates a new private repo from templateOwner/templateRepo
 // under newOwner/newRepoName, then substitutes {{ .AgentName }} and
-// {{ .Description }} in all text files via the GitHub Contents API.
+// {{ .Description }} in all text files as ONE commit through the Git Data API.
 // Returns the full name "owner/repo" of the new repo.
+//
+// One commit, not one per file: the Contents API commits every PUT, so a
+// template of nine files left nine "Scaffold identity" commits at the base of
+// every identity repo (MAT-90 G15).
 //
 // Idempotent: if the target repo already exists (HTTP 422 "name already exists"),
 // the function skips creation and proceeds to the substitution step — this allows
-// safe retry after partial failure. Substitution is also idempotent (files without
-// placeholders are skipped; files already substituted contain no placeholders and
-// are skipped too).
+// safe retry after partial failure. Substitution is also idempotent: files
+// without placeholders are left alone, and when no file needs a change no
+// commit is made. Nothing is visible until the final ref update, so a failure
+// part-way leaves the repo as generated.
 func (c *Client) CreateFromTemplate(
 	ctx context.Context,
 	installationToken string,
@@ -117,25 +127,45 @@ func (c *Client) CreateFromTemplate(
 		return "", fmt.Errorf("githubapp: getting default branch of %s/%s: %w", newOwner, newRepoName, err)
 	}
 
-	// Step 4: List all blobs recursively.
-	tree, err := c.listTree(ctx, installationToken, newOwner, newRepoName, branch)
+	// Step 4: Wait for the tree to be populated, then pin the head commit and
+	// read the tree AT that commit, so the new commit's base tree and parent
+	// are the same snapshot.
+	if _, _, err := c.listTree(ctx, installationToken, newOwner, newRepoName, branch); err != nil {
+		return "", fmt.Errorf("githubapp: listing tree for %s/%s: %w", newOwner, newRepoName, err)
+	}
+	head, err := c.getRefSHA(ctx, installationToken, newOwner, newRepoName, branch)
+	if err != nil {
+		return "", fmt.Errorf("githubapp: reading %s head of %s/%s: %w", branch, newOwner, newRepoName, err)
+	}
+	baseTree, tree, err := c.listTree(ctx, installationToken, newOwner, newRepoName, head)
 	if err != nil {
 		return "", fmt.Errorf("githubapp: listing tree for %s/%s: %w", newOwner, newRepoName, err)
 	}
 
-	// Step 5: Substitute placeholders in each text blob.
+	// Step 5: Substitute placeholders in each text blob, collecting the
+	// changed files as new blobs.
+	var changed []treeItem
 	for _, item := range tree {
-		if item.Type != "blob" {
+		if item.Type != "blob" || isBinaryPath(item.Path) {
 			continue
 		}
-		if isBinaryPath(item.Path) {
-			continue
-		}
-		if subErr := c.substituteFile(ctx, installationToken, newOwner, newRepoName, item.Path, params); subErr != nil {
+		newSHA, subErr := c.substituteBlob(ctx, installationToken, newOwner, newRepoName, item, params)
+		if subErr != nil {
 			return "", fmt.Errorf("githubapp: substituting %s in %s/%s: %w", item.Path, newOwner, newRepoName, subErr)
 		}
+		if newSHA != "" {
+			changed = append(changed, treeItem{Path: item.Path, Mode: item.Mode, Type: "blob", SHA: newSHA})
+		}
+	}
+	if len(changed) == 0 {
+		return newOwner + "/" + newRepoName, nil
 	}
 
+	// Step 6: One tree, one commit, one fast-forward ref update.
+	if err := c.commitChanges(ctx, installationToken, newOwner, newRepoName, branch, head, baseTree, changed,
+		"Scaffold identity for "+params.AgentName); err != nil {
+		return "", fmt.Errorf("githubapp: committing scaffold to %s/%s: %w", newOwner, newRepoName, err)
+	}
 	return newOwner + "/" + newRepoName, nil
 }
 
@@ -264,32 +294,33 @@ func (c *Client) getDefaultBranch(ctx context.Context, token, owner, repo string
 	return r.DefaultBranch, nil
 }
 
-// listTree returns the recursive file tree for the repo at the given branch ref.
+// listTree returns the root tree SHA and the recursive file tree for the repo
+// at the given ref (a branch name or a commit SHA).
 //
 // Retries on HTTP 409 "Git Repository is empty" — GitHub's template-generate
 // API returns from POST /generate before the tree is populated. The repo is
 // observable via GET /repos (which waitForRepo polled) before the tree is
 // ready, so a naive fetch here races the async population and fails the
 // whole scaffold. We back off and retry up to listTreeMaxAttempts.
-func (c *Client) listTree(ctx context.Context, token, owner, repo, branch string) ([]treeItem, error) {
+func (c *Client) listTree(ctx context.Context, token, owner, repo, ref string) (string, []treeItem, error) {
 	const (
 		maxAttempts = 12
 		backoff     = 500 * time.Millisecond
 	)
 
-	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", c.baseURL, owner, repo, branch)
+	url := fmt.Sprintf("%s/repos/%s/%s/git/trees/%s?recursive=1", c.baseURL, owner, repo, ref)
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, ctx.Err()
+				return "", nil, ctx.Err()
 			case <-time.After(backoff):
 			}
 		}
 
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 		if err != nil {
-			return nil, fmt.Errorf("building request: %w", err)
+			return "", nil, fmt.Errorf("building request: %w", err)
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
 		req.Header.Set("Accept", "application/vnd.github+json")
@@ -297,7 +328,7 @@ func (c *Client) listTree(ctx context.Context, token, owner, repo, branch string
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return nil, fmt.Errorf("GET /git/trees: %w", err)
+			return "", nil, fmt.Errorf("GET /git/trees: %w", err)
 		}
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 		resp.Body.Close()
@@ -306,105 +337,133 @@ func (c *Client) listTree(ctx context.Context, token, owner, repo, branch string
 		case http.StatusOK:
 			var t treeResponse
 			if err := json.Unmarshal(body, &t); err != nil {
-				return nil, fmt.Errorf("decoding tree response: %w", err)
+				return "", nil, fmt.Errorf("decoding tree response: %w", err)
 			}
-			return t.Tree, nil
+			return t.SHA, t.Tree, nil
 		case http.StatusNotFound:
-			return nil, fmt.Errorf("template not found: %s/%s (HTTP 404)", owner, repo)
+			return "", nil, fmt.Errorf("template not found: %s/%s (HTTP 404)", owner, repo)
 		case http.StatusConflict:
 			// GitHub's "Git Repository is empty" — generate is still populating.
 			// Retry after the backoff.
 			continue
 		default:
-			return nil, fmt.Errorf("GET /git/trees: HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(body))
+			return "", nil, fmt.Errorf("GET /git/trees: HTTP %d: %s", resp.StatusCode, bytes.TrimSpace(body))
 		}
 	}
-	return nil, fmt.Errorf("GET /git/trees: tree not populated after %d attempts — template generate may have stalled", maxAttempts)
+	return "", nil, fmt.Errorf("GET /git/trees: tree not populated after %d attempts — template generate may have stalled", maxAttempts)
 }
 
-// substituteFile fetches a file's contents, substitutes placeholders if any
-// are present, and PUTs the updated content back. Skips files with no placeholders
-// (idempotent — already-substituted files have no placeholders left).
-func (c *Client) substituteFile(ctx context.Context, token, owner, repo, path string, params ScaffoldParams) error {
-	// GET the current contents.
-	url := fmt.Sprintf("%s/repos/%s/%s/contents/%s", c.baseURL, owner, repo, path)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+// gitData makes one Git Data API call, JSON in and out, and fails unless the
+// response status is want.
+func (c *Client) gitData(ctx context.Context, token, method, url string, in, out any, want int) error {
+	var body io.Reader
+	if in != nil {
+		b, err := json.Marshal(in)
+		if err != nil {
+			return fmt.Errorf("marshaling %s body: %w", method, err)
+		}
+		body = bytes.NewReader(b)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return fmt.Errorf("building GET request: %w", err)
+		return fmt.Errorf("building %s request: %w", method, err)
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-
+	if in != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("GET /contents/%s: %w", path, err)
+		return fmt.Errorf("%s %s: %w", method, strings.TrimPrefix(url, c.baseURL), err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("GET /contents/%s: HTTP %d: %s", path, resp.StatusCode, bytes.TrimSpace(body))
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
+	if resp.StatusCode != want {
+		return fmt.Errorf("%s %s: HTTP %d: %s", method, strings.TrimPrefix(url, c.baseURL), resp.StatusCode, bytes.TrimSpace(respBody))
 	}
-
-	var contents contentsResponse
-	if err := json.Unmarshal(body, &contents); err != nil {
-		return fmt.Errorf("decoding contents response for %s: %w", path, err)
-	}
-
-	// Decode — GitHub returns base64 with possible embedded newlines.
-	rawContent, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(contents.Content, "\n", ""))
-	if err != nil {
-		// If standard decoding fails, try without the trimming (some rare files).
-		rawContent, err = base64.StdEncoding.DecodeString(contents.Content)
-		if err != nil {
-			// Probably a truly binary file even without a binary extension; skip safely.
-			return nil
+	if out != nil {
+		if err := json.Unmarshal(respBody, out); err != nil {
+			return fmt.Errorf("decoding %s %s response: %w", method, strings.TrimPrefix(url, c.baseURL), err)
 		}
 	}
+	return nil
+}
 
-	text := string(rawContent)
+// getRefSHA returns the commit SHA the branch points at.
+func (c *Client) getRefSHA(ctx context.Context, token, owner, repo, branch string) (string, error) {
+	var ref refResponse
+	url := fmt.Sprintf("%s/repos/%s/%s/git/ref/heads/%s", c.baseURL, owner, repo, branch)
+	if err := c.gitData(ctx, token, http.MethodGet, url, nil, &ref, http.StatusOK); err != nil {
+		return "", err
+	}
+	if ref.Object.SHA == "" {
+		return "", fmt.Errorf("ref heads/%s has no commit", branch)
+	}
+	return ref.Object.SHA, nil
+}
 
-	// Skip if no placeholders present — already substituted or plain file.
-	if !strings.Contains(text, "{{ .") {
-		return nil
+// substituteBlob reads a blob, substitutes placeholders, and stores the result
+// as a new blob. It returns the new blob's SHA, or "" when the file needs no
+// change (no placeholders, already substituted, or not decodable text).
+func (c *Client) substituteBlob(ctx context.Context, token, owner, repo string, item treeItem, params ScaffoldParams) (string, error) {
+	var blob blobResponse
+	url := fmt.Sprintf("%s/repos/%s/%s/git/blobs/%s", c.baseURL, owner, repo, item.SHA)
+	if err := c.gitData(ctx, token, http.MethodGet, url, nil, &blob, http.StatusOK); err != nil {
+		return "", err
+	}
+	if blob.Encoding != "" && blob.Encoding != "base64" {
+		return "", nil
+	}
+	// GitHub returns base64 with embedded newlines.
+	raw, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(blob.Content, "\n", ""))
+	if err != nil {
+		// Probably a truly binary file even without a binary extension; skip safely.
+		return "", nil
 	}
 
+	text := string(raw)
+	// Skip if no placeholders present — already substituted or plain file.
+	if !strings.Contains(text, "{{ .") {
+		return "", nil
+	}
 	// Perform the literal substitutions (not text/template — keep it simple).
 	text = strings.ReplaceAll(text, "{{ .AgentName }}", params.AgentName)
 	text = strings.ReplaceAll(text, "{{ .Description }}", params.Description)
 
-	// PUT the updated content.
-	newContent := base64.StdEncoding.EncodeToString([]byte(text))
-	updateBody := contentsUpdateBody{
-		Message: "Scaffold identity for " + params.AgentName,
-		Content: newContent,
-		SHA:     contents.SHA,
+	var created shaResponse
+	createURL := fmt.Sprintf("%s/repos/%s/%s/git/blobs", c.baseURL, owner, repo)
+	in := map[string]string{"content": base64.StdEncoding.EncodeToString([]byte(text)), "encoding": "base64"}
+	if err := c.gitData(ctx, token, http.MethodPost, createURL, in, &created, http.StatusCreated); err != nil {
+		return "", err
 	}
-	updateBytes, err := json.Marshal(updateBody)
-	if err != nil {
-		return fmt.Errorf("marshaling PUT body for %s: %w", path, err)
-	}
+	return created.SHA, nil
+}
 
-	putReq, err := http.NewRequestWithContext(ctx, http.MethodPut, url, bytes.NewReader(updateBytes))
-	if err != nil {
-		return fmt.Errorf("building PUT request for %s: %w", path, err)
+// commitChanges writes changed files as one commit on top of parent and
+// fast-forwards the branch to it. The ref update is not forced: if the branch
+// moved since parent was read, GitHub refuses it and nothing is lost.
+func (c *Client) commitChanges(ctx context.Context, token, owner, repo, branch, parent, baseTree string, changed []treeItem, message string) error {
+	for i := range changed {
+		if changed[i].Mode == "" {
+			changed[i].Mode = "100644"
+		}
 	}
-	putReq.Header.Set("Authorization", "Bearer "+token)
-	putReq.Header.Set("Accept", "application/vnd.github+json")
-	putReq.Header.Set("Content-Type", "application/json")
-	putReq.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	base := fmt.Sprintf("%s/repos/%s/%s/git", c.baseURL, owner, repo)
 
-	putResp, err := c.http.Do(putReq)
-	if err != nil {
-		return fmt.Errorf("PUT /contents/%s: %w", path, err)
+	var tree shaResponse
+	if err := c.gitData(ctx, token, http.MethodPost, base+"/trees",
+		map[string]any{"base_tree": baseTree, "tree": changed}, &tree, http.StatusCreated); err != nil {
+		return err
 	}
-	defer putResp.Body.Close()
-	putBody, _ := io.ReadAll(io.LimitReader(putResp.Body, maxResponseBytes))
-	if putResp.StatusCode != http.StatusOK && putResp.StatusCode != http.StatusCreated {
-		return fmt.Errorf("PUT /contents/%s: HTTP %d: %s", path, putResp.StatusCode, bytes.TrimSpace(putBody))
+	var commit shaResponse
+	if err := c.gitData(ctx, token, http.MethodPost, base+"/commits",
+		map[string]any{"message": message, "tree": tree.SHA, "parents": []string{parent}}, &commit, http.StatusCreated); err != nil {
+		return err
 	}
-
-	return nil
+	return c.gitData(ctx, token, http.MethodPatch, base+"/refs/heads/"+branch,
+		map[string]any{"sha": commit.SHA, "force": false}, nil, http.StatusOK)
 }
 
 // isBinaryPath returns true when the file path's extension is in binaryExtensions.
