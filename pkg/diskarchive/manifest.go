@@ -153,6 +153,10 @@ type Entry struct {
 	// since the image put it there (see ImageFile). Such a file is neither a
 	// credential nor a crontab the agent installed.
 	Image bool `json:"image,omitempty"`
+	// NoCredentials is set when the export read a package-manager config
+	// (.npmrc, .pypirc) and found no auth settings in it: it names a
+	// registry, not a login.
+	NoCredentials bool `json:"noCredentials,omitempty"`
 }
 
 // ZipName is the ZIP entry name for e.
@@ -229,7 +233,7 @@ var sensitiveSuffixes = []string{
 // local credential: the well-known files above, SSH private keys, and
 // *.pem/*.key files. The image's own unchanged files are never credentials.
 func IsSensitive(e Entry) bool {
-	if e.Type != EntryFile || e.Image {
+	if e.Type != EntryFile || e.Image || e.NoCredentials {
 		return false
 	}
 	p := "/" + e.Path
