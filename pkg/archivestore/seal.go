@@ -111,18 +111,32 @@ type SealWriter struct {
 	plain  int64
 	closed bool
 	err    error
+	// nonFinal marks a part that is not the archive's last: Close seals its
+	// last chunk without the final flag, so it must end on a chunk boundary.
+	nonFinal bool
 }
 
 // NewSealWriter starts a sealed stream on w.
 func NewSealWriter(w io.Writer, key []byte) (*SealWriter, error) {
+	return NewPartSealWriter(w, key, 0, true, true)
+}
+
+// NewPartSealWriter seals one part of an archive received in parts. Joining
+// every part in order is byte-identical to NewSealWriter's output for the
+// whole plaintext: only the first part carries the header, chunk indexes
+// continue from firstChunk, and only the last part seals its last chunk as
+// final. A part that is not last must hold a whole, non-zero number of chunks.
+func NewPartSealWriter(w io.Writer, key []byte, firstChunk uint64, header, final bool) (*SealWriter, error) {
 	aead, err := newAEAD(key)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := io.WriteString(w, sealHeader); err != nil {
-		return nil, err
+	if header {
+		if _, err := io.WriteString(w, sealHeader); err != nil {
+			return nil, err
+		}
 	}
-	return &SealWriter{w: w, aead: aead, buf: make([]byte, 0, ChunkSize)}, nil
+	return &SealWriter{w: w, aead: aead, buf: make([]byte, 0, ChunkSize), index: firstChunk, nonFinal: !final}, nil
 }
 
 func (s *SealWriter) Write(p []byte) (int, error) {
@@ -170,7 +184,11 @@ func (s *SealWriter) Close() error {
 	if s.err != nil {
 		return s.err
 	}
-	return s.flush(true)
+	if s.nonFinal && len(s.buf) != ChunkSize {
+		s.err = errors.New("archivestore: a part that is not last must end on a chunk boundary")
+		return s.err
+	}
+	return s.flush(!s.nonFinal)
 }
 
 // PlainBytes is the number of plaintext bytes written so far.

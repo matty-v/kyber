@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.57.0
+
+- Archive uploads are sent in parts, so a ZIP the size of an agent's disk gets
+  through ingresses and tunnels that cap request bodies. A part that fails on
+  a dropped connection, rate limit or server error is retried on its own, and
+  the progress bar covers the whole file. `uploadArchive(file, onProgress)`
+  keeps its signature; it now needs a control plane that serves
+  `PUT /api/v1/archive-uploads/{id}/parts/{n}`.
+- `ArchiveJob` gains `partSize`, `partCount` and `partsReceived`.
+
 ## 0.56.0
 
 - Switch harness works from Agent Detail. Opening it also stacked the generic

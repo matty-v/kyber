@@ -77,6 +77,8 @@ func (a *ArchiveService) advanceUpload(ctx context.Context, j *archivejob.Job) e
 		return a.finish(ctx, j, archivejob.StateCanceled, "canceled by operator")
 	case j.Deadline != nil && a.now().After(*j.Deadline):
 		return a.fail(ctx, j, "upload exceeded its time limit")
+	case a.uploadIdle(j):
+		return a.fail(ctx, j, "upload stopped: no part arrived for "+uploadPartIdleTimeout.String())
 	case j.Step == archivejob.StepVerifying:
 		return a.verifyStored(ctx, j, "Ready to import")
 	}
@@ -698,11 +700,18 @@ func (s *Server) handleArchiveUploads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a := s.Archives
-	id := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v1/archive-uploads"), "/")
+	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v1/archive-uploads"), "/")
+	id, action, _ := strings.Cut(rest, "/")
 	switch {
+	case id == "" && r.Method == http.MethodPost && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json"):
+		s.startPartUpload(w, r)
 	case id == "" && r.Method == http.MethodPost:
 		s.receiveUpload(w, r)
-	case id != "" && r.Method == http.MethodGet:
+	case id != "" && strings.HasPrefix(action, "parts/") && r.Method == http.MethodPut:
+		s.receivePart(w, r, id, strings.TrimPrefix(action, "parts/"))
+	case id != "" && action == "complete" && r.Method == http.MethodPost:
+		s.completeUpload(w, r, id)
+	case id != "" && action == "" && r.Method == http.MethodGet:
 		j, err := a.Jobs.Get(r.Context(), id)
 		if err != nil || j.Kind != archivejob.KindUpload {
 			writeJSONError(w, http.StatusNotFound, "not_found", "upload not found")

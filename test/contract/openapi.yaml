@@ -1000,16 +1000,32 @@ paths:
       operationId: uploadArchive
       summary: Upload a Kyber disk archive ZIP so an agent can be created from it
       description: >
-        Requires archives:admin with an installation-wide agent grant. The body
-        is the raw ZIP, streamed and sealed into the archive store; the job is
-        verified asynchronously before it can be imported.
+        Requires archives:admin with an installation-wide agent grant. Two
+        forms. A JSON body {size} starts an upload in parts (201): the job
+        carries partSize and partCount, each part is sent with
+        PUT /archive-uploads/{id}/parts/{n}, then POST
+        /archive-uploads/{id}/complete assembles them. Any other body is the
+        raw ZIP in one request (202), streamed and sealed into the archive
+        store. Either way the job is verified asynchronously before it can be
+        imported.
       tags: [agents]
       requestBody:
         required: true
         content:
+          application/json:
+            schema:
+              type: object
+              required: [size]
+              properties:
+                size: {type: integer, format: int64, minimum: 1, description: The ZIP's length in bytes}
           application/zip:
             schema: {type: string, format: binary}
       responses:
+        '201':
+          description: Upload in parts started; send the parts
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
         '202':
           description: Upload stored; verification queued
           content:
@@ -1038,6 +1054,55 @@ paths:
         '401': {$ref: '#/components/responses/Unauthorized'}
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
+
+  /api/v1/archive-uploads/{id}/parts/{n}:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+      - {name: n, in: path, required: true, schema: {type: integer, minimum: 0}}
+    put:
+      operationId: putArchiveUploadPart
+      summary: Send one part of an upload in parts
+      description: >
+        Part n is bytes [n*partSize, (n+1)*partSize) of the ZIP; only the last
+        part may be shorter. Parts may arrive in any order and on any replica,
+        and resending a part replaces it. An upload that receives no part for
+        30 minutes fails and its parts are deleted.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema: {type: string, format: binary}
+      responses:
+        '200':
+          description: Part stored
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+
+  /api/v1/archive-uploads/{id}/complete:
+    parameters:
+      - {name: id, in: path, required: true, schema: {type: string}}
+    post:
+      operationId: completeArchiveUpload
+      summary: Assemble an upload in parts and queue its verification
+      tags: [agents]
+      responses:
+        '202':
+          description: Parts assembled; verification queued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ArchiveJob'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
 
   /api/v1/agent-imports:
     post:
@@ -1972,7 +2037,7 @@ components:
       required: [id, kind, agent, state, bytesDone, createdAt, cancelable, downloadable]
       properties:
         id: {type: string}
-        kind: {type: string, enum: [export, import]}
+        kind: {type: string, enum: [export, upload, import]}
         agent: {type: string}
         state: {type: string, enum: [queued, running, completed, failed, canceled, expired]}
         step: {type: string}
@@ -1988,6 +2053,12 @@ components:
         downloadable: {type: boolean}
         requestedBy: {type: string}
         summary: {$ref: '#/components/schemas/ArchiveSummary'}
+        partSize: {type: integer, format: int64, description: Upload in parts only; the length of every part but the last}
+        partCount: {type: integer, description: Upload in parts only; how many parts the ZIP is sent in}
+        partsReceived:
+          type: array
+          description: Upload in parts only; the part numbers stored so far
+          items: {type: integer}
         sourceId: {type: string, description: Import only; the export or upload restored from}
         restored: {type: boolean, description: Import only; the volume is complete and verified}
         skipped:

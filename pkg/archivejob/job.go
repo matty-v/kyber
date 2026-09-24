@@ -131,6 +131,13 @@ type Job struct {
 	// before that point recreates it instead of failing the export.
 	ExportPodCreated bool `json:"exportPodCreated,omitempty"`
 	Uploaded         bool `json:"uploaded,omitempty"`
+	// An upload received in parts: the declared plaintext size, the part
+	// size, which parts are stored, and when the last one arrived. Zero
+	// PartSize means the archive arrived as one request body.
+	UploadSize    int64      `json:"uploadSize,omitempty"`
+	PartSize      int64      `json:"partSize,omitempty"`
+	PartsReceived []int      `json:"partsReceived,omitempty"`
+	LastPartAt    *time.Time `json:"lastPartAt,omitempty"`
 	// VerifyStarted and Verified track the verification pod; Verified is set
 	// when it has posted a summary of a fully checked archive.
 	VerifyStarted bool `json:"verifyStarted,omitempty"`

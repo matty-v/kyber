@@ -21,6 +21,8 @@ type S3Store struct {
 	client *minio.Client
 	bucket string
 	prefix string
+	// compose overrides client.ComposeObject in tests.
+	compose func(context.Context, minio.CopyDestOptions, ...minio.CopySrcOptions) (minio.UploadInfo, error)
 }
 
 // NewS3Store connects to an S3-compatible endpoint.
@@ -112,6 +114,8 @@ type GCSStore struct {
 	client *storage.Client
 	bucket string
 	prefix string
+	// composer overrides the GCS compose API in tests.
+	composer gcsComposer
 }
 
 // NewGCSStore connects with application default credentials.
