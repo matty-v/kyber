@@ -45,6 +45,10 @@ type archiveJobView struct {
 	Restored bool     `json:"restored,omitempty"`
 	Skipped  []string `json:"skipped,omitempty"`
 	Cutover  []string `json:"cutover,omitempty"`
+	// Upload-in-parts only.
+	PartSize      int64 `json:"partSize,omitempty"`
+	PartCount     int   `json:"partCount,omitempty"`
+	PartsReceived []int `json:"partsReceived,omitempty"`
 }
 
 func viewArchiveJob(j *archivejob.Job) archiveJobView {
@@ -66,6 +70,9 @@ func viewArchiveJob(j *archivejob.Job) archiveJobView {
 	}
 	if j.Kind == archivejob.KindImport {
 		v.Cancelable = v.Cancelable && !j.Restored
+	}
+	if j.PartSize > 0 {
+		v.PartSize, v.PartCount, v.PartsReceived = j.PartSize, uploadPartCount(j.UploadSize, j.PartSize), j.PartsReceived
 	}
 	if j.CancelRequested && !j.State.Terminal() {
 		v.Message = "Canceling"

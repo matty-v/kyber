@@ -110,6 +110,25 @@ class KyberAPIError extends Error {
   }
 }
 
+// Pauses before each retry of an archive upload part. Parts are idempotent
+// on the server, so resending one that did land is harmless.
+export const UPLOAD_PART_RETRY_DELAYS_MS = [1_000, 4_000, 15_000]
+
+// retryPart runs send until it succeeds, retrying only failures a resend can
+// fix: a dropped connection, a timeout, rate limiting or a 5xx.
+async function retryPart<T>(send: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send()
+    } catch (err) {
+      const status = err instanceof KyberAPIError ? err.status : -1
+      const transient = status === 0 || status === 408 || status === 429 || status >= 500
+      if (!transient || attempt >= UPLOAD_PART_RETRY_DELAYS_MS.length) throw err
+      await new Promise((r) => setTimeout(r, UPLOAD_PART_RETRY_DELAYS_MS[attempt]))
+    }
+  }
+}
+
 // Error code the control plane returns when a browser-session cookie is no
 // longer valid (pkg/api/auth.go ErrCodeSessionExpired). Distinct from the
 // generic "unauthorized" precisely so this case can be recovered in place.
@@ -201,6 +220,32 @@ export function createApiClient(cluster: Cluster) {
     }
 
     return res.json() as Promise<T>
+  }
+
+  // sendBody sends a raw body with XMLHttpRequest rather than fetch, because
+  // fetch reports no upload progress.
+  function sendBody<T>(method: string, path: string, body: Blob, onProgress: (loaded: number) => void): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open(method, `${baseURL}${path}`)
+      xhr.withCredentials = true
+      if (cluster.apiKey) xhr.setRequestHeader('Authorization', `Bearer ${cluster.apiKey}`)
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream')
+      xhr.upload.onprogress = (e) => onProgress(e.loaded)
+      xhr.onload = () => {
+        let parsed: unknown
+        try { parsed = JSON.parse(xhr.responseText) } catch { parsed = undefined }
+        if (xhr.status >= 200 && xhr.status < 300) {
+          bumpLastApiCall()
+          resolve(parsed as T)
+          return
+        }
+        const err = (parsed as { error?: { code?: string; message?: string } } | undefined)?.error
+        reject(new KyberAPIError(xhr.status, err?.code ?? 'UNKNOWN', err?.message ?? `HTTP ${xhr.status}`))
+      }
+      xhr.onerror = () => reject(new KyberAPIError(0, 'NETWORK', 'upload failed: network error'))
+      xhr.send(body)
+    })
   }
 
   return {
@@ -323,29 +368,28 @@ export function createApiClient(cluster: Cluster) {
     getArchiveUpload: (id: string): Promise<ArchiveJob> =>
       request<ArchiveJob>('GET', `/api/v1/archive-uploads/${encodeURIComponent(id)}`),
 
-    // uploadArchive streams a ZIP from disk. XMLHttpRequest rather than fetch
-    // because fetch reports no upload progress, and archives are large.
-    uploadArchive: (file: Blob, onProgress?: (loaded: number, total: number) => void): Promise<ArchiveJob> =>
-      new Promise<ArchiveJob>((resolve, reject) => {
-        const xhr = new XMLHttpRequest()
-        xhr.open('POST', `${baseURL}/api/v1/archive-uploads`)
-        xhr.withCredentials = true
-        if (cluster.apiKey) xhr.setRequestHeader('Authorization', `Bearer ${cluster.apiKey}`)
-        xhr.setRequestHeader('Content-Type', 'application/zip')
-        xhr.upload.onprogress = (e) => onProgress?.(e.loaded, e.total)
-        xhr.onload = () => {
-          let body: unknown
-          try { body = JSON.parse(xhr.responseText) } catch { body = undefined }
-          if (xhr.status >= 200 && xhr.status < 300) {
-            resolve(body as ArchiveJob)
-            return
-          }
-          const err = (body as { error?: { code?: string; message?: string } } | undefined)?.error
-          reject(new KyberAPIError(xhr.status, err?.code ?? 'UNKNOWN', err?.message ?? `HTTP ${xhr.status}`))
-        }
-        xhr.onerror = () => reject(new KyberAPIError(0, 'NETWORK', 'upload failed: network error'))
-        xhr.send(file)
-      }),
+    // uploadArchive sends a ZIP in fixed-size parts, so an archive the size of
+    // an agent's disk passes proxies that cap request bodies (Cloudflare:
+    // 100 MB). Each part is retried on its own; progress covers the whole
+    // file. complete only queues the join; the upload's job reports
+    // assembling and verifying while the picker polls it.
+    uploadArchive: async (file: Blob, onProgress?: (loaded: number, total: number) => void): Promise<ArchiveJob> => {
+      const plan = await request<ArchiveJob>('POST', '/api/v1/archive-uploads', { size: file.size })
+      const partSize = plan.partSize ?? 0
+      const partCount = plan.partCount ?? 0
+      if (partSize <= 0 || partCount <= 0) {
+        throw new KyberAPIError(0, 'UNKNOWN', 'upload failed: the server did not return a part size')
+      }
+      const base = `/api/v1/archive-uploads/${encodeURIComponent(plan.id)}`
+      let done = 0
+      for (let n = 0; n < partCount; n++) {
+        const part = file.slice(n * partSize, Math.min((n + 1) * partSize, file.size))
+        await retryPart(() => sendBody('PUT', `${base}/parts/${n}`, part, (loaded) => onProgress?.(done + loaded, file.size)))
+        done += part.size
+        onProgress?.(done, file.size)
+      }
+      return request<ArchiveJob>('POST', `${base}/complete`)
+    },
 
     createAgentFromArchive: (req: AgentImportRequest): Promise<AgentImportResponse> =>
       request<AgentImportResponse>('POST', '/api/v1/agent-imports', req),

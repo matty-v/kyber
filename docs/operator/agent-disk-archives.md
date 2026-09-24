@@ -100,9 +100,8 @@ get `429` with `Retry-After`.
 
 1. Choose a source: a completed export (retention applies), or upload a ZIP
    with `POST /api/v1/archive-uploads` (needs an installation-wide agent
-   grant). An upload is verified like an export before it can be used. Large
-   uploads go through your ingress; if it caps request size, import from an
-   export on the same installation instead.
+   grant). An upload is verified like an export before it can be used. See
+   [Uploading in parts](#uploading-in-parts).
 2. `POST /api/v1/agent-imports` with `source` (`exportId` or `uploadId`),
    `agent` (an ordinary create request) and optionally `keepCredentialFiles`
    and `keepCrontabs`. By default the restore leaves out every file that looks
@@ -132,6 +131,32 @@ Canceling or failing before the disk is complete deletes the new agent and
 its volume; the source agent is never touched. The new agent's cutover
 checklist (Agent Detail, or `GET /api/v1/agent-imports/{id}`) lists what you
 must move by hand.
+
+## Uploading in parts
+
+The console sends an archive in 32 MiB parts, so an upload the size of an
+agent's disk passes ingresses and tunnels that cap request bodies (Cloudflare
+allows 100 MB). Scripts can do the same:
+
+1. `POST /api/v1/archive-uploads` with the JSON body `{"size": <bytes>}`. The
+   job it returns carries `partSize` and `partCount`.
+2. `PUT /api/v1/archive-uploads/{id}/parts/{n}` with bytes
+   `[n*partSize, (n+1)*partSize)` of the ZIP; only the last part is shorter.
+   Parts may arrive in any order and on any control-plane replica, and a part
+   sent again replaces the first copy, so retry a failed part as is. The job's
+   `partsReceived` lists what has landed.
+3. `POST /api/v1/archive-uploads/{id}/complete` once every part is in. It
+   answers `202` at once with the job in the `assembling` step. The worker
+   then joins the parts into one archive (natively for `s3` and `gcs`, by
+   copying for `builtin`), so a large join never depends on the request
+   staying open behind a proxy. Verification follows as for any upload;
+   poll the job until it completes.
+
+Each part is sealed as it arrives, so parts are never stored in the clear.
+An upload that receives no part for 30 minutes fails and its parts are
+deleted, as are the parts of a canceled upload. Sending the whole ZIP as the
+body of `POST /api/v1/archive-uploads` still works where no proxy limits the
+request size.
 
 ## Troubleshooting
 

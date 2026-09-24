@@ -3,9 +3,11 @@
 package contract
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -101,4 +103,40 @@ func TestContract_AgentImports(t *testing.T) {
 	validateContract(t, h, authedReq(t, http.MethodGet, "/api/v1/agent-imports?agent=restored", nil))
 	validateContract(t, h, authedReq(t, http.MethodGet, "/api/v1/agent-imports/"+created.Import.ID, nil))
 	validateContract(t, h, authedReq(t, http.MethodPost, "/api/v1/agent-imports/"+created.Import.ID+"/cancel", nil))
+}
+
+// TestContract_ArchiveUploadInParts validates the upload-in-parts routes
+// (MAT-90) against openapi.yaml.
+func TestContract_ArchiveUploadInParts(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(newContractScheme(t)).Build()
+	store, err := archivestore.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &api.Server{K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
+		Client: c, Namespace: contractNS, Store: store, Jobs: archivejob.NewMemoryStore(),
+		SigningKey: []byte("k"), ToolImage: "kyber/control-plane:test",
+	}}
+	h := srv.BuildHandler()
+
+	body := []byte("PK\x03\x04 not really a zip")
+	rr := validateContract(t, h, authedReq(t, http.MethodPost, "/api/v1/archive-uploads", map[string]any{"size": len(body)}))
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("start = %d %s", rr.Code, rr.Body.String())
+	}
+	var job struct{ ID string }
+	_ = json.Unmarshal(rr.Body.Bytes(), &job)
+
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/archive-uploads/"+job.ID+"/parts/0", bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+contractAPIKey)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	if rr := validateContract(t, h, req); rr.Code != http.StatusOK {
+		t.Fatalf("part = %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := validateContract(t, h, authedReq(t, http.MethodPost, "/api/v1/archive-uploads/"+job.ID+"/complete", nil)); rr.Code != http.StatusAccepted {
+		t.Fatalf("complete = %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := validateContractResponseOnly(t, h, authedReq(t, http.MethodPost, "/api/v1/archive-uploads/"+job.ID+"/complete", nil)); rr.Code != http.StatusConflict {
+		t.Fatalf("second complete = %d, want 409", rr.Code)
+	}
 }

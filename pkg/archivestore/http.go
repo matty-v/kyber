@@ -1,6 +1,7 @@
 package archivestore
 
 import (
+	"bytes"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -23,7 +24,46 @@ type Server struct {
 	Token string
 }
 
-const objectsPrefix = "/v1/objects/"
+const (
+	objectsPrefix = "/v1/objects/"
+	composePath   = "/v1/compose"
+)
+
+type composeRequest struct {
+	Dst   string   `json:"dst"`
+	Parts []string `json:"parts"`
+}
+
+// serveCompose joins stored parts into one object on the store's own disk.
+// It never answers 404, so a client can read 404 as "this server predates
+// compose"; a missing part is 422.
+func (s *Server) serveCompose(w http.ResponseWriter, r *http.Request) {
+	var req composeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil || len(req.Parts) == 0 {
+		http.Error(w, "bad compose request", http.StatusBadRequest)
+		return
+	}
+	for _, k := range append([]string{req.Dst}, req.Parts...) {
+		if ValidateKey(k) != nil {
+			http.Error(w, "bad key", http.StatusBadRequest)
+			return
+		}
+	}
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+	n, err := s.Store.Compose(r.Context(), req.Dst, req.Parts)
+	if errors.Is(err, ErrNotFound) {
+		http.Error(w, "part not found", http.StatusUnprocessableEntity)
+		return
+	}
+	if err != nil {
+		slog.Warn("archive store: compose failed", "dst", req.Dst, "error", err)
+		http.Error(w, "compose failed", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]int64{"size": n})
+}
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path == "/healthz" {
@@ -42,6 +82,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(c)
+		return
+	}
+	if r.URL.Path == composePath && r.Method == http.MethodPost {
+		s.serveCompose(w, r)
 		return
 	}
 	key, ok := strings.CutPrefix(r.URL.Path, objectsPrefix)
@@ -237,6 +281,31 @@ func (s *HTTPStore) Delete(ctx context.Context, key string) error {
 	}
 	resp.Body.Close()
 	return nil
+}
+
+// Compose asks the archive store server to join the parts on its own disk. A
+// server older than the compose endpoint answers 404, which is reported as
+// ErrComposeUnsupported so the caller falls back to streaming.
+func (s *HTTPStore) Compose(ctx context.Context, dst string, parts []string) (int64, error) {
+	body, err := json.Marshal(composeRequest{Dst: dst, Parts: parts})
+	if err != nil {
+		return 0, err
+	}
+	resp, err := s.do(ctx, http.MethodPost, composePath, bytes.NewReader(body), map[string]string{"Content-Type": "application/json"})
+	if errors.Is(err, ErrNotFound) {
+		return 0, ErrComposeUnsupported
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	var out struct {
+		Size int64 `json:"size"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&out); err != nil {
+		return 0, fmt.Errorf("archive store compose: %w", err)
+	}
+	return out.Size, nil
 }
 
 func (s *HTTPStore) Capacity(ctx context.Context) (Capacity, error) {

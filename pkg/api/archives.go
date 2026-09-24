@@ -57,9 +57,16 @@ type ArchiveLimits struct {
 	// keeps the manifest inside diskarchive's fixed decode cap, so an export
 	// the scan accepts is never rejected by verification afterwards.
 	MaxEntries int
+	// UploadPartBytes is the part size for uploads in parts, rounded down to
+	// whole seal chunks.
+	UploadPartBytes int64
 }
 
 func (l ArchiveLimits) withDefaults() ArchiveLimits {
+	l.UploadPartBytes -= l.UploadPartBytes % archivestore.ChunkSize
+	if l.UploadPartBytes <= 0 {
+		l.UploadPartBytes = archiveUploadPartSize
+	}
 	if l.MaxArchiveBytes <= 0 {
 		l.MaxArchiveBytes = 200 << 30
 	}
@@ -354,6 +361,9 @@ func (a *ArchiveService) finish(ctx context.Context, j *archivejob.Job, state ar
 		if err := a.Store.Delete(ctx, j.ObjectKey); err != nil {
 			return fmt.Errorf("deleting archive: %w", err)
 		}
+	}
+	if err := a.deleteUploadParts(ctx, j); err != nil {
+		return err
 	}
 	now := a.now()
 	j.State = j.Finishing

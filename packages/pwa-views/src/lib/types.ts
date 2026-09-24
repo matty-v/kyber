@@ -975,6 +975,11 @@ export interface ArchiveJob {
   downloadable: boolean
   requestedBy?: string
   summary?: ArchiveSummary
+  // Upload in parts only (MAT-90): the plan returned by
+  // POST /api/v1/archive-uploads {size} and the parts received so far.
+  partSize?: number
+  partCount?: number
+  partsReceived?: number[]
   // Import only (MAT-88).
   sourceId?: string
   restored?: boolean
