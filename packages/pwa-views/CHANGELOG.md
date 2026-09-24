@@ -1,5 +1,11 @@
 # @matty-v/kyber-pwa-views
 
+## 0.60.0
+
+- Built and tested against React 19. The peer range is now
+  `^18.3.0 || ^19.0.0`, so hosts on React 18 keep working and hosts can
+  move to 19 when ready.
+
 ## 0.59.0
 
 - A file secret keeps its own file name. Picking a file in Add secret fills
