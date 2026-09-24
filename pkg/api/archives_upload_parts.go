@@ -233,8 +233,14 @@ func (s *Server) receivePart(w http.ResponseWriter, r *http.Request, id, number 
 	})
 	if err != nil || !ok {
 		// The job was canceled, failed or completed while this part arrived;
-		// its cleanup may already have run, so remove the part here.
-		_ = a.Store.Delete(bg, partKey)
+		// its cleanup may already have run, so remove the part here. A join
+		// in progress owns the parts (and deletes them when done): this
+		// retry replaced its part with an equivalent one, and deleting it
+		// would break the join.
+		joining := cur != nil && cur.UploadClaimed && cur.State == archivejob.StateRunning && cur.Step == archivejob.StepReceiving
+		if err != nil || !joining {
+			_ = a.Store.Delete(bg, partKey)
+		}
 		writeJSONError(w, http.StatusConflict, "upload_changed", "the upload was canceled or finished while the part was received")
 		return
 	}

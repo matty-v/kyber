@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -172,5 +173,51 @@ func TestIdleUploadInPartsFailsAndDeletesParts(t *testing.T) {
 	}
 	if rr := h.putPart(up.ID, 1, part(data, up.PartSize, 1)); rr.Code != http.StatusConflict {
 		t.Errorf("part after failure = %d, want 409", rr.Code)
+	}
+}
+
+// hookStore runs a hook before a Put, to interleave another request.
+type hookStore struct {
+	archivestore.Store
+	beforePut func(key string)
+}
+
+func (s hookStore) Put(ctx context.Context, key string, r io.Reader) (int64, error) {
+	if s.beforePut != nil {
+		s.beforePut(key)
+	}
+	return s.Store.Put(ctx, key, r)
+}
+
+// A part retried while complete is joining the parts must not delete the
+// part the join is reading.
+func TestLatePartDoesNotDeleteAPartBeingJoined(t *testing.T) {
+	h := newExportHarness(t)
+	h.svc.Limits.UploadPartBytes = archivestore.ChunkSize
+	ctx := context.Background()
+	data := largeSampleDisk(t)
+	up := h.startPartUpload(len(data))
+	for n := range up.PartCount {
+		if rr := h.putPart(up.ID, n, part(data, up.PartSize, n)); rr.Code != http.StatusOK {
+			t.Fatalf("part %d = %d", n, rr.Code)
+		}
+	}
+	key := fmt.Sprintf("uploads/%s/parts/%06d.sealed", up.ID, 0)
+	h.svc.Store = hookStore{Store: h.store, beforePut: func(k string) {
+		if k != key {
+			return
+		}
+		// complete claims the join while this retry is being stored.
+		j := h.job(up.ID)
+		j.UploadClaimed = true
+		if err := h.svc.Jobs.Update(ctx, j); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	if rr := h.putPart(up.ID, 0, part(data, up.PartSize, 0)); rr.Code != http.StatusConflict {
+		t.Fatalf("late part = %d, want 409", rr.Code)
+	}
+	if _, err := h.store.Size(ctx, key); err != nil {
+		t.Fatalf("the late part's cleanup deleted a part being joined: %v", err)
 	}
 }
