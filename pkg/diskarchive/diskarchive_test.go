@@ -485,12 +485,14 @@ func TestParseImageManifest(t *testing.T) {
 }
 
 func TestIsLoginPath(t *testing.T) {
-	login := []string{".claude/.credentials.json", ".codex/auth.json"}
+	login := []string{".claude/.credentials.json", ".codex/auth.json", ".claude/sessions/"}
 	for p, want := range map[string]bool{
-		"agentroot/home/kyber/.claude/.credentials.json":  true,
-		"agentroot/home/kyber/.codex/auth.json":           true,
-		"agentroot/home/kyber/x.claude/.credentials.json": false,
-		"agentroot/home/kyber/.claude/settings.json":      false,
+		"agentroot/home/kyber/.claude/.credentials.json":    true,
+		"agentroot/home/kyber/.codex/auth.json":             true,
+		"agentroot/home/kyber/x.claude/.credentials.json":   false,
+		"agentroot/home/kyber/.claude/settings.json":        false,
+		"agentroot/home/kyber/.claude/sessions/495.abc.key": true,
+		"agentroot/home/kyber/.claude/sessionsx/495.key":    false,
 	} {
 		if got := IsLoginPath(p, login); got != want {
 			t.Errorf("IsLoginPath(%s) = %v", p, got)

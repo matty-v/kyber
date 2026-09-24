@@ -18,9 +18,12 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			{ID: kyberv1.AgentAuthTypeOAuth, Name: "Claude subscription", Flow: "authorization-code", InputField: "oauthCode", SecretSuffix: "oauth", ReauthorizePath: "oauth", AuthorizationURL: "https://claude.ai/oauth/authorize", AuthorizationParams: map[string]string{"code": "true", "client_id": "9d1c250a-e61b-44d9-88ed-5944d1962f5e", "response_type": "code", "redirect_uri": "https://platform.claude.com/oauth/code/callback", "scope": "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload"}, Channels: []string{"telegram", "discord", "slack"}},
 			{ID: kyberv1.AgentAuthTypeAPIKey, Name: "Anthropic API key", Flow: "api-key", InputField: "anthropicApiKey", SecretSuffix: "anthropic", Channels: []string{"slack"}},
 		},
-		Features:           []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature},
-		TranscriptPath:     ".claude/projects",
-		LoginFiles:         []string{".claude/.credentials.json"},
+		Features:       []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature},
+		TranscriptPath: ".claude/projects",
+		// sessions/ holds each running process's peer-messaging registration
+		// and its .key: per-process runtime state, meaningless (and not ours
+		// to share) on another agent.
+		LoginFiles:         []string{".claude/.credentials.json", ".claude/sessions/"},
 		TranscriptExchange: `select((.isSidechain // false) | not) | select(.type == "user" or .type == "assistant") | {role: .type, timestamp: (.timestamp // ""), content: (.message.content as $c | if ($c | type) == "string" then $c elif ($c | type) == "array" then ([$c[] | select(.type == "text") | .text] | join("\n")) else "" end)}`,
 	}
 }
