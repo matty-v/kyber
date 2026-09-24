@@ -1171,6 +1171,13 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), field)
 			return
 		}
+		// An API-key mode with no key and no pre-provisioned Secret creates a
+		// pod that references a Secret nobody will ever write: the agent sat
+		// in Creating on CreateContainerConfigError with no explanation.
+		if msg, field := s.missingAPIKey(r.Context(), req); msg != "" {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, field)
+			return
+		}
 	}
 
 	if req.Secrets.TelegramEnabled {
@@ -2543,6 +2550,34 @@ func (s *Server) createAgentSecrets(ctx context.Context, req CreateAgentRequest)
 
 // runtimeAuthInput is the compatibility boundary for the existing wire fields.
 // Provider interpretation and credential preparation live in each runtime.
+//
+// missingAPIKey reports an API-key auth mode created with no key, unless the
+// mode's credential Secret was provisioned ahead of time. It reads the mode
+// from the runtime descriptor, so every API-key runtime is covered alike.
+func (s *Server) missingAPIKey(ctx context.Context, req CreateAgentRequest) (string, string) {
+	descriptor, ok := pkgruntimes.Describe(req.Runtime)
+	if !ok {
+		return "", ""
+	}
+	mode, ok := descriptor.Auth(kyberv1.AgentAuthType(req.Secrets.AuthType))
+	if !ok || mode.Flow != "api-key" || mode.InputField == "" ||
+		strings.TrimSpace(req.Secrets.runtimeAuthInput()[mode.InputField]) != "" {
+		return "", ""
+	}
+	name := pkgruntimes.CredentialName(req.Runtime, req.Name, kyberv1.AgentAuthType(req.Secrets.AuthType))
+	existing := &corev1.Secret{}
+	if err := s.K8sClient.Get(ctx, types.NamespacedName{Name: name, Namespace: s.Namespace}, existing); err == nil || !k8serrors.IsNotFound(err) {
+		return "", ""
+	}
+	field := "secrets.runtimeAuth." + mode.InputField
+	switch mode.InputField {
+	case "anthropicApiKey", "openaiApiKey", "codexAuthJson":
+		field = "secrets." + mode.InputField
+	}
+	return fmt.Sprintf("%s requires %s: %s authentication needs its key, and no %s Secret exists",
+		descriptor.Name, field, mode.Name, name), field
+}
+
 func (s agentSecretsRequest) runtimeAuthInput() pkgruntimes.AuthInput {
 	input := pkgruntimes.AuthInput{}
 	for k, v := range s.RuntimeAuth {

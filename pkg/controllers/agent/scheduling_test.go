@@ -397,6 +397,36 @@ func TestPopulateSchedulingStatus_StalledPodWithNoEventsReportsWhatItCanSee(t *t
 	}
 }
 
+// MAT-90 G11: a pod whose container references a Secret that does not exist
+// is not a slow boot. The kubelet already knows why, so report it at once
+// (no grace window) with its message, rather than after the ten-minute
+// stalled fallback.
+func TestPopulateSchedulingStatus_CreateContainerConfigErrorIsImmediate(t *testing.T) {
+	for _, reason := range []string{"CreateContainerConfigError", "CreateContainerError"} {
+		pod := stalledPod("pod-uid", 2*time.Second)
+		pod.Status.ContainerStatuses[0].State.Waiting = &corev1.ContainerStateWaiting{
+			Reason: reason, Message: `secret "alice-anthropic" not found`}
+		agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber"}}
+		c := fake.NewClientBuilder().WithScheme(schedulingTestScheme(t)).Build()
+
+		if !populateSchedulingStatus(context.Background(), c, pod, agent) {
+			t.Fatalf("%s: not reported inside the grace window", reason)
+		}
+		got := agent.Status.Scheduling
+		if got.Category != "Other" || !strings.Contains(got.LastError, "agent") ||
+			!strings.Contains(got.LastError, reason) ||
+			!strings.Contains(got.LastError, `secret "alice-anthropic" not found`) {
+			t.Errorf("%s: Scheduling = %+v, want Other naming container, reason and kubelet message", reason, got)
+		}
+		if got.FirstObservedAt == nil || !got.FirstObservedAt.Time.Equal(pod.CreationTimestamp.UTC()) {
+			t.Errorf("%s: FirstObservedAt = %v, want pod creation", reason, got.FirstObservedAt)
+		}
+		if populateSchedulingStatus(context.Background(), c, pod, agent) {
+			t.Errorf("%s: second pass reported a change for the same error", reason)
+		}
+	}
+}
+
 // A cold node pulling a large runtime image is Pending with no events for
 // minutes. That is a healthy boot, not a stall, and must not raise a banner.
 func TestPopulateSchedulingStatus_StalledFallbackWaitsOutASlowBoot(t *testing.T) {
