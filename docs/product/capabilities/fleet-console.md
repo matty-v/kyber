@@ -17,7 +17,7 @@ Every screen shows a cluster identifier with the cluster's name and version, so 
 
 ## Agent profiles
 
-An agent’s General settings let you set its alias and description. Private avatar storage is currently available through the API; the console does not yet provide an avatar upload control. The API accepts PNG, JPEG, or WebP files up to 1 MiB, requires authenticated access, and currently needs durable tasks enabled with object storage configured. Replacing or removing an avatar does not restart the agent.
+An agent’s General settings let you set its alias, description and avatar: upload or drop a PNG, JPEG or WebP image (up to 1 MiB), replace it, or remove it. Kyber crops it square, scales it to 256 px and strips its metadata, and it works on every installation with no object storage. Avatars show in the agent list and the agent's header, and agents without one show their initials. Changing the avatar does not restart the agent.
 
 ## Agent status and activity
 

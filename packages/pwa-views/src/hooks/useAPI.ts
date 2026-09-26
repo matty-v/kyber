@@ -147,6 +147,37 @@ export function useUpdateAgentProfile() {
   })
 }
 
+// useUploadAgentAvatar replaces an agent's avatar. The agent response carries
+// the new versioned avatarUrl, so the list and detail refetch pick it up.
+export function useUploadAgentAvatar() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, file }: { name: string; file: Blob }) => api.uploadAgentAvatar(name, file),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    // No errorPrefix: the settings row maps the error code to inline copy.
+    meta: { successMessage: 'Avatar updated' },
+  })
+}
+
+export function useDeleteAgentAvatar() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name }: { name: string }) => api.deleteAgentAvatar(name),
+    onSuccess: (_data, variables) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', variables.name] })
+    },
+    meta: { successMessage: 'Avatar removed' },
+  })
+}
+
 // useSetSessionResume flips the kyber#118 per-agent session-resume toggle.
 // Separate from usePatchAgent so each control keeps its own toast copy.
 export function useSetSessionResume() {

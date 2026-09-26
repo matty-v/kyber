@@ -187,7 +187,21 @@ export function createApiClient(cluster: Cluster) {
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
     })
+    return parseResponse<T>(res)
+  }
 
+  // sendRaw sends a binary body (an image, say) with its own content type,
+  // through the same error handling as request.
+  async function sendRaw<T>(method: string, path: string, body: Blob, contentType: string): Promise<T> {
+    const headers: Record<string, string> = { 'Content-Type': contentType }
+    if (cluster.apiKey) {
+      headers['Authorization'] = `Bearer ${cluster.apiKey}`
+    }
+    const res = await fetch(`${baseURL}${path}`, { method, headers, body })
+    return parseResponse<T>(res)
+  }
+
+  async function parseResponse<T>(res: Response): Promise<T> {
     if (!res.ok) {
       let code = 'UNKNOWN'
       let message = `HTTP ${res.status}`
@@ -264,6 +278,14 @@ export function createApiClient(cluster: Cluster) {
 
     patchAgent: (name: string, req: import('./types').PatchAgentRequest): Promise<Agent> =>
       request<Agent>('PATCH', `/api/v1/agents/${encodeURIComponent(name)}`, req),
+
+    // uploadAgentAvatar sends the image as-is; the server checks and
+    // normalizes it (square, at most 256 px) and returns the updated agent.
+    uploadAgentAvatar: (name: string, file: Blob): Promise<Agent> =>
+      sendRaw<Agent>('PUT', `/api/v1/agents/${encodeURIComponent(name)}/profile/avatar`, file, file.type || 'application/octet-stream'),
+
+    deleteAgentAvatar: (name: string): Promise<void> =>
+      request<void>('DELETE', `/api/v1/agents/${encodeURIComponent(name)}/profile/avatar`),
 
     getAgentModels: (name: string): Promise<AgentModelsResponse> =>
       request<AgentModelsResponse>('GET', `/api/v1/agents/${encodeURIComponent(name)}/models`),

@@ -166,3 +166,21 @@ describe('AgentList activity badge (kyber#417)', () => {
     expect(screen.getByRole('button', { name: 'Collapse idle-han details' })).toHaveAttribute('aria-expanded', 'true')
   })
 })
+
+describe('AgentList avatars (MAT-91)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('shows the agent avatar in both the card and table layouts', () => {
+    renderList([
+      { ...mockIdleAgent, profile: { alias: 'Idle Han', avatarUrl: '/api/v1/agents/idle-han/profile/avatar?v=9' } },
+      { ...mockNoActivityAgent, profile: undefined },
+    ])
+    const images = screen.getAllByTestId('agent-avatar-image')
+    expect(images).toHaveLength(2)
+    for (const img of images) expect(img).toHaveAttribute('src', '/api/v1/agents/idle-han/profile/avatar?v=9')
+    // The agent without an avatar falls back to initials in both layouts.
+    expect(screen.getAllByTestId('agent-avatar-initials')).toHaveLength(2)
+  })
+})

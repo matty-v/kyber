@@ -20,6 +20,9 @@ import {
 } from './fixtures'
 import { twoSessionJsonl } from '../lib/transcript-fixtures'
 
+// The last avatar uploaded in mock mode.
+let mockAvatar: { bytes: ArrayBuffer; type: string } | null = null
+
 // Canned "attached to agent tmux" output for the exec WebSocket. Includes
 // the Connected banner the terminal prints on onopen plus a plausible
 // Claude Code prompt framing so screenshots communicate what the Shell +
@@ -197,6 +200,23 @@ export const handlers = [
   http.patch(`*/api/v1/agents/${MOCK_AGENT_NAME}`, async ({ request }) => {
     const body = (await request.json()) as Partial<typeof mockAgent>
     return HttpResponse.json({ ...mockAgent, ...body })
+  }),
+
+  // Avatar upload/remove echo a versioned avatarUrl; GET serves back the last
+  // uploaded image, so the General settings row can be exercised in mock mode.
+  http.put(`*/api/v1/agents/${MOCK_AGENT_NAME}/profile/avatar`, async ({ request }) => {
+    mockAvatar = { bytes: await request.arrayBuffer(), type: request.headers.get('Content-Type') ?? 'image/png' }
+    const avatarUrl = `/api/v1/agents/${MOCK_AGENT_NAME}/profile/avatar?v=${Date.now().toString(36)}`
+    return HttpResponse.json({ ...mockAgent, profile: { ...mockAgent.profile, avatarUrl } })
+  }),
+  http.get(`*/api/v1/agents/${MOCK_AGENT_NAME}/profile/avatar`, () =>
+    mockAvatar
+      ? new HttpResponse(mockAvatar.bytes, { headers: { 'Content-Type': mockAvatar.type } })
+      : HttpResponse.json({ error: { code: 'not_found', message: 'agent has no avatar' } }, { status: 404 }),
+  ),
+  http.delete(`*/api/v1/agents/${MOCK_AGENT_NAME}/profile/avatar`, () => {
+    mockAvatar = null
+    return new HttpResponse(null, { status: 204 })
   }),
 
   // WebSocket mock for the exec endpoint — picks frames based on ?mode=…

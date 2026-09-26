@@ -54,6 +54,9 @@ const DefaultPublicPort = ":8080"
 type Server struct {
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
+	// APIReader, when set, reads straight from the API server, bypassing
+	// K8sClient's informer cache (a just-written avatar is served at once).
+	APIReader client.Reader
 
 	// ComputeSimulation is an explicitly enabled development-only scenario
 	// controller. It is nil in production and for real compute providers.

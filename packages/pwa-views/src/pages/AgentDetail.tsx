@@ -33,6 +33,8 @@ import { SchedulingFailureBanner } from '../components/SchedulingFailureBanner'
 import { SchedulingFailureBadge } from '../components/SchedulingFailureBadge'
 import { AgentActivityBadge } from '../components/AgentActivityBadge'
 import { AgentResourceUsage } from '../components/AgentResourceUsage'
+import { AgentAvatar } from '../components/AgentAvatar'
+import { AgentAvatarSettings } from '../components/AgentAvatarSettings'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { DiskExportCard } from '../components/DiskExportCard'
@@ -724,6 +726,7 @@ export function AgentDetail() {
         <Button variant="ghost" size="sm" onClick={() => navigate(prefixed('/agents'))}>
           <ArrowLeft className="h-4 w-4" />
         </Button>
+        <AgentAvatar name={agent.id} alias={agent.profile?.alias} avatarUrl={agent.profile?.avatarUrl} />
         <h1 className="min-w-0 truncate text-xl font-bold text-text-primary">{agent.id}</h1>
         <div className="order-3 flex w-full flex-wrap items-center gap-2 pl-10 sm:order-none sm:w-auto sm:pl-0">
           <StatusBadge phase={agent.phase} />
@@ -1006,6 +1009,7 @@ export function AgentDetail() {
                     <h2 className="mb-1 text-sm font-semibold text-text-primary">Agent profile</h2>
                     <p className="mb-3 text-xs text-text-muted">An operator-facing identity. Changes do not restart the agent.</p>
                     <div className="space-y-3">
+                      <AgentAvatarSettings name={name} alias={agent.profile?.alias} avatarUrl={agent.profile?.avatarUrl} />
                       <label className="block text-xs font-medium text-text-muted">
                         Alias
                         <input

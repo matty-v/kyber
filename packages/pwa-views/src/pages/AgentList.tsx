@@ -33,6 +33,7 @@ import {
 import { DataTable, type DataTableColumn } from '@/components/ui/data-table'
 import { Skeleton } from '../components/Skeleton'
 import type { Agent } from '../lib/types'
+import { AgentAvatar } from '../components/AgentAvatar'
 import {
   LifecycleMenuItems,
   SessionMenuItems,
@@ -111,16 +112,19 @@ export function AgentList() {
         accessorKey: 'id',
         header: 'Agent',
         cell: ({ row }) => (
-          <div className="min-w-0 overflow-hidden">
-            <span className="block truncate text-sm font-medium text-text-primary">
-              {row.original.profile?.alias || row.original.id}
-            </span>
-            {row.original.profile?.alias && (
-              <span className="block truncate font-mono text-[10px] text-text-muted">
-                {row.original.id}
+          <div className="flex min-w-0 items-start gap-2">
+            <AgentAvatar name={row.original.id} alias={row.original.profile?.alias} avatarUrl={row.original.profile?.avatarUrl} size="sm" />
+            <div className="min-w-0 overflow-hidden">
+              <span className="block truncate text-sm font-medium text-text-primary">
+                {row.original.profile?.alias || row.original.id}
               </span>
-            )}
-            <AgentGoalLine goal={row.original.goal} className="mt-0.5" />
+              {row.original.profile?.alias && (
+                <span className="block truncate font-mono text-[10px] text-text-muted">
+                  {row.original.id}
+                </span>
+              )}
+              <AgentGoalLine goal={row.original.goal} className="mt-0.5" />
+            </div>
           </div>
         ),
       },
@@ -253,47 +257,50 @@ export function AgentList() {
             {agents.map((a) => (
               <Card key={a.id} onClick={() => navigate(prefixed(`/agents/${a.id}`))}>
                 <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium text-text-primary truncate">{a.profile?.alias || a.id}</span>
-                      <StatusBadge phase={a.phase} />
-                      <SchedulingFailureBadge agent={a} />
-                      <AgentDiskPressureBadge usage={a.activity?.resources} />
-                    </div>
-                    {/* Activity badge on its own line — keeps the truncating
-                        id + badges in the header row from overflowing on
-                        narrow viewports (kyber#417). Gate the line on the same
-                        visible-by-absence condition the badge itself uses, so a
-                        no-activity card keeps its exact prior layout (no empty
-                        spacer div nudging the model·machine line down). */}
-                    {a.activity?.state && a.activity.state !== 'unknown' && (
-                      <div className="mt-1">
-                        <AgentActivityBadge agent={a} showDot={false} />
+                  <div className="flex min-w-0 items-start gap-3">
+                    <AgentAvatar name={a.id} alias={a.profile?.alias} avatarUrl={a.profile?.avatarUrl} />
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-text-primary truncate">{a.profile?.alias || a.id}</span>
+                        <StatusBadge phase={a.phase} />
+                        <SchedulingFailureBadge agent={a} />
+                        <AgentDiskPressureBadge usage={a.activity?.resources} />
                       </div>
-                    )}
-                    {a.profile?.alias && <p className="mt-0.5 font-mono text-[10px] text-text-muted">{a.id}</p>}
-                    <AgentGoalLine goal={a.goal} className="mt-1" />
-                    <p className="mt-1 text-xs text-text-muted">
-                      {a.currentModel || a.model || '—'} &middot; {a.machine}
-                    </p>
-                    <p className="mt-0.5 text-xs text-text-muted">
-                      Context:{' '}
-                      {a.tokenUsage ? (
-                        <span
-                          className={`font-mono tabular-nums ${
-                            a.tokenUsage.percentage >= 90 ? 'text-danger'
-                            : a.tokenUsage.percentage >= 75 ? 'text-warn'
-                            : 'text-text-secondary'
-                          }`}
-                        >
-                          {formatTokens(a.tokenUsage.tokens.used)} /{' '}
-                          {formatTokens(a.tokenUsage.tokens.limit)} (
-                          {formatPct(a.tokenUsage.percentage)})
-                        </span>
-                      ) : (
-                        <span className="font-mono text-text-disabled">—</span>
+                      {/* Activity badge on its own line — keeps the truncating
+                          id + badges in the header row from overflowing on
+                          narrow viewports (kyber#417). Gate the line on the same
+                          visible-by-absence condition the badge itself uses, so a
+                          no-activity card keeps its exact prior layout (no empty
+                          spacer div nudging the model·machine line down). */}
+                      {a.activity?.state && a.activity.state !== 'unknown' && (
+                        <div className="mt-1">
+                          <AgentActivityBadge agent={a} showDot={false} />
+                        </div>
                       )}
-                    </p>
+                      {a.profile?.alias && <p className="mt-0.5 font-mono text-[10px] text-text-muted">{a.id}</p>}
+                      <AgentGoalLine goal={a.goal} className="mt-1" />
+                      <p className="mt-1 text-xs text-text-muted">
+                        {a.currentModel || a.model || '—'} &middot; {a.machine}
+                      </p>
+                      <p className="mt-0.5 text-xs text-text-muted">
+                        Context:{' '}
+                        {a.tokenUsage ? (
+                          <span
+                            className={`font-mono tabular-nums ${
+                              a.tokenUsage.percentage >= 90 ? 'text-danger'
+                              : a.tokenUsage.percentage >= 75 ? 'text-warn'
+                              : 'text-text-secondary'
+                            }`}
+                          >
+                            {formatTokens(a.tokenUsage.tokens.used)} /{' '}
+                            {formatTokens(a.tokenUsage.tokens.limit)} (
+                            {formatPct(a.tokenUsage.percentage)})
+                          </span>
+                        ) : (
+                          <span className="font-mono text-text-disabled">—</span>
+                        )}
+                      </p>
+                    </div>
                   </div>
                   <AgentActionsMenu agent={a} onAction={confirm} />
                 </div>
