@@ -34,7 +34,6 @@ import (
 	agentcontroller "github.com/matty-v/kyber/pkg/controllers/agent"
 	"github.com/matty-v/kyber/pkg/oauth"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
-	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 )
 
@@ -922,7 +921,11 @@ func profileAvatarURL(name, key string) string {
 	if key == "" {
 		return ""
 	}
-	return "/api/v1/agents/" + url.PathEscape(name) + "/profile/avatar"
+	u := "/api/v1/agents/" + url.PathEscape(name) + "/profile/avatar"
+	if v := avatarVersion(key); v != "" {
+		u += "?v=" + v
+	}
+	return u
 }
 
 func avatarContentType(value string) bool {
@@ -954,14 +957,15 @@ func validatedAvatarType(data []byte, declared string) bool {
 	return (declared == "image/png" && format == "png") || (declared == "image/jpeg" && format == "jpeg")
 }
 
-// handleAgentAvatar stores private avatar bytes in the configured object store
-// and serves them only through the authenticated API. The CRD stores only an
-// opaque key and validated content type, never image bytes or a public URL.
+func (s *Server) avatars() avatarStore {
+	return avatarStore{Client: s.K8sClient, Reader: s.APIReader, Namespace: s.Namespace, Legacy: s.TaskObjectStore}
+}
+
+// handleAgentAvatar serves an agent's avatar through the authenticated API.
+// Uploads are normalized (see normalizeAvatar) and stored in a ConfigMap the
+// Agent owns; the CRD records only an opaque, versioned key and the content
+// type, never image bytes or a public URL.
 func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name string) {
-	if s.TaskObjectStore == nil {
-		writeJSONError(w, http.StatusServiceUnavailable, "avatar_unavailable", "avatar storage is not configured")
-		return
-	}
 	agent := &kyberv1.Agent{}
 	if err := s.K8sClient.Get(r.Context(), types.NamespacedName{Name: name, Namespace: s.Namespace}, agent); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -971,26 +975,38 @@ func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
-	key := "agent-avatars/" + name
+	store := s.avatars()
 	switch r.Method {
 	case http.MethodGet:
-		if agent.Spec.Profile.AvatarKey == "" {
-			writeJSONError(w, http.StatusNotFound, "not_found", "agent has no avatar")
+		key := agent.Spec.Profile.AvatarKey
+		version := avatarVersion(key)
+		if version != "" && r.Header.Get("If-None-Match") == `"`+version+`"` {
+			w.WriteHeader(http.StatusNotModified)
 			return
 		}
-		obj, err := s.TaskObjectStore.Open(r.Context(), agent.Spec.Profile.AvatarKey, nil)
-		if err != nil {
-			if errors.Is(err, taskobject.ErrNotFound) {
-				writeJSONError(w, http.StatusNotFound, "not_found", "agent avatar not found")
-				return
-			}
+		data, err := store.Load(r.Context(), agent)
+		if errors.Is(err, errAvatarNotFound) {
+			writeJSONError(w, http.StatusNotFound, "not_found", "agent has no avatar")
+			return
+		} else if err != nil {
+			slog.Error("reading avatar failed", "agent", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to read avatar")
 			return
 		}
-		defer obj.Body.Close()
 		w.Header().Set("Content-Type", agent.Spec.Profile.AvatarContentType)
-		w.Header().Set("Cache-Control", "private, max-age=3600")
-		_, _ = io.Copy(w, obj.Body)
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		switch {
+		case version != "" && r.URL.Query().Get("v") == version:
+			// A versioned URL names these exact bytes; a new avatar gets a new URL.
+			w.Header().Set("Cache-Control", "private, max-age=31536000, immutable")
+			w.Header().Set("ETag", `"`+version+`"`)
+		case version != "":
+			w.Header().Set("Cache-Control", "private, no-cache")
+			w.Header().Set("ETag", `"`+version+`"`)
+		default:
+			w.Header().Set("Cache-Control", "private, no-cache")
+		}
+		_, _ = w.Write(data)
 	case http.MethodPut:
 		contentType := r.Header.Get("Content-Type")
 		if !avatarContentType(contentType) {
@@ -999,37 +1015,50 @@ func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name 
 		}
 		r.Body = http.MaxBytesReader(w, r.Body, maxAgentAvatarBytes+1)
 		data, err := io.ReadAll(r.Body)
-		if err != nil {
-			writeJSONError(w, http.StatusBadRequest, "invalid_avatar", "failed to read avatar")
-			return
-		}
-		if int64(len(data)) > maxAgentAvatarBytes {
+		if err != nil || int64(len(data)) > maxAgentAvatarBytes {
 			writeJSONError(w, http.StatusRequestEntityTooLarge, "avatar_too_large", "avatar must be at most 1 MiB")
 			return
 		}
-		if !validatedAvatarType(data, contentType) {
-			writeJSONError(w, http.StatusUnsupportedMediaType, "invalid_avatar", "avatar bytes do not match the declared PNG, JPEG, or WebP type")
+		normalized, storedType, err := normalizeAvatar(data, contentType)
+		switch {
+		case errors.Is(err, errAvatarType):
+			writeJSONError(w, http.StatusUnsupportedMediaType, "invalid_avatar", "avatar bytes are not a valid PNG, JPEG, or WebP image of the declared type")
+			return
+		case errors.Is(err, errAvatarDimensions):
+			writeJSONError(w, http.StatusBadRequest, "invalid_avatar", err.Error())
+			return
+		case err != nil:
+			slog.Error("normalizing avatar failed", "agent", name, "error", err)
+			writeJSONError(w, http.StatusBadRequest, "invalid_avatar", "avatar could not be processed")
 			return
 		}
-		if err := s.TaskObjectStore.Put(r.Context(), key, bytes.NewReader(data), int64(len(data)), taskobject.PutOptions{Filename: name + "-avatar", ContentType: contentType}); err != nil {
+		oldKey := agent.Spec.Profile.AvatarKey
+		key, err := store.Store(r.Context(), name, agent.UID, normalized, storedType)
+		if err != nil {
+			slog.Error("storing avatar failed", "agent", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store avatar")
 			return
 		}
 		patch := client.MergeFrom(agent.DeepCopy())
 		agent.Spec.Profile.AvatarKey = key
-		agent.Spec.Profile.AvatarContentType = strings.ToLower(strings.Split(contentType, ";")[0])
+		agent.Spec.Profile.AvatarContentType = storedType
 		if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
-			_ = s.TaskObjectStore.Delete(r.Context(), key)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to save avatar metadata")
 			return
 		}
+		// A legacy object-store avatar is replaced, so its object goes.
+		if oldKey != "" && !strings.HasPrefix(oldKey, avatarKeyPrefix) {
+			if err := store.Remove(r.Context(), name, oldKey); err != nil {
+				slog.Warn("removing the replaced legacy avatar failed", "agent", name, "error", err)
+			}
+		}
 		writeJSON(w, http.StatusOK, agentToResponse(agent))
 	case http.MethodDelete:
-		if agent.Spec.Profile.AvatarKey == "" {
-			writeJSON(w, http.StatusNoContent, nil)
+		oldKey := agent.Spec.Profile.AvatarKey
+		if oldKey == "" {
+			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		oldKey := agent.Spec.Profile.AvatarKey
 		patch := client.MergeFrom(agent.DeepCopy())
 		agent.Spec.Profile.AvatarKey = ""
 		agent.Spec.Profile.AvatarContentType = ""
@@ -1037,7 +1066,7 @@ func (s *Server) handleAgentAvatar(w http.ResponseWriter, r *http.Request, name 
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to clear avatar metadata")
 			return
 		}
-		if err := s.TaskObjectStore.Delete(r.Context(), oldKey); err != nil && !errors.Is(err, taskobject.ErrNotFound) {
+		if err := store.Remove(r.Context(), name, oldKey); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to delete avatar")
 			return
 		}
@@ -1947,6 +1976,13 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 		slog.Error("failed to delete agent", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to delete agent")
 		return
+	}
+	// A current avatar's ConfigMap is owned by the Agent and goes with it; an
+	// avatar still in the pre-MAT-91 object store has no owner, so remove it.
+	if key := agent.Spec.Profile.AvatarKey; key != "" && !strings.HasPrefix(key, avatarKeyPrefix) {
+		if err := s.avatars().Remove(r.Context(), name, key); err != nil {
+			slog.Warn("removing the deleted agent's legacy avatar failed", "agent", name, "error", err)
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

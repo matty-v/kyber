@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,7 +25,20 @@ import (
 	"github.com/matty-v/kyber/pkg/taskobject"
 )
 
-var testAvatar = []byte("\x89PNG\r\n\x1a\nnot-really-a-png")
+// testAvatar is a real 32x32 opaque PNG: imports normalize avatars, which
+// needs an image that decodes.
+var testAvatar = func() []byte {
+	img := image.NewRGBA(image.Rect(0, 0, 32, 32))
+	for i := range img.Pix {
+		img.Pix[i] = 0xC8
+		if i%4 == 3 {
+			img.Pix[i] = 0xFF // opaque, so it normalizes to JPEG
+		}
+	}
+	var b bytes.Buffer
+	_ = png.Encode(&b, img)
+	return b.Bytes()
+}()
 
 // configureSource gives the export harness's source agent every setting an
 // import should carry, plus user secrets and an avatar.
@@ -193,17 +208,17 @@ func TestImportAppliesTheArchivedConfig(t *testing.T) {
 		t.Errorf("peers = %+v; only the one whose Secret exists", s.A2APeers)
 	}
 	// Profile and avatar.
-	if s.Profile.Alias != "Vault" || s.Profile.AvatarKey != "agent-avatars/"+restoredAgent || s.Profile.AvatarContentType != "image/png" {
+	// The source's legacy object-store avatar lands, normalized, in a
+	// ConfigMap the new agent owns.
+	if s.Profile.Alias != "Vault" || !strings.HasPrefix(s.Profile.AvatarKey, "configmap:"+restoredAgent+"-avatar#") || s.Profile.AvatarContentType != "image/jpeg" {
 		t.Errorf("profile = %+v", s.Profile)
 	}
-	obj, err := h.server.TaskObjectStore.Open(ctx, "agent-avatars/"+restoredAgent, nil)
-	if err != nil {
+	cm := &corev1.ConfigMap{}
+	if err := h.c.Get(ctx, types.NamespacedName{Name: restoredAgent + "-avatar", Namespace: "kyber-system"}, cm); err != nil {
 		t.Fatal(err)
 	}
-	img, _ := io.ReadAll(obj.Body)
-	obj.Body.Close()
-	if !bytes.Equal(img, testAvatar) {
-		t.Error("avatar bytes differ")
+	if cfg, format, err := image.DecodeConfig(bytes.NewReader(cm.BinaryData["avatar"])); err != nil || format != "jpeg" || cfg.Width != 32 || !metav1.IsControlledBy(cm, a) {
+		t.Errorf("restored avatar = %s %dx%d %v, owner %+v", format, cfg.Width, cfg.Height, err, cm.OwnerReferences)
 	}
 	// User secrets copied server-side, owned by the new agent.
 	for suffix, key := range map[string]string{"-user-secrets-kv": "API_TOKEN", "-user-secrets-files": "cert.bin"} {

@@ -764,6 +764,85 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /api/v1/agents/{name}/profile/avatar:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgentAvatar
+      summary: Get an agent's avatar image
+      description: >
+        Serves the normalized avatar bytes through the authenticated API. When
+        the ?v= query matches the current avatar (profile.avatarUrl carries
+        it), the response is cacheable as immutable; otherwise it must be
+        revalidated with the ETag.
+      tags: [agents]
+      parameters:
+        - {name: v, in: query, required: false, schema: {type: string}, description: Avatar version from profile.avatarUrl}
+      responses:
+        '200':
+          description: Avatar image
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+        '304':
+          description: Not modified (If-None-Match matched)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    put:
+      operationId: putAgentAvatar
+      summary: Upload or replace an agent's avatar
+      description: >
+        Raw image bytes (PNG, JPEG or WebP, at most 1 MiB and 4096 px per
+        side). The image is center-cropped square, scaled to at most 256 px
+        and re-encoded (PNG if it has transparency, otherwise JPEG), which
+        drops all metadata. It is stored in a ConfigMap owned by the agent,
+        so no object store is needed. Does not restart the agent.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          image/png: {schema: {type: string, format: binary}}
+          image/jpeg: {schema: {type: string, format: binary}}
+          image/webp: {schema: {type: string, format: binary}}
+      responses:
+        '200':
+          description: Avatar stored; the updated agent (profile.avatarUrl carries the new version)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: Avatar larger than 1 MiB
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '415':
+          description: Not a PNG, JPEG or WebP image of the declared type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    delete:
+      operationId: deleteAgentAvatar
+      summary: Remove an agent's avatar
+      tags: [agents]
+      responses:
+        '204':
+          description: Avatar removed (also when there was none)
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /api/v1/agents/{name}/repair-runtime:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -2887,7 +2966,9 @@ components:
           maxLength: 500
         avatarUrl:
           type: string
-          description: Authenticated API URL for the private avatar bytes.
+          description: >
+            Authenticated API URL for the avatar bytes, versioned with ?v= so
+            it changes whenever the avatar does. Absent when there is none.
 
     PublicCapabilityIdentity:
       type: object

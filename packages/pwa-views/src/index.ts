@@ -30,6 +30,8 @@ export { useUpgradeProgress, type UpgradeProgress } from './hooks/useUpgradeProg
 // Cluster name + version display component. Renders "{name} {version}" with
 // a refresh affordance when a new chart version is detected.
 export { ClusterIdentifier } from './components/ClusterIdentifier'
+// Agent avatar (profile image or initials); the hub can render it in its own views.
+export { AgentAvatar } from './components/AgentAvatar'
 export { UpgradeBanner } from './components/UpgradeBanner'
 export { useLiveVersion, type LiveVersionState } from './hooks/useLiveVersion'
 

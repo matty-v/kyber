@@ -1418,6 +1418,7 @@ func main() {
 
 	publicAPI = &internalapi.Server{
 		K8sClient:                     mgr.GetClient(),
+		APIReader:                     mgr.GetAPIReader(),
 		TokenStore:                    tokenStore,
 		TokenAccumulator:              tokenAccumulator,
 		SkillStore:                    skillStore,

@@ -17,6 +17,8 @@ import (
 	"encoding/json"
 	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
+	"image"
+	"image/png"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -479,5 +481,43 @@ func TestContract_Unauthorized_NoKey(t *testing.T) {
 	}
 	if errResp.Error.Code == "" {
 		t.Error("401 ErrorResponse.error.code must not be empty")
+	}
+}
+
+// MAT-91: the avatar routes, with no object store configured.
+func TestContract_AgentAvatar(t *testing.T) {
+	h := newContractServer(t, sampleAgentObj("dave"))
+	img := image.NewRGBA(image.Rect(0, 0, 40, 30))
+	for i := range img.Pix {
+		img.Pix[i] = 0xFF
+	}
+	var png1 bytes.Buffer
+	if err := png.Encode(&png1, img); err != nil {
+		t.Fatal(err)
+	}
+	put := httptest.NewRequest(http.MethodPut, "/api/v1/agents/dave/profile/avatar", bytes.NewReader(png1.Bytes()))
+	put.Header.Set("Authorization", "Bearer "+contractAPIKey)
+	put.Header.Set("Content-Type", "image/png")
+	rr := validateContract(t, h, put)
+	var agent struct {
+		Profile struct {
+			AvatarURL string `json:"avatarUrl"`
+		} `json:"profile"`
+	}
+	_ = json.Unmarshal(rr.Body.Bytes(), &agent)
+	if rr.Code != http.StatusOK || agent.Profile.AvatarURL == "" {
+		t.Fatalf("PUT = %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := validateContract(t, h, authedReq(t, http.MethodGet, agent.Profile.AvatarURL, nil)); rr.Code != http.StatusOK {
+		t.Fatalf("GET = %d", rr.Code)
+	}
+	bad := httptest.NewRequest(http.MethodPut, "/api/v1/agents/dave/profile/avatar", bytes.NewReader([]byte("nope")))
+	bad.Header.Set("Authorization", "Bearer "+contractAPIKey)
+	bad.Header.Set("Content-Type", "image/png")
+	if rr := validateContractResponseOnly(t, h, bad); rr.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("bad PUT = %d", rr.Code)
+	}
+	if rr := validateContract(t, h, authedReq(t, http.MethodDelete, "/api/v1/agents/dave/profile/avatar", nil)); rr.Code != http.StatusNoContent {
+		t.Fatalf("DELETE = %d", rr.Code)
 	}
 }

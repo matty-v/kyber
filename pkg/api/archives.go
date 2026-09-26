@@ -119,8 +119,9 @@ type ArchiveService struct {
 	// ImagePullSecrets are attached to archive pods; they run the control
 	// plane's image, which may come from a private registry.
 	ImagePullSecrets []string
-	// Avatars is the object store holding agent profile avatars, so an export
-	// can carry the image and an import can restore it. Nil leaves avatars out.
+	// Avatars is the object store that held agent profile avatars before
+	// MAT-91, so an export still carries an avatar stored there. Current
+	// avatars live in ConfigMaps and need no store; nil is fine.
 	Avatars taskobject.ObjectStore
 
 	// Now is overridable in tests.
@@ -1080,12 +1081,18 @@ func (a *ArchiveService) archiveConfig(ctx context.Context, agent *kyberv1.Agent
 	}
 	if p := s.Profile; p.Alias != "" || p.Description != "" || p.AvatarKey != "" {
 		cfg.Profile = &diskarchive.ConfigProfile{Alias: p.Alias, Description: p.Description}
-		if p.AvatarKey != "" && a.Avatars != nil {
-			img, err := readAvatar(ctx, a.Avatars, p.AvatarKey)
-			if err != nil {
+		if p.AvatarKey != "" {
+			store := avatarStore{Client: a.Client, Namespace: a.Namespace, Legacy: a.Avatars}
+			img, err := store.Load(ctx, agent)
+			switch {
+			case errors.Is(err, errAvatarNotFound):
+				// Recorded but gone (or in an object store this installation
+				// no longer has): the archive simply carries no avatar.
+			case err != nil:
 				return nil, fmt.Errorf("reading the profile avatar: %w", err)
+			default:
+				cfg.Profile.Avatar, cfg.Profile.AvatarContentType = img, p.AvatarContentType
 			}
-			cfg.Profile.Avatar, cfg.Profile.AvatarContentType = img, p.AvatarContentType
 		}
 	}
 	secrets, err := userSecretInventory(ctx, a.Client, a.Namespace, agent.Name)
@@ -1094,23 +1101,6 @@ func (a *ArchiveService) archiveConfig(ctx context.Context, agent *kyberv1.Agent
 	}
 	cfg.UserSecrets = secrets
 	return cfg, nil
-}
-
-// readAvatar reads a profile avatar, refusing anything over the API's cap.
-func readAvatar(ctx context.Context, store taskobject.ObjectStore, key string) ([]byte, error) {
-	obj, err := store.Open(ctx, key, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer obj.Body.Close()
-	data, err := io.ReadAll(io.LimitReader(obj.Body, maxAgentAvatarBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if int64(len(data)) > maxAgentAvatarBytes {
-		return nil, fmt.Errorf("avatar exceeds %d bytes", maxAgentAvatarBytes)
-	}
-	return data, nil
 }
 
 // userSecretInventory lists an agent's user secrets without their values.

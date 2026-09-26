@@ -422,3 +422,34 @@ describe('create from archive', () => {
     expect(url).toBe('http://localhost:8080/api/v1/agent-imports?agent=han%20solo')
   })
 })
+
+describe('agent avatar', () => {
+  it('PUTs the raw image with its own content type', async () => {
+    mockFetch({ id: 'vault', profile: { avatarUrl: '/api/v1/agents/vault/profile/avatar?v=1' } })
+    const api = createApiClient(mockCluster)
+    const file = new Blob(['img'], { type: 'image/webp' })
+    const agent = await api.uploadAgentAvatar('vault', file)
+    expect(agent.profile?.avatarUrl).toContain('?v=1')
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('http://localhost:8080/api/v1/agents/vault/profile/avatar')
+    expect(init).toMatchObject({ method: 'PUT', body: file, headers: { 'Content-Type': 'image/webp', Authorization: 'Bearer test-key' } })
+  })
+
+  it('surfaces the server error code on a rejected upload', async () => {
+    mockFetch({ error: { code: 'avatar_too_large', message: 'avatar must be at most 1 MiB' } }, 413)
+    const api = createApiClient(mockCluster)
+    await expect(api.uploadAgentAvatar('vault', new Blob(['x'], { type: 'image/png' }))).rejects.toMatchObject({
+      status: 413,
+      code: 'avatar_too_large',
+    })
+  })
+
+  it('DELETEs the avatar', async () => {
+    mockFetch(undefined, 204)
+    const api = createApiClient(mockCluster)
+    await api.deleteAgentAvatar('vault')
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('http://localhost:8080/api/v1/agents/vault/profile/avatar')
+    expect(init).toMatchObject({ method: 'DELETE' })
+  })
+})

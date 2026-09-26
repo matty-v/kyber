@@ -1,5 +1,19 @@
 # @matty-v/kyber-pwa-views
 
+## 0.62.0
+
+- Agents show their avatar, or their initials on a stable color, in the agent
+  list (table and cards) and the Agent Detail header.
+- General settings has an Avatar row: upload or replace a PNG, JPEG, or WebP
+  image (up to 1 MiB; drop it on the preview or choose a file) and remove it.
+  Errors from the server (wrong type, too large, unreadable or oversized
+  dimensions) show inline.
+- New `AgentAvatar` export. In embedded (cookie) mode it renders a plain
+  `<img>`; in hub (bearer) mode it fetches the image with the cluster's key and
+  shows it from a blob URL, since an `<img>` cannot send the key.
+- API client: `uploadAgentAvatar(name, file)` and `deleteAgentAvatar(name)`,
+  with `useUploadAgentAvatar` and `useDeleteAgentAvatar` hooks.
+
 ## 0.61.0
 
 - The agent and machine tables run on TanStack Table v9. Sorting and row

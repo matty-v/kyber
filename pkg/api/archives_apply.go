@@ -1,7 +1,6 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -22,7 +21,6 @@ import (
 	"github.com/matty-v/kyber/pkg/archivejob"
 	"github.com/matty-v/kyber/pkg/capabilities"
 	"github.com/matty-v/kyber/pkg/diskarchive"
-	"github.com/matty-v/kyber/pkg/taskobject"
 )
 
 // errStaleAgent is a cached read that still shows another agent by the name.
@@ -255,22 +253,20 @@ func (s *Server) applyArchiveToAgent(ctx context.Context, name string, uid types
 			caps = decl
 		}
 	}
-	var avatarKey string
+	// The avatar is normalized like an upload (an archive from before MAT-91
+	// holds it as uploaded) and stored in a ConfigMap the new agent owns, so
+	// it goes with the agent if the import is abandoned.
+	var avatarKey, avatarType string
 	if c.Profile != nil && len(c.Profile.Avatar) > 0 {
-		if s.TaskObjectStore == nil {
-			p.failed = append(p.failed, "profile avatar: this installation has no object store for avatars")
-		} else {
-			key := "agent-avatars/" + name
-			err := s.TaskObjectStore.Put(ctx, key, bytes.NewReader(c.Profile.Avatar), int64(len(c.Profile.Avatar)),
-				taskobject.PutOptions{Filename: name + "-avatar", ContentType: c.Profile.AvatarContentType})
-			if err != nil {
-				p.failed = append(p.failed, "profile avatar: "+err.Error())
-			} else {
-				avatarKey = key
-			}
+		normalized, contentType, err := normalizeAvatar(c.Profile.Avatar, c.Profile.AvatarContentType)
+		if err == nil {
+			avatarKey, err = s.avatars().Store(ctx, name, uid, normalized, contentType)
+			avatarType = contentType
+		}
+		if err != nil {
+			p.failed = append(p.failed, "profile avatar: "+err.Error())
 		}
 	}
-
 	agent := &kyberv1.Agent{}
 	// The client may be cache-backed and not show the just-created agent yet.
 	notYet := func(err error) bool {
@@ -290,7 +286,7 @@ func (s *Server) applyArchiveToAgent(ctx context.Context, name string, uid types
 			agent.Spec.Profile.Alias, agent.Spec.Profile.Description = c.Profile.Alias, c.Profile.Description
 			if avatarKey != "" {
 				agent.Spec.Profile.AvatarKey = avatarKey
-				agent.Spec.Profile.AvatarContentType = strings.ToLower(strings.Split(c.Profile.AvatarContentType, ";")[0])
+				agent.Spec.Profile.AvatarContentType = avatarType
 			}
 		}
 		return s.K8sClient.Update(ctx, agent)
