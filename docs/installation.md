@@ -504,7 +504,7 @@ the release tag are the same number:
 
 ```bash
 helm install kyber-gcp oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.7.0 \
+  --version 1.8.0 \
   --namespace kyber-system \
   -f ~/.config/kyber/values-gcp.yaml \
   --wait --timeout 15m
@@ -686,7 +686,7 @@ auto-renewed every ~60 days by Tailscale.
 
 ```bash
 helm upgrade kyber-gcp oci://ghcr.io/matty-v/charts/kyber \
-  --version 1.7.0 \
+  --version 1.8.0 \
   --namespace kyber-system \
   -f ~/.config/kyber/values-gcp.yaml \
   --wait
