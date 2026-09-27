@@ -551,6 +551,29 @@ curl -s -H "Authorization: Bearer $KYBER_API_KEY" \
 
 Stagger restarts by a few seconds so the cluster's image pull quota isn't hammered. For large fleets, consider restarting in waves.
 
+## Disk archives: the built-in archive store (v1.8.0)
+
+v1.8.0 enables disk archives by default. The first upgrade to it creates a
+`kyber-archive-store` Deployment and Service, its token Secret, and a 100Gi
+`ReadWriteOnce` PersistentVolumeClaim. Before upgrading, check the table in
+[disk archives](operator/agent-disk-archives.md#the-built-in-store-on-each-installation-target):
+
+- **macOS, WSL2 and k3s installs** need nothing. The volume is a local-path
+  directory.
+- **GKE** provisions a billed 100Gi zonal disk on `standard-rwo`. Set
+  `agentArchives.storage.builtin.size` smaller, or use `backend: gcs`.
+- **EKS** has no default StorageClass. Use the updated EKS preset, which sets
+  `agentArchives.storage.builtin.storageClassName: kyber-ebs`, or set that
+  value yourself. Without it the upgrade is refused before anything changes.
+- **Anywhere:** set `agentArchives.enabled: false` to skip the store entirely.
+
+On a self-upgrading install, add the value to the release's Helm values
+before clicking Install. The Job upgrades with the values it captures from
+the release, so a value you have not applied there is not used. If the class
+is still missing, the Job's Helm upgrade step fails when it renders the
+chart, before any release resource changes. Only the additive CRDs from the
+step before are applied, and the running version stays as it is.
+
 ## CRD migrations
 
 Kyber CRDs are generated under `deploy/helm/kyber/crds/`. Edit Go type markers

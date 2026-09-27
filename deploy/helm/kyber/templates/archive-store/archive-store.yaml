@@ -2,7 +2,7 @@
 {{- /*
   Kyber archive store (MAT-87/MAT-88): where agent disk exports live when no
   object storage is configured, which is the default on every installation
-  target (GKE, EKS, WSL2, bare Linux). One replica, Recreate, one RWO volume on
+  target. One replica, Recreate, one RWO volume on
   the installation's default StorageClass (or agentArchives.storage.builtin.
   storageClassName). It holds sealed archives only — the control plane encrypts
   before writing — and is reachable only from the control plane (Service is
@@ -12,6 +12,31 @@
   chart-created Secret stabilised by lookup, or a pre-created existingSecret
   (key "token") for GitOps installs where lookup cannot see the cluster.
 */}}
+{{- /*
+  No StorageClass named and no default one: the claim would sit Pending, the
+  store would never become ready, and `helm upgrade --wait` (and so the
+  self-upgrade Job) would time out and roll back. EKS 1.30+ clusters have no
+  default class. Refuse at render time with the fix instead. Only checked when
+  the cluster is visible (lookup is empty under `helm template`/GitOps) and the
+  claim does not already exist (an existing claim is already bound).
+*/}}
+{{- $builtin := .Values.agentArchives.storage.builtin }}
+{{- if not $builtin.storageClassName }}
+{{- $claim := lookup "v1" "PersistentVolumeClaim" (include "kyber.namespace" .) (printf "%s-archive-store" (include "kyber.fullname" .)) }}
+{{- $classes := lookup "storage.k8s.io/v1" "StorageClass" "" "" }}
+{{- if and (not $claim) (hasKey $classes "items") }}
+{{- $hasDefault := false }}
+{{- range $classes.items }}
+{{- $ann := .metadata.annotations | default dict }}
+{{- if or (eq (index $ann "storageclass.kubernetes.io/is-default-class" | default "") "true") (eq (index $ann "storageclass.beta.kubernetes.io/is-default-class" | default "") "true") }}
+{{- $hasDefault = true }}
+{{- end }}
+{{- end }}
+{{- if not $hasDefault }}
+{{- fail "agentArchives: this cluster has no default StorageClass, so the built-in archive store's volume would never bind. Set agentArchives.storage.builtin.storageClassName (on EKS, the class Kyber uses for agents, e.g. kyber-ebs), use agentArchives.storage.backend s3 or gcs, or set agentArchives.enabled=false." }}
+{{- end }}
+{{- end }}
+{{- end }}
 {{- $secretName := .Values.agentArchives.storage.builtin.existingSecret | default (printf "%s-archive-store" (include "kyber.fullname" .)) }}
 {{- if not .Values.agentArchives.storage.builtin.existingSecret }}
 {{- $existing := lookup "v1" "Secret" (include "kyber.namespace" .) $secretName }}
@@ -87,6 +112,21 @@ spec:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       automountServiceAccountToken: false
+      {{- /* Unset placement follows the control plane: the store serves only
+             the control plane, and wherever an installation puts that is
+             platform ground an agent Machine's deletion cannot take away. */}}
+      {{- with ($builtin.nodeSelector | default .Values.controlPlane.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with ($builtin.tolerations | default .Values.controlPlane.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $builtin.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

@@ -529,12 +529,23 @@ agentArchives:
       # the number of archives kept at once (see retention). Archives larger
       # than the free space fail cleanly.
       size: 100Gi
-      # Empty = the cluster's default StorageClass.
+      # Empty = the cluster's default StorageClass. A cluster with none (EKS
+      # 1.30+) must name one here, e.g. the agent class (kyber-ebs); the chart
+      # refuses to render otherwise rather than leave the volume Pending.
+      # On k3s local-path the size is only a request; on GKE/EKS it is a
+      # provisioned (billed) disk.
       storageClassName: ""
       # Pre-created Secret with key "token"; set on GitOps installs so the
       # chart does not regenerate the token on every sync.
       existingSecret: ""
       keepOnUninstall: false
+      # Where the store pod (and so, with WaitForFirstConsumer classes, its
+      # volume) lands. Empty follows controlPlane.nodeSelector/tolerations,
+      # keeping it off agent Machine nodes: deleting a Machine would take a
+      # node-local volume (k3s local-path) with it.
+      nodeSelector: {}
+      tolerations: []
+      affinity: {}
       resources:
         requests:
           cpu: 50m

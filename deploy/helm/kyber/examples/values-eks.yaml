@@ -17,6 +17,14 @@ redis:
   nodeSelector:
     kyber.io/role: platform
 
+# EKS has no default StorageClass: the built-in archive store's volume goes on
+# the zonal EBS class, and the store follows the control plane to the platform
+# pool (controlPlane.nodeSelector above).
+agentArchives:
+  storage:
+    builtin:
+      storageClassName: kyber-ebs
+
 compute:
   provider: eks
   eks:

@@ -21,7 +21,7 @@ agent, and how a restore works.
 
 | Backend | What it is | When to use it |
 |---|---|---|
-| `builtin` (default) | The chart's `kyber-archive-store` Deployment with its own `ReadWriteOnce` volume on the default StorageClass | Every target: GKE, EKS, WSL2, bare Linux. Needs nothing but a StorageClass |
+| `builtin` (default) | The chart's `kyber-archive-store` Deployment with its own `ReadWriteOnce` volume | Every target, given a StorageClass (see below) |
 | `s3` | Any S3-compatible bucket (AWS S3, MinIO) under `agentArchives.storage.prefix` | You already run object storage and want archives off-cluster |
 | `gcs` | A GCS bucket via node application default credentials | GKE installs with a bucket the nodes can write |
 
@@ -31,8 +31,37 @@ then reports it unavailable.
 Size the built-in volume (`agentArchives.storage.builtin.size`, 100Gi by
 default) for the largest agent disk you expect to export times the number of
 archives kept at once. An export that runs out of space fails cleanly and
-releases its agent. On cloud targets the volume is billed like any other
-persistent disk.
+releases its agent. A volume can grow later if its StorageClass allows
+expansion, but never shrink, so start small on cloud targets where the size is
+billed.
+
+### The built-in store on each installation target
+
+The store's volume uses `agentArchives.storage.builtin.storageClassName`, or
+the cluster's **default** StorageClass when that is empty. The store pod
+follows the control plane's `nodeSelector` and `tolerations` unless
+`agentArchives.storage.builtin.nodeSelector`, `tolerations` or `affinity` are
+set. That keeps it off agent Machine nodes, which can be deleted along with a
+node-local volume.
+
+| Target | Default StorageClass | What the 100Gi volume is | What to set |
+|---|---|---|---|
+| macOS (Colima or k3d) | k3s `local-path` | A directory in the VM or container. The size is a request, not an allocation | Nothing |
+| Windows (WSL2) | k3s `local-path` | A directory in the WSL distro. The size is a request, not an allocation | Nothing |
+| Linux / GCE VM (k3s) | k3s `local-path` | A directory on the server node, where the store follows the control plane | Nothing |
+| GKE | `standard-rwo` (`pd-balanced`) | A **provisioned, billed** zonal Persistent Disk | Optionally a smaller `size`, or `backend: gcs` |
+| EKS | **None** on EKS 1.30+ | Nothing binds without a class | The [EKS preset](../../deploy/helm/kyber/examples/values-eks.yaml) sets `storageClassName: kyber-ebs`; otherwise set it yourself, or use `backend: s3` |
+
+If no StorageClass is set and the cluster has no default, the chart **refuses
+to render**. It names these fixes rather than leaving the volume Pending,
+which would make `helm upgrade --wait` (and so the self-upgrade Job) time out
+and roll back. The check needs to see the cluster, so it runs for `helm
+install`/`upgrade` and the self-upgrade Job, but not for `helm template` or
+GitOps renders. GitOps installs must set the class themselves.
+
+Disk archives also need PostgreSQL (`KYBER_POSTGRES_URL`) for their job
+records. Without it the feature reports itself unavailable, and the store
+still runs.
 
 GitOps installs (Argo CD) should pre-create the store's token Secret and set
 `agentArchives.storage.builtin.existingSecret`, the same pattern as MinIO and
