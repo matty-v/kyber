@@ -38,4 +38,19 @@ describe('RecentlyActiveList', () => {
     render1([a('quiet')])
     expect(screen.getByText('No activity yet')).toBeInTheDocument()
   })
+  it('shows each agent\'s avatar with its activity dot', () => {
+    render1([
+      a('pic', {
+        activity: { lastActivityAt: new Date(NOW - 10_000).toISOString(), state: 'working' },
+        profile: { avatarUrl: '/api/v1/agents/pic/profile/avatar?v=abc' },
+      }),
+      a('plain', { activity: { lastActivityAt: new Date(NOW - 20_000).toISOString(), state: 'idle' } }),
+    ])
+    const img = screen.getByTestId('agent-avatar-image')
+    expect(img).toHaveAttribute('src', '/api/v1/agents/pic/profile/avatar?v=abc')
+    expect(screen.getByTestId('agent-avatar-initials')).toHaveAccessibleName('plain avatar')
+    const dots = screen.getAllByTestId('activity-dot')
+    expect(dots[0]).toHaveClass('bg-success')
+    expect(dots[1]).toHaveClass('bg-warn')
+  })
 })

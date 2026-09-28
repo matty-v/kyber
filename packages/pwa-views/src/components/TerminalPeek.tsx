@@ -7,6 +7,7 @@ import { rankByActivity } from '../lib/dashboard'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './ui/select'
 import { AgentGoalLine } from './AgentGoalLine'
+import { AgentAvatar } from './AgentAvatar'
 
 function PeekFrame({
   name,
@@ -63,12 +64,18 @@ export function TerminalPeek({ agents }: { agents: Agent[] }) {
 
   const selector = (
     <Select value={name} onValueChange={setSelected}>
+          {/* The trigger mirrors the selected item, avatar included. */}
           <SelectTrigger className="h-7 w-44 text-xs">
             <SelectValue placeholder="Select agent" />
           </SelectTrigger>
           <SelectContent>
             {agents.map((agent) => (
-              <SelectItem key={agent.id} value={agent.id}>{agent.id}</SelectItem>
+              <SelectItem key={agent.id} value={agent.id}>
+                <span className="flex items-center gap-2">
+                  <AgentAvatar name={agent.id} alias={agent.profile?.alias} avatarUrl={agent.profile?.avatarUrl} size="xs" />
+                  {agent.id}
+                </span>
+              </SelectItem>
             ))}
           </SelectContent>
     </Select>

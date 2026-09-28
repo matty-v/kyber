@@ -5,6 +5,7 @@ import { Card } from './Card'
 import { EmptyState } from './EmptyState'
 import { StatusBadge } from './StatusBadge'
 import { AgentGoalLine } from './AgentGoalLine'
+import { AgentAvatar } from './AgentAvatar'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { rankByActivity, isStale, isAttentionPhase, formatAgo, DEFAULT_LIST_LIMIT } from '../lib/dashboard'
 
@@ -39,7 +40,15 @@ export function RecentlyActiveList({
                   to={prefixed(`/agents/${agent.id}`)}
                   className="-mx-1 flex min-w-0 max-w-full items-center gap-2 overflow-hidden rounded border-b border-border-subtle px-1 py-2 transition-colors last:border-0 hover:bg-surface-overlay/40"
                 >
-                  <span className={`h-2 w-2 shrink-0 rounded-full ${dotClass[state]}`} aria-hidden />
+                  {/* The activity dot rides on the avatar's corner. */}
+                  <span className="relative shrink-0">
+                    <AgentAvatar name={agent.id} alias={agent.profile?.alias} avatarUrl={agent.profile?.avatarUrl} size="sm" />
+                    <span
+                      className={`absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-surface-raised ${dotClass[state]}`}
+                      aria-hidden
+                      data-testid="activity-dot"
+                    />
+                  </span>
                   <span className="min-w-0 flex-1">
                     <span className="flex min-w-0 items-center gap-2">
                       <span className="block min-w-0 flex-1 truncate text-sm text-text-primary">{agent.id}</span>
