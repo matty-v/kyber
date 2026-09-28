@@ -2,9 +2,10 @@ import { useContext, useEffect, useState } from 'react'
 import { ClusterContext, type Cluster } from '../lib/cluster-context'
 import { avatarColor, avatarInitials } from '../lib/avatar'
 
-type Size = 'sm' | 'md' | 'lg'
+type Size = 'xs' | 'sm' | 'md' | 'lg'
 
 const SIZES: Record<Size, string> = {
+  xs: 'h-5 w-5 text-[9px]',
   sm: 'h-7 w-7 text-[11px]',
   md: 'h-9 w-9 text-xs',
   lg: 'h-16 w-16 text-lg',

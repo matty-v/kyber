@@ -29,6 +29,14 @@ describe('TerminalPeek', () => {
     expect(exec).toHaveAttribute('data-mode', 'attach')
     expect(screen.getByText('Implement agent goals')).toBeInTheDocument()
   })
+  it('shows the watched agent\'s avatar in the picker', () => {
+    const pic = a('pic', 5)
+    pic.profile = { avatarUrl: '/api/v1/agents/pic/profile/avatar?v=abc' }
+    render(<TerminalPeek agents={[pic, a('plain', 300)]} />)
+    const img = screen.getByTestId('agent-avatar-image')
+    expect(img).toHaveAttribute('src', '/api/v1/agents/pic/profile/avatar?v=abc')
+    expect(screen.getByRole('combobox')).toContainElement(img)
+  })
   it('renders an empty state with no agents', () => {
     render(<TerminalPeek agents={[]} />)
     expect(screen.getByText('No agents to watch')).toBeInTheDocument()

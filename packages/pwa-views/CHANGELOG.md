@@ -1,5 +1,15 @@
 # @matty-v/kyber-pwa-views
 
+## 0.63.0
+
+- The Dashboard shows agent avatars:
+  - **Recently active:** each row shows the agent's avatar, with its activity
+    dot as a badge on the corner.
+  - **Terminal peek:** each entry in the agent picker, and the picker itself,
+    shows the watched agent's avatar.
+  - Agents without an avatar show their initials.
+- `AgentAvatar` gains an `xs` size.
+
 ## 0.62.0
 
 - Agents show their avatar, or their initials on a stable color, in the agent
