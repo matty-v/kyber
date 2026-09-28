@@ -24,7 +24,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-skills ./cmd/kyber-skills && \
     CGO_ENABLED=0 GOOS=linux go build -o /build/hermes-reporter ./cmd/hermes-reporter
 
-FROM ghcr.io/astral-sh/uv:0.12.18-python3.13-trixie@sha256:6bfd6c5658ed3fa44e464c19d84689b61fa1486c0c98f028f05be6eb807dcba9 AS uv-source
+FROM ghcr.io/astral-sh/uv:0.12.19-python3.13-trixie@sha256:dbc39f05b15187083adc7d2ad7d7bb40f3227f1bfed39f428d73d7493fdc43fe AS uv-source
 
 FROM ${BASE_IMAGE}
 
