@@ -72,6 +72,9 @@ const (
 	// Ready. It is provider-neutral and includes both interruption recovery and
 	// ordinary infrastructure repair.
 	EventMachineUnavailable Event = "MachineUnavailable"
+	// EventStaleNodePod fires when an unschedulable Pending pod is pinned to
+	// the former hostname of an otherwise Ready Machine.
+	EventStaleNodePod Event = "StaleNodePod"
 	// EventMachineReady fires when a replacement machine is available and the agent can be rescheduled.
 	EventMachineReady Event = "MachineReady"
 	// EventOAuthRefreshFailed fires when the runtime's start script exits with
@@ -337,6 +340,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionWriteBriefAndCreatePod,
 			NextPhase: kyberv1.AgentPhaseCreating,
 		},
+		{phase: kyberv1.AgentPhaseFailed, event: EventStaleNodePod}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
 		{phase: kyberv1.AgentPhaseFailed, event: EventRetryLimitReached}: {
 			Action:    ActionStayFailedAndAlert,
 			NextPhase: kyberv1.AgentPhaseFailed,
@@ -462,6 +469,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},
 		{phase: kyberv1.AgentPhaseRestarting, event: EventMachineUnavailable}: {
+			Action:    ActionTransitionToWaiting,
+			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
+		},
+		{phase: kyberv1.AgentPhaseFailed, event: EventMachineUnavailable}: {
 			Action:    ActionTransitionToWaiting,
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},

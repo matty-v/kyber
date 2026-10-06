@@ -83,6 +83,9 @@ testable without a cluster. Authoritative transition table:
   crash-loop; operator bumps memory first.
 - Spot-preemption parking is `Draining` → `WaitingForMachine`; a replacement
   machine resumes the agent automatically.
+- Machine unavailability also parks `Failed` agents before auto-restart. A
+  Pending pod pinned to a replaced node is removed only when its required
+  hostname differs from the Machine's current ready node.
 - `pkg/controllers/machine/` mirrors the same pattern for VMs. Compute
   providers sit behind `pkg/adapters/compute.go`: GCE is the production
   adapter, fake exercises managed lifecycle locally, and static attaches an
