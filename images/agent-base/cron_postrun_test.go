@@ -344,3 +344,34 @@ func TestCronTurnCorrelation_ArmsOnlyOneMarkerPerSubmission(t *testing.T) {
 		t.Errorf("want exactly 1 armed marker, got %d", armed)
 	}
 }
+
+// Claude Code wraps a multi-line pasted prompt in <pasted_content id=…>. The
+// dispatcher hashed the raw text it pasted, so the hook must hash the
+// unwrapped text or a long scheduled prompt would never arm.
+func TestCronTurnCorrelation_ArmsThroughClaudeCodePasteWrapper(t *testing.T) {
+	h := setupPostrunHarness(t)
+	jobPrompt := "run your work tick\ncheck the queue\nreport back"
+	h.marker("work-tick", "started_at=t0\nclear_context=true\nstate=queued\nprompt_sha256="+sha256Hex(jobPrompt)+"\n")
+
+	wrapped := "\n\n<pasted_content id=\"aea0\">\n" + jobPrompt + "\n</pasted_content id=\"aea0\">\n"
+	if _, code := h.runTurnStart(wrapped); code != 0 {
+		t.Fatalf("turn-start hook must exit 0, got %d", code)
+	}
+	if !strings.Contains(h.markerBody("work-tick"), "state=armed") {
+		t.Fatalf("a wrapped copy of the job's own prompt must arm it, got %q", h.markerBody("work-tick"))
+	}
+}
+
+// A different prompt that happens to be wrapped still must not arm.
+func TestCronTurnCorrelation_WrappedUnrelatedPromptDoesNotArm(t *testing.T) {
+	h := setupPostrunHarness(t)
+	h.marker("work-tick", "started_at=t0\nclear_context=true\nstate=queued\nprompt_sha256="+sha256Hex("run your work tick")+"\n")
+
+	wrapped := "\n\n<pasted_content id=\"aea0\">\nsomething else\nentirely\n</pasted_content id=\"aea0\">\n"
+	if _, code := h.runTurnStart(wrapped); code != 0 {
+		t.Fatalf("turn-start hook must exit 0, got %d", code)
+	}
+	if !strings.Contains(h.markerBody("work-tick"), "state=queued") {
+		t.Errorf("an unrelated wrapped prompt must not arm the marker, got %q", h.markerBody("work-tick"))
+	}
+}

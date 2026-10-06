@@ -64,6 +64,22 @@ main() {
         return 0
     fi
 
+    # The harness may wrap a pasted prompt (Claude Code wraps multi-line pastes
+    # in <pasted_content id=…>…</pasted_content id=…>). The dispatcher hashed
+    # the raw text it pasted, so hash the unwrapped text. An unwrapped prompt
+    # comes back unchanged.
+    local unwrap unwrapped
+    unwrap="$(dirname "$(readlink -f "$0")")/kyber-prompt-unwrap"
+    if [ -r "$unwrap" ]; then
+        if unwrapped="$(printf '%s' "$prompt" | bash "$unwrap")"; then
+            prompt="$unwrapped"
+        else
+            log "event=unwrap_failed"
+        fi
+    else
+        log "event=unwrap_missing"
+    fi
+
     # The dispatcher hashes the text it pasted, which command substitution had
     # already stripped of trailing newlines. Strip here too so both sides agree.
     prompt="${prompt%$'\n'}"

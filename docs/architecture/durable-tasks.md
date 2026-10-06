@@ -17,6 +17,14 @@ typed outputs without scraping an agent transcript. Authoritative code lives in
 2. A leased worker delivers the task through the existing bounded per-agent
    queue. The runtime's managed submit hook records the exact random attempt
    receipt before the task becomes `dispatched`.
+   The hook (`kyber-task-receipt`) requires the `[kyber-task:…] attempt=…`
+   header as the first line of the delivered text. Claude Code wraps a
+   multi-line bracketed paste in `<pasted_content id=…>…</pasted_content id=…>`,
+   so the hook (and `kyber-cron-turn-start`) first remove exactly one such
+   wrapper with `kyber-prompt-unwrap`. A prompt that mentions a task header but
+   still does not match logs `event=header_not_first_line` (or
+   `event=unwrap_missing` if the helper is not installed beside the hook) to
+   `/persist/var/log/kyber-task-receipt.log`, rather than failing silently.
 3. Claude Code or Codex invokes the sidecar's loopback `kyber-task` MCP tools.
    The sidecar validates basic shape and forwards progress, results, or
    completion using its pod credential. The control plane repeats validation

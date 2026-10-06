@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# kyber-prompt-unwrap — undo the harness's paste wrapper so UserPromptSubmit
+# hooks see the text Kyber actually delivered.
+#
+# Kyber delivers jobs and tasks as a tmux bracketed paste. Claude Code submits
+# a multi-line paste wrapped like this (observed in 2.1.285 and 2.1.291):
+#
+#   \n\n<pasted_content id="aea0">\n<the pasted text>\n</pasted_content id="aea0">\n
+#
+# while a short single-line paste arrives raw. kyber-task-receipt needs its
+# header on the first line and kyber-cron-turn-start hashes the exact text the
+# dispatcher pasted, so both read the prompt through this filter.
+#
+# Reads the prompt on stdin, writes it to stdout. It removes exactly one
+# wrapper, and only when both the opener (as the first non-empty line) and its
+# matching closer (as the last non-empty line) are present. Only empty lines
+# are skipped: a line of spaces or a CRLF ending does not match, and that
+# prompt comes back unchanged. Anything else is
+# written back unchanged, byte for byte: an unwrapped prompt keeps today's
+# behaviour, and a half-wrapper is not ours to guess about.
+set -uo pipefail
+
+orig="$(cat; printf x)"
+orig="${orig%x}"
+
+prompt="$orig"
+while [[ "$prompt" == $'\n'* ]]; do prompt="${prompt#$'\n'}"; done
+
+first="${prompt%%$'\n'*}"
+if [[ "$prompt" != *$'\n'* || ! "$first" =~ ^\<pasted_content\ id=\"([A-Za-z0-9]{1,16})\"\>$ ]]; then
+    printf '%s' "$orig"
+    exit 0
+fi
+closer="</pasted_content id=\"${BASH_REMATCH[1]}\">"
+
+body="${prompt#*$'\n'}"
+while [[ "$body" == *$'\n' ]]; do body="${body%$'\n'}"; done
+if [[ "$body" == "$closer" ]]; then
+    exit 0
+fi
+if [[ "$body" != *$'\n'"$closer" ]]; then
+    printf '%s' "$orig"
+    exit 0
+fi
+printf '%s' "${body%$'\n'"$closer"}"
