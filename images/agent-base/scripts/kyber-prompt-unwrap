@@ -12,8 +12,10 @@
 # dispatcher pasted, so both read the prompt through this filter.
 #
 # Reads the prompt on stdin, writes it to stdout. It removes exactly one
-# wrapper, and only when both the opener (as the first non-blank line) and its
-# matching closer (as the last non-blank line) are present. Anything else is
+# wrapper, and only when both the opener (as the first non-empty line) and its
+# matching closer (as the last non-empty line) are present. Only empty lines
+# are skipped: a line of spaces or a CRLF ending does not match, and that
+# prompt comes back unchanged. Anything else is
 # written back unchanged, byte for byte: an unwrapped prompt keeps today's
 # behaviour, and a half-wrapper is not ours to guess about.
 set -uo pipefail

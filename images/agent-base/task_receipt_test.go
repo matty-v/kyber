@@ -134,10 +134,11 @@ func TestTaskReceiptHookAcceptsClaudeCodePasteWrapper(t *testing.T) {
 // near-miss is logged instead of passing silently.
 func TestTaskReceiptHookIgnoresQuotedHeaderAndLogsIt(t *testing.T) {
 	cases := map[string]string{
-		"quoted mid-message":     "here is the log you asked for:\n" + testEnvelope,
-		"quoted inside wrapper":  "\n\n<pasted_content id=\"2b5a\">\nlog follows\n" + testEnvelope + "\n</pasted_content id=\"2b5a\">\n",
-		"unknown wrapper":        "<pasted_text id=\"2b5a\">\n" + testEnvelope + "\n</pasted_text id=\"2b5a\">",
-		"wrapper with no closer": "\n\n<pasted_content id=\"2b5a\">\n" + testEnvelope,
+		"quoted mid-message":      "here is the log you asked for:\n" + testEnvelope,
+		"quoted inside wrapper":   "\n\n<pasted_content id=\"2b5a\">\nlog follows\n" + testEnvelope + "\n</pasted_content id=\"2b5a\">\n",
+		"unknown wrapper":         "<pasted_text id=\"2b5a\">\n" + testEnvelope + "\n</pasted_text id=\"2b5a\">",
+		"wrapper with no closer":  "\n\n<pasted_content id=\"2b5a\">\n" + testEnvelope,
+		"blank line after opener": "\n\n<pasted_content id=\"2b5a\">\n\n" + testEnvelope + "\n</pasted_content id=\"2b5a\">\n",
 	}
 	for name, prompt := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -163,5 +164,35 @@ func TestTaskReceiptHookStaysQuietForOrdinaryPrompts(t *testing.T) {
 	}
 	if _, err := os.Stat(logPath); !os.IsNotExist(err) {
 		t.Fatalf("must not log for an ordinary prompt (err=%v)", err)
+	}
+}
+
+// If the helper is not installed beside the hook, a wrapped task prompt cannot
+// bind a receipt; say so in the log rather than failing silently.
+func TestTaskReceiptHookLogsMissingUnwrapHelper(t *testing.T) {
+	server, got := receiptServer(t)
+	src, err := os.ReadFile("scripts/kyber-task-receipt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	hook := filepath.Join(dir, "kyber-task-receipt")
+	if err := os.WriteFile(hook, src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	payload, _ := json.Marshal(map[string]string{"prompt": "\n\n<pasted_content id=\"2b5a\">\n" + testEnvelope + "\n</pasted_content id=\"2b5a\">\n", "session_id": "session-1", "hook_event_name": "UserPromptSubmit"})
+	logPath := filepath.Join(dir, "receipt.log")
+	cmd := exec.Command("bash", hook, "claude-code")
+	cmd.Stdin = strings.NewReader(string(payload))
+	cmd.Env = append(os.Environ(), "KYBER_TASK_RECEIPT_URL="+server.URL, "KYBER_TASK_RECEIPT_DIR="+filepath.Join(dir, "receipts"), "KYBER_TASK_RECEIPT_LOG="+logPath)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hook must not fail: %v: %s", err, out)
+	}
+	if len(*got) != 0 {
+		t.Fatalf("must not post a receipt without unwrapping, got %v", *got)
+	}
+	b, _ := os.ReadFile(logPath)
+	if !strings.Contains(string(b), "event=unwrap_missing") {
+		t.Fatalf("want an unwrap_missing log line, got %q", b)
 	}
 }
