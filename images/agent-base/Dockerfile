@@ -77,6 +77,9 @@ COPY --chmod=0755 scripts/kyber-cron-turn-start /usr/local/bin/kyber-cron-turn-s
 # Managed UserPromptSubmit hook that proves a task envelope crossed the
 # harness boundary before model processing begins.
 COPY --chmod=0755 scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
+# Shared by kyber-task-receipt and kyber-cron-turn-start: undoes the harness's
+# paste wrapper so both hooks see the text Kyber delivered.
+COPY --chmod=0755 scripts/kyber-prompt-unwrap /usr/local/bin/kyber-prompt-unwrap
 COPY --chmod=0755 scripts/kyber-goal-start /usr/local/bin/kyber-goal-start
 COPY --chmod=0755 scripts/kyber-runtime-capabilities /usr/local/bin/kyber-runtime-capabilities
 

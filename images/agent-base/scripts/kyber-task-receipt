@@ -4,8 +4,24 @@ set -euo pipefail
 runtime="${1:-}"
 payload="$(cat)"
 prompt="$(jq -r '.prompt // empty' <<<"$payload")"
+# The harness may wrap a pasted envelope (Claude Code: <pasted_content id=…>),
+# which pushes the header off the first line. Unwrap one known wrapper first;
+# the header must still be the very first line of what Kyber pasted, so a
+# header quoted inside someone's message never binds a receipt.
+unwrap="${KYBER_PROMPT_UNWRAP_CMD:-$(dirname "$0")/kyber-prompt-unwrap}"
+if [[ -x "$unwrap" ]]; then
+    prompt="$(printf '%s' "$prompt" | "$unwrap")"
+fi
 header="${prompt%%$'\n'*}"
 if [[ ! "$header" =~ ^\[kyber-task:(task_[a-f0-9]{32})\]\ attempt=(attempt_[a-f0-9]{32})$ ]]; then
+    # Not a task prompt. But a prompt that mentions a task header and still
+    # did not match is exactly how this hook failed silently before, so leave
+    # one line of evidence. Never exit non-zero here: a non-zero exit from
+    # UserPromptSubmit can block the operator's prompt.
+    if [[ "$prompt" == *"[kyber-task:"* ]]; then
+        log="${KYBER_TASK_RECEIPT_LOG:-/persist/var/log/kyber-task-receipt.log}"
+        { mkdir -p "$(dirname "$log")" && printf 'ts=%s event=header_not_first_line runtime=%s\n' "$(date -Iseconds)" "$runtime" >>"$log"; } 2>/dev/null || true
+    fi
     exit 0
 fi
 
