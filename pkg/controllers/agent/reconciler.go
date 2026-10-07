@@ -1159,6 +1159,18 @@ func (r *AgentReconciler) classifyEvent(
 				return EventDesiredRunning, nil
 			}
 		}
+		// A Pending pod pinned to a replaced node is an infrastructure
+		// recovery, even if the agent previously exhausted its crash budget.
+		// Park it and remove the stale pod before resuming against the new node.
+		if pod != nil && pod.Status.Phase == corev1.PodPending {
+			currentNode, err := r.resolveNodeName(ctx, agent)
+			if err != nil {
+				return "", err
+			}
+			if r.isStaleNodePendingPod(ctx, agent, pod, currentNode) {
+				return EventStaleNodePod, nil
+			}
+		}
 		// Auto-restart: if retry count < max, trigger auto-restart.
 		if agent.Status.RestartCount < maxRestartRetries {
 			return EventAutoRestartTriggered, nil
@@ -1669,8 +1681,13 @@ func (r *AgentReconciler) executeAction(
 				return 0, fmt.Errorf("deleting pod while waiting for machine: %w", err)
 			}
 		}
-		r.Recorder.Eventf(agent, corev1.EventTypeWarning, "MachineUnavailable",
-			"Agent waiting for machine capacity; it will resume automatically")
+		if event == EventStaleNodePod {
+			r.Recorder.Eventf(agent, corev1.EventTypeWarning, "StaleNodePod",
+				"Removed unschedulable pod pinned to a replaced node; agent will resume automatically")
+		} else {
+			r.Recorder.Eventf(agent, corev1.EventTypeWarning, "MachineUnavailable",
+				"Agent waiting for machine capacity; it will resume automatically")
+		}
 		return 15 * time.Second, nil
 
 	default:
@@ -2395,34 +2412,43 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	// Failed state and is never deleted, so a subsequent ResetRetryAndCreatePod
 	// would have silently no-op'd (Create → AlreadyExists → ignored) and the
 	// stale pod would outlive the re-auth, leaving the fresh refresh_token in
-	// the secret permanently unread. Only sweeps terminal phases AND the
-	// orphaned-Terminating-on-dead-node case; a live pod on a healthy node
-	// here signals an upstream state-machine bug and we fail loud.
+	// the secret permanently unread. Also remove a Pending pod pinned to a
+	// replaced node and an orphaned Terminating pod. A live pod on a healthy
+	// node here signals an upstream state-machine bug and we fail loud.
 	existing := &corev1.Pod{}
 	podKey := types.NamespacedName{Name: pod.Name, Namespace: pod.Namespace}
 	switch err := r.Get(ctx, podKey, existing); {
 	case err == nil:
 		if existing.Status.Phase != corev1.PodFailed && existing.Status.Phase != corev1.PodSucceeded {
-			// Special-case: pod is Terminating (DeletionTimestamp set) but
-			// kubelet on its assigned node is gone, so the deletion will
-			// never complete on its own. Without this branch the agent
-			// reconciler loops forever on "existing pod in non-terminal
-			// phase Running" — see kyber-gcp incident 2026-04-27, where a
-			// preempted spot VM left a pod stuck Terminating for 26+ hours.
-			if r.isOrphanedTerminating(ctx, existing) {
-				zero := int64(0)
-				if err := r.Delete(ctx, existing, &client.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !errors.IsNotFound(err) {
-					return fmt.Errorf("force-deleting orphaned terminating pod: %w", err)
+			// A replacement pod can be created while the Machine still reports
+			// its old node. If that pod cannot schedule and the Machine later
+			// points to a new node, its required hostname never updates in
+			// place. Remove only this stale, unscheduled pod; a healthy pod or
+			// an unrelated scheduling failure must not be disrupted.
+			if r.isStaleNodePendingPod(ctx, agent, existing, nodeName) {
+				if err := r.deletePod(ctx, existing, true); err != nil {
+					return fmt.Errorf("deleting pod pinned to replaced node: %w", err)
 				}
-				log.FromContext(ctx).Info("force-deleted orphaned Terminating pod on dead node",
-					"pod", existing.Name, "node", existing.Spec.NodeName)
-				if r.Recorder != nil {
-					r.Recorder.Eventf(agent, corev1.EventTypeWarning, "OrphanedPodForceDeleted",
-						"Force-deleted pod %s stuck Terminating on dead/missing node %s",
-						existing.Name, existing.Spec.NodeName)
+				return errAwaitingPodDeletion
+			}
+			if existing.DeletionTimestamp != nil {
+				// Most deletions finish on their own. If the kubelet on the
+				// assigned node is gone, force-delete after the grace window.
+				// See the kyber-gcp incident of 2026-04-27.
+				if r.isOrphanedTerminating(ctx, existing) {
+					zero := int64(0)
+					if err := r.Delete(ctx, existing, &client.DeleteOptions{GracePeriodSeconds: &zero}); err != nil && !errors.IsNotFound(err) {
+						return fmt.Errorf("force-deleting orphaned terminating pod: %w", err)
+					}
+					log.FromContext(ctx).Info("force-deleted orphaned Terminating pod on dead node",
+						"pod", existing.Name, "node", existing.Spec.NodeName)
+					if r.Recorder != nil {
+						r.Recorder.Eventf(agent, corev1.EventTypeWarning, "OrphanedPodForceDeleted",
+							"Force-deleted pod %s stuck Terminating on dead/missing node %s",
+							existing.Name, existing.Spec.NodeName)
+					}
 				}
-				// Fall through to the create below.
-				break
+				return errAwaitingPodDeletion
 			}
 			return fmt.Errorf("cannot create pod %s: existing pod in non-terminal phase %s", pod.Name, existing.Status.Phase)
 		}
@@ -2621,6 +2647,48 @@ func (r *AgentReconciler) isOrphanedTerminating(ctx context.Context, pod *corev1
 	}
 	// No Ready condition at all → treat as not-ready.
 	return true
+}
+
+// isStaleNodePendingPod identifies an agent pod that cannot schedule because
+// its immutable hostname affinity still points to the Machine's former node.
+// Replacing any other Pending pod could cause churn during a capacity shortage.
+func (r *AgentReconciler) isStaleNodePendingPod(ctx context.Context, agent *kyberv1.Agent, pod *corev1.Pod, currentNode string) bool {
+	if pod.Status.Phase != corev1.PodPending || pod.Spec.NodeName != "" ||
+		pod.DeletionTimestamp != nil || !metav1.IsControlledBy(pod, agent) ||
+		!r.isMachineReady(ctx, agent) {
+		return false
+	}
+	unschedulable := false
+	for _, condition := range pod.Status.Conditions {
+		if condition.Type == corev1.PodScheduled && condition.Status == corev1.ConditionFalse &&
+			condition.Reason == corev1.PodReasonUnschedulable {
+			unschedulable = true
+			break
+		}
+	}
+	if !unschedulable {
+		return false
+	}
+	oldNode := podRequiredHostname(pod)
+	return oldNode != "" && oldNode != currentNode
+}
+
+// podRequiredHostname returns the sole required hostname of a pod built by
+// BuildPodSpec. More complex affinity is left untouched for safety.
+func podRequiredHostname(pod *corev1.Pod) string {
+	if pod.Spec.Affinity == nil || pod.Spec.Affinity.NodeAffinity == nil ||
+		pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		return ""
+	}
+	terms := pod.Spec.Affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms
+	if len(terms) != 1 || len(terms[0].MatchFields) != 0 || len(terms[0].MatchExpressions) != 1 {
+		return ""
+	}
+	requirement := terms[0].MatchExpressions[0]
+	if requirement.Key != corev1.LabelHostname || requirement.Operator != corev1.NodeSelectorOpIn || len(requirement.Values) != 1 {
+		return ""
+	}
+	return requirement.Values[0]
 }
 
 // deletePod deletes the agent pod. If force is true, the grace period is set to 0.

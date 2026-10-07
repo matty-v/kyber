@@ -149,7 +149,12 @@ annotation.
 `MachineUnavailable` is the provider-neutral capacity-loss event. Active and
 retrying Agents park in `WaitingForMachine` without consuming restart retries;
 the transition removes any stale pod so `MachineReady` can rebuild it against
-the replacement Node.
+the replacement Node. If a replacement pod was already created against the old Node
+while the Machine still reported Ready, the reconciler removes it only after
+it is Pending/Unschedulable and its required hostname differs from the
+Machine's current ready Node. `StaleNodePod` parks the Agent briefly in
+`WaitingForMachine` so the next reconcile rebuilds the pod without relying on
+the crash retry budget.
 
 > **`LivenessFailed` is defined but not yet wired.** Its transition exists in
 > `NextPhase`, but no reconciler or API code currently emits the event. It
@@ -198,6 +203,7 @@ stateDiagram-v2
     Starting --> WaitingForMachine: MachineUnavailable
     Running --> WaitingForMachine: MachineUnavailable
     Restarting --> WaitingForMachine: MachineUnavailable
+    Failed --> WaitingForMachine: StaleNodePod
 
     Running --> Stopping: DesiredStopped
     Running --> Restarting: DesiredRestarting
@@ -282,6 +288,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Starting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Running` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Restarting` | `MachineUnavailable` | `TransitionToWaiting` | `WaitingForMachine` |
+| `Failed` | `StaleNodePod` | `TransitionToWaiting` | `WaitingForMachine` |
 | `WaitingForMachine` | `DesiredStopped` | `ForceKillPod` | `Stopped` |
 | `Running` | `DesiredStopped` | `SendSIGTERM` | `Stopping` |
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
