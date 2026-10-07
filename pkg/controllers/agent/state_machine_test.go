@@ -125,13 +125,6 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantNext:   kyberv1.AgentPhaseCreating,
 		},
 		{
-			name:       "Failed: machine unavailable → WaitingForMachine",
-			current:    kyberv1.AgentPhaseFailed,
-			event:      EventMachineUnavailable,
-			wantAction: ActionTransitionToWaiting,
-			wantNext:   kyberv1.AgentPhaseWaitingForMachine,
-		},
-		{
 			name:       "Failed: stale node pod → WaitingForMachine",
 			current:    kyberv1.AgentPhaseFailed,
 			event:      EventStaleNodePod,

@@ -83,41 +83,6 @@ func setNodeRecoveryMachine(t *testing.T, c client.Client, namespace string, pha
 	}
 }
 
-func TestReconciler_FailedAgentWaitsForUnavailableMachine(t *testing.T) {
-	c, r, key, teardown := setupNodeRecoveryTest(t)
-	defer teardown()
-	setNodeRecoveryAgentFailed(t, c, key)
-	setNodeRecoveryMachine(t, c, key.Namespace, kyberv1.MachinePhaseProvisioning, "old-node")
-
-	req := ctrl.Request{NamespacedName: key}
-	reconcileN(t, r, req, 1)
-	parked := getAgent(t, c, key)
-	if parked.Status.Phase != kyberv1.AgentPhaseWaitingForMachine {
-		t.Fatalf("phase = %q, want WaitingForMachine", parked.Status.Phase)
-	}
-	if parked.Status.RestartCount != 1 {
-		t.Errorf("restart count = %d, want unchanged 1", parked.Status.RestartCount)
-	}
-	podKey := types.NamespacedName{Name: AgentPodName(key.Name), Namespace: key.Namespace}
-	if err := c.Get(context.Background(), podKey, &corev1.Pod{}); !errors.IsNotFound(err) {
-		t.Fatalf("old pod still exists after parking: %v", err)
-	}
-
-	setNodeRecoveryMachine(t, c, key.Namespace, kyberv1.MachinePhaseReady, "new-node")
-	reconcileN(t, r, req, 1)
-	resumed := getAgent(t, c, key)
-	if resumed.Status.Phase != kyberv1.AgentPhaseCreating {
-		t.Fatalf("phase = %q, want Creating", resumed.Status.Phase)
-	}
-	pod := &corev1.Pod{}
-	if err := c.Get(context.Background(), podKey, pod); err != nil {
-		t.Fatalf("getting replacement pod: %v", err)
-	}
-	if got := podRequiredHostname(pod); got != "new-node" {
-		t.Errorf("replacement hostname = %q, want new-node", got)
-	}
-}
-
 func TestReconciler_FailedAgentReplacesPendingPodPinnedToOldNode(t *testing.T) {
 	c, r, key, teardown := setupNodeRecoveryTest(t)
 	defer teardown()

@@ -472,10 +472,6 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 			Action:    ActionTransitionToWaiting,
 			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
 		},
-		{phase: kyberv1.AgentPhaseFailed, event: EventMachineUnavailable}: {
-			Action:    ActionTransitionToWaiting,
-			NextPhase: kyberv1.AgentPhaseWaitingForMachine,
-		},
 		// Preemption: draining but the node died before the pod finished terminating
 		{phase: kyberv1.AgentPhaseDraining, event: EventMachinePreempted}: {
 			Action:    ActionTransitionToWaiting,

@@ -1008,8 +1008,7 @@ func (r *AgentReconciler) classifyEvent(
 	// Operator Stop/NeedsAuth intent above still wins by ordering.
 	switch phase {
 	case kyberv1.AgentPhaseCreating, kyberv1.AgentPhaseStarting,
-		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting,
-		kyberv1.AgentPhaseFailed:
+		kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRestarting:
 		if r.isMachineUnavailable(ctx, agent) {
 			return EventMachineUnavailable, nil
 		}
