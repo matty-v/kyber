@@ -40,7 +40,7 @@ class ComparisonTests(unittest.TestCase):
                                                               "generationIds": [candidate_id, ancillary_id]}}}})
                 tests.append({"name": f"case {case} on {model}", "status": "pass"})
         data = {"scope": {"models": list(module.MODELS), "runs": 4}, "results": runs, "tests": tests}
-        with patch.object(module, "request_json", side_effect=lambda url, key, retries=0: records[url.split("id=")[1]]):
+        with patch.object(module, "request_json", side_effect=lambda url, key, retries=0, timeout_seconds=20: records[url.split("id=")[1]]):
             summary = module.summarize(data, "test-key", "full")
         self.assertEqual(summary["problems"], [])
         self.assertEqual(summary["models"][module.MODELS[0]]["verifiedCandidateCostUsd"], 0)

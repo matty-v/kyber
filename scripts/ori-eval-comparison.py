@@ -33,11 +33,11 @@ class EvalError(Exception):
     pass
 
 
-def request_json(url: str, key: str, retries: int = 0) -> dict:
+def request_json(url: str, key: str, retries: int = 0, timeout_seconds: int = 20) -> dict:
     req = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
     for attempt in range(retries + 1):
         try:
-            with urllib.request.urlopen(req, timeout=20) as response:
+            with urllib.request.urlopen(req, timeout=timeout_seconds) as response:
                 body = json.load(response)
             break
         except urllib.error.HTTPError as exc:
@@ -154,7 +154,8 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
                 row["generationMetadataComplete"] = False
                 continue
             try:
-                record = request_json(f"{API}/generation?id={urllib.parse.quote(generation_id)}", key, retries=6)
+                record = request_json(f"{API}/generation?id={urllib.parse.quote(generation_id)}", key,
+                                      retries=5, timeout_seconds=5)
             except urllib.error.URLError:
                 warnings.append(f"{model}: generation metadata unavailable")
                 row["generationMetadataComplete"] = False
