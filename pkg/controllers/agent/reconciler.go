@@ -873,6 +873,14 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// 9. Update the CRD status with the new phase.
 	message := ""
+	if result.NextPhase == kyberv1.AgentPhaseNeedsAuth &&
+		agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil &&
+		(event == EventInferenceAuthRejected || event == EventOAuthRefreshFailed) {
+		message = "Codex inference endpoint credential is missing or rejected. Update the configured endpoint Secret to retry."
+		if event == EventInferenceAuthRejected {
+			message = "Codex inference endpoint rejected its credential (HTTP 401). Update the configured endpoint Secret to retry."
+		}
+	}
 	if result.NextPhase == kyberv1.AgentPhaseBrokenRuntime {
 		message = agent.Status.Runtime.ProbeMessage
 		if message == "" {
