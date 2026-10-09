@@ -20,7 +20,7 @@ import urllib.request
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "docs/examples/ori-eval/kyber-synthetic.eval.ts"
-FIXTURE_SHA256 = "1230d9e185774398bcb920c0a0c28936967592ab4824fa2fef0d61f37879705d"
+FIXTURE_SHA256 = "959da39132b6c81d6bdd5f7affc598795f13c89668ed395937f59acaef3e55e1"
 MODELS = ("cohere/north-mini-code:free", "nvidia/nemotron-3.5-lightning:free")
 ORI_VERSION = "0.15.6+4855f79"
 ORI_SHA256 = "d3525283d0431197943445c499edf8d790d13816752efd0e373afe2da75e035c"
