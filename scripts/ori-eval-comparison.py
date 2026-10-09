@@ -214,10 +214,14 @@ def main() -> int:
         (workspace / "evals").mkdir()
         (workspace / "features").mkdir()
         (workspace / "temporary").mkdir()
+        (workspace / "home").mkdir()
+        (workspace / "bin").mkdir()
+        (workspace / "bin" / "bun").symlink_to(bun)
         shutil.copy2(FIXTURE, workspace / "evals" / FIXTURE.name)
-        env = {name: value for name, value in os.environ.items() if name in ("PATH", "HOME", "LANG", "LC_ALL")}
-        env["PATH"] = str(bun.parent) + os.pathsep + env.get("PATH", "")
-        env.update({"TMPDIR": str(workspace / "temporary"), "ORI_EVAL_OPT_IN": "1", "ORI_DISABLE_UPDATES": "1",
+        env = {name: value for name, value in os.environ.items() if name in ("PATH", "LANG", "LC_ALL")}
+        env["PATH"] = str(workspace / "bin") + os.pathsep + env.get("PATH", "")
+        env.update({"HOME": str(workspace / "home"), "TMPDIR": str(workspace / "temporary"),
+                    "ORI_EVAL_OPT_IN": "1", "ORI_DISABLE_UPDATES": "1",
                     "ORI_TELEMETRY": "0", "ORI_FORCE_OPENROUTER_API_KEY": "1", "ORI_FALLBACK_MODELS": "",
                     "ORI_MAX_TURNS": "1"})
         if key:
