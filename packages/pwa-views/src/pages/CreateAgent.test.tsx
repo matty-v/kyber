@@ -594,6 +594,35 @@ describe('CreateAgent — custom endpoint credentials', () => {
     expect(request.secrets.anthropicApiKey).toBeUndefined()
     expect(JSON.stringify(request)).not.toContain('stale-provider-key')
   }, 15_000)
+
+  it('clears a custom endpoint when switching to a runtime that cannot use it', async () => {
+    const user = userEvent.setup()
+    setupHooks({ configData: {
+      ...config,
+      runtimes: [
+        { id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: ['custom-inference-endpoint'], authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey' }] },
+        { id: 'claude-code', name: 'Claude Code', contractVersion: '1.0', profile: 'interactive-tmux-v1', cancellation: 'notify_only', features: [], authModes: [{ id: 'api-key', name: 'Anthropic API key', flow: 'api-key', inputField: 'anthropicApiKey' }] },
+      ],
+    } })
+    renderAt()
+    await user.type(screen.getByLabelText(/name/i), 'switch-agent')
+    await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.selectOptions(screen.getByLabelText(/runtime/i), 'hermes')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('checkbox', { name: /use a custom inference endpoint/i }))
+    await user.type(screen.getByLabelText(/endpoint url/i), 'https://llm.example.com/v1')
+    await user.type(screen.getByLabelText(/endpoint api key/i), 'endpoint-key')
+    await user.click(screen.getByRole('button', { name: /back/i }))
+    await user.click(screen.getByRole('button', { name: /back/i }))
+    await user.selectOptions(screen.getByLabelText(/runtime/i), 'claude-code')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    expect(screen.queryByLabelText(/endpoint url/i)).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/anthropic api key/i)).toBeInTheDocument()
+    expect(screen.getByTestId('wizard-step-reason')).toHaveTextContent('Paste your Anthropic API key.')
+  }, 15_000)
 })
 
 describe('CreateAgent — identity repo capability (MAT-53)', () => {

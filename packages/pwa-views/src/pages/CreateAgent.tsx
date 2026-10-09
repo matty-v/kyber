@@ -75,9 +75,11 @@ export function CreateAgent() {
     if (!config?.runtimes?.length) return
     const next = config.runtimes.find(d => d.id === form.runtime) ?? config.runtimes[0]
     if (next.id !== form.runtime || !next.authModes.some(mode => mode.id === form.authType)) {
-      setState(prev => ({ ...prev, runtime: next.id, authType: next.authModes[0]?.id ?? 'oauth', oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '' }))
+      setState(prev => ({ ...prev, runtime: next.id, authType: next.authModes[0]?.id ?? 'oauth', oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '', inferenceEnabled: false, inferenceBaseURL: '', inferenceModel: '', inferenceApiKey: '' }))
+    } else if (form.inferenceEnabled && !next.features.includes('custom-inference-endpoint')) {
+      setState(prev => ({ ...prev, inferenceEnabled: false, inferenceBaseURL: '', inferenceModel: '', inferenceApiKey: '' }))
     }
-  }, [config?.runtimes, form.runtime, form.authType])
+  }, [config?.runtimes, form.runtime, form.authType, form.inferenceEnabled])
   // Until the operator picks an identity mode, follow the installation's
   // default. Once config says a mode is unsupported, drop it — including one
   // the operator picked — so it can never be submitted.
@@ -127,6 +129,7 @@ export function CreateAgent() {
     setState((prev) => key === 'runtime' ? { ...prev, runtime: value as string,
       authType: runtimeOptions.find(d => d.id === value)?.authModes[0]?.id ?? 'oauth',
       oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '',
+      inferenceEnabled: false, inferenceBaseURL: '', inferenceModel: '', inferenceApiKey: '',
     } : ({ ...prev, [key]: value }))
     if (key === 'identityRepoMode') identityModeChosen.current = true
     setFieldError(null)
@@ -311,7 +314,7 @@ export function CreateAgent() {
           telegramEnabled: state.telegramEnabled,
           oauthCode: oauthCodeFinal,
           pkceVerifier: pkceVerifierFinal,
-          pkceState: state.pkceState || undefined,
+          pkceState: !state.inferenceEnabled ? state.pkceState || undefined : undefined,
           // A key entered before switching to a custom endpoint must not be
           // submitted after the built-in provider field disappears.
           anthropicApiKey: !state.inferenceEnabled ? state.anthropicApiKey || undefined : undefined,
