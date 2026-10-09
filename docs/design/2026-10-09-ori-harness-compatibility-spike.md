@@ -1,0 +1,58 @@
+# MAT-106: Ori Harness compatibility with Kyber
+
+Status: offline investigation in progress, **no production routing decision**. Date: 2026-10-09.
+
+## Evidence and versions
+
+- Inspected Kyber `main` at `eb6e3c4` and the [v1 harness contract](../architecture/agent-harness-contract.md). Repository defaults are Claude Code `2.1.119` and Codex `0.146.0` in Helm values; the actual dev-cluster image and installed CLI versions have not been observed.
+- Inspected the Linux Ori CLI `0.15.6+4855f79`, SHA-256 `d3525283d0431197943445c499edf8d790d13816752efd0e373afe2da75e035c`, using `ori --version`, `ori help claude`, and `ori help codex`. This confirms command descriptions, not a successful authenticated turn. Its downloaded binary remains outside this repository.
+- Read the current [Ori Harness](https://openrouter.ai/docs/guides/ori/harness), [Ori Configuration](https://openrouter.ai/docs/guides/ori/configuration), [Ori file-writing](https://openrouter.ai/docs/guides/ori/files), and [Ori Codex](https://openrouter.ai/docs/guides/ori/codex) documentation. Upstream behavior can change; pin and retest exact images before enabling a route.
+- An operator-injected OpenRouter key became available during this spike. `GET /api/v1/key` reports no per-key spending limit. A direct `POST /api/v1/responses` smoke test with `cohere/north-mini-code:free`, `reasoning.effort=none`, and a 32-token cap returned a completed `OK` message with reported cost `$0`. This verifies only the OpenRouter endpoint and key, not a Kyber or Ori harness turn. Other free-model probes returned incomplete reasoning-only responses or upstream 429, so model-specific qualification is necessary. This pod still lacks the GKE auth plugin; **no live Ori or `spec.inference` agent canary has run.**
+
+## Candidate routes
+
+| Route | Current evidence | Main concern | Provisional disposition |
+| --- | --- | --- | --- |
+| Existing Hermes direct OpenRouter | Registered runtime, per-agent Secret, model catalog and usage paths in Kyber; UI clarity is MAT-107 | Does not answer whether Claude Code or Codex can run through Ori | Keep as the product baseline |
+| `ori claude --model <id> -- <Claude flags>` per session | Ori CLI says it injects OpenRouter settings and launches the installed `claude` on `PATH` | Kyber also owns Claude settings, preflight model probes, tmux resume, hooks, MCP, and reporters; explicit `--settings` can override Ori and `--setting-sources` suppresses it | Candidate only; live conformance and config precedence required |
+| `ori codex --model <id> -- <Codex flags>` per session | Ori CLI says it configures a Responses provider and launches installed Codex | Kyber's `/etc/codex/managed_config.toml` already owns model/provider, hooks and MCP. Precedence and reporter compatibility unknown | Compare head-to-head with direct endpoint |
+| Codex `spec.inference` pointing at OpenRouter | Existing Kyber path renders a managed Responses provider and agent-scoped endpoint Secret; OpenRouter documents `/api/v1/responses` | Existing catalog, `spec.model` prefix validation, auth recovery, cost provenance and upstream model compatibility are not qualified for OpenRouter | Likely lower integration surface, but unproved until canary |
+| `ori harness setup codex` | Ori documents persistent Codex config mutation, including desktop use | Mutates user config that Kyber and the agent also use; may affect bare Codex and survive billing-mode changes | Exclude from managed pods unless isolation/rollback is proven |
+| `ori harness setup claude` | Ori docs say it is not available yet | No supported setup path | Exclude |
+
+Ori documentation says Claude Code and Codex use launch-time catalog checks, not in-session catalog/routing toggles. An unknown model ID may pass through unchanged. Kyber must validate the selected OpenRouter model and supported harness combination itself; it cannot treat Ori's launch check as a safety gate. OpenRouter's catalog includes models that may fail a given harness's tool or wire requirements.
+
+Two current Kyber paths need special review even for direct Codex routing. `pkg/api/model_validation.go` only checks IDs with the native `gpt-` prefix, so an `author/model` OpenRouter ID bypasses the current write-time catalog check. `docs/runtimes.md` records that an endpoint agent in `NeedsAuth` is still offered the native Codex login control, although rotating its endpoint Secret is the relevant recovery action. Neither should be presented as finished UX.
+
+## V1 contract check (inspected versus live)
+
+| Contract surface | Inspected finding | Live evidence needed |
+| --- | --- | --- |
+| HC-01 image/version | Kyber images pin upstream CLIs; Ori would need a separately pinned binary and checksum. Ori may install a missing harness on a desktop, which managed images must prohibit. | Report exact Ori, upstream, image digest and model at boot. |
+| HC-02 lifecycle | Existing scripts start `claude` or `codex` under managed tmux and their probes/watchdogs. | A full turn, idle, crash, pod replacement, auth outage, and provider outage must yield distinct states. |
+| HC-03 identity/continuity | Current native transcript roots and platform identity inputs assume native CLI behavior. | Verify identity, skills/MCP, transcript and brief, native resume versus platform recall after pod replacement. |
+| HC-04 prompt/model | Shared prompt delivery targets tmux; both start scripts construct native launch and resume commands. Codex's existing endpoint renders a Responses provider. | Verify model override, allowed IDs, startup prompt, interactive and channel turns, and no shell interpretation. |
+| HC-05 auth/billing | Ori accepts `OPENROUTER_API_KEY` for unattended use; its saved credentials default to file storage while releases are unsigned. The CLI says missing credentials fail before launch. | Per-agent Secret only; rotate/revoke/recover; ensure no subscription or alternate-provider fallback, and no key in logs, status, transcript, context, or pod-spec literal. |
+| HC-06 jobs/commands | Native Claude/Codex hook and session-command wiring is runtime-specific. | Verify scheduled-job start/stop hooks, restart, resume, compaction, and capability reporter after Ori injection. |
+| HC-07/08 tasks/cancel | Existing receipt hooks and task tools depend on native CLI config and current-boot evidence. Cancellation remains `notify_only`. | Correlated pre-model receipt and fail-closed ambiguity test for each routed mode before advertising durable tasks. |
+| HC-09/10 capabilities, usage | Runtime descriptors currently describe the native modes. Claude and Codex reporters parse native logs; Kyber cost uses a local rate catalog. | Gate routed-mode features separately, compare native usage with OpenRouter billed usage, show unknown provider/price, and avoid double count. |
+
+## Security and launch constraints to verify
+
+1. Use one OpenRouter credential Secret per agent, injected as `OPENROUTER_API_KEY` only for the selected route. Set `ORI_FORCE_OPENROUTER_API_KEY=1`; avoid `ori login` and its file-backed saved key. Confirm the CLI does not copy the key into workspace logs or upstream config. Review Ori's `.ori/logs` (which can contain prompts/repo content), keep them out of git, and account for them in disk export and retention policy.
+2. Pin Ori's binary and upstream CLI/image. Set `ORI_DISABLE_UPDATES=1` and `ORI_TELEMETRY=0` in a managed policy; keep installation and background updates out of the agent's runtime. Test actual policy precedence in the pinned version.
+3. Set `ORI_FALLBACK_MODELS` to an empty value and test that no implicit model fallback occurs. Ori's documented default contains two alternate model slugs. Neither a model failure nor a missing OpenRouter credential may silently use an existing subscription or another paid model.
+4. Do not allow agent-owned `.ori/config.json`, `--settings`, `--setting-sources`, or Codex user config to redirect a managed launch or override Kyber's hook, model, endpoint, or credential policy. Identify which Ori CLI settings are injected where and verify precedence by inspecting a disposable agent's effective config.
+5. Explicitly disclose that OpenRouter and the routed upstream provider can process prompts and that OpenRouter, not Kyber, enforces workspace guardrails/budgets. Provider routing may change or be unknown. Kyber token cost estimates are not OpenRouter invoices.
+
+## Disposable canary plan
+
+Use two fresh, isolated agents with no production identity or channels initially. Set a small provider-enforced key or workspace budget on the injected OpenRouter credential before any paid canary; the current key has no per-key limit. Never paste it into an issue or test log. Record image digests, CLI versions, exact model ID, config hashes/paths (not contents containing secrets), and UTC times. For each candidate route:
+
+1. Confirm boot chooses OpenRouter explicitly and rejects a missing key before the harness starts. Inspect the effective native config and process environment without printing the key.
+2. Send one interactive prompt and one tool-using prompt, then a platform channel message. Confirm outbound response, transcript, token usage and model identity; compare OpenRouter activity/cost to Kyber estimates without treating equality as expected.
+3. Restart session and replace the pod. Confirm persistent identity/skills/MCP, native resume, reporter recovery, no config drift, and a subsequent successful turn.
+4. Revoke or rotate the key, then simulate provider/network errors. Confirm `NeedsAuth` only for confirmed auth loss, bounded recovery elsewhere, and no fallback to a subscription or second model.
+5. Exercise model change and an invalid/blocked model. Verify controlled restart, honest catalog and price states, and fail-closed job/task hooks before enabling those capabilities.
+
+The canary must be disposable and must not mutate an existing subscription agent. `MAT-108` remains gated until these results select a route and its spec is revised. A production implementation would then need reviewed changes across API/CRD mode representation, Secret handling, image/start scripts, reporters, descriptor/capability gates, PWA, conformance fixtures, and release docs. It may be smaller for Codex if direct `spec.inference` meets the contract.
