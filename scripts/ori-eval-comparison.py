@@ -122,6 +122,7 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
                       "candidateProviders": set(), "ancillaryProviders": set(),
                       "generationMetadataComplete": True} for model in MODELS}
     problems: list[str] = []
+    warnings: list[str] = []
     for run in data["results"]:
         model = run.get("model")
         if model not in models:
@@ -138,8 +139,12 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
             continue
         row["reportedCostUsd"] += reported
         ids = usage.get("generationIds", [])
-        if not key or not ids or len(ids) > 4:
-            problems.append(f"{model}: generation evidence unavailable or unexpectedly large")
+        if not key or not ids:
+            warnings.append(f"{model}: generation evidence unavailable")
+            row["generationMetadataComplete"] = False
+            continue
+        if len(ids) > 4:
+            problems.append(f"{model}: unexpected number of generations")
             row["generationMetadataComplete"] = False
             continue
         verified = 0.0
@@ -151,7 +156,7 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
             try:
                 record = request_json(f"{API}/generation?id={urllib.parse.quote(generation_id)}", key, retries=6)
             except urllib.error.URLError:
-                problems.append(f"{model}: generation metadata unavailable")
+                warnings.append(f"{model}: generation metadata unavailable")
                 row["generationMetadataComplete"] = False
                 continue
             cost = record.get("total_cost")
@@ -179,7 +184,8 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
             row[field] = round(row[field], 9)
         for field in ("candidateProviders", "ancillaryProviders"):
             row[field] = sorted(row[field])
-    return {"phase": phase, "tests": tests, "models": models, "problems": sorted(set(problems))}
+    return {"phase": phase, "tests": tests, "models": models,
+            "problems": sorted(set(problems)), "warnings": sorted(set(warnings))}
 
 
 def main() -> int:
@@ -246,6 +252,9 @@ def main() -> int:
                 report["fullExitCode"] = code
         report["observedTotalCostUsd"] = round(sum(sum(row["reportedCostUsd"] for row in phase["models"].values())
                                                     for phase in (report.get("pilot"), report.get("full")) if phase), 9)
+        report["costProvenanceComplete"] = all(row["generationMetadataComplete"]
+            for phase in (report.get("pilot"), report.get("full")) if phase
+            for row in phase["models"].values())
         serialized = json.dumps(report, indent=2, sort_keys=True) + "\n"
         if args.output:
             output_fd = os.open(args.output, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -257,7 +266,7 @@ def main() -> int:
         if any(phase.get("problems") or any(t["status"] != "pass" for t in phase["tests"])
                for phase in (report.get("pilot"), report.get("full")) if phase):
             return 1
-        if report.get("pilotExitCode", 0) or report.get("fullExitCode", 0):
+        if report.get("pilotExitCode", 0) or report.get("fullExitCode", 0) or not report["costProvenanceComplete"]:
             return 1
     return 0
 

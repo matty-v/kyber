@@ -1,6 +1,7 @@
 import importlib.util
 from pathlib import Path
 import unittest
+import urllib.error
 from unittest.mock import patch
 
 
@@ -51,6 +52,22 @@ class ComparisonTests(unittest.TestCase):
         with self.assertRaises(module.EvalError):
             module.verify_scope({"scope": {"models": [module.MODELS[0]], "runs": 2},
                                  "results": [{}, {}], "tests": [{}, {}]}, 2)
+
+    def test_missing_generation_metadata_is_visible_without_zero_cost_claim(self):
+        results = [{"model": model, "outcome": "passed", "durationMs": 1000,
+                    "terminal": {"payload": {"usage": {"costUsd": 0.000061404,
+                                                     "generationIds": [f"gen-{index}"]}}}}
+                   for index, model in enumerate(module.MODELS)]
+        data = {"scope": {"models": list(module.MODELS), "runs": 2}, "results": results,
+                "tests": [{"name": model, "status": "pass"} for model in module.MODELS]}
+        missing = urllib.error.HTTPError("https://example.invalid", 404, "missing", {}, None)
+        with patch.object(module, "request_json", side_effect=missing):
+            summary = module.summarize(data, "test-key", "pilot")
+        missing.close()
+        self.assertEqual(summary["problems"], [])
+        self.assertTrue(summary["warnings"])
+        self.assertFalse(summary["models"][module.MODELS[0]]["generationMetadataComplete"])
+        self.assertEqual(summary["models"][module.MODELS[0]]["reportedCostUsd"], 0.000061404)
 
 
 if __name__ == "__main__":
