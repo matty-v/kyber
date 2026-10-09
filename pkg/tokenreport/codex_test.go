@@ -51,3 +51,38 @@ func TestDetectCodexActivityAcrossRollouts(t *testing.T) {
 		t.Fatalf("activity = %q at %s, want idle at %s", state, at, want)
 	}
 }
+
+func TestDetectCodexActivityFileWithAuth(t *testing.T) {
+	for _, tc := range []struct {
+		name, errorInfo string
+		want            bool
+	}{
+		{"unauthorized", `{"http_connection_failed":{"http_status_code":401}}`, true},
+		{"forbidden", `{"http_connection_failed":{"http_status_code":403}}`, false},
+		{"message only", `{}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "rollout.jsonl")
+			data := `{"timestamp":"2026-10-09T06:00:00Z","type":"event_msg","payload":{"type":"task_complete","error":{"message":"unauthorized","codex_error_info":` + tc.errorInfo + `}}}` + "\n"
+			if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+				t.Fatal(err)
+			}
+			state, _, rejected, err := DetectCodexActivityFileWithAuth(path)
+			if err != nil || state != ActivityIdle || rejected != tc.want {
+				t.Fatalf("state=%q rejected=%v err=%v, want idle/%v", state, rejected, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestDetectCodexActivityFileWithNonObjectError(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "rollout.jsonl")
+	data := `{"timestamp":"2026-10-09T06:00:00Z","type":"event_msg","payload":{"type":"task_complete","error":"provider failure"}}` + "\n"
+	if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+		t.Fatal(err)
+	}
+	state, _, rejected, err := DetectCodexActivityFileWithAuth(path)
+	if err != nil || state != ActivityIdle || rejected {
+		t.Fatalf("state=%q rejected=%v err=%v", state, rejected, err)
+	}
+}

@@ -185,6 +185,14 @@ the PWA attaches read-only to tmux session `auth`. The exact `{}` payload in
 `<agent>-codex-auth` is the device-login marker and pauses the normal Starting
 timeout until the credential syncer replaces it. Codex API-key agents use
 `<agent>-openai` / `OPENAI_API_KEY` and never enter the device flow.
+Codex agents using `spec.inference` instead read an endpoint Secret. A
+structured HTTP 401 at boot or on a live turn enters NeedsAuth; the live
+report is scoped to the current pod UID and recovery waits for that endpoint
+Secret to rotate. The pod stamps the Secret resource version and a newer
+version rolls a Running Codex endpoint pod to refresh its environment. The
+controller polls these pods every 30 seconds because operator-supplied Secrets
+have no Agent owner watch; a reported working turn defers the rotation.
+Free-form errors and 403 are not credential proof.
 Codex readiness enters PID 1's chroot from a kubelet exec probe; it must use
 the absolute `/home/kyber/.codex/auth.json` path because probe processes do not
 inherit the start script's `CODEX_HOME` export. Local Vite development must
