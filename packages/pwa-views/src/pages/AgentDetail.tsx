@@ -1058,10 +1058,12 @@ export function AgentDetail() {
                     </div>
                     <dl className="mt-4 grid gap-x-8 gap-y-2 border-t border-border-subtle pt-3 text-sm sm:grid-cols-2">
                       {canSelectModel && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd></div>}
+                      {agent.runtime === 'hermes' && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model source</dt><dd className="text-text-primary">{agent.inference ? 'Custom endpoint' : agentAuth(agent)?.inputField === 'openrouterApiKey' ? 'OpenRouter (direct)' : 'Harness provider'}</dd></div>}
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Harness</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.runtimeVersion?.installedVersion || agent.runtime}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
+                    {agent.runtime === 'hermes' && !agent.inference && agentAuth(agent)?.inputField === 'openrouterApiKey' && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Uses this agent’s OpenRouter API key. OpenRouter bills model requests separately from Claude and ChatGPT subscriptions; Kyber’s cost figures are estimates, not the provider invoice. The upstream model provider may vary by route and is not reported here. Manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                   </Card>
                   <RestoreStatusCard agentName={name} capability={computeConfig?.archives} />
                   <DiskExportCard agentName={name} phase={agent.phase} capability={computeConfig?.archives} />

@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { render, screen } from '@testing-library/react'
 import { ReviewSection } from './ReviewSection'
 import { initialWizardState } from './types'
+import type { RuntimeDescriptor } from '../../lib/types'
 
 describe('ReviewSection', () => {
   it('renders the agent configuration and inherited runtime defaults', () => {
@@ -40,7 +41,29 @@ describe('ReviewSection', () => {
         state={{ ...initialWizardState([]), authType: 'api-key' }}
       />,
     )
-    expect(screen.getByText(/API key/)).toBeInTheDocument()
+    expect(screen.getByText(/API key/i)).toBeInTheDocument()
+  })
+
+  it('distinguishes direct OpenRouter from a custom endpoint on Hermes', () => {
+    const direct = {
+      ...initialWizardState([]),
+      runtime: 'hermes',
+      authType: 'api-key' as const,
+      runtimeContract: {
+        id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+        cancellation: 'notify_only', features: ['model-catalog', 'custom-inference-endpoint'],
+        authModes: [{ id: 'api-key' as const, name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey' }],
+      } as RuntimeDescriptor,
+    }
+    const { rerender } = render(<ReviewSection state={direct} />)
+    expect(screen.getByText('OpenRouter (direct)')).toBeInTheDocument()
+    expect(screen.getByText('OpenRouter API key')).toBeInTheDocument()
+
+    rerender(<ReviewSection state={{ ...direct, inferenceEnabled: true, inferenceModel: 'qwen/test' }} />)
+    expect(screen.getByText('Custom endpoint')).toBeInTheDocument()
+    expect(screen.getByText('Endpoint API key')).toBeInTheDocument()
+    expect(screen.getByText('qwen/test')).toBeInTheDocument()
+    expect(screen.queryByText('OpenRouter (direct)')).not.toBeInTheDocument()
   })
 
   it('omits model selection for a runtime without model-catalog', () => {

@@ -46,6 +46,15 @@ The Secrets tab manages an agent's own secrets. A text secret becomes an environ
 
 Changing an agent's model from its detail page restarts a live agent's pod so the new model takes effect right away. The restart takes around half a minute, and a message that arrives during that window is held and delivered once the agent is back up. A stopped agent keeps the new model for its next start, and a failed agent is started fresh on it. The model list comes from the catalog the agent's own authenticated runtime reports, so it shows what your subscription actually offers; a newly created agent's list fills in once its runtime has reported.
 
+For Hermes, the built-in model source is OpenRouter: the operator supplies a key
+that Kyber stores for that agent, and OpenRouter bills the resulting API usage.
+The creation review and agent settings distinguish this direct route from a
+custom inference endpoint. OpenRouter owns its budget, model/provider, and
+privacy controls; Kyber links to those settings but does not change or verify
+them. The selected upstream provider can be unknown when OpenRouter routes a
+request. Kyber's cost panel estimates charges from its model-rate catalog and
+does not represent the OpenRouter invoice.
+
 The Webhooks tab manages the signed inbound bindings that let other senders reach the agent. The signing secret is shown exactly once when a binding is created and once again when it is rotated, and is never readable afterward, so capture it then. Rotating keeps the old secret valid for 24 hours so an in-flight cutover does not drop traffic. Each binding is rate-limited to 10 requests per minute by default, duplicate request bodies are dropped for 24 hours, and each agent queues at most 5 pending messages; excess load is shed with an explicit reason rather than buffered without bound.
 
 ## Metrics

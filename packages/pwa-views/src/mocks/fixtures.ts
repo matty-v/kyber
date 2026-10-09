@@ -17,6 +17,7 @@ import type {
   MachineListResponse,
   TokenUsage,
 } from '../lib/types'
+import { legacyRuntimeContracts } from '../lib/runtime-contract'
 
 export const MOCK_AGENT_NAME = 'alice'
 export const MOCK_MACHINE_NAME = 'demo'
@@ -188,6 +189,14 @@ export const mockSecrets: AgentSecret[] = [
 
 export const mockComputeConfig: ComputeConfig = {
   compute: { provider: 'mock' },
+  runtimes: [
+    ...legacyRuntimeContracts,
+    {
+      id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+      cancellation: 'notify_only', features: ['model-catalog', 'custom-inference-endpoint'],
+      authModes: [{ id: 'api-key', name: 'OpenRouter API key', flow: 'api-key', inputField: 'openrouterApiKey', channels: ['telegram', 'discord', 'slack'] }],
+    },
+  ],
   models: [
     { id: 'claude-sonnet-4-6', contextWindow: 200_000 },
     { id: 'claude-opus-4-7', contextWindow: 200_000 },

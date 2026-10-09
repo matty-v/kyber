@@ -1,5 +1,5 @@
 import type { WizardState } from './types'
-import { supportsModelSelection, wizardContract } from '../../lib/runtime-contract'
+import { supportsModelSelection, wizardAuth, wizardContract } from '../../lib/runtime-contract'
 
 /** Step ids the user can jump back to from Review (Review itself is not editable). */
 type EditableStep = 1 | 2 | 3 | 4
@@ -54,11 +54,12 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
     { label: 'Machine', value: state.machine || '(unset)' },
     { label: 'Startup prompt', value: fmtStartupPrompt(state.startupPrompt) },
     { label: 'Runtime', value: state.runtime, editStep: 2 },
-    ...(canSelectModel ? [{ label: 'Model', value: 'Fleet default' }] : []),
+    ...(canSelectModel ? [{ label: 'Model', value: state.inferenceEnabled ? (state.inferenceModel || state.model || 'Endpoint default') : (state.model || 'Fleet default') }] : []),
+    ...(state.runtime === 'hermes' ? [{ label: 'Model source', value: state.inferenceEnabled ? 'Custom endpoint' : 'OpenRouter (direct)' }] : []),
     { label: 'Harness version', value: 'Fleet default' },
     { label: 'Resources', value: `${state.cpu} CPU / ${state.memory} / ${state.disk}` },
     { label: 'Identity', value: fmtIdentity(state), editStep: 3 },
-    { label: 'Auth', value: state.authType === 'oauth' ? 'OAuth' : 'API key', editStep: 4 },
+    { label: 'Auth', value: state.inferenceEnabled ? 'Endpoint API key' : (wizardAuth(state)?.name ?? (state.authType === 'oauth' ? 'OAuth' : 'API key')), editStep: 4 },
     { label: 'Channels', value: fmtChannels(state) },
   ]
 

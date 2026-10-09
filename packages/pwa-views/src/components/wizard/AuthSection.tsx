@@ -240,13 +240,19 @@ export function AuthSection({ state, set }: AuthSectionProps) {
           </div>
         </>}
       </div>}
-      {auth?.flow === 'device-code' && <p className="text-sm text-text-muted">After creation, Kyber will show a device code. Open the displayed URL, enter the code, and the agent will start automatically.</p>}
-      {auth?.flow === 'api-key' && <div>
+      {!state.inferenceEnabled && auth?.flow === 'device-code' && <p className="text-sm text-text-muted">After creation, Kyber will show a device code. Open the displayed URL, enter the code, and the agent will start automatically.</p>}
+      {!state.inferenceEnabled && auth?.flow === 'api-key' && <div>
         <label htmlFor="agent-api-key" className={labelClass}>{auth.name}</label>
         <input id="agent-api-key" type="password" required value={wizardApiKey(state)} onChange={e => setApiKey(e.target.value)} className={inputClass} />
         <p className="mt-1.5 text-xs text-text-muted">Stored as a Secret and injected only into this agent.</p>
       </div>}
-      {auth?.flow === 'authorization-code' && <div className="space-y-3">
+      {state.runtime === 'hermes' && auth?.inputField === 'openrouterApiKey' && !state.inferenceEnabled && <div className="rounded-md border border-border bg-surface-raised p-3 text-xs text-text-muted">
+        <p className="font-medium text-text-primary">Model source: OpenRouter (direct)</p>
+        <p className="mt-1">Hermes requests use OpenRouter API billing. OpenRouter and the selected model provider process prompts. Your Claude or ChatGPT subscription does not cover these requests.</p>
+        <p className="mt-1">Set spend, model/provider, and privacy controls in OpenRouter. Kyber does not manage or verify those settings.</p>
+        <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-accent hover:underline">OpenRouter guardrails and privacy ↗</a>
+      </div>}
+      {!state.inferenceEnabled && auth?.flow === 'authorization-code' && <div className="space-y-3">
         <Button type="button" variant="secondary" size="md" disabled={!auth.authorizationUrl} onClick={() => void startOAuth()}>{state.pkceVerifier ? 'Re-authorize' : `Open ${contract?.name ?? 'provider'} login`}</Button>
         <p className="text-xs text-text-muted">Open the login page, sign in and authorize, then paste the authorization code below.</p>
         {state.pkceVerifier && <div>

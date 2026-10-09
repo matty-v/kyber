@@ -170,7 +170,7 @@ describe('TokenTable unpriced badge', () => {
     render(<TokenTable rows={rows} />)
     expect(screen.getByText('Cache write')).toBeInTheDocument()
     expect(screen.getByText('4,321')).toBeInTheDocument()
-    // Column order: Agent, Model, Input, Output, Cache write, Cache read, Cost.
+    // Column order: Agent, Model, Input, Output, Cache write, Cache read, estimated cost.
     const cells = screen.getAllByRole('cell').map((c) => c.textContent)
     expect(cells.slice(2, 6)).toEqual(['1,000', '200', '4,321', '99'])
   })

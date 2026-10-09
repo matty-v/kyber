@@ -86,12 +86,12 @@ export function isAuthValid(state: WizardState): StepValidation {
   if (state.inferenceEnabled) {
     if (!state.inferenceBaseURL.trim()) return { ok: false, reason: 'Enter the inference endpoint URL.' }
     if (!state.inferenceApiKey.trim()) return { ok: false, reason: "Paste the endpoint's API key." }
+    return OK
   }
   if (auth.flow === 'device-code') return OK
   // An agent on its own endpoint authenticates with that endpoint's Secret and
   // never reaches the harness's built-in provider, so its key is not required.
   if (auth.flow === 'api-key') {
-    if (state.inferenceEnabled) return OK
     return wizardApiKey(state).trim() ? OK : { ok: false, reason: `Paste your ${auth.name}.` }
   }
   if (auth.flow === 'authorization-code') {
