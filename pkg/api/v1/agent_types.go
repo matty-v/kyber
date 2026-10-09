@@ -874,6 +874,10 @@ type AgentSpec struct {
 	Channels *AgentChannels `json:"channels,omitempty"`
 }
 
+// AgentInferenceCredentialRVAnnotation records the endpoint Secret version
+// used to build a Codex pod. It contains metadata only, never the key value.
+const AgentInferenceCredentialRVAnnotation = "kyber.io/inference-credential-rv"
+
 // AgentInference points an agent at a model endpoint Kyber does not host.
 //
 // The field names the WIRE PROTOCOL, not a vendor. Anything speaking the named
@@ -1204,6 +1208,10 @@ type ActivityStatus struct {
 	// structured turn result reported HTTP 401 from a custom endpoint.
 	// The controller ignores the signal after that pod is replaced.
 	InferenceAuthRejectedPodUID string `json:"inferenceAuthRejectedPodUID,omitempty"`
+	// InferenceAuthRejectedSecretRV is the version of the endpoint Secret
+	// stamped on that pod when it was built. It prevents a concurrent Secret
+	// rotation from being mistaken for the credential that failed.
+	InferenceAuthRejectedSecretRV string `json:"inferenceAuthRejectedSecretRV,omitempty"`
 	// LastHeartbeatAt is the timestamp of the most recent heartbeat event
 	// the control plane received from the agent's status sidecar. Updated
 	// on every heartbeat (currently 5s cadence). Treat absence (or a

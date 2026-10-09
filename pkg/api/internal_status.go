@@ -140,6 +140,8 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 			return nil
 		}
 		agent.Status.Activity.InferenceAuthRejectedPodUID = ev.PodUID
+		agent.Status.Activity.InferenceAuthRejectedSecretRV =
+			pod.Annotations[kyberv1.AgentInferenceCredentialRVAnnotation]
 	case "memory_oom":
 		// kyber#285: sidecar observed an oom_kill counter increment in
 		// the pod-level cgroup memory.events (recursive). Stamp the

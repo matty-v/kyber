@@ -112,6 +112,7 @@ func TestStatusEvent_InferenceAuthRejectsStalePod(t *testing.T) {
 	}
 	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
 		Name: "agent-alice", Namespace: "kyber-system", UID: types.UID("current-pod"),
+		Annotations: map[string]string{kyberv1.AgentInferenceCredentialRVAnnotation: "42"},
 	}}
 	k8s := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent, pod).
 		WithStatusSubresource(&kyberv1.Agent{}).Build()
@@ -147,6 +148,9 @@ func TestStatusEvent_InferenceAuthRejectsStalePod(t *testing.T) {
 		}
 		if signal != tc.want {
 			t.Fatalf("signal = %q, want %q", signal, tc.want)
+		}
+		if tc.want != "" && got.Status.Activity.InferenceAuthRejectedSecretRV != "42" {
+			t.Fatalf("credential version = %q, want 42", got.Status.Activity.InferenceAuthRejectedSecretRV)
 		}
 	}
 }

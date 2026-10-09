@@ -1360,6 +1360,22 @@ func (r *AgentReconciler) classifyEvent(
 			}
 			return EventPodDied, nil
 		}
+		if agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil && pod != nil {
+			// The endpoint key is an env var; a new Secret needs a new pod.
+			if mountedRV := pod.Annotations[kyberv1.AgentInferenceCredentialRVAnnotation]; mountedRV != "" {
+				var secret corev1.Secret
+				err := r.Get(ctx, client.ObjectKey{
+					Namespace: agent.Namespace, Name: agent.Spec.Inference.Credential.ExistingSecret,
+				}, &secret)
+				if err != nil && !errors.IsNotFound(err) {
+					return "", fmt.Errorf("reading inference credential: %w", err)
+				}
+				if err == nil && len(secret.Data[agent.Spec.Inference.Credential.Key]) > 0 &&
+					secret.ResourceVersion != mountedRV {
+					return EventInferenceCredentialRotated, nil
+				}
+			}
+		}
 		if agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil &&
 			agent.Status.Activity != nil &&
 			agent.Status.Activity.InferenceAuthRejectedPodUID != "" &&
@@ -2408,6 +2424,9 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 		},
 		Spec: podSpec,
 	}
+	if err := r.stampInferenceCredentialVersion(ctx, agent, pod); err != nil {
+		return err
+	}
 
 	if err := ctrl.SetControllerReference(agent, pod, r.Scheme); err != nil {
 		return fmt.Errorf("setting pod owner reference: %w", err)
@@ -2492,6 +2511,29 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 			log.FromContext(ctx).Error(err, "clearing pod-creation wait conditions after pod create", "agent", agent.Name)
 		}
 	}
+	return nil
+}
+
+// stampInferenceCredentialVersion records the Secret metadata associated with
+// an endpoint pod. The key value never enters Pod metadata.
+func (r *AgentReconciler) stampInferenceCredentialVersion(ctx context.Context, agent *kyberv1.Agent, pod *corev1.Pod) error {
+	if agent.Spec.Runtime != "codex" || agent.Spec.Inference == nil {
+		return nil
+	}
+	var secret corev1.Secret
+	err := r.Get(ctx, client.ObjectKey{
+		Namespace: agent.Namespace, Name: agent.Spec.Inference.Credential.ExistingSecret,
+	}, &secret)
+	if err != nil {
+		if errors.IsNotFound(err) {
+			return nil // the pod's SecretKeyRef will surface the missing Secret
+		}
+		return fmt.Errorf("reading inference credential for pod: %w", err)
+	}
+	if pod.Annotations == nil {
+		pod.Annotations = make(map[string]string)
+	}
+	pod.Annotations[kyberv1.AgentInferenceCredentialRVAnnotation] = secret.ResourceVersion
 	return nil
 }
 
@@ -2750,14 +2792,21 @@ func (r *AgentReconciler) updatePhase(
 		// Capture the rejected credential's identity before consuming the
 		// signal. NeedsAuth may reopen only after the endpoint Secret rotates.
 		if newPhase == kyberv1.AgentPhaseNeedsAuth {
-			probe := agent.DeepCopy()
-			input, err := r.currentRecoveryInput(ctx, probe)
-			if err != nil {
-				return fmt.Errorf("recording rejected endpoint credential: %w", err)
+			if rv := agent.Status.Activity.InferenceAuthRejectedSecretRV; rv != "" && agent.Spec.Inference != nil {
+				name := agent.Spec.Inference.Credential.ExistingSecret
+				agent.Status.RecoveryInput = "rv:" + name + ":" + rv
+			} else {
+				// Older pods have no stamped Secret version.
+				probe := agent.DeepCopy()
+				input, err := r.currentRecoveryInput(ctx, probe)
+				if err != nil {
+					return fmt.Errorf("recording rejected endpoint credential: %w", err)
+				}
+				agent.Status.RecoveryInput = input
 			}
-			agent.Status.RecoveryInput = input
 		}
 		agent.Status.Activity.InferenceAuthRejectedPodUID = ""
+		agent.Status.Activity.InferenceAuthRejectedSecretRV = ""
 	}
 	// Baseline the disk request on entry so a hard-full terminal pod cannot
 	// consume the standing desiredPhase=Running as an immediate retry. Only a

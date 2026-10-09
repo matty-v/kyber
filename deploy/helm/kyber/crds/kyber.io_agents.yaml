@@ -822,6 +822,12 @@ spec:
                       structured turn result reported HTTP 401 from a custom endpoint.
                       The controller ignores the signal after that pod is replaced.
                     type: string
+                  inferenceAuthRejectedSecretRV:
+                    description: |-
+                      InferenceAuthRejectedSecretRV is the version of the endpoint Secret
+                      stamped on that pod when it was built. It prevents a concurrent Secret
+                      rotation from being mistaken for the credential that failed.
+                    type: string
                   lastActivityAt:
                     description: |-
                       LastActivityAt is the timestamp of the most recent observed activity
