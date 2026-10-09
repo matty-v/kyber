@@ -776,6 +776,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			// the owned-PVC watch so a missed event cannot stall recovery.
 			base = requeueWaiting
 		case kyberv1.AgentPhaseRunning:
+			// Operator-supplied endpoint Secrets are not owned by Agent and
+			// have no watch edge here. Poll only Codex endpoint agents so a
+			// rotated env credential reaches a new pod within 30 seconds
+			// instead of waiting for the manager's broad resync.
+			if agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil {
+				base = 30 * time.Second
+			}
 			// The recently-terminating wait guard (classifyEvent) emits no
 			// event while a graceful roll's pod delete is in flight. The
 			// stuck-Terminating recovery at the grace bound must not depend
@@ -786,7 +793,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				if remaining < time.Second {
 					remaining = time.Second
 				}
-				base = remaining + time.Second
+				base = minNonZero(base, remaining+time.Second)
 			}
 		}
 		return ctrl.Result{RequeueAfter: minNonZero(minNonZero(base, identityRequeue), capabilityRequeue)}, nil

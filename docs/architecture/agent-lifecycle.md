@@ -385,8 +385,10 @@ silently.
   HTTP 401 from a live Codex endpoint pod enters `NeedsAuth` and removes that
   pod. The current pod UID rejects stale rollout events, and the Secret version
   stamped at pod creation lets a concurrently rotated key reopen recovery. A
-  newer valid Secret version proactively restarts a Running pod so its
-  environment receives the replacement key. Free-form errors and 403 do not
+  newer valid Secret version restarts a Running pod so its environment
+  receives the replacement key. Since operator-supplied Secrets have no Agent
+  owner watch, Running Codex endpoint agents poll for rotation every 30 seconds.
+  Free-form errors and 403 do not
   prove a rejected credential.
 - **Operator-forced re-auth is gated in the reconciler, and its Action splits
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).

@@ -189,8 +189,9 @@ Codex agents using `spec.inference` instead read an endpoint Secret. A
 structured HTTP 401 at boot or on a live turn enters NeedsAuth; the live
 report is scoped to the current pod UID and recovery waits for that endpoint
 Secret to rotate. The pod stamps the Secret resource version and a newer
-version rolls a Running Codex endpoint pod to refresh its environment.
-Free-form errors and 403 are not credential proof.
+version rolls a Running Codex endpoint pod to refresh its environment. The
+controller polls these pods every 30 seconds because operator-supplied Secrets
+have no Agent owner watch. Free-form errors and 403 are not credential proof.
 Codex readiness enters PID 1's chroot from a kubelet exec probe; it must use
 the absolute `/home/kyber/.codex/auth.json` path because probe processes do not
 inherit the start script's `CODEX_HOME` export. Local Vite development must
