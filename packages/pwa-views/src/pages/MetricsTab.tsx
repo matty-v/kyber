@@ -258,7 +258,10 @@ function TokenUsagePanel({ start, end }: { start: number; end: number }) {
         <PanelEmpty message="No token usage recorded yet for this cluster in the selected time range." />
       )}
       {!isLoading && data && data.length > 0 && (
-        <TokenTable rows={data} />
+        <>
+          <p className="mb-3 text-xs text-text-muted">Cost is estimated from Kyber’s model rates, not a provider invoice. Routed provider and billing adjustments may differ.</p>
+          <TokenTable rows={data} />
+        </>
       )}
     </Panel>
   )
@@ -291,7 +294,7 @@ export function TokenTable({ rows }: { rows: MetricsTokenUsage[] }) {
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Output</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache write</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache read</th>
-            <th className="pb-2 font-mono font-medium uppercase tracking-wider">Cost (USD)</th>
+            <th className="pb-2 font-mono font-medium uppercase tracking-wider">Est. cost (USD)</th>
           </tr>
         </thead>
         <tbody>

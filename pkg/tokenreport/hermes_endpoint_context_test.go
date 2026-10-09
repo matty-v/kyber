@@ -74,7 +74,7 @@ func TestLoadHermesCatalogUsesTheEndpointWindowWhenMetadataHasNone(t *testing.T)
 		t.Fatal(err)
 	}
 
-	models, err := LoadHermesCatalog(providerPath, metadataPath, "kyber-endpoint", map[string]int64{"qwen3.6-35b-a3b": 65536}, 100)
+	models, err := LoadHermesCatalog(providerPath, metadataPath, []string{"kyber-endpoint"}, map[string]int64{"qwen3.6-35b-a3b": 65536}, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestLoadHermesCatalogPrefersMetadataOverTheEndpointWindow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	models, err := LoadHermesCatalog(providerPath, metadataPath, "openrouter", map[string]int64{"vendor/a": 65536}, 100)
+	models, err := LoadHermesCatalog(providerPath, metadataPath, []string{"openrouter"}, map[string]int64{"vendor/a": 65536}, 100)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -181,5 +181,63 @@ func TestParseHermesLatestDoesNotApplyTheEndpointWindowToOpenRouterLines(t *test
 	if snap.ContextWindowKnown || snap.Tokens.Limit != 0 {
 		t.Errorf("limit = %d known = %v; an OpenRouter line must not borrow the endpoint's window",
 			snap.Tokens.Limit, snap.ContextWindowKnown)
+	}
+}
+
+// Hermes keys its provider cache by "custom:<base_url>" for a provider
+// configured with an explicit base_url — NOT by the provider's name from
+// config.yaml. Looking up the name found nothing, so an endpoint agent posted
+// an EMPTY catalog, which the control plane rejects outright: the model picker
+// stayed empty and the reporter retried until it backed off to hourly.
+// Verified against a live agent, whose cache held only
+// "custom:https://llm.voget.io/v1".
+func TestLoadHermesCatalogFindsTheCustomProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	providerPath := filepath.Join(dir, "provider_models_cache.json")
+	metadataPath := filepath.Join(dir, "metadata.json")
+	if err := os.WriteFile(providerPath,
+		[]byte(`{"openai-api":{"models":["gpt-x"]},"custom:https://llm.voget.io/v1":{"models":["qwen3.6-35b-a3b"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	keys := []string{"kyber-endpoint", HermesCustomProviderKey("https://llm.voget.io/v1")}
+	models, err := LoadHermesCatalog(providerPath, metadataPath, keys,
+		map[string]int64{"qwen3.6-35b-a3b": 65536}, 100)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "qwen3.6-35b-a3b" {
+		t.Fatalf("models = %+v, want the endpoint's model found under the custom key", models)
+	}
+	if !models[0].ContextWindowKnown {
+		t.Error("window must be known, or the control plane rejects the catalog")
+	}
+}
+
+// The first key that is actually present wins, so a named provider is still
+// preferred when Hermes cached it that way.
+func TestLoadHermesCatalogPrefersTheFirstPresentProviderKey(t *testing.T) {
+	dir := t.TempDir()
+	providerPath := filepath.Join(dir, "provider_models_cache.json")
+	metadataPath := filepath.Join(dir, "metadata.json")
+	if err := os.WriteFile(providerPath,
+		[]byte(`{"kyber-endpoint":{"models":["named"]},"custom:https://x/v1":{"models":["custom"]}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(metadataPath, []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	models, err := LoadHermesCatalog(providerPath, metadataPath,
+		[]string{"kyber-endpoint", HermesCustomProviderKey("https://x/v1")},
+		map[string]int64{"named": 4096, "custom": 8192}, 100)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(models) != 1 || models[0].ID != "named" {
+		t.Fatalf("models = %+v, want the named provider's entry", models)
 	}
 }

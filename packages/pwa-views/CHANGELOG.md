@@ -1,5 +1,13 @@
 # @matty-v/kyber-pwa-views
 
+## 0.63.1
+
+- Clarify that Hermes uses OpenRouter directly, with separate API billing and
+  provider-managed guardrails. Show the model source in creation and agent
+  settings, and label Kyber's cost figures as estimates.
+- Hide built-in provider authentication when a custom inference endpoint supplies
+  its own credential; omit stale provider keys from creation requests.
+
 ## 0.63.0
 
 - The Dashboard shows agent avatars:

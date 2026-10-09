@@ -82,6 +82,12 @@ const (
 	// refresh returned an error) or start-codex.sh code 42 (`codex login
 	// status` failed). Requires human re-auth.
 	EventOAuthRefreshFailed Event = "OAuthRefreshFailed"
+	// EventInferenceAuthRejected fires when a live Codex endpoint turn returns
+	// a structured HTTP 401. Its pod must be removed before NeedsAuth.
+	EventInferenceAuthRejected Event = "InferenceAuthRejected"
+	// EventInferenceCredentialRotated fires when the endpoint Secret version
+	// differs from the one stamped on the live Codex pod.
+	EventInferenceCredentialRotated Event = "InferenceCredentialRotated"
 	// EventAuthServiceFailed means the runtime could not reach or obtain a
 	// usable response from its authentication provider. Credentials are not
 	// known to be invalid, so bounded automatic recovery is appropriate.
@@ -278,6 +284,14 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseRunning, event: EventOAuthRefreshFailed}: {
 			Action:    ActionUpdateStatus,
 			NextPhase: kyberv1.AgentPhaseNeedsAuth,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventInferenceAuthRejected}: {
+			Action:    ActionCaptureStateAndDeletePod,
+			NextPhase: kyberv1.AgentPhaseNeedsAuth,
+		},
+		{phase: kyberv1.AgentPhaseRunning, event: EventInferenceCredentialRotated}: {
+			Action:    ActionCaptureStateAndDeletePod,
+			NextPhase: kyberv1.AgentPhaseRestarting,
 		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventAuthServiceFailed}: {
 			Action:    ActionEmitEventAutoRestart,

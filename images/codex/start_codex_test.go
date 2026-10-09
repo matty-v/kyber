@@ -1115,7 +1115,8 @@ func TestStartCodexKeepsUserConfigWhenFailureIsNotTheUserFile(t *testing.T) {
 
 // cronHookEnv points the boot path at temp paths the test can inspect.
 // turnStartExists/postrunExists control which of the two hook commands is
-// actually installed, which is what drives the both-or-neither rule.
+// actually installed, which is what drives the both-or-neither rule. Disable
+// the unrelated goal hook so the result is independent of the host PATH.
 func cronHookEnv(t *testing.T, turnStartExists, postrunExists bool) (sentinel, managed string, env []string) {
 	t.Helper()
 	dir := t.TempDir()
@@ -1141,6 +1142,7 @@ func cronHookEnv(t *testing.T, turnStartExists, postrunExists bool) (sentinel, m
 		"KYBER_MANAGED_CODEX_CONFIG=" + managed,
 		"KYBER_CRON_POSTRUN_CMD=" + postrun,
 		"KYBER_CRON_TURNSTART_CMD=" + turnstart,
+		"KYBER_GOAL_CMD=" + filepath.Join(dir, "missing-goal-hook"),
 	}
 }
 
@@ -2111,10 +2113,10 @@ exit 0
 	}
 }
 
-// A reachable endpoint that answers the probe at all must boot. 400 and 401
-// still prove the route exists; judging the credential is not the probe's job.
+// A reachable endpoint with an accepted credential must boot. A 400 or 403 may
+// refer to the probe model, rather than proving the credential is invalid.
 func TestStartCodexAcceptsAnEndpointThatServesResponses(t *testing.T) {
-	for _, code := range []string{"200", "400", "401"} {
+	for _, code := range []string{"200", "400", "403"} {
 		t.Run("status="+code, func(t *testing.T) {
 			bin := t.TempDir()
 			codexStub := `#!/usr/bin/env bash
@@ -2136,6 +2138,40 @@ exit 0
 			}
 			if strings.Contains(string(out), "endpoint-key-value") {
 				t.Fatal("the endpoint credential was logged")
+			}
+		})
+	}
+}
+
+// A rejected endpoint key is an auth failure, not a healthy Codex session.
+// Exit 42 lets the controller enter NeedsAuth; its Codex adapter watches the
+// endpoint Secret's resourceVersion to resume after rotation.
+func TestStartCodexRejectsInferenceEndpointAuthFailure(t *testing.T) {
+	for _, code := range []string{"401"} {
+		t.Run("status="+code, func(t *testing.T) {
+			bin := t.TempDir()
+			codexStub := `#!/usr/bin/env bash
+if [ "$1" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi
+exit 0
+`
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(codexStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			curlStub := "#!/usr/bin/env bash\nprintf '" + code + "'\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curlStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+				"KYBER_INFERENCE_BASE_URL=https://llm.example.com/v1",
+				"OPENAI_API_KEY=endpoint-key-value")
+			if err == nil {
+				t.Fatalf("rejected endpoint credential was accepted:\n%s", out)
+			}
+			if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 42 {
+				t.Fatalf("boot error = %v, want exit 42:\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "credential was rejected") || strings.Contains(string(out), "endpoint-key-value") {
+				t.Fatalf("auth rejection was not reported safely:\n%s", out)
 			}
 		})
 	}

@@ -50,6 +50,8 @@ func main() {
 	go credSyncer.Run(ctx)
 	log.Printf("codex-reporter: credential syncer started (watching %s)", credSyncer.AuthPath)
 	var lastActivity string
+	reporterStartedAt := time.Now().UTC()
+	var pendingAuthAt, lastAuthAt time.Time
 	var lastActivityPath string
 	var lastActivityMod time.Time
 	var lastTokens time.Time
@@ -73,17 +75,36 @@ func main() {
 		// file actually changed — otherwise this loop would re-read the whole
 		// session history once per second for the life of the pod.
 		state, at := tokenreport.ActivityUnknown, time.Time{}
+		var authRejected bool
 		var activityErr error
 		if bootActivity {
 			state, at, activityErr = tokenreport.DetectCodexActivity(root)
 		} else if path := latest(root); path != "" {
 			info, statErr := os.Stat(path)
 			if statErr == nil && (path != lastActivityPath || info.ModTime().After(lastActivityMod)) {
-				state, at, activityErr = tokenreport.DetectCodexActivityFile(path)
+				state, at, authRejected, activityErr = tokenreport.DetectCodexActivityFileWithAuth(path)
 				lastActivityPath, lastActivityMod = path, info.ModTime()
 			}
 		}
 		bootActivity = false
+		// Only a turn completed during this reporter's lifetime can condemn
+		// the current pod. Persisted rollouts from an earlier pod are ignored.
+		if activityErr == nil && at.After(reporterStartedAt) && at.After(pendingAuthAt) {
+			if authRejected {
+				pendingAuthAt = at
+			} else {
+				pendingAuthAt = time.Time{}
+			}
+		}
+		if endpointConfigured && !pendingAuthAt.IsZero() && pendingAuthAt.After(lastAuthAt) && os.Getenv("KYBER_POD_UID") != "" {
+			body, _ := json.Marshal(map[string]string{
+				"type": "inference_auth_rejected", "podUID": os.Getenv("KYBER_POD_UID"),
+				"at": pendingAuthAt.UTC().Format(time.RFC3339),
+			})
+			if post(client, "event", body) == nil {
+				lastAuthAt = pendingAuthAt
+			}
+		}
 		if activityErr == nil && state != tokenreport.ActivityUnknown && state != lastActivity {
 			body, _ := json.Marshal(map[string]string{
 				"type": "activity", "state": state, "at": at.UTC().Format(time.RFC3339),

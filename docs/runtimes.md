@@ -136,9 +136,10 @@ contacts OpenAI; a Hermes agent on one needs no OpenRouter key. Kyber neither
 asks for that credential at creation nor mints a Secret for it.
 
 If such an agent lands in `NeedsAuth`, the fix is to **rotate the endpoint's
-Secret** — that is the credential the recovery gate watches. The re-authorize
-control still offers the harness's own login flow (ChatGPT for Codex), which is
-the wrong lever for these agents and will not clear the phase.
+Secret** — that is the credential the recovery gate watches. Agent detail shows
+a custom inference credential panel for this route. A rejected endpoint key
+enters `NeedsAuth` during Codex's startup probe; rotating the Secret causes a
+controlled retry with the new value on reconciliation (the manager also resyncs periodically).
 
 ### Codex against a custom endpoint
 

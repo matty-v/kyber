@@ -352,15 +352,21 @@ if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
     # agent reports healthy. Probe once here so that becomes a loud boot
     # failure with a reason instead.
     #
-    # Any status other than 404/405 counts as "speaks Responses" — a 400 or 401
-    # still proves the route exists, and judging the credential is the next
-    # block's job, not this one's.
+    # A 401 also proves the route exists, but an endpoint agent has no native
+    # Codex login path to repair rejected credentials. Exit with the normal
+    # auth-failure code so Kyber enters NeedsAuth and watches this agent's
+    # endpoint Secret for a new version. A 400 or 403 can refer to the probe's
+    # intentionally nonexistent model, so neither proves the key is invalid.
     _probe_url="${KYBER_INFERENCE_BASE_URL%/}/responses"
     _probe_code="$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$_probe_url" \
         -H "Authorization: Bearer ${OPENAI_API_KEY}" \
         -H 'Content-Type: application/json' \
         -d '{"model":"probe","input":"probe","max_output_tokens":1}' 2>/dev/null || echo 000)"
     case "$_probe_code" in
+        401)
+            echo "[kyber] Codex inference-endpoint credential was rejected (POST /responses returned ${_probe_code}); rotate the endpoint Secret." >&2
+            exit 42
+            ;;
         404|405)
             echo "[kyber] FATAL: ${KYBER_INFERENCE_BASE_URL} does not serve the Responses API (POST /responses returned ${_probe_code})." >&2
             echo "[kyber] Codex requires it; an endpoint offering only /chat/completions cannot be used without a translating gateway." >&2

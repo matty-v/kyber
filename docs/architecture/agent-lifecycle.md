@@ -108,7 +108,7 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 | `Deleted` | fully deleted incl. PV + identity cleanup (reached via `handleDeletion`, **not** the state machine) |
 | `Draining` | gracefully draining ahead of a machine preemption |
 | `WaitingForMachine` | waiting for a replacement machine after preemption |
-| `NeedsAuth` | OAuth credential is missing, expired, or invalid; human must re-authorize |
+| `NeedsAuth` | runtime credential is missing, expired, or invalid; operator must renew it |
 | `MemoryExhausted` | container was OOM-killed; operator must raise the memory limit before retry |
 | `DiskExhausted` | persistent volume reached its 90% reserve; the harness is paused while the pod and Shell remain available for cleanup |
 | `BrokenRuntime` | the runtime executable is missing, truncated, or cannot return a parseable version; authentication is not attempted and automatic restart is suppressed pending runtime repair |
@@ -122,7 +122,8 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `DesiredNeedsAuth`, `DesiredRunning`, `PodDied`, `LivenessFailed`,
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
 `RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
-`MachineReady`, `OAuthRefreshFailed`, `AuthServiceFailed`,
+`MachineReady`, `OAuthRefreshFailed`, `InferenceAuthRejected`,
+`InferenceCredentialRotated`, `AuthServiceFailed`,
 `CredentialSyncFailed`, `OOMKilled`, `IdentityRepoReady`, `RestoreComplete`.
 
 `IdentityRepoReady` builds the first pod of an agent that was held back for
@@ -294,6 +295,8 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
+| `Running` | `InferenceAuthRejected` | `CaptureStateAndDeletePod` | `NeedsAuth` |
+| `Running` | `InferenceCredentialRotated` | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `AuthServiceFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `CredentialSyncFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `RuntimeProbeFailed` | `UpdateStatus` | `BrokenRuntime` |
@@ -378,6 +381,16 @@ silently.
   `45`) instead route through `Failed` and the bounded restart budget. Their
   distinct status message survives `RetryLimitReached`; a provider outage does
   not instruct the operator to replace valid credentials.
+- **Codex endpoint credentials use the pod's Secret version.** A structured
+  HTTP 401 from a live Codex endpoint pod enters `NeedsAuth` and removes that
+  pod. The current pod UID rejects stale rollout events, and the Secret version
+  stamped at pod creation lets a concurrently rotated key reopen recovery. A
+  newer valid Secret version restarts a Running pod so its environment
+  receives the replacement key. Since operator-supplied Secrets have no Agent
+  owner watch, Running Codex endpoint agents poll for rotation every 30 seconds.
+  A `working` activity signal defers that rotation until the turn completes;
+  a confirmed 401 still enters NeedsAuth immediately. Free-form errors and 403 do not
+  prove a rejected credential.
 - **Operator-forced re-auth is gated in the reconciler, and its Action splits
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).
   `DesiredNeedsAuth` (set by the `force-needs-auth` API action and by a
@@ -567,6 +580,8 @@ silently.
 | Agent container OOM-killed | `OOMKilled` | `MemoryExhausted` (no auto-restart) |
 | Native **sidecar** OOM-killed / flapping (transcript-tailer, kyber-status-sidecar) | reconciler pod-status scan `sidecarOOMOrFlapping` (kyber#584 Phase C) | best-effort **`SidecarOOMRestart` warning alert** via the existing path → `WebhookAlertSink` → Echo Base / Telegram, deduped per escalation. The sidecar still self-heals under `restartPolicy:Always` (kyber#575) — this surfaces it so a memory regression can't hide behind the auto-restart (closes the #575 masking that hid #584). Threshold: restartCount ≥ 3 or an OOMKilled (current or last) termination. Does **not** change agent phase. **Delivery** (kyber#586): the alert is pushed to a receiver only when `KYBER_ALERT_WEBHOOK_URL` is configured; otherwise it is log-only and the control plane warns loudly at startup. The receiver contract (payload/transport/auth) is in `docs/operator/telemetry.md` |
 | OAuth credential is missing or refresh returns `invalid_grant` (Claude exit 2) | `OAuthRefreshFailed` | `NeedsAuth` (no auto-restart) |
+| Live Codex custom endpoint turn returns structured HTTP 401 | `InferenceAuthRejected` | `NeedsAuth` after deleting the current pod; endpoint Secret rotation required |
+| Endpoint Secret rotated while a Codex agent is Running | `InferenceCredentialRotated` | `Restarting` with a fresh pod and key |
 | OAuth provider/network request fails or returns an unusable response (Claude exit 44) | `AuthServiceFailed` | `Failed` → bounded auto-restart; status says credentials are not known invalid |
 | Refreshed credential cannot be persisted (Claude exit 45) | `CredentialSyncFailed` | `Failed` → bounded auto-restart; status warns rotation may already have occurred |
 | Spot machine preempted (with notice) | `PreemptionNotice` → drain → `PodDeleted` | `Draining` → `WaitingForMachine` |
