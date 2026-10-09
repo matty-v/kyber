@@ -1,4 +1,4 @@
-import { test } from 'bun:test'
+import { expect, test } from 'bun:test'
 import { pilotCases, setupAgent } from 'ori/eval'
 
 if (process.env.ORI_EVAL_OPT_IN !== '1') throw new Error('Set ORI_EVAL_OPT_IN=1 to run this opt-in synthetic eval')
@@ -30,6 +30,7 @@ for (const model of models) {
       })
       run.toComplete()
       run.toMention(scenario.mustMention)
+      if (scenario.name === 'support') expect(run.text.trim()).toBe('APPROVE_REFUND')
       run.toCostAtMost(0.001)
       run.toFinishWithin(90_000)
     }, { timeout: 90_000 })
