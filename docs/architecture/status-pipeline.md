@@ -101,6 +101,12 @@ The only remaining direct-to-control-plane path from an agent pod is
 `start-claude.sh`'s boot-time OAuth push, which runs before the sidecar
 is reachable; that migration is tracked separately.
 
+Codex endpoint turns also report a structured `inference_auth_rejected`
+event when the rollout records HTTP 401. The internal status handler accepts
+it only from the current Codex pod with custom inference configured; the agent
+controller then removes that pod and enters NeedsAuth. The event carries a pod
+UID and timestamp, never a credential or prompt.
+
 The boundary matters because runtime images can update independently
 from the platform; an old runtime binary should keep working with a new
 sidecar, and vice versa, as long as the wire shape (statusEvent) is

@@ -816,6 +816,12 @@ spec:
                   Phase A populates LastHeartbeatAt only; Phase B (kyber#249) fills in
                   State (working/idle) and LastActivityAt.
                 properties:
+                  inferenceAuthRejectedPodUID:
+                    description: |-
+                      InferenceAuthRejectedPodUID identifies the current Codex pod whose
+                      structured turn result reported HTTP 401 from a custom endpoint.
+                      The controller ignores the signal after that pod is replaced.
+                    type: string
                   lastActivityAt:
                     description: |-
                       LastActivityAt is the timestamp of the most recent observed activity

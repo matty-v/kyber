@@ -103,6 +103,54 @@ func TestStatusEvent_HeartbeatUpdatesLastHeartbeatAt(t *testing.T) {
 	}
 }
 
+func TestStatusEvent_InferenceAuthRejectsStalePod(t *testing.T) {
+	scheme := statusEventTestScheme(t)
+	agent := &kyberv1.Agent{
+		ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system"},
+		Spec:       kyberv1.AgentSpec{Runtime: "codex", Inference: &kyberv1.AgentInference{}},
+		Status:     kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseRunning},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "agent-alice", Namespace: "kyber-system", UID: types.UID("current-pod"),
+	}}
+	k8s := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent, pod).
+		WithStatusSubresource(&kyberv1.Agent{}).Build()
+	srv := api.NewInternalServer(briefstore.NewMemoryStore(),
+		api.WithKubeClient(k8s, "kyber-system"))
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+	for _, tc := range []struct {
+		uid, want string
+	}{
+		{"old-pod", ""},
+		{"current-pod", "current-pod"},
+	} {
+		body := fmt.Sprintf(`{"type":"inference_auth_rejected","podUID":%q,"at":"2026-10-09T06:00:00Z"}`, tc.uid)
+		resp, err := http.Post(ts.URL+"/internal/agents/alice/status-event",
+			"application/json", strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusNoContent {
+			t.Fatalf("status = %d", resp.StatusCode)
+		}
+		var got kyberv1.Agent
+		if err := k8s.Get(context.Background(), types.NamespacedName{
+			Name: "alice", Namespace: "kyber-system",
+		}, &got); err != nil {
+			t.Fatal(err)
+		}
+		signal := ""
+		if got.Status.Activity != nil {
+			signal = got.Status.Activity.InferenceAuthRejectedPodUID
+		}
+		if signal != tc.want {
+			t.Fatalf("signal = %q, want %q", signal, tc.want)
+		}
+	}
+}
+
 func TestStatusEvent_ResourceUsageUpdatesActivity(t *testing.T) {
 	scheme := statusEventTestScheme(t)
 	agent := &kyberv1.Agent{

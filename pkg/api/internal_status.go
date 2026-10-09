@@ -26,6 +26,8 @@ import (
 	"net/http"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -39,7 +41,8 @@ import (
 // are accepted and silently dropped so older control planes can
 // tolerate newer sidecars.
 type statusEvent struct {
-	Type string `json:"type"`
+	Type   string `json:"type"`
+	PodUID string `json:"podUID,omitempty"`
 	// At is the sidecar's wall-clock at the time the event was generated.
 	// RFC3339. Heartbeat events use this to update LastHeartbeatAt; future
 	// activity events will use it for LastActivityAt.
@@ -115,6 +118,28 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		if ev.State != "" {
 			agent.Status.Activity.State = ev.State
 		}
+	case "inference_auth_rejected":
+		// The local runtime reporter is an untrusted signal source. Accept
+		// only a structured 401 for the live Codex endpoint pod, never a
+		// persisted event replayed after pod replacement.
+		if agent.Status.Phase != kyberv1.AgentPhaseRunning ||
+			agent.Spec.Runtime != "codex" || agent.Spec.Inference == nil ||
+			ev.PodUID == "" {
+			return nil
+		}
+		var pod corev1.Pod
+		if err := s.k8sClient.Get(ctx, types.NamespacedName{
+			Namespace: s.namespace, Name: "agent-" + agentName,
+		}, &pod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil
+			}
+			return fmt.Errorf("get agent pod: %w", err)
+		}
+		if string(pod.UID) != ev.PodUID || pod.DeletionTimestamp != nil {
+			return nil
+		}
+		agent.Status.Activity.InferenceAuthRejectedPodUID = ev.PodUID
 	case "memory_oom":
 		// kyber#285: sidecar observed an oom_kill counter increment in
 		// the pod-level cgroup memory.events (recursive). Stamp the

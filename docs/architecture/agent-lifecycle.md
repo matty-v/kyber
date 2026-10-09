@@ -122,7 +122,7 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 `DesiredNeedsAuth`, `DesiredRunning`, `PodDied`, `LivenessFailed`,
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
 `RetryLimitReached`, `PreemptionNotice`, `MachinePreempted`,
-`MachineReady`, `OAuthRefreshFailed`, `AuthServiceFailed`,
+`MachineReady`, `OAuthRefreshFailed`, `InferenceAuthRejected`, `AuthServiceFailed`,
 `CredentialSyncFailed`, `OOMKilled`, `IdentityRepoReady`, `RestoreComplete`.
 
 `IdentityRepoReady` builds the first pod of an agent that was held back for
@@ -294,6 +294,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Running` | `DesiredRestarting` † | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `PodDied` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `OAuthRefreshFailed` | `UpdateStatus` | `NeedsAuth` |
+| `Running` | `InferenceAuthRejected` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Running` | `AuthServiceFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `CredentialSyncFailed` | `EmitEventAutoRestart` | `Failed` |
 | `Running` | `RuntimeProbeFailed` | `UpdateStatus` | `BrokenRuntime` |
@@ -567,6 +568,7 @@ silently.
 | Agent container OOM-killed | `OOMKilled` | `MemoryExhausted` (no auto-restart) |
 | Native **sidecar** OOM-killed / flapping (transcript-tailer, kyber-status-sidecar) | reconciler pod-status scan `sidecarOOMOrFlapping` (kyber#584 Phase C) | best-effort **`SidecarOOMRestart` warning alert** via the existing path → `WebhookAlertSink` → Echo Base / Telegram, deduped per escalation. The sidecar still self-heals under `restartPolicy:Always` (kyber#575) — this surfaces it so a memory regression can't hide behind the auto-restart (closes the #575 masking that hid #584). Threshold: restartCount ≥ 3 or an OOMKilled (current or last) termination. Does **not** change agent phase. **Delivery** (kyber#586): the alert is pushed to a receiver only when `KYBER_ALERT_WEBHOOK_URL` is configured; otherwise it is log-only and the control plane warns loudly at startup. The receiver contract (payload/transport/auth) is in `docs/operator/telemetry.md` |
 | OAuth credential is missing or refresh returns `invalid_grant` (Claude exit 2) | `OAuthRefreshFailed` | `NeedsAuth` (no auto-restart) |
+| Live Codex custom endpoint turn returns structured HTTP 401 | `InferenceAuthRejected` | `NeedsAuth` after deleting the current pod; endpoint Secret rotation required |
 | OAuth provider/network request fails or returns an unusable response (Claude exit 44) | `AuthServiceFailed` | `Failed` → bounded auto-restart; status says credentials are not known invalid |
 | Refreshed credential cannot be persisted (Claude exit 45) | `CredentialSyncFailed` | `Failed` → bounded auto-restart; status warns rotation may already have occurred |
 | Spot machine preempted (with notice) | `PreemptionNotice` → drain → `PodDeleted` | `Draining` → `WaitingForMachine` |

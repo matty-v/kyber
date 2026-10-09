@@ -1200,6 +1200,10 @@ type AgentSchedulingStatus struct {
 // adds State + LastActivityAt from the runtime-specific Probe (e.g.
 // claudecode.Probe tails the JSONL transcript to detect mid-turn vs idle).
 type ActivityStatus struct {
+	// InferenceAuthRejectedPodUID identifies the current Codex pod whose
+	// structured turn result reported HTTP 401 from a custom endpoint.
+	// The controller ignores the signal after that pod is replaced.
+	InferenceAuthRejectedPodUID string `json:"inferenceAuthRejectedPodUID,omitempty"`
 	// LastHeartbeatAt is the timestamp of the most recent heartbeat event
 	// the control plane received from the agent's status sidecar. Updated
 	// on every heartbeat (currently 5s cadence). Treat absence (or a

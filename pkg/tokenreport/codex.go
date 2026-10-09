@@ -37,8 +37,20 @@ type codexActivityEntry struct {
 	Timestamp time.Time `json:"timestamp"`
 	Type      string    `json:"type"`
 	Payload   struct {
-		Type string `json:"type"`
+		Type  string          `json:"type"`
+		Error json.RawMessage `json:"error"`
 	} `json:"payload"`
+}
+
+func codexHTTP401(raw json.RawMessage) bool {
+	var e struct {
+		Info struct {
+			HTTPConnectionFailed struct {
+				HTTPStatusCode int `json:"http_status_code"`
+			} `json:"http_connection_failed"`
+		} `json:"codex_error_info"`
+	}
+	return json.Unmarshal(raw, &e) == nil && e.Info.HTTPConnectionFailed.HTTPStatusCode == 401
 }
 
 // DetectCodexActivity finds the newest task lifecycle event across persisted
@@ -68,9 +80,16 @@ func DetectCodexActivity(root string) (state string, at time.Time, err error) {
 // DetectCodexActivityFile returns the newest lifecycle event in one rollout.
 // Reporters use this cheap path after one boot-time fleet scan.
 func DetectCodexActivityFile(path string) (state string, at time.Time, err error) {
+	state, at, _, err = DetectCodexActivityFileWithAuth(path)
+	return state, at, err
+}
+
+// DetectCodexActivityFileWithAuth reports a structured HTTP 401 from the
+// latest turn. It deliberately ignores free-form error text and 403 responses.
+func DetectCodexActivityFileWithAuth(path string) (state string, at time.Time, authRejected bool, err error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return ActivityUnknown, time.Time{}, fmt.Errorf("opening %q: %w", path, err)
+		return ActivityUnknown, time.Time{}, false, fmt.Errorf("opening %q: %w", path, err)
 	}
 	defer f.Close()
 	s := bufio.NewScanner(f)
@@ -82,18 +101,19 @@ func DetectCodexActivityFile(path string) (state string, at time.Time, err error
 		}
 		switch e.Payload.Type {
 		case "task_started":
-			state, at = ActivityWorking, e.Timestamp
+			state, at, authRejected = ActivityWorking, e.Timestamp, false
 		case "task_complete":
 			state, at = ActivityIdle, e.Timestamp
+			authRejected = codexHTTP401(e.Payload.Error)
 		}
 	}
 	if err := s.Err(); err != nil {
-		return ActivityUnknown, time.Time{}, fmt.Errorf("scanning %q: %w", path, err)
+		return ActivityUnknown, time.Time{}, false, fmt.Errorf("scanning %q: %w", path, err)
 	}
 	if state == "" {
-		return ActivityUnknown, time.Time{}, nil
+		return ActivityUnknown, time.Time{}, false, nil
 	}
-	return state, at, nil
+	return state, at, authRejected, nil
 }
 
 // ParseCodexLatest returns the latest token-count observation in a Codex

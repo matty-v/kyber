@@ -1360,6 +1360,12 @@ func (r *AgentReconciler) classifyEvent(
 			}
 			return EventPodDied, nil
 		}
+		if agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil &&
+			agent.Status.Activity != nil &&
+			agent.Status.Activity.InferenceAuthRejectedPodUID != "" &&
+			string(pod.UID) == agent.Status.Activity.InferenceAuthRejectedPodUID {
+			return EventInferenceAuthRejected, nil
+		}
 
 	case kyberv1.AgentPhaseStopping:
 		if pod == nil || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
@@ -2740,6 +2746,19 @@ func (r *AgentReconciler) updatePhase(
 	}
 	agent.Status.Phase = newPhase
 	agent.Status.LastTransition = &now
+	if agent.Status.Activity != nil && agent.Status.Activity.InferenceAuthRejectedPodUID != "" {
+		// Capture the rejected credential's identity before consuming the
+		// signal. NeedsAuth may reopen only after the endpoint Secret rotates.
+		if newPhase == kyberv1.AgentPhaseNeedsAuth {
+			probe := agent.DeepCopy()
+			input, err := r.currentRecoveryInput(ctx, probe)
+			if err != nil {
+				return fmt.Errorf("recording rejected endpoint credential: %w", err)
+			}
+			agent.Status.RecoveryInput = input
+		}
+		agent.Status.Activity.InferenceAuthRejectedPodUID = ""
+	}
 	// Baseline the disk request on entry so a hard-full terminal pod cannot
 	// consume the standing desiredPhase=Running as an immediate retry. Only a
 	// later size change may unlock the bounded recreation path.
