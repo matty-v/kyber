@@ -115,14 +115,28 @@ export const handlers = [
     // Allow screenshot / e2e tests to inject a scheduling-failure status
     // without mutating the global fixture. Set window.__mockAgentScheduling
     // before page.goto via page.addInitScript; cleared by reload.
-    const override = (window as unknown as {
+    const mockWindow = window as unknown as {
       __mockAgentScheduling?: import('../lib/types').AgentSchedulingStatus
-    }).__mockAgentScheduling
-    return HttpResponse.json(override ? { ...mockAgent, scheduling: override } : mockAgent)
+      __mockAgentRuntime?: string
+    }
+    const override = mockWindow.__mockAgentScheduling
+    const hermes = mockWindow.__mockAgentRuntime === 'hermes'
+    const agent = hermes ? {
+      ...mockAgent,
+      runtime: 'hermes',
+      authType: 'api-key' as const,
+      model: 'openai/gpt-6',
+      tokenUsage: { ...mockTokenUsage, model: 'openai/gpt-6', provider: 'openrouter' },
+      runtimeContract: mockComputeConfig.runtimes?.find(runtime => runtime.id === 'hermes'),
+      jobs: undefined,
+      lastJobRuns: undefined,
+    } : mockAgent
+    return HttpResponse.json(override ? { ...agent, scheduling: override } : agent)
   }),
-  http.get(`*/api/v1/agents/${MOCK_AGENT_NAME}/token-usage`, () =>
-    HttpResponse.json(mockTokenUsage),
-  ),
+  http.get(`*/api/v1/agents/${MOCK_AGENT_NAME}/token-usage`, () => {
+    const hermes = (window as unknown as { __mockAgentRuntime?: string }).__mockAgentRuntime === 'hermes'
+    return HttpResponse.json(hermes ? { ...mockTokenUsage, model: 'openai/gpt-6', provider: 'openrouter' } : mockTokenUsage)
+  }),
   http.get(`*/api/v1/agents/${MOCK_AGENT_NAME}/secrets`, () =>
     HttpResponse.json({ items: mockSecrets }),
   ),

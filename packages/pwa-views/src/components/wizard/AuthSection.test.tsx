@@ -220,5 +220,15 @@ describe('AuthSection', () => {
     // The key is entered as a value, not as the name of a Secret the operator
     // had to create themselves with kubectl.
     expect(screen.getByLabelText(/endpoint api key/i)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^OpenRouter API key$/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/OpenRouter \(direct\)/i)).not.toBeInTheDocument()
+  })
+
+  it('explains the direct OpenRouter billing and policy boundary for Hermes', () => {
+    render(<AuthSection state={hermesState()} set={vi.fn()} />)
+    expect(screen.getByLabelText(/^OpenRouter API key$/i)).toBeInTheDocument()
+    expect(screen.getByText(/Model source: OpenRouter \(direct\)/i)).toBeInTheDocument()
+    expect(screen.getByText(/subscription does not cover/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /OpenRouter guardrails and privacy/i })).toHaveAttribute('href', 'https://openrouter.ai/docs/guides/features/guardrails/overview')
   })
 })

@@ -125,6 +125,39 @@ func TestRecoveryGate_NeedsAuth_FiresOnceOnNewCredential(t *testing.T) {
 	}
 }
 
+// A Codex custom endpoint must watch its own credential Secret rather than
+// the native subscription credential when recovering from a rejected key.
+func TestRecoveryGate_NeedsAuth_EndpointSecretRotation(t *testing.T) {
+	agent := needsAuthAgent("rv:" + rigAgent + "-inference:100")
+	agent.Spec.Inference = &kyberv1.AgentInference{
+		Credential: kyberv1.AgentInferenceCredentialRef{ExistingSecret: rigAgent + "-inference", Key: "token"},
+	}
+	endpoint := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{
+		Name: rigAgent + "-inference", Namespace: rigNS, ResourceVersion: "200",
+	}}
+	native := credentialSecret("100")
+	r := newGateReconciler(t, agent, endpoint, native)
+
+	ev, err := r.classifyEvent(context.Background(), agent, nil)
+	if err != nil {
+		t.Fatalf("classifyEvent: %v", err)
+	}
+	if ev != EventDesiredRunning {
+		t.Fatalf("endpoint Secret rotation raised %q, want %q", ev, EventDesiredRunning)
+	}
+	var stored kyberv1.Agent
+	if err := r.Get(context.Background(), client.ObjectKey{Name: rigAgent, Namespace: rigNS}, &stored); err != nil {
+		t.Fatalf("re-reading agent: %v", err)
+	}
+	if want := "rv:" + rigAgent + "-inference:200"; stored.Status.RecoveryInput != want {
+		t.Fatalf("recovery input = %q, want %q", stored.Status.RecoveryInput, want)
+	}
+	ev, err = r.classifyEvent(context.Background(), &stored, nil)
+	if err != nil || ev != "" {
+		t.Fatalf("unchanged endpoint Secret retried: event=%q error=%v", ev, err)
+	}
+}
+
 // An operator who stopped the agent must not get a surprise pod, even when the
 // credential changes underneath them.
 func TestRecoveryGate_NeedsAuth_RespectsDesiredPhase(t *testing.T) {
