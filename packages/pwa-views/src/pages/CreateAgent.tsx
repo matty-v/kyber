@@ -208,7 +208,7 @@ export function CreateAgent() {
       let oauthCodeFinal: string | undefined
       let pkceVerifierFinal: string | undefined
 
-      if (selectedAuth?.flow === 'authorization-code') {
+      if (!state.inferenceEnabled && selectedAuth?.flow === 'authorization-code') {
         const parsed = parseAuthorizationInput(state.oauthCode)
         if (!parsed) {
           setFieldError('Paste the authorization code Anthropic showed you')
@@ -312,8 +312,10 @@ export function CreateAgent() {
           oauthCode: oauthCodeFinal,
           pkceVerifier: pkceVerifierFinal,
           pkceState: state.pkceState || undefined,
-          anthropicApiKey: state.anthropicApiKey || undefined,
-          openaiApiKey: state.openaiApiKey || undefined,
+          // A key entered before switching to a custom endpoint must not be
+          // submitted after the built-in provider field disappears.
+          anthropicApiKey: !state.inferenceEnabled ? state.anthropicApiKey || undefined : undefined,
+          openaiApiKey: !state.inferenceEnabled ? state.openaiApiKey || undefined : undefined,
           telegramBotToken: state.telegramBotToken || undefined,
           telegramAllowedUserIds: state.telegramEnabled ? telegramAllowedUserIds : undefined,
 		  slackEnabled: state.slackEnabled,

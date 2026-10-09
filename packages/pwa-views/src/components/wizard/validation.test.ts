@@ -254,6 +254,20 @@ describe('isAuthValid — custom inference endpoint', () => {
     expect(isAuthValid(noProviderKey).ok).toBe(true)
   })
 
+  it('does not require provider OAuth when an endpoint is configured', () => {
+    const oauth = {
+      ...base(),
+      authType: 'oauth',
+      pkceVerifier: '',
+      oauthCode: '',
+      runtimeContract: {
+        ...base().runtimeContract,
+        authModes: [{ id: 'oauth', name: 'Provider OAuth', flow: 'authorization-code' }],
+      },
+    } as WizardState
+    expect(isAuthValid(oauth)).toEqual({ ok: true })
+  })
+
   it('still requires the provider key when no endpoint is configured', () => {
     const off = { ...base(), inferenceEnabled: false, runtimeApiKey: '' }
     expect(isAuthValid(off).ok).toBe(false)
