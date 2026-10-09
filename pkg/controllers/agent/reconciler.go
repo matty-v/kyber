@@ -1387,7 +1387,12 @@ func (r *AgentReconciler) classifyEvent(
 				}
 				if err == nil && len(secret.Data[agent.Spec.Inference.Credential.Key]) > 0 &&
 					secret.ResourceVersion != mountedRV {
-					return EventInferenceCredentialRotated, nil
+					// Do not cut off a turn that is still producing work.
+					// Unknown activity is allowed so a key rotated before
+					// the first task does not strand a newly booted pod.
+					if agent.Status.Activity == nil || agent.Status.Activity.State != tokenreport.ActivityWorking {
+						return EventInferenceCredentialRotated, nil
+					}
 				}
 			}
 		}

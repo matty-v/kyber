@@ -158,6 +158,19 @@ func TestInferenceCredentialRotated_Envtest(t *testing.T) {
 	if err := k8s.Update(ctx, secret); err != nil {
 		t.Fatal(err)
 	}
+	agent.Status.Activity = &kyberv1.ActivityStatus{State: "working"}
+	if err := k8s.Status().Update(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	agent = getAgent(t, k8s, client.ObjectKeyFromObject(agent))
+	if active, err := r.classifyEvent(ctx, agent, pod); err != nil || active != "" {
+		t.Fatalf("active turn interrupted: event=%q err=%v", active, err)
+	}
+	agent.Status.Activity.State = "idle"
+	if err := k8s.Status().Update(ctx, agent); err != nil {
+		t.Fatal(err)
+	}
+	agent = getAgent(t, k8s, client.ObjectKeyFromObject(agent))
 	event, err := r.classifyEvent(ctx, agent, pod)
 	if err != nil || event != EventInferenceCredentialRotated {
 		t.Fatalf("event=%q err=%v", event, err)

@@ -388,7 +388,8 @@ silently.
   newer valid Secret version restarts a Running pod so its environment
   receives the replacement key. Since operator-supplied Secrets have no Agent
   owner watch, Running Codex endpoint agents poll for rotation every 30 seconds.
-  Free-form errors and 403 do not
+  A `working` activity signal defers that rotation until the turn completes;
+  a confirmed 401 still enters NeedsAuth immediately. Free-form errors and 403 do not
   prove a rejected credential.
 - **Operator-forced re-auth is gated in the reconciler, and its Action splits
   on live-pod-ness** ([kyber#395](https://github.com/matty-v/kyber/issues/395)).

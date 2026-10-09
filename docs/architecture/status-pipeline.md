@@ -108,7 +108,8 @@ controller then removes that pod and enters NeedsAuth. The pod records the
 endpoint Secret resource version used to build it so a concurrent rotation
 remains eligible for recovery. A changed Secret version also rolls a Running
 endpoint pod so its environment receives the new key; the agent controller
-polls these endpoint pods every 30 seconds. The event carries a pod
+polls these endpoint pods every 30 seconds and defers rotation while a turn
+is reported as working. The event carries a pod
 UID and timestamp, never a credential or prompt.
 
 The boundary matters because runtime images can update independently
