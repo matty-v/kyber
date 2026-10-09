@@ -43,7 +43,7 @@ def request_json(url: str, key: str, retries: int = 0) -> dict:
         except urllib.error.HTTPError as exc:
             if exc.code != 404 or attempt == retries:
                 raise
-            time.sleep(min(2 ** attempt, 4))
+            time.sleep(min(2 ** attempt, 8))
     if not isinstance(body, dict) or not isinstance(body.get("data"), dict):
         raise EvalError("OpenRouter returned an unexpected metadata response")
     return body["data"]
@@ -149,7 +149,7 @@ def summarize(data: dict, key: str | None, phase: str) -> dict:
                 row["generationMetadataComplete"] = False
                 continue
             try:
-                record = request_json(f"{API}/generation?id={urllib.parse.quote(generation_id)}", key, retries=4)
+                record = request_json(f"{API}/generation?id={urllib.parse.quote(generation_id)}", key, retries=6)
             except urllib.error.URLError:
                 problems.append(f"{model}: generation metadata unavailable")
                 row["generationMetadataComplete"] = False
