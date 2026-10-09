@@ -33,6 +33,7 @@ func TestInferenceAuthRejected_Envtest(t *testing.T) {
 	rejectedRV := secret.ResourceVersion
 	agent := newTestAgent("auth", ns.Name)
 	agent.Spec.Runtime = "codex"
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	agent.Spec.Inference = &kyberv1.AgentInference{
 		BaseURL: "https://example.com/v1", API: "openai",
 		Credential: kyberv1.AgentInferenceCredentialRef{ExistingSecret: secret.Name, Key: "token"},
@@ -100,6 +101,10 @@ func TestInferenceAuthRejected_Envtest(t *testing.T) {
 	}
 	if got.Status.Activity.InferenceAuthRejectedPodUID != "" {
 		t.Fatal("signal was not consumed")
+	}
+	recoveryEvent, err := r.classifyEvent(ctx, got, nil)
+	if err != nil || recoveryEvent != EventDesiredRunning {
+		t.Fatalf("rotated key recovery event=%q err=%v", recoveryEvent, err)
 	}
 }
 
