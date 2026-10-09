@@ -254,16 +254,38 @@ func hermesContextWindow(path, model string) int64 {
 // its models perfectly well. Those are kept with ContextWindowKnown=false,
 // which the API already carries end to end (routes_available.go passes the
 // flag straight through).
-func LoadHermesCatalog(providerCachePath, metadataPath, provider string, endpointWindows map[string]int64, limit int) ([]HermesCatalogModel, error) {
+// HermesCustomProviderKey is how Hermes keys its provider cache for a provider
+// configured with an explicit base_url: "custom:<base_url>", NOT the provider's
+// name from config.yaml. Verified against a live agent — an endpoint agent's
+// cache holds `custom:https://llm.voget.io/v1`, never `kyber-endpoint`.
+func HermesCustomProviderKey(baseURL string) string {
+	return "custom:" + baseURL
+}
+
+// LoadHermesCatalog loads the model ids Hermes cached for the ACTIVE provider.
+//
+// providerKeys are tried in order and the first one present wins, because the
+// key depends on how the provider was configured: a named built-in provider is
+// cached under its name, a base_url provider under "custom:<base_url>".
+func LoadHermesCatalog(providerCachePath, metadataPath string, providerKeys []string, endpointWindows map[string]int64, limit int) ([]HermesCatalogModel, error) {
 	if limit <= 0 || limit > 100 {
 		limit = 100
 	}
-	if provider == "" {
-		provider = openRouterProvider
+	// Drop empties so an unset HERMES_PROVIDER still means OpenRouter, the
+	// behaviour every default agent has always had.
+	keys := make([]string, 0, len(providerKeys))
+	for _, k := range providerKeys {
+		if k != "" {
+			keys = append(keys, k)
+		}
 	}
+	if len(keys) == 0 {
+		keys = []string{openRouterProvider}
+	}
+	providerKeys = keys
 	// OpenRouter's metadata cache is authoritative for OpenRouter and for
 	// nothing else. Decided up front because the read below branches on it.
-	metadataIsAuthoritative := provider == openRouterProvider
+	metadataIsAuthoritative := providerKeys[0] == openRouterProvider
 	f, err := os.Open(providerCachePath)
 	if err != nil {
 		return nil, fmt.Errorf("opening Hermes provider cache: %w", err)
@@ -288,7 +310,13 @@ func LoadHermesCatalog(providerCachePath, metadataPath, provider string, endpoin
 		}
 		metadata = nil
 	}
-	ids := append([]string(nil), cache[provider].Models...)
+	var ids []string
+	for _, key := range providerKeys {
+		if entry, ok := cache[key]; ok && len(entry.Models) > 0 {
+			ids = append([]string(nil), entry.Models...)
+			break
+		}
+	}
 	sort.Strings(ids)
 	seen := make(map[string]struct{}, len(ids))
 	models := make([]HermesCatalogModel, 0, min(len(ids), limit))
