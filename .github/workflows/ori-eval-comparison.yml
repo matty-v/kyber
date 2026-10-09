@@ -1,0 +1,76 @@
+name: Ori model comparison (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      full:
+        description: Run the full four-case comparison after the pilot passes
+        type: boolean
+        required: true
+        default: false
+      allow_uncapped:
+        description: Explicitly waive the provider key limit check for this bounded run
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ori-eval-comparison
+  cancel-in-progress: false
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+
+      - name: Install pinned Ori
+        shell: bash
+        run: |
+          set -euo pipefail
+          ori_url='https://github.com/OpenRouterLabs/ori-releases/releases/download/cli-0.15.6-4855f79/ori-linux-x64'
+          curl -fsSL --proto '=https' --retry 3 -o "$RUNNER_TEMP/ori" "$ori_url"
+          echo 'd3525283d0431197943445c499edf8d790d13816752efd0e373afe2da75e035c  '"$RUNNER_TEMP/ori" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/ori"
+
+      - name: Check the reviewed fixture without model calls
+        shell: bash
+        run: |
+          python3 scripts/ori-eval-comparison.py \
+            --ori "$RUNNER_TEMP/ori" --bun "$(command -v bun)" --preflight-only
+
+      - name: Run the opt-in comparison
+        shell: bash
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.ORI_EVAL_OPENROUTER_API_KEY }}
+          RUN_FULL: ${{ inputs.full }}
+          ALLOW_UNCAPPED: ${{ inputs.allow_uncapped }}
+        run: |
+          set -euo pipefail
+          if [ -z "$OPENROUTER_API_KEY" ]; then
+            echo 'Configure the dedicated ORI_EVAL_OPENROUTER_API_KEY repository secret.' >&2
+            exit 2
+          fi
+          args=(--ori "$RUNNER_TEMP/ori" --bun "$(command -v bun)" --output "$RUNNER_TEMP/ori-eval-aggregate.json")
+          if [ "$RUN_FULL" = true ]; then args+=(--full); fi
+          if [ "$ALLOW_UNCAPPED" = true ]; then args+=(--allow-uncapped); fi
+          python3 scripts/ori-eval-comparison.py "${args[@]}"
+
+      - name: Upload aggregate result only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ori-eval-aggregate
+          path: ${{ runner.temp }}/ori-eval-aggregate.json
+          if-no-files-found: ignore
+          retention-days: 7
