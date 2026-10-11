@@ -68,7 +68,20 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		offset_bytes BIGINT NOT NULL CHECK(offset_bytes >= 0),
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 		PRIMARY KEY(agent_uid,runtime,source_namespace)
-	);`
+	);
+	CREATE TABLE IF NOT EXISTS agent_usage_daily (
+		agent_uid TEXT NOT NULL,
+		day DATE NOT NULL,
+		runtime TEXT NOT NULL,
+		model TEXT NOT NULL,
+		configured_route TEXT NOT NULL,
+		route_id TEXT NOT NULL,
+		upstream_provider_known BOOLEAN NOT NULL,
+		upstream_provider TEXT NOT NULL,
+		document JSONB NOT NULL,
+		PRIMARY KEY(agent_uid,day,runtime,model,configured_route,route_id,upstream_provider_known,upstream_provider)
+	);
+	CREATE INDEX IF NOT EXISTS agent_usage_daily_day_idx ON agent_usage_daily(day);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrating usage evidence: %w", err)
 	}
@@ -138,14 +151,20 @@ func (s *PostgresStore) IngestWithCursor(ctx context.Context, input Event, curso
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Event{}, false, fmt.Errorf("checking usage identity: %w", err)
 	}
+	var oldEvent *Event
 	if input.SupersedesID != "" {
 		var oldAgentUID string
-		err = tx.QueryRowContext(ctx, `SELECT agent_uid FROM agent_usage_events WHERE id=$1`, input.SupersedesID).Scan(&oldAgentUID)
+		var oldRaw []byte
+		err = tx.QueryRowContext(ctx, `SELECT agent_uid,document FROM agent_usage_events WHERE id=$1`, input.SupersedesID).Scan(&oldAgentUID, &oldRaw)
 		if errors.Is(err, sql.ErrNoRows) || (err == nil && oldAgentUID != input.AgentUID) {
 			return Event{}, false, ErrInvalid
 		}
 		if err != nil {
 			return Event{}, false, fmt.Errorf("checking superseded usage event: %w", err)
+		}
+		oldEvent = new(Event)
+		if err := json.Unmarshal(oldRaw, oldEvent); err != nil {
+			return Event{}, false, fmt.Errorf("decoding superseded usage event: %w", err)
 		}
 	}
 	input.ID = uuid.NewString()
@@ -173,6 +192,14 @@ func (s *PostgresStore) IngestWithCursor(ctx context.Context, input Event, curso
 			return Event{}, false, ErrConflict
 		}
 		return Event{}, false, fmt.Errorf("inserting usage event: %w", err)
+	}
+	if oldEvent != nil {
+		if err := applyDaily(ctx, tx, *oldEvent, -1); err != nil {
+			return Event{}, false, err
+		}
+	}
+	if err := applyDaily(ctx, tx, input, 1); err != nil {
+		return Event{}, false, err
 	}
 	if err := advanceCursor(ctx, tx, input.AgentUID, input.Runtime, cursor); err != nil {
 		return Event{}, false, err
@@ -335,6 +362,9 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, agentUID string) error 
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, agentUID); err != nil {
 		return fmt.Errorf("deleting usage cursors: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, agentUID); err != nil {
+		return fmt.Errorf("deleting usage aggregates: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing usage deletion: %w", err)

@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
@@ -31,6 +32,7 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_gaps WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, uid)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, uid)
 	})
 	output := int64(10)
 	event := usagestore.Event{AgentUID: uid, Agent: "test", ObservedAt: time.Now().UTC(), Runtime: "claude", SourceFormat: "claude-jsonl", SourceVersion: "1",
@@ -87,9 +89,21 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	correction := event
 	correction.SourceIdentity = "session-1:correction-1"
 	correction.SupersedesID = first.ID
+	correction.Output = &otherOutput
 	corrected, inserted, err := store.Ingest(ctx, correction)
 	if err != nil || !inserted || corrected.SupersedesID != first.ID {
 		t.Fatalf("correction=%+v inserted=%v err=%v", corrected, inserted, err)
+	}
+	var dailyRaw []byte
+	if err := sharedDB.QueryRowContext(ctx, `SELECT document FROM agent_usage_daily WHERE agent_uid=$1`, uid).Scan(&dailyRaw); err != nil {
+		t.Fatal(err)
+	}
+	var daily usagestore.DailyAggregate
+	if err := json.Unmarshal(dailyRaw, &daily); err != nil {
+		t.Fatal(err)
+	}
+	if daily.EventCount != 1 || daily.Output.Sum == nil || *daily.Output.Sum != 11 || daily.Output.ReportedEvents != 1 {
+		t.Fatalf("corrected daily aggregate=%+v", daily)
 	}
 	duplicateCorrection := correction
 	duplicateCorrection.SourceIdentity = "session-1:correction-2"
@@ -127,5 +141,8 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	}
 	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_events WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("remaining event count=%d err=%v", count, err)
+	}
+	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_daily WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("remaining aggregate count=%d err=%v", count, err)
 	}
 }
