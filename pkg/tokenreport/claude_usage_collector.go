@@ -89,11 +89,18 @@ func (c *ClaudeUsageCollector) Scan(ctx context.Context) error {
 		// cannot be assigned to the new route, so acknowledge a gap and skip
 		// them. Even a file not seen by the old collector may contain an old
 		// route call. Files created after this boundary start from zero.
+		// Give newly discovered files a durable namespace before publishing
+		// any gap. A retry after a lost ACK must use the same gap identity.
 		for _, path := range paths {
-			file, known := state.Files[path]
-			if !known {
-				file.Namespace = uuid.NewString()
+			if _, known := state.Files[path]; !known {
+				state.Files[path] = claudeFileCursor{Namespace: uuid.NewString()}
+				if err := saveClaudeCursor(c.CursorPath, state); err != nil {
+					return err
+				}
 			}
+		}
+		for _, path := range paths {
+			file := state.Files[path]
 			offset, offsetErr := completeEOF(path)
 			if offsetErr != nil {
 				return offsetErr
@@ -103,17 +110,17 @@ func (c *ClaudeUsageCollector) Scan(ctx context.Context) error {
 				return fmt.Errorf("stating Claude session: %w", statErr)
 			}
 			dev, ino := fileIdentity(info)
-			if offset > file.Offset || (known && (offset < file.Offset || file.Inode != ino || file.Device != dev)) {
+			if offset > file.Offset || (file.Inode != 0 && (offset < file.Offset || file.Inode != ino || file.Device != dev)) {
 				cursor := UsageAckCursor{Namespace: file.Namespace, Offset: offset}
 				if err := c.Sink.AcceptGap(ctx, file.Namespace+":route-change-"+fmt.Sprint(file.Offset), "route_changed", time.Now().UTC(), cursor); err != nil {
 					return err
 				}
 			}
 			state.Files[path] = claudeFileCursor{Namespace: uuid.NewString(), Offset: offset, Device: dev, Inode: ino}
-			if err := saveClaudeCursor(c.CursorPath, state); err != nil {
-				return err
-			}
 		}
+		// Commit the new route and all file positions together. If the
+		// process stops after a gap ACK, replay uses the same old namespace
+		// and gap key, so the control plane can deduplicate it.
 		state.RouteFingerprint = c.RouteFingerprint
 		return saveClaudeCursor(c.CursorPath, state)
 	}
@@ -282,9 +289,20 @@ func completeEOF(path string) (int64, error) {
 }
 
 func readClaudeCursor(path string) (claudeCursorState, error) {
-	raw, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return claudeCursorState{}, err
+	}
+	defer f.Close()
+	// Cursor files hold paths and offsets only. Treat an unexpectedly large
+	// or corrupt file as unavailable rather than loading it without a bound.
+	const maxCursorBytes = 8 << 20
+	raw, err := io.ReadAll(io.LimitReader(f, maxCursorBytes+1))
+	if err != nil {
+		return claudeCursorState{}, fmt.Errorf("reading Claude usage cursor: %w", err)
+	}
+	if len(raw) > maxCursorBytes {
+		return claudeCursorState{}, ErrIncompleteUsage
 	}
 	var state claudeCursorState
 	if err := json.Unmarshal(raw, &state); err != nil {

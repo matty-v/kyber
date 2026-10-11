@@ -20,9 +20,10 @@ func TestReadUsageLineBoundsTranscriptContent(t *testing.T) {
 }
 
 type usageSinkFixture struct {
-	events   []UsageEvidence
-	gaps     []string
-	failOnce bool
+	events    []UsageEvidence
+	gaps      []string
+	failOnce  bool
+	failGapAt int
 }
 
 func (s *usageSinkFixture) AcceptUsage(_ context.Context, e UsageEvidence, _ UsageAckCursor) error {
@@ -36,6 +37,9 @@ func (s *usageSinkFixture) AcceptUsage(_ context.Context, e UsageEvidence, _ Usa
 
 func (s *usageSinkFixture) AcceptGap(_ context.Context, id, reason string, _ time.Time, _ UsageAckCursor) error {
 	s.gaps = append(s.gaps, id+":"+reason)
+	if s.failGapAt > 0 && len(s.gaps) == s.failGapAt {
+		return errors.New("gap transport unavailable")
+	}
 	return nil
 }
 
@@ -104,10 +108,19 @@ func TestClaudeUsageCollectorBootReplayAndRouteChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	changed := &ClaudeUsageCollector{ProjectsRoot: root, CursorPath: cursor, RouteFingerprint: "route-B", Sink: sink}
+	sink.failGapAt = 2
+	if err := changed.Scan(ctx); err == nil {
+		t.Fatal("expected failure before route cursor commit")
+	}
+	state, err := readClaudeCursor(cursor)
+	if err != nil || state.RouteFingerprint != "route-A" {
+		t.Fatalf("route cursor advanced before all gaps were acknowledged: %+v %v", state, err)
+	}
+	sink.failGapAt = 0
 	if err := changed.Scan(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if len(sink.events) != 2 || len(sink.gaps) != 2 || !strings.HasSuffix(sink.gaps[0], ":route_changed") {
+	if len(sink.events) != 2 || len(sink.gaps) != 4 || sink.gaps[0] != sink.gaps[2] || sink.gaps[1] != sink.gaps[3] || !strings.HasSuffix(sink.gaps[0], ":route_changed") {
 		t.Fatalf("route change events=%d gaps=%v", len(sink.events), sink.gaps)
 	}
 	appendUsage(t, path, claudeUsageLine("new-route"))
