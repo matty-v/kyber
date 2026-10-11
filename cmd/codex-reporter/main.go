@@ -39,6 +39,29 @@ func main() {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {
+		collector := &tokenreport.CodexUsageCollector{
+			SessionsRoot: root, CursorPath: "/persist/usage/codex-cursor.json", RouteFingerprint: routeFingerprint,
+			ConfiguredModel: model, Sink: &tokenreport.HTTPUsageSink{SidecarURL: os.Getenv("KYBER_SIDECAR_URL"),
+				AgentUID: agentUID, RouteFingerprint: routeFingerprint, Runtime: "codex"},
+		}
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				if err := collector.Scan(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("codex-reporter: usage collection delayed: %v", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	} else {
+		log.Print("codex-reporter: usage collection unavailable until Agent pod has UID and route stamp")
+	}
 	credSyncer := &tokenreport.CodexCredentialSyncer{
 		AuthPath:              filepath.Join(codexHome, "auth.json"),
 		SidecarURL:            os.Getenv("KYBER_SIDECAR_URL"),
