@@ -775,6 +775,13 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			// PVC expansion is asynchronous. Poll as a fallback in addition to
 			// the owned-PVC watch so a missed event cannot stall recovery.
 			base = requeueWaiting
+		case kyberv1.AgentPhaseNeedsAuth:
+			// Endpoint Secrets are operator-supplied, so they have no Agent
+			// owner watch. Check for a replacement credential while waiting.
+			if agent.Spec.DesiredPhase == kyberv1.AgentPhaseRunning &&
+				agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil {
+				base = 30 * time.Second
+			}
 		case kyberv1.AgentPhaseRunning:
 			// Operator-supplied endpoint Secrets are not owned by Agent and
 			// have no watch edge here. Poll only Codex endpoint agents so a
@@ -899,7 +906,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				"Automatic retries are exhausted;", 1)
 		}
 	}
-	if err := r.updatePhase(ctx, agent, result.NextPhase, message); err != nil {
+	if err := r.updatePhase(ctx, agent, result.NextPhase, message, event, pod); err != nil {
 		return ctrl.Result{}, err
 	}
 
@@ -2792,6 +2799,8 @@ func (r *AgentReconciler) updatePhase(
 	agent *kyberv1.Agent,
 	newPhase kyberv1.AgentPhase,
 	message string,
+	event Event,
+	pod *corev1.Pod,
 ) error {
 	if agent.Status.Phase == newPhase && agent.Status.Message == message {
 		return nil // nothing to update
@@ -2808,6 +2817,24 @@ func (r *AgentReconciler) updatePhase(
 	}
 	agent.Status.Phase = newPhase
 	agent.Status.LastTransition = &now
+	if newPhase == kyberv1.AgentPhaseNeedsAuth && event == EventOAuthRefreshFailed &&
+		agent.Spec.Runtime == "codex" && agent.Spec.Inference != nil {
+		// Startup rejects the endpoint key before the live-turn activity
+		// reporter exists. Baseline the credential used by the failed pod,
+		// so the standing desiredPhase cannot consume it as a new input.
+		// A concurrent Secret rotation must remain eligible for recovery.
+		if pod != nil && pod.Annotations[kyberv1.AgentInferenceCredentialRVAnnotation] != "" {
+			agent.Status.RecoveryInput = "rv:" + agent.Spec.Inference.Credential.ExistingSecret + ":" +
+				pod.Annotations[kyberv1.AgentInferenceCredentialRVAnnotation]
+		} else {
+			probe := agent.DeepCopy()
+			input, err := r.currentRecoveryInput(ctx, probe)
+			if err != nil {
+				return fmt.Errorf("recording rejected endpoint credential: %w", err)
+			}
+			agent.Status.RecoveryInput = input
+		}
+	}
 	if agent.Status.Activity != nil && agent.Status.Activity.InferenceAuthRejectedPodUID != "" {
 		// Capture the rejected credential's identity before consuming the
 		// signal. NeedsAuth may reopen only after the endpoint Secret rotates.
