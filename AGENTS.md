@@ -441,6 +441,10 @@ dollar costs. Accepted events update exact daily aggregates in the same
 transaction; corrections subtract the superseded event before adding their
 replacement. Detailed evidence defaults to 90 days, daily aggregates to 13
 months. Until reporter and API wiring lands, this package is inert.
+Usage route revisions live in `agent_usage_routes`: a random UUID is exposed,
+while only an internal fingerprint of the configured endpoint is retained.
+Ingest rejects a route ID belonging to another Agent UID. A configured route
+or Hermes provider label never proves the upstream inference provider.
 
 ---
 

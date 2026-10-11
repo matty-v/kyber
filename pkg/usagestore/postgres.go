@@ -92,7 +92,15 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		document JSONB NOT NULL,
 		PRIMARY KEY(agent_uid,day,runtime,model,configured_route,route_id,upstream_provider_known,upstream_provider)
 	);
-	CREATE INDEX IF NOT EXISTS agent_usage_daily_day_idx ON agent_usage_daily(day);`
+	CREATE INDEX IF NOT EXISTS agent_usage_daily_day_idx ON agent_usage_daily(day);
+	CREATE TABLE IF NOT EXISTS agent_usage_routes (
+		agent_uid TEXT NOT NULL,
+		fingerprint BYTEA NOT NULL,
+		route_id UUID NOT NULL UNIQUE,
+		configured_route TEXT NOT NULL,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+		PRIMARY KEY(agent_uid,fingerprint)
+	);`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting usage migration: %w", err)
@@ -169,6 +177,15 @@ func (s *PostgresStore) IngestWithCursor(ctx context.Context, input Event, curso
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return Event{}, false, fmt.Errorf("checking usage identity: %w", err)
+	}
+	var routeKind string
+	err = tx.QueryRowContext(ctx, `SELECT configured_route FROM agent_usage_routes WHERE agent_uid=$1 AND route_id=$2`,
+		input.AgentUID, input.RouteID).Scan(&routeKind)
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && routeKind != input.ConfiguredRoute) {
+		return Event{}, false, ErrInvalid
+	}
+	if err != nil {
+		return Event{}, false, fmt.Errorf("checking usage route: %w", err)
 	}
 	var oldEvent *Event
 	if input.SupersedesID != "" {
@@ -390,6 +407,9 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, agentUID string) error 
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, agentUID); err != nil {
 		return fmt.Errorf("deleting usage aggregates: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_routes WHERE agent_uid=$1`, agentUID); err != nil {
+		return fmt.Errorf("deleting usage routes: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing usage deletion: %w", err)
