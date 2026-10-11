@@ -161,6 +161,13 @@ returns the canonical task plus:
 }
 ```
 
+`applied` describes the result of this `POST` operation: whether the
+cancellation request took effect when that mutation ran. It is omitted from
+task `GET` and list responses because it is not stored task state. On reads,
+use the task `state` and cancellation `status` and `ackSource` to determine
+the lasting outcome. Neither `applied` nor an acknowledgment means prior
+external effects were rolled back.
+
 Rules:
 
 - identical replay returns the same result;
