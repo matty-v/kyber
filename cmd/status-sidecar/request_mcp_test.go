@@ -136,6 +136,38 @@ func TestRequestMCPCancellationControlAndAcknowledgment(t *testing.T) {
 	}
 }
 
+func TestRequestMCPCancellationAcknowledgmentGuidesInvalidCalls(t *testing.T) {
+	server := &requestMCPServer{}
+	listed := requestMCPCall(t, server.handle, "tools/list", map[string]any{})
+	encoded, _ := json.Marshal(listed.Result)
+	for _, want := range []string{"Generate a fresh acknowledgment_id", "Do not reuse an attempt_id", "Exact task_id from the current task envelope"} {
+		if !bytes.Contains(encoded, []byte(want)) {
+			t.Fatalf("ack_cancel guidance missing %q", want)
+		}
+	}
+	base := map[string]any{"task_id": "task_11111111111111111111111111111111", "attempt_id": "attempt_22222222222222222222222222222222"}
+	for _, test := range []struct {
+		name string
+		args map[string]any
+		want string
+	}{
+		{"missing task", map[string]any{"attempt_id": base["attempt_id"], "acknowledgment_id": "ack_33333333333333333333333333333333"}, "task_id is required"},
+		{"attempt as acknowledgment", map[string]any{"task_id": base["task_id"], "attempt_id": base["attempt_id"], "acknowledgment_id": base["attempt_id"]}, "not the attempt_id"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			response := requestMCPCall(t, server.handle, "tools/call", map[string]any{"name": "ack_cancel", "arguments": test.args})
+			result := response.Result.(map[string]any)
+			if result["isError"] != true {
+				t.Fatalf("expected validation error: %+v", result)
+			}
+			message := result["content"].([]any)[0].(map[string]any)["text"].(string)
+			if !strings.Contains(message, test.want) {
+				t.Fatalf("error = %q, want %q", message, test.want)
+			}
+		})
+	}
+}
+
 func TestRequestMCPProgressAndInlineResults(t *testing.T) {
 	var paths []string
 	var bodies []map[string]any

@@ -28,6 +28,7 @@ var taskAttemptIDPattern = regexp.MustCompile(`^attempt_[a-f0-9]{32}$`)
 var taskUpdateIDPattern = regexp.MustCompile(`^update_[a-f0-9]{32}$`)
 var taskResultIDPattern = regexp.MustCompile(`^result_[a-f0-9]{32}$`)
 var taskInteractionIDPattern = regexp.MustCompile(`^interaction_[a-f0-9]{32}$`)
+var taskCancelAckIDPattern = regexp.MustCompile(`^ack_[a-f0-9]{32}$`)
 
 type requestRPCRequest struct {
 	JSONRPC string          `json:"jsonrpc"`
@@ -180,7 +181,7 @@ func (s *requestMCPServer) handle(w http.ResponseWriter, r *http.Request) {
 			"inputSchema": taskControlToolSchema(false),
 		}, {
 			"name":        "ack_cancel",
-			"description": "Acknowledge that the exact current task attempt stopped future task work. This does not claim rollback of prior external effects.",
+			"description": "After get_control reports cancel_requested=true, stop future task work and acknowledge cancellation for that task_id and attempt_id. Generate a fresh acknowledgment_id: ack_ followed by 32 lowercase hexadecimal digits. Do not reuse an attempt_id. This does not claim rollback of prior external effects.",
 			"inputSchema": taskControlToolSchema(true),
 		}, {
 			"name":        "request_input",
@@ -424,12 +425,12 @@ func (s *requestMCPServer) requestTaskInteraction(ctx context.Context, auth bool
 
 func taskControlToolSchema(ack bool) map[string]any {
 	properties := map[string]any{
-		"task_id":    map[string]any{"type": "string", "pattern": `^task_[a-f0-9]{32}$`},
-		"attempt_id": map[string]any{"type": "string", "pattern": `^attempt_[a-f0-9]{32}$`},
+		"task_id":    map[string]any{"type": "string", "pattern": `^task_[a-f0-9]{32}$`, "description": "Exact task_id from the current task envelope or get_control call."},
+		"attempt_id": map[string]any{"type": "string", "pattern": `^attempt_[a-f0-9]{32}$`, "description": "Exact attempt_id from the current task envelope or get_control call."},
 	}
 	required := []string{"task_id", "attempt_id"}
 	if ack {
-		properties["acknowledgment_id"] = map[string]any{"type": "string", "pattern": `^ack_[a-f0-9]{32}$`}
+		properties["acknowledgment_id"] = map[string]any{"type": "string", "pattern": `^ack_[a-f0-9]{32}$`, "description": "Generate a fresh idempotency ID: ack_ followed by 32 lowercase hexadecimal digits. Do not copy the attempt_id."}
 		properties["note"] = map[string]any{"type": "string", "maxLength": taskstore.HardMaxCancelReasonBytes}
 		required = append(required, "acknowledgment_id")
 	}
@@ -453,8 +454,17 @@ func (s *requestMCPServer) getTaskControl(ctx context.Context, taskID, attemptID
 }
 
 func (s *requestMCPServer) ackTaskCancel(ctx context.Context, taskID, attemptID, acknowledgmentID, note string) requestToolResult {
-	if !taskReplyIDPattern.MatchString(strings.TrimSpace(taskID)) || !taskAttemptIDPattern.MatchString(strings.TrimSpace(attemptID)) || !regexp.MustCompile(`^ack_[a-f0-9]{32}$`).MatchString(strings.TrimSpace(acknowledgmentID)) || len([]byte(note)) > taskstore.HardMaxCancelReasonBytes {
-		return requestToolError("cancellation acknowledgment is invalid")
+	if !taskReplyIDPattern.MatchString(strings.TrimSpace(taskID)) {
+		return requestToolError("task_id is required and must match task_ followed by 32 lowercase hexadecimal digits; use the current task envelope's task_id")
+	}
+	if !taskAttemptIDPattern.MatchString(strings.TrimSpace(attemptID)) {
+		return requestToolError("attempt_id is required and must match attempt_ followed by 32 lowercase hexadecimal digits; use the current task envelope's attempt_id")
+	}
+	if !taskCancelAckIDPattern.MatchString(strings.TrimSpace(acknowledgmentID)) {
+		return requestToolError("acknowledgment_id is required; generate a fresh ack_ followed by 32 lowercase hexadecimal digits, not the attempt_id")
+	}
+	if len([]byte(note)) > taskstore.HardMaxCancelReasonBytes {
+		return requestToolError("note exceeds the maximum cancellation reason length")
 	}
 	body, _ := json.Marshal(map[string]string{"task_id": taskID, "attempt_id": attemptID, "acknowledgment_id": acknowledgmentID, "note": note})
 	status, err := postToCP(ctx, s.client, s.cfg, "task-cancel-ack", body)

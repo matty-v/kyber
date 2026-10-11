@@ -25,6 +25,19 @@ prompt content.
 | Second completion | Exact task/attempt receipt; `complete` returned its own `UNIQUE-RESPONSE-2` marker | `completed` |
 | Cancellation | Exact task/attempt receipt; Codex said it would monitor cancellation, then ended the turn without `get_control` or `ack_cancel` | `failed`, `cancel_unconfirmed` after five minutes; `cancel.applied=false` |
 
+The cancellation request above arrived **after** Codex ended that turn. It
+establishes a quiescent-turn failure, not an active-turn result. A separate
+active-turn test on the same image requested cancellation while Codex was
+working. Codex called `get_control` and saw `cancel_requested=true`, then
+called `ack_cancel` twice without `task_id` and with an `attempt_` value as
+`acknowledgment_id`. Both calls were rejected by the sidecar's generic
+validation error. The model ended its turn without acknowledging cancellation.
+This exposes an avoidable tool-guidance problem in addition to the route's
+unqualified cancellation behavior. The sidecar now describes the required
+fields and generated `ack_` ID and returns field-specific validation errors.
+This guidance change needs a fresh live qualification run before any support
+claim changes.
+
 The earlier pilot had one successful cancellation. This fresh failure means
 task cancellation is **not qualified** for this route and model. The evidence
 descriptor reports `task-cancel: fail`; it must not imply repeatable support
