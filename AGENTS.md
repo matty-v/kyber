@@ -53,6 +53,8 @@ Agent UID and route revision checks precede one Postgres transaction for the
 evidence and source cursor. A successful ACK means durable ingest; without
 Postgres these paths return 503. The Claude reporter scans complete finalized
 JSONL lines every five seconds alongside its existing context snapshot loop.
+The Agent UID check uses the uncached Kubernetes API reader, so an informer
+delay after Agent name reuse cannot attribute an old pod's event to the new UID.
 
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`

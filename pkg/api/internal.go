@@ -98,6 +98,7 @@ type InternalServer struct {
 	server            *http.Server
 	preemptionHandler PreemptionHandler
 	k8sClient         client.Client // for rotation endpoint's secret patch
+	usageAgentReader  client.Reader // direct API read for immutable Agent UID checks
 	namespace         string        // e.g. "kyber-system"
 
 	// identityRepoTokenMinter, when non-nil, lets the
@@ -186,6 +187,13 @@ type UsageStore interface {
 
 func WithUsageStore(store UsageStore) InternalServerOption {
 	return func(s *InternalServer) { s.usageStore = store }
+}
+
+// WithUsageAgentReader bypasses the informer cache when resolving the current
+// Agent lifetime for usage writes. A stale cached Agent could misattribute an
+// old pod's event after its name has been reused.
+func WithUsageAgentReader(reader client.Reader) InternalServerOption {
+	return func(s *InternalServer) { s.usageAgentReader = reader }
 }
 
 // WithTokenAccumulator wires an Accumulator so the POST /internal/agents/{name}/token-usage
