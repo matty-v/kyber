@@ -703,6 +703,12 @@ export function AgentDetail() {
     )
   }
 
+  const directOpenRouter = agent.runtime === 'codex' && Boolean(agent.inference && isOpenRouterInference(agent.inference.baseURL))
+  const modelSource = agent.inference
+    ? directOpenRouter ? 'OpenRouter (direct)' : 'Custom endpoint'
+    : agent.runtime === 'hermes' && agentAuth(agent)?.inputField === 'openrouterApiKey'
+      ? 'OpenRouter (direct)' : 'Harness provider'
+
   function selectSection(nextSection: AgentSection) {
     navigate(prefixed(nextSection === 'overview' ? `/agents/${name}` : `/agents/${name}/${nextSection}`))
   }
@@ -923,7 +929,7 @@ export function AgentDetail() {
           )}
           {agent.phase === 'NeedsAuth' && agent.inference && (
             <Card className="border-warn/40 bg-warn-muted">
-              <h2 className="text-sm font-semibold text-warn mb-1">{agent.runtime === 'codex' && isOpenRouterInference(agent.inference.baseURL) ? 'OpenRouter credential' : 'Custom inference credential'}</h2>
+              <h2 className="text-sm font-semibold text-warn mb-1">{directOpenRouter ? 'OpenRouter credential' : 'Custom inference credential'}</h2>
               <p className="text-xs text-warn/80 mb-3">
                 This harness uses the existing custom inference Secret. If its key needs changing,
                 update that Secret first, then retry startup.
@@ -1059,13 +1065,13 @@ export function AgentDetail() {
                     </div>
                     <dl className="mt-4 grid gap-x-8 gap-y-2 border-t border-border-subtle pt-3 text-sm sm:grid-cols-2">
                       {canSelectModel && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.currentModel || agent.model || 'Harness default'}</dd></div>}
-                      {(agent.runtime === 'hermes' || agent.runtime === 'codex') && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model source</dt><dd className="text-text-primary">{agent.inference ? agent.runtime === 'codex' && isOpenRouterInference(agent.inference.baseURL) ? 'OpenRouter (direct)' : 'Custom endpoint' : agent.runtime === 'hermes' && agentAuth(agent)?.inputField === 'openrouterApiKey' ? 'OpenRouter (direct)' : 'Harness provider'}</dd></div>}
+                      {(agent.runtime === 'hermes' || agent.runtime === 'codex') && <div className="flex justify-between gap-3"><dt className="text-text-muted">Model source</dt><dd className="text-text-primary">{modelSource}</dd></div>}
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Harness</dt><dd className="truncate font-mono text-xs text-text-primary">{agent.runtimeVersion?.installedVersion || agent.runtime}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
                     {agent.runtime === 'hermes' && !agent.inference && agentAuth(agent)?.inputField === 'openrouterApiKey' && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Uses this agent’s OpenRouter API key. OpenRouter bills model requests separately from Claude and ChatGPT subscriptions; Kyber’s cost figures are estimates, not the provider invoice. The upstream model provider may vary by route and is not reported here. Manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
-                    {agent.runtime === 'codex' && agent.inference && isOpenRouterInference(agent.inference.baseURL) && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Codex uses this agent’s OpenRouter endpoint credential. OpenRouter bills API requests separately from ChatGPT subscriptions and may route them to an upstream provider Kyber does not identify. Kyber usage and cost figures are estimates, not the OpenRouter invoice; check OpenRouter activity for actual charges and manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
+                    {directOpenRouter && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Codex uses this agent’s OpenRouter endpoint credential. OpenRouter bills API requests separately from ChatGPT subscriptions and may route them to an upstream provider Kyber does not identify. Any Kyber cost shown is an estimate, not the OpenRouter invoice; check OpenRouter activity for actual charges and manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                   </Card>
                   <RestoreStatusCard agentName={name} capability={computeConfig?.archives} />
                   <DiskExportCard agentName={name} phase={agent.phase} capability={computeConfig?.archives} />
