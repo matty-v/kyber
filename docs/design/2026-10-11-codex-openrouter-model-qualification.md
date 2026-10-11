@@ -35,8 +35,17 @@ validation error. The model ended its turn without acknowledging cancellation.
 This exposes an avoidable tool-guidance problem in addition to the route's
 unqualified cancellation behavior. The sidecar now describes the required
 fields and generated `ack_` ID and returns field-specific validation errors.
-This guidance change needs a fresh live qualification run before any support
-claim changes.
+
+On PR #327 image `59815b7` in the same dev cluster, one active-turn retest
+requested cancellation while Codex was processing a task. The new status
+sidecar image was present in the disposable Agent pod. Codex called
+`get_control`, then called `ack_cancel` with the exact task and attempt IDs
+and a correctly shaped `ack_` ID. The API reached `canceled`, with
+`ackSource=agent` and cancellation delivery `acknowledged`. A separate first
+task on this image completed after checking control before cancellation was
+requested; it does not count as a cancellation test. This single successful
+retest validates the tool guidance path, but does not establish repeatable
+route/model cancellation support after the two failures above.
 
 The earlier pilot had one successful cancellation. This fresh failure means
 task cancellation is **not qualified** for this route and model. The evidence
