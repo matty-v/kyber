@@ -1,6 +1,6 @@
 import type { WizardState } from './types'
 import { supportsModelSelection, wizardAuth, wizardContract } from '../../lib/runtime-contract'
-import { isOpenRouterInference } from '../../lib/openrouter-inference'
+import { codexOpenRouterEvidence, isOpenRouterInference } from '../../lib/openrouter-inference'
 
 /** Step ids the user can jump back to from Review (Review itself is not editable). */
 type EditableStep = 1 | 2 | 3 | 4
@@ -86,6 +86,9 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
           </div>
         ))}
       </dl>
+      {state.runtime === 'codex' && state.inferenceEnabled && isOpenRouterInference(state.inferenceBaseURL) && (
+        <p role="alert" className="mt-3 text-xs text-warning">{codexOpenRouterEvidence(wizardContract(state), state.inferenceModel)}</p>
+      )}
     </section>
   )
 }

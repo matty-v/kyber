@@ -191,7 +191,10 @@ export const mockComputeConfig: ComputeConfig = {
   compute: { provider: 'mock' },
   runtimes: [
     ...legacyRuntimeContracts.map(contract => contract.id === 'codex'
-      ? { ...contract, features: [...contract.features, 'custom-inference-endpoint'] }
+      ? { ...contract, features: [...contract.features, 'custom-inference-endpoint'], routeModelEvidence: [
+        { route: 'openrouter-responses', model: 'cohere/north-mini-code:free', harnessVersion: '0.162.1', observedAt: '2026-10-11', upstream: 'unknown', outcomes: { interactive: 'pass' as const, shell: 'pass' as const, jobs: 'pass' as const, 'task-receipt': 'fail' as const, 'task-cancel': 'fail' as const }, evidenceUrl: 'https://linear.app/matty-v/issue/MAT-115' },
+        { route: 'openrouter-responses', model: 'openai/gpt-4.1-mini', harnessVersion: '0.162.1', observedAt: '2026-10-11', upstream: 'unknown', outcomes: { interactive: 'pass' as const, shell: 'untested' as const, jobs: 'untested' as const, 'task-receipt': 'pass' as const, 'task-cancel': 'pass' as const }, evidenceUrl: 'https://linear.app/matty-v/issue/MAT-115' },
+      ] }
       : contract),
     {
       id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',

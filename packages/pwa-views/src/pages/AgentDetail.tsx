@@ -1,5 +1,5 @@
 import { agentAuth, agentContract, authorizationUrl, supportsModelSelection } from '../lib/runtime-contract'
-import { isOpenRouterInference } from '../lib/openrouter-inference'
+import { codexOpenRouterEvidence, isOpenRouterInference, validCodexOpenRouterModel } from '../lib/openrouter-inference'
 import { useEffect, useState } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
@@ -576,7 +576,8 @@ export function AgentDetail() {
   const [profileAlias, setProfileAlias] = useState('')
   const [profileDescription, setProfileDescription] = useState('')
   const canSelectModel = agent ? supportsModelSelection(agentContract(agent)) : false
-  const agentModels = useAgentModels(name, pending === 'set-model' && canSelectModel)
+  const endpointModel = Boolean(agent?.inference)
+  const agentModels = useAgentModels(name, pending === 'set-model' && canSelectModel && !endpointModel)
 
   useEffect(() => {
     if (pending === 'set-model' && !newModel && agentModels.data?.models[0]) {
@@ -1070,6 +1071,7 @@ export function AgentDetail() {
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
+                    {directOpenRouter && <p role="alert" className="mt-3 text-xs text-warning">{codexOpenRouterEvidence(agentContract(agent), agent.inference?.model || agent.currentModel || agent.model)}</p>}
                     {agent.runtime === 'hermes' && !agent.inference && agentAuth(agent)?.inputField === 'openrouterApiKey' && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Uses this agent’s OpenRouter API key. OpenRouter bills model requests separately from Claude and ChatGPT subscriptions; Kyber’s cost figures are estimates, not the provider invoice. The upstream model provider may vary by route and is not reported here. Manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                     {directOpenRouter && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Codex uses this agent’s OpenRouter endpoint credential. OpenRouter bills API requests separately from ChatGPT subscriptions and may route them to an upstream provider Kyber does not identify. Any Kyber cost shown is an estimate, not the OpenRouter invoice; check OpenRouter activity for actual charges and manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                   </Card>
@@ -1120,13 +1122,17 @@ export function AgentDetail() {
               const models = agentModels.data?.models ?? []
               return (
                 <>
-                  {agentModels.isLoading && <p className="mb-3 text-sm text-text-muted">Loading models from the authenticated agent…</p>}
-                  {agentModels.isError && (
+                  {!endpointModel && agentModels.isLoading && <p className="mb-3 text-sm text-text-muted">Loading models from the authenticated agent…</p>}
+                  {!endpointModel && agentModels.isError && (
                     <p className="mb-3 text-sm text-warning">
                       No authenticated model catalog is available yet. Finish authentication and wait a few seconds, then reopen this dialog.
                     </p>
                   )}
-                  <select
+                  {endpointModel ? <>
+                    <label htmlFor="agent-new-endpoint-model" className="mb-2 block text-sm text-text-muted">Endpoint model ID</label>
+                    <input id="agent-new-endpoint-model" value={newModel} onChange={e => setNewModel(e.target.value)} className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none" />
+                    {directOpenRouter && <p role="alert" className="mt-2 text-xs text-warning">{codexOpenRouterEvidence(agentContract(agent), newModel)}</p>}
+                  </> : <select
                     value={newModel}
                     onChange={(e) => setNewModel(e.target.value)}
                     className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none"
@@ -1144,7 +1150,7 @@ export function AgentDetail() {
                         </option>
                       )
                     })}
-                  </select>
+                  </select>}
                 </>
               )
             })()}
@@ -1157,7 +1163,7 @@ export function AgentDetail() {
                 size="sm"
                 onClick={() => void executeAction()}
                 loading={isActing}
-                disabled={!newModel}
+                disabled={!newModel.trim() || (directOpenRouter && !validCodexOpenRouterModel(newModel))}
               >
                 Apply
               </Button>

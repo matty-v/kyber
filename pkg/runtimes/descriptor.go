@@ -43,20 +43,23 @@ var runtimeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,63}$`)
 // Descriptor is trusted, code-owned integration metadata. It declares support,
 // not observed readiness or provider availability. No credentials belong here.
 type Descriptor struct {
-	ID                 string     `json:"id"`
-	Name               string     `json:"name"`
-	ContractVersion    string     `json:"contractVersion"`
-	Profile            string     `json:"profile"`
-	AuthModes          []AuthMode `json:"authModes"`
-	Features           []Feature  `json:"features"`
-	Cancellation       string     `json:"cancellation"`
-	ModelPrefix        string     `json:"-"`
-	LegacyCatalogKey   string     `json:"legacyCatalogKey,omitempty"`
-	LegacyVersionsKey  string     `json:"legacyVersionsKey,omitempty"`
-	LegacyDefaultsKey  string     `json:"-"`
-	HelmKey            string     `json:"-"`
-	TranscriptPath     string     `json:"-"` // relative to persisted HOME
-	TranscriptExchange string     `json:"-"` // trusted jq expression yielding one exchange
+	ID              string     `json:"id"`
+	Name            string     `json:"name"`
+	ContractVersion string     `json:"contractVersion"`
+	Profile         string     `json:"profile"`
+	AuthModes       []AuthMode `json:"authModes"`
+	Features        []Feature  `json:"features"`
+	Cancellation    string     `json:"cancellation"`
+	// RouteModelEvidence records bounded live observations, not a promise that
+	// an external route will keep choosing the same upstream provider.
+	RouteModelEvidence []RouteModelEvidence `json:"routeModelEvidence,omitempty"`
+	ModelPrefix        string               `json:"-"`
+	LegacyCatalogKey   string               `json:"legacyCatalogKey,omitempty"`
+	LegacyVersionsKey  string               `json:"legacyVersionsKey,omitempty"`
+	LegacyDefaultsKey  string               `json:"-"`
+	HelmKey            string               `json:"-"`
+	TranscriptPath     string               `json:"-"` // relative to persisted HOME
+	TranscriptExchange string               `json:"-"` // trusted jq expression yielding one exchange
 	// LoginFiles are the harness's own login files, relative to the persisted
 	// HOME; an entry ending in "/" covers a whole directory. A disk restore
 	// never copies them, so a restored agent cannot act on its source's login.
@@ -65,6 +68,16 @@ type Descriptor struct {
 	AuthFailureExitCode           int32    `json:"-"`
 	AuthServiceFailureExitCode    int32    `json:"-"`
 	CredentialSyncFailureExitCode int32    `json:"-"`
+}
+
+type RouteModelEvidence struct {
+	Route          string            `json:"route"`
+	Model          string            `json:"model"`
+	HarnessVersion string            `json:"harnessVersion"`
+	ObservedAt     string            `json:"observedAt"`
+	Upstream       string            `json:"upstream"` // "unknown" unless observed in the local trace
+	Outcomes       map[string]string `json:"outcomes"` // pass, fail, or untested per workflow
+	EvidenceURL    string            `json:"evidenceUrl"`
 }
 type AuthMode struct {
 	ID                  kyberv1.AgentAuthType `json:"id"`
@@ -189,6 +202,14 @@ func Describe(id string) (Descriptor, bool) {
 		d.AuthModes[i].Channels = append([]string(nil), m.Channels...)
 	}
 	d.Features = append([]Feature{}, d.Features...)
+	d.RouteModelEvidence = append([]RouteModelEvidence(nil), d.RouteModelEvidence...)
+	for i := range d.RouteModelEvidence {
+		outcomes := make(map[string]string, len(d.RouteModelEvidence[i].Outcomes))
+		for workflow, outcome := range d.RouteModelEvidence[i].Outcomes {
+			outcomes[workflow] = outcome
+		}
+		d.RouteModelEvidence[i].Outcomes = outcomes
+	}
 	return d, true
 }
 

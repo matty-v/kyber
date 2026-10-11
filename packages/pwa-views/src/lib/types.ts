@@ -1467,6 +1467,16 @@ export interface RuntimeDescriptor {
   profile: string
   cancellation: string
   features: string[]
+  /** Bounded route/model observations; absence means unverified. */
+  routeModelEvidence?: Array<{
+    route: string
+    model: string
+    harnessVersion: string
+    observedAt: string
+    upstream: string
+    outcomes: Record<string, 'pass' | 'fail' | 'untested'>
+    evidenceUrl: string
+  }>
   authModes: Array<{ id: AgentAuthType; name: string; flow: string; authorizationUrl?: string
     authorizationParams?: Record<string,string>
     inputField?: string; reauthorizePath?: string; channels?: Array<'telegram' | 'discord' | 'slack'> }>

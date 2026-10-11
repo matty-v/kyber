@@ -177,6 +177,14 @@ not upstream completion, simulated Kubernetes objects are not storage-provider
 evidence, and repair fixtures are not a live package-registry qualification.
 Use the linked staging runbook for those boundaries.
 
+The `routeModelEvidence` entries on a runtime descriptor are dated observations
+for one route, model, and harness version. Each workflow outcome is reported
+separately; `untested` stays untested. An OpenRouter model ID and configured
+endpoint do not identify which upstream served a request. Unknown or changing
+upstream routing prevents these observations from becoming a blanket provider
+qualification. The PWA warns on unlisted models and shows the bounded evidence
+on create, model change, and agent detail.
+
 Capability observations belong to one pod UID. A replacement pod must publish
 new evidence before hook-dependent operations resume. An attempt lost between
 delivery and receipt is terminal `delivery_unknown` after its ambiguity lease

@@ -1,5 +1,10 @@
 # @matty-v/kyber-pwa-views
 
+## 0.63.3
+
+- Show versioned Codex/OpenRouter model observations and warnings in agent creation, review, settings, and model change. Unlisted models remain explicitly unverified; upstream routing is not inferred.
+- Let operators enter an endpoint model ID in the model-change dialog, since custom endpoints do not publish the built-in Codex catalog.
+
 ## 0.63.2
 
 - Offer Codex's direct OpenRouter Responses route explicitly during agent creation, with a fixed endpoint, required model ID, per-agent key, and billing and provider disclosure.
