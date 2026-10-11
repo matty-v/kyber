@@ -445,6 +445,10 @@ Usage route revisions live in `agent_usage_routes`: a random UUID is exposed,
 while only an internal fingerprint of the configured endpoint is retained.
 Ingest rejects a route ID belonging to another Agent UID. A configured route
 or Hermes provider label never proves the upstream inference provider.
+`pkg/tokenreport/claude_usage_collector.go` scans complete finalized Claude
+records with a cursor saved on the Agent PVC. It skips pre-cutover transcript
+history and records a gap when a route changes or a file truncates. The
+collector remains inactive until its sidecar sink and internal API are wired.
 
 ---
 

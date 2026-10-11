@@ -148,7 +148,7 @@ func (g Gap) Validate() error {
 		return ErrInvalid
 	}
 	switch g.Reason {
-	case "malformed", "missing_identity", "missing_time", "truncated", "unsupported_version", "cursor_gap":
+	case "malformed", "missing_identity", "missing_time", "truncated", "unsupported_version", "cursor_gap", "route_changed":
 		return nil
 	default:
 		return ErrInvalid
