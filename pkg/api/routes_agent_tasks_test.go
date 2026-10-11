@@ -239,6 +239,81 @@ func TestAgentTaskCancelQueuedAndReplay(t *testing.T) {
 	}
 }
 
+func TestAgentTaskCancelAppliedIsMutationOnly(t *testing.T) {
+	h, store := buildTaskHarness(t, true)
+	created := taskRequest(t, h, http.MethodPost, "/api/v1/agents/kiosk/tasks", requestWriteKey, map[string]string{"prompt": "work"}, "create-active-cancel")
+	if created.Code != http.StatusAccepted {
+		t.Fatal(created.Body.String())
+	}
+	var task struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(created.Body.Bytes(), &task); err != nil {
+		t.Fatal(err)
+	}
+	agent := taskstore.AgentRef{Namespace: "kyber-system", Name: "kiosk"}
+	if err := store.MarkDispatched(t.Context(), agent, task.ID, 1); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/v1/agents/kiosk/tasks/" + task.ID
+	canceled := taskRequest(t, h, http.MethodPost, base+"/cancel", requestWriteKey, map[string]string{}, "cancel-active")
+	if canceled.Code != http.StatusOK {
+		t.Fatal(canceled.Body.String())
+	}
+	var mutation map[string]any
+	if err := json.Unmarshal(canceled.Body.Bytes(), &mutation); err != nil {
+		t.Fatal(err)
+	}
+	if mutation["cancel"].(map[string]any)["applied"] != true {
+		t.Fatalf("cancel mutation=%v", mutation["cancel"])
+	}
+	pending := taskRequest(t, h, http.MethodGet, base, requestWriteKey, nil, "")
+	if pending.Code != http.StatusOK {
+		t.Fatal(pending.Body.String())
+	}
+	var pendingTask map[string]any
+	if err := json.Unmarshal(pending.Body.Bytes(), &pendingTask); err != nil {
+		t.Fatal(err)
+	}
+	if _, present := pendingTask["cancel"].(map[string]any)["applied"]; present || pendingTask["state"] != "canceling" {
+		t.Fatalf("pending read includes mutation result or wrong state: %v", pendingTask)
+	}
+	if _, _, err := store.AcknowledgeCancel(t.Context(), agent, task.ID, "attempt_11111111111111111111111111111111", "ack_22222222222222222222222222222222", "stopped"); err != nil {
+		t.Fatal(err)
+	}
+	for _, target := range []string{base, "/api/v1/agents/kiosk/tasks"} {
+		read := taskRequest(t, h, http.MethodGet, target, requestWriteKey, nil, "")
+		if read.Code != http.StatusOK {
+			t.Fatalf("GET %s: %s", target, read.Body.String())
+		}
+		var result map[string]any
+		if err := json.Unmarshal(read.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if target != base {
+			result = result["tasks"].([]any)[0].(map[string]any)
+		}
+		cancel := result["cancel"].(map[string]any)
+		if _, present := cancel["applied"]; present {
+			t.Fatalf("GET %s includes mutation-only applied: %v", target, cancel)
+		}
+		if result["state"] != "canceled" || cancel["status"] != "acknowledged" || cancel["ackSource"] != "agent" {
+			t.Fatalf("GET %s outcome=%v", target, result)
+		}
+	}
+	repeated := taskRequest(t, h, http.MethodPost, base+"/cancel", requestWriteKey, map[string]string{}, "cancel-after-ack")
+	if repeated.Code != http.StatusOK {
+		t.Fatal(repeated.Body.String())
+	}
+	var repeat map[string]any
+	if err := json.Unmarshal(repeated.Body.Bytes(), &repeat); err != nil {
+		t.Fatal(err)
+	}
+	if repeat["cancel"].(map[string]any)["applied"] != false {
+		t.Fatalf("repeat cancel=%v", repeat["cancel"])
+	}
+}
+
 func TestAgentTaskFileDownloadIsAuthorizedAndRanged(t *testing.T) {
 	store, err := taskstore.NewMemoryStore(taskstore.DefaultLimits())
 	if err != nil {

@@ -68,7 +68,9 @@ type agentTaskCancelResponse struct {
 	AckSource      string     `json:"ackSource,omitempty"`
 	Status         string     `json:"status"`
 	Scope          string     `json:"scope"`
-	Applied        bool       `json:"applied"`
+	// Applied describes this cancel mutation, not persisted task state. Reads
+	// omit it; state/status/ackSource describe the lasting outcome.
+	Applied *bool `json:"applied,omitempty"`
 }
 
 type agentTaskResultResponse struct {
@@ -282,7 +284,7 @@ func (s *Server) cancelAgentTask(w http.ResponseWriter, r *http.Request, agentNa
 	)
 	out := taskResponse(result.Task, true)
 	if out.Cancel != nil {
-		out.Cancel.Applied = result.Applied
+		out.Cancel.Applied = &result.Applied
 	}
 	writeJSON(w, http.StatusOK, out)
 }
