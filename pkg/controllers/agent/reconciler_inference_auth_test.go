@@ -283,6 +283,7 @@ func TestNeedsAuthEndpointSecret_PollsForRotation(t *testing.T) {
 	agent.Spec.Runtime = "codex"
 	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	agent.Spec.Inference = &kyberv1.AgentInference{
+		BaseURL: "https://example.com/v1", API: "openai",
 		Credential: kyberv1.AgentInferenceCredentialRef{ExistingSecret: secret.Name, Key: "token"},
 	}
 	if err := k8s.Create(ctx, agent); err != nil {
