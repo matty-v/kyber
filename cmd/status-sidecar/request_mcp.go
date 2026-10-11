@@ -454,13 +454,13 @@ func (s *requestMCPServer) getTaskControl(ctx context.Context, taskID, attemptID
 }
 
 func (s *requestMCPServer) ackTaskCancel(ctx context.Context, taskID, attemptID, acknowledgmentID, note string) requestToolResult {
-	if !taskReplyIDPattern.MatchString(strings.TrimSpace(taskID)) {
+	if !taskReplyIDPattern.MatchString(taskID) {
 		return requestToolError("task_id is required and must match task_ followed by 32 lowercase hexadecimal digits; use the current task envelope's task_id")
 	}
-	if !taskAttemptIDPattern.MatchString(strings.TrimSpace(attemptID)) {
+	if !taskAttemptIDPattern.MatchString(attemptID) {
 		return requestToolError("attempt_id is required and must match attempt_ followed by 32 lowercase hexadecimal digits; use the current task envelope's attempt_id")
 	}
-	if !taskCancelAckIDPattern.MatchString(strings.TrimSpace(acknowledgmentID)) {
+	if !taskCancelAckIDPattern.MatchString(acknowledgmentID) {
 		return requestToolError("acknowledgment_id is required; generate a fresh ack_ followed by 32 lowercase hexadecimal digits, not the attempt_id")
 	}
 	if len([]byte(note)) > taskstore.HardMaxCancelReasonBytes {
