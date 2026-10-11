@@ -65,3 +65,14 @@ uses a prior task's marker. It cannot prove semantic quality or upstream
 identity. A pass applies only to the recorded model, Codex version, route and
 date; requalify after a harness or route change. Do not silently translate a
 pass into provider-wide support while upstream selection is unknown.
+
+## Missed receipt behavior
+
+Kyber already records an attempt that may have reached the runtime as terminal
+`delivery_unknown` when its receipt lease expires. The task API and terminal
+event expose that failure code. Automatically retrying that ambiguous attempt
+could execute the same user request twice, so qualification does not introduce
+a retry. A caller should show `delivery_unknown` as a delivery uncertainty and
+let the user decide whether to submit a new task. This is separate from a
+runtime accepting delivery but the model failing to call `complete`; the fixture catches
+that with a missing completion and nonterminal task state.
