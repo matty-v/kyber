@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -19,6 +20,48 @@ type RouteRevision struct {
 	Runtime     string
 	Kind        string
 	EndpointURL string
+}
+
+// RouteRevisionFor classifies trusted Agent spec metadata. It does not read
+// credentials and treats an endpoint as a route, never as proof of the
+// inference provider ultimately selected by a gateway.
+func RouteRevisionFor(runtime, authType, endpointURL string) (RouteRevision, error) {
+	r := RouteRevision{}
+	switch runtime {
+	case "claude-code":
+		r.Runtime = "claude"
+	case "codex":
+		r.Runtime = "codex"
+	case "hermes":
+		r.Runtime = "hermes"
+	default:
+		return r, ErrInvalid
+	}
+	if endpointURL != "" {
+		r.Kind = "custom"
+		r.EndpointURL = endpointURL
+		u, err := url.Parse(endpointURL)
+		if err == nil && u.Scheme == "https" && strings.EqualFold(u.Hostname(), "openrouter.ai") &&
+			(u.Port() == "" || u.Port() == "443") && strings.TrimSuffix(u.Path, "/") == "/api/v1" && u.User == nil && u.RawQuery == "" && u.Fragment == "" {
+			r.Kind = "openrouter"
+		}
+	} else if r.Runtime == "hermes" {
+		r.Kind = "openrouter"
+		r.EndpointURL = "https://openrouter.ai/api/v1"
+	} else if authType == "api-key" {
+		r.Kind = "direct-api"
+	} else {
+		r.Kind = "native"
+	}
+	return r, r.Validate()
+}
+
+func (r RouteRevision) FingerprintHex() (string, error) {
+	if err := r.Validate(); err != nil {
+		return "", err
+	}
+	fingerprint := sha256.Sum256([]byte(r.Runtime + "\x00" + r.Kind + "\x00" + r.EndpointURL))
+	return hex.EncodeToString(fingerprint[:]), nil
 }
 
 func (r RouteRevision) Validate() error {
