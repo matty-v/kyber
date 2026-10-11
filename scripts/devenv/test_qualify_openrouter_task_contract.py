@@ -64,6 +64,12 @@ class QualificationEvidenceTest(unittest.TestCase):
         self.assertTrue(any("misbound" in error for error in errors))
         self.assertTrue(any("also emitted completion" in error for error in errors))
 
+    def test_malformed_evidence_is_reported_without_crashing(self):
+        evidence = fixture()
+        evidence["tasks"][0]["marker"] = None
+        evidence["tasks"][1]["completion"]["response"] = 42
+        self.assertTrue(qualification.check(evidence))
+
 
 if __name__ == "__main__":
     unittest.main()

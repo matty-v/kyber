@@ -20,12 +20,15 @@ ACK = re.compile(r"^ack_[a-f0-9]{32}$")
 def check(evidence):
     errors = []
     tasks = evidence.get("tasks", [])
-    if len(tasks) != 3:
+    if not isinstance(tasks, list) or len(tasks) != 3:
         return ["expected exactly two completion tasks and one cancellation task"]
     seen = set()
     markers = []
     for index, task in enumerate(tasks):
         label = f"task {index + 1}"
+        if not isinstance(task, dict):
+            errors.append(f"{label}: expected an object")
+            continue
         task_id, attempt, marker = (task.get(key, "") for key in ("taskId", "attemptId", "marker"))
         if not isinstance(task_id, str) or not ID.fullmatch(task_id) or not isinstance(attempt, str) or not ATTEMPT.fullmatch(attempt):
             errors.append(f"{label}: invalid task or attempt ID")
@@ -35,16 +38,21 @@ def check(evidence):
         if not isinstance(marker, str) or not marker or marker in markers:
             errors.append(f"{label}: marker must be unique and nonempty")
         prior_markers = markers.copy()
-        markers.append(marker)
+        if isinstance(marker, str) and marker:
+            markers.append(marker)
         receipt = task.get("receipt") or {}
+        if not isinstance(receipt, dict):
+            receipt = {}
         if receipt.get("taskId") != task_id or receipt.get("attemptId") != attempt:
             errors.append(f"{label}: receipt is missing or bound to a different task/attempt")
         if index < 2:
             completion = task.get("completion") or {}
+            if not isinstance(completion, dict):
+                completion = {}
             response = completion.get("response", "")
             if completion.get("taskId") != task_id or completion.get("attemptId") != attempt:
                 errors.append(f"{label}: completion is missing or bound to a different task/attempt")
-            if not isinstance(response, str) or marker not in response:
+            if not isinstance(marker, str) or not isinstance(response, str) or marker not in response:
                 errors.append(f"{label}: completion omitted its own marker")
             if isinstance(response, str) and any(previous in response for previous in prior_markers):
                 errors.append(f"{label}: completion copied a previous task marker")
@@ -52,6 +60,8 @@ def check(evidence):
                 errors.append(f"{label}: final state is not completed")
         else:
             ack = task.get("cancelAck") or {}
+            if not isinstance(ack, dict):
+                ack = {}
             if ack.get("taskId") != task_id or ack.get("attemptId") != attempt:
                 errors.append(f"{label}: cancellation acknowledgment is missing or misbound")
             ack_id = ack.get("acknowledgmentId")

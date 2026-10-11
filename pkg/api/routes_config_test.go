@@ -42,6 +42,28 @@ func TestHandleConfig_ReturnsProvider(t *testing.T) {
 	}
 }
 
+func TestHandleConfig_ReturnsBoundedCodexOpenRouterEvidence(t *testing.T) {
+	s := &Server{ComputeProvider: "mock", ValidRuntimes: map[string]bool{"codex": true}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+	rr := httptest.NewRecorder()
+	s.handleConfig(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	var got ConfigResponse
+	if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Runtimes) != 1 || got.Runtimes[0].ID != "codex" || len(got.Runtimes[0].RouteModelEvidence) != 2 {
+		t.Fatalf("Codex evidence missing from config: %+v", got.Runtimes)
+	}
+	for _, evidence := range got.Runtimes[0].RouteModelEvidence {
+		if evidence.Upstream != "unknown" || evidence.HarnessVersion != "0.162.1" {
+			t.Fatalf("config overstates route evidence: %+v", evidence)
+		}
+	}
+}
+
 func TestHandleConfig_ReturnsSchedulerDemandCapability(t *testing.T) {
 	s := &Server{
 		ComputeProvider:  "fake",
