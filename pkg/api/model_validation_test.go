@@ -213,7 +213,7 @@ func TestSetModel_OpenRouterRouteUsesEndpointModelRules(t *testing.T) {
 		want  int
 	}{
 		{"gpt-5", http.StatusBadRequest},
-		{"cohere/north-mini-code:free", http.StatusOK},
+		{"qwen/qwen3-coder", http.StatusOK},
 	} {
 		body := fmt.Sprintf(`{"model":%q}`, tc.model)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model", bytes.NewBufferString(body))
@@ -222,6 +222,12 @@ func TestSetModel_OpenRouterRouteUsesEndpointModelRules(t *testing.T) {
 		if rr.Code != tc.want {
 			t.Errorf("model %q: status = %d, want %d; body=%s", tc.model, rr.Code, tc.want, rr.Body.String())
 		}
+	}
+	if err := s.K8sClient.Get(context.Background(), key, agent); err != nil {
+		t.Fatal(err)
+	}
+	if agent.Spec.Model != "qwen/qwen3-coder" || agent.Spec.Inference.Model != "qwen/qwen3-coder" {
+		t.Fatalf("model change did not update both fields: model=%q inference.model=%q", agent.Spec.Model, agent.Spec.Inference.Model)
 	}
 }
 
