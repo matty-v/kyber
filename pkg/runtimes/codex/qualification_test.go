@@ -13,7 +13,7 @@ func TestOpenRouterEvidenceDoesNotClaimUnobservedWorkflow(t *testing.T) {
 		}
 		switch e.Model {
 		case "openai/gpt-4.1-mini":
-			if e.Outcomes["task-receipt"] != "pass" || e.Outcomes["task-cancel"] != "pass" || e.Outcomes["shell"] != "untested" || e.Outcomes["jobs"] != "untested" {
+			if e.Outcomes["task-receipt"] != "pass" || e.Outcomes["task-cancel"] != "fail" || e.Outcomes["shell"] != "untested" || e.Outcomes["jobs"] != "untested" {
 				t.Fatalf("GPT pilot overclaims workflow coverage: %+v", e.Outcomes)
 			}
 		case "cohere/north-mini-code:free":

@@ -1,0 +1,57 @@
+{
+  "date": "2026-10-11",
+  "environment": "datawire-dev/kyber-dev",
+  "mainSha": "c48c8d7caa9e707925c37fe18f1dc1ed51320c88",
+  "codexVersion": "0.162.1",
+  "codexImageDigest": "sha256:3b2a5d14a342a6f4d4f4908046a579e874da43c6413bf1fb836b1f69a2c973c4",
+  "route": "https://openrouter.ai/api/v1",
+  "model": "openai/gpt-4.1-mini",
+  "upstream": "unknown",
+  "tasks": [
+    {
+      "taskId": "task_11111111111111111111111111111111",
+      "attemptId": "attempt_11111111111111111111111111111111",
+      "marker": "UNIQUE-RESPONSE-1",
+      "receipt": {
+        "taskId": "task_11111111111111111111111111111111",
+        "attemptId": "attempt_11111111111111111111111111111111"
+      },
+      "completion": {
+        "taskId": "task_11111111111111111111111111111111",
+        "attemptId": "attempt_11111111111111111111111111111111",
+        "response": "UNIQUE-RESPONSE-1"
+      },
+      "state": "completed"
+    },
+    {
+      "taskId": "task_22222222222222222222222222222222",
+      "attemptId": "attempt_22222222222222222222222222222222",
+      "marker": "UNIQUE-RESPONSE-2",
+      "receipt": {
+        "taskId": "task_22222222222222222222222222222222",
+        "attemptId": "attempt_22222222222222222222222222222222"
+      },
+      "completion": {
+        "taskId": "task_22222222222222222222222222222222",
+        "attemptId": "attempt_22222222222222222222222222222222",
+        "response": "UNIQUE-RESPONSE-2"
+      },
+      "state": "completed"
+    },
+    {
+      "taskId": "task_33333333333333333333333333333333",
+      "attemptId": "attempt_33333333333333333333333333333333",
+      "marker": "UNIQUE-RESPONSE-3",
+      "receipt": {
+        "taskId": "task_33333333333333333333333333333333",
+        "attemptId": "attempt_33333333333333333333333333333333"
+      },
+      "state": "failed",
+      "failureCode": "cancel_unconfirmed",
+      "ackSource": "",
+      "cancelRequestedAt": "2026-10-11T16:14:17.648764Z",
+      "cancelDeadlineAt": "2026-10-11T16:19:17.648764Z"
+    }
+  ],
+  "idsRedacted": true
+}

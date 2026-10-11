@@ -23,7 +23,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 		// MAT-115: one-off dev observations are evidence, not route-wide
 		// qualification. OpenRouter's selected upstream was not observable.
 		RouteModelEvidence: []runtimes.RouteModelEvidence{
-			{Route: "openrouter-responses", Model: "openai/gpt-4.1-mini", HarnessVersion: "0.162.1", ObservedAt: "2026-10-11", Upstream: "unknown", EvidenceURL: "https://linear.app/matty-v/issue/MAT-115/featruntime-qualify-codex-openrouter-models-for-kyber-task-contracts", Outcomes: map[string]string{"interactive": "pass", "shell": "untested", "jobs": "untested", "task-receipt": "pass", "task-cancel": "pass"}},
+			{Route: "openrouter-responses", Model: "openai/gpt-4.1-mini", HarnessVersion: "0.162.1", ObservedAt: "2026-10-11", Upstream: "unknown", EvidenceURL: "https://linear.app/matty-v/issue/MAT-115/featruntime-qualify-codex-openrouter-models-for-kyber-task-contracts", Outcomes: map[string]string{"interactive": "pass", "shell": "untested", "jobs": "untested", "task-receipt": "pass", "task-cancel": "fail"}},
 			{Route: "openrouter-responses", Model: "cohere/north-mini-code:free", HarnessVersion: "0.162.1", ObservedAt: "2026-10-11", Upstream: "unknown", EvidenceURL: "https://linear.app/matty-v/issue/MAT-115/featruntime-qualify-codex-openrouter-models-for-kyber-task-contracts", Outcomes: map[string]string{"interactive": "pass", "shell": "pass", "jobs": "pass", "task-receipt": "fail", "task-cancel": "fail"}},
 		},
 		TranscriptPath:     ".codex/sessions",
