@@ -31,6 +31,7 @@ import (
 	"github.com/matty-v/kyber/pkg/githubapp"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	"github.com/matty-v/kyber/pkg/usagestore"
 )
 
 // envtestBinPath resolves the envtest binary path from the KUBEBUILDER_ASSETS env var
@@ -210,12 +211,34 @@ func TestReconciler_StampsObservedGenerationOnPodCreate(t *testing.T) {
 	}
 
 	agent := newTestAgent("dave", "test-stamping")
+	agent.Spec.Runtime = "claude-code"
 	if err := k8sClient.Create(context.Background(), agent); err != nil {
 		t.Fatalf("creating agent: %v", err)
 	}
 
 	req := ctrl.Request{NamespacedName: types.NamespacedName{Name: "dave", Namespace: "test-stamping"}}
 	reconcileN(t, r, req, 1)
+	pod := &corev1.Pod{}
+	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: AgentPodName(agent.Name), Namespace: ns.Name}, pod); err != nil {
+		t.Fatalf("reading reconciled pod: %v", err)
+	}
+	configuredRoute, err := usagestore.RouteRevisionFor(agent.Spec.Runtime, string(agent.Spec.Secrets.AuthType), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantRouteStamp, err := configuredRoute.FingerprintHex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var routeStamp string
+	for _, env := range pod.Spec.Containers[0].Env {
+		if env.Name == "KYBER_USAGE_ROUTE_FINGERPRINT" {
+			routeStamp = env.Value
+		}
+	}
+	if routeStamp != wantRouteStamp {
+		t.Fatalf("reconciled pod route stamp=%q want=%q", routeStamp, wantRouteStamp)
+	}
 
 	updated := getAgent(t, k8sClient, types.NamespacedName{Name: "dave", Namespace: "test-stamping"})
 	if updated.Generation == 0 {

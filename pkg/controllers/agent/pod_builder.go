@@ -404,22 +404,27 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	// pair switched to the sidecar in kyber#257, but start-claude.sh's
 	// boot-time push runs before the sidecar is reachable and still POSTs
 	// directly to the control plane — that migration is a follow-up.
-	endpointURL := ""
-	if agent.Spec.Inference != nil {
-		endpointURL = agent.Spec.Inference.BaseURL
-	}
-	route, err := usagestore.RouteRevisionFor(agent.Spec.Runtime, string(agent.Spec.Secrets.AuthType), endpointURL)
-	if err != nil {
-		return corev1.PodSpec{}, fmt.Errorf("classifying agent usage route: %w", err)
-	}
-	routeFingerprint, err := route.FingerprintHex()
-	if err != nil {
-		return corev1.PodSpec{}, fmt.Errorf("fingerprinting agent usage route: %w", err)
+	routeFingerprint := ""
+	// Test and extension adapters can use other runtime names. Only the
+	// three qualified local usage sources receive a route stamp.
+	switch agent.Spec.Runtime {
+	case "claude-code", "codex", "hermes":
+		endpointURL := ""
+		if agent.Spec.Inference != nil {
+			endpointURL = agent.Spec.Inference.BaseURL
+		}
+		route, err := usagestore.RouteRevisionFor(agent.Spec.Runtime, string(agent.Spec.Secrets.AuthType), endpointURL)
+		if err != nil {
+			return corev1.PodSpec{}, fmt.Errorf("classifying agent usage route: %w", err)
+		}
+		routeFingerprint, err = route.FingerprintHex()
+		if err != nil {
+			return corev1.PodSpec{}, fmt.Errorf("fingerprinting agent usage route: %w", err)
+		}
 	}
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
 		{Name: "KYBER_AGENT_GENERATION", Value: strconv.FormatInt(agent.Generation, 10)},
-		{Name: "KYBER_USAGE_ROUTE_FINGERPRINT", Value: routeFingerprint},
 		{Name: "KYBER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
 		// kyber#118: launch scripts read this to decide whether an
@@ -437,6 +442,9 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 		// start is an operator's deliberate choice or an unnoticed regression.
 		{Name: "KYBER_PERSISTENCE_MODE", Value: agentPersistenceMode()},
 		{Name: "KYBER_REQUIRE_USER_NAMESPACE", Value: strconv.FormatBool(agentPodRequiresUserNamespace())},
+	}
+	if routeFingerprint != "" {
+		envVars = append(envVars, corev1.EnvVar{Name: "KYBER_USAGE_ROUTE_FINGERPRINT", Value: routeFingerprint})
 	}
 	// TZ controls the pod-wide timezone — cron daemon, dispatcher logs, and
 	// any process that calls localtime(3). Setting it here is strictly more
