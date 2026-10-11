@@ -157,6 +157,9 @@ jobs:
           python3 scripts/a2a_conformance.py validate
           python3 scripts/a2a_conformance_test.py
 
+      - name: OpenRouter task qualification fixture
+        run: python3 -m unittest discover -s scripts/devenv -p 'test_qualify_openrouter_task_contract.py'
+
       - name: Lint
         if: needs.changes.outputs.go == 'true'
         run: make lint
