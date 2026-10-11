@@ -34,12 +34,26 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_gaps WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, uid)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_routes WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1`, reusedUID)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, reusedUID)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_routes WHERE agent_uid=$1`, reusedUID)
 	})
+	routeID, err := store.ResolveRoute(ctx, uid, usagestore.RouteRevision{Runtime: "claude", Kind: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repeatRouteID, err := store.ResolveRoute(ctx, uid, usagestore.RouteRevision{Runtime: "claude", Kind: "native"})
+	if err != nil || repeatRouteID != routeID {
+		t.Fatalf("stable route=%q/%q err=%v", routeID, repeatRouteID, err)
+	}
+	changedRouteID, err := store.ResolveRoute(ctx, uid, usagestore.RouteRevision{Runtime: "claude", Kind: "direct-api"})
+	if err != nil || changedRouteID == routeID {
+		t.Fatalf("changed route=%q err=%v", changedRouteID, err)
+	}
 	output := int64(10)
 	event := usagestore.Event{AgentUID: uid, Agent: "test", ObservedAt: time.Now().UTC(), Runtime: "claude", SourceFormat: "claude-jsonl", SourceVersion: "1",
-		SourceIdentity: "session-1:msg-1", Coverage: "observed", ConfiguredRoute: "native", RouteID: uuid.NewString(), Model: "claude-test", ModelEvidence: "observed", Output: &output}
+		SourceIdentity: "session-1:msg-1", Coverage: "observed", ConfiguredRoute: "native", RouteID: routeID, Model: "claude-test", ModelEvidence: "observed", Output: &output}
 	first, inserted, err := store.IngestWithCursor(ctx, event, &usagestore.SourceCursor{Namespace: "session-1", Offset: 100})
 	if err != nil || !inserted || first.ID == "" || first.IngestedAt.IsZero() {
 		t.Fatalf("first=%+v inserted=%v err=%v", first, inserted, err)
@@ -110,9 +124,18 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	}
 	reusedName := event
 	reusedName.AgentUID = reusedUID
-	reusedName.RouteID = uuid.NewString()
+	reusedName.RouteID, err = store.ResolveRoute(ctx, reusedUID, usagestore.RouteRevision{Runtime: "claude", Kind: "native"})
+	if err != nil || reusedName.RouteID == routeID {
+		t.Fatalf("reused UID route=%q err=%v", reusedName.RouteID, err)
+	}
 	if _, inserted, err := store.Ingest(ctx, reusedName); err != nil || !inserted {
 		t.Fatalf("reused name/identity inserted=%v err=%v", inserted, err)
+	}
+	wrongRoute := event
+	wrongRoute.SourceIdentity = "session-1:wrong-route"
+	wrongRoute.RouteID = reusedName.RouteID
+	if _, _, err := store.Ingest(ctx, wrongRoute); !errors.Is(err, usagestore.ErrInvalid) {
+		t.Fatalf("cross-Agent route err=%v", err)
 	}
 	duplicateCorrection := correction
 	duplicateCorrection.SourceIdentity = "session-1:correction-2"
