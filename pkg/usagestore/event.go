@@ -123,6 +123,21 @@ type Gap struct {
 	Reason         string    `json:"reason"`
 }
 
+// SourceCursor is the byte offset immediately after an acknowledged complete
+// record in one source namespace. Reporters retain their local PVC cursor and
+// advance it only after IngestWithCursor acknowledges this durable position.
+type SourceCursor struct {
+	Namespace string `json:"namespace"`
+	Offset    int64  `json:"offset"`
+}
+
+func (c SourceCursor) Validate() error {
+	if !safeIdentity.MatchString(c.Namespace) || c.Offset < 0 {
+		return ErrInvalid
+	}
+	return nil
+}
+
 func (g Gap) Validate() error {
 	if g.AgentUID == "" || g.Runtime == "" || g.SourceFormat == "" || g.SourceIdentity == "" || g.DetectedAt.IsZero() ||
 		len(g.AgentUID) > 128 || len(g.Runtime) > 32 || len(g.SourceFormat) > 64 || len(g.SourceIdentity) > 256 {

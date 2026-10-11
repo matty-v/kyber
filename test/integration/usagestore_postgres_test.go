@@ -30,11 +30,12 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1 AND supersedes_id IS NOT NULL`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_gaps WHERE agent_uid=$1`, uid)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, uid)
 	})
 	output := int64(10)
 	event := usagestore.Event{AgentUID: uid, Agent: "test", ObservedAt: time.Now().UTC(), Runtime: "claude", SourceFormat: "claude-jsonl", SourceVersion: "1",
 		SourceIdentity: "session-1:msg-1", Coverage: "observed", ConfiguredRoute: "native", RouteID: uuid.NewString(), Model: "claude-test", ModelEvidence: "observed", Output: &output}
-	first, inserted, err := store.Ingest(ctx, event)
+	first, inserted, err := store.IngestWithCursor(ctx, event, &usagestore.SourceCursor{Namespace: "session-1", Offset: 100})
 	if err != nil || !inserted || first.ID == "" || first.IngestedAt.IsZero() {
 		t.Fatalf("first=%+v inserted=%v err=%v", first, inserted, err)
 	}
@@ -42,9 +43,12 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	if err != nil || beforeCorrection < 1 {
 		t.Fatalf("event snapshot=%d err=%v", beforeCorrection, err)
 	}
-	replayed, inserted, err := store.Ingest(ctx, event)
+	replayed, inserted, err := store.IngestWithCursor(ctx, event, &usagestore.SourceCursor{Namespace: "session-1", Offset: 120})
 	if err != nil || inserted || replayed.ID != first.ID {
 		t.Fatalf("replay=%+v inserted=%v err=%v", replayed, inserted, err)
+	}
+	if offset, err := store.Cursor(ctx, uid, "claude", "session-1"); err != nil || offset != 120 {
+		t.Fatalf("cursor=%d err=%v", offset, err)
 	}
 	var wg sync.WaitGroup
 	results := make(chan struct {
@@ -74,8 +78,11 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	changed := event
 	otherOutput := int64(11)
 	changed.Output = &otherOutput
-	if _, _, err := store.Ingest(ctx, changed); !errors.Is(err, usagestore.ErrConflict) {
+	if _, _, err := store.IngestWithCursor(ctx, changed, &usagestore.SourceCursor{Namespace: "session-1", Offset: 500}); !errors.Is(err, usagestore.ErrConflict) {
 		t.Fatalf("changed replay err=%v", err)
+	}
+	if offset, err := store.Cursor(ctx, uid, "claude", "session-1"); err != nil || offset != 120 {
+		t.Fatalf("conflict advanced cursor=%d err=%v", offset, err)
 	}
 	correction := event
 	correction.SourceIdentity = "session-1:correction-1"
@@ -90,11 +97,22 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 		t.Fatalf("second correction err=%v", err)
 	}
 	gap := usagestore.Gap{AgentUID: uid, Runtime: "claude", SourceFormat: "claude-jsonl", SourceIdentity: "session-1:offset-400", DetectedAt: time.Now().UTC(), Reason: "truncated"}
-	if err := store.RecordGap(ctx, gap); err != nil {
+	if err := store.RecordGapWithCursor(ctx, gap, &usagestore.SourceCursor{Namespace: "session-1", Offset: 600}); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.RecordGap(ctx, gap); err != nil {
+	if err := store.RecordGapWithCursor(ctx, gap, &usagestore.SourceCursor{Namespace: "session-1", Offset: 620}); err != nil {
 		t.Fatalf("repeated gap: %v", err)
+	}
+	if offset, err := store.Cursor(ctx, uid, "claude", "session-1"); err != nil || offset != 620 {
+		t.Fatalf("gap cursor=%d err=%v", offset, err)
+	}
+	changedGap := gap
+	changedGap.Reason = "malformed"
+	if err := store.RecordGapWithCursor(ctx, changedGap, &usagestore.SourceCursor{Namespace: "session-1", Offset: 700}); !errors.Is(err, usagestore.ErrConflict) {
+		t.Fatalf("changed gap err=%v", err)
+	}
+	if offset, err := store.Cursor(ctx, uid, "claude", "session-1"); err != nil || offset != 620 {
+		t.Fatalf("conflicting gap advanced cursor=%d err=%v", offset, err)
 	}
 	afterCorrection, gapHorizon, err := store.Snapshot(ctx)
 	if err != nil || afterCorrection <= beforeCorrection || gapHorizon < 1 {

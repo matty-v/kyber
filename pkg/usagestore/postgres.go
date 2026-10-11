@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -59,7 +60,15 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		UNIQUE(agent_uid,runtime,source_identity)
 	);
 	CREATE INDEX IF NOT EXISTS agent_usage_gaps_agent_time
-		ON agent_usage_gaps(agent_uid,detected_at);`
+		ON agent_usage_gaps(agent_uid,detected_at);
+	CREATE TABLE IF NOT EXISTS agent_usage_cursors (
+		agent_uid TEXT NOT NULL,
+		runtime TEXT NOT NULL,
+		source_namespace TEXT NOT NULL,
+		offset_bytes BIGINT NOT NULL CHECK(offset_bytes >= 0),
+		updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+		PRIMARY KEY(agent_uid,runtime,source_namespace)
+	);`
 	if _, err := s.db.ExecContext(ctx, schema); err != nil {
 		return fmt.Errorf("migrating usage evidence: %w", err)
 	}
@@ -70,8 +79,23 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 // payload returns the original acknowledgment. A different payload under the
 // same identity is a conflict that the caller must surface as a coverage gap.
 func (s *PostgresStore) Ingest(ctx context.Context, input Event) (Event, bool, error) {
+	return s.IngestWithCursor(ctx, input, nil)
+}
+
+// IngestWithCursor acknowledges a source position in the same transaction as
+// the event, including an idempotent retry whose first acknowledgment was
+// lost. A conflicting replay never moves the cursor.
+func (s *PostgresStore) IngestWithCursor(ctx context.Context, input Event, cursor *SourceCursor) (Event, bool, error) {
 	if err := input.Validate(); err != nil {
 		return Event{}, false, err
+	}
+	if cursor != nil {
+		if err := cursor.Validate(); err != nil {
+			return Event{}, false, err
+		}
+		if !strings.HasPrefix(input.SourceIdentity, cursor.Namespace+":") {
+			return Event{}, false, ErrInvalid
+		}
 	}
 	input.ObservedAt = input.ObservedAt.UTC()
 	if input.SupersedesID != "" {
@@ -102,6 +126,9 @@ func (s *PostgresStore) Ingest(ctx context.Context, input Event) (Event, bool, e
 		var existing Event
 		if err := json.Unmarshal(existingRaw, &existing); err != nil {
 			return Event{}, false, fmt.Errorf("decoding existing usage event: %w", err)
+		}
+		if err := advanceCursor(ctx, tx, input.AgentUID, input.Runtime, cursor); err != nil {
+			return Event{}, false, err
 		}
 		if err := tx.Commit(); err != nil {
 			return Event{}, false, fmt.Errorf("committing usage retry: %w", err)
@@ -147,17 +174,65 @@ func (s *PostgresStore) Ingest(ctx context.Context, input Event) (Event, bool, e
 		}
 		return Event{}, false, fmt.Errorf("inserting usage event: %w", err)
 	}
+	if err := advanceCursor(ctx, tx, input.AgentUID, input.Runtime, cursor); err != nil {
+		return Event{}, false, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Event{}, false, fmt.Errorf("committing usage event: %w", err)
 	}
 	return input, true, nil
 }
 
+func advanceCursor(ctx context.Context, tx *sql.Tx, agentUID, runtime string, cursor *SourceCursor) error {
+	if cursor == nil {
+		return nil
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO agent_usage_cursors(agent_uid,runtime,source_namespace,offset_bytes)
+		VALUES($1,$2,$3,$4)
+		ON CONFLICT(agent_uid,runtime,source_namespace) DO UPDATE
+		SET offset_bytes=GREATEST(agent_usage_cursors.offset_bytes,EXCLUDED.offset_bytes),updated_at=clock_timestamp()`,
+		agentUID, runtime, cursor.Namespace, cursor.Offset)
+	if err != nil {
+		return fmt.Errorf("acknowledging usage cursor: %w", err)
+	}
+	return nil
+}
+
+func (s *PostgresStore) Cursor(ctx context.Context, agentUID, runtime, namespace string) (int64, error) {
+	if agentUID == "" || runtime == "" || !safeIdentity.MatchString(namespace) {
+		return 0, ErrInvalid
+	}
+	var offset int64
+	err := s.db.QueryRowContext(ctx, `SELECT offset_bytes FROM agent_usage_cursors WHERE agent_uid=$1 AND runtime=$2 AND source_namespace=$3`,
+		agentUID, runtime, namespace).Scan(&offset)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, fmt.Errorf("reading usage cursor: %w", err)
+	}
+	return offset, nil
+}
+
 // RecordGap is idempotent for one source identity. It records detection, not
 // an inferred number of lost calls.
 func (s *PostgresStore) RecordGap(ctx context.Context, gap Gap) error {
+	return s.RecordGapWithCursor(ctx, gap, nil)
+}
+
+// RecordGapWithCursor durably records a known gap before acknowledging that
+// source offset, so a malformed line cannot trap a reporter in a replay loop.
+func (s *PostgresStore) RecordGapWithCursor(ctx context.Context, gap Gap, cursor *SourceCursor) error {
 	if err := gap.Validate(); err != nil {
 		return err
+	}
+	if cursor != nil {
+		if err := cursor.Validate(); err != nil {
+			return err
+		}
+		if !strings.HasPrefix(gap.SourceIdentity, cursor.Namespace+":") {
+			return ErrInvalid
+		}
 	}
 	gap.DetectedAt = gap.DetectedAt.UTC()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -168,13 +243,33 @@ func (s *PostgresStore) RecordGap(ctx context.Context, gap Gap) error {
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(9101172026)`); err != nil {
 		return fmt.Errorf("locking usage sequence: %w", err)
 	}
+	var existingReason string
+	err = tx.QueryRowContext(ctx, `SELECT reason FROM agent_usage_gaps WHERE agent_uid=$1 AND runtime=$2 AND source_identity=$3`,
+		gap.AgentUID, gap.Runtime, gap.SourceIdentity).Scan(&existingReason)
+	if err == nil {
+		if existingReason != gap.Reason {
+			return ErrConflict
+		}
+		if err := advanceCursor(ctx, tx, gap.AgentUID, gap.Runtime, cursor); err != nil {
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("committing usage gap retry: %w", err)
+		}
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("checking usage gap identity: %w", err)
+	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO agent_usage_gaps
 		(id,agent_uid,runtime,source_format,source_identity,detected_at,reason)
-		VALUES($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT(agent_uid,runtime,source_identity) DO NOTHING`,
+		VALUES($1,$2,$3,$4,$5,$6,$7)`,
 		uuid.NewString(), gap.AgentUID, gap.Runtime, gap.SourceFormat, gap.SourceIdentity, gap.DetectedAt, gap.Reason)
 	if err != nil {
 		return fmt.Errorf("recording usage gap: %w", err)
+	}
+	if err := advanceCursor(ctx, tx, gap.AgentUID, gap.Runtime, cursor); err != nil {
+		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing usage gap: %w", err)
@@ -237,6 +332,9 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, agentUID string) error 
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_gaps WHERE agent_uid=$1`, agentUID); err != nil {
 		return fmt.Errorf("deleting usage gaps: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, agentUID); err != nil {
+		return fmt.Errorf("deleting usage cursors: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing usage deletion: %w", err)
