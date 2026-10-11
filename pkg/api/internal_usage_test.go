@@ -67,12 +67,14 @@ func TestInternalUsage_AuthenticatedLifetimeRouteAndAllowlist(t *testing.T) {
 	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "alice", Namespace: "kyber-system", UID: types.UID(agentUID)},
 		Spec: kyberv1.AgentSpec{Runtime: "claude-code"}}
 	client := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent).Build()
+	readerClient := fake.NewClientBuilder().WithScheme(scheme).WithObjects(agent.DeepCopy()).Build()
 	spy := &usageStoreSpy{}
 	key := make([]byte, 32)
 	for i := range key {
 		key[i] = byte(i)
 	}
 	server := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(client, "kyber-system"),
+		api.WithUsageAgentReader(readerClient),
 		api.WithUsageStore(spy), api.WithInternalAuth(api.NewHMACInternalAuthenticator(key), false))
 	ts := httptest.NewServer(server.Handler())
 	defer ts.Close()
@@ -139,5 +141,15 @@ func TestInternalUsage_AuthenticatedLifetimeRouteAndAllowlist(t *testing.T) {
 		SourceIdentity: cursor.Namespace + ":malformed-120", Reason: "malformed", DetectedAt: time.Now().UTC(), Cursor: cursor}
 	if got := post("/internal/agents/alice/usage-gap", aliceToken, gap); got != http.StatusNoContent || len(spy.gaps) != 1 {
 		t.Fatalf("gap status=%d gaps=%+v", got, spy.gaps)
+	}
+	// The cached client still holds the old Agent lifetime. A direct API
+	// reader seeing a replacement must reject the old pod's next write.
+	replaced := agent.DeepCopy()
+	replaced.UID = types.UID(uuid.NewString())
+	if err := readerClient.Update(context.Background(), replaced); err != nil {
+		t.Fatal(err)
+	}
+	if got := post("/internal/agents/alice/usage-event", aliceToken, request); got != http.StatusConflict {
+		t.Fatalf("stale cache accepted old lifetime: %d", got)
 	}
 }

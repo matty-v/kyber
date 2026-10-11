@@ -744,13 +744,16 @@ func main() {
 	internalOpts := []internalapi.InternalServerOption{
 		internalapi.WithArchiveService(archiveService),
 		internalapi.WithKubeClient(mgr.GetClient(), kyberNamespace),
+		internalapi.WithUsageAgentReader(mgr.GetAPIReader()),
 		internalapi.WithTokenStore(tokenStore),
-		internalapi.WithUsageStore(usageStore),
 		internalapi.WithTokenAccumulator(tokenAccumulator),
 		internalapi.WithMetricsStore(metricsStore),
 		internalapi.WithNodeStore(nodeStore),
 		internalapi.WithStateChangeAccumulator(stateChangeAccum),
 		internalapi.WithSkillStore(skillStore),
+	}
+	if usageStore != nil {
+		internalOpts = append(internalOpts, internalapi.WithUsageStore(usageStore))
 	}
 	if agentRequestStore != nil {
 		internalOpts = append(internalOpts, internalapi.WithRequestStore(agentRequestStore))

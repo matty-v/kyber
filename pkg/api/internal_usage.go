@@ -32,8 +32,12 @@ func (s *InternalServer) usageAgent(w http.ResponseWriter, r *http.Request, name
 		http.Error(w, "durable usage unavailable", http.StatusServiceUnavailable)
 		return nil, usagestore.RouteRevision{}, false
 	}
+	reader := s.usageAgentReader
+	if reader == nil {
+		reader = s.k8sClient
+	}
 	agent := &kyberv1.Agent{}
-	if err := s.k8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: name}, agent); err != nil {
+	if err := reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: name}, agent); err != nil {
 		http.Error(w, "agent unavailable", http.StatusServiceUnavailable)
 		return nil, usagestore.RouteRevision{}, false
 	}
