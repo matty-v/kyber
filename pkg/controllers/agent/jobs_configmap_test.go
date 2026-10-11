@@ -46,8 +46,8 @@ func TestRenderJobsConfigMapData_NoJobs(t *testing.T) {
 	if _, ok := data["crontab"]; !ok {
 		t.Fatal("expected crontab key even with no jobs, got nothing")
 	}
-	if len(data) != 1 {
-		t.Fatalf("expected exactly 1 key (crontab) with no jobs, got %d: %v", len(data), keys(data))
+	if len(data) != 2 || data["revision"] == "" {
+		t.Fatalf("expected crontab and revision with no jobs, got %v", keys(data))
 	}
 	if !strings.Contains(data["crontab"], "SHELL=/bin/bash") {
 		t.Errorf("expected SHELL header in empty crontab, got:\n%s", data["crontab"])
@@ -180,10 +180,14 @@ func TestRenderJobsConfigMapData_StableAcrossCalls(t *testing.T) {
 	first := RenderJobsConfigMapData(agent)
 	for i := 0; i < 5; i++ {
 		got := RenderJobsConfigMapData(agent)
-		if got["crontab"] != first["crontab"] {
+		if got["crontab"] != first["crontab"] || got["revision"] != first["revision"] {
 			t.Fatalf("render %d drifted from first render\nfirst:\n%s\ngot:\n%s",
 				i, first["crontab"], got["crontab"])
 		}
+	}
+	agent.Spec.Jobs[0].Prompt = "changed"
+	if RenderJobsConfigMapData(agent)["revision"] == first["revision"] {
+		t.Fatal("prompt change did not advance atomic projection revision")
 	}
 }
 

@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -52,7 +55,7 @@ func JobsConfigMapLabels(agentName string) map[string]string {
 }
 
 // RenderJobsConfigMapData produces the ConfigMap.Data map for the given
-// agent. The resulting map contains exactly one "crontab" key plus one
+// agent. The resulting map contains "crontab", "revision", and one
 // "prompt-<name>" key per job. When spec.jobs is empty the returned map is
 // still populated with an empty crontab — this keeps the ConfigMap present
 // across transitions (job added then removed) so the pod's volumeMount path
@@ -121,6 +124,9 @@ func RenderJobsConfigMapData(agent *kyberv1.Agent) map[string]string {
 	// no-jobs case as well.
 
 	data["crontab"] = crontab.String()
+	encoded, _ := json.Marshal(data) // A map of strings cannot fail JSON encoding.
+	sum := sha256.Sum256(encoded)
+	data["revision"] = hex.EncodeToString(sum[:])
 	return data
 }
 

@@ -265,14 +265,9 @@ type AgentResponse struct {
 	// Goal is the latest bounded operator-facing description of this agent's
 	// accepted work. Absent when the runtime has not reported goal support.
 	Goal *agentGoalStatusResponse `json:"goal,omitempty"`
-	// Dirty is true when the running pod is on an older spec generation
-	// than the live Agent CR — i.e. an operator edit hasn't yet been
-	// rolled into a new pod. Derived as metadata.generation >
-	// status.observedGeneration; surfaces the kyber#157 PR-A
-	// "restart required" signal without requiring the PWA to know about
-	// generation comparisons. Subresource changes that don't bump
-	// metadata.generation (cron-job ConfigMap edits, Secret rotations)
-	// are NOT covered by V1; tracked as #157 follow-ups.
+	// Dirty is true when the running pod's restart-relevant spec differs
+	// from the Agent CR, or its status sidecar image is out of date.
+	// Hot jobs edits do not require a restart.
 	Dirty bool `json:"dirty,omitempty"`
 	// RuntimeVersionMismatch is true when the agent's installed Claude
 	// Code version differs from what spec.runtimeVersion (or the fleet
@@ -513,17 +508,13 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			RestartCount: a.Status.RestartCount,
 			Message:      a.Status.Message,
 		},
-		// Dirty: spec has advanced beyond what the running pod was built
-		// from, OR the running pod's kyber-status-sidecar is on an older
-		// digest than the controller's current StatusSidecarImage
-		// (kyber#299). Both conditions surface the same operator action:
-		// "restart the pod to pick up the change."
+		// Dirty: pod configuration differs or the running pod's status
+		// sidecar is on an older image digest.
 		//
 		// Generation 0 is the never-reconciled baseline — don't flag
 		// freshly-created agents whose pod hasn't been built yet (the
-		// reconciler stamps ObservedGeneration on first createPod, after
-		// which the comparison is meaningful).
-		Dirty: a.SpecChangedSinceLastPod() ||
+		// reconciler stamps the baseline on first createPod).
+		Dirty: a.PodRestartRequired() ||
 			meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionSidecarOutOfDate),
 		CreatedAt: a.CreationTimestamp.UTC().Format(time.RFC3339),
 	}

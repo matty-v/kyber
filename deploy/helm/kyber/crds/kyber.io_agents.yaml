@@ -1165,6 +1165,12 @@ spec:
                   - startedAt
                   type: object
                 type: array
+              jobsProjectedGeneration:
+                description: |-
+                  JobsProjectedGeneration is the latest Agent generation whose jobs
+                  revision was observed inside the running pod's ConfigMap mount.
+                format: int64
+                type: integer
               lastKernelOOMKillAt:
                 description: |-
                   LastKernelOOMKillAt is the wall-clock timestamp of the most recent
@@ -1197,15 +1203,17 @@ spec:
                 type: string
               observedGeneration:
                 description: |-
-                  ObservedGeneration is the spec.metadata.generation that was last
-                  applied to a running pod. The reconciler stamps this when it
-                  successfully creates or recreates the pod, so spec changes that DO
-                  trigger a roll update it; spec changes that DON'T (resources today,
-                  per kyber#149; runtime/adapter fields where the pod isn't recreated)
-                  leave it lagging. The PWA derives a "restart required" badge from
-                  metadata.generation > status.observedGeneration. See kyber#157.
+                  ObservedGeneration is the spec.metadata.generation last built into a
+                  pod. It remains the one-shot Failed restart claim and a compatibility
+                  fallback until ObservedPodConfigHash is seeded. See kyber#157.
                 format: int64
                 type: integer
+              observedPodConfigHash:
+                description: |-
+                  ObservedPodConfigHash is the restart-relevant Agent spec last built into
+                  a pod. It lets hot-applied edits advance metadata.generation without
+                  making the running pod appear stale.
+                type: string
               phase:
                 description: Phase is the current lifecycle phase of the agent.
                 type: string

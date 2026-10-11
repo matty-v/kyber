@@ -556,6 +556,30 @@ func TestAgents_Get_OmitsDirtyWhenAtRest(t *testing.T) {
 	}
 }
 
+func TestAgents_Get_OmitsDirtyAfterHotJobsSync(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Generation = 5
+	agent.Status.ObservedGeneration = 4
+	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
+	agent.Status.JobsProjectedGeneration = 5
+	agent.Spec.Jobs = []kyberv1.AgentJob{{Name: "check", Schedule: "0 * * * *", Prompt: "check"}}
+
+	h, _ := buildAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodGet, "/api/v1/agents/dave", nil)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+	var wire map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&wire); err != nil {
+		t.Fatal(err)
+	}
+	if dirty, _ := wire["dirty"].(bool); dirty {
+		t.Fatal("synced jobs-only edit should not report dirty")
+	}
+}
+
 // TestAgents_Get_ExposesDirtyWhenSidecarOutOfDate pins kyber#299:
 // when the controller has set Status.Conditions[SidecarOutOfDate] to
 // True (running pod's status-sidecar digest != controller's current

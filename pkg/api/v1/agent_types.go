@@ -1,6 +1,10 @@
 package v1
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
@@ -1123,15 +1127,20 @@ type AgentStatus struct {
 	// +listMapKey=type
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 
-	// ObservedGeneration is the spec.metadata.generation that was last
-	// applied to a running pod. The reconciler stamps this when it
-	// successfully creates or recreates the pod, so spec changes that DO
-	// trigger a roll update it; spec changes that DON'T (resources today,
-	// per kyber#149; runtime/adapter fields where the pod isn't recreated)
-	// leave it lagging. The PWA derives a "restart required" badge from
-	// metadata.generation > status.observedGeneration. See kyber#157.
+	// ObservedGeneration is the spec.metadata.generation last built into a
+	// pod. It remains the one-shot Failed restart claim and a compatibility
+	// fallback until ObservedPodConfigHash is seeded. See kyber#157.
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
+	// ObservedPodConfigHash is the restart-relevant Agent spec last built into
+	// a pod. It lets hot-applied edits advance metadata.generation without
+	// making the running pod appear stale.
+	// +optional
+	ObservedPodConfigHash string `json:"observedPodConfigHash,omitempty"`
+	// JobsProjectedGeneration is the latest Agent generation whose jobs
+	// revision was observed inside the running pod's ConfigMap mount.
+	// +optional
+	JobsProjectedGeneration int64 `json:"jobsProjectedGeneration,omitempty"`
 
 	// LastKernelOOMKillAt is the wall-clock timestamp of the most recent
 	// kernel OOM kill observed inside this agent's pod-level cgroup, as
@@ -1301,25 +1310,62 @@ type Agent struct {
 // spec since the reconciler last rolled it into a pod: metadata.generation is
 // ahead of the status.observedGeneration that createPod stamps.
 //
-// Two callers depend on this predicate and they have to agree, which is why it
-// lives on the type rather than being spelled out in each package. The PWA
-// renders it as the "restart required" badge (kyber#157). The agent reconciler
-// reads it as a one-shot claim on the Failed → Starting edge, where it is the
-// difference between an operator override and an unbounded restart loop.
+// The reconciler reads it as a one-shot claim on the Failed → Starting edge,
+// where it distinguishes an operator override from an unbounded restart loop.
 //
 // Generation 0 is the never-reconciled baseline: an agent whose pod has never
 // been built has nothing to compare against, so it reports false rather than
 // treating generation=1 as an edit.
 //
-// Known looseness: observedGeneration also lags for spec edits that never roll
-// a pod (spec.resources, per kyber#149), so an edit made while the agent was
-// healthy can still read as "changed" the first time it is consulted later.
-// Both callers are fine with that — the badge is meant to over-report, and the
-// reconciler claims the generation before acting, so it is bounded to a single
-// cycle rather than repeating.
+// The user-facing dirty flag uses PodRestartRequired; runtime availability
+// uses PodConfigurationPending so hot edits do not leave capabilities
+// unavailable indefinitely.
 func (a *Agent) SpecChangedSinceLastPod() bool {
 	return a.Status.ObservedGeneration > 0 &&
 		a.Generation > a.Status.ObservedGeneration
+}
+
+// PodConfigHash fingerprints spec fields that need a new pod to take effect.
+// The omitted fields are applied by the API/controller without changing the
+// pod spec; jobs are tracked separately through JobsProjectedGeneration.
+func (a *Agent) PodConfigHash() string {
+	spec := a.Spec
+	spec.Profile = AgentProfile{}
+	spec.DesiredPhase = ""
+	spec.RequestReplyEnabled = false
+	spec.PublicCapabilities = nil
+	spec.Jobs = nil
+	spec.InboundBindings = nil
+	encoded, _ := json.Marshal(spec) // AgentSpec contains no non-JSON values.
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+// PodRestartRequired reports a pod-material edit. Older agents fall back to
+// the generation check until the reconciler safely seeds their baseline hash.
+func (a *Agent) PodRestartRequired() bool {
+	if a.Status.ObservedGeneration == 0 {
+		return false
+	}
+	if a.Status.ObservedPodConfigHash == "" {
+		return a.SpecChangedSinceLastPod()
+	}
+	return a.PodConfigHash() != a.Status.ObservedPodConfigHash
+}
+
+// PodConfigurationPending includes the window before a hot jobs edit reaches
+// the pod's ConfigMap mount. It remains pending if projection fails.
+func (a *Agent) PodConfigurationPending() bool {
+	if a.PodRestartRequired() {
+		return true
+	}
+	// Unmigrated agents have no projection marker. Their generation still
+	// supplies the conservative legacy gate until the controller seeds both
+	// baselines on a pod whose observed generation matches the live spec.
+	if a.Status.ObservedPodConfigHash == "" {
+		return false
+	}
+	return a.Status.ObservedGeneration > 0 && a.Status.JobsProjectedGeneration < a.Generation
 }
 
 // +kubebuilder:object:root=true

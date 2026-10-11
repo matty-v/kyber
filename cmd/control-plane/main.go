@@ -643,6 +643,7 @@ func main() {
 		Client:                        mgr.GetClient(),
 		Scheme:                        mgr.GetScheme(),
 		Recorder:                      mgr.GetEventRecorderFor("agent-controller"),
+		JobsProjectionProbe:           agentcontroller.NewKubernetesJobsProjectionProbe(restCfg, clientset),
 		AdapterRegistry:               adapterRegistry,
 		BriefStore:                    briefStore,
 		AlertSink:                     alertSink,
