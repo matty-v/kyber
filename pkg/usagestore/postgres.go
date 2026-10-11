@@ -100,7 +100,24 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
 		configured_route TEXT NOT NULL,
 		created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
 		PRIMARY KEY(agent_uid,fingerprint)
-	);`
+	);
+	CREATE TABLE IF NOT EXISTS agent_usage_read_snapshots (
+		id UUID PRIMARY KEY,
+		owner_key TEXT NOT NULL,
+		query_hash BYTEA NOT NULL,
+		event_sequence BIGINT NOT NULL DEFAULT 0,
+		gap_sequence BIGINT NOT NULL DEFAULT 0,
+		gap_count BIGINT NOT NULL DEFAULT 0,
+		created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+		expires_at TIMESTAMPTZ NOT NULL
+	);
+	CREATE TABLE IF NOT EXISTS agent_usage_read_snapshot_rows (
+		snapshot_id UUID NOT NULL REFERENCES agent_usage_read_snapshots(id) ON DELETE CASCADE,
+		ordinal BIGINT NOT NULL,
+		document JSONB NOT NULL,
+		PRIMARY KEY(snapshot_id,ordinal)
+	);
+	CREATE INDEX IF NOT EXISTS agent_usage_read_snapshots_expiry ON agent_usage_read_snapshots(expires_at);`
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("starting usage migration: %w", err)
@@ -382,6 +399,11 @@ func (s *PostgresStore) DeleteAgent(ctx context.Context, agentUID string) error 
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(9101172026)`); err != nil {
 		return fmt.Errorf("locking usage sequence: %w", err)
+	}
+	// Snapshot rows may contain this UID. Invalidate every short-lived read
+	// snapshot so deletion cannot leave a copy behind for the cursor TTL.
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_read_snapshots`); err != nil {
+		return fmt.Errorf("deleting usage read snapshots: %w", err)
 	}
 	// A correction can itself be corrected. Removing leaves from the chain
 	// first handles every depth without assuming a fixed number of revisions.

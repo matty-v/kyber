@@ -15,6 +15,57 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/usage/events:
+    get:
+      operationId: listUsageEvents
+      summary: Read immutable local usage evidence
+      description: Requires usage:read and current Agent resource access. start is inclusive, end exclusive. Repeat all filters with nextCursor.
+      tags: [usage]
+      parameters:
+        - {name: agent, in: query, schema: {type: string}}
+        - {name: start, in: query, required: true, schema: {type: string, format: date-time}}
+        - {name: end, in: query, required: true, schema: {type: string, format: date-time}}
+        - {name: runtime, in: query, schema: {type: string}}
+        - {name: model, in: query, schema: {type: string}}
+        - {name: route, in: query, schema: {type: string}}
+        - {name: upstreamProvider, in: query, schema: {type: string, description: "Use unknown for observations with no proven upstream provider."}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Stable page of observed events
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UsageEventPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/usage/aggregates:
+    get:
+      operationId: listUsageDailyAggregates
+      summary: Read frozen daily token aggregates without prices
+      description: Requires usage:read and current Agent resource access. Date end is exclusive. Repeat all filters with nextCursor.
+      tags: [usage]
+      parameters:
+        - {name: agent, in: query, schema: {type: string}}
+        - {name: start, in: query, required: true, schema: {type: string, format: date}}
+        - {name: end, in: query, required: true, schema: {type: string, format: date}}
+        - {name: runtime, in: query, schema: {type: string}}
+        - {name: model, in: query, schema: {type: string}}
+        - {name: route, in: query, schema: {type: string}}
+        - {name: upstreamProvider, in: query, schema: {type: string}}
+        - {name: bucket, in: query, required: true, schema: {type: string, enum: [day]}}
+        - {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 500}}
+        - {name: cursor, in: query, schema: {type: string}}
+      responses:
+        '200':
+          description: Frozen page of UTC daily aggregates
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/UsageDailyPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
   /api/v1/agents/{name}/tasks:
     parameters:
       - name: name
@@ -1838,6 +1889,76 @@ components:
             additionalProperties: true
 
   schemas:
+    UsageCoverage:
+      type: object
+      required: [detectedGapCount, guaranteedComplete]
+      properties:
+        detectedGapCount: {type: integer, format: int64}
+        guaranteedComplete: {type: boolean, description: "Always false; local evidence cannot prove that every upstream call was captured."}
+    UsageEvent:
+      type: object
+      required: [id, agentUID, agent, observedAt, ingestedAt, runtime, sourceFormat, sourceVersion, sourceIdentity, coverage, configuredRoute, routeID, model, modelEvidence, inputUncached, output, cacheRead, cacheWrite]
+      properties:
+        id: {type: string, format: uuid}
+        agentUID: {type: string}
+        agent: {type: string}
+        observedAt: {type: string, format: date-time}
+        ingestedAt: {type: string, format: date-time}
+        runtime: {type: string}
+        sourceFormat: {type: string}
+        sourceVersion: {type: string}
+        sourceIdentity: {type: string}
+        coverage: {type: string}
+        configuredRoute: {type: string}
+        routeID: {type: string, format: uuid}
+        model: {type: string}
+        modelEvidence: {type: string, enum: [observed, configured]}
+        observedUpstreamProvider: {type: string, nullable: true}
+        reportedProviderLabel: {type: string, nullable: true}
+        inputUncached: {type: integer, format: int64, nullable: true}
+        output: {type: integer, format: int64, nullable: true}
+        cacheRead: {type: integer, format: int64, nullable: true}
+        cacheWrite: {type: integer, format: int64, nullable: true}
+        rawUsage: {type: object, additionalProperties: {type: integer, format: int64}}
+        supersedesID: {type: string, format: uuid}
+    UsageEventPage:
+      type: object
+      required: [events, nextCursor, coverage]
+      properties:
+        events: {type: array, items: {$ref: '#/components/schemas/UsageEvent'}}
+        nextCursor: {type: string, nullable: true}
+        coverage: {$ref: '#/components/schemas/UsageCoverage'}
+    UsageTokenAggregate:
+      type: object
+      required: [sum, reportedEvents, unknownEvents]
+      properties:
+        sum: {type: integer, format: int64, nullable: true}
+        reportedEvents: {type: integer, format: int64}
+        unknownEvents: {type: integer, format: int64}
+    UsageDailyAggregate:
+      type: object
+      required: [agentUID, day, runtime, model, configuredRoute, routeID, observedUpstreamProvider, eventCount, inputUncached, output, cacheRead, cacheWrite]
+      properties:
+        agentUID: {type: string}
+        day: {type: string, format: date}
+        runtime: {type: string}
+        model: {type: string}
+        configuredRoute: {type: string}
+        routeID: {type: string, format: uuid}
+        observedUpstreamProvider: {type: string, nullable: true}
+        eventCount: {type: integer, format: int64}
+        inputUncached: {$ref: '#/components/schemas/UsageTokenAggregate'}
+        output: {$ref: '#/components/schemas/UsageTokenAggregate'}
+        cacheRead: {$ref: '#/components/schemas/UsageTokenAggregate'}
+        cacheWrite: {$ref: '#/components/schemas/UsageTokenAggregate'}
+    UsageDailyPage:
+      type: object
+      required: [bucket, rows, nextCursor, coverage]
+      properties:
+        bucket: {type: string, enum: [day]}
+        rows: {type: array, items: {$ref: '#/components/schemas/UsageDailyAggregate'}}
+        nextCursor: {type: string, nullable: true}
+        coverage: {$ref: '#/components/schemas/UsageCoverage'}
     CodexDeviceAuthStatus:
       type: object
       required: [state]

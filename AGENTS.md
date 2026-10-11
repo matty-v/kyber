@@ -62,6 +62,12 @@ The Codex reporter derives accepted call deltas from monotonic rollout totals,
 so repeated `token_count` observations are never billed twice. It prefers an
 observed `turn_context` model, tracks the configured model as a fallback, and
 records a coverage gap on counter reset or an unidentifiable model.
+The public `GET /api/v1/usage/events` and `/api/v1/usage/aggregates` endpoints
+require `usage:read` plus current Agent resource access. Event cursors pin
+committed ingestion sequence horizons; daily aggregate cursors page frozen
+one-hour PostgreSQL read snapshots. Repeat the same filters on every page.
+Coverage reports detected gaps but never promises every upstream call was
+captured. Agent deletion invalidates all usage read snapshots.
 
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`

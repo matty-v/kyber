@@ -40,7 +40,9 @@ func (s *PostgresStore) Prune(ctx context.Context, now time.Time) error {
 	}
 	for {
 		result, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_events e WHERE e.observed_at < $1
-			AND NOT EXISTS (SELECT 1 FROM agent_usage_events child WHERE child.supersedes_id=e.id)`, detailCutoff)
+			AND NOT EXISTS (SELECT 1 FROM agent_usage_events child WHERE child.supersedes_id=e.id)
+			AND NOT EXISTS (SELECT 1 FROM agent_usage_read_snapshots snapshot
+				WHERE snapshot.expires_at>$2 AND snapshot.event_sequence>=e.sequence)`, detailCutoff, now.UTC())
 		if err != nil {
 			return fmt.Errorf("pruning usage events: %w", err)
 		}
@@ -52,7 +54,9 @@ func (s *PostgresStore) Prune(ctx context.Context, now time.Time) error {
 			break
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_gaps WHERE detected_at < $1`, detailCutoff); err != nil {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_gaps g WHERE g.detected_at < $1
+		AND NOT EXISTS (SELECT 1 FROM agent_usage_read_snapshots snapshot
+			WHERE snapshot.expires_at>$2 AND snapshot.gap_sequence>=g.sequence)`, detailCutoff, now.UTC()); err != nil {
 		return fmt.Errorf("pruning usage gaps: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_daily WHERE day < $1`, dailyCutoff); err != nil {
@@ -60,6 +64,9 @@ func (s *PostgresStore) Prune(ctx context.Context, now time.Time) error {
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_cursors WHERE updated_at < $1`, now.UTC().AddDate(0, -s.retention.DailyMonths, 0)); err != nil {
 		return fmt.Errorf("pruning usage cursors: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM agent_usage_read_snapshots WHERE expires_at < $1`, now.UTC()); err != nil {
+		return fmt.Errorf("pruning usage read snapshots: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("committing usage retention: %w", err)
