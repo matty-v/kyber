@@ -11,6 +11,7 @@ import (
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/usagestore"
 )
 
 // controlPlaneInternalURL returns the in-cluster URL of the control-plane internal API.
@@ -403,9 +404,22 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	// pair switched to the sidecar in kyber#257, but start-claude.sh's
 	// boot-time push runs before the sidecar is reachable and still POSTs
 	// directly to the control plane — that migration is a follow-up.
+	endpointURL := ""
+	if agent.Spec.Inference != nil {
+		endpointURL = agent.Spec.Inference.BaseURL
+	}
+	route, err := usagestore.RouteRevisionFor(agent.Spec.Runtime, string(agent.Spec.Secrets.AuthType), endpointURL)
+	if err != nil {
+		return corev1.PodSpec{}, fmt.Errorf("classifying agent usage route: %w", err)
+	}
+	routeFingerprint, err := route.FingerprintHex()
+	if err != nil {
+		return corev1.PodSpec{}, fmt.Errorf("fingerprinting agent usage route: %w", err)
+	}
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
 		{Name: "KYBER_AGENT_GENERATION", Value: strconv.FormatInt(agent.Generation, 10)},
+		{Name: "KYBER_USAGE_ROUTE_FINGERPRINT", Value: routeFingerprint},
 		{Name: "KYBER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
 		// kyber#118: launch scripts read this to decide whether an

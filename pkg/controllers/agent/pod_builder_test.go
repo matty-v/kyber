@@ -13,6 +13,7 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	"github.com/matty-v/kyber/pkg/usagestore"
 )
 
 // TestMain sets the KYBER_CONTROL_PLANE_INTERNAL_URL env var for the entire
@@ -358,6 +359,42 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 	// helper does not set the env var, so the pod env should not contain TZ.
 	if v, ok := envMap["TZ"]; ok {
 		t.Errorf("TZ env var unexpectedly present (got %q); should be omitted when KYBER_AGENT_TIMEZONE is unset", v)
+	}
+}
+
+func TestBuildPodSpec_UsageRouteStamp(t *testing.T) {
+	agent := testAgent()
+	stamp := func() string {
+		t.Helper()
+		pod, err := BuildPodSpec(agent, testAdapter(), "node-01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, env := range pod.Containers[0].Env {
+			if env.Name == "KYBER_USAGE_ROUTE_FINGERPRINT" {
+				return env.Value
+			}
+		}
+		t.Fatal("usage route fingerprint not injected")
+		return ""
+	}
+	native := stamp()
+	nativeRoute, err := usagestore.RouteRevisionFor("claude-code", string(agent.Spec.Secrets.AuthType), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNative, err := nativeRoute.FingerprintHex()
+	if err != nil || native != wantNative {
+		t.Fatalf("native stamp=%q want=%q err=%v", native, wantNative, err)
+	}
+	agent.Spec.Inference = &kyberv1.AgentInference{BaseURL: "https://openrouter.ai/api/v1"}
+	gateway := stamp()
+	if gateway == native {
+		t.Fatal("endpoint change kept old route stamp")
+	}
+	agent.Spec.Inference.BaseURL = "https://example.test/v1"
+	if custom := stamp(); custom == native || custom == gateway {
+		t.Fatal("custom endpoint reused another route stamp")
 	}
 }
 

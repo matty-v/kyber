@@ -43,6 +43,10 @@ sidecar condition so ConfigMap propagation does not imply a restart.
 Existing pods at a matching observed generation seed both baselines once;
 later jobs edits require an in-pod revision probe.
 `observedGeneration` remains the Failed restart claim and legacy fallback.
+The agent pod also receives `KYBER_USAGE_ROUTE_FINGERPRINT`, derived from its
+runtime, authentication mode, and configured inference endpoint. Usage
+reporters use this non-secret stamp to detect route changes across pod
+restarts; the control plane independently derives the same trusted revision.
 
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`
