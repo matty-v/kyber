@@ -1200,6 +1200,72 @@ export interface MetricsTokenUsage {
   priced?: boolean
 }
 
+export interface UsageCoverage {
+  detectedGapCount: number
+  guaranteedComplete: false
+}
+
+export interface UsageEvent {
+  id: string
+  agentUID: string
+  agent: string
+  observedAt: string
+  ingestedAt: string
+  runtime: string
+  sourceFormat: string
+  sourceVersion: string
+  sourceIdentity: string
+  coverage: string
+  configuredRoute: string
+  routeID: string
+  model: string
+  modelEvidence: 'observed' | 'configured'
+  observedUpstreamProvider: string | null
+  reportedProviderLabel: string | null
+  inputUncached: number | null
+  output: number | null
+  cacheRead: number | null
+  cacheWrite: number | null
+  rawUsage?: Record<string, number>
+  supersedesID?: string
+}
+
+export interface UsageTokenAggregate {
+  sum: number | null
+  reportedEvents: number
+  unknownEvents: number
+}
+
+export interface UsageDailyAggregate {
+  agentUID: string
+  day: string
+  runtime: string
+  model: string
+  configuredRoute: string
+  routeID: string
+  observedUpstreamProvider: string | null
+  eventCount: number
+  inputUncached: UsageTokenAggregate
+  output: UsageTokenAggregate
+  cacheRead: UsageTokenAggregate
+  cacheWrite: UsageTokenAggregate
+}
+
+export interface UsageEventPage { events: UsageEvent[]; nextCursor: string | null; coverage: UsageCoverage }
+export interface UsageDailyPage { bucket: 'day'; rows: UsageDailyAggregate[]; nextCursor: string | null; coverage: UsageCoverage }
+
+export interface UsageQuery {
+  agent?: string
+  start: string
+  end: string
+  runtime?: string
+  model?: string
+  route?: string
+  upstreamProvider?: string
+  limit?: number
+  cursor?: string
+}
+
 export interface MetricsLastActive {
   name: string
   state: string

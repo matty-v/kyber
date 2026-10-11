@@ -45,6 +45,7 @@ const (
 	ScopeTasksPlatformAdmin Scope = "tasks:platform-admin"
 	ScopeCapabilitiesRead   Scope = "capabilities:read"
 	ScopeCapabilitiesWrite  Scope = "capabilities:write"
+	ScopeUsageRead          Scope = "usage:read"
 	// ScopeArchivesAdmin permits exporting an agent's disk, downloading the
 	// archive, and creating agents from archives (MAT-87/MAT-88). A disk
 	// archive can contain local credentials, so this is its own grant and is
@@ -182,7 +183,7 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		}
 		hasTaskScope := false
 		for _, sc := range c.Scopes {
-			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") || strings.HasPrefix(sc, "capabilities:") {
+			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") || strings.HasPrefix(sc, "capabilities:") || sc == string(ScopeUsageRead) {
 				hasTaskScope = true
 			}
 			if !validScope(Scope(sc)) {
@@ -209,7 +210,7 @@ func validScope(sc Scope) bool {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
 		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
-		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeArchivesAdmin:
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeArchivesAdmin:
 		return true
 	default:
 		return false
