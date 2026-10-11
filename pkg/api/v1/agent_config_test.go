@@ -9,7 +9,7 @@ func TestPodConfigurationPending(t *testing.T) {
 	agent.Spec.Model = "initial"
 	agent.Status.ObservedGeneration = 3
 	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
-	agent.Status.JobsSyncedGeneration = 3
+	agent.Status.JobsProjectedGeneration = 3
 	if agent.PodConfigurationPending() {
 		t.Fatal("current pod and jobs should not be pending")
 	}
@@ -20,19 +20,19 @@ func TestPodConfigurationPending(t *testing.T) {
 		t.Fatal("hot jobs edit changed pod fingerprint")
 	}
 	if !agent.PodConfigurationPending() {
-		t.Fatal("jobs edit must wait for ConfigMap sync")
+		t.Fatal("jobs edit must wait for in-pod projection")
 	}
 	if agent.PodRestartRequired() {
 		t.Fatal("hot jobs edit should not require a pod restart")
 	}
-	agent.Status.JobsSyncedGeneration = 4
+	agent.Status.JobsProjectedGeneration = 4
 	if agent.PodConfigurationPending() {
-		t.Fatal("synced jobs edit should clear pending state")
+		t.Fatal("projected jobs edit should clear pending state")
 	}
 
 	agent.Generation = 5
 	agent.Spec.Model = "replacement"
-	agent.Status.JobsSyncedGeneration = 5
+	agent.Status.JobsProjectedGeneration = 5
 	if !agent.PodConfigurationPending() {
 		t.Fatal("model change requires a new pod even when jobs are synced")
 	}
@@ -43,6 +43,11 @@ func TestPodConfigurationPending(t *testing.T) {
 	agent.Status.ObservedPodConfigHash = ""
 	if !agent.PodConfigurationPending() {
 		t.Fatal("legacy status should fall back to generation check")
+	}
+	agent.Status.ObservedGeneration = agent.Generation
+	agent.Status.JobsProjectedGeneration = 0
+	if agent.PodConfigurationPending() {
+		t.Fatal("unmigrated current pod should retain its legacy availability")
 	}
 	agent.Status.ObservedGeneration = 0
 	if agent.PodConfigurationPending() {

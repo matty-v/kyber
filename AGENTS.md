@@ -36,10 +36,12 @@ manifests with `make generate` — NEVER hand-edit `deploy/helm/kyber/crds/`.
 
 `Agent.status.observedPodConfigHash` records the restart-relevant spec last
 built into a pod. The reconciler excludes hot API/controller fields from that
-fingerprint and records `jobsSyncedGeneration` only after the per-agent jobs
-ConfigMap is written (before kubelet projection). Runtime capability
+fingerprint and records `jobsProjectedGeneration` only after the per-agent jobs
+ConfigMap revision appears in the running pod's mount. Runtime capability
 availability uses both markers; API `dirty` uses only the pod fingerprint and
 sidecar condition so ConfigMap propagation does not imply a restart.
+Existing pods at a matching observed generation seed both baselines once;
+later jobs edits require an in-pod revision probe.
 `observedGeneration` remains the Failed restart claim and legacy fallback.
 
 An existing Agent changes harness through the lifecycle-write

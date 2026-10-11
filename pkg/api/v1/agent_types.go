@@ -1137,11 +1137,10 @@ type AgentStatus struct {
 	// making the running pod appear stale.
 	// +optional
 	ObservedPodConfigHash string `json:"observedPodConfigHash,omitempty"`
-	// JobsSyncedGeneration is the latest Agent generation whose jobs were
-	// successfully written to the mounted ConfigMap. It does not claim that
-	// kubelet has already projected the new contents into the pod.
+	// JobsProjectedGeneration is the latest Agent generation whose jobs
+	// revision was observed inside the running pod's ConfigMap mount.
 	// +optional
-	JobsSyncedGeneration int64 `json:"jobsSyncedGeneration,omitempty"`
+	JobsProjectedGeneration int64 `json:"jobsProjectedGeneration,omitempty"`
 
 	// LastKernelOOMKillAt is the wall-clock timestamp of the most recent
 	// kernel OOM kill observed inside this agent's pod-level cgroup, as
@@ -1328,7 +1327,7 @@ func (a *Agent) SpecChangedSinceLastPod() bool {
 
 // PodConfigHash fingerprints spec fields that need a new pod to take effect.
 // The omitted fields are applied by the API/controller without changing the
-// pod spec; jobs are tracked separately through JobsSyncedGeneration.
+// pod spec; jobs are tracked separately through JobsProjectedGeneration.
 func (a *Agent) PodConfigHash() string {
 	spec := a.Spec
 	spec.Profile = AgentProfile{}
@@ -1354,11 +1353,19 @@ func (a *Agent) PodRestartRequired() bool {
 	return a.PodConfigHash() != a.Status.ObservedPodConfigHash
 }
 
-// PodConfigurationPending includes the brief window before a hot jobs edit
-// reaches the ConfigMap. Kubelet projection may take longer than this marker.
+// PodConfigurationPending includes the window before a hot jobs edit reaches
+// the pod's ConfigMap mount. It remains pending if projection fails.
 func (a *Agent) PodConfigurationPending() bool {
-	return a.PodRestartRequired() ||
-		a.Status.ObservedGeneration > 0 && a.Status.JobsSyncedGeneration < a.Generation
+	if a.PodRestartRequired() {
+		return true
+	}
+	// Unmigrated agents have no projection marker. Their generation still
+	// supplies the conservative legacy gate until the controller seeds both
+	// baselines on a pod whose observed generation matches the live spec.
+	if a.Status.ObservedPodConfigHash == "" {
+		return false
+	}
+	return a.Status.ObservedGeneration > 0 && a.Status.JobsProjectedGeneration < a.Generation
 }
 
 // +kubebuilder:object:root=true

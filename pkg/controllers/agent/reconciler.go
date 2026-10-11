@@ -119,6 +119,9 @@ type AgentReconciler struct {
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
+	// JobsProjectionProbe reads the jobs revision from the running pod's
+	// ConfigMap mount. A nil probe leaves the capability gate pending.
+	JobsProjectionProbe JobsProjectionProbe
 
 	// AdapterRegistry maps runtime type strings to their adapters. Optional
 	// at construction time (post-#250): when nil, resolveAdapter falls back
@@ -481,19 +484,24 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// reads prompt files out of it and entrypoint.sh copies the rendered
 	// crontab into /persist/cron/cron.d/kyber-jobs on every boot. A ConfigMap
 	// rotation while the pod is up propagates via kubelet (~30-60s); the
-	// in-pod node-agent re-syncs the persist path so cron's mtime scan picks
+	// in-pod watcher re-syncs the cron path so cron's mtime scan picks
 	// up changes without a restart. Failures here don't block the state
 	// machine — jobs are a secondary feature and an empty ConfigMap simply
 	// means no scheduled prompts fire.
+	jobsConfigMapSynced := false
+	var jobsConfigMapRequeue time.Duration
 	if err := r.reconcileJobsConfigMap(ctx, agent); err != nil {
 		logger.Error(err, "reconciling jobs ConfigMap (continuing)", "agent", agent.Name)
-	} else if err := r.stampJobsSyncedGeneration(ctx, agent); err != nil {
-		return ctrl.Result{}, err
+		jobsConfigMapRequeue = 10 * time.Second
+	} else {
+		jobsConfigMapSynced = true
 	}
 	// Existing pods predate observedPodConfigHash. A matching generation is
 	// evidence that the current spec was built into this pod, so seed the
-	// baseline before a later hot jobs edit advances the generation.
-	if agent.Status.ObservedPodConfigHash == "" &&
+	// baseline before a later hot jobs edit advances the generation. These
+	// pods already ran under this spec, so seed the initial projection marker
+	// too; future jobs edits require an in-pod revision probe.
+	if jobsConfigMapSynced && agent.Status.ObservedPodConfigHash == "" &&
 		agent.Status.ObservedGeneration == agent.Generation &&
 		agent.Status.ObservedGeneration > 0 && agent.Status.PodName != "" {
 		if err := r.stampObservedPodConfigHash(ctx, agent); err != nil {
@@ -556,6 +564,21 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	pod, err := r.getAgentPod(ctx, agent)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	var jobsProjectionRequeue time.Duration
+	if jobsConfigMapSynced && pod != nil && pod.Status.Phase == corev1.PodRunning &&
+		agent.Status.JobsProjectedGeneration < agent.Generation {
+		jobsProjectionRequeue = 10 * time.Second
+		if r.JobsProjectionProbe == nil {
+			logger.Info("jobs projection probe unavailable", "agent", agent.Name)
+		} else if revision, probeErr := r.JobsProjectionProbe(ctx, pod); probeErr != nil {
+			logger.Info("jobs projection not yet observable", "agent", agent.Name, "err", probeErr)
+		} else if revision == RenderJobsConfigMapData(agent)["revision"] {
+			if err := r.stampJobsProjectedGeneration(ctx, agent); err != nil {
+				return ctrl.Result{}, err
+			}
+			jobsProjectionRequeue = 0
+		}
 	}
 
 	// 5a. Verification trigger for the kyber#371 observed-evidence canary.
@@ -922,7 +945,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue)}, nil
+	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue), jobsProjectionRequeue), jobsConfigMapRequeue)}, nil
 }
 
 // clearStaleRuntimeStatus discards observations from the source harness once
@@ -2618,20 +2641,23 @@ func (r *AgentReconciler) stampObservedGeneration(ctx context.Context, agent *ky
 func (r *AgentReconciler) stampObservedPodConfigHash(ctx context.Context, agent *kyberv1.Agent) error {
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
+	if agent.Status.JobsProjectedGeneration == 0 {
+		agent.Status.JobsProjectedGeneration = agent.Generation
+	}
 	if err := r.Status().Patch(ctx, agent, patch); err != nil {
 		return fmt.Errorf("seeding observed pod config hash: %w", err)
 	}
 	return nil
 }
 
-func (r *AgentReconciler) stampJobsSyncedGeneration(ctx context.Context, agent *kyberv1.Agent) error {
-	if agent.Status.JobsSyncedGeneration == agent.Generation {
+func (r *AgentReconciler) stampJobsProjectedGeneration(ctx context.Context, agent *kyberv1.Agent) error {
+	if agent.Status.JobsProjectedGeneration == agent.Generation {
 		return nil
 	}
 	patch := client.MergeFrom(agent.DeepCopy())
-	agent.Status.JobsSyncedGeneration = agent.Generation
+	agent.Status.JobsProjectedGeneration = agent.Generation
 	if err := r.Status().Patch(ctx, agent, patch); err != nil {
-		return fmt.Errorf("stamping synced jobs generation: %w", err)
+		return fmt.Errorf("stamping projected jobs generation: %w", err)
 	}
 	return nil
 }

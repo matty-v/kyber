@@ -170,6 +170,31 @@ func getAgent(t *testing.T, c client.Client, key types.NamespacedName) *kyberv1.
 	return agent
 }
 
+func markAgentPodRunning(t *testing.T, c client.Client, namespace, agentName string) {
+	t.Helper()
+	ctx := context.Background()
+	pod := &corev1.Pod{}
+	key := types.NamespacedName{Name: AgentPodName(agentName), Namespace: namespace}
+	if err := c.Get(ctx, key, pod); err != nil {
+		t.Fatal(err)
+	}
+	pod.Status.Phase = corev1.PodRunning
+	if err := c.Status().Update(ctx, pod); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func configMapRevisionProbe(c client.Client, agentName string) JobsProjectionProbe {
+	return func(ctx context.Context, pod *corev1.Pod) (string, error) {
+		cm := &corev1.ConfigMap{}
+		err := c.Get(ctx, types.NamespacedName{Name: JobsConfigMapName(agentName), Namespace: pod.Namespace}, cm)
+		if err != nil {
+			return "", err
+		}
+		return cm.Data["revision"], nil
+	}
+}
+
 // TestReconciler_StampsObservedGenerationOnPodCreate verifies that pod
 // creation records both the generation and the restart-relevant spec hash.
 func TestReconciler_StampsObservedGenerationOnPodCreate(t *testing.T) {
@@ -203,15 +228,37 @@ func TestReconciler_StampsObservedGenerationOnPodCreate(t *testing.T) {
 	if updated.Status.ObservedPodConfigHash != updated.PodConfigHash() {
 		t.Errorf("observed pod config hash: got %q, want %q", updated.Status.ObservedPodConfigHash, updated.PodConfigHash())
 	}
-	if updated.Status.JobsSyncedGeneration != updated.Generation {
-		t.Errorf("jobs synced generation: got %d, want %d", updated.Status.JobsSyncedGeneration, updated.Generation)
+	if updated.Status.JobsProjectedGeneration != 0 {
+		t.Errorf("jobs projected before pod was running: %d", updated.Status.JobsProjectedGeneration)
+	}
+	r.JobsProjectionProbe = configMapRevisionProbe(k8sClient, agent.Name)
+	markAgentPodRunning(t, k8sClient, ns.Name, agent.Name)
+	reconcileN(t, r, req, 1)
+	updated = getAgent(t, k8sClient, types.NamespacedName{Name: "dave", Namespace: "test-stamping"})
+	if updated.Status.JobsProjectedGeneration != updated.Generation {
+		t.Errorf("jobs projected generation: got %d, want %d", updated.Status.JobsProjectedGeneration, updated.Generation)
+	}
+	// A control plane upgrade sees old pods with matching generations but no
+	// fingerprint or projection marker. Seed both once to avoid a false gate.
+	updated.Status.ObservedPodConfigHash = ""
+	updated.Status.JobsProjectedGeneration = 0
+	updated.Status.PodName = AgentPodName(agent.Name)
+	if err := k8sClient.Status().Update(context.Background(), updated); err != nil {
+		t.Fatal(err)
+	}
+	reconcileN(t, r, req, 1)
+	updated = getAgent(t, k8sClient, types.NamespacedName{Name: "dave", Namespace: "test-stamping"})
+	if updated.Status.ObservedPodConfigHash != updated.PodConfigHash() ||
+		updated.Status.JobsProjectedGeneration != updated.Generation {
+		t.Fatalf("legacy pod baseline not seeded: %+v", updated.Status)
 	}
 }
 
-func TestReconciler_JobsEditClearsPendingAfterConfigMapSync(t *testing.T) {
+func TestReconciler_JobsEditClearsPendingAfterProjection(t *testing.T) {
 	k8sClient, teardown := setupEnvtest(t)
 	defer teardown()
 	r := newReconciler(k8sClient, buildTestScheme())
+	r.JobsProjectionProbe = configMapRevisionProbe(k8sClient, "jobs-agent")
 	ctx := context.Background()
 	ns := &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "test-jobs-hot-edit"}}
 	if err := k8sClient.Create(ctx, ns); err != nil {
@@ -223,6 +270,8 @@ func TestReconciler_JobsEditClearsPendingAfterConfigMapSync(t *testing.T) {
 	}
 	key := types.NamespacedName{Name: agent.Name, Namespace: ns.Name}
 	req := ctrl.Request{NamespacedName: key}
+	reconcileN(t, r, req, 1)
+	markAgentPodRunning(t, k8sClient, ns.Name, agent.Name)
 	reconcileN(t, r, req, 1)
 
 	agent = getAgent(t, k8sClient, key)
@@ -236,12 +285,19 @@ func TestReconciler_JobsEditClearsPendingAfterConfigMapSync(t *testing.T) {
 	}
 	agent = getAgent(t, k8sClient, key)
 	if !agent.PodConfigurationPending() {
-		t.Fatal("jobs edit must remain pending until ConfigMap sync")
+		t.Fatal("jobs edit must remain pending until in-pod projection")
 	}
+	r.JobsProjectionProbe = func(context.Context, *corev1.Pod) (string, error) { return "old-revision", nil }
 	reconcileN(t, r, req, 1)
 	agent = getAgent(t, k8sClient, key)
-	if agent.PodConfigurationPending() || agent.Status.JobsSyncedGeneration != agent.Generation {
-		t.Fatalf("jobs edit remained pending after sync: generation=%d status=%+v", agent.Generation, agent.Status)
+	if !agent.PodConfigurationPending() || agent.Status.JobsProjectedGeneration == agent.Generation {
+		t.Fatalf("failed projection prematurely cleared pending state: generation=%d status=%+v", agent.Generation, agent.Status)
+	}
+	r.JobsProjectionProbe = configMapRevisionProbe(k8sClient, agent.Name)
+	reconcileN(t, r, req, 1)
+	agent = getAgent(t, k8sClient, key)
+	if agent.PodConfigurationPending() || agent.Status.JobsProjectedGeneration != agent.Generation {
+		t.Fatalf("jobs edit remained pending after projection: generation=%d status=%+v", agent.Generation, agent.Status)
 	}
 	if agent.Status.ObservedPodConfigHash != baselineHash || agent.Status.ObservedGeneration == agent.Generation {
 		t.Fatalf("jobs edit incorrectly claimed a new pod: %+v", agent.Status)
@@ -252,13 +308,14 @@ func TestReconciler_JobsEditClearsPendingAfterConfigMapSync(t *testing.T) {
 	}
 
 	agent.Spec.Model = "different-model"
+	agent.Spec.Jobs[0].Prompt = "new prompt"
 	if err := k8sClient.Update(ctx, agent); err != nil {
 		t.Fatal(err)
 	}
 	reconcileN(t, r, req, 1)
 	agent = getAgent(t, k8sClient, key)
-	if !agent.PodConfigurationPending() {
-		t.Fatal("pod-material model edit must remain pending until a new pod is built")
+	if agent.Status.JobsProjectedGeneration != agent.Generation || !agent.PodRestartRequired() || !agent.PodConfigurationPending() {
+		t.Fatalf("mixed jobs/model edit must remain pending after projection until a new pod is built: %+v", agent.Status)
 	}
 }
 

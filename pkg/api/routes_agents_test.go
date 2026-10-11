@@ -561,7 +561,7 @@ func TestAgents_Get_OmitsDirtyAfterHotJobsSync(t *testing.T) {
 	agent.Generation = 5
 	agent.Status.ObservedGeneration = 4
 	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
-	agent.Status.JobsSyncedGeneration = 5
+	agent.Status.JobsProjectedGeneration = 5
 	agent.Spec.Jobs = []kyberv1.AgentJob{{Name: "check", Schedule: "0 * * * *", Prompt: "check"}}
 
 	h, _ := buildAgentHandler(t, agent)

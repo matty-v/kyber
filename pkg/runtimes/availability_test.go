@@ -26,17 +26,17 @@ func TestAvailabilityRequiresCurrentEvidence(t *testing.T) {
 			{"future contract", "unknown", func(a *kyberv1.Agent) { a.Status.Runtime.Capabilities.ContractVersion = "2.0" }},
 			{"not wired", "unavailable", func(a *kyberv1.Agent) { a.Status.Runtime.Capabilities.Features[string(runtimes.JobTurnHooks)] = false }},
 			{"stopped", "unavailable", func(a *kyberv1.Agent) { a.Status.Phase = kyberv1.AgentPhaseStopped }},
-			{"jobs sync pending", "unavailable", func(a *kyberv1.Agent) {
+			{"jobs projection pending", "unavailable", func(a *kyberv1.Agent) {
 				a.Generation = 2
 				a.Status.ObservedGeneration = 1
 				a.Status.ObservedPodConfigHash = a.PodConfigHash()
-				a.Status.JobsSyncedGeneration = 1
+				a.Status.JobsProjectedGeneration = 1
 			}},
-			{"jobs sync complete", "available", func(a *kyberv1.Agent) {
+			{"jobs projection complete", "available", func(a *kyberv1.Agent) {
 				a.Generation = 2
 				a.Status.ObservedGeneration = 1
 				a.Status.ObservedPodConfigHash = a.PodConfigHash()
-				a.Status.JobsSyncedGeneration = 2
+				a.Status.JobsProjectedGeneration = 2
 			}},
 		} {
 			t.Run(id+"/"+tc.name, func(t *testing.T) {
