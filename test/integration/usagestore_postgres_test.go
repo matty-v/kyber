@@ -27,12 +27,15 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 		t.Fatalf("repeated migration: %v", err)
 	}
 	uid := uuid.NewString()
+	reusedUID := uuid.NewString()
 	t.Cleanup(func() {
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1 AND supersedes_id IS NOT NULL`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_gaps WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_cursors WHERE agent_uid=$1`, uid)
 		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, uid)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_events WHERE agent_uid=$1`, reusedUID)
+		_, _ = sharedDB.ExecContext(context.Background(), `DELETE FROM agent_usage_daily WHERE agent_uid=$1`, reusedUID)
 	})
 	output := int64(10)
 	event := usagestore.Event{AgentUID: uid, Agent: "test", ObservedAt: time.Now().UTC(), Runtime: "claude", SourceFormat: "claude-jsonl", SourceVersion: "1",
@@ -105,6 +108,12 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	if daily.EventCount != 1 || daily.Output.Sum == nil || *daily.Output.Sum != 11 || daily.Output.ReportedEvents != 1 {
 		t.Fatalf("corrected daily aggregate=%+v", daily)
 	}
+	reusedName := event
+	reusedName.AgentUID = reusedUID
+	reusedName.RouteID = uuid.NewString()
+	if _, inserted, err := store.Ingest(ctx, reusedName); err != nil || !inserted {
+		t.Fatalf("reused name/identity inserted=%v err=%v", inserted, err)
+	}
 	duplicateCorrection := correction
 	duplicateCorrection.SourceIdentity = "session-1:correction-2"
 	if _, _, err := store.Ingest(ctx, duplicateCorrection); !errors.Is(err, usagestore.ErrConflict) {
@@ -136,6 +145,21 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_gaps WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("gap count=%d err=%v", count, err)
 	}
+	tooOld := event
+	tooOld.SourceIdentity = "session-1:old-event"
+	tooOld.ObservedAt = time.Now().UTC().Add(-100 * 24 * time.Hour)
+	if _, _, err := store.Ingest(ctx, tooOld); !errors.Is(err, usagestore.ErrOutsideRetention) {
+		t.Fatalf("old event err=%v", err)
+	}
+	if err := store.Prune(ctx, time.Now().UTC().Add(91*24*time.Hour)); err != nil {
+		t.Fatalf("Prune: %v", err)
+	}
+	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_events WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("retained old events=%d err=%v", count, err)
+	}
+	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_daily WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("daily aggregate after detail prune=%d err=%v", count, err)
+	}
 	if err := store.DeleteAgent(ctx, uid); err != nil {
 		t.Fatalf("DeleteAgent: %v", err)
 	}
@@ -144,5 +168,11 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	}
 	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_daily WHERE agent_uid=$1`, uid).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("remaining aggregate count=%d err=%v", count, err)
+	}
+	if err := sharedDB.QueryRowContext(ctx, `SELECT count(*) FROM agent_usage_daily WHERE agent_uid=$1`, reusedUID).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("reused name aggregate removed=%d err=%v", count, err)
+	}
+	if err := store.DeleteAgent(ctx, reusedUID); err != nil {
+		t.Fatalf("DeleteAgent reused UID: %v", err)
 	}
 }
