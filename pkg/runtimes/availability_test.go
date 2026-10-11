@@ -60,8 +60,9 @@ func TestDescriptorCopiesAndUnsupportedRuntime(t *testing.T) {
 	}
 	first.AuthModes[0].Name = "changed"
 	first.Features[0] = "made-up"
+	first.RouteModelEvidence[0].Outcomes["task-receipt"] = "made-up"
 	second, _ := runtimes.Describe("codex")
-	if second.AuthModes[0].Name == "changed" || second.Supports("made-up") {
+	if second.AuthModes[0].Name == "changed" || second.Supports("made-up") || second.RouteModelEvidence[0].Outcomes["task-receipt"] == "made-up" {
 		t.Fatal("mutable shared descriptor")
 	}
 	a := &kyberv1.Agent{}

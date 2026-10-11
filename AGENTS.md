@@ -203,6 +203,15 @@ version rolls a Running Codex endpoint pod to refresh its environment. The
 controller polls these pods every 30 seconds because operator-supplied Secrets
 have no Agent owner watch; a reported working turn defers the rotation.
 Free-form errors and 403 are not credential proof.
+Codex's direct OpenRouter route has no built-in authenticated model catalog.
+The PWA accepts an explicit author/model ID on create and model change;
+`RuntimeDescriptor.routeModelEvidence` carries bounded, versioned dev
+observations for known IDs. Unlisted IDs remain unverified, and the route
+does not reveal the selected upstream provider. Never treat a runtime
+capability signal as model/provider task-contract qualification.
+The MAT-115 conformance evaluator in `scripts/devenv/` checks redacted live
+task evidence for exact IDs, completion markers, and cancellation schema;
+its fixture tests run in the required `test.yml` job.
 Codex readiness enters PID 1's chroot from a kubelet exec probe; it must use
 the absolute `/home/kyber/.codex/auth.json` path because probe processes do not
 inherit the start script's `CODEX_HOME` export. Local Vite development must

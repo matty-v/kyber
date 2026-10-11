@@ -2850,6 +2850,22 @@ components:
         features:
           type: array
           items: {type: string}
+        routeModelEvidence:
+          type: array
+          description: Bounded live observations for an external route and model; omitted models are unverified, and an unknown upstream is not qualified.
+          items:
+            type: object
+            required: [route, model, harnessVersion, observedAt, upstream, outcomes, evidenceUrl]
+            properties:
+              route: {type: string}
+              model: {type: string}
+              harnessVersion: {type: string}
+              observedAt: {type: string, format: date}
+              upstream: {type: string}
+              outcomes:
+                type: object
+                additionalProperties: {type: string, enum: [pass, fail, untested]}
+              evidenceUrl: {type: string, format: uri}
         authModes:
           type: array
           items:

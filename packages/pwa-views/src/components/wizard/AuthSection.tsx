@@ -4,7 +4,7 @@ import { inputClass, labelClass } from './styles'
 import type { WizardSetter, WizardState } from './types'
 
 import { wizardContract, wizardAuth, wizardApiKey } from '../../lib/runtime-contract'
-import { isOpenRouterInference, OPENROUTER_INFERENCE_URL } from '../../lib/openrouter-inference'
+import { codexOpenRouterEvidence, isOpenRouterInference, OPENROUTER_INFERENCE_URL } from '../../lib/openrouter-inference'
 
 /**
  * ChannelDef — the wizard's auth-step channel picker. Each channel is a
@@ -251,6 +251,7 @@ export function AuthSection({ state, set }: AuthSectionProps) {
               onChange={e => set('inferenceModel', e.target.value)}
               className={inputClass}
             />
+            {openRouterRoute && <p role="alert" className="mt-1.5 text-xs text-warning">{codexOpenRouterEvidence(contract, state.inferenceModel)}</p>}
           </div>
           <div>
             <label htmlFor="agent-inference-key" className={labelClass}>Endpoint API key</label>

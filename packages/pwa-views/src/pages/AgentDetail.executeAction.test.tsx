@@ -146,6 +146,30 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     expect(agentModels).toHaveBeenCalledWith('fixed', false)
   })
 
+  it('lets an OpenRouter endpoint agent change model without a built-in catalog', async () => {
+    const user = userEvent.setup()
+    vi.mocked(useAPIModule.useAgent).mockReturnValue({
+      data: { ...needsAuthAgent, phase: 'Running', runtime: 'codex', model: 'openai/gpt-4.1-mini',
+        inference: { baseURL: 'https://openrouter.ai/api/v1', api: 'openai', model: 'openai/gpt-4.1-mini', credentialSecret: 'test-key', credentialKey: 'api-key' },
+        runtimeContract: { id: 'codex', name: 'Codex', contractVersion: '1.0', profile: 'interactive-tmux-v1',
+          cancellation: 'notify_only', features: ['model-catalog'], authModes: [{ id: 'api-key', name: 'API key', flow: 'api-key' }],
+        },
+      }, isLoading: false, error: null,
+    } as ReturnType<typeof useAPIModule.useAgent>)
+    render(<MemoryRouter initialEntries={['/agents/lando/general']}>
+      <Routes><Route path="/agents/:name/:section" element={<AgentDetail />} /></Routes>
+    </MemoryRouter>)
+    await user.click(screen.getByRole('button', { name: 'Model' }))
+    expect(agentModels).toHaveBeenCalledWith('lando', false)
+    expect(screen.getByLabelText('Endpoint model ID')).toHaveValue('openai/gpt-4.1-mini')
+    await user.clear(screen.getByLabelText('Endpoint model ID'))
+    await user.type(screen.getByLabelText('Endpoint model ID'), 'invalid')
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()
+    await user.clear(screen.getByLabelText('Endpoint model ID'))
+    await user.type(screen.getByLabelText('Endpoint model ID'), 'cohere/north-mini-code:free')
+    expect(screen.getByRole('button', { name: 'Apply' })).toBeEnabled()
+  })
+
   it('switches a running agent to a configured compatible harness', async () => {
     const user = userEvent.setup()
     vi.mocked(useAPIModule.useAgent).mockReturnValue({
