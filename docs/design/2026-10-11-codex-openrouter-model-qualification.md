@@ -7,6 +7,54 @@ observed upstream (or `unknown`), date, task IDs, API terminal states, and any
 route/provider settings used for each run. Never put API keys or prompt content
 in the evidence file.
 
+## Fresh Kyber dev run (2026-10-11)
+
+On `datawire-dev/kyber-dev` at main `c48c8d7`, a disposable Codex agent used
+`openai/gpt-4.1-mini` through the OpenRouter Responses endpoint. The running
+harness reported `0.162.1` from its installed overlay; the baked image CLI is
+`0.146.0`. The agent image digest was
+`sha256:3b2a5d14a342a6f4d4f4908046a579e874da43c6413bf1fb836b1f69a2c973c4`.
+The upstream provider was not observable. [Redacted task evidence](fixtures/2026-10-11-gpt41mini-task-contract.json)
+uses synthetic ID aliases while preserving task/attempt binding, receipts,
+marker-only completions, and terminal states. It contains no credentials or
+prompt content.
+
+| Task | Receipt and model tool call | API outcome |
+| --- | --- | --- |
+| First completion | Exact task/attempt receipt; `complete` returned its own `UNIQUE-RESPONSE-1` marker | `completed` |
+| Second completion | Exact task/attempt receipt; `complete` returned its own `UNIQUE-RESPONSE-2` marker | `completed` |
+| Cancellation | Exact task/attempt receipt; Codex said it would monitor cancellation, then ended the turn without `get_control` or `ack_cancel` | `failed`, `cancel_unconfirmed` after five minutes; `cancel.applied=false` |
+
+The cancellation request above arrived **after** Codex ended that turn. It
+establishes a quiescent-turn failure, not an active-turn result. A separate
+active-turn test on the same image requested cancellation while Codex was
+working. Codex called `get_control` and saw `cancel_requested=true`, then
+called `ack_cancel` twice without `task_id` and with an `attempt_` value as
+`acknowledgment_id`. Both calls were rejected by the sidecar's generic
+validation error. The model ended its turn without acknowledging cancellation.
+This exposes an avoidable tool-guidance problem in addition to the route's
+unqualified cancellation behavior. The sidecar now describes the required
+fields and generated `ack_` ID and returns field-specific validation errors.
+
+On PR #327 image `59815b7` in the same dev cluster, one active-turn retest
+requested cancellation while Codex was processing a task. The new status
+sidecar image was present in the disposable Agent pod. Codex called
+`get_control`, then called `ack_cancel` with the exact task and attempt IDs
+and a correctly shaped `ack_` ID. The API reached `canceled`, with
+`ackSource=agent` and cancellation delivery `acknowledged`. A separate first
+task on this image completed after checking control before cancellation was
+requested; it does not count as a cancellation test. This single successful
+retest validates the tool guidance path, but does not establish repeatable
+route/model cancellation support after the two failures above.
+
+The earlier pilot had one successful cancellation. This fresh failure means
+task cancellation is **not qualified** for this route and model. The evidence
+descriptor reports `task-cancel: fail`; it must not imply repeatable support
+from a single earlier pass. The evaluator correctly fails the redacted file
+because its cancellation acknowledgment is absent. After the run, the
+disposable agent and managed credential were deleted; dev returned to zero
+Agents with durable tasks disabled.
+
 ## Three-task fixture
 
 Run this only on the dedicated Kyber GCP dev cluster, with a disposable Agent.
