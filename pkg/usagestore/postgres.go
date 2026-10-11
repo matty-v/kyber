@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -123,7 +122,12 @@ func (s *PostgresStore) Ingest(ctx context.Context, input Event) (Event, bool, e
 		}
 	}
 	input.ID = uuid.NewString()
-	input.IngestedAt = time.Now().UTC()
+	// Use the database clock while holding the sequence lock so control-plane
+	// replicas with skewed clocks cannot reorder ingestion timestamps.
+	if err := tx.QueryRowContext(ctx, `SELECT clock_timestamp()`).Scan(&input.IngestedAt); err != nil {
+		return Event{}, false, fmt.Errorf("reading usage ingestion time: %w", err)
+	}
+	input.IngestedAt = input.IngestedAt.UTC()
 	document, err := json.Marshal(input)
 	if err != nil {
 		return Event{}, false, fmt.Errorf("marshaling usage event: %w", err)
