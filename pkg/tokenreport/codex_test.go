@@ -59,6 +59,8 @@ func TestDetectCodexActivityFileWithAuth(t *testing.T) {
 	}{
 		{"unauthorized", `{"http_connection_failed":{"http_status_code":401}}`, true},
 		{"forbidden", `{"http_connection_failed":{"http_status_code":403}}`, false},
+		{"rate limited", `{"response_too_many_failed_attempts":{"http_status_code":429}}`, false},
+		{"server error", `"internal_server_error"`, false},
 		{"message only", `{}`, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
