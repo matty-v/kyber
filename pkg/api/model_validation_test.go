@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -191,6 +193,35 @@ func TestSetModel_AcceptsKnownModel(t *testing.T) {
 	s.setAgentModel(rr, req, "wedge")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestSetModel_OpenRouterRouteUsesEndpointModelRules(t *testing.T) {
+	s := newSetModelServer(t, snapshotCache(t, nil, []string{"gpt-5"}))
+	agent := &kyberv1.Agent{}
+	key := types.NamespacedName{Name: "wedge", Namespace: fdNS}
+	if err := s.K8sClient.Get(context.Background(), key, agent); err != nil {
+		t.Fatal(err)
+	}
+	agent.Spec.Runtime = "codex"
+	agent.Spec.Inference = &kyberv1.AgentInference{BaseURL: openRouterInferenceBaseURL, API: "openai", Model: "cohere/north-mini-code:free"}
+	if err := s.K8sClient.Update(context.Background(), agent); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		model string
+		want  int
+	}{
+		{"gpt-5", http.StatusBadRequest},
+		{"cohere/north-mini-code:free", http.StatusOK},
+	} {
+		body := fmt.Sprintf(`{"model":%q}`, tc.model)
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model", bytes.NewBufferString(body))
+		rr := httptest.NewRecorder()
+		s.setAgentModel(rr, req, "wedge")
+		if rr.Code != tc.want {
+			t.Errorf("model %q: status = %d, want %d; body=%s", tc.model, rr.Code, tc.want, rr.Body.String())
+		}
 	}
 }
 

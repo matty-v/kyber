@@ -22,6 +22,26 @@ func TestValidateInferenceAcceptsAWellFormedEndpoint(t *testing.T) {
 	}
 }
 
+func TestOpenRouterCodexRequiresExplicitModel(t *testing.T) {
+	for _, model := range []string{"", "gpt-5", "author/model with space", "author/model\nnext"} {
+		inf := validInference()
+		inf.BaseURL = openRouterInferenceBaseURL
+		inf.Model = model
+		if err := validateInference("codex", inf); err == nil {
+			t.Errorf("accepted invalid OpenRouter model %q", model)
+		}
+	}
+	inf := validInference()
+	inf.BaseURL = openRouterInferenceBaseURL
+	inf.Model = "cohere/north-mini-code:free"
+	if err := validateInference("codex", inf); err != nil {
+		t.Fatalf("rejected explicit OpenRouter model: %v", err)
+	}
+	if isOpenRouterEndpoint("https://openrouter.ai.evil.example/api/v1") || isOpenRouterEndpoint("https://openrouter.ai/api/v1/other") {
+		t.Fatal("classified a lookalike or different path as OpenRouter")
+	}
+}
+
 // Nil is how every existing agent looks. It must stay valid on any runtime,
 // including ones that do not support the feature at all.
 func TestValidateInferenceAllowsNilOnAnyRuntime(t *testing.T) {

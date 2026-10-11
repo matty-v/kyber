@@ -1,5 +1,6 @@
 import type { WizardState } from './types'
 import { supportsModelSelection, wizardAuth, wizardContract } from '../../lib/runtime-contract'
+import { isOpenRouterInference } from '../../lib/openrouter-inference'
 
 /** Step ids the user can jump back to from Review (Review itself is not editable). */
 type EditableStep = 1 | 2 | 3 | 4
@@ -55,7 +56,7 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
     { label: 'Startup prompt', value: fmtStartupPrompt(state.startupPrompt) },
     { label: 'Runtime', value: state.runtime, editStep: 2 },
     ...(canSelectModel ? [{ label: 'Model', value: state.inferenceEnabled ? (state.inferenceModel || state.model || 'Endpoint default') : (state.model || 'Fleet default') }] : []),
-    ...(state.runtime === 'hermes' ? [{ label: 'Model source', value: state.inferenceEnabled ? 'Custom endpoint' : 'OpenRouter (direct)' }] : []),
+    ...(state.runtime === 'hermes' || state.runtime === 'codex' ? [{ label: 'Model source', value: state.inferenceEnabled ? (state.runtime === 'codex' && isOpenRouterInference(state.inferenceBaseURL) ? 'OpenRouter (direct)' : 'Custom endpoint') : state.runtime === 'hermes' ? 'OpenRouter (direct)' : 'Codex built-in provider' }] : []),
     { label: 'Harness version', value: 'Fleet default' },
     { label: 'Resources', value: `${state.cpu} CPU / ${state.memory} / ${state.disk}` },
     { label: 'Identity', value: fmtIdentity(state), editStep: 3 },

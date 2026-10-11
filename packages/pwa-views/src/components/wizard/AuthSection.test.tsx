@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { AuthSection } from './AuthSection'
 import { initialWizardState } from './types'
 import type { RuntimeDescriptor } from '../../lib/types'
+import { OPENROUTER_INFERENCE_URL } from '../../lib/openrouter-inference'
 
 /** A runtime contract that declares the custom-inference-endpoint feature. */
 const hermesContract: RuntimeDescriptor = {
@@ -25,6 +26,16 @@ const hermesState = () => ({
 })
 
 describe('AuthSection', () => {
+  it('offers Codex OpenRouter as an explicit route and clears credentials when switching', async () => {
+    const user = userEvent.setup()
+    const set = vi.fn()
+    const codexContract: RuntimeDescriptor = { ...hermesContract, id: 'codex', name: 'Codex' }
+    render(<AuthSection state={{ ...initialWizardState([]), runtime: 'codex', runtimeContract: codexContract }} set={set} />)
+    await user.selectOptions(screen.getByLabelText('Model source'), 'openrouter')
+    expect(set).toHaveBeenCalledWith('inferenceEnabled', true)
+    expect(set).toHaveBeenCalledWith('inferenceBaseURL', OPENROUTER_INFERENCE_URL)
+    expect(set).toHaveBeenCalledWith('inferenceApiKey', '')
+  })
   it('switching auth type to api-key clears telegramEnabled', async () => {
     const user = userEvent.setup()
     const set = vi.fn()

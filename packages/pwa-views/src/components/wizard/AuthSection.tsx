@@ -4,6 +4,7 @@ import { inputClass, labelClass } from './styles'
 import type { WizardSetter, WizardState } from './types'
 
 import { wizardContract, wizardAuth, wizardApiKey } from '../../lib/runtime-contract'
+import { isOpenRouterInference, OPENROUTER_INFERENCE_URL } from '../../lib/openrouter-inference'
 
 /**
  * ChannelDef — the wizard's auth-step channel picker. Each channel is a
@@ -153,6 +154,7 @@ export interface AuthSectionProps {
 export function AuthSection({ state, set }: AuthSectionProps) {
   const contract = wizardContract(state)
   const auth = wizardAuth(state)
+  const openRouterRoute = state.runtime === 'codex' && state.inferenceEnabled && isOpenRouterInference(state.inferenceBaseURL)
   function setApiKey(value: string) {
     if (auth?.inputField === 'anthropicApiKey') set('anthropicApiKey', value)
     else if (auth?.inputField === 'openaiApiKey') set('openaiApiKey', value)
@@ -175,7 +177,7 @@ export function AuthSection({ state, set }: AuthSectionProps) {
 
   return (
     <section className="space-y-5">
-      <div>
+      {!state.inferenceEnabled && <div>
         <label htmlFor="agent-auth-type" className={labelClass}>Authentication</label>
         <select id="agent-auth-type" value={state.authType} className={inputClass} onChange={e => {
           const mode = e.target.value as 'oauth' | 'api-key'
@@ -187,9 +189,24 @@ export function AuthSection({ state, set }: AuthSectionProps) {
         }}>
           {contract?.authModes.map(mode => <option key={mode.id} value={mode.id}>{mode.name}</option>)}
         </select>
-      </div>
+      </div>}
       {!auth && <p role="alert">Authentication is unavailable for this harness.</p>}
       {contract?.features?.includes('custom-inference-endpoint') && <div className="space-y-3 rounded-md border border-border p-3">
+        {state.runtime === 'codex' ? <>
+          <label htmlFor="agent-model-source" className={labelClass}>Model source</label>
+          <select id="agent-model-source" className={inputClass} value={!state.inferenceEnabled ? 'native' : openRouterRoute ? 'openrouter' : 'custom'} onChange={e => {
+            const route = e.target.value
+            set('inferenceEnabled', route !== 'native')
+            set('inferenceBaseURL', route === 'openrouter' ? OPENROUTER_INFERENCE_URL : '')
+            set('inferenceModel', '')
+            set('inferenceApiKey', '')
+            set('authType', contract?.authModes[0]?.id ?? 'oauth')
+          }}>
+            <option value="native">Codex built-in provider</option>
+            <option value="openrouter">OpenRouter (direct Responses API)</option>
+            <option value="custom">Custom inference endpoint</option>
+          </select>
+        </> : <>
         <label className="flex items-center gap-2 text-sm">
           <input
             type="checkbox"
@@ -202,8 +219,15 @@ export function AuthSection({ state, set }: AuthSectionProps) {
           Point this agent at a model server you run — anything speaking the OpenAI API.
           Leave off to use the harness&apos;s built-in provider.
         </p>
+        </>}
         {state.inferenceEnabled && <>
-          <div>
+          {openRouterRoute ? <div className="rounded-md border border-border bg-surface-raised p-3 text-xs text-text-muted">
+            <p className="font-medium text-text-primary">OpenRouter direct route</p>
+            <p className="mt-1">Codex sends prompts and tool calls to OpenRouter, which can route them to another model provider. OpenRouter bills API usage separately from ChatGPT subscriptions. The upstream provider can vary and is not reported by Kyber.</p>
+            <p className="mt-1">Set model, provider, spend and privacy rules in OpenRouter. Any Kyber cost shown is an estimate; OpenRouter activity is the billing source of truth.</p>
+            <p className="mt-1">No ChatGPT device login or OpenAI API key is needed for this route.</p>
+            <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="mt-2 inline-block text-accent hover:underline">OpenRouter guardrails and privacy ↗</a>
+          </div> : <div>
             <label htmlFor="agent-inference-url" className={labelClass}>Endpoint URL</label>
             <input
               id="agent-inference-url"
@@ -215,12 +239,14 @@ export function AuthSection({ state, set }: AuthSectionProps) {
               className={inputClass}
             />
             <p className="mt-1.5 text-xs text-text-muted">Include the version path the server expects. HTTPS unless the host is inside the cluster.</p>
-          </div>
+          </div>}
           <div>
             <label htmlFor="agent-inference-model" className={labelClass}>Model</label>
             <input
               id="agent-inference-model"
               type="text"
+              required={openRouterRoute}
+              placeholder={openRouterRoute ? 'author/model:variant' : undefined}
               value={state.inferenceModel}
               onChange={e => set('inferenceModel', e.target.value)}
               className={inputClass}
@@ -236,7 +262,7 @@ export function AuthSection({ state, set }: AuthSectionProps) {
               onChange={e => set('inferenceApiKey', e.target.value)}
               className={inputClass}
             />
-            <p className="mt-1.5 text-xs text-text-muted">Stored as a Secret and injected only into this agent.</p>
+            <p className="mt-1.5 text-xs text-text-muted">Stored as a Secret and injected only into this agent. A rejected key requires Secret rotation.</p>
           </div>
         </>}
       </div>}

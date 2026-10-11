@@ -1,6 +1,7 @@
 import { wizardAuth, wizardApiKey } from '../../lib/runtime-contract'
 import { IDENTITY_REPO_SLUG_RE } from './identity-utils'
 import type { WizardState } from './types'
+import { isOpenRouterInference } from '../../lib/openrouter-inference'
 
 /**
  * Validation result for a wizard step. The discriminated union lets the
@@ -85,6 +86,9 @@ export function isAuthValid(state: WizardState): StepValidation {
   // reject it after the rest of the form is gone.
   if (state.inferenceEnabled) {
     if (!state.inferenceBaseURL.trim()) return { ok: false, reason: 'Enter the inference endpoint URL.' }
+    if (state.runtime === 'codex' && isOpenRouterInference(state.inferenceBaseURL) && !/^[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._:-]*$/.test(state.inferenceModel.trim())) {
+      return { ok: false, reason: 'Enter an OpenRouter author/model ID for Codex.' }
+    }
     if (!state.inferenceApiKey.trim()) return { ok: false, reason: "Paste the endpoint's API key." }
     return OK
   }
