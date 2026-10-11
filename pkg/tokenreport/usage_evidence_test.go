@@ -91,7 +91,7 @@ func TestParseHermesUsageLineRouteAndUnknownCache(t *testing.T) {
 	if err != nil || got == nil {
 		t.Fatalf("evidence=%+v err=%v", got, err)
 	}
-	if got.SourceIdentity != "log-1:session_one:2" || got.ReportedProviderLabel != "openrouter" || got.CacheRead != nil || got.CacheWrite != nil || *got.InputUncached != 100 {
+	if got.SourceIdentity != "log-1:session_one:2" || got.ReportedProviderLabel != "openrouter" || got.CacheRead != nil || got.CacheWrite != nil || got.InputUncached != nil || got.RawUsage["input"] != 100 {
 		t.Fatalf("evidence=%+v", got)
 	}
 	if got.ObservedAt.Format(time.RFC3339) != "2026-10-11T16:00:00Z" {
@@ -106,7 +106,7 @@ func TestParseHermesUsageLineRouteAndUnknownCache(t *testing.T) {
 		t.Fatalf("missing timezone got=%+v err=%v", got, err)
 	}
 	second, err := ParseHermesUsageLine(strings.Replace(line, "call #2", "call #3", 1), "log-1", time.UTC)
-	if err != nil || second == nil || second.SourceIdentity == got.SourceIdentity || *second.InputUncached != 100 {
+	if err != nil || second == nil || second.SourceIdentity == got.SourceIdentity || second.InputUncached != nil || second.RawUsage["input"] != 100 {
 		t.Fatalf("equal-count next call should remain distinct: %+v err=%v", second, err)
 	}
 }

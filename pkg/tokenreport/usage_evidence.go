@@ -31,6 +31,8 @@ type UsageEvidence struct {
 	Output                *int64
 	CacheRead             *int64
 	CacheWrite            *int64
+	// RawUsage contains only explicitly allowlisted numeric source fields.
+	RawUsage map[string]int64
 }
 
 func tokenCount(n int64) *int64 { return &n }
@@ -173,13 +175,13 @@ func ParseHermesUsageLine(line, sourceNamespace string, location *time.Location)
 	if err != nil {
 		return nil, ErrIncompleteUsage
 	}
-	input := call.input - call.cacheRead
 	e := &UsageEvidence{Runtime: "hermes", SourceIdentity: fmt.Sprintf("%s:%s:%d", sourceNamespace, call.session, callNumber),
 		ObservedAt: at.UTC(), Model: call.model, ModelEvidence: "observed", ReportedProviderLabel: call.provider,
-		InputUncached: tokenCount(input), Output: tokenCount(call.output), CacheWrite: nil}
+		Output: tokenCount(call.output), RawUsage: map[string]int64{"input": call.input}}
 	// The optional cache=read/total segment is the only local evidence for
 	// Hermes cache reads. Its absence is unknown, not an observed zero.
 	if hermesAPICallPattern.FindStringSubmatch(line)[9] != "" {
+		e.InputUncached = tokenCount(call.input - call.cacheRead)
 		e.CacheRead = tokenCount(call.cacheRead)
 	}
 	return e, nil
