@@ -98,6 +98,7 @@ const openRouterProvider = "openrouter"
 
 type hermesCall struct {
 	at, session, model, provider string
+	callNumber                   string
 	input, output, cacheRead     int64
 }
 
@@ -200,7 +201,7 @@ func parseHermesCall(line string) (hermesCall, bool) {
 			return hermesCall{}, false
 		}
 	}
-	return hermesCall{at: m[1], session: m[2], model: m[4], provider: m[5], input: input, output: output, cacheRead: cacheRead}, true
+	return hermesCall{at: m[1], session: m[2], callNumber: m[3], model: m[4], provider: m[5], input: input, output: output, cacheRead: cacheRead}, true
 }
 
 func parseHermesTimestamp(value string) time.Time {

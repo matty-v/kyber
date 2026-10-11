@@ -17,8 +17,9 @@ import (
 // streaming). effortLevel is at the top level for extended-thinking models
 // (Opus/Sonnet), absent on Haiku.
 type rawEntry struct {
-	Type    string `json:"type"`
-	Message struct {
+	Type      string    `json:"type"`
+	Timestamp time.Time `json:"timestamp"`
+	Message   struct {
 		// ID is the API message id (msg_…). Multiple JSONL lines can carry
 		// the same message id (one per content block), each repeating the
 		// message's usage — the outputTracker dedups on it.
