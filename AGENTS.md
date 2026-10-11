@@ -47,6 +47,12 @@ The agent pod also receives `KYBER_USAGE_ROUTE_FINGERPRINT`, derived from its
 runtime, authentication mode, and configured inference endpoint. Usage
 reporters use this non-secret stamp to detect route changes across pod
 restarts; the control plane independently derives the same trusted revision.
+The internal `/usage-event` and `/usage-gap` sidecar paths forward to
+`/internal/agents/{name}/...`, where same-Agent pod authentication, current
+Agent UID and route revision checks precede one Postgres transaction for the
+evidence and source cursor. A successful ACK means durable ingest; without
+Postgres these paths return 503. The Claude reporter scans complete finalized
+JSONL lines every five seconds alongside its existing context snapshot loop.
 
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`

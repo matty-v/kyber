@@ -22,8 +22,8 @@ const maxUsageLine = 4 << 20
 // UsageAckCursor is the position after one complete source record. The sink
 // must acknowledge a durable control-plane write before Scan saves it locally.
 type UsageAckCursor struct {
-	Namespace string
-	Offset    int64
+	Namespace string `json:"namespace"`
+	Offset    int64  `json:"offset"`
 }
 
 type ClaudeUsageSink interface {
@@ -39,10 +39,11 @@ type ClaudeUsageCollector struct {
 }
 
 type claudeFileCursor struct {
-	Namespace string `json:"namespace"`
-	Offset    int64  `json:"offset"`
-	Device    uint64 `json:"device"`
-	Inode     uint64 `json:"inode"`
+	Namespace          string `json:"namespace"`
+	Offset             int64  `json:"offset"`
+	Device             uint64 `json:"device"`
+	Inode              uint64 `json:"inode"`
+	LastSourceIdentity string `json:"lastSourceIdentity,omitempty"`
 }
 
 type claudeCursorState struct {
@@ -185,10 +186,11 @@ func (c *ClaudeUsageCollector) scanFile(ctx context.Context, path string, state 
 				if err := c.Sink.AcceptGap(ctx, file.Namespace+":malformed-"+fmt.Sprint(file.Offset), "malformed", time.Now().UTC(), cursor); err != nil {
 					return err
 				}
-			} else if evidence != nil {
+			} else if evidence != nil && evidence.SourceIdentity != file.LastSourceIdentity {
 				if err := c.Sink.AcceptUsage(ctx, *evidence, cursor); err != nil {
 					return err
 				}
+				file.LastSourceIdentity = evidence.SourceIdentity
 			}
 		}
 		file.Offset = next

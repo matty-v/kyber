@@ -81,7 +81,8 @@ func TestClaudeUsageCollectorBootReplayAndRouteChange(t *testing.T) {
 	if len(sink.events) != 0 {
 		t.Fatal("pre-cutover transcript was counted")
 	}
-	appendUsage(t, path, claudeUsageLine("msg-1")+claudeUsageLine("msg-2"))
+	duplicateBlock := strings.Replace(claudeUsageLine("msg-2"), "2026-10-11T12:00:00Z", "2026-10-11T12:00:01Z", 1)
+	appendUsage(t, path, claudeUsageLine("msg-1")+claudeUsageLine("msg-2")+duplicateBlock)
 	sink.failOnce = true
 	if err := c.Scan(ctx); err == nil {
 		t.Fatal("expected transport failure")

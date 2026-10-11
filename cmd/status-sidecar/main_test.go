@@ -114,6 +114,8 @@ func TestForwarder_RoutesAllPaths(t *testing.T) {
 	}{
 		{"/event", "/internal/agents/alice/status-event"},
 		{"/token-usage", "/internal/agents/alice/token-usage"},
+		{"/usage-event", "/internal/agents/alice/usage-event"},
+		{"/usage-gap", "/internal/agents/alice/usage-gap"},
 		{"/runtime-version", "/internal/agents/alice/runtime-version"},
 		{"/runtime-catalog", "/internal/agents/alice/runtime-catalog"},
 		{"/refresh-token", "/internal/agents/alice/refresh-token"},
@@ -136,6 +138,7 @@ func TestForwarder_RoutesAllPaths(t *testing.T) {
 			lg := testLogger(slog.LevelInfo)
 			mux.HandleFunc("/event", forwardHandler(&http.Client{Timeout: postTimeout}, cfg, nil, lg, "status-event", true))
 			mux.HandleFunc("/token-usage", forwardHandler(&http.Client{Timeout: postTimeout}, cfg, nil, lg, "token-usage", false))
+			registerUsageForwarders(mux, &http.Client{Timeout: postTimeout}, cfg, nil, lg)
 			mux.HandleFunc("/runtime-version", forwardHandler(&http.Client{Timeout: postTimeout}, cfg, nil, lg, "runtime-version", false))
 			mux.HandleFunc("/runtime-catalog", forwardHandler(&http.Client{Timeout: postTimeout}, cfg, nil, lg, "runtime-catalog", false))
 			mux.HandleFunc("/refresh-token", forwardHandler(&http.Client{Timeout: postTimeout}, cfg, nil, lg, "refresh-token", false))

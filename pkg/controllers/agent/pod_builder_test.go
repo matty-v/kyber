@@ -364,6 +364,7 @@ func TestBuildPodSpec_EnvVars(t *testing.T) {
 
 func TestBuildPodSpec_UsageRouteStamp(t *testing.T) {
 	agent := testAgent()
+	agent.UID = "test-agent-lifetime"
 	stamp := func() string {
 		t.Helper()
 		pod, err := BuildPodSpec(agent, testAdapter(), "node-01")
@@ -371,6 +372,9 @@ func TestBuildPodSpec_UsageRouteStamp(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, env := range pod.Containers[0].Env {
+			if env.Name == "KYBER_AGENT_UID" && env.Value != "test-agent-lifetime" {
+				t.Fatalf("agent UID stamp=%q", env.Value)
+			}
 			if env.Name == "KYBER_USAGE_ROUTE_FINGERPRINT" {
 				return env.Value
 			}

@@ -424,6 +424,7 @@ func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName st
 	}
 	envVars := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: agent.Name},
+		{Name: "KYBER_AGENT_UID", Value: string(agent.UID)},
 		{Name: "KYBER_AGENT_GENERATION", Value: strconv.FormatInt(agent.Generation, 10)},
 		{Name: "KYBER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "KYBER_STARTUP_PROMPT", Value: agent.Spec.StartupPrompt},
