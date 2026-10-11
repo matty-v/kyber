@@ -44,6 +44,7 @@ import (
 	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
+	"github.com/matty-v/kyber/pkg/usagestore"
 )
 
 // MaxJobRunsPerJob caps the number of AgentJobRun entries retained on
@@ -127,6 +128,7 @@ type InternalServer struct {
 	// (MAT-87/MAT-88). Nil leaves those routes answering 503.
 	archives           *ArchiveService
 	tokenStore         tokenstore.TokenStore
+	usageStore         UsageStore
 	tokenAccumulator   tokenstore.Accumulator
 	metricsStore       metricsstore.MetricsStore
 	nodeStore          metricsstore.NodeStore
@@ -173,6 +175,17 @@ func WithTokenStore(ts tokenstore.TokenStore) InternalServerOption {
 	return func(s *InternalServer) {
 		s.tokenStore = ts
 	}
+}
+
+// UsageStore is the durable local evidence boundary used by the internal API.
+type UsageStore interface {
+	ResolveRoute(context.Context, string, usagestore.RouteRevision) (string, error)
+	IngestWithCursor(context.Context, usagestore.Event, *usagestore.SourceCursor) (usagestore.Event, bool, error)
+	RecordGapWithCursor(context.Context, usagestore.Gap, *usagestore.SourceCursor) error
+}
+
+func WithUsageStore(store UsageStore) InternalServerOption {
+	return func(s *InternalServer) { s.usageStore = store }
 }
 
 // WithTokenAccumulator wires an Accumulator so the POST /internal/agents/{name}/token-usage
@@ -396,6 +409,10 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 		s.handleCodexAuthRotation(w, r, agentName)
 	case "token-usage":
 		s.handleTokenUsagePost(w, r, agentName)
+	case "usage-event":
+		s.handleUsageEventPost(w, r, agentName)
+	case "usage-gap":
+		s.handleUsageGapPost(w, r, agentName)
 	case "job-events":
 		s.handleJobEvent(w, r, agentName)
 	case "runtime-capabilities":

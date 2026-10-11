@@ -21,18 +21,18 @@ var safeSourcePart = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
 // ingestion metadata. Nil token classes mean that the source did not report
 // them, while a pointer to zero means an observed zero.
 type UsageEvidence struct {
-	Runtime               string
-	SourceIdentity        string
-	ObservedAt            time.Time
-	Model                 string
-	ModelEvidence         string
-	ReportedProviderLabel string
-	InputUncached         *int64
-	Output                *int64
-	CacheRead             *int64
-	CacheWrite            *int64
+	Runtime               string    `json:"runtime"`
+	SourceIdentity        string    `json:"sourceIdentity"`
+	ObservedAt            time.Time `json:"observedAt"`
+	Model                 string    `json:"model"`
+	ModelEvidence         string    `json:"modelEvidence"`
+	ReportedProviderLabel string    `json:"reportedProviderLabel,omitempty"`
+	InputUncached         *int64    `json:"inputUncached"`
+	Output                *int64    `json:"output"`
+	CacheRead             *int64    `json:"cacheRead"`
+	CacheWrite            *int64    `json:"cacheWrite"`
 	// RawUsage contains only explicitly allowlisted numeric source fields.
-	RawUsage map[string]int64
+	RawUsage map[string]int64 `json:"rawUsage,omitempty"`
 }
 
 func tokenCount(n int64) *int64 { return &n }

@@ -66,6 +66,28 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {
+		collector := &tokenreport.ClaudeUsageCollector{
+			ProjectsRoot: projectsRoot, CursorPath: "/persist/usage/claude-cursor.json", RouteFingerprint: routeFingerprint,
+			Sink: &tokenreport.HTTPUsageSink{SidecarURL: sidecarURL, AgentUID: agentUID, RouteFingerprint: routeFingerprint, Runtime: "claude"},
+		}
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				if err := collector.Scan(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("token-reporter: usage collection delayed: %v", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	} else {
+		log.Print("token-reporter: usage collection unavailable until Agent pod has UID and route stamp")
+	}
 
 	// Credential sync is unconditional now — the sidecar is always present
 	// in agent pods (the controller injects it; api-key agents simply have
