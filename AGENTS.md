@@ -34,6 +34,14 @@ controllers reconcile reality toward it. Nothing mutates cluster state
 imperatively except controllers executing reconcile actions. Regenerate CRD
 manifests with `make generate` — NEVER hand-edit `deploy/helm/kyber/crds/`.
 
+`Agent.status.observedPodConfigHash` records the restart-relevant spec last
+built into a pod. The reconciler excludes hot API/controller fields from that
+fingerprint and records `jobsSyncedGeneration` only after the per-agent jobs
+ConfigMap is written (before kubelet projection). Runtime capability
+availability uses both markers; API `dirty` uses only the pod fingerprint and
+sidecar condition so ConfigMap propagation does not imply a restart.
+`observedGeneration` remains the Failed restart claim and legacy fallback.
+
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`
 edit. It checks the target image, authentication and channels, prepares the

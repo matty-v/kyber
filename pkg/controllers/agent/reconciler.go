@@ -487,6 +487,18 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// means no scheduled prompts fire.
 	if err := r.reconcileJobsConfigMap(ctx, agent); err != nil {
 		logger.Error(err, "reconciling jobs ConfigMap (continuing)", "agent", agent.Name)
+	} else if err := r.stampJobsSyncedGeneration(ctx, agent); err != nil {
+		return ctrl.Result{}, err
+	}
+	// Existing pods predate observedPodConfigHash. A matching generation is
+	// evidence that the current spec was built into this pod, so seed the
+	// baseline before a later hot jobs edit advances the generation.
+	if agent.Status.ObservedPodConfigHash == "" &&
+		agent.Status.ObservedGeneration == agent.Generation &&
+		agent.Status.ObservedGeneration > 0 && agent.Status.PodName != "" {
+		if err := r.stampObservedPodConfigHash(ctx, agent); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 
 	// 3c. Gate pod creation when auto-create is still pending. Template set +
@@ -2515,14 +2527,9 @@ func (r *AgentReconciler) createPod(ctx context.Context, agent *kyberv1.Agent) e
 	if err := r.Create(ctx, pod); err != nil {
 		return fmt.Errorf("creating pod: %w", err)
 	}
-	// Stamp the spec generation we just rolled into a pod. The PWA derives
-	// its "restart required" badge from metadata.generation > status.observedGeneration
-	// (kyber#157 PR-A); spec changes that don't trigger another createPod
-	// (e.g. spec.resources today, see kyber#149) will leave it lagging until
-	// the operator rolls the pod manually. Failure here is intentionally
-	// non-fatal — the pod is already up and the next createPod will retry
-	// the stamp; over-reporting "restart required" is preferable to losing
-	// the just-created pod.
+	// Record the generation and restart-relevant spec built into this pod.
+	// Failure is non-fatal because the pod already exists; availability then
+	// remains conservative until a later reconciliation can seed the status.
 	if err := r.stampObservedGeneration(ctx, agent); err != nil {
 		log.FromContext(ctx).Error(err, "stamping observedGeneration after pod create",
 			"agent", agent.Name, "generation", agent.Generation)
@@ -2595,15 +2602,38 @@ func (r *AgentReconciler) restartRequestChanged(ctx context.Context, agent *kybe
 
 // stampObservedGeneration patches agent.status.observedGeneration to the
 // current metadata.generation. Called after a successful pod create/recreate
-// so the PWA can derive "restart required" as generation > observedGeneration.
-// No-op when the value is already current.
+// together with the restart-relevant spec fingerprint. No-op when both are
+// already current.
 func (r *AgentReconciler) stampObservedGeneration(ctx context.Context, agent *kyberv1.Agent) error {
-	if agent.Status.ObservedGeneration == agent.Generation {
+	hash := agent.PodConfigHash()
+	if agent.Status.ObservedGeneration == agent.Generation && agent.Status.ObservedPodConfigHash == hash {
 		return nil
 	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.ObservedGeneration = agent.Generation
+	agent.Status.ObservedPodConfigHash = hash
 	return r.Status().Patch(ctx, agent, patch)
+}
+
+func (r *AgentReconciler) stampObservedPodConfigHash(ctx context.Context, agent *kyberv1.Agent) error {
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
+	if err := r.Status().Patch(ctx, agent, patch); err != nil {
+		return fmt.Errorf("seeding observed pod config hash: %w", err)
+	}
+	return nil
+}
+
+func (r *AgentReconciler) stampJobsSyncedGeneration(ctx context.Context, agent *kyberv1.Agent) error {
+	if agent.Status.JobsSyncedGeneration == agent.Generation {
+		return nil
+	}
+	patch := client.MergeFrom(agent.DeepCopy())
+	agent.Status.JobsSyncedGeneration = agent.Generation
+	if err := r.Status().Patch(ctx, agent, patch); err != nil {
+		return fmt.Errorf("stamping synced jobs generation: %w", err)
+	}
+	return nil
 }
 
 func (r *AgentReconciler) reconcilePublicCapabilities(ctx context.Context, agent *kyberv1.Agent) (time.Duration, error) {

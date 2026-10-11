@@ -26,7 +26,7 @@ func AvailabilityFor(agent *kyberv1.Agent, feature Feature, now time.Time) Avail
 		result.Reason = "agent_not_running"
 		return result
 	}
-	if agent.SpecChangedSinceLastPod() {
+	if agent.PodConfigurationPending() {
 		result.Reason = "configuration_pending"
 		return result
 	}

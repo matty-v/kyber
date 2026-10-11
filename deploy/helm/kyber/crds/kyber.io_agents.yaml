@@ -1165,6 +1165,13 @@ spec:
                   - startedAt
                   type: object
                 type: array
+              jobsSyncedGeneration:
+                description: |-
+                  JobsSyncedGeneration is the latest Agent generation whose jobs were
+                  successfully written to the mounted ConfigMap. It does not claim that
+                  kubelet has already projected the new contents into the pod.
+                format: int64
+                type: integer
               lastKernelOOMKillAt:
                 description: |-
                   LastKernelOOMKillAt is the wall-clock timestamp of the most recent
@@ -1206,6 +1213,12 @@ spec:
                   metadata.generation > status.observedGeneration. See kyber#157.
                 format: int64
                 type: integer
+              observedPodConfigHash:
+                description: |-
+                  ObservedPodConfigHash is the restart-relevant Agent spec last built into
+                  a pod. It lets hot-applied edits advance metadata.generation without
+                  making the running pod appear stale.
+                type: string
               phase:
                 description: Phase is the current lifecycle phase of the agent.
                 type: string
