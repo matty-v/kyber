@@ -52,6 +52,29 @@ func main() {
 	defer cancel()
 	client := &http.Client{Timeout: 5 * time.Second}
 	logPath := filepath.Join(home, "logs", "agent.log")
+	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {
+		collector := &tokenreport.HermesUsageCollector{
+			LogPath: logPath, CursorPath: "/persist/usage/hermes-cursor.json", RouteFingerprint: routeFingerprint,
+			Location: time.Local, Sink: &tokenreport.HTTPUsageSink{SidecarURL: os.Getenv("KYBER_SIDECAR_URL"),
+				AgentUID: agentUID, RouteFingerprint: routeFingerprint, Runtime: "hermes"},
+		}
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				if err := collector.Scan(ctx); err != nil && ctx.Err() == nil {
+					log.Printf("hermes-reporter: usage collection delayed: %v", err)
+				}
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+				}
+			}
+		}()
+	} else {
+		log.Print("hermes-reporter: usage collection unavailable until Agent pod has UID and route stamp")
+	}
 	providerCache := filepath.Join(home, "provider_models_cache.json")
 	// Report the catalog for the provider this agent actually runs against.
 	// HERMES_PROVIDER is "openrouter" for a default agent and the Kyber-managed
