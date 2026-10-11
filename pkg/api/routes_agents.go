@@ -1157,7 +1157,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	// Same catalog check + force escape set-model applies — an unknown
 	// model id would otherwise fail every turn while the agent reports
 	// healthy.
-	if !req.Force {
+	if !req.Force && req.Inference == nil {
 		if msg := s.validateModelValue(r.Context(), req.Runtime, req.Model, ""); msg != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
 			return
@@ -1844,6 +1844,11 @@ func validateInference(runtime string, inf *kyberv1.AgentInference) error {
 	if len(inf.Model) > 253 {
 		return fmt.Errorf("model exceeds 253 characters")
 	}
+	if runtime == "codex" && isOpenRouterEndpoint(inf.BaseURL) {
+		if err := validateOpenRouterModel(inf.Model); err != nil {
+			return err
+		}
+	}
 	if problems := validation.IsDNS1123Subdomain(inf.Credential.ExistingSecret); len(problems) > 0 {
 		return fmt.Errorf("credential.existingSecret must be a valid Kubernetes Secret name")
 	}
@@ -2159,10 +2164,14 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
-	// An UNCHANGED model is not re-validated — re-posting the current
-	// value (to trigger a roll, or from a UI resubmit) must not start
-	// failing because the catalog view shifted since it was set.
-	if !req.Force && req.Model != agent.Spec.Model {
+	// An unchanged native model is not re-validated: the catalog may have
+	// shifted. OpenRouter endpoint IDs still need their explicit syntax gate.
+	if agent.Spec.Inference != nil && isOpenRouterEndpoint(agent.Spec.Inference.BaseURL) {
+		if err := validateOpenRouterModel(req.Model); err != nil {
+			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "model")
+			return
+		}
+	} else if agent.Spec.Inference == nil && !req.Force && req.Model != agent.Spec.Model {
 		if msg := s.validateModelValue(r.Context(), agent.Spec.Runtime, req.Model, name); msg != "" {
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", msg, "model")
 			return

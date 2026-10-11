@@ -190,7 +190,9 @@ export const mockSecrets: AgentSecret[] = [
 export const mockComputeConfig: ComputeConfig = {
   compute: { provider: 'mock' },
   runtimes: [
-    ...legacyRuntimeContracts,
+    ...legacyRuntimeContracts.map(contract => contract.id === 'codex'
+      ? { ...contract, features: [...contract.features, 'custom-inference-endpoint'] }
+      : contract),
     {
       id: 'hermes', name: 'Hermes', contractVersion: '1.0', profile: 'interactive-tmux-v1',
       cancellation: 'notify_only', features: ['model-catalog', 'custom-inference-endpoint'],

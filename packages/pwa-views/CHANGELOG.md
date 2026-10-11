@@ -1,5 +1,10 @@
 # @matty-v/kyber-pwa-views
 
+## 0.63.2
+
+- Offer Codex's direct OpenRouter Responses route explicitly during agent creation, with a fixed endpoint, required model ID, per-agent key, and billing and provider disclosure.
+- Identify that route on agent detail and give its credential recovery an OpenRouter label. Existing Codex provider selections stay unchanged.
+
 ## 0.63.1
 
 - Clarify that Hermes uses OpenRouter directly, with separate API billing and

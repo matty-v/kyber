@@ -165,10 +165,26 @@ and plenty do — including some of the servers listed above as OpenAI-compatibl
 `api: "openai"` does not distinguish the two, so the runtime probes
 `POST /responses` once at boot and exits with a clear reason on a 404 or 405
 rather than reporting healthy and failing every turn. llama.cpp's
-`llama-server` serves it; check before pointing Codex at anything else. `env_key` names the variable Codex reads the bearer token from; despite
-the conventional name it is **not** an OpenAI credential, and such an agent
-needs no OpenAI key, no ChatGPT login, and never contacts OpenAI.
+`llama-server` serves it; check before pointing Codex at anything else. `env_key`
+names the variable Codex reads the bearer token from; despite the conventional
+name it is **not** an OpenAI credential, and such an agent needs no OpenAI key,
+no ChatGPT login, and never contacts OpenAI.
 
+For Codex, the create wizard also offers **OpenRouter (direct Responses API)**.
+It fixes `baseURL` to `https://openrouter.ai/api/v1`, requires an explicit
+`author/model` ID and stores the OpenRouter key in that agent's inference
+Secret. This is the existing Codex endpoint route, not the Ori wrapper. Model
+syntax is checked before writing. Codex's boot probe checks route and
+credential errors; a real turn determines whether the selected model, account
+policy and current OpenRouter backend can serve Responses and tools. A catalog
+listing alone does not prove that. The
+route does not use ChatGPT subscription billing or silently fall back to it.
+OpenRouter and its selected upstream provider can process prompts; Kyber cannot
+identify the provider for each turn. Kyber usage and cost estimates are not an
+OpenRouter invoice; use OpenRouter activity for actual charges and guardrails.
+`api: "openai"` does not distinguish the two, so the runtime probes
+`POST /responses` once at boot and exits with a clear reason on a 404 or 405
+rather than reporting healthy and failing every turn. llama.cpp's
 Ordering in that file is load-bearing: `model_provider` and `model` are
 top-level keys and must precede `[model_providers.*]`. A top-level key written
 after any table header is parsed as a member of that table, and Codex would
