@@ -437,7 +437,10 @@ in-memory fallbacks; production durable tasks require PostgreSQL and fail closed
 `pkg/usagestore` owns the new Postgres schema for local usage evidence and
 detected gaps. Its event identity includes the immutable Agent UID; token
 classes use null for unknown and zero for observed zero. It is not a source of
-dollar costs. Until reporter and API wiring lands, this package is inert.
+dollar costs. Accepted events update exact daily aggregates in the same
+transaction; corrections subtract the superseded event before adding their
+replacement. Detailed evidence defaults to 90 days, daily aggregates to 13
+months. Until reporter and API wiring lands, this package is inert.
 
 ---
 

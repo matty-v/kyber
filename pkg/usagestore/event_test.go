@@ -63,3 +63,13 @@ func TestPostgresStoreRequiresDatabase(t *testing.T) {
 		t.Fatalf("err=%v", err)
 	}
 }
+
+func TestRetentionDefaultsAndValidation(t *testing.T) {
+	r := DefaultRetention()
+	if r.DetailDays != 90 || r.DailyMonths != 13 || r.Validate() != nil {
+		t.Fatalf("retention=%+v", r)
+	}
+	if !errors.Is((Retention{DetailDays: 90, DailyMonths: 1}).Validate(), ErrInvalid) {
+		t.Fatal("daily aggregates must outlive detail")
+	}
+}

@@ -10,9 +10,10 @@ import (
 )
 
 var (
-	ErrInvalid     = errors.New("usagestore: invalid usage evidence")
-	ErrConflict    = errors.New("usagestore: conflicting source identity")
-	ErrUnavailable = errors.New("usagestore: durable storage unavailable")
+	ErrInvalid          = errors.New("usagestore: invalid usage evidence")
+	ErrConflict         = errors.New("usagestore: conflicting source identity")
+	ErrUnavailable      = errors.New("usagestore: durable storage unavailable")
+	ErrOutsideRetention = errors.New("usagestore: observation outside detailed retention")
 )
 
 const MaxRawUsageFields = 12
