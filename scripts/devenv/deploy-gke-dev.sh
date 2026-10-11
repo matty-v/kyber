@@ -20,6 +20,8 @@
 #
 # Env overrides: KYBER_DEV_PROJECT, KYBER_DEV_LOCATION, KYBER_DEV_CLUSTER,
 # KYBER_DEV_RELEASE, KYBER_DEV_NAMESPACE, KYBER_DEV_URL.
+# KYBER_DEV_IMAGE_BASE_SHA may point to an older published main ancestor when
+# the merge-base/main head changed only docs and has no published image tag.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -79,7 +81,10 @@ case "$REF" in
     git merge-base --is-ancestor "$SHA" origin/main || die "$REF is not on main; use pr/<number> for PR builds"
     BASE_SHA="$SHA"; HEAD_TAG="" ;;
 esac
-BASE_TAG=$(describe_tag "$BASE_SHA")
+IMAGE_BASE_SHA="${KYBER_DEV_IMAGE_BASE_SHA:-$BASE_SHA}"
+git merge-base --is-ancestor "$IMAGE_BASE_SHA" "$BASE_SHA" \
+  || die "image base $IMAGE_BASE_SHA is not an ancestor of $BASE_SHA"
+BASE_TAG=$(describe_tag "$IMAGE_BASE_SHA")
 
 published_tags() {
   gh api "/users/$REGISTRY_OWNER/packages/container/$1/versions?per_page=100" \
@@ -108,7 +113,7 @@ CP_TAG=$(printf '%s\n' "${SETS[@]}" | sed -n 's/^image\.controlPlane\.tag=//p')
 CP_SHA=$(gh api "/users/$REGISTRY_OWNER/packages/container/kyber-control-plane/versions?per_page=100" \
   --jq ".[] | select(.metadata.container.tags | index(\"$CP_TAG\")) | .metadata.container.tags[] | select(test(\"^[0-9a-f]{40}$\"))" 2>/dev/null | head -1)
 if [ -z "$CP_SHA" ]; then
-  CP_SHA="$BASE_SHA"; [ "$CP_TAG" = "$HEAD_TAG" ] && CP_SHA="$SHA"
+  CP_SHA="$IMAGE_BASE_SHA"; [ "$CP_TAG" = "$HEAD_TAG" ] && CP_SHA="$SHA"
 fi
 
 log "control plane will report build ${CP_SHA:0:7}"
