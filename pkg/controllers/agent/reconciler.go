@@ -496,19 +496,6 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	} else {
 		jobsConfigMapSynced = true
 	}
-	// Existing pods predate observedPodConfigHash. A matching generation is
-	// evidence that the current spec was built into this pod, so seed the
-	// baseline before a later hot jobs edit advances the generation. These
-	// pods already ran under this spec, so seed the initial projection marker
-	// too; future jobs edits require an in-pod revision probe.
-	if jobsConfigMapSynced && agent.Status.ObservedPodConfigHash == "" &&
-		agent.Status.ObservedGeneration == agent.Generation &&
-		agent.Status.ObservedGeneration > 0 && agent.Status.PodName != "" {
-		if err := r.stampObservedPodConfigHash(ctx, agent); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	// 3c. Gate pod creation when auto-create is still pending. Template set +
 	// Repo empty means the scaffolder hasn't successfully patched Repo yet —
 	// running the state machine now would build a pod without the
@@ -564,6 +551,17 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	pod, err := r.getAgentPod(ctx, agent)
 	if err != nil {
 		return ctrl.Result{}, err
+	}
+	// Existing pods predate observedPodConfigHash. A live pod and matching
+	// generation establish a safe migration baseline. Future jobs edits must
+	// pass the in-pod revision probe below.
+	if jobsConfigMapSynced && pod != nil && pod.Status.Phase == corev1.PodRunning &&
+		agent.Status.ObservedPodConfigHash == "" &&
+		agent.Status.ObservedGeneration == agent.Generation &&
+		agent.Status.ObservedGeneration > 0 {
+		if err := r.stampObservedPodConfigHash(ctx, agent); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	var jobsProjectionRequeue time.Duration
 	if jobsConfigMapSynced && pod != nil && pod.Status.Phase == corev1.PodRunning &&
