@@ -121,7 +121,16 @@ export const handlers = [
     }
     const override = mockWindow.__mockAgentScheduling
     const hermes = mockWindow.__mockAgentRuntime === 'hermes'
-    const agent = hermes ? {
+    const codexOpenRouter = mockWindow.__mockAgentRuntime === 'codex-openrouter'
+    const agent = codexOpenRouter ? {
+      ...mockAgent,
+      runtime: 'codex',
+      authType: 'api-key' as const,
+      model: 'cohere/north-mini-code:free',
+      currentModel: 'cohere/north-mini-code:free',
+      inference: { baseURL: 'https://openrouter.ai/api/v1', api: 'openai', model: 'cohere/north-mini-code:free', credentialSecret: 'mock-openrouter', credentialKey: 'api-key' },
+      runtimeContract: mockComputeConfig.runtimes?.find(runtime => runtime.id === 'codex'),
+    } : hermes ? {
       ...mockAgent,
       runtime: 'hermes',
       authType: 'api-key' as const,

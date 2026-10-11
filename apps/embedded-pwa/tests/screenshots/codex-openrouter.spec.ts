@@ -28,3 +28,17 @@ test('Codex OpenRouter route is clear on desktop and mobile', async ({ page }) =
   await expect(page.getByText(/task cancel fail/)).toBeVisible()
   await page.screenshot({ path: path.join(output, `${test.info().project.name}-codex-openrouter-create-review.png`), fullPage: true })
 })
+
+test('Codex OpenRouter agent detail and model change show the failure evidence', async ({ page }) => {
+  await page.addInitScript(() => {
+    ;(window as unknown as { __mockAgentRuntime?: string }).__mockAgentRuntime = 'codex-openrouter'
+  })
+  await page.goto('/agents/alice/general')
+  await page.waitForFunction(() => document.documentElement.getAttribute('data-mocks') === 'ready')
+  await expect(page.getByText(/task receipt fail/)).toBeVisible()
+  await page.screenshot({ path: path.join(output, `${test.info().project.name}-codex-openrouter-agent-detail.png`), fullPage: true })
+  await page.getByRole('button', { name: 'Model', exact: true }).click()
+  await expect(page.getByLabel('Endpoint model ID')).toHaveValue('cohere/north-mini-code:free')
+  await expect(page.getByText(/task cancel fail/).last()).toBeVisible()
+  await page.screenshot({ path: path.join(output, `${test.info().project.name}-codex-openrouter-model-change.png`), fullPage: true })
+})
