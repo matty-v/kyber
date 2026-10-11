@@ -434,6 +434,10 @@ token-usage events), `cmd/transcript-compact`, `cmd/fetch-provider-rates`
 Backing stores: k8s API (resource state), Redis (events/token budgets/metrics),
 Postgres (session briefs, skills, durable tasks). Briefs and telemetry have
 in-memory fallbacks; production durable tasks require PostgreSQL and fail closed.
+`pkg/usagestore` owns the new Postgres schema for local usage evidence and
+detected gaps. Its event identity includes the immutable Agent UID; token
+classes use null for unknown and zero for observed zero. It is not a source of
+dollar costs. Until reporter and API wiring lands, this package is inert.
 
 ---
 
