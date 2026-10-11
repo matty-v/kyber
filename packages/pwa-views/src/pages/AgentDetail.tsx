@@ -1131,7 +1131,6 @@ export function AgentDetail() {
                   {endpointModel ? <>
                     <label htmlFor="agent-new-endpoint-model" className="mb-2 block text-sm text-text-muted">Endpoint model ID</label>
                     <input id="agent-new-endpoint-model" value={newModel} onChange={e => setNewModel(e.target.value)} className="w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary focus:border-accent focus:outline-none" />
-                    {directOpenRouter && <p role="alert" className="mt-2 text-xs text-warning">{codexOpenRouterEvidence(agentContract(agent), newModel)}</p>}
                   </> : <select
                     value={newModel}
                     onChange={(e) => setNewModel(e.target.value)}

@@ -162,7 +162,6 @@ describe('AgentDetail executeAction — NeedsAuth Restart pod (kyber#26)', () =>
     await user.click(screen.getByRole('button', { name: 'Model' }))
     expect(agentModels).toHaveBeenCalledWith('lando', false)
     expect(screen.getByLabelText('Endpoint model ID')).toHaveValue('openai/gpt-4.1-mini')
-    expect(screen.getAllByText(/No Kyber task-contract evidence/).length).toBeGreaterThan(0)
     await user.clear(screen.getByLabelText('Endpoint model ID'))
     await user.type(screen.getByLabelText('Endpoint model ID'), 'invalid')
     expect(screen.getByRole('button', { name: 'Apply' })).toBeDisabled()

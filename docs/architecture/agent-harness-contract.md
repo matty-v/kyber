@@ -183,7 +183,8 @@ separately; `untested` stays untested. An OpenRouter model ID and configured
 endpoint do not identify which upstream served a request. Unknown or changing
 upstream routing prevents these observations from becoming a blanket provider
 qualification. The PWA warns on unlisted models and shows the bounded evidence
-on create, model change, and agent detail.
+on create and agent detail. The model-change dialog stays focused on entering
+and validating an endpoint model ID.
 
 Capability observations belong to one pod UID. A replacement pod must publish
 new evidence before hook-dependent operations resume. An attempt lost between
