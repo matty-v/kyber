@@ -2143,6 +2143,33 @@ exit 0
 	}
 }
 
+// curl prints HTTP 000 and exits nonzero for DNS and connection failures. The
+// boot should preserve that code so the operator sees the network warning.
+func TestStartCodexWarnsWhenInferenceEndpointIsUnreachable(t *testing.T) {
+	for _, output := range []string{"000", ""} {
+		t.Run("curl-output="+output, func(t *testing.T) {
+			bin := t.TempDir()
+			codexStub := "#!/usr/bin/env bash\nif [ \"$1\" = --version ]; then echo 'codex-cli 0.153.4'; exit 0; fi\nexit 0\n"
+			if err := os.WriteFile(filepath.Join(bin, "codex"), []byte(codexStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			curlStub := "#!/usr/bin/env bash\nprintf '" + output + "'\nexit 6\n"
+			if err := os.WriteFile(filepath.Join(bin, "curl"), []byte(curlStub), 0755); err != nil {
+				t.Fatal(err)
+			}
+			out, err := runBoot(t, t.TempDir(), "", bin+":"+stubBin(t),
+				"KYBER_INFERENCE_BASE_URL=https://unreachable.example.com/v1",
+				"OPENAI_API_KEY=endpoint-key-value")
+			if err != nil {
+				t.Fatalf("network failure blocked the boot: %v\n%s", err, out)
+			}
+			if !strings.Contains(string(out), "WARNING: could not reach") {
+				t.Errorf("network warning missing:\n%s", out)
+			}
+		})
+	}
+}
+
 // A rejected endpoint key is an auth failure, not a healthy Codex session.
 // Exit 42 lets the controller enter NeedsAuth; its Codex adapter watches the
 // endpoint Secret's resourceVersion to resume after rotation.

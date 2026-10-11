@@ -358,10 +358,12 @@ if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ]; then
     # endpoint Secret for a new version. A 400 or 403 can refer to the probe's
     # intentionally nonexistent model, so neither proves the key is invalid.
     _probe_url="${KYBER_INFERENCE_BASE_URL%/}/responses"
+    # curl can print 000 and still exit nonzero; do not append a second 000.
     _probe_code="$(curl -sS -o /dev/null -w '%{http_code}' -m 30 -X POST "$_probe_url" \
         -H "Authorization: Bearer ${OPENAI_API_KEY}" \
         -H 'Content-Type: application/json' \
-        -d '{"model":"probe","input":"probe","max_output_tokens":1}' 2>/dev/null || echo 000)"
+        -d '{"model":"probe","input":"probe","max_output_tokens":1}' 2>/dev/null || true)"
+    _probe_code="${_probe_code:-000}"
     case "$_probe_code" in
         401)
             echo "[kyber] Codex inference-endpoint credential was rejected (POST /responses returned ${_probe_code}); rotate the endpoint Secret." >&2
