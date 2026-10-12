@@ -182,6 +182,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// them by `type`.
 	mux.HandleFunc("/event", forwardHandler(client, cfg, metrics, logger, "status-event", true))
 	mux.HandleFunc("/token-usage", forwardHandler(client, cfg, metrics, logger, "token-usage", false))
+	registerUsageForwarders(mux, client, cfg, metrics, logger)
 	mux.HandleFunc("/runtime-version", forwardHandler(client, cfg, metrics, logger, "runtime-version", false))
 	mux.HandleFunc("/runtime-catalog", forwardHandler(client, cfg, metrics, logger, "runtime-catalog", false))
 	// The agent's skill inventory, scanned from its own filesystem by
@@ -223,6 +224,16 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	logger.Info("forwarder listening", "addr", localhostAddr)
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("forwarder server died", "err", err)
+	}
+}
+
+func registerUsageForwarders(mux *http.ServeMux, client *http.Client, cfg config, metrics *Metrics, logger *slog.Logger) {
+	for _, endpoint := range []string{"usage-event", "usage-gap"} {
+		handler := forwardHandler(client, cfg, metrics, logger, endpoint, false)
+		mux.HandleFunc("/"+endpoint, func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+			handler(w, r)
+		})
 	}
 }
 

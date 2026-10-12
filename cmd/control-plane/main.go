@@ -67,6 +67,7 @@ import (
 	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/telemetry"
+	"github.com/matty-v/kyber/pkg/usagestore"
 
 	// pkg/runtimes/claudecode now needs both blank-import side effect
 	// (init() registers the adapter against the global registry) AND a
@@ -210,6 +211,7 @@ func main() {
 	var briefStore briefstore.BriefStore
 	var skillStore skillstore.Store
 	var archiveJobs archivejob.Store
+	var usageStore *usagestore.PostgresStore
 	var agentTaskStore taskstore.Store
 	taskLimits, taskConfigErr := loadTaskLimits()
 	if taskConfigErr != nil {
@@ -294,6 +296,25 @@ func main() {
 			os.Exit(1)
 		}
 		archiveJobs = pgArchives
+
+		// Usage evidence has no in-memory fallback: a successful ACK must
+		// mean the call and its source cursor were committed durably.
+		pgUsage, usageErr := usagestore.NewPostgresStore(db)
+		if usageErr != nil {
+			setupLog.Error(usageErr, "initializing usage evidence store")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		usageMigrateCtx, cancelUsage := context.WithTimeout(ctx, 2*time.Minute+30*time.Second)
+		usageErr = briefstore.MigrateWithRetry(usageMigrateCtx, pgUsage.Migrate,
+			2*time.Minute, 5*time.Second, setupLog.Info)
+		cancelUsage()
+		if usageErr != nil {
+			setupLog.Error(usageErr, "usage evidence migration failed")
+			_ = db.Close()
+			os.Exit(1)
+		}
+		usageStore = pgUsage
 	} else {
 		setupLog.Info("BriefStore: KYBER_POSTGRES_URL not set — using in-memory store (briefs will not survive pod restart)")
 		briefStore = briefstore.NewMemoryStore()
@@ -723,12 +744,16 @@ func main() {
 	internalOpts := []internalapi.InternalServerOption{
 		internalapi.WithArchiveService(archiveService),
 		internalapi.WithKubeClient(mgr.GetClient(), kyberNamespace),
+		internalapi.WithUsageAgentReader(mgr.GetAPIReader()),
 		internalapi.WithTokenStore(tokenStore),
 		internalapi.WithTokenAccumulator(tokenAccumulator),
 		internalapi.WithMetricsStore(metricsStore),
 		internalapi.WithNodeStore(nodeStore),
 		internalapi.WithStateChangeAccumulator(stateChangeAccum),
 		internalapi.WithSkillStore(skillStore),
+	}
+	if usageStore != nil {
+		internalOpts = append(internalOpts, internalapi.WithUsageStore(usageStore))
 	}
 	if agentRequestStore != nil {
 		internalOpts = append(internalOpts, internalapi.WithRequestStore(agentRequestStore))
