@@ -1,6 +1,6 @@
 # Local usage metadata boundary (MAT-117)
 
-**Status:** draft for Matt's product and API review. No implementation is authorized by this document alone.
+**Status:** implemented in MAT-119–MAT-125 and merged on 2026-10-12. This document records the original source audit and design; references below to the "current" collector and proposed behavior describe the pre-implementation baseline. For shipped behavior, see [Metrics data flow](../architecture/metrics-data-flow.md), [the API contract](../../test/contract/openapi.yaml), and [the operator telemetry guide](../operator/telemetry.md). The old `/api/v1/metrics/tokens` route returns 404, and no LiteLLM pricing data is installed.
 
 ## Product boundary
 
@@ -59,8 +59,8 @@ The exact old Redis token keys and Prometheus token counter can be removed only 
 3. Move the PWA Token Usage panel to new token/model/route/provider aggregates and coverage indicators; remove “Est. cost (USD)” and `priced`/`unpriced`. Keep context-window budget separate. Stop presenting dollars in agent and fleet views.
 4. In the same release that switches the PWA to the new usage API, remove `/api/v1/metrics/tokens`, `costUsd`/`priced`, the LiteLLM rate refresh workflow, vendored rates and ConfigMap, pricing code/tests, and pricing claims in docs. The old route returns 404. Keep `/api/v1/agents/{name}/token-usage` as a **context snapshot** under its documented name. No old estimate is carried into the new records. Matt explicitly chose no migration grace period on 2026-10-11.
 
-## Review decisions and implementation slices
+## Decisions and implementation slices
 
-Matt should approve the detailed/aggregate retention defaults and whether route identifiers may expose a custom endpoint hostname to authorized API consumers (the proposed default is an opaque ID only). The legacy cost API and price feed are removed at cutover, with no compatibility window, per Matt's 2026-10-11 direction. No code should assume the remaining choices before review.
+The shipped defaults are 90 days of detailed events and 13 months of daily aggregates. Custom endpoint route IDs are opaque; the usage API does not expose the hostname. The legacy cost API and price feed were removed at cutover, with no compatibility window, per Matt's 2026-10-11 direction.
 
-After approval, split implementation into: (1) source fixtures and safe per-call capture; (2) durable idempotent ingest with gap tracking; (3) route/provider provenance and privacy; (4) detailed/aggregate API contract tests; (5) PWA transition and removal of Kyber pricing dependencies. Each slice needs multi-call count validation, replay/restart tests, and at least one live dev trace for its harness path.
+Implementation was split into: (1) source fixtures and safe per-call capture (MAT-119); (2) durable idempotent ingest with gap tracking (MAT-120); (3) Claude, Codex, and Hermes reporting and route provenance (MAT-121–MAT-123); (4) detailed/aggregate API contract tests (MAT-124); (5) PWA transition and removal of Kyber pricing dependencies (MAT-125).
