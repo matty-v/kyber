@@ -52,8 +52,8 @@ The creation review and agent settings distinguish this direct route from a
 custom inference endpoint. OpenRouter owns its budget, model/provider, and
 privacy controls; Kyber links to those settings but does not change or verify
 them. The selected upstream provider can be unknown when OpenRouter routes a
-request. Kyber's cost panel estimates charges from its model-rate catalog and
-does not represent the OpenRouter invoice.
+request. Kyber records observed token usage, model, and route metadata. Billing
+stays with OpenRouter or the selected upstream provider.
 
 The Webhooks tab manages the signed inbound bindings that let other senders reach the agent. The signing secret is shown exactly once when a binding is created and once again when it is rotated, and is never readable afterward, so capture it then. Rotating keeps the old secret valid for 24 hours so an in-flight cutover does not drop traffic. Each binding is rate-limited to 10 requests per minute by default, duplicate request bodies are dropped for 24 hours, and each agent queues at most 5 pending messages; excess load is shed with an explicit reason rather than buffered without bound.
 
@@ -63,12 +63,12 @@ The Metrics surface is a read-only observability dashboard for the current clust
 
 - **Fleet summary**: how many agents are working, idle, and offline right now.
 - **Agent activity breakdown** and **working time trend**: how each agent's time split between working and idle over the selected range, and cumulative working hours per agent, useful for attributing spend.
-- **Token usage and cost**: input, cache-creation, and cache-read tokens per agent and model, with an estimated cost.
+- **Token usage**: observed input, output, cache-write, and cache-read tokens per agent, model, and route. Missing counts and upstream providers remain unknown.
 - **Last active**: each agent's time since its last heartbeat, with stale agents visually flagged (the staleness threshold defaults to 5 minutes).
 - **Node resources**: live CPU, memory, and disk gauges per node, refreshed every 30 seconds.
 - **State change frequency**: how often each agent transitioned between states, for spotting reliability regressions.
 
-The whole surface follows one rule: never show a confident number Kyber cannot stand behind. Cost is computed from an open, community-maintained pricing dataset that is refreshed on a schedule and reviewed before it ships; a model with no known price shows "unpriced" rather than a believable $0.00. The usage numbers are still real in that case, only the cost is unavailable. Context budgets use authoritative runtime or provider evidence. Claude catalogs include the provider’s context window; Codex uses the active session’s reported context window. Missing evidence stays unknown.
+The whole surface follows one rule: never show a confident number Kyber cannot stand behind. Usage comes from local harness evidence and reports collection gaps and missing token classes. Kyber exposes that evidence through an API for downstream cost analysis, without computing dollar costs. Context budgets use authoritative runtime or provider evidence. Claude catalogs include the provider’s context window; Codex uses the active session’s reported context window. Missing evidence stays unknown.
 
 ## Learn more
 
