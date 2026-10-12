@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.65.0
+
+- Show observed token usage, configured route, and known upstream provider in the Metrics tab. Preserve unknown token classes and show detected coverage gaps. Remove the dollar estimate from this panel.
+
 ## 0.64.0
 
 - Add typed clients for local usage events and UTC daily aggregates, including explicit coverage and nullable token classes. These methods expose no dollar estimate.

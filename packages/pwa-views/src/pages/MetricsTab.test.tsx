@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import type { MetricsLastActive, MetricsNodeResources, MetricsTokenUsage } from '../lib/types'
+import type { MetricsLastActive, MetricsNodeResources, UsageEvent } from '../lib/types'
+import { summarizeUsageEvents, TokenTable } from './MetricsTab'
 
 // Test the pure display subcomponents extracted from MetricsTab.
 
@@ -50,11 +51,6 @@ describe('formatAge', () => {
 
 // ---- Stale detection logic ----
 
-// NOTE: cost math is server-side (pkg/metrics ComputeCostKnown, covered by Go
-// tests); the panel only renders the server-supplied costUsd. A local
-// re-implementation of the pricing formula used to live here but only tested
-// itself, so it was removed.
-
 describe('stale detection', () => {
   it('marks agent with no heartbeat as stale', () => {
     const agent: MetricsLastActive = {
@@ -87,22 +83,6 @@ describe('stale detection', () => {
   })
 })
 
-// ---- Token usage sorting ----
-
-describe('token table sorting', () => {
-  it('sorts by costUsd descending', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'cheap', model: 'haiku', tokens: {}, costUsd: 0.1 },
-      { agent: 'pricey', model: 'opus', tokens: {}, costUsd: 5.5 },
-      { agent: 'mid', model: 'sonnet', tokens: {}, costUsd: 2.2 },
-    ]
-    const sorted = [...rows].sort((a, b) => b.costUsd - a.costUsd)
-    expect(sorted[0].agent).toBe('pricey')
-    expect(sorted[1].agent).toBe('mid')
-    expect(sorted[2].agent).toBe('cheap')
-  })
-})
-
 // ---- Node resources CPU gauge ----
 
 describe('gauge percentage', () => {
@@ -124,77 +104,50 @@ describe('gauge percentage', () => {
   })
 })
 
-// ---- TokenTable unpriced fail-loud badge (kyber#487) ----
+// ---- Finalized usage evidence ----
 
-import { TokenTable } from './MetricsTab'
+function usageEvent(id: string, overrides: Partial<UsageEvent> = {}): UsageEvent {
+  return {
+    id, agentUID: 'uid-1', agent: 'r2-d2', observedAt: '2026-10-12T00:00:00Z',
+    ingestedAt: '2026-10-12T00:00:01Z', runtime: 'claude', sourceFormat: 'claude-jsonl',
+    sourceVersion: '1', sourceIdentity: id, coverage: 'observed',
+    configuredRoute: 'direct-api', routeID: 'route-1', model: 'claude-sonnet-4-6',
+    modelEvidence: 'observed', observedUpstreamProvider: null, reportedProviderLabel: null,
+    inputUncached: 50, output: 10, cacheRead: 5, cacheWrite: null,
+    ...overrides,
+  }
+}
 
-describe('TokenTable unpriced badge', () => {
-  it('renders — and an unpriced badge for priced:false, not $0.0000', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'oppy', model: 'claude-opus-4-8', tokens: { input: 1000 }, costUsd: 0, priced: false },
-    ]
+describe('usage summary', () => {
+  it('counts equal-sized calls separately and preserves unknown token classes', () => {
+    const rows = summarizeUsageEvents([
+      usageEvent('one'),
+      usageEvent('two', { output: 20, cacheWrite: 3 }),
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0].eventCount).toBe(2)
+    expect(rows[0].tokens).toEqual({ inputUncached: 100, output: 30, cacheRead: 10, cacheWrite: 3 })
+    expect(rows[0].unknown.cacheWrite).toBe(1)
     render(<TokenTable rows={rows} />)
-    expect(screen.getByText('—')).toBeInTheDocument()
-    expect(screen.getByText(/unpriced/i)).toBeInTheDocument()
-    expect(screen.queryByText('$0.0000')).not.toBeInTheDocument()
+    expect(screen.getByText('100')).toBeInTheDocument()
+    expect(screen.getByText('3*')).toHaveAttribute('title', '1 call did not report this count')
+    expect(screen.queryByText(/cost|unpriced/i)).not.toBeInTheDocument()
   })
 
-  it('renders money for priced:true', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'sonny', model: 'claude-sonnet-4-6', tokens: {}, costUsd: 3, priced: true },
-    ]
+  it('keeps provider-unknown calls distinct from observed upstream providers', () => {
+    const rows = summarizeUsageEvents([
+      usageEvent('unknown'),
+      usageEvent('known', { observedUpstreamProvider: 'anthropic' }),
+    ])
+    expect(rows).toHaveLength(2)
     render(<TokenTable rows={rows} />)
-    expect(screen.getByText('$3.0000')).toBeInTheDocument()
-    expect(screen.queryByText(/unpriced/i)).not.toBeInTheDocument()
+    expect(screen.getByText('Unknown')).toBeInTheDocument()
+    expect(screen.getByText('anthropic')).toBeInTheDocument()
   })
 
-  it('treats a missing priced field (older payload) as priced — money, not unpriced', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'legacy', model: 'x', tokens: {}, costUsd: 0 },
-    ]
+  it('shows an unknown count as unavailable, not zero', () => {
+    const rows = summarizeUsageEvents([usageEvent('one', { cacheWrite: null })])
     render(<TokenTable rows={rows} />)
-    expect(screen.getByText('$0.0000')).toBeInTheDocument()
-    expect(screen.queryByText(/unpriced/i)).not.toBeInTheDocument()
-  })
-
-  it('renders the Cache write column with the cache_creation count', () => {
-    const rows: MetricsTokenUsage[] = [
-      {
-        agent: 'sonny',
-        model: 'claude-sonnet-4-6',
-        tokens: { input: 1000, output: 200, cache_creation: 4321, cache_read: 99 },
-        costUsd: 1.23,
-        priced: true,
-      },
-    ]
-    render(<TokenTable rows={rows} />)
-    expect(screen.getByText('Cache write')).toBeInTheDocument()
-    expect(screen.getByText('4,321')).toBeInTheDocument()
-    // Column order: Agent, Model, Input, Output, Cache write, Cache read, estimated cost.
-    const cells = screen.getAllByRole('cell').map((c) => c.textContent)
-    expect(cells.slice(2, 6)).toEqual(['1,000', '200', '4,321', '99'])
-  })
-
-  it('renders 0 in Cache write for a row without cache_creation', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'legacy', model: 'x', tokens: { input: 5 }, costUsd: 0, priced: true },
-    ]
-    render(<TokenTable rows={rows} />)
-    expect(screen.getByText('Cache write')).toBeInTheDocument()
-    // Output, Cache write, and Cache read all fall back to 0.
-    const cells = screen.getAllByRole('cell').map((c) => c.textContent)
-    expect(cells.slice(2, 6)).toEqual(['5', '0', '0', '0'])
-  })
-
-  it('sorts unpriced rows last, below genuinely-priced rows', () => {
-    const rows: MetricsTokenUsage[] = [
-      { agent: 'unpriced', model: 'claude-opus-4-8', tokens: {}, costUsd: 0, priced: false },
-      { agent: 'cheap', model: 'haiku', tokens: {}, costUsd: 0.1, priced: true },
-      { agent: 'pricey', model: 'opus', tokens: {}, costUsd: 5.5, priced: true },
-    ]
-    render(<TokenTable rows={rows} />)
-    const dataRows = screen.getAllByRole('row').slice(1) // drop header
-    const agents = dataRows.map((r) => r.querySelector('td')?.textContent)
-    expect(agents).toEqual(['pricey', 'cheap', 'unpriced'])
+    expect(screen.getByTitle('1 call did not report this count')).toHaveTextContent('—')
   })
 })

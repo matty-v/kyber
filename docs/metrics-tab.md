@@ -45,22 +45,13 @@ Empty state: shown when Prometheus is not configured or no data exists for the s
 
 A bar chart showing cumulative working hours per agent over the selected time range. Useful for billing attribution and identifying which agents are doing the most work. Derived from `kyber_agent_activity_state_seconds_total{state="working"}`.
 
-### Token Usage and Cost
+### Token Usage
 
-A table showing, per agent and model:
+A table shows finalized calls and locally observed input, output, cache-write, and cache-read tokens for each agent, model, configured route, and known upstream provider. An unknown token count appears as `—`; a `*` marks a partial total when some calls did not report that class. An unknown upstream provider stays `Unknown` rather than being inferred from the model or route.
 
-- Input tokens consumed
-- Cache-creation tokens consumed
-- Cache-read tokens consumed
-- Estimated USD cost (computed from `deploy/helm/kyber/templates/configmap-rates.yaml`)
+The panel reads `/api/v1/usage/events` for the exact selected time range, following its stable cursor. If more than 5,000 events match, it asks the operator to choose a shorter range instead of displaying a partial total. Detected collection gaps are shown above the table. No prices or dollar estimates are displayed.
 
-**Data source (Tier 1 — Redis accumulator):** When Redis is configured, token counts are read from a persistent per-agent/model accumulator that is updated on every token-reporter POST. This data is always available regardless of Prometheus availability and reflects all-time cumulative totals (not windowed by the time range picker).
-
-**Fallback (Tier 2 — Prometheus TSDB):** When the Redis accumulator is not configured or is unpopulated, the panel falls back to `kyber_agent_tokens_total` queried from Prometheus over the selected time range.
-
-When a model has no entry in the provider rates table — the rates ConfigMap isn't mounted, or the model simply isn't in it — the cost cell renders as `—` with an "unpriced" badge (the payload's `priced` flag is `false`), a fail-loud placeholder rather than a misleading `$0.0000`. Priced models render to four decimals (`$X.XXXX`).
-
-Empty state: shown when both Redis accumulator and Prometheus TSDB are unavailable or unpopulated.
+Empty state: shown when no durable usage records are available in the selected range. Usage from before the new collection path was enabled is not backfilled from older snapshots.
 
 ### Last Active
 
