@@ -1375,17 +1375,6 @@ export function useMetricsWorkingTime(start: number, end: number) {
   })
 }
 
-export function useMetricsTokens(start: number, end: number) {
-  const cluster = useCluster()
-  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
-  return useQuery({
-    queryKey: ['cluster', cluster.id, 'metrics', 'tokens', start, end],
-    queryFn: () => api.getMetricsTokens(start, end),
-    enabled: start > 0 && end > start,
-    retry: false,
-  })
-}
-
 // The Metrics range picker uses exact timestamps. The daily aggregate API is
 // intentionally day-granular, so fetch finalized events for this panel rather
 // than presenting a whole UTC day's tokens as a 15-minute total.

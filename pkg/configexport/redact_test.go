@@ -42,7 +42,6 @@ func TestIsSecretPath_KeepsSecretReferences(t *testing.T) {
 		"preview.credentialsSecretName",
 		"preview.postgresSecretName",
 		"preview.bootstrapSecrets",
-		"metrics.tokenRatesConfigMapName",
 	} {
 		if IsSecretPath(path, "some-string-value") {
 			t.Errorf("IsSecretPath(%q) = true; this names a Secret rather than holding one, and the export needs it to rebuild", path)

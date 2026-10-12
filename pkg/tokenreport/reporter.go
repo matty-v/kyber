@@ -36,10 +36,8 @@ type Reporter struct {
 
 	// output accumulates finalized assistant output tokens across ticks —
 	// cumulative "since reporter start" (see outputTracker). Lazily
-	// initialized on the first tick. A reporter restart resets the total;
-	// the control plane's safeDelta treats the rollback as a fresh
-	// increment, undercounting only the restart gap (honest, never
-	// double-counted).
+	// initialized on the first tick. A reporter restart resets this
+	// diagnostic total.
 	output *outputTracker
 }
 
@@ -119,7 +117,7 @@ func (r *Reporter) tick(ctx context.Context, client *http.Client) error {
 		return nil // no finalized message yet
 	}
 	// ParseLatest leaves Output zero (a single latest message can't represent
-	// spend); the reporter owns the cumulative total.
+	// the cumulative output count); the reporter owns that total.
 	snap.Tokens.Output = outputTotal
 	body, err := json.Marshal(snap)
 	if err != nil {

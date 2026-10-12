@@ -99,11 +99,6 @@ type Server struct {
 	taskEventByTeam map[string]int
 	taskEventRecent map[string][]time.Time
 
-	// TokenAccumulator holds all-time per-agent/model token counts in Redis.
-	// When non-nil, handleMetricsTokens reads the accumulator first (Tier 1)
-	// before falling back to Prometheus TSDB (Tier 2).
-	TokenAccumulator tokenstore.Accumulator
-
 	// APIKey is the API key for the public API. All /api/v1/* requests must include
 	// "Authorization: Bearer <APIKey>". If empty, all requests are rejected with 401.
 	// Mutated by /api/v1/rotate-api-key (#143) to keep the seed value in sync with

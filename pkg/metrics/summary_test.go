@@ -107,20 +107,3 @@ func TestGetLastActive_Stale(t *testing.T) {
 		t.Errorf("agent with no heartbeat should be stale")
 	}
 }
-
-func TestRateTable_ComputeCostUSD(t *testing.T) {
-	table := RateTable{
-		"claude-sonnet-4-6": ProviderRates{Input: 3.0, Output: 15.0, CacheRead: 0.3},
-	}
-
-	counts := map[string]float64{"input": 1_000_000, "output": 500_000, "cache_read": 2_000_000}
-	cost := table.ComputeCostUSD("claude-sonnet-4-6", counts)
-	// 3.0 + 7.5 + 0.6 = 11.1
-	if cost != 11.1 {
-		t.Errorf("ComputeCostUSD = %v, want 11.1", cost)
-	}
-
-	if table.ComputeCostUSD("unknown-model", counts) != 0 {
-		t.Errorf("expected 0 for unknown model")
-	}
-}

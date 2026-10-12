@@ -63,7 +63,7 @@ tracked in the per-agent skill issues, not here.
 | [`status-pipeline.md`](status-pipeline.md) | in-pod signal source → status sidecar → `Agent.status.activity` | deep-dive |
 | [`telegram-sidecar.md`](telegram-sidecar.md) | Telegram polling, signed inbound delivery, MCP replies, capability bounds, and migration | deep-dive |
 | [`metrics-data-flow.md`](metrics-data-flow.md) | metrics emission and aggregation flow | deep-dive |
-| [`model-onboarding.md`](model-onboarding.md) | data-driven model onboarding: context-window auto-detect (Anthropic Models API) + feed-derived pricing (build-time vendored LiteLLM — **not** a runtime proxy) | deep-dive |
+| [`model-onboarding.md`](model-onboarding.md) | Agent-scoped model discovery, context-window resolution, and local usage metadata | deep-dive |
 | [`metricsstore.md`](metricsstore.md) | the metrics store backing model | deep-dive |
 | [`pwa-views-publish-boundary.md`](pwa-views-publish-boundary.md) | PWA views publish boundary | deep-dive |
 | [`log-retention.md`](log-retention.md) | durable platform log retention: Vector shipper → GCS/S3 → generic archive/export read path | deep-dive |

@@ -337,7 +337,6 @@ func main() {
 	// Fall back to in-memory implementations otherwise.
 	var (
 		tokenStore       tokenstore.TokenStore
-		tokenAccumulator tokenstore.Accumulator
 		metricsStore     metricsstore.MetricsStore
 		nodeStore        metricsstore.NodeStore
 		stateChangeAccum statechangestore.Accumulator
@@ -365,7 +364,6 @@ func main() {
 	redisStoreEnabled := os.Getenv("KYBER_METRICS_REDIS_STORE_ENABLED") != "false"
 	if redisClient != nil {
 		tokenStore = tokenstore.NewRedisStore(redisClient)
-		tokenAccumulator = tokenstore.NewRedisAccumulator(redisClient)
 		if redisStoreEnabled {
 			metricsStore = metricsstore.NewRedisMetricsStore(redisClient)
 			nodeStore = metricsstore.NewRedisNodeStore(redisClient)
@@ -380,7 +378,6 @@ func main() {
 	} else {
 		setupLog.Info("WARN: metrics: Redis not configured; using in-memory metrics store. Data evaporates on restart and is not shared across replicas.")
 		tokenStore = tokenstore.NewMemoryStore()
-		tokenAccumulator = tokenstore.NewMemoryAccumulator()
 		metricsStore = metricsstore.NewMemoryMetricsStore()
 		nodeStore = metricsstore.NewMemoryNodeStore()
 		stateChangeAccum = statechangestore.NewMemoryAccumulator()
@@ -697,7 +694,7 @@ func main() {
 		// confirmed agent delete leaves zero orphaned identity state. Same
 		// handles the InternalServer uses for the metrics read/write path.
 		TokenStore:             tokenStore,
-		TokenAccumulator:       tokenAccumulator,
+		UsageStore:             usageStore,
 		MetricsStore:           metricsStore,
 		StateChangeAccumulator: stateChangeAccum,
 		SkillStore:             skillStore,
@@ -746,7 +743,6 @@ func main() {
 		internalapi.WithKubeClient(mgr.GetClient(), kyberNamespace),
 		internalapi.WithUsageAgentReader(mgr.GetAPIReader()),
 		internalapi.WithTokenStore(tokenStore),
-		internalapi.WithTokenAccumulator(tokenAccumulator),
 		internalapi.WithMetricsStore(metricsStore),
 		internalapi.WithNodeStore(nodeStore),
 		internalapi.WithStateChangeAccumulator(stateChangeAccum),
@@ -1447,7 +1443,6 @@ func main() {
 		APIReader:                     mgr.GetAPIReader(),
 		TokenStore:                    tokenStore,
 		UsageStore:                    usageStore,
-		TokenAccumulator:              tokenAccumulator,
 		SkillStore:                    skillStore,
 		APIKey:                        os.Getenv("KYBER_API_KEY"),
 		APIKeySecretName:              os.Getenv("KYBER_API_KEY_SECRET_NAME"),
@@ -1524,7 +1519,6 @@ func main() {
 		ContextWindows: contextWindowResolver,
 		MetricsConfig: metrics.Config{
 			PrometheusURL:                os.Getenv("KYBER_METRICS_PROMETHEUS_URL"),
-			TokenRatesPath:               os.Getenv("KYBER_METRICS_TOKEN_RATES_PATH"),
 			PrometheusInsecureSkipVerify: os.Getenv("KYBER_METRICS_PROMETHEUS_INSECURE") == "true",
 		},
 	}

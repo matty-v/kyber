@@ -13,10 +13,10 @@ func TestMemoryMetricsStore_DeleteAgent(t *testing.T) {
 	ctx := context.Background()
 	store := metricsstore.NewMemoryMetricsStore()
 
-	// dave's activity + token-usage series, plus an unrelated agent + an
+	// dave's activity + legacy token-usage series, plus an unrelated agent + an
 	// unrelated namespace that must both survive.
 	_ = store.AddPoint(ctx, metricsstore.ActivityKey("ns1", "dave", "working"), 100, 0.5)
-	_ = store.AddPoint(ctx, metricsstore.TokenUsageKey("ns1", "dave", "claude-opus-4", "input"), 100, 7)
+	_ = store.AddPoint(ctx, "ts:token_usage:ns1:dave:claude-opus-4:input", 100, 7)
 	_ = store.AddPoint(ctx, metricsstore.ActivityKey("ns1", "han", "working"), 100, 0.5)
 	_ = store.AddPoint(ctx, metricsstore.ActivityKey("ns2", "dave", "working"), 100, 0.5)
 
@@ -27,7 +27,7 @@ func TestMemoryMetricsStore_DeleteAgent(t *testing.T) {
 	// dave/ns1 series gone.
 	for _, key := range []string{
 		metricsstore.ActivityKey("ns1", "dave", "working"),
-		metricsstore.TokenUsageKey("ns1", "dave", "claude-opus-4", "input"),
+		"ts:token_usage:ns1:dave:claude-opus-4:input",
 	} {
 		pts, err := store.RangeQuery(ctx, key, 0, 1<<62)
 		if err != nil {

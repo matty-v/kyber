@@ -306,8 +306,10 @@ per-agent git credentials.
 - **Alternatives + tradeoffs:** Runtime fetch with cache (fresher, riskier), manual rates
   (stale), provider billing APIs (no Anthropic per-token public API at the granularity
   needed).
-- **Status:** **Sound.** A model decision — small, complete, correctly bounded.
-- **Blast radius if reversed:** Metrics pricing accuracy and its trust story.
+- **Status:** **Superseded by MAT-117.** Kyber now stores local usage metadata and
+  exposes it through an API; pricing and LiteLLM artifacts were removed. This
+  entry records the earlier decision and why it was made.
+- **Blast radius of the change:** The old Metrics cost column and pricing feed.
 
 ## ADR-014 — Data-driven runtime/model management: detection poller + spec.runtimeVersion + boot-time install
 

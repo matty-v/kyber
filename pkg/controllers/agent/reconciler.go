@@ -146,11 +146,11 @@ type AgentReconciler struct {
 	// TokenStore holds the TTL'd per-agent token-usage snapshot
 	// (token-usage:<agent>).
 	TokenStore tokenstore.TokenStore
-	// TokenAccumulator holds the non-TTL'd all-time token counts
-	// (accum:token_usage:<ns>:<agent>:<model>) — a real orphan risk.
-	TokenAccumulator tokenstore.Accumulator
-	// MetricsStore holds the per-agent activity / token time-series
-	// (ts:activity / ts:token_usage :<ns>:<agent>:*).
+	// UsageStore holds durable per-call evidence under the immutable Agent UID.
+	UsageStore interface {
+		DeleteAgent(context.Context, string) error
+	}
+	// MetricsStore holds per-agent activity time-series.
 	MetricsStore metricsstore.MetricsStore
 	// StateChangeAccumulator holds the non-TTL'd state-transition counts
 	// (accum:state_changes:<ns>:<agent>) — a real orphan risk.
@@ -1902,7 +1902,7 @@ func (r *AgentReconciler) handleDeletion(ctx context.Context, agent *kyberv1.Age
 }
 
 // cleanupAgentStores reaps all of an agent's owned state in the external stores
-// (Postgres brief + the Redis token-usage/accumulator/time-series keys) so
+// (Postgres brief/usage + Redis snapshot/activity keys) so
 // a confirmed delete leaves zero orphaned identity material (kyber#565 AC-5).
 //
 // Each store is optional: a nil handle means that backend isn't configured, so
@@ -1932,11 +1932,11 @@ func (r *AgentReconciler) cleanupAgentStores(ctx context.Context, agent *kyberv1
 			}
 			return r.TokenStore.Delete(ctx, name)
 		}},
-		{"token-accumulator", func() error {
-			if r.TokenAccumulator == nil {
+		{"usage-evidence", func() error {
+			if r.UsageStore == nil {
 				return nil
 			}
-			return r.TokenAccumulator.DeleteAgent(ctx, ns, name)
+			return r.UsageStore.DeleteAgent(ctx, string(agent.UID))
 		}},
 		{"state-change-accumulator", func() error {
 			if r.StateChangeAccumulator == nil {

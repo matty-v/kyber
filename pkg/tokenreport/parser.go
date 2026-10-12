@@ -137,7 +137,7 @@ func ParseLatest(dir, file string) (*Snapshot, error) {
 				CacheRead:     e.Message.Usage.CacheReadInputTokens,
 				// Output is deliberately NOT taken from this single latest
 				// message: with several assistant messages per reporter tick
-				// that would drop every intermediate message's spend. The
+				// that would drop every intermediate message's output. The
 				// Reporter overwrites Tokens.Output with the outputTracker's
 				// cumulative total before POSTing.
 			},

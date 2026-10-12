@@ -20,7 +20,7 @@ type codexEntry struct {
 				CacheWrite int64 `json:"cache_write_input_tokens"`
 			} `json:"last_token_usage"`
 			// Total is the rollout's CUMULATIVE counter, carried alongside
-			// last_token_usage in every token_count event. Output spend is
+			// last_token_usage in every token_count event. Output count is
 			// read from here (not from Last) so no intermediate message
 			// between reporter polls is ever lost. output_tokens covers all
 			// generated tokens; reasoning_output_tokens is a subset of it and
@@ -120,8 +120,8 @@ func DetectCodexActivityFileWithAuth(path string) (state string, at time.Time, a
 // rollout JSONL. Cached input is a subset of input, so Used is Input rather
 // than Input+Cached; CacheRead is retained as a useful breakdown.
 // Tokens.Output is the rollout's cumulative total_token_usage counter
-// (spend since rollout-session start); a rollout rotation resets it and the
-// control plane's safeDelta treats the rollback as a fresh increment.
+// (since rollout-session start); a rollout rotation resets it. This remains
+// diagnostic context data; durable usage events provide per-call counts.
 func ParseCodexLatest(path, model string) (*Snapshot, error) {
 	f, err := os.Open(path)
 	if err != nil {

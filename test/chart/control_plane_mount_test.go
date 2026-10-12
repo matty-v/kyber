@@ -157,82 +157,29 @@ func volumeMountNames(c map[string]any) map[string]map[string]any {
 	return out
 }
 
-// TestProviderRatesMount_DefaultValues asserts the volume / volumeMount / env-var
-// triple is present when metrics.tokenRatesConfigMapName is set (the default).
-func TestProviderRatesMount_DefaultValues(t *testing.T) {
-	rendered := helmTemplate(t)
+// TestProviderRatesRemoved checks the chart no longer installs LiteLLM rate
+// resources after MAT-117. Helm will delete the old ConfigMap on upgrade.
+func TestProviderRatesRemoved(t *testing.T) {
+	rendered := helmTemplate(t, "metrics.tokenRatesConfigMapName=kyber-provider-rates")
 	deploy := findControlPlaneDeployment(t, rendered)
 	c := container(t, deploy)
 	ps := podSpec(t, deploy)
-
-	// 1. Volume sourced from the ConfigMap.
-	vols := volumeNames(ps)
-	vol, ok := vols["provider-rates"]
-	if !ok {
-		t.Fatalf("expected pod volume named 'provider-rates'; volumes present: %v", keysOf(vols))
+	if strings.Contains(rendered, "kyber-provider-rates") {
+		t.Fatal("provider-rates ConfigMap still rendered")
 	}
-	cm, _ := vol["configMap"].(map[string]any)
-	if cm == nil {
-		t.Fatalf("provider-rates volume must source from a configMap; got: %v", vol)
-	}
-	if got, want := cm["name"], "kyber-provider-rates"; got != want {
-		t.Errorf("provider-rates volume configMap.name = %q, want %q", got, want)
-	}
-
-	// 2. VolumeMount on the control-plane container, read-only.
-	mounts := volumeMountNames(c)
-	mnt, ok := mounts["provider-rates"]
-	if !ok {
-		t.Fatalf("expected volumeMount named 'provider-rates' on control-plane container; mounts present: %v", keysOf(mounts))
-	}
-	if ro, _ := mnt["readOnly"].(bool); !ro {
-		t.Errorf("provider-rates volumeMount must be readOnly: true; got: %v", mnt["readOnly"])
-	}
-	mountPath, _ := mnt["mountPath"].(string)
-	if mountPath == "" {
-		t.Fatal("provider-rates volumeMount must set mountPath")
-	}
-	if mountPath == "/etc/kyber" {
-		t.Errorf("provider-rates mountPath %q collides with chart-version mount at /etc/kyber", mountPath)
-	}
-
-	// 3. KYBER_METRICS_TOKEN_RATES_PATH env var points to the rates file under the mount.
-	envs := envNames(c)
-	ratesPath, ok := envs["KYBER_METRICS_TOKEN_RATES_PATH"]
-	if !ok {
-		t.Fatalf("expected env KYBER_METRICS_TOKEN_RATES_PATH on control-plane container; env names: %v", keysOf(envs))
-	}
-	if !strings.HasPrefix(ratesPath, mountPath+"/") {
-		t.Errorf("KYBER_METRICS_TOKEN_RATES_PATH = %q must point inside mountPath %q", ratesPath, mountPath)
-	}
-	if !strings.HasSuffix(ratesPath, "provider-rates.yaml") {
-		t.Errorf("KYBER_METRICS_TOKEN_RATES_PATH = %q must end in provider-rates.yaml (the ConfigMap key)", ratesPath)
-	}
-}
-
-// TestProviderRatesMount_EmptyConfigMapName asserts the triple is absent when
-// metrics.tokenRatesConfigMapName is empty — preserving fail-soft for operators
-// who intentionally disable cost computation.
-func TestProviderRatesMount_EmptyConfigMapName(t *testing.T) {
-	rendered := helmTemplate(t, "metrics.tokenRatesConfigMapName=")
-	deploy := findControlPlaneDeployment(t, rendered)
-	c := container(t, deploy)
-	ps := podSpec(t, deploy)
-
 	if _, ok := volumeNames(ps)["provider-rates"]; ok {
-		t.Error("provider-rates volume must NOT be present when metrics.tokenRatesConfigMapName is empty")
+		t.Fatal("provider-rates volume still rendered")
 	}
 	if _, ok := volumeMountNames(c)["provider-rates"]; ok {
-		t.Error("provider-rates volumeMount must NOT be present when metrics.tokenRatesConfigMapName is empty")
+		t.Fatal("provider-rates mount still rendered")
 	}
 	if _, ok := envNames(c)["KYBER_METRICS_TOKEN_RATES_PATH"]; ok {
-		t.Error("KYBER_METRICS_TOKEN_RATES_PATH env var must NOT be present when metrics.tokenRatesConfigMapName is empty")
+		t.Fatal("provider-rates environment variable still rendered")
 	}
 }
 
-// TestChartVersionMount_Preserved asserts the existing chart-version volume /
-// volumeMount at /etc/kyber is unaffected — guards against accidental collision
-// with the new provider-rates mount.
+// TestChartVersionMount_Preserved asserts the chart-version volume remains
+// mounted at /etc/kyber after the provider-rates resource is removed.
 func TestChartVersionMount_Preserved(t *testing.T) {
 	rendered := helmTemplate(t)
 	deploy := findControlPlaneDeployment(t, rendered)
@@ -249,12 +196,4 @@ func TestChartVersionMount_Preserved(t *testing.T) {
 	if got := mnt["mountPath"]; got != "/etc/kyber" {
 		t.Errorf("chart-version mountPath = %v, want /etc/kyber", got)
 	}
-}
-
-func keysOf[V any](m map[string]V) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }

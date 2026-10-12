@@ -114,15 +114,6 @@ jobs:
           curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
           helm version --short
 
-      # kyber#487: assert the vendored LiteLLM pricing feed is wired (dataset
-      # present, parses, rates within sanity bounds, chart renders it) and fresh
-      # (snapshot within the freshness window) — the refresh bot keeps it current.
-      - name: Pricing feed wired + fresh
-        if: needs.changes.outputs.go == 'true'
-        run: |
-          bash scripts/preflight-model-pricing_test.sh
-          bash scripts/preflight-model-pricing.sh
-
       # kyber#578: the internal-auth key-presence deploy gate — a keyless ENFORCE
       # cutover must abort before reaching a cluster (the v2.1.0 fail-closed
       # outage). Test the gate logic (mocks kubectl).

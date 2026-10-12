@@ -13,8 +13,8 @@ import (
 // later — which does not happen in an append-only transcript.
 const outputSeenCap = 4096
 
-// outputTracker accumulates the output-token spend of finalized assistant
-// messages across reporter ticks (kyber output-cost fix). The Claude Code
+// outputTracker accumulates output-token counts from finalized assistant
+// messages across reporter ticks. The Claude Code
 // transcript has no cumulative output counter (unlike Codex's
 // total_token_usage), and reading only the newest finalized message loses
 // every intermediate message written between ticks — so the reporter process
@@ -24,10 +24,8 @@ const outputSeenCap = 4096
 // Mechanics:
 //   - Counting starts at the END of the first-observed session file
 //     ("output since reporter start"): historical content is skipped so a
-//     reporter restart cannot re-count spend an earlier incarnation already
-//     reported. The restart gap itself is undercounted — acceptable and
-//     honest (the control plane's safeDelta treats the post-restart smaller
-//     total as a fresh increment).
+//     reporter restart cannot re-count output an earlier incarnation already
+//     reported. A reporter restart resets this diagnostic counter.
 //   - Each tick reads ONLY newly-appended complete lines via a per-file byte
 //     offset, so messages that scroll out of ParseLatest's 50-line tail
 //     window between ticks are still counted. A trailing line without '\n'

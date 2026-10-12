@@ -18,8 +18,6 @@ import (
 
 	"sync"
 
-	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/metric"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -41,7 +39,6 @@ import (
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskobject"
 	"github.com/matty-v/kyber/pkg/taskstore"
-	"github.com/matty-v/kyber/pkg/telemetry"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/usagestore"
@@ -130,7 +127,6 @@ type InternalServer struct {
 	archives           *ArchiveService
 	tokenStore         tokenstore.TokenStore
 	usageStore         UsageStore
-	tokenAccumulator   tokenstore.Accumulator
 	metricsStore       metricsstore.MetricsStore
 	nodeStore          metricsstore.NodeStore
 	stateChangeAccum   statechangestore.Accumulator
@@ -194,14 +190,6 @@ func WithUsageStore(store UsageStore) InternalServerOption {
 // old pod's event after its name has been reused.
 func WithUsageAgentReader(reader client.Reader) InternalServerOption {
 	return func(s *InternalServer) { s.usageAgentReader = reader }
-}
-
-// WithTokenAccumulator wires an Accumulator so the POST /internal/agents/{name}/token-usage
-// endpoint increments persistent per-agent/model token counts for the Tier 1 metrics panel.
-func WithTokenAccumulator(acc tokenstore.Accumulator) InternalServerOption {
-	return func(s *InternalServer) {
-		s.tokenAccumulator = acc
-	}
 }
 
 // WithMetricsStore wires a MetricsStore so the POST /internal/agents/{name}/status
@@ -821,9 +809,8 @@ func (s *InternalServer) handleCodexAuthRotation(w http.ResponseWriter, r *http.
 var errCredentialWriteSuperseded = errors.New("credential write superseded")
 
 // handleTokenUsagePost handles POST /internal/agents/{name}/token-usage.
-// It persists the provided Snapshot under agentName in the TokenStore and
-// emits per-token-type increments to the kyber_agent_tokens_total OTel counter.
-//
+// It persists the provided Snapshot under agentName in the short-lived
+// TokenStore for the live context-window display.
 // Returns 200 on success, 400 on malformed body, 503 when not configured.
 func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Request, agent string) {
 	if r.Method != http.MethodPost {
@@ -834,9 +821,6 @@ func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Req
 		http.Error(w, "not configured", http.StatusServiceUnavailable)
 		return
 	}
-	// Read prev before storing so we can compute per-report deltas for OTel and
-	// the Redis accumulator (the snapshot carries cumulative session totals).
-	prev, _ := s.tokenStore.Get(r.Context(), agent)
 	var snap tokenreport.Snapshot
 	if err := json.NewDecoder(r.Body).Decode(&snap); err != nil {
 		http.Error(w, "invalid body", http.StatusBadRequest)
@@ -860,99 +844,7 @@ func (s *InternalServer) handleTokenUsagePost(w http.ResponseWriter, r *http.Req
 			_ = s.k8sClient.Status().Patch(r.Context(), current, patch)
 		}
 	}
-	delta := computeTokenDelta(prev, &snap)
-	if telemetry.AgentTokensTotal != nil {
-		emitTokenCounterDelta(r.Context(), agent, snap.Model, delta)
-	}
-	if s.tokenAccumulator != nil {
-		_ = s.tokenAccumulator.IncrBy(r.Context(), s.namespace, agent, snap.Model, delta)
-	}
-	// Record the per-type delta to the windowed token time series so
-	// GET /api/v1/metrics/tokens can honor start/end (kyber#428). The
-	// accumulator above keeps the all-time totals; this is the windowed
-	// counterpart, mirroring the activity write at internal_metrics_snapshot.go.
-	if s.metricsStore != nil && !delta.IsZero() {
-		s.addTokenUsagePoints(r.Context(), agent, snap.Model, delta, time.Now().Unix())
-	}
 	w.WriteHeader(http.StatusOK)
-}
-
-// addTokenUsagePoints writes the non-zero components of delta to their
-// per-(agent,model,type) Redis token time series at timestamp ts. Zero
-// components are skipped to avoid storing empty points. Best-effort: write
-// errors are swallowed (same contract as the activity snapshot write).
-func (s *InternalServer) addTokenUsagePoints(ctx context.Context, agent, model string, delta tokenstore.TokenDelta, ts int64) {
-	add := func(tokenType string, val int64) {
-		if val <= 0 {
-			return
-		}
-		key := metricsstore.TokenUsageKey(s.namespace, agent, model, tokenType)
-		_ = s.metricsStore.AddPoint(ctx, key, ts, float64(val))
-	}
-	add("input", delta.Input)
-	add("cache_creation", delta.CacheCreation)
-	add("cache_read", delta.CacheRead)
-	add("output", delta.Output)
-}
-
-// computeTokenDelta returns the per-token-type increment from prev to snap.
-//
-// All four token types are quasi-cumulative counters and flow through the
-// same safeDelta logic: input/cache_creation/cache_read carry the latest
-// message's context-window numbers, and output is the reporter-accumulated
-// total (since reporter start for Claude Code, since rollout-session start
-// for Codex — see tokenreport.Tokens.Output). prev may be nil (first report,
-// or the token store's 5-minute-TTL latest-snapshot entry expired) or carry
-// a different model (session/model change); in both cases snap's values are
-// the full increment — a pre-existing limitation shared identically by all
-// four types (a prev-miss re-adds the current counter value once). A
-// negative diff (session restart, counter rolled back) uses snap's value as
-// the increment, undercounting only the gap. safeDelta never returns a
-// negative value, so a malformed negative count in a reporter POST is
-// clamped to 0 rather than decrementing the accumulators.
-func computeTokenDelta(prev, snap *tokenreport.Snapshot) tokenstore.TokenDelta {
-	var prevInput, prevCache, prevCacheRead, prevOutput int64
-	if prev != nil && prev.Model == snap.Model {
-		prevInput = prev.Tokens.Input
-		prevCache = prev.Tokens.CacheCreation
-		prevCacheRead = prev.Tokens.CacheRead
-		prevOutput = prev.Tokens.Output
-	}
-	safeDelta := func(newVal, oldVal int64) int64 {
-		d := newVal - oldVal
-		if d > 0 {
-			return d
-		}
-		if d < 0 && newVal > 0 {
-			return newVal // session reset
-		}
-		return 0
-	}
-	return tokenstore.TokenDelta{
-		Input:         safeDelta(snap.Tokens.Input, prevInput),
-		CacheCreation: safeDelta(snap.Tokens.CacheCreation, prevCache),
-		CacheRead:     safeDelta(snap.Tokens.CacheRead, prevCacheRead),
-		Output:        safeDelta(snap.Tokens.Output, prevOutput),
-	}
-}
-
-// emitTokenCounterDelta adds per-token-type increments to AgentTokensTotal.
-func emitTokenCounterDelta(ctx context.Context, agentName, model string, delta tokenstore.TokenDelta) {
-	add := func(tokenType string, val int64) {
-		if val <= 0 {
-			return
-		}
-		telemetry.AgentTokensTotal.Add(ctx, val,
-			metric.WithAttributes(
-				attribute.String("agent", agentName),
-				attribute.String("model", model),
-				attribute.String("token_type", tokenType),
-			))
-	}
-	add("input", delta.Input)
-	add("cache_creation", delta.CacheCreation)
-	add("cache_read", delta.CacheRead)
-	add("output", delta.Output)
 }
 
 // handleJobEvent handles POST /internal/agents/{name}/job-events (#135).

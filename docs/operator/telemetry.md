@@ -1,30 +1,20 @@
 # Telemetry and the Metrics Tab
 
-The Kyber Metrics tab has three data tiers:
+The Metrics tab reads different stores for different panels:
 
-1. **CRD-backed panels** (Fleet Summary, Last Active) — always available; read agent CRD status fields directly.
-2. **Redis-backed panels** (Activity, Working Time, Tokens, Node Resources, State Changes) — populated automatically from the status-sidecar and node-agent; no Prometheus required. On by default (`metrics.redisStoreEnabled: true`).
-3. **Prometheus TSDB** — optional fallback and historical source for the same five panels. Used when Redis is disabled or when historical data predates the Redis store rollout.
+1. Fleet Summary and Last Active read Agent CRDs.
+2. Activity, Working Time, Node Resources, and State Changes use Redis time series by default, with optional Prometheus history.
+3. Token Usage reads durable per-call evidence from PostgreSQL through `GET /api/v1/usage/events`. It reports observed token classes, model, configured route, and upstream provider when known. Unknown counts stay unknown; Kyber does not calculate dollar costs.
 
 ## Default (no-Prometheus) mode
 
-With `metrics.redisStoreEnabled: true` (the default), all five time-series panels populate without any Prometheus setup. The status-sidecar and node-agent write directly to Redis every 15–30 seconds.
+With `metrics.redisStoreEnabled: true`, the activity, working-time, node, and state-change panels populate without Prometheus. Their Redis history defaults to 7 days (`metrics.redisRetentionSeconds: 604800`). Token Usage needs PostgreSQL and an Agent reporter that emits local usage evidence; it does not depend on Redis or Prometheus. Detailed usage events default to 90 days of retention and daily aggregates to 13 months.
 
-**What works out of the box:**
-- All 7 Metrics tab panels populate once pods are running
-- Up to 7 days of history (`metrics.redisRetentionSeconds: 604800`)
-- Token usage and state-change counts are always-on (Redis accumulators)
-
-**What you lose without Prometheus:**
-- Historical data predating the Redis store (before cluster upgrade to this version)
-- Alerting rules and recording rules
-- External dashboards (Grafana, etc.) that query Prometheus directly
-
-To disable the Redis store and use only Prometheus: set `metrics.redisStoreEnabled: false` in your Helm values.
+To disable the Redis time-series store and use Prometheus for its panels, set `metrics.redisStoreEnabled: false`. This does not change Token Usage.
 
 ## Enabling OTLP Export
 
-By default, `telemetry.enabled` is `false`. Time-series panels show an empty state until telemetry is enabled and metrics are flowing.
+By default, `telemetry.enabled` is `false`. Redis-backed panels still work; enable OTLP export when you want Prometheus history or external dashboards.
 
 ### Step 1: Deploy an OTEL Collector + Prometheus backend
 
@@ -44,7 +34,6 @@ telemetry:
 metrics:
   prometheusURL: "http://prometheus.monitoring:9090"     # Prometheus query API
   stalenessThresholdSeconds: 300                         # 5 min (default)
-  tokenRatesConfigMapName: kyber-provider-rates          # default, created by chart
 ```
 
 ### Step 3: Verify data flow
@@ -69,7 +58,6 @@ If the result is empty, check:
 |--------|--------|--------|-------|
 | `kyber_agent_activity_state_seconds_total` | agent, state, namespace | status-sidecar | Activity, Working Time |
 | `kyber_agent_heartbeat_seconds_since_last` | agent, namespace | status-sidecar | (Last Active uses CRD) |
-| `kyber_agent_tokens_total` | agent, model, token_type, namespace | control-plane | Token Usage |
 | `kyber_agent_state_changes_total` | agent, to_state, namespace | control-plane | State Changes |
 | `node_cpu_seconds_total` | mode, node, namespace | node-agent | Node Resources |
 | `node_memory_MemTotal_bytes` | node, namespace | node-agent | Node Resources |
@@ -77,26 +65,11 @@ If the result is empty, check:
 | `node_filesystem_size_bytes` | node, mountpoint, namespace | node-agent | Node Resources |
 | `node_filesystem_free_bytes` | node, mountpoint, namespace | node-agent | Node Resources |
 
-## Token Cost Rates
+## Usage metadata API
 
-Provider rates are stored in the `kyber-provider-rates` ConfigMap (created by the Helm chart at `templates/configmap-rates.yaml`). To update rates:
+`GET /api/v1/usage/events` returns authorized, paginated per-call evidence. `GET /api/v1/usage/aggregates?bucket=day` returns daily summaries. Both require `usage:read` and are restricted to the caller's current Agent UIDs. Responses include nullable `inputUncached`, `output`, `cacheRead`, and `cacheWrite` counts, a detected-gap count, and no cost field. A missing upstream provider is shown as unknown; a configured OpenRouter route does not prove which provider served a request.
 
-```bash
-kubectl edit configmap kyber-provider-rates -n kyber-system
-```
-
-Format (`provider-rates.yaml` key in the ConfigMap data):
-
-```yaml
-claude-sonnet-4-6:
-  input: 3.0        # USD per 1M input tokens
-  output: 15.0      # USD per 1M output tokens
-  cache_read: 0.3   # USD per 1M cache-read tokens
-```
-
-The control plane reads this file at request time (no restart required after editing). Models not in the table show $0 cost.
-
-Cost computation requires `metrics.tokenRatesConfigMapName` to be set (default: `kyber-provider-rates`). When it is empty, the chart omits the ConfigMap, the mount, and `KYBER_METRICS_TOKEN_RATES_PATH`, and all costs degrade gracefully to $0 (token counts are unaffected).
+The Metrics tab groups observed calls for the selected time range. If a range contains too many events to summarize without truncation, choose a shorter range. Cost calculations can be performed by a separate system using this API and its own pricing data.
 
 ## TLS for Prometheus
 
