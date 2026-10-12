@@ -320,7 +320,24 @@ function tokenCell(value: number | null, unknown: number) {
 
 export function TokenTable({ rows }: { rows: TokenSummaryRow[] }) {
   return (
-    <div className="overflow-x-auto">
+    <>
+    <div className="space-y-3 md:hidden">
+      {rows.map((row, i) => (
+        <div key={i} className="rounded-md border border-border-subtle p-3 text-xs">
+          <div className="font-mono text-text-primary break-all">{row.agent}</div>
+          <div className="mt-1 break-all text-text-secondary">{row.model}</div>
+          <div className="mt-2 text-text-muted break-all">{row.route} · {row.provider ?? 'Unknown'}</div>
+          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+            <div><dt className="text-text-muted">Calls</dt><dd className="tabular-nums text-text-secondary">{row.eventCount.toLocaleString()}</dd></div>
+            <div><dt className="text-text-muted">Input</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.inputUncached, row.unknown.inputUncached)}</dd></div>
+            <div><dt className="text-text-muted">Output</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.output, row.unknown.output)}</dd></div>
+            <div><dt className="text-text-muted">Cache write</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheWrite, row.unknown.cacheWrite)}</dd></div>
+            <div><dt className="text-text-muted">Cache read</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheRead, row.unknown.cacheRead)}</dd></div>
+          </dl>
+        </div>
+      ))}
+    </div>
+    <div className="hidden overflow-x-auto md:block">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border-subtle text-left text-text-muted">
@@ -352,6 +369,7 @@ export function TokenTable({ rows }: { rows: TokenSummaryRow[] }) {
         </tbody>
       </table>
     </div>
+    </>
   )
 }
 
