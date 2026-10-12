@@ -7,7 +7,7 @@ import {
   useMetricsSummary,
   useMetricsActivity,
   useMetricsWorkingTime,
-  useMetricsTokens,
+  useUsageEventsForRange,
   useMetricsLastActive,
   useMetricsNodes,
   useMetricsStateChanges,
@@ -16,7 +16,7 @@ import { formatDuration } from '../lib/duration'
 import type {
   MetricsFleetSummary,
   MetricsSeries,
-  MetricsTokenUsage,
+  UsageEvent,
   MetricsLastActive,
   MetricsNodeResources,
   MetricsStateChange,
@@ -249,81 +249,127 @@ function WorkingTimeTable({ series }: { series: MetricsSeries[] }) {
 // ---- Token Usage panel ----
 
 function TokenUsagePanel({ start, end }: { start: number; end: number }) {
-  const { data, isLoading } = useMetricsTokens(start, end)
+  const { data, isLoading, isError } = useUsageEventsForRange(start, end)
+  const rows = useMemo(() => summarizeUsageEvents(data?.events ?? []), [data?.events])
 
   return (
-    <Panel title="Token Usage and Cost">
+    <Panel title="Token usage">
       {isLoading && <Skeleton className="h-32" />}
-      {!isLoading && (!data || data.length === 0) && (
-        <PanelEmpty message="No token usage recorded yet for this cluster in the selected time range." />
+      {isError && <PanelEmpty message="Usage records are unavailable right now." />}
+      {!isLoading && !isError && data?.tooMany && (
+        <PanelEmpty message="Too many calls to summarize here. Choose a shorter time range." />
       )}
-      {!isLoading && data && data.length > 0 && (
+      {!isLoading && !isError && !data?.tooMany && rows.length === 0 && (
+        <PanelEmpty message="No usage records are available for this time range." />
+      )}
+      {!isLoading && !isError && !data?.tooMany && rows.length > 0 && (
         <>
-          <p className="mb-3 text-xs text-text-muted">Cost is estimated from Kyber’s model rates, not a provider invoice. Routed provider and billing adjustments may differ.</p>
-          <TokenTable rows={data} />
+          <p className="mb-3 text-xs text-text-muted">
+            {data && data.detectedGapCount > 0
+              ? `${data.detectedGapCount} gap${data.detectedGapCount === 1 ? '' : 's'} detected. Some calls may be missing.`
+              : 'Totals include the calls Kyber observed. Earlier or missed calls may be absent.'}
+          </p>
+          <TokenTable rows={rows} />
         </>
       )}
     </Panel>
   )
 }
 
-// An explicit priced===false is "unpriced" (no rate in provider-rates);
-// older payloads omit the field and are treated as priced, same defensive
-// check as windowUnknown in TokenUsage.tsx (kyber#487).
-function isUnpriced(row: MetricsTokenUsage): boolean {
-  return row.priced === false
+type TokenClass = 'inputUncached' | 'output' | 'cacheWrite' | 'cacheRead'
+const TOKEN_CLASSES: TokenClass[] = ['inputUncached', 'output', 'cacheWrite', 'cacheRead']
+
+export interface TokenSummaryRow {
+  agent: string
+  model: string
+  route: string
+  provider: string | null
+  eventCount: number
+  tokens: Record<TokenClass, number | null>
+  unknown: Record<TokenClass, number>
 }
 
-export function TokenTable({ rows }: { rows: MetricsTokenUsage[] }) {
-  // Priced rows by cost desc; unpriced rows sorted last (their costUsd is a
-  // placeholder 0, so we can't let it rank among genuine $0 rows).
-  const sorted = [...rows].sort((a, b) => {
-    const au = isUnpriced(a)
-    const bu = isUnpriced(b)
-    if (au !== bu) return au ? 1 : -1
-    return b.costUsd - a.costUsd
-  })
+export function summarizeUsageEvents(events: UsageEvent[]): TokenSummaryRow[] {
+  const groups = new Map<string, TokenSummaryRow>()
+  for (const event of events) {
+    const key = JSON.stringify([event.agentUID, event.model, event.configuredRoute, event.observedUpstreamProvider])
+    let row = groups.get(key)
+    if (!row) {
+      row = {
+        agent: event.agent, model: event.model, route: event.configuredRoute,
+        provider: event.observedUpstreamProvider, eventCount: 0,
+        tokens: { inputUncached: null, output: null, cacheWrite: null, cacheRead: null },
+        unknown: { inputUncached: 0, output: 0, cacheWrite: 0, cacheRead: 0 },
+      }
+      groups.set(key, row)
+    }
+    row.eventCount += 1
+    for (const tokenClass of TOKEN_CLASSES) {
+      const count = event[tokenClass]
+      if (count == null) row.unknown[tokenClass] += 1
+      else row.tokens[tokenClass] = (row.tokens[tokenClass] ?? 0) + count
+    }
+  }
+  return [...groups.values()].sort((a, b) => a.agent.localeCompare(b.agent) || a.model.localeCompare(b.model))
+}
+
+function tokenCell(value: number | null, unknown: number) {
+  const text = value === null ? '—' : value.toLocaleString()
+  return <span title={unknown ? `${unknown} call${unknown === 1 ? '' : 's'} did not report this count` : undefined}>{text}{unknown && value !== null ? '*' : ''}</span>
+}
+
+export function TokenTable({ rows }: { rows: TokenSummaryRow[] }) {
   return (
-    <div className="overflow-x-auto">
+    <>
+    <div className="space-y-3 md:hidden">
+      {rows.map((row, i) => (
+        <div key={i} className="rounded-md border border-border-subtle p-3 text-xs">
+          <div className="font-mono text-text-primary break-all">{row.agent}</div>
+          <div className="mt-1 break-all text-text-secondary">{row.model}</div>
+          <div className="mt-2 text-text-muted break-all">{row.route} · {row.provider ?? 'Unknown'}</div>
+          <dl className="mt-3 grid grid-cols-2 gap-x-3 gap-y-2">
+            <div><dt className="text-text-muted">Calls</dt><dd className="tabular-nums text-text-secondary">{row.eventCount.toLocaleString()}</dd></div>
+            <div><dt className="text-text-muted">Input</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.inputUncached, row.unknown.inputUncached)}</dd></div>
+            <div><dt className="text-text-muted">Output</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.output, row.unknown.output)}</dd></div>
+            <div><dt className="text-text-muted">Cache write</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheWrite, row.unknown.cacheWrite)}</dd></div>
+            <div><dt className="text-text-muted">Cache read</dt><dd className="tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheRead, row.unknown.cacheRead)}</dd></div>
+          </dl>
+        </div>
+      ))}
+    </div>
+    <div className="hidden overflow-x-auto md:block">
       <table className="w-full text-xs">
         <thead>
           <tr className="border-b border-border-subtle text-left text-text-muted">
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Agent</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Model</th>
+            <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Route</th>
+            <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Provider</th>
+            <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Calls</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Input</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Output</th>
             <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache write</th>
-            <th className="pb-2 pr-4 font-mono font-medium uppercase tracking-wider">Cache read</th>
-            <th className="pb-2 font-mono font-medium uppercase tracking-wider">Est. cost (USD)</th>
+            <th className="pb-2 font-mono font-medium uppercase tracking-wider">Cache read</th>
           </tr>
         </thead>
         <tbody>
-          {sorted.map((row, i) => (
+          {rows.map((row, i) => (
             <tr key={i} className="border-b border-border-subtle/40">
               <td className="py-2 pr-4 font-mono text-text-primary">{row.agent}</td>
               <td className="py-2 pr-4 text-text-secondary">{row.model}</td>
-              <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['input'] ?? 0).toLocaleString()}</td>
-              <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['output'] ?? 0).toLocaleString()}</td>
-              <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['cache_creation'] ?? 0).toLocaleString()}</td>
-              <td className="py-2 pr-4 tabular-nums text-text-secondary">{(row.tokens['cache_read'] ?? 0).toLocaleString()}</td>
-              {isUnpriced(row) ? (
-                <td className="py-2 tabular-nums">
-                  <span className="text-text-muted">—</span>
-                  <span
-                    className="ml-1 italic text-text-muted"
-                    title="No rate for this model in provider-rates — add it to fix the cost."
-                  >
-                    · unpriced
-                  </span>
-                </td>
-              ) : (
-                <td className="py-2 tabular-nums text-text-primary font-medium">${row.costUsd.toFixed(4)}</td>
-              )}
+              <td className="py-2 pr-4 text-text-secondary">{row.route}</td>
+              <td className="py-2 pr-4 text-text-secondary">{row.provider ?? 'Unknown'}</td>
+              <td className="py-2 pr-4 tabular-nums text-text-secondary">{row.eventCount.toLocaleString()}</td>
+              <td className="py-2 pr-4 tabular-nums text-text-secondary">{tokenCell(row.tokens.inputUncached, row.unknown.inputUncached)}</td>
+              <td className="py-2 pr-4 tabular-nums text-text-secondary">{tokenCell(row.tokens.output, row.unknown.output)}</td>
+              <td className="py-2 pr-4 tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheWrite, row.unknown.cacheWrite)}</td>
+              <td className="py-2 tabular-nums text-text-secondary">{tokenCell(row.tokens.cacheRead, row.unknown.cacheRead)}</td>
             </tr>
           ))}
         </tbody>
       </table>
     </div>
+    </>
   )
 }
 

@@ -1386,6 +1386,40 @@ export function useMetricsTokens(start: number, end: number) {
   })
 }
 
+// The Metrics range picker uses exact timestamps. The daily aggregate API is
+// intentionally day-granular, so fetch finalized events for this panel rather
+// than presenting a whole UTC day's tokens as a 15-minute total.
+export function useUsageEventsForRange(start: number, end: number) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'usage', 'events', start, end],
+    queryFn: async () => {
+      const events: import('../lib/types').UsageEvent[] = []
+      let cursor: string | undefined
+      let detectedGapCount = 0
+      do {
+        const page = await api.getUsageEvents({
+          start: new Date(start * 1000).toISOString(),
+          end: new Date(end * 1000).toISOString(),
+          limit: 500,
+          cursor,
+        })
+        detectedGapCount = page.coverage.detectedGapCount
+        events.push(...page.events)
+        // Do not show a partial total as though it covered the full range.
+        if (page.nextCursor && events.length >= 5000) {
+          return { events: [], detectedGapCount, tooMany: true }
+        }
+        cursor = page.nextCursor ?? undefined
+      } while (cursor)
+      return { events, detectedGapCount, tooMany: false }
+    },
+    enabled: start > 0 && end > start,
+    retry: false,
+  })
+}
+
 export function useMetricsLastActive() {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

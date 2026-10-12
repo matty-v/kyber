@@ -66,6 +66,19 @@ let mockFleetTick = 0
 // reverse-proxies. Use wildcards so localhost:5173 and any configured server
 // URL both resolve.
 export const handlers = [
+  http.get('*/api/v1/usage/events', () => HttpResponse.json({
+    events: [{
+      id: 'mock-usage-1', agentUID: 'mock-agent-uid', agent: MOCK_AGENT_NAME,
+      observedAt: new Date().toISOString(), ingestedAt: new Date().toISOString(),
+      runtime: 'claude', sourceFormat: 'claude-jsonl', sourceVersion: '1',
+      sourceIdentity: 'mock:1', coverage: 'observed', configuredRoute: 'direct-api',
+      routeID: 'mock-route', model: 'claude-sonnet-4-6', modelEvidence: 'observed',
+      observedUpstreamProvider: null, reportedProviderLabel: null,
+      inputUncached: 2000, output: 530, cacheRead: 520, cacheWrite: null,
+    }],
+    nextCursor: null,
+    coverage: { detectedGapCount: 0, guaranteedComplete: false },
+  })),
   // cluster-info is the embedded app's bootstrap gate (EmbeddedClusterProvider
   // fetches it before mounting anything) — without this handler every
   // mock-backed page renders the "Could not reach the kyber control plane"
