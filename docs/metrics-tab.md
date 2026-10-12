@@ -8,7 +8,7 @@ The Metrics tab appears in the sidebar (desktop) and bottom nav bar (mobile) alo
 
 ## Time Range Picker
 
-The picker at the top right of the page controls the time window for all time-series panels:
+The picker at the top right of the page controls the time window for activity, working time, and token usage. The state-change panel also uses that window when it falls back to Prometheus; its default Redis counts are all-time totals.
 
 | Option | Window |
 |--------|--------|
@@ -18,7 +18,7 @@ The picker at the top right of the page controls the time window for all time-se
 | 24 h | 24 hours |
 | 7 d | 7 days |
 
-Selecting a new range re-fetches all time-series panels simultaneously. In-flight requests from the previous range are cancelled. The **Node Resources** panel is unaffected by the time range — it always shows the current live state.
+Selecting a new range re-fetches the time-range panels. The **Node Resources** panel is unaffected by the time range — it always shows the current live state.
 
 ## Panels
 
@@ -39,11 +39,11 @@ A table showing the rate of time each agent spent in `working`, `idle`, and `pau
 
 Each duration cell renders as a compound, human-readable duration showing the two most-significant units, selected by magnitude — `7d 23h`, `1h 38m`, `12m 46s`, or `59.4s` for sub-minute values. This formatting is display-only: the underlying metrics payload (`/api/v1/metrics/activity`) stays in seconds. Absent values render as `—`.
 
-Empty state: shown when Prometheus is not configured or no data exists for the selected range.
+Empty state: shown when neither the default Redis store nor an optional Prometheus fallback has activity data for the selected range.
 
 ### Working Time Trend
 
-A bar chart showing cumulative working hours per agent over the selected time range. Useful for billing attribution and identifying which agents are doing the most work. Derived from `kyber_agent_activity_state_seconds_total{state="working"}`.
+A bar chart showing observed working hours per agent over the selected time range. Useful for identifying which agents are doing the most work. The default source is Redis activity history; Prometheus can supply the fallback.
 
 ### Token Usage
 
@@ -63,7 +63,7 @@ This panel is backed by CRD status fields and is always available.
 
 ### Node Resources (live)
 
-Live CPU, memory, and disk gauges per node. This panel refreshes automatically every 30 seconds, independent of the time range picker. It uses Prometheus instant queries.
+Live CPU, memory, and disk gauges per node. This panel refreshes automatically every 30 seconds, independent of the time range picker. It reads the latest node-agent samples from Redis, with Prometheus instant queries as a fallback.
 
 - **CPU%** — CPU utilisation averaged across all cores.
 - **Memory** — Used vs. total physical memory.
@@ -71,19 +71,14 @@ Live CPU, memory, and disk gauges per node. This panel refreshes automatically e
 
 Gauge color: green below 70%, amber 70–85%, red above 85%.
 
-Empty state: shown when node_exporter metrics are not flowing to the TSDB.
+Empty state: shown when no node-agent samples or Prometheus node metrics are available.
 
 ### Agent State Change Frequency
 
-A table showing how many times each agent transitioned into each named state over the selected time range. Derived from `kyber_agent_state_changes_total`. Useful for spotting reliability regressions (e.g., an agent bouncing between Failed and Running repeatedly).
+A table showing how many times each agent transitioned into each named state. With the default Redis accumulator, counts are all-time totals; when Prometheus supplies the fallback, counts cover the selected time range. Useful for spotting reliability regressions (e.g., an agent bouncing between Failed and Running repeatedly).
 
 ## Empty States
 
-Each panel renders a descriptive empty state when:
-
-- The Prometheus URL is not configured (`metrics.prometheusURL` is empty in Helm values).
-- The TSDB is unreachable (30-second timeout).
-- No data exists for the selected time range (e.g., telemetry was just enabled, or the range predates data collection).
-- The cluster has no agents (Fleet Summary, Last Active).
+Panels render an empty state when their required data is unavailable. Activity and working-time panels use Redis by default and can fall back to Prometheus; node and state-change panels use their Redis-backed stores with a Prometheus fallback. Token Usage requires PostgreSQL and observed usage events. A selected range that predates collection can also be empty. Fleet Summary and Last Active have no rows when the cluster has no agents.
 
 No panel crashes or spins indefinitely on data unavailability.
