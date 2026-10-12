@@ -44,6 +44,7 @@ import (
 	"github.com/matty-v/kyber/pkg/taskstore"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
+	"github.com/matty-v/kyber/pkg/usagestore"
 )
 
 // DefaultPublicPort is the default listen address for the public HTTP API.
@@ -69,6 +70,8 @@ type Server struct {
 
 	// TokenStore persists per-agent Claude Code context-budget snapshots.
 	TokenStore tokenstore.TokenStore
+	// UsageStore serves durable local usage evidence. Nil returns 503.
+	UsageStore *usagestore.PostgresStore
 
 	// SkillStore serves the read-only Skills tab: the most recent report each
 	// agent scanned from its own filesystem. Nil disables the endpoint (503).
@@ -843,6 +846,8 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 
 	// Metrics tab — cluster observability dashboard (#328).
 	mux.HandleFunc("/api/v1/metrics/", s.handleMetrics)
+	mux.HandleFunc("/api/v1/usage/events", s.handleUsageEvents)
+	mux.HandleFunc("/api/v1/usage/aggregates", s.handleUsageAggregates)
 
 	// Runtime detection (kyber#375 / PR-A of #374). /available surfaces
 	// Claude Code versions + Claude models the detection poller has seen.

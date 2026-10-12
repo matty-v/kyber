@@ -1446,6 +1446,7 @@ func main() {
 		K8sClient:                     mgr.GetClient(),
 		APIReader:                     mgr.GetAPIReader(),
 		TokenStore:                    tokenStore,
+		UsageStore:                    usageStore,
 		TokenAccumulator:              tokenAccumulator,
 		SkillStore:                    skillStore,
 		APIKey:                        os.Getenv("KYBER_API_KEY"),

@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.64.0
+
+- Add typed clients for local usage events and UTC daily aggregates, including explicit coverage and nullable token classes. These methods expose no dollar estimate.
+
 ## 0.63.3
 
 - Show versioned Codex/OpenRouter model observations in agent creation, review, and settings. Unlisted models remain explicitly unverified; upstream routing is not inferred.

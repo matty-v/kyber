@@ -55,6 +55,7 @@ request ── authMiddleware ──> Authenticate(r) -> (*Caller{Name,Scopes}, 
 | `task-results:read` | read owned task results and files | result content routes |
 | `task-events:read` | subscribe to owned task events | event stream and replay routes |
 | `archives:admin` | export an agent's disk and download it (MAT-87); create agents from archives (MAT-88); delete archives early (MAT-90). Also requires the agent in the caller's `agentResources`. Not implied by any lifecycle scope, because an archive can hold credentials | `POST/GET/DELETE /agents/{agent}/exports…`, download links, `POST /agent-imports`, `POST/GET/DELETE /archive-uploads…` |
+| `usage:read` | read locally observed usage events and UTC daily aggregates for currently authorized Agent resources | `GET /usage/events`, `GET /usage/aggregates` |
 
 **Privilege ordering (the #474 invariant):** scopes nest — `lifecycle:admin` ⊃
 `lifecycle:write`. The impactful verbs require the strictly-higher scope, so they

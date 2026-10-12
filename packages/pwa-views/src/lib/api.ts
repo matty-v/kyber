@@ -49,6 +49,9 @@ import type {
   MetricsFleetSummary,
   MetricsSeries,
   MetricsTokenUsage,
+  UsageEventPage,
+  UsageDailyPage,
+  UsageQuery,
   MetricsLastActive,
   MetricsNodeResources,
   MetricsStateChange,
@@ -986,6 +989,18 @@ export function createApiClient(cluster: Cluster) {
 
     getMetricsTokens: (start: number, end: number): Promise<MetricsTokenUsage[]> =>
       request<MetricsTokenUsage[]>('GET', `/api/v1/metrics/tokens?start=${start}&end=${end}`),
+
+    getUsageEvents: (query: UsageQuery): Promise<UsageEventPage> => {
+      const params = new URLSearchParams()
+      for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value))
+      return request<UsageEventPage>('GET', `/api/v1/usage/events?${params}`)
+    },
+
+    getUsageDaily: (query: UsageQuery): Promise<UsageDailyPage> => {
+      const params = new URLSearchParams({ bucket: 'day' })
+      for (const [key, value] of Object.entries(query)) if (value !== undefined) params.set(key, String(value))
+      return request<UsageDailyPage>('GET', `/api/v1/usage/aggregates?${params}`)
+    },
 
     getMetricsLastActive: (): Promise<MetricsLastActive[]> =>
       request<MetricsLastActive[]>('GET', '/api/v1/metrics/last-active'),

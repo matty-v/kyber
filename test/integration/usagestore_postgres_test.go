@@ -4,6 +4,7 @@ package integration
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -197,5 +198,89 @@ func TestUsageStorePostgresReplayAndCorrection(t *testing.T) {
 	}
 	if err := store.DeleteAgent(ctx, reusedUID); err != nil {
 		t.Fatalf("DeleteAgent reused UID: %v", err)
+	}
+}
+
+func TestUsageReadSnapshotsStayStableAcrossCorrections(t *testing.T) {
+	ctx := context.Background()
+	store, err := usagestore.NewPostgresStore(sharedDB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatal(err)
+	}
+	uid := uuid.NewString()
+	t.Cleanup(func() { _ = store.DeleteAgent(context.Background(), uid) })
+	routeID, err := store.ResolveRoute(ctx, uid, usagestore.RouteRevision{Runtime: "claude", Kind: "native"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC()
+	output := int64(10)
+	base := usagestore.Event{AgentUID: uid, Agent: "read-test", ObservedAt: now, Runtime: "claude",
+		SourceFormat: "claude-jsonl", SourceVersion: "1", Coverage: "observed", ConfiguredRoute: "native",
+		RouteID: routeID, Model: "claude-test", ModelEvidence: "observed", Output: &output}
+	first := base
+	first.SourceIdentity = "read-test:one"
+	first, _, err = store.Ingest(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := base
+	second.SourceIdentity = "read-test:two"
+	if _, _, err := store.Ingest(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	f := usagestore.ReadFilter{AgentUIDs: []string{uid}, Start: now.Add(-time.Hour), End: now.Add(time.Hour)}
+	dailyFilter := usagestore.ReadFilter{AgentUIDs: []string{uid}, Start: now.Truncate(24 * time.Hour), End: now.Truncate(24 * time.Hour).Add(24 * time.Hour)}
+	hash := sha256.Sum256([]byte("query"))
+	id, eventsAt, gapsAt, err := store.CreateEventSnapshot(ctx, "owner", hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dayID, err := store.CreateDailySnapshot(ctx, "owner", hash, dailyFilter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	page1, err := store.ListEvents(ctx, f, eventsAt, gapsAt, time.Time{}, "", 1)
+	if err != nil || len(page1.Events) != 1 || !page1.HasMore {
+		t.Fatalf("page1=%+v err=%v", page1, err)
+	}
+	correction := base
+	correction.SourceIdentity = "read-test:correction"
+	correction.SupersedesID = first.ID
+	forty := int64(40)
+	correction.Output = &forty
+	if _, _, err := store.Ingest(ctx, correction); err != nil {
+		t.Fatal(err)
+	}
+	page2, err := store.ListEvents(ctx, f, eventsAt, gapsAt, page1.NextIngestedAt, page1.NextID, 1)
+	if err != nil || len(page2.Events) != 1 || page2.Events[0].SupersedesID != "" {
+		t.Fatalf("pinned page2=%+v err=%v", page2, err)
+	}
+	if gotEvents, gotGaps, err := store.EventSnapshot(ctx, id, "owner", hash); err != nil || gotEvents != eventsAt || gotGaps != gapsAt {
+		t.Fatalf("pinned horizons=%d/%d err=%v", gotEvents, gotGaps, err)
+	}
+	oldDaily, err := store.ListDailySnapshot(ctx, dayID, "owner", hash, 0, 1)
+	if err != nil || len(oldDaily.Rows) != 1 || oldDaily.Rows[0].Output.Sum == nil || *oldDaily.Rows[0].Output.Sum != 20 {
+		t.Fatalf("pinned daily=%+v err=%v", oldDaily, err)
+	}
+	newID, err := store.CreateDailySnapshot(ctx, "owner", hash, dailyFilter)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newDaily, err := store.ListDailySnapshot(ctx, newID, "owner", hash, 0, 1)
+	if err != nil || len(newDaily.Rows) != 1 || newDaily.Rows[0].Output.Sum == nil || *newDaily.Rows[0].Output.Sum != 50 {
+		t.Fatalf("fresh daily=%+v err=%v", newDaily, err)
+	}
+	if _, _, err := store.EventSnapshot(ctx, id, "wrong-owner", hash); !errors.Is(err, usagestore.ErrReadSnapshotExpired) {
+		t.Fatalf("cross-owner snapshot err=%v", err)
+	}
+	if err := store.DeleteAgent(ctx, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ListDailySnapshot(ctx, dayID, "owner", hash, 0, 1); !errors.Is(err, usagestore.ErrReadSnapshotExpired) {
+		t.Fatalf("deleted Agent snapshot err=%v", err)
 	}
 }
