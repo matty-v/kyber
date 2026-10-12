@@ -48,7 +48,6 @@ import type {
   VersionInfo,
   MetricsFleetSummary,
   MetricsSeries,
-  MetricsTokenUsage,
   UsageEventPage,
   UsageDailyPage,
   UsageQuery,
@@ -986,9 +985,6 @@ export function createApiClient(cluster: Cluster) {
 
     getMetricsWorkingTime: (start: number, end: number): Promise<MetricsSeries[]> =>
       request<MetricsSeries[]>('GET', `/api/v1/metrics/working-time?start=${start}&end=${end}`),
-
-    getMetricsTokens: (start: number, end: number): Promise<MetricsTokenUsage[]> =>
-      request<MetricsTokenUsage[]>('GET', `/api/v1/metrics/tokens?start=${start}&end=${end}`),
 
     getUsageEvents: (query: UsageQuery): Promise<UsageEventPage> => {
       const params = new URLSearchParams()

@@ -1,6 +1,6 @@
 # Metrics Tab
 
-The Metrics tab (`/metrics`) is a read-only observability dashboard for the current cluster. It surfaces the most important signals — agent activity, token spend, node resource gauges, and reliability signals — without requiring an external observability stack.
+The Metrics tab (`/metrics`) is a read-only observability dashboard for the current cluster. It surfaces the most important signals — agent activity, observed token usage, node resource gauges, and reliability signals — without requiring an external observability stack.
 
 ## Navigation
 

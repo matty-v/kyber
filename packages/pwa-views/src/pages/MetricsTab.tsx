@@ -270,6 +270,7 @@ function TokenUsagePanel({ start, end }: { start: number; end: number }) {
               : 'Totals include the calls Kyber observed. Earlier or missed calls may be absent.'}
           </p>
           <TokenTable rows={rows} />
+          <p className="mt-2 text-xs text-text-muted">— means not reported. * means some calls did not report that count.</p>
         </>
       )}
     </Panel>

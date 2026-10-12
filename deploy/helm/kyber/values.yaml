@@ -718,21 +718,11 @@ metrics:
   # considered stale in the Last Active panel. Agents exceeding this threshold are
   # visually distinguished. Default: 300 (5 minutes).
   stalenessThresholdSeconds: 300
-  # tokenRatesConfigMapName: name of the ConfigMap containing provider-rates.yaml.
-  # Drives three things in one switch:
-  #   1. The chart renders the default rates ConfigMap (templates/configmap-rates.yaml).
-  #   2. The control-plane Deployment mounts that ConfigMap read-only at
-  #      /etc/kyber-rates inside the control-plane container.
-  #   3. KYBER_METRICS_TOKEN_RATES_PATH is set to the rates file path so
-  #      metrics.LoadRateTable reads it at boot.
-  # When empty, all three are omitted: no ConfigMap, no mount, no env var, and
-  # token cost computations return $0 (token counts still shown — fail-soft).
-  tokenRatesConfigMapName: kyber-provider-rates
   # prometheusInsecureSkipVerify: allow self-signed TLS certificates on prometheusURL.
   # Defaults to false (TLS verification enforced). Only set true for internal-only URLs.
   prometheusInsecureSkipVerify: false
-  # redisStoreEnabled: when true (default), the control plane writes per-agent activity,
-  # state-change, and token snapshots to Redis on a 15-second cadence and reads endpoints
+  # redisStoreEnabled: when true (default), the control plane writes per-agent activity
+  # and state-change snapshots to Redis on a 15-second cadence and reads endpoints
   # prefer Redis over Prometheus when both are configured. Set to false for Prometheus-only
   # semantics.
   redisStoreEnabled: true

@@ -14,8 +14,7 @@ right at install time matters because renaming a release later means
 reinstalling.
 
 A few shared ConfigMaps keep a fixed `kyber-` name at any release name
-(`kyber-fleet-defaults`, `kyber-model-context-windows`,
-`kyber-provider-rates`), so don't rely on the release prefix to select
+(`kyber-fleet-defaults`, `kyber-model-context-windows`), so don't rely on the release prefix to select
 everything the chart owns — use the chart's labels for that.
 
 ## Example clusters

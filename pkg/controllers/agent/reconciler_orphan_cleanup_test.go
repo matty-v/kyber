@@ -25,22 +25,29 @@ import (
 // orphanTestStores bundles the memory backends so a test can seed them and then
 // assert the finalizer reaped every per-agent row (kyber#565 AC-5).
 type orphanTestStores struct {
-	brief    briefstore.BriefStore
-	token    tokenstore.TokenStore
-	tokAccum tokenstore.Accumulator
-	stAccum  statechangestore.Accumulator
-	metrics  metricsstore.MetricsStore
-	skills   skillstore.Store
+	brief   briefstore.BriefStore
+	token   tokenstore.TokenStore
+	stAccum statechangestore.Accumulator
+	metrics metricsstore.MetricsStore
+	skills  skillstore.Store
+	usage   *recordingUsageDeleter
+}
+
+type recordingUsageDeleter struct{ deleted []string }
+
+func (d *recordingUsageDeleter) DeleteAgent(_ context.Context, uid string) error {
+	d.deleted = append(d.deleted, uid)
+	return nil
 }
 
 func newOrphanTestStores() orphanTestStores {
 	return orphanTestStores{
-		brief:    briefstore.NewMemoryStore(),
-		token:    tokenstore.NewMemoryStore(),
-		tokAccum: tokenstore.NewMemoryAccumulator(),
-		stAccum:  statechangestore.NewMemoryAccumulator(),
-		metrics:  metricsstore.NewMemoryMetricsStore(),
-		skills:   skillstore.NewMemoryStore(),
+		brief:   briefstore.NewMemoryStore(),
+		token:   tokenstore.NewMemoryStore(),
+		stAccum: statechangestore.NewMemoryAccumulator(),
+		metrics: metricsstore.NewMemoryMetricsStore(),
+		skills:  skillstore.NewMemoryStore(),
+		usage:   &recordingUsageDeleter{},
 	}
 }
 
@@ -48,7 +55,6 @@ func newOrphanTestStores() orphanTestStores {
 func (s orphanTestStores) seed(ctx context.Context, ns, agent string) {
 	_ = s.brief.Put(ctx, agent, &briefstore.Brief{Version: 1, AgentName: agent})
 	_ = s.token.Put(ctx, agent, &tokenreport.Snapshot{Tokens: tokenreport.Tokens{Used: 1}})
-	_ = s.tokAccum.IncrBy(ctx, ns, agent, "claude-opus-4", tokenstore.TokenDelta{Input: 10})
 	_ = s.stAccum.IncrBy(ctx, ns, agent, "working", 1)
 	_ = s.metrics.AddPoint(ctx, metricsstore.ActivityKey(ns, agent, "working"), 100, 0.5)
 	_ = s.skills.Put(ctx, agent, &skillscan.Report{
@@ -60,7 +66,7 @@ func (s orphanTestStores) seed(ctx context.Context, ns, agent string) {
 func (s orphanTestStores) wire(r *AgentReconciler) {
 	r.BriefStore = s.brief
 	r.TokenStore = s.token
-	r.TokenAccumulator = s.tokAccum
+	r.UsageStore = s.usage
 	r.StateChangeAccumulator = s.stAccum
 	r.MetricsStore = s.metrics
 	r.SkillStore = s.skills
@@ -125,8 +131,8 @@ func TestReconciler_Deletion_ReapsAllOrphanState(t *testing.T) {
 	if snap, _ := stores.token.Get(ctx, "dave"); snap != nil {
 		t.Error("token-usage for dave must be reaped")
 	}
-	if hasAgent(toAgentNames(getTokenAgents(ctx, t, stores.tokAccum, ns)), "dave") {
-		t.Error("token accumulator rows for dave must be reaped")
+	if len(stores.usage.deleted) != 1 || stores.usage.deleted[0] != string(created.UID) {
+		t.Errorf("usage evidence deletion must use Agent UID, got %v", stores.usage.deleted)
 	}
 	if hasAgent(getStateAgents(ctx, t, stores.stAccum, ns), "dave") {
 		t.Error("state-change accumulator rows for dave must be reaped")
@@ -143,9 +149,6 @@ func TestReconciler_Deletion_ReapsAllOrphanState(t *testing.T) {
 	// The unrelated agent han must be fully intact (no collateral cleanup).
 	if b, _ := stores.brief.Get(ctx, "han"); b == nil {
 		t.Error("han's brief must survive dave's deletion")
-	}
-	if !hasAgent(toAgentNames(getTokenAgents(ctx, t, stores.tokAccum, ns)), "han") {
-		t.Error("han's token accumulator rows must survive")
 	}
 	if pts, _ := stores.metrics.RangeQuery(ctx, metricsstore.ActivityKey(ns, "han", "working"), 0, 1<<62); len(pts) != 1 {
 		t.Error("han's metrics time-series must survive")
@@ -226,25 +229,6 @@ func TestReconciler_Deletion_OrphanCleanupGivesUp(t *testing.T) {
 	if !sawEvent(t, r, "OrphanCleanupIncomplete") {
 		t.Error("expected an OrphanCleanupIncomplete Event after bounded give-up")
 	}
-}
-
-// --- small helpers to read back accumulator agents ---
-
-func getTokenAgents(ctx context.Context, t *testing.T, a tokenstore.Accumulator, ns string) []tokenstore.AgentModelCounts {
-	t.Helper()
-	got, err := a.GetAll(ctx, ns)
-	if err != nil {
-		t.Fatalf("token GetAll: %v", err)
-	}
-	return got
-}
-
-func toAgentNames(cs []tokenstore.AgentModelCounts) []string {
-	out := make([]string, 0, len(cs))
-	for _, c := range cs {
-		out = append(out, c.Agent)
-	}
-	return out
 }
 
 func getStateAgents(ctx context.Context, t *testing.T, a statechangestore.Accumulator, ns string) []string {

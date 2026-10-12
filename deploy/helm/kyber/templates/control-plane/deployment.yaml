@@ -731,15 +731,6 @@ spec:
             # upgrader's CheckOrigin).
             - name: KYBER_CORS_ALLOWED_ORIGINS
               value: {{ join "," .Values.controlPlane.cors.allowedOrigins | quote }}
-            # Provider rates file path — read by metrics.LoadRateTable at boot
-            # to populate the Token Usage Cost column. Gated on the ConfigMap
-            # being wired below; absent when metrics.tokenRatesConfigMapName
-            # is empty so LoadRateTable("") returns an empty table and costs
-            # fail soft to $0 (the documented disabled-state contract).
-            {{- if .Values.metrics.tokenRatesConfigMapName }}
-            - name: KYBER_METRICS_TOKEN_RATES_PATH
-              value: /etc/kyber-rates/provider-rates.yaml
-            {{- end }}
             {{- if .Values.runtimeDetect.enabled }}
             # Runtime detection (kyber#375). Poller refreshes the npm + Anthropic
             # caches on this cadence; the cap bounds how many CC versions /available
@@ -801,11 +792,6 @@ spec:
             - name: chart-version
               mountPath: /etc/kyber
               readOnly: true
-            {{- if .Values.metrics.tokenRatesConfigMapName }}
-            - name: provider-rates
-              mountPath: /etc/kyber-rates
-              readOnly: true
-            {{- end }}
             {{- if .Values.runtimeDetect.enabled }}
             # Anthropic API key (kyber#375). Mounted RO so a `PUT
             # /api/v1/settings/anthropic-key` rotation propagates to the
@@ -819,13 +805,6 @@ spec:
         - name: chart-version
           configMap:
             name: {{ include "kyber.fullname" . }}-control-plane-version
-        {{- if .Values.metrics.tokenRatesConfigMapName }}
-        # provider-rates: populates the Token Usage Cost column. ConfigMap is
-        # rendered at templates/configmap-rates.yaml under the same gate.
-        - name: provider-rates
-          configMap:
-            name: {{ .Values.metrics.tokenRatesConfigMapName }}
-        {{- end }}
         {{- if .Values.runtimeDetect.enabled }}
         - name: anthropic-key
           secret:

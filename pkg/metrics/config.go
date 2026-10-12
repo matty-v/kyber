@@ -13,10 +13,6 @@ type Config struct {
 	// Defaults to 300 (5 minutes) when zero.
 	StalenessThresholdSeconds int
 
-	// TokenRatesPath is the file path of the provider-rates.yaml ConfigMap
-	// mount. When empty, token cost computation is skipped (costs show as 0).
-	TokenRatesPath string
-
 	// PrometheusInsecureSkipVerify allows connecting to a Prometheus endpoint
 	// with a self-signed certificate. Defaults to false (TLS verification enforced).
 	PrometheusInsecureSkipVerify bool

@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.66.0
+
+- Remove the retired token-cost API client after switching Metrics to durable local usage metadata, and explain unreported and partial token counts in the panel.
+
 ## 0.65.0
 
 - Show observed token usage, configured route, and known upstream provider in the Metrics tab. Preserve unknown token classes and show detected coverage gaps. Remove the dollar estimate from this panel.

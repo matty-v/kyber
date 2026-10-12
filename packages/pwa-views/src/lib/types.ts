@@ -1185,21 +1185,6 @@ export interface MetricsSeries {
   points: MetricsSeriesPoint[]
 }
 
-export interface MetricsTokenUsage {
-  agent: string
-  model: string
-  tokens: Record<string, number>
-  costUsd: number
-  /**
-   * Fail-loud sentinel (kyber#487). `false` means the model has no entry in
-   * provider-rates, so `costUsd` is a placeholder 0 the panel renders as
-   * "—"/unpriced rather than a believable $0.0000. Omitted by older payloads —
-   * only an explicit `false` is treated as unpriced (mirrors
-   * `contextWindowKnown`).
-   */
-  priced?: boolean
-}
-
 export interface UsageCoverage {
   detectedGapCount: number
   guaranteedComplete: false

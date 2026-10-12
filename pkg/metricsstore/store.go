@@ -44,17 +44,16 @@ type MetricsStore interface {
 	// when no data exists.
 	RangeQuery(ctx context.Context, key string, startTs, endTs int64) ([]Point, error)
 
-	// DeleteAgent removes every time-series for (namespace, agent) — both the
-	// ts:activity:{ns}:{agent}:* and ts:token_usage:{ns}:{agent}:* families.
+	// DeleteAgent removes activity series and any legacy token series for
+	// (namespace, agent).
 	// Idempotent — no matching series is a no-op. The retention worker is only a
 	// slow backstop, so the agent finalizer reaps these eagerly (kyber#565).
 	DeleteAgent(ctx context.Context, namespace, agent string) error
 }
 
-// agentSeriesPrefixes returns the key prefixes for every per-agent time-series
-// family, so DeleteAgent and the key builders stay byte-identical on the
-// {namespace}:{agent} boundary (the trailing ":" prevents matching an agent
-// whose name is a prefix of another's).
+// agentSeriesPrefixes includes the legacy token-series prefix so Agent deletion
+// still reaps keys written before MAT-117. The trailing colon prevents prefix
+// matching another Agent name.
 func agentSeriesPrefixes(namespace, agent string) []string {
 	return []string{
 		"ts:activity:" + namespace + ":" + agent + ":",
@@ -76,17 +75,6 @@ type NodeStore interface {
 // ActivityKey builds the Redis sorted-set key for an (agent, state) time series.
 func ActivityKey(namespace, agent, state string) string {
 	return "ts:activity:" + namespace + ":" + agent + ":" + state
-}
-
-// TokenUsageKey builds the Redis sorted-set key for an (agent, model, tokenType)
-// token-delta time series. tokenType is one of input/cache_creation/cache_read/output.
-// The ts: prefix means the existing retention worker (SCAN ts:*) evicts these
-// series automatically — no retention change required. model is interpolated
-// verbatim, byte-identical to the accumulator key (accum:token_usage:…:{model}),
-// so the write path and read path agree on the key even when model contains
-// colons.
-func TokenUsageKey(namespace, agent, model, tokenType string) string {
-	return "ts:token_usage:" + namespace + ":" + agent + ":" + model + ":" + tokenType
 }
 
 // NodeKey builds the Redis hash key for a node's latest sample.

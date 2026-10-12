@@ -25,7 +25,6 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/credentialsync"
-	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/tokenreport"
 	"github.com/matty-v/kyber/pkg/tokenstore"
 )
@@ -744,126 +743,6 @@ func TestInternalServer_TokenUsageDoesNotRestoreSourceModelDuringSwitch(t *testi
 	}
 	if got.Status.CurrentModel != "" {
 		t.Fatalf("source model restored during switch: %q", got.Status.CurrentModel)
-	}
-}
-
-// TestInternalServer_TokenUsagePost_DuplicatePost verifies that a second POST
-// with the same cumulative counts as the first (d==0, newVal>0) contributes 0
-// to the accumulator — no double-counting on idle heartbeat or duplicate delivery.
-func TestInternalServer_TokenUsagePost_DuplicatePost(t *testing.T) {
-	tokenStr := tokenstore.NewMemoryStore()
-	acc := tokenstore.NewMemoryAccumulator()
-	briefs := briefstore.NewMemoryStore()
-	s := api.NewInternalServer(briefs,
-		api.WithTokenStore(tokenStr),
-		api.WithTokenAccumulator(acc),
-	)
-	srv := httptest.NewServer(s.Handler())
-	defer srv.Close()
-
-	snap := tokenreport.Snapshot{
-		Model: "claude-sonnet-4-5",
-		Tokens: tokenreport.Tokens{
-			Used: 500, Limit: 200000, Input: 300, CacheCreation: 150, CacheRead: 50,
-		},
-	}
-	body, _ := json.Marshal(snap)
-
-	// First POST — no prev; delta equals snap values.
-	resp, err := http.Post(srv.URL+"/internal/agents/alice/token-usage",
-		"application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("first POST: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("first POST status=%d", resp.StatusCode)
-	}
-
-	// Second POST — identical snapshot: d==0, newVal>0 for all fields.
-	// safeDelta must return 0; accumulator total must not increase.
-	resp, err = http.Post(srv.URL+"/internal/agents/alice/token-usage",
-		"application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("second POST: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("second POST status=%d", resp.StatusCode)
-	}
-
-	counts, err := acc.GetAll(context.Background(), "")
-	if err != nil {
-		t.Fatalf("GetAll: %v", err)
-	}
-	if len(counts) == 0 {
-		t.Fatal("no accumulator counts recorded after first POST")
-	}
-	got := counts[0]
-	if got.Input != 300 {
-		t.Errorf("Input: got %d, want 300 (duplicate POST must not double-count)", got.Input)
-	}
-	if got.CacheCreation != 150 {
-		t.Errorf("CacheCreation: got %d, want 150", got.CacheCreation)
-	}
-	if got.CacheRead != 50 {
-		t.Errorf("CacheRead: got %d, want 50", got.CacheRead)
-	}
-}
-
-// TestInternalServer_TokenUsagePost_WritesWindowedSeries verifies that a
-// token-usage POST records the per-type delta to the windowed Redis token time
-// series (kyber#428), so GET /metrics/tokens can honor start/end. Mirrors the
-// accumulator write but asserts the new ts:token_usage:* series.
-func TestInternalServer_TokenUsagePost_WritesWindowedSeries(t *testing.T) {
-	tokenStr := tokenstore.NewMemoryStore()
-	acc := tokenstore.NewMemoryAccumulator()
-	ms := metricsstore.NewMemoryMetricsStore()
-	briefs := briefstore.NewMemoryStore()
-	s := api.NewInternalServer(briefs,
-		api.WithTokenStore(tokenStr),
-		api.WithTokenAccumulator(acc),
-		api.WithMetricsStore(ms),
-	)
-	srv := httptest.NewServer(s.Handler())
-	defer srv.Close()
-
-	const model = "claude-sonnet-4-5"
-	snap := tokenreport.Snapshot{
-		Model: model,
-		Tokens: tokenreport.Tokens{
-			Used: 500, Limit: 200000, Input: 300, CacheCreation: 150, CacheRead: 50,
-		},
-	}
-	body, _ := json.Marshal(snap)
-
-	resp, err := http.Post(srv.URL+"/internal/agents/alice/token-usage",
-		"application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status=%d, want 200", resp.StatusCode)
-	}
-
-	ctx := context.Background()
-	now := time.Now().Unix()
-	// InternalServer namespace defaults to "" without WithKubeClient.
-	want := map[string]float64{"input": 300, "cache_creation": 150, "cache_read": 50}
-	for tt, exp := range want {
-		key := metricsstore.TokenUsageKey("", "alice", model, tt)
-		pts, err := ms.RangeQuery(ctx, key, now-3600, now+3600)
-		if err != nil {
-			t.Fatalf("RangeQuery %s: %v", tt, err)
-		}
-		var sum float64
-		for _, p := range pts {
-			sum += p.Value
-		}
-		if sum != exp {
-			t.Errorf("series %q sum = %v, want %v", tt, sum, exp)
-		}
 	}
 }
 

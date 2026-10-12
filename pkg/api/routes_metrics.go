@@ -11,7 +11,6 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
-	"github.com/matty-v/kyber/pkg/tokenstore"
 )
 
 // metricsTimeRangeParams validates and extracts start/end query parameters as Unix timestamps.
@@ -68,8 +67,6 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		s.handleMetricsActivity(w, r)
 	case "working-time":
 		s.handleMetricsWorkingTime(w, r)
-	case "tokens":
-		s.handleMetricsTokens(w, r)
 	case "last-active":
 		s.handleMetricsLastActive(w, r)
 	case "nodes":
@@ -253,188 +250,6 @@ func (s *Server) workingTimeFromMetricsStore(r *http.Request, start, end int64) 
 	return series, true
 }
 
-// TokenUsageResponse wraps per-agent token counts and estimated cost.
-type TokenUsageResponse struct {
-	Agent   string             `json:"agent"`
-	Model   string             `json:"model"`
-	Tokens  map[string]float64 `json:"tokens"`
-	CostUSD float64            `json:"costUsd"`
-	// Priced is the fail-loud sentinel (kyber#487): false means the model has
-	// no entry in provider-rates, so CostUSD is a placeholder 0 the PWA renders
-	// as "—"/unpriced rather than a believable $0.0000. Mirrors the
-	// contextWindowKnown badge idiom (PR-E #379).
-	Priced bool `json:"priced"`
-}
-
-// tokenTypes is the set of token-delta components the read path sums per
-// (agent, model) pair and the write path records as separate time series.
-// Must stay aligned with tokenstore.TokenDelta's fields and the accumulator's
-// hash fields (input/cache_creation/cache_read/output).
-var tokenTypes = []string{"input", "cache_creation", "cache_read", "output"}
-
-// handleMetricsTokens serves GET /api/v1/metrics/tokens?start=&end=
-// Returns per-agent/model token usage and estimated cost, scoped to the window.
-//
-// Data source priority:
-//  1. Redis MetricsStore (Tier 1) — windowed per-(agent,model,type) token time
-//     series read with RangeQuery over the absolute start/end, enumerated via
-//     the accumulator. Authoritative when configured and any token data exists:
-//     returns its result even when the window yields zero rows (so an
-//     out-of-range window returns [] rather than resurrecting all-time data —
-//     kyber#428).
-//  2. Prometheus TSDB (Tier 2) — windowed increase() evaluated at end; used as
-//     fallback only when MetricsStore is absent or no token data has ever existed.
-func (s *Server) handleMetricsTokens(w http.ResponseWriter, r *http.Request) {
-	start, end, ok := metricsTimeRangeParams(r)
-	if !ok {
-		writeJSONError(w, http.StatusBadRequest, "bad_request", "start and end (unix seconds, 1m–7d range) required")
-		return
-	}
-
-	rateTable := metrics.LoadRateTable(s.MetricsConfig.TokenRatesPath)
-
-	// Tier 1: windowed Redis token time series (authoritative when token data exists).
-	if s.MetricsStore != nil && s.TokenAccumulator != nil {
-		if out, ok := s.tokenUsageWindowedFromMetricsStore(r, rateTable, start, end); ok {
-			writeJSON(w, http.StatusOK, out)
-			return
-		}
-	}
-
-	// Tier 2: Prometheus TSDB fallback — evaluate increase() at end so a
-	// past/future window returns data for that window, not anchored to now.
-	tsdb := metrics.NewTSDBClient(s.MetricsConfig)
-	window := fmt.Sprintf("%ds", end-start)
-	samples, _ := tsdb.QueryInstantAt(
-		r.Context(),
-		fmt.Sprintf(metricsTokensQuery, s.Namespace, window),
-		end,
-	)
-
-	type agentModelKey struct{ agent, model string }
-	grouped := map[agentModelKey]map[string]float64{}
-	for _, sample := range samples {
-		agent := sample.Labels["agent"]
-		model := sample.Labels["model"]
-		tokenType := sample.Labels["token_type"]
-		if agent == "" || model == "" || tokenType == "" {
-			continue
-		}
-		key := agentModelKey{agent, model}
-		if grouped[key] == nil {
-			grouped[key] = map[string]float64{}
-		}
-		grouped[key][tokenType] += sample.Value
-	}
-
-	out := make([]TokenUsageResponse, 0, len(grouped))
-	for k, counts := range grouped {
-		cost, priced := rateTable.ComputeCostKnown(k.model, counts)
-		out = append(out, TokenUsageResponse{
-			Agent:   k.agent,
-			Model:   k.model,
-			Tokens:  counts,
-			CostUSD: cost,
-			Priced:  priced,
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
-}
-
-// tokenUsageWindowedFromMetricsStore returns per-(agent,model) token usage and
-// cost scoped to [start, end] by summing the per-type Redis token time series.
-// The accumulator enumerates which (agent, model) pairs exist; for each pair we
-// RangeQuery the per-type series (one per tokenTypes entry) and sum the points
-// in the window — a near-mirror of activityFromMetricsStore.
-//
-// Unlike activityFromMetricsStore (which returns (nil,false) on empty so the
-// caller falls back to Prometheus), this path is AUTHORITATIVE once the
-// accumulator shows token data has ever existed: it returns its result even
-// when the window yields zero rows. Otherwise an out-of-range window would fall
-// through to Tier-2 and resurrect the all-time/recent set — the exact #428 bug.
-// It returns (nil, false) only when no token data exists at all (empty
-// accumulator), so a never-populated cluster can still fall back to Prometheus.
-func (s *Server) tokenUsageWindowedFromMetricsStore(r *http.Request, rateTable metrics.RateTable, start, end int64) ([]TokenUsageResponse, bool) {
-	pairs, err := s.TokenAccumulator.GetAll(r.Context(), s.Namespace)
-	if err != nil || len(pairs) == 0 {
-		// No token data has ever existed — let the caller try Tier-2.
-		return nil, false
-	}
-
-	out := make([]TokenUsageResponse, 0, len(pairs))
-	for _, p := range pairs {
-		counts := map[string]float64{}
-		hasPoints := false
-		for _, tt := range tokenTypes {
-			key := metricsstore.TokenUsageKey(s.Namespace, p.Agent, p.Model, tt)
-			pts, err := s.MetricsStore.RangeQuery(r.Context(), key, start, end)
-			if err != nil {
-				continue
-			}
-			var sum float64
-			for _, pt := range pts {
-				sum += pt.Value
-			}
-			counts[tt] = sum
-			if len(pts) > 0 {
-				hasPoints = true
-			}
-		}
-		// Skip pairs with no points anywhere in the window so an out-of-range
-		// window yields [] rather than a list of zero rows.
-		if !hasPoints {
-			continue
-		}
-		cost, priced := rateTable.ComputeCostKnown(p.Model, counts)
-		out = append(out, TokenUsageResponse{
-			Agent:   p.Agent,
-			Model:   p.Model,
-			Tokens:  counts,
-			CostUSD: cost,
-			Priced:  priced,
-		})
-	}
-	// Authoritative even when out is empty (do NOT fall through to Tier-2).
-	return out, true
-}
-
-// tokenUsageFromAccumulator reads the Redis accumulator and converts entries to
-// a TokenUsageResponse slice of all-time totals. Since kyber#428 the windowed
-// Tier-1 path (tokenUsageWindowedFromMetricsStore) backs the panel; the
-// accumulator is retained as the (agent, model) enumerator and is reserved for
-// an explicit all-time view. Returns (nil, false) when the accumulator returns
-// no data.
-func (s *Server) tokenUsageFromAccumulator(r *http.Request, rateTable metrics.RateTable) ([]TokenUsageResponse, bool) {
-	counts, err := s.TokenAccumulator.GetAll(r.Context(), s.Namespace)
-	if err != nil || len(counts) == 0 {
-		return nil, false
-	}
-	out := make([]TokenUsageResponse, 0, len(counts))
-	for _, c := range counts {
-		tokenMap := tokenCountsToMap(c)
-		cost, priced := rateTable.ComputeCostKnown(c.Model, tokenMap)
-		out = append(out, TokenUsageResponse{
-			Agent:   c.Agent,
-			Model:   c.Model,
-			Tokens:  tokenMap,
-			CostUSD: cost,
-			Priced:  priced,
-		})
-	}
-	return out, true
-}
-
-// tokenCountsToMap converts AgentModelCounts to the map[string]float64 shape
-// expected by TokenUsageResponse.Tokens.
-func tokenCountsToMap(c tokenstore.AgentModelCounts) map[string]float64 {
-	return map[string]float64{
-		"input":          float64(c.Input),
-		"cache_creation": float64(c.CacheCreation),
-		"cache_read":     float64(c.CacheRead),
-		"output":         float64(c.Output),
-	}
-}
-
 // NodeResourcesResponse holds live resource gauges for one node.
 type NodeResourcesResponse struct {
 	Node           string  `json:"node"`
@@ -584,7 +399,6 @@ func seriesOrEmpty(series []metrics.Series) []metrics.Series {
 const (
 	metricsActivityQuery      = `rate(kyber_agent_activity_state_seconds_total{namespace="%s"}[%s])`
 	metricsWorkingTimeQuery   = `increase(kyber_agent_activity_state_seconds_total{namespace="%s",state="working"}[%s]) / 3600`
-	metricsTokensQuery        = `increase(kyber_agent_tokens_total{namespace="%s"}[%s])`
 	metricsNodeCPUQuery       = `100 - (avg by (node) (rate(node_cpu_seconds_total{mode="idle",namespace="%s"}[2m])) * 100)`
 	metricsNodeMemUsedQuery   = `node_memory_MemTotal_bytes{namespace="%s"} - node_memory_MemAvailable_bytes{namespace="%s"}`
 	metricsNodeMemTotalQuery  = `node_memory_MemTotal_bytes{namespace="%s"}`

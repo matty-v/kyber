@@ -33,10 +33,6 @@ var (
 	// Labels: agent (the agent name).
 	AgentRestarts metric.Int64Counter
 
-	// AgentTokensTotal counts Claude API tokens consumed per agent.
-	// Labels: agent, model, token_type (input|cache_creation|cache_read).
-	AgentTokensTotal metric.Int64Counter
-
 	// AgentStateChangesTotal counts transitions into each named state per agent.
 	// Labels: agent, to_state.
 	AgentStateChangesTotal metric.Int64Counter
@@ -112,13 +108,6 @@ func registerAll(m metric.Meter) error {
 		metric.WithDescription("Total number of Agent auto-restart events. Labels: agent."),
 	); err != nil {
 		return fmt.Errorf("registering kyber_agent_restart_count: %w", err)
-	}
-
-	if AgentTokensTotal, err = m.Int64Counter(
-		"kyber_agent_tokens_total",
-		metric.WithDescription("Total Claude API tokens consumed per agent. Labels: agent, model, token_type (input|cache_creation|cache_read|output)."),
-	); err != nil {
-		return fmt.Errorf("registering kyber_agent_tokens_total: %w", err)
 	}
 
 	if AgentStateChangesTotal, err = m.Int64Counter(

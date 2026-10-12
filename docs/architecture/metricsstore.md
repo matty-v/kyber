@@ -1,6 +1,6 @@
 # metricsstore — Redis-backed metrics storage
 
-`pkg/metricsstore` and `pkg/statechangestore` provide always-on storage for the five time-series Metrics tab panels, eliminating the Prometheus TSDB dependency for the common case.
+`pkg/metricsstore` and `pkg/statechangestore` provide Redis storage for activity, working-time, node-resource, and state-change Metrics panels. Token Usage reads durable PostgreSQL evidence through `pkg/usagestore`.
 
 ## Key schema
 
@@ -9,9 +9,7 @@ All keys are scoped to the Kubernetes namespace so a single Redis instance can s
 | Key | Type | Purpose |
 |-----|------|---------|
 | `ts:activity:{namespace}:{agent}:{state}` | Sorted set | Per-agent activity time-series; score = Unix timestamp, member = `"{ts}:{value}"` |
-| `ts:token_usage:{namespace}:{agent}:{model}:{type}` | Sorted set | Per-(agent,model,type) token-delta time-series; `type` ∈ `input`/`cache_creation`/`cache_read`/`output`; score = Unix timestamp. Windowed source for the Token Usage panel (kyber#428) |
 | `accum:state_changes:{namespace}:{agent}` | Hash | Accumulated state-transition counts; field = `to_state`, value = count |
-| `accum:token_usage:{namespace}:{agent}:{model}` | Hash | Accumulated all-time token counts; fields = `input`, `cache_creation`, `cache_read`, `output` (a missing `output` field on a pre-upgrade hash reads as 0). Retained as the (agent,model) enumerator + all-time view alongside the windowed `ts:token_usage:*` series. After the `output` field's deploy, mixed query windows under-report output for up to 7 days (retention == max query window) and then self-heal |
 | `node:{namespace}:{node}` | Hash | Latest node resource sample; fields = `cpuPercent`, `memUsedBytes`, etc. |
 
 ## Interfaces
@@ -57,7 +55,7 @@ A background goroutine (`StartRetentionWorker`) runs every 5 minutes and calls `
 - Redis: `SCAN ts:*` + `ZREMRANGEBYSCORE … -inf <cutoff>`
 - Memory: prune slice in-place
 
-Default retention: 7 days (`KYBER_METRICS_RETENTION_SECONDS=604800`). The `SCAN ts:*` pattern matches **every** time-series key, so the `ts:token_usage:*` token series (kyber#428) is evicted automatically with no retention-code change. Only time-series keys are evicted; accumulator hashes and node hashes are not touched (they hold all-time counts / latest samples, not a time series).
+Default retention: 7 days (`KYBER_METRICS_RETENTION_SECONDS=604800`). `SCAN ts:*` also evicts any legacy token time-series left by pre-MAT-117 releases. State-change counters and node hashes are separate from this time-series retention.
 
 ## Concurrency
 

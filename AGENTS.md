@@ -453,8 +453,7 @@ Control plane = ONE binary (`cmd/control-plane/main.go`) — a modular monolith:
 REST API (`pkg/api`), both controllers, inbound, telemetry, background workers.
 Other binaries: `cmd/node-agent` (DaemonSet, node metrics + machine actions),
 `cmd/status-sidecar`, `cmd/token-reporter` (in-pod transcript tailer →
-token-usage events), `cmd/transcript-compact`, `cmd/fetch-provider-rates`
-(generates `deploy/helm/kyber/files/provider-rates.generated.{yaml,meta}`).
+token-usage events), `cmd/transcript-compact`.
 
 Backing stores: k8s API (resource state), Redis (events/token budgets/metrics),
 Postgres (session briefs, skills, durable tasks). Briefs and telemetry have
@@ -465,15 +464,15 @@ classes use null for unknown and zero for observed zero. It is not a source of
 dollar costs. Accepted events update exact daily aggregates in the same
 transaction; corrections subtract the superseded event before adding their
 replacement. Detailed evidence defaults to 90 days, daily aggregates to 13
-months. Until reporter and API wiring lands, this package is inert.
+months. The public `usage:read` API exposes this evidence without dollar costs.
 Usage route revisions live in `agent_usage_routes`: a random UUID is exposed,
 while only an internal fingerprint of the configured endpoint is retained.
 Ingest rejects a route ID belonging to another Agent UID. A configured route
 or Hermes provider label never proves the upstream inference provider.
 `pkg/tokenreport/claude_usage_collector.go` scans complete finalized Claude
 records with a cursor saved on the Agent PVC. It skips pre-cutover transcript
-history and records a gap when a route changes or a file truncates. The
-collector remains inactive until its sidecar sink and internal API are wired.
+history and records a gap when a route changes or a file truncates. Hermes
+and Codex have their own local collectors and durable cursors.
 
 ---
 
@@ -690,10 +689,6 @@ Full living list: `docs/contributing/reviewing.md` (append-on-discovery). Highes
   `preview.enabled` renders out of `kyber-system`. Weakening it re-enables the
   2026-04-19 ArgoCD prune cascade that DELETED PROD. The per-PR preview system
   is retired (kyber#531) but the fence stays.
-- **`deploy/helm/kyber/files/provider-rates.generated.{yaml,meta}`** —
-  generator output (`cmd/fetch-provider-rates`, weekly refresh bot). No manual
-  cost data ever; code-owner review required; regeneration is provable
-  byte-for-byte (docs/contributing/reviewing.md #14).
 - **`pkg/api/pwa_dist/`** — build artifact of `make pwa-build`.
 - **Controller cache scope** (`cmd/control-plane/main.go`
   `cache.Options{DefaultNamespaces}`) — namespace-scoped on purpose (PR #118).
@@ -763,7 +758,7 @@ scripts/devenv/compute-scenario.sh apply <machine> preempted
 scripts/devenv/compute-scenario.sh attach-node <machine>  # replacement join
 ```
 
-CI gates: `test.yml` (lint+test+pwa+pricing-feed preflight — a `changes` job
+CI gates: `test.yml` (lint+test+pwa — a `changes` job
 skips the heavy Go/PWA steps on docs-/`scripts/devenv/`-only PRs, but the jobs
 still run green so the merge gate never wedges), `integration.yml`, `e2e.yml`,
 `build.yml` (images), `design-lint.yml` (advisory, PWA paths only).
