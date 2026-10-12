@@ -58,6 +58,10 @@ delay after Agent name reuse cannot attribute an old pod's event to the new UID.
 The Hermes reporter applies the same durable ACK rule to complete per-call log
 lines, interpreting its timezone-less timestamps with the pod's configured
 `TZ`. Rotation, truncation and route changes create explicit coverage gaps.
+The Codex reporter derives accepted call deltas from monotonic rollout totals,
+so repeated `token_count` observations are never billed twice. It prefers an
+observed `turn_context` model, tracks the configured model as a fallback, and
+records a coverage gap on counter reset or an unidentifiable model.
 
 An existing Agent changes harness through the lifecycle-write
 `POST /api/v1/agents/{name}/switch-runtime` action, not a bare `spec.runtime`

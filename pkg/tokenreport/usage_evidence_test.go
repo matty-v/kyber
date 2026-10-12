@@ -85,6 +85,14 @@ func TestParseCodexUsageLineKeepsCounterSemantics(t *testing.T) {
 	}
 }
 
+func TestParseCodexUsageLineAcceptsTotalWithoutLast(t *testing.T) {
+	line := []byte(`{"timestamp":"2026-10-11T12:00:00Z","type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":null,"total_token_usage":{"input_tokens":100,"cached_input_tokens":20,"output_tokens":30}}}}`)
+	got, err := ParseCodexUsageLine(line, "gpt-test")
+	if err != nil || got == nil || got.Last.InputUncached != nil || got.Total.InputUncached == nil || *got.Total.InputUncached != 80 {
+		t.Fatalf("total-only observation=%+v err=%v", got, err)
+	}
+}
+
 func TestParseHermesUsageLineRouteAndUnknownCache(t *testing.T) {
 	line := "2026-10-11 12:00:00,000 INFO [session_one] agent.conversation_loop: API call #2: model=z-ai/glm-5.2 provider=openrouter in=100 out=20 total=120 latency=1s"
 	got, err := ParseHermesUsageLine(line, "log-1", time.FixedZone("local", -4*3600))

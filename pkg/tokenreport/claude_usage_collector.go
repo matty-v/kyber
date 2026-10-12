@@ -39,15 +39,18 @@ type ClaudeUsageCollector struct {
 }
 
 type claudeFileCursor struct {
-	Namespace          string `json:"namespace"`
-	Offset             int64  `json:"offset"`
-	Device             uint64 `json:"device"`
-	Inode              uint64 `json:"inode"`
-	LastSourceIdentity string `json:"lastSourceIdentity,omitempty"`
+	Namespace          string         `json:"namespace"`
+	Offset             int64          `json:"offset"`
+	Device             uint64         `json:"device"`
+	Inode              uint64         `json:"inode"`
+	LastSourceIdentity string         `json:"lastSourceIdentity,omitempty"`
+	CodexTotal         *UsageEvidence `json:"codexTotal,omitempty"`
+	CodexModel         string         `json:"codexModel,omitempty"`
 }
 
 type claudeCursorState struct {
 	RouteFingerprint string                      `json:"routeFingerprint"`
+	ConfiguredModel  string                      `json:"configuredModel,omitempty"`
 	Files            map[string]claudeFileCursor `json:"files"`
 }
 
