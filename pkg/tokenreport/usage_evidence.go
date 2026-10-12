@@ -123,8 +123,10 @@ func ParseCodexUsageLine(line []byte, configuredModel string) (*CodexUsageObserv
 			Output     *int64 `json:"output_tokens"`
 		} `json:"total_token_usage"`
 	}
-	if envelope.Timestamp.IsZero() || configuredModel == "" || json.Unmarshal(envelope.Payload.Info, &info) != nil || info.Last == nil || info.Total == nil ||
-		invalidCodexCounts(info.Last.Input, info.Last.Cached, info.Last.CacheWrite, info.Last.Output) ||
+	// Codex can publish cumulative totals before it has a per-turn last usage.
+	// The collector derives deltas from Total, so Last is optional here.
+	if envelope.Timestamp.IsZero() || configuredModel == "" || json.Unmarshal(envelope.Payload.Info, &info) != nil || info.Total == nil ||
+		(info.Last != nil && invalidCodexCounts(info.Last.Input, info.Last.Cached, info.Last.CacheWrite, info.Last.Output)) ||
 		invalidCodexCounts(info.Total.Input, info.Total.Cached, info.Total.CacheWrite, info.Total.Output) {
 		return nil, ErrIncompleteUsage
 	}
@@ -136,8 +138,11 @@ func ParseCodexUsageLine(line []byte, configuredModel string) (*CodexUsageObserv
 		return UsageEvidence{Runtime: "codex", ObservedAt: envelope.Timestamp.UTC(), Model: configuredModel, ModelEvidence: "configured",
 			InputUncached: uncached, Output: output, CacheRead: cached, CacheWrite: cacheWrite}
 	}
-	return &CodexUsageObservation{ObservedAt: envelope.Timestamp.UTC(),
-		Last:  makeEvidence(info.Last.Input, info.Last.Cached, info.Last.CacheWrite, info.Last.Output),
+	var last UsageEvidence
+	if info.Last != nil {
+		last = makeEvidence(info.Last.Input, info.Last.Cached, info.Last.CacheWrite, info.Last.Output)
+	}
+	return &CodexUsageObservation{ObservedAt: envelope.Timestamp.UTC(), Last: last,
 		Total: makeEvidence(info.Total.Input, info.Total.Cached, info.Total.CacheWrite, info.Total.Output)}, nil
 }
 
