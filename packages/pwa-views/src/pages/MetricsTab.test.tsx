@@ -129,8 +129,11 @@ describe('usage summary', () => {
     expect(rows[0].tokens).toEqual({ inputUncached: 100, output: 30, cacheRead: 10, cacheWrite: 3 })
     expect(rows[0].unknown.cacheWrite).toBe(1)
     render(<TokenTable rows={rows} />)
-    expect(screen.getByText('100')).toBeInTheDocument()
-    expect(screen.getByText('3*')).toHaveAttribute('title', '1 call did not report this count')
+    expect(screen.getAllByText('100')).toHaveLength(2) // mobile card and desktop table
+    expect(screen.getAllByText('3*')).toHaveLength(2)
+    for (const value of screen.getAllByText('3*')) {
+      expect(value).toHaveAttribute('title', '1 call did not report this count')
+    }
     expect(screen.queryByText(/cost|unpriced/i)).not.toBeInTheDocument()
   })
 
@@ -148,6 +151,8 @@ describe('usage summary', () => {
   it('shows an unknown count as unavailable, not zero', () => {
     const rows = summarizeUsageEvents([usageEvent('one', { cacheWrite: null })])
     render(<TokenTable rows={rows} />)
-    expect(screen.getByTitle('1 call did not report this count')).toHaveTextContent('—')
+    const unknown = screen.getAllByTitle('1 call did not report this count')
+    expect(unknown).toHaveLength(2)
+    for (const value of unknown) expect(value).toHaveTextContent('—')
   })
 })
