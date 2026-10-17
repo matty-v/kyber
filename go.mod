@@ -5,7 +5,7 @@ go 1.26.0
 require (
 	cloud.google.com/go/compute v1.71.0
 	cloud.google.com/go/storage v1.69.0
-	github.com/a2aproject/a2a-go/v2 v2.4.0
+	github.com/a2aproject/a2a-go/v2 v2.6.0
 	github.com/aws/aws-sdk-go-v2 v1.47.1
 	github.com/aws/aws-sdk-go-v2/config v1.33.6
 	github.com/aws/aws-sdk-go-v2/service/eks v1.102.0
