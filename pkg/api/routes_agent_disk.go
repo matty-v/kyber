@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"slices"
 
@@ -256,11 +257,26 @@ func (s *Server) increaseAgentDisk(w http.ResponseWriter, r *http.Request, name 
 	}
 	now := metav1.Now()
 	op := &kyberv1.AgentDiskExpansionStatus{RequestedAt: &now, TargetGiB: req.SizeGiB, PVCUID: p.pvc.UID, PVUID: p.pv.UID, Stage: "Requested"}
-	statusBefore := p.agent.DeepCopy()
-	p.agent.Status.DiskExpansion = op
-	if err := s.K8sClient.Status().Patch(r.Context(), p.agent, client.MergeFrom(statusBefore)); err != nil {
+	current := &kyberv1.Agent{}
+	reader := s.APIReader
+	if reader == nil {
+		reader = s.K8sClient
+	}
+	if err := reader.Get(r.Context(), types.NamespacedName{Namespace: s.Namespace, Name: name}, current); err != nil {
+		slog.Warn("Agent disk target accepted but status fetch failed; controller will recover", "agent", name, "error", err)
+		writeJSON(w, http.StatusAccepted, diskOperationForAPI(op))
+		return
+	}
+	if current.Spec.Resources.Disk.Value() != targetBytes {
+		slog.Warn("Agent disk target changed before status write; controller will recover", "agent", name, "currentBytes", current.Spec.Resources.Disk.Value(), "targetBytes", targetBytes)
+		writeJSON(w, http.StatusAccepted, diskOperationForAPI(op))
+		return
+	}
+	current.Status.DiskExpansion = op
+	if err := s.K8sClient.Status().Update(r.Context(), current); err != nil {
 		// Reconciliation can recover from spec > PVC even if this status write
 		// loses a race; never report completion on this response.
+		slog.Warn("Agent disk target accepted but status write failed; controller will recover", "agent", name, "error", err)
 		writeJSON(w, http.StatusAccepted, diskOperationForAPI(op))
 		return
 	}

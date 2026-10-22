@@ -7,13 +7,25 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+func buildDiskHandler(t *testing.T, objs ...runtime.Object) (http.Handler, client.Client) {
+	t.Helper()
+	all := append([]runtime.Object{defaultMachine()}, objs...)
+	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithRuntimeObjects(all...).WithStatusSubresource(&kyberv1.Agent{}).Build()
+	s := &api.Server{K8sClient: fakeClient, APIKey: testAPIKey, Namespace: "kyber-system", ValidRuntimes: map[string]bool{"claude-code": true}}
+	return s.BuildHandler(), fakeClient
+}
 
 func diskObjects(t *testing.T, driver string) (*kyberv1.Agent, *corev1.PersistentVolumeClaim, *corev1.PersistentVolume, *storagev1.StorageClass) {
 	t.Helper()
@@ -43,7 +55,7 @@ func diskObjects(t *testing.T, driver string) (*kyberv1.Agent, *corev1.Persisten
 
 func TestAgentDiskAPI_PreflightAndIncreasePreservesVolume(t *testing.T) {
 	agent, pvc, pv, class := diskObjects(t, "pd.csi.storage.gke.io")
-	h, c := buildAgentHandler(t, agent, pvc, pv, class)
+	h, c := buildDiskHandler(t, agent, pvc, pv, class)
 	options := httptest.NewRecorder()
 	h.ServeHTTP(options, authedRequest(t, http.MethodGet, "/api/v1/agents/dave/disk-options", nil))
 	if options.Code != http.StatusOK || !strings.Contains(options.Body.String(), `"supported":true`) || strings.Contains(options.Body.String(), "private-volume-id") {
@@ -79,7 +91,7 @@ func TestAgentDiskAPI_PreflightAndIncreasePreservesVolume(t *testing.T) {
 
 func TestAgentDiskAPI_UnsupportedDriver(t *testing.T) {
 	agent, pvc, pv, class := diskObjects(t, "rancher.io/local-path")
-	h, _ := buildAgentHandler(t, agent, pvc, pv, class)
+	h, _ := buildDiskHandler(t, agent, pvc, pv, class)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/increase-disk", map[string]any{"sizeGiB": 50}))
 	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "not verified") {
@@ -94,7 +106,7 @@ func TestAgentDiskAPI_BlockedUnfulfilledTargetCanBeReducedWithoutShrinkingVolume
 		TargetGiB: 100, PVCUID: pvc.UID, PVUID: pv.UID, Stage: "Blocked",
 	}
 	pvc.Spec.Resources.Requests[corev1.ResourceStorage] = resource.MustParse("100Gi")
-	h, c := buildAgentHandler(t, agent, pvc, pv, class)
+	h, c := buildDiskHandler(t, agent, pvc, pv, class)
 
 	options := httptest.NewRecorder()
 	h.ServeHTTP(options, authedRequest(t, http.MethodGet, "/api/v1/agents/dave/disk-options", nil))
