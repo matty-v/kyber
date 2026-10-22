@@ -1979,7 +1979,7 @@ components:
       required: [value]
       properties:
         value: {type: string}
-        reason: {type: string, description: Why this preset cannot be selected, if unavailable}
+        reason: {type: string, description: "Why this preset cannot be selected, if unavailable"}
     UsageCoverage:
       type: object
       required: [detectedGapCount, guaranteedComplete]
