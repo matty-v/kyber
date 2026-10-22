@@ -26,11 +26,13 @@ type diskCapacityMeasurement struct {
 	AvailableBytes int64 `json:"availableBytes"`
 }
 
-// filesystemExpanded allows for filesystem metadata while still requiring a
-// fresh measurement of essentially the requested capacity. Available bytes
-// are reported separately: ext4's reserve does not make an expansion fail.
+// filesystemExpanded accounts for filesystem metadata, which makes statfs
+// total smaller than the block device. GKE ext4 reported 11,516,715,008
+// bytes on a successfully expanded 11 GiB PVC (11,811,160,064 bytes).
+// Callers also require PVC status.capacity to reach the target: this
+// measurement alone cannot prove a small increase on a large disk.
 func filesystemExpanded(total, target int64) bool {
-	return total > 0 && target > 0 && total >= target-target/100
+	return total > 0 && target > 0 && total >= target-max(384*1024*1024, target*3/100)
 }
 
 func (r *AgentReconciler) updateDiskExpansion(ctx context.Context, agent *kyberv1.Agent, op *kyberv1.AgentDiskExpansionStatus) error {
@@ -309,6 +311,14 @@ func (r *AgentReconciler) reconcileStoppedDiskFilesystem(ctx context.Context, ag
 		return 0, r.updateDiskExpansion(ctx, agent, op)
 	}
 	if helper.Status.Phase != corev1.PodSucceeded {
+		return diskExpansionPoll, r.updateDiskExpansion(ctx, agent, op)
+	}
+	// The helper mount triggers kubelet's node resize. Its exit can be
+	// observed before the PVC status update reaches the controller cache.
+	// PVC capacity is the Kubernetes confirmation that filesystem resize
+	// finished; wait for it before accepting the helper's statfs sample.
+	capacity := pvc.Status.Capacity[corev1.ResourceStorage]
+	if capacity.Value() < op.TargetGiB*diskGiB {
 		return diskExpansionPoll, r.updateDiskExpansion(ctx, agent, op)
 	}
 	var report diskCapacityMeasurement

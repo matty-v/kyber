@@ -80,6 +80,19 @@ func TestDiskExpansion_StoppedPreservesOriginalVolumeAndIntent(t *testing.T) {
 	if _, err := r.reconcileDiskExpansion(ctx, agent, nil); err != nil {
 		t.Fatal(err)
 	}
+	if agent.Status.DiskExpansion.Stage == "Complete" {
+		t.Fatal("helper measurement completed before PVC status confirmed node resize")
+	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(pvc), claim); err != nil {
+		t.Fatal(err)
+	}
+	claim.Status.Capacity[corev1.ResourceStorage] = resource.MustParse("50Gi")
+	if err := c.Status().Update(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.reconcileDiskExpansion(ctx, agent, nil); err != nil {
+		t.Fatal(err)
+	}
 	if agent.Status.DiskExpansion.Stage != "Complete" || agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped || agent.Status.DiskExpansion.FilesystemTotalBytes < 50*diskGiB {
 		t.Fatalf("stopped Agent did not complete safely: %+v", agent.Status.DiskExpansion)
 	}
@@ -145,7 +158,10 @@ func TestDiskExpansion_RunningRestartsOnlyAfterFreshFilesystemSample(t *testing.
 }
 
 func TestDiskExpansion_FilesystemThreshold(t *testing.T) {
-	if filesystemExpanded(0, 50*diskGiB) || filesystemExpanded(20*diskGiB, 50*diskGiB) || !filesystemExpanded(50*diskGiB-100*1024*1024, 50*diskGiB) {
+	// This is the real statfs total from the successful 10 -> 11 GiB GKE
+	// standard-rwo ext4 expansion; the old 1% allowance rejected it.
+	if filesystemExpanded(0, 11*diskGiB) || filesystemExpanded(10*diskGiB-300*1024*1024, 11*diskGiB) ||
+		!filesystemExpanded(11516715008, 11*diskGiB) || !filesystemExpanded(50*diskGiB-100*1024*1024, 50*diskGiB) {
 		t.Fatal("filesystem capacity threshold is incorrect")
 	}
 }
