@@ -9,6 +9,7 @@ import {
   useCreateAgent,
   useCreateAgentFromArchive,
   useMachines,
+  useMachineAgentResourceOptions,
   usePutDiscordComms,
 } from '../hooks/useAPI'
 import { useUpgradeProgress } from '../hooks/useUpgradeProgress'
@@ -62,6 +63,7 @@ export function CreateAgent() {
   const { data: agents } = useAgents()
   const { data: config } = useComputeConfig()
   const [form, setState] = useState<WizardState>(() => initialWizardState([]))
+  const resourceOptions = useMachineAgentResourceOptions(form.machine, Boolean(form.machine))
   const runtimeOptions = config?.runtimes ?? legacyRuntimeContracts
   const identityCapability = identityRepoCapability(config)
   const state: WizardState = {
@@ -401,6 +403,7 @@ export function CreateAgent() {
                 set={set}
                 selectedMachine={selectedMachine}
                 machineAvailable={machineAvailable}
+                resourceOptions={resourceOptions.data ?? null}
               />
             )}
             {activeStep === 3 && <IdentitySection state={state} set={set} />}

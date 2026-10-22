@@ -263,6 +263,10 @@ func (s *Server) handleMachines(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	if action == "agent-resource-options" && r.Method == http.MethodGet {
+		s.getMachineAgentResourceOptions(w, r, name)
+		return
+	}
 
 	// C2: logs and exec do their own method checking.
 	switch action {

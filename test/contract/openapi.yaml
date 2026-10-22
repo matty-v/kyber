@@ -736,6 +736,23 @@ paths:
         '422':
           $ref: '#/components/responses/UnprocessableEntity'
 
+  /api/v1/machines/{name}/agent-resource-options:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getMachineAgentResourceOptions
+      summary: Get CPU and memory choices for a new agent on a machine
+      tags: [machines, agents]
+      responses:
+        '200':
+          description: Machine resource choices and headroom
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResourceOptions'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /api/v1/agents:
     get:
       operationId: listAgents
@@ -814,6 +831,54 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/resource-options:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgentResourceOptions
+      summary: Get CPU and memory choices for an existing agent
+      tags: [agents]
+      responses:
+        '200':
+          description: Current allocation, machine headroom, and choices
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentResourceOptions'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/set-resources:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: setAgentResources
+      summary: Change an agent's CPU and memory without replacing its disks
+      description: Running agents restart; stopped agents retain their stopped intent. At least one field is required.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                cpu: {type: string, example: 750m}
+                memory: {type: string, example: 1536Mi}
+      responses:
+        '200':
+          description: Resource change accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Agent'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
 
   /api/v1/agents/{name}/profile/avatar:
     parameters:
@@ -1889,6 +1954,32 @@ components:
             additionalProperties: true
 
   schemas:
+    AgentResourceOptions:
+      type: object
+      required: [machine, provider, currentCPU, currentMemory, availableCPU, availableMemory, minimumCPU, minimumMemory, cpuStep, memoryStep, cpu, memory]
+      properties:
+        machine: {type: string}
+        provider: {type: string}
+        currentCPU: {type: string}
+        currentMemory: {type: string}
+        availableCPU: {type: string}
+        availableMemory: {type: string}
+        minimumCPU: {type: string, example: 100m}
+        minimumMemory: {type: string, example: 128Mi}
+        cpuStep: {type: string, example: 50m}
+        memoryStep: {type: string, example: 128Mi}
+        cpu:
+          type: array
+          items: {$ref: '#/components/schemas/AgentResourceChoice'}
+        memory:
+          type: array
+          items: {$ref: '#/components/schemas/AgentResourceChoice'}
+    AgentResourceChoice:
+      type: object
+      required: [value]
+      properties:
+        value: {type: string}
+        reason: {type: string, description: Why this preset cannot be selected, if unavailable}
     UsageCoverage:
       type: object
       required: [detectedGapCount, guaranteedComplete]

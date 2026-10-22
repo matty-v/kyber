@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiresource "k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -426,6 +427,9 @@ func mustNewScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	if err := coordinationv1.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme coordinationv1: %v", err)
 	}
 	return scheme
 }

@@ -11,6 +11,7 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -2223,6 +2224,12 @@ func TestCreateAgent_InsufficientResources(t *testing.T) {
 	}
 
 	// Existing agent consuming 1500m CPU — leaves only 500m free.
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "test-node"},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("8Gi"),
+		}},
+	}
 	existingAgent := &kyberv1.Agent{
 		ObjectMeta: metav1.ObjectMeta{Name: "bob", Namespace: "kyber-system"},
 		Spec: kyberv1.AgentSpec{
@@ -2236,7 +2243,7 @@ func TestCreateAgent_InsufficientResources(t *testing.T) {
 
 	fakeClient := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithRuntimeObjects(machine, existingAgent).
+		WithRuntimeObjects(machine, node, existingAgent).
 		Build()
 
 	s := &api.Server{
@@ -2305,8 +2312,259 @@ func TestAgents_SetResources_HappyPath(t *testing.T) {
 	}
 }
 
+func TestAgents_SetResources_StoppedPreservesIntent(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseStopped
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
+	h, fc := buildAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{
+		"cpu": "750m", "memory": "1536Mi",
+	})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseStopped || got.Spec.Resources.CPU.String() != "750m" || got.Spec.Resources.Memory.String() != "1536Mi" {
+		t.Fatalf("stopped resource edit changed intent or missed allocation: %+v", got.Spec)
+	}
+}
+
+func TestAgents_SetResources_OfflineDecreasePreservesStopped(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseStopped
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseStopped
+	agent.Spec.Machine = "offline"
+	machine := defaultMachine()
+	machine.Name = "offline"
+	machine.Status.NodeName = "missing-node"
+	machine.Status.Phase = kyberv1.MachinePhaseStopped
+	h, fc := buildAgentHandler(t, machine, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "500m", "memory": "1Gi"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
+		t.Fatalf("offline decrease restarted stopped agent: %s", got.Spec.DesiredPhase)
+	}
+}
+
+func TestAgents_SetResources_PhaseIntent(t *testing.T) {
+	for _, tc := range []struct {
+		name, phase, desired string
+		wantStatus           int
+		wantDesired          string
+	}{
+		{"failed", string(kyberv1.AgentPhaseFailed), string(kyberv1.AgentPhaseRunning), http.StatusOK, string(kyberv1.AgentPhaseRunning)},
+		{"needs-auth", string(kyberv1.AgentPhaseNeedsAuth), string(kyberv1.AgentPhaseRunning), http.StatusOK, string(kyberv1.AgentPhaseRunning)},
+		{"disk-exhausted", string(kyberv1.AgentPhaseDiskExhausted), string(kyberv1.AgentPhaseRunning), http.StatusOK, string(kyberv1.AgentPhaseRunning)},
+		{"starting", string(kyberv1.AgentPhaseStarting), string(kyberv1.AgentPhaseRunning), http.StatusConflict, string(kyberv1.AgentPhaseRunning)},
+		{"pending-stop", string(kyberv1.AgentPhaseRunning), string(kyberv1.AgentPhaseStopped), http.StatusConflict, string(kyberv1.AgentPhaseStopped)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			agent := sampleAgentCRD("dave")
+			agent.Status.Phase = kyberv1.AgentPhase(tc.phase)
+			agent.Spec.DesiredPhase = kyberv1.AgentPhase(tc.desired)
+			h, fc := buildAgentHandler(t, agent)
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "750m"}))
+			if rr.Code != tc.wantStatus {
+				t.Fatalf("status=%d want %d: %s", rr.Code, tc.wantStatus, rr.Body.String())
+			}
+			got := &kyberv1.Agent{}
+			if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+				t.Fatal(err)
+			}
+			if string(got.Spec.DesiredPhase) != tc.wantDesired {
+				t.Fatalf("desiredPhase=%s want %s", got.Spec.DesiredPhase, tc.wantDesired)
+			}
+			if tc.wantStatus == http.StatusConflict && got.Spec.Resources.CPU.Cmp(agent.Spec.Resources.CPU) != 0 {
+				t.Fatal("rejected edit changed CPU")
+			}
+		})
+	}
+}
+
+func TestAgents_SetResources_NoOpKeepsIntent(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	h, fc := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "1000m"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.DesiredPhase != kyberv1.AgentPhaseRunning || got.Spec.Resources.CPU.String() != "1" {
+		t.Fatalf("no-op changed Agent: %+v", got.Spec)
+	}
+}
+
+func TestAgents_SetResources_LegacyOffGridDimensionMayRemain(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	agent.Spec.Resources.Memory = resource.MustParse("3.1415G")
+	h, fc := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "750m"}))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status=%d: %s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Resources.Memory.Cmp(agent.Spec.Resources.Memory) != 0 {
+		t.Fatal("partial edit changed legacy memory")
+	}
+}
+
+func TestAgents_ResourceOptionsUseMachineHeadroom(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	h, _ := buildAgentHandler(t, agent)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/agents/dave/resource-options", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("agent options status=%d: %s", rr.Code, rr.Body.String())
+	}
+	var options map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&options); err != nil {
+		t.Fatal(err)
+	}
+	if options["currentCPU"] != "1" || options["cpuStep"] != "50m" || options["memoryStep"] != "128Mi" {
+		t.Fatalf("unexpected options: %+v", options)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/machines/worker-1/agent-resource-options", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("machine options status=%d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestAgents_SetResources_SerializesSameMachine(t *testing.T) {
+	machine := defaultMachine()
+	machine.Name = "local"
+	machine.Spec.Capacity.CPU = resource.MustParse("2500m")
+	machine.Spec.Capacity.Memory = resource.MustParse("8Gi")
+	alice := sampleAgentCRD("alice")
+	bob := sampleAgentCRD("bob")
+	alice.Spec.Machine, bob.Spec.Machine = "local", "local"
+	alice.Spec.Resources.CPU = resource.MustParse("500m")
+	bob.Spec.Resources.CPU = resource.MustParse("500m")
+	alice.Status.Phase, bob.Status.Phase = kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseRunning
+	h, fc := buildAgentHandler(t, machine, alice, bob)
+	var wg sync.WaitGroup
+	statuses := make(chan int, 2)
+	for _, name := range []string{"alice", "bob"} {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/"+name+"/set-resources", map[string]interface{}{"cpu": "1750m"}))
+			statuses <- rr.Code
+		}(name)
+	}
+	wg.Wait()
+	close(statuses)
+	success, conflict := 0, 0
+	for status := range statuses {
+		switch status {
+		case http.StatusOK:
+			success++
+		case http.StatusConflict:
+			conflict++
+		default:
+			t.Fatalf("unexpected status %d", status)
+		}
+	}
+	if success != 1 || conflict != 1 {
+		t.Fatalf("expected one serialized success and one capacity conflict, got success=%d conflict=%d", success, conflict)
+	}
+	for _, name := range []string{"alice", "bob"} {
+		agent := &kyberv1.Agent{}
+		if err := fc.Get(context.Background(), types.NamespacedName{Name: name, Namespace: "kyber-system"}, agent); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestAgents_SetResources_RejectsOffGridMemory(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	h, fc := buildAgentHandler(t, agent)
+	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"memory": "3.1415G"})
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400: %s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Resources.Memory.Cmp(agent.Spec.Resources.Memory) != 0 {
+		t.Fatalf("invalid memory request mutated Agent: %s", got.Spec.Resources.Memory.String())
+	}
+}
+
+func TestAgents_SetResources_RejectsNamespaceLimitRange(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	limit := &corev1.LimitRange{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-max", Namespace: "kyber-system"},
+		Spec: corev1.LimitRangeSpec{Limits: []corev1.LimitRangeItem{{
+			Type: corev1.LimitTypeContainer,
+			Max:  corev1.ResourceList{corev1.ResourceMemory: resource.MustParse("3Gi")},
+		}}},
+	}
+	h, fc := buildAgentHandler(t, agent, limit)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"memory": "4Gi"}))
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "agent-max") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	got := &kyberv1.Agent{}
+	if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Spec.Resources.Memory.Cmp(agent.Spec.Resources.Memory) != 0 {
+		t.Fatal("rejected edit changed Agent")
+	}
+}
+
+func TestAgents_SetResources_RejectsNamespaceQuota(t *testing.T) {
+	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	quota := &corev1.ResourceQuota{
+		ObjectMeta: metav1.ObjectMeta{Name: "cpu-cap", Namespace: "kyber-system"},
+		Spec:       corev1.ResourceQuotaSpec{Hard: corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("2")}},
+		Status:     corev1.ResourceQuotaStatus{Used: corev1.ResourceList{corev1.ResourceRequestsCPU: resource.MustParse("1600m")}},
+	}
+	h, _ := buildAgentHandler(t, agent, quota)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "1500m"}))
+	if rr.Code != http.StatusForbidden || !strings.Contains(rr.Body.String(), "cpu-cap") {
+		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAgents_SetResources_CPUOnly_LeavesMemoryUntouched(t *testing.T) {
 	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
 	h, fc := buildAgentHandler(t, agent)
 	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{
 		"cpu": "500m",
@@ -2330,6 +2588,7 @@ func TestAgents_SetResources_CPUOnly_LeavesMemoryUntouched(t *testing.T) {
 
 func TestAgents_SetResources_MemoryOnly_LeavesCPUUntouched(t *testing.T) {
 	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
 	h, fc := buildAgentHandler(t, agent)
 	req := authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{
 		"memory": "4Gi",
@@ -2467,12 +2726,13 @@ func TestAgents_SetResources_SameCapacityOK(t *testing.T) {
 		Spec: kyberv1.MachineSpec{
 			Provider: kyberv1.MachineProviderMock,
 			Capacity: kyberv1.MachineCapacity{
-				CPU:    resource.MustParse("2"),
-				Memory: resource.MustParse("4Gi"),
+				CPU:    resource.MustParse("2100m"),
+				Memory: resource.MustParse("4608Mi"),
 			},
 		},
 	}
 	agent := sampleAgentCRD("dave")
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
 	agent.Spec.Machine = "local"
 	agent.Spec.Resources.CPU = resource.MustParse("1")
 	agent.Spec.Resources.Memory = resource.MustParse("2Gi")
@@ -2515,10 +2775,8 @@ func TestAgents_SetResources_MachineMissing_Returns409(t *testing.T) {
 }
 
 // TestAgents_Create_409_ReadsStatusAvailableCapacity verifies that when the
-// machine controller has populated Status.AvailableCapacity (post-#140 happy
-// path), the API /create-agent 409 check reads that field directly. Locks in
-// the end-to-end contract: 409 INSUFFICIENT_CAPACITY with the live numbers
-// in the body when the request exceeds AvailableCapacity.
+// machine controller has populated Status.AvailableCapacity, the API clamps
+// against it and reserves sidecar overhead before admitting another Agent.
 func TestAgents_Create_409_ReadsStatusAvailableCapacity(t *testing.T) {
 	machine := &kyberv1.Machine{
 		ObjectMeta: metav1.ObjectMeta{Name: "razer", Namespace: "kyber-system"},
@@ -2562,11 +2820,11 @@ func TestAgents_Create_409_ReadsStatusAvailableCapacity(t *testing.T) {
 	if !strings.Contains(body, "INSUFFICIENT_CAPACITY") {
 		t.Errorf("body missing INSUFFICIENT_CAPACITY code: %s", body)
 	}
-	if !strings.Contains(body, "500m") {
-		t.Errorf("body missing live available CPU value: %s", body)
+	if !strings.Contains(body, "400m") {
+		t.Errorf("body missing effective available CPU value: %s", body)
 	}
-	if !strings.Contains(body, "256Mi") {
-		t.Errorf("body missing live available memory value: %s", body)
+	if !strings.Contains(body, "memory=0") {
+		t.Errorf("body missing effective available memory value: %s", body)
 	}
 }
 

@@ -55,6 +55,12 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 	machine := &kyberv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", Namespace: "kyber-system"}}
 	machine.Status.NodeName = "node-a"
 	machine.Spec.Capacity = kyberv1.MachineCapacity{CPU: resource.MustParse("16"), Memory: resource.MustParse("64Gi")}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{Name: "node-a"},
+		Status: corev1.NodeStatus{Allocatable: corev1.ResourceList{
+			corev1.ResourceCPU: resource.MustParse("16"), corev1.ResourceMemory: resource.MustParse("64Gi"),
+		}},
+	}
 	sc := "local-path"
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-" + exportAgent + "-pv", Namespace: "kyber-system"},
@@ -79,7 +85,7 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 		},
 	}
 	// The API server assigns UIDs on create; the fake client does not.
-	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, machine, pvc, pod).
+	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, machine, node, pvc, pod).
 		WithInterceptorFuncs(interceptor.Funcs{Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
 			if obj.GetUID() == "" {
 				obj.SetUID(types.UID(archivejob.NewID()))
