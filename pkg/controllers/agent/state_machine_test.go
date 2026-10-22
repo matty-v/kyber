@@ -274,6 +274,13 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantAction: ActionResetRetryAndCreatePod,
 			wantNext:   kyberv1.AgentPhaseCreating,
 		},
+		{
+			name:       "DiskExhausted + expansion restart → Restarting",
+			current:    kyberv1.AgentPhaseDiskExhausted,
+			event:      EventDesiredRestarting,
+			wantAction: ActionCaptureStateAndDeletePod,
+			wantNext:   kyberv1.AgentPhaseRestarting,
+		},
 		// Operator-forced re-auth (#395). Live-pod phases delete the pod;
 		// pod-less phases flip status only. All land in NeedsAuth.
 		{

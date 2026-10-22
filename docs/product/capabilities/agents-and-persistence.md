@@ -20,6 +20,13 @@ session. Startup prompts are operator-visible configuration, not secrets.
 
 An agent keeps its entire filesystem on its persistent volume across pod restarts and upgrades: installed packages, cloned repos, credentials, and memory. Stopping an agent parks it with its filesystem preserved. Restarting it replaces the underlying pod while preserving its work. Recovery on a replacement machine depends on storage: portable cloud volumes can reattach, while node-local storage cannot survive loss of its node. Pushed identity-repo content survives either case.
 
+On supported GKE and EKS persistent disks, **Increase disk** grows the existing
+volume in whole GiB without replacing its PVC or files. Kyber shows the
+requested size, provisioned size, and measured filesystem capacity as the
+change progresses. A running agent restarts once to use the new limit; a
+stopped agent stays stopped. The control does not offer shrinking because the
+cloud disk cannot shrink in place. See [Agent disk expansion](../../operator/agent-disk-expansion.md).
+
 ## Switch the harness on the same agent
 
 Agent Detail offers **Switch harness**, in the ⋯ menu and under General, for

@@ -666,6 +666,7 @@ func main() {
 		BriefStore:                    briefStore,
 		AlertSink:                     alertSink,
 		AgentStorageClass:             agentStorageClass,
+		DiskMaintenanceImage:          os.Getenv("KYBER_ARCHIVE_TOOL_IMAGE"),
 		TranscriptOffsetsStorageClass: transcriptOffsetsStorageClass,
 		TranscriptOffsetsSize:         transcriptOffsetsSize,
 		IdentityRepoOwner:             identityRepoOwner,

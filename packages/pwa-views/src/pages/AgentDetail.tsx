@@ -40,6 +40,7 @@ import { AgentAvatarSettings } from '../components/AgentAvatarSettings'
 import { Button } from '../components/Button'
 import { Card } from '../components/Card'
 import { DiskExportCard } from '../components/DiskExportCard'
+import { AgentDiskControl } from '../components/AgentDiskControl'
 import { RestoreStatusCard } from '../components/RestoreStatusCard'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { agentActionConfirmMessage } from '../lib/agentMessages'
@@ -1087,6 +1088,7 @@ export function AgentDetail() {
                     {agent.runtime === 'hermes' && !agent.inference && agentAuth(agent)?.inputField === 'openrouterApiKey' && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Uses this agent’s OpenRouter API key. OpenRouter bills model requests separately from Claude and ChatGPT subscriptions; Kyber’s cost figures are estimates, not the provider invoice. The upstream model provider may vary by route and is not reported here. Manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                     {directOpenRouter && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Codex uses this agent’s OpenRouter endpoint credential. OpenRouter bills API requests separately from ChatGPT subscriptions and may route them to an upstream provider Kyber does not identify. Any Kyber cost shown is an estimate, not the OpenRouter invoice; check OpenRouter activity for actual charges and manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                   </Card>
+                  <AgentDiskControl agent={agent} />
                   <RestoreStatusCard agentName={name} capability={computeConfig?.archives} />
                   <DiskExportCard agentName={name} phase={agent.phase} capability={computeConfig?.archives} />
                   <Card>

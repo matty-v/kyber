@@ -7,6 +7,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 )
 
 // AgentPhase represents the current lifecycle phase of an Agent.
@@ -190,6 +191,24 @@ type AgentResources struct {
 	Memory resource.Quantity `json:"memory"`
 	// Disk is the size of the agent's persistent volume (e.g., "50Gi").
 	Disk resource.Quantity `json:"disk"`
+}
+
+// AgentDiskExpansionStatus tracks an in-place increase of an Agent's persist
+// volume. PVC/PV UIDs guard against mistaking a replacement volume for a
+// successful expansion. Filesystem bytes are measurements, not the request.
+type AgentDiskExpansionStatus struct {
+	RequestedAt              *metav1.Time `json:"requestedAt,omitempty"`
+	TargetGiB                int64        `json:"targetGiB"`
+	PVCUID                   types.UID    `json:"pvcUID"`
+	PVUID                    types.UID    `json:"pvUID"`
+	PVCRequestBytes          int64        `json:"pvcRequestBytes,omitempty"`
+	PVCapacityBytes          int64        `json:"pvCapacityBytes,omitempty"`
+	FilesystemTotalBytes     int64        `json:"filesystemTotalBytes,omitempty"`
+	FilesystemAvailableBytes int64        `json:"filesystemAvailableBytes,omitempty"`
+	FilesystemSampledAt      *metav1.Time `json:"filesystemSampledAt,omitempty"`
+	RestartRequestedAt       *metav1.Time `json:"restartRequestedAt,omitempty"`
+	Stage                    string       `json:"stage"`
+	Reason                   string       `json:"reason,omitempty"`
 }
 
 // AgentIdentity holds the agent's identity configuration written to its PV on first boot.
@@ -1015,6 +1034,10 @@ type AgentDiscordChannel struct {
 
 // AgentStatus defines the observed state of an Agent.
 type AgentStatus struct {
+	// DiskExpansion is the progress of the current or most recent in-place
+	// persist-volume increase. It never represents a disk replacement.
+	// +optional
+	DiskExpansion *AgentDiskExpansionStatus `json:"diskExpansion,omitempty"`
 	// Phase is the current lifecycle phase of the agent.
 	Phase AgentPhase `json:"phase,omitempty"`
 

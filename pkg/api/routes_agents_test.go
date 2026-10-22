@@ -1234,6 +1234,31 @@ func TestAgents_Patch(t *testing.T) {
 	}
 }
 
+func TestAgents_PatchCannotBypassDiskExpansion(t *testing.T) {
+	for _, size := range []string{"20Gi", "80Gi", "3.1415Gi"} {
+		t.Run(size, func(t *testing.T) {
+			agent := sampleAgentCRD("dave")
+			h, fc := buildAgentHandler(t, agent)
+			req := authedRequest(t, http.MethodPatch, "/api/v1/agents/dave", map[string]interface{}{
+				"resources": map[string]string{"disk": size},
+				"model":     "claude-opus-4",
+			})
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "resources.disk") {
+				t.Fatalf("expected field-specific disk rejection, got %d: %s", rr.Code, rr.Body.String())
+			}
+			stored := &kyberv1.Agent{}
+			if err := fc.Get(context.Background(), types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, stored); err != nil {
+				t.Fatal(err)
+			}
+			if stored.Spec.Resources.Disk.Cmp(agent.Spec.Resources.Disk) != 0 || stored.Spec.Model != agent.Spec.Model {
+				t.Fatalf("rejected PATCH changed Agent: disk=%s model=%s", stored.Spec.Resources.Disk.String(), stored.Spec.Model)
+			}
+		})
+	}
+}
+
 func TestAgents_PatchRejectsUnsafeA2APeers(t *testing.T) {
 	tests := []struct {
 		name  string

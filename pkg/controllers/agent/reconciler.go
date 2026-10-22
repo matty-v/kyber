@@ -188,6 +188,9 @@ type AgentReconciler struct {
 	// GKE) bind the volume. Sourced from KYBER_AGENT_STORAGE_CLASS in
 	// cmd/control-plane/main.go.
 	AgentStorageClass string
+	// DiskMaintenanceImage is the pinned control-plane image containing the
+	// unprivileged kyber-disk-capacity helper used for stopped Agents.
+	DiskMaintenanceImage string
 
 	// TranscriptOffsetsStorageClass / TranscriptOffsetsSize configure the small
 	// per-agent transcript-offsets PVC (kyber#467) that durably holds the tailer's
@@ -552,6 +555,10 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	if err != nil {
 		return ctrl.Result{}, err
 	}
+	diskRequeue, err := r.reconcileDiskExpansion(ctx, agent, pod)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("reconciling Agent disk expansion: %w", err)
+	}
 	// Existing pods predate observedPodConfigHash. A live pod and matching
 	// generation establish a safe migration baseline. Future jobs edits must
 	// pass the in-pod revision probe below.
@@ -836,7 +843,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				base = minNonZero(base, remaining+time.Second)
 			}
 		}
-		return ctrl.Result{RequeueAfter: minNonZero(minNonZero(base, identityRequeue), capabilityRequeue)}, nil
+		return ctrl.Result{RequeueAfter: minNonZero(minNonZero(minNonZero(base, identityRequeue), capabilityRequeue), diskRequeue)}, nil
 	}
 
 	// 6a. If the event is an auto-restart, check whether the backoff window has elapsed.
@@ -943,7 +950,7 @@ func (r *AgentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, err
 	}
 
-	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue), jobsProjectionRequeue), jobsConfigMapRequeue)}, nil
+	return ctrl.Result{RequeueAfter: minNonZero(minNonZero(minNonZero(minNonZero(minNonZero(requeueAfter, identityRequeue), capabilityRequeue), jobsProjectionRequeue), jobsConfigMapRequeue), diskRequeue)}, nil
 }
 
 // clearStaleRuntimeStatus discards observations from the source harness once
@@ -1143,6 +1150,10 @@ func (r *AgentReconciler) classifyEvent(
 		}
 
 	case kyberv1.AgentPhaseDiskExhausted:
+		if desired == kyberv1.AgentPhaseRestarting && agent.Status.DiskExpansion != nil &&
+			(agent.Status.DiskExpansion.Stage == "Restarting" || agent.Status.DiskExpansion.Stage == "Verifying") {
+			return EventDesiredRestarting, nil
+		}
 		if agent.Status.Activity != nil && agent.Status.Activity.Resources != nil && !agent.Status.Activity.Resources.DiskReserveReached {
 			return EventDiskReserveCleared, nil
 		}
@@ -2210,6 +2221,12 @@ func (r *AgentReconciler) ensurePVC(ctx context.Context, agent *kyberv1.Agent) e
 	pvc := &corev1.PersistentVolumeClaim{}
 	key := types.NamespacedName{Name: PVCName(agent.Name), Namespace: agent.Namespace}
 	if err := r.Get(ctx, key, pvc); err == nil {
+		// Expansion operations own all changes to this PVC after preflight.
+		// In particular, a Blocked operation must not be silently applied by
+		// the legacy disk-exhaustion recovery path below.
+		if agent.Status.DiskExpansion != nil {
+			return nil
+		}
 		requested := agent.Spec.Resources.Disk
 		current := pvc.Spec.Resources.Requests[corev1.ResourceStorage]
 		if requested.IsZero() || requested.Cmp(current) <= 0 {
@@ -2223,6 +2240,9 @@ func (r *AgentReconciler) ensurePVC(ctx context.Context, agent *kyberv1.Agent) e
 		return nil
 	} else if !errors.IsNotFound(err) {
 		return fmt.Errorf("checking PVC: %w", err)
+	}
+	if op := agent.Status.DiskExpansion; op != nil && op.Stage != "Complete" {
+		return fmt.Errorf("original persist PVC missing during disk expansion; refusing to create a replacement")
 	}
 
 	newPVC := BuildPVC(agent, r.AgentStorageClass)

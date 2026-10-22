@@ -100,6 +100,19 @@ clear it. Create-from-archive (`POST /api/v1/agent-imports`, uploads at
 hold set from the request context, pre-creates the PVC, and releases the hold
 only after the restore pod has re-scanned the volume against the manifest. See `docs/design/2026-09-22-agent-disk-export-import.md`.
 
+Agent disk increases use `POST /api/v1/agents/{name}/increase-disk` after
+`GET /api/v1/agents/{name}/disk-options` checks the bound PVC, PV, CSI driver,
+StorageClass, and quota. Generic Agent PATCH must reject disk changes. The
+controller in `pkg/controllers/agent/disk_expansion.go` grows the existing PVC
+only after checking its UID and bound PV UID; never replace or delete either
+volume to change size. It waits for provisioned and mounted filesystem
+capacity, then intentionally restarts a Running Agent once so its disk limit
+and status match. Stopped or failed Agents use a short-lived, unprivileged
+capacity helper pod with the existing PVC and no Agent credentials. Physical
+shrinking is unsupported; a blocked, unfulfilled PVC request may be reduced
+only while the new target exceeds already allocated capacity. See
+`docs/operator/agent-disk-expansion.md`.
+
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function
   `(phase, event) → (action, nextPhase)`. Zero k8s imports. Unit-testable.

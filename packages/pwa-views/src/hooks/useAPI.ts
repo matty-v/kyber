@@ -646,6 +646,31 @@ export function useAgentResourceOptions(name: string, enabled: boolean) {
   })
 }
 
+export function useAgentDiskOptions(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'disk-options'],
+    queryFn: () => api.getAgentDiskOptions(name),
+    enabled: enabled && Boolean(name),
+    refetchInterval: enabled ? 15000 : false,
+  })
+}
+
+export function useIncreaseAgentDisk() {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ name, sizeGiB }: { name: string; sizeGiB: number }) => api.increaseAgentDisk(name, sizeGiB),
+    onSuccess: (_data, { name }) => {
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name, 'disk-options'] })
+    },
+    meta: { successMessage: 'Disk expansion requested', errorPrefix: 'Could not increase disk' },
+  })
+}
+
 export function useMachineAgentResourceOptions(name: string, enabled: boolean) {
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])

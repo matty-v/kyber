@@ -66,6 +66,35 @@ export interface AgentStatus {
   startTime?: string
   restartCount?: number
   message?: string
+  diskExpansion?: AgentDiskOperation
+}
+
+export interface AgentDiskOperation {
+  targetGiB: number
+  stage: 'Requested' | 'Provisioning' | 'Filesystem' | 'Restarting' | 'Verifying' | 'Complete' | 'Blocked'
+  reason?: string
+  pvcRequestBytes?: number
+  pvCapacityBytes?: number
+  filesystemTotalBytes?: number
+  filesystemAvailableBytes?: number
+  filesystemSampledAt?: string
+}
+
+export interface AgentDiskOptions {
+  supported: boolean
+  reason?: string
+  driver?: string
+  storageClass?: string
+  currentTargetGiB: number
+  pvcRequestGiB?: number
+  pvCapacityGiB?: number
+  filesystemTotalBytes?: number
+  filesystemAvailableBytes?: number
+  filesystemSampledAt?: string
+  stepGiB: number
+  minimumTargetGiB: number
+  suggestedTargetsGiB: number[]
+  operation?: AgentDiskOperation
 }
 
 export type PublicCapabilityAvailability = 'available' | 'degraded' | 'unavailable' | 'unknown'
