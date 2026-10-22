@@ -58,7 +58,7 @@ func applyResourceEditIntent(agent *kyberv1.Agent) error {
 	case kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseMemoryExhausted:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	case kyberv1.AgentPhaseStopped:
-		if agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
+		if agent.Spec.DesiredPhase != "" && agent.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
 			return fmt.Errorf("agent has a pending start; retry after it settles")
 		}
 	case kyberv1.AgentPhaseNeedsAuth,

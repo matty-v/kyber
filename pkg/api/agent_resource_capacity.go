@@ -20,6 +20,9 @@ var agentPodOverheadMemory = resource.MustParse("512Mi")
 // The latter includes unrelated pods. The smaller budget wins. The final
 // scheduler/admission decision can still change after this snapshot.
 func agentResourceHeadroom(ctx context.Context, reader client.Reader, machine *kyberv1.Machine, agents []kyberv1.Agent, excludedAgent string) (MachineAvailable, error) {
+	if machine.Status.Phase != "" && !isLiveMachinePhase(machine.Status.Phase) {
+		return MachineAvailable{}, fmt.Errorf("machine %s is %s", machine.Name, machine.Status.Phase)
+	}
 	// Recompute from the fresh Agent list. Machine.status.availableCapacity is
 	// controller-published and can lag the previous API write even under a Lease.
 	available := MachineAvailable{

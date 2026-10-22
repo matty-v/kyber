@@ -2356,6 +2356,11 @@ func TestAgents_SetResources_OfflineDecreasePreservesStopped(t *testing.T) {
 	if got.Spec.DesiredPhase != kyberv1.AgentPhaseStopped {
 		t.Fatalf("offline decrease restarted stopped agent: %s", got.Spec.DesiredPhase)
 	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/set-resources", map[string]interface{}{"cpu": "1500m"}))
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("offline increase status=%d, want 409: %s", rr.Code, rr.Body.String())
+	}
 }
 
 func TestAgents_SetResources_PhaseIntent(t *testing.T) {

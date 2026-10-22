@@ -30,6 +30,9 @@ func (s *Server) acquireAgentCapacityLease(ctx context.Context, machineName stri
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("machine capacity reservation is busy")
+		}
 		lease := &coordinationv1.Lease{}
 		err := reader.Get(ctx, key, lease)
 		now := metav1.NewMicroTime(time.Now().UTC())
@@ -42,9 +45,6 @@ func (s *Server) acquireAgentCapacityLease(ctx context.Context, machineName stri
 				lease.Spec.RenewTime != nil && lease.Spec.LeaseDurationSeconds != nil &&
 				now.Time.Before(lease.Spec.RenewTime.Add(time.Duration(*lease.Spec.LeaseDurationSeconds)*time.Second))
 			if busy {
-				if time.Now().After(deadline) {
-					return nil, fmt.Errorf("machine capacity reservation is busy")
-				}
 				select {
 				case <-ctx.Done():
 					return nil, ctx.Err()
