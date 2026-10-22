@@ -1318,7 +1318,7 @@ export function AgentDetail() {
       {pending === 'set-resources' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
-          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+          <div className="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
             <h2 className="text-base font-semibold text-text-primary mb-4">Set Resources</h2>
             <div className="space-y-3">
               {resourceOptions.isLoading && <p className="text-sm text-text-muted">Loading sizes…</p>}
