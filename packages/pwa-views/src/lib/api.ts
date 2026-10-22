@@ -28,6 +28,8 @@ import type {
   SetModelRequest,
   SetResourcesRequest,
   AgentResourceOptions,
+  AgentDiskOptions,
+  AgentDiskOperation,
   Machine,
   MachineListResponse,
   CreateMachineRequest,
@@ -461,6 +463,12 @@ export function createApiClient(cluster: Cluster) {
 
     getAgentResourceOptions: (name: string): Promise<AgentResourceOptions> =>
       request<AgentResourceOptions>('GET', `/api/v1/agents/${encodeURIComponent(name)}/resource-options`),
+
+    getAgentDiskOptions: (name: string): Promise<AgentDiskOptions> =>
+      request<AgentDiskOptions>('GET', `/api/v1/agents/${encodeURIComponent(name)}/disk-options`),
+
+    increaseAgentDisk: (name: string, sizeGiB: number): Promise<AgentDiskOperation> =>
+      request<AgentDiskOperation>('POST', `/api/v1/agents/${encodeURIComponent(name)}/increase-disk`, { sizeGiB }),
 
     getMachineAgentResourceOptions: (name: string): Promise<AgentResourceOptions> =>
       request<AgentResourceOptions>('GET', `/api/v1/machines/${encodeURIComponent(name)}/agent-resource-options`),

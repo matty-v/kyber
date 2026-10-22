@@ -66,6 +66,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-upgrade ./cmd/kyber-upgrad
 # export/restore pod entrypoint and the built-in archive store. Same image, for
 # the same reason: the control plane can always name an image that has them.
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-disk-archive ./cmd/kyber-disk-archive
+RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-disk-capacity ./cmd/kyber-disk-capacity
 RUN CGO_ENABLED=0 GOOS=linux go build -o /build/kyber-archive-store ./cmd/kyber-archive-store
 
 # Stage 3: minimal runtime image.
@@ -111,6 +112,7 @@ COPY --from=go-builder /build/control-plane /usr/local/bin/control-plane
 COPY --from=go-builder /build/transcript-compact /usr/local/bin/transcript-compact
 COPY --from=go-builder /build/kyber-upgrade /usr/local/bin/kyber-upgrade
 COPY --from=go-builder /build/kyber-disk-archive /usr/local/bin/kyber-disk-archive
+COPY --from=go-builder /build/kyber-disk-capacity /usr/local/bin/kyber-disk-capacity
 COPY --from=go-builder /build/kyber-archive-store /usr/local/bin/kyber-archive-store
 EXPOSE 8080 8081 8082 9090
 ENTRYPOINT ["/usr/local/bin/control-plane"]

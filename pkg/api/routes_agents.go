@@ -455,11 +455,12 @@ type agentResourcesResponse struct {
 }
 
 type agentStatusResponse struct {
-	Phase        kyberv1.AgentPhase `json:"phase,omitempty"`
-	PodName      string             `json:"podName,omitempty"`
-	PodIP        string             `json:"podIP,omitempty"`
-	RestartCount int32              `json:"restartCount,omitempty"`
-	Message      string             `json:"message,omitempty"`
+	Phase         kyberv1.AgentPhase     `json:"phase,omitempty"`
+	PodName       string                 `json:"podName,omitempty"`
+	PodIP         string                 `json:"podIP,omitempty"`
+	RestartCount  int32                  `json:"restartCount,omitempty"`
+	Message       string                 `json:"message,omitempty"`
+	DiskExpansion *diskOperationResponse `json:"diskExpansion,omitempty"`
 }
 
 // AgentListResponse wraps a list of agents.
@@ -502,11 +503,12 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 			Disk:   a.Spec.Resources.Disk.String(),
 		},
 		Status: agentStatusResponse{
-			Phase:        a.Status.Phase,
-			PodName:      a.Status.PodName,
-			PodIP:        a.Status.PodIP,
-			RestartCount: a.Status.RestartCount,
-			Message:      a.Status.Message,
+			Phase:         a.Status.Phase,
+			PodName:       a.Status.PodName,
+			PodIP:         a.Status.PodIP,
+			RestartCount:  a.Status.RestartCount,
+			Message:       a.Status.Message,
+			DiskExpansion: diskOperationForAPI(a.Status.DiskExpansion),
 		},
 		// Dirty: pod configuration differs or the running pod's status
 		// sidecar is on an older image digest.
@@ -865,6 +867,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.getAgentResourceOptions(w, r, name)
 		return
 	}
+	if action == "disk-options" && r.Method == http.MethodGet {
+		s.getAgentDiskOptions(w, r, name)
+		return
+	}
 
 	// All other sub-actions require POST.
 	if r.Method != http.MethodPost {
@@ -891,6 +897,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.setAgentRuntimeVersion(w, r, name)
 	case "set-resources":
 		s.setAgentResources(w, r, name)
+	case "increase-disk":
+		s.increaseAgentDisk(w, r, name)
 	case "auth":
 		s.handleRuntimeReauthorize(w, r, name)
 	case "oauth":
@@ -1530,6 +1538,24 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 	proposedMemory := agent.Spec.Resources.Memory.DeepCopy()
 	resourceChanged := false
 	if req.Resources != nil {
+		// Disk changes have a separate, capacity-verified expansion workflow.
+		// Reject them before this PATCH can write any of its other fields or
+		// Secrets: a plain spec change can make the UI claim a smaller disk while
+		// Kubernetes keeps the original PVC, or claim an increase before CSI has
+		// actually expanded the filesystem.
+		if req.Resources.Disk != "" {
+			q, err := resource.ParseQuantity(req.Resources.Disk)
+			if err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
+					"resources.disk must be a valid Kubernetes quantity", "resources.disk")
+				return
+			}
+			if q.Cmp(agent.Spec.Resources.Disk) != 0 {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
+					"Use Increase disk to change disk size; shrinking a provisioned disk is not supported", "resources.disk")
+				return
+			}
+		}
 		if req.Resources.CPU != "" {
 			q, err := resource.ParseQuantity(req.Resources.CPU)
 			if err != nil {
@@ -1721,15 +1747,6 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		}
 		if req.Resources.Memory != "" {
 			agent.Spec.Resources.Memory = proposedMemory
-		}
-		if req.Resources.Disk != "" {
-			q, err := resource.ParseQuantity(req.Resources.Disk)
-			if err != nil {
-				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-					"resources.disk must be a valid Kubernetes quantity", "resources.disk")
-				return
-			}
-			agent.Spec.Resources.Disk = q
 		}
 	}
 	if resourceChanged {

@@ -998,6 +998,57 @@ spec:
                   CurrentModel is the model currently in use by the agent.
                   Updated when a model change takes effect.
                 type: string
+              diskExpansion:
+                description: |-
+                  DiskExpansion is the progress of the current or most recent in-place
+                  persist-volume increase. It never represents a disk replacement.
+                properties:
+                  filesystemAvailableBytes:
+                    format: int64
+                    type: integer
+                  filesystemSampledAt:
+                    format: date-time
+                    type: string
+                  filesystemTotalBytes:
+                    format: int64
+                    type: integer
+                  pvCapacityBytes:
+                    format: int64
+                    type: integer
+                  pvUID:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                  pvcRequestBytes:
+                    format: int64
+                    type: integer
+                  pvcUID:
+                    description: |-
+                      UID is a type that holds unique ID values, including UUIDs.  Because we
+                      don't ONLY use UUIDs, this is an alias to string.  Being a type captures
+                      intent and helps make sure that UIDs and names do not get conflated.
+                    type: string
+                  reason:
+                    type: string
+                  requestedAt:
+                    format: date-time
+                    type: string
+                  restartRequestedAt:
+                    format: date-time
+                    type: string
+                  stage:
+                    type: string
+                  targetGiB:
+                    format: int64
+                    type: integer
+                required:
+                - pvUID
+                - pvcUID
+                - stage
+                - targetGiB
+                type: object
               goal:
                 description: |-
                   Goal is the latest one-line description of the work accepted by this

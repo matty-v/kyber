@@ -329,6 +329,9 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredRunning}: {
 			Action: ActionResetRetryAndCreatePod, NextPhase: kyberv1.AgentPhaseCreating,
 		},
+		{phase: kyberv1.AgentPhaseDiskExhausted, event: EventDesiredRestarting}: {
+			Action: ActionCaptureStateAndDeletePod, NextPhase: kyberv1.AgentPhaseRestarting,
+		},
 		{phase: kyberv1.AgentPhaseRunning, event: EventLivenessFailed}: {
 			Action:    ActionKillPodEmitEventAutoRestart,
 			NextPhase: kyberv1.AgentPhaseFailed,

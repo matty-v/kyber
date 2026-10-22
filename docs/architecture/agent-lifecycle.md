@@ -226,6 +226,7 @@ stateDiagram-v2
     MemoryExhausted --> Creating: DesiredRunning
     DiskExhausted --> Running: DiskReserveCleared
     DiskExhausted --> Creating: DesiredRunning (terminal pod + larger PVC)
+    DiskExhausted --> Restarting: DesiredRestarting (verified disk expansion)
 
     %% Operator-forced re-auth (#395): drop a wedged agent to NeedsAuth.
     %% Live-pod phases delete the pod; pod-less phases flip status only.
@@ -319,6 +320,7 @@ is the authoritative table; it mirrors the `transitions` map in
 | `MemoryExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
 | `DiskExhausted` | `DiskReserveCleared` | `UpdateStatus` | `Running` |
 | `DiskExhausted` | `DesiredRunning` | `ResetRetryAndCreatePod` | `Creating` |
+| `DiskExhausted` | `DesiredRestarting` | `CaptureStateAndDeletePod` | `Restarting` |
 | `Running` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Starting` | `DesiredNeedsAuth` | `CaptureStateAndDeletePod` | `NeedsAuth` |
 | `Failed` | `DesiredNeedsAuth` | `UpdateStatus` | `NeedsAuth` |

@@ -159,20 +159,11 @@ func (s *InternalServer) applyStatusEvent(ctx context.Context, agentName string,
 		memoryLimit := agent.Spec.Resources.Memory.Value()
 		ev.Resources.CPULimitMillicores = &cpuLimit
 		ev.Resources.MemoryLimitBytes = &memoryLimit
-		// The allocation the SIDECAR measured against, captured before the
-		// spec's value overwrites it. The two differ after an online PVC grow:
-		// KYBER_AGENT_DISK_BYTES is a pod env var read once at sidecar start
-		// (status_sidecar.go:85, main.go:377), so a resize does not reach a
-		// running pod. Deciding on the spec's larger number while the sidecar
-		// still holds the old one would clear the phase while the sidecar keeps
-		// the pause marker in place — the agent would report Running and answer
-		// nothing. Decide on what the pod actually measured; the operator's
-		// Start recreates the pod, and the new sidecar picks up the grow.
+		// Keep the sidecar's effective limit. During an in-place disk grow the
+		// old pod still enforces its original KYBER_AGENT_DISK_BYTES until a
+		// controlled restart. Agent.spec.resources.disk is the *requested*
+		// allocation and must not masquerade as this observed value.
 		sampledTotal := ev.Resources.DiskTotalBytes
-		diskTotal := agent.Spec.Resources.Disk.Value()
-		if diskTotal > 0 {
-			ev.Resources.DiskTotalBytes = diskTotal
-		}
 		// Only the new topology-aware sidecar may drive the reserve signal.
 		// Older sidecars report node-level statfs on local-path volumes, so
 		// accepting their boolean during a rolling upgrade could exhaust every

@@ -880,6 +880,59 @@ paths:
         '409':
           $ref: '#/components/responses/Conflict'
 
+  /api/v1/agents/{name}/disk-options:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: getAgentDiskOptions
+      summary: Inspect in-place disk expansion support and capacity
+      tags: [agents]
+      responses:
+        '200':
+          description: Support, sizes, measurement, and active operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDiskOptions'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/v1/agents/{name}/increase-disk:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    post:
+      operationId: increaseAgentDisk
+      summary: Increase the existing Agent persist volume
+      description: >
+        Accepts only a whole-GiB target above provisioned capacity. The
+        existing PVC, PV, and disk are preserved; success is asynchronous.
+        A running Agent restarts once after filesystem expansion. Shrink is
+        unavailable. Requires lifecycle:write.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [sizeGiB]
+              additionalProperties: false
+              properties:
+                sizeGiB: {type: integer, format: int64, minimum: 1, maximum: 65536}
+      responses:
+        '202':
+          description: Expansion requested; poll Agent status or disk options
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentDiskOperation'
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
   /api/v1/agents/{name}/profile/avatar:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1974,6 +2027,36 @@ components:
         memory:
           type: array
           items: {$ref: '#/components/schemas/AgentResourceChoice'}
+    AgentDiskOptions:
+      type: object
+      required: [supported, currentTargetGiB, stepGiB, minimumTargetGiB, suggestedTargetsGiB]
+      properties:
+        supported: {type: boolean}
+        reason: {type: string}
+        driver: {type: string}
+        storageClass: {type: string}
+        currentTargetGiB: {type: integer, format: int64}
+        pvcRequestGiB: {type: integer, format: int64}
+        pvCapacityGiB: {type: integer, format: int64}
+        filesystemTotalBytes: {type: integer, format: int64}
+        filesystemAvailableBytes: {type: integer, format: int64}
+        filesystemSampledAt: {type: string, format: date-time}
+        stepGiB: {type: integer, format: int64}
+        minimumTargetGiB: {type: integer, format: int64}
+        suggestedTargetsGiB: {type: array, items: {type: integer, format: int64}}
+        operation: {$ref: '#/components/schemas/AgentDiskOperation'}
+    AgentDiskOperation:
+      type: object
+      required: [targetGiB, stage]
+      properties:
+        targetGiB: {type: integer, format: int64}
+        stage: {type: string, enum: [Requested, Provisioning, Filesystem, Restarting, Verifying, Complete, Blocked]}
+        reason: {type: string}
+        pvcRequestBytes: {type: integer, format: int64}
+        pvCapacityBytes: {type: integer, format: int64}
+        filesystemTotalBytes: {type: integer, format: int64}
+        filesystemAvailableBytes: {type: integer, format: int64}
+        filesystemSampledAt: {type: string, format: date-time}
     AgentResourceChoice:
       type: object
       required: [value]
@@ -2970,6 +3053,8 @@ components:
           format: int32
         message:
           type: string
+        diskExpansion:
+          $ref: '#/components/schemas/AgentDiskOperation'
 
     AgentResourceUsage:
       type: object

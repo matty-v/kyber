@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.67.0
+
+- Add an Agent disk increase control with integer GiB choices, preflight support and capacity details, restart confirmation, and expansion progress. The control offers no shrink action.
+
 ## 0.66.1
 
 - Show machine-aware CPU and memory choices in the Agent resource dialog, with stepped custom sizes and clear restart behavior.

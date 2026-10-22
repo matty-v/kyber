@@ -56,6 +56,8 @@ vi.mock('../hooks/useAPI', () => ({
     cpuStep: '50m', memoryStep: '128Mi',
     cpu: [{ value: '1' }, { value: '2' }], memory: [{ value: '2Gi' }, { value: '4Gi' }],
   }, isLoading: false, isError: false }),
+  useAgentDiskOptions: () => ({ data: { supported: false, reason: 'Test storage', currentTargetGiB: 50, stepGiB: 1, suggestedTargetsGiB: [] }, isLoading: false, isError: false }),
+  useIncreaseAgentDisk: idleMutation,
   usePatchAgent: idleMutation,
   useUpdateAgentProfile: idleMutation,
   useUploadAgentAvatar: idleMutation,

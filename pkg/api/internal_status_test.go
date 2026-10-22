@@ -231,7 +231,7 @@ func TestStatusEvent_ResourceUsageUsesAgentMetricsAndRequestedLimits(t *testing.
 	if usage.MemoryUsedBytes != 682*1024*1024 || usage.MemoryLimitBytes == nil || *usage.MemoryLimitBytes != 1024*1024*1024 {
 		t.Errorf("memory = %+v", usage)
 	}
-	if usage.DiskUsedBytes != 90 || usage.DiskTotalBytes != 2*1024*1024*1024 {
+	if usage.DiskUsedBytes != 90 || usage.DiskTotalBytes != 100 {
 		t.Errorf("disk sample changed: %+v", usage)
 	}
 	if usage.DiskReserveReached {
@@ -551,8 +551,8 @@ func TestStatusEvent_DiskReserveUsesTheAllocationTheSidecarMeasured(t *testing.T
 	if !usage.DiskReserveReached {
 		t.Fatalf("a grown spec released the phase while the sidecar still measures 95%%: %+v", usage)
 	}
-	// The reported total still follows the spec, so the operator sees the new size.
-	if usage.DiskTotalBytes != 400 {
-		t.Fatalf("reported total did not follow the grown allocation: %+v", usage)
+	// The reported total remains the sidecar's effective limit until restart.
+	if usage.DiskTotalBytes != 100 {
+		t.Fatalf("reported total did not preserve the sidecar allocation: %+v", usage)
 	}
 }

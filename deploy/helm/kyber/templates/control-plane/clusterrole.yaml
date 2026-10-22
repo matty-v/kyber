@@ -49,6 +49,14 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # In-place Agent disk expansion verifies the bound PV and its StorageClass.
+  # Neither resource is mutated by Kyber; the CSI driver owns PV capacity.
+  - apiGroups: [""]
+    resources: ["persistentvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch"]
   # Node management (Machine Controller — maps machines to nodes)
   - apiGroups: [""]
     resources: ["nodes"]
