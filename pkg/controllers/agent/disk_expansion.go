@@ -331,7 +331,8 @@ func (r *AgentReconciler) reconcileStoppedDiskFilesystem(ctx context.Context, ag
 	now := metav1.Now()
 	op.FilesystemSampledAt = &now
 	op.Stage = "Complete"
-	if agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted {
+	if agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted &&
+		(agent.Spec.DesiredPhase == "" || agent.Spec.DesiredPhase == kyberv1.AgentPhaseRunning) {
 		// The existing one-shot recovery gate starts a fresh Agent pod after
 		// the filesystem is ready. Verify that pod's new sidecar before success.
 		op.Stage = "Verifying"
