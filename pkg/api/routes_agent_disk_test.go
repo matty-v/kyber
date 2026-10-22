@@ -99,6 +99,17 @@ func TestAgentDiskAPI_UnsupportedDriver(t *testing.T) {
 	}
 }
 
+func TestAgentDiskAPI_RejectsUnownedPVC(t *testing.T) {
+	agent, pvc, pv, class := diskObjects(t, "pd.csi.storage.gke.io")
+	pvc.OwnerReferences = nil
+	h, _ := buildDiskHandler(t, agent, pvc, pv, class)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, authedRequest(t, http.MethodPost, "/api/v1/agents/dave/increase-disk", map[string]any{"sizeGiB": 50}))
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "ownership") {
+		t.Fatalf("unowned PVC must be rejected: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func TestAgentDiskAPI_BlockedUnfulfilledTargetCanBeReducedWithoutShrinkingVolume(t *testing.T) {
 	agent, pvc, pv, class := diskObjects(t, "pd.csi.storage.gke.io")
 	agent.Spec.Resources.Disk = resource.MustParse("100Gi")

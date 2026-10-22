@@ -20,6 +20,10 @@ func diskExpansionClass() *storagev1.StorageClass {
 	return &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "expandable-pd"}, Provisioner: "pd.csi.storage.gke.io", AllowVolumeExpansion: &allow}
 }
 
+func markDiskPVCOwned(agent *kyberv1.Agent, pvc *corev1.PersistentVolumeClaim) {
+	pvc.OwnerReferences = []metav1.OwnerReference{{APIVersion: "kyber.io/v1", Kind: "Agent", Name: agent.Name, UID: agent.UID}}
+}
+
 func TestDiskExpansion_StoppedPreservesOriginalVolumeAndIntent(t *testing.T) {
 	ctx := context.Background()
 	scheme := buildTestScheme()
@@ -36,6 +40,7 @@ func TestDiskExpansion_StoppedPreservesOriginalVolumeAndIntent(t *testing.T) {
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("20Gi")}},
 	}
 	*pvc.Spec.StorageClassName = "expandable-pd"
+	markDiskPVCOwned(agent, pvc)
 	pv := &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: pvc.Spec.VolumeName, UID: agent.Status.DiskExpansion.PVUID},
 		Spec: corev1.PersistentVolumeSpec{ClaimRef: &corev1.ObjectReference{UID: pvc.UID}, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("20Gi")}, PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: "pd.csi.storage.gke.io"}}}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent, pvc).WithObjects(agent, pvc, pv, diskExpansionClass()).Build()
@@ -99,6 +104,7 @@ func TestDiskExpansion_RunningRestartsOnlyAfterFreshFilesystemSample(t *testing.
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("50Gi")}},
 	}
 	*pvc.Spec.StorageClassName = "expandable-pd"
+	markDiskPVCOwned(agent, pvc)
 	pv := &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: pvc.Spec.VolumeName, UID: agent.Status.DiskExpansion.PVUID},
 		Spec: corev1.PersistentVolumeSpec{ClaimRef: &corev1.ObjectReference{UID: pvc.UID}, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("50Gi")}, PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: "pd.csi.storage.gke.io"}}}}
 	stale := metav1.NewTime(time.Now().Add(-2 * time.Minute))
@@ -160,6 +166,7 @@ func TestDiskExpansion_BlockedRequestRecoversAtLowerUnallocatedTarget(t *testing
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("20Gi")}},
 	}
 	*pvc.Spec.StorageClassName = "expandable-pd"
+	markDiskPVCOwned(agent, pvc)
 	pv := &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: pvc.Spec.VolumeName, UID: agent.Status.DiskExpansion.PVUID},
 		Spec: corev1.PersistentVolumeSpec{ClaimRef: &corev1.ObjectReference{UID: pvc.UID}, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("20Gi")}, PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: "pd.csi.storage.gke.io"}}}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent, pvc).WithObjects(agent, pvc, pv, diskExpansionClass()).Build()
@@ -193,6 +200,7 @@ func TestDiskExpansion_DiskExhaustedAfterHelperRequestsRecovery(t *testing.T) {
 		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("50Gi")}},
 	}
 	*pvc.Spec.StorageClassName = "expandable-pd"
+	markDiskPVCOwned(agent, pvc)
 	pv := &corev1.PersistentVolume{ObjectMeta: metav1.ObjectMeta{Name: pvc.Spec.VolumeName, UID: agent.Status.DiskExpansion.PVUID},
 		Spec: corev1.PersistentVolumeSpec{ClaimRef: &corev1.ObjectReference{UID: pvc.UID}, Capacity: corev1.ResourceList{corev1.ResourceStorage: resource.MustParse("50Gi")}, PersistentVolumeSource: corev1.PersistentVolumeSource{CSI: &corev1.CSIPersistentVolumeSource{Driver: "pd.csi.storage.gke.io"}}}}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent, pvc).WithObjects(agent, pvc, pv, diskExpansionClass()).Build()

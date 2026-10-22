@@ -125,17 +125,15 @@ func (s *Server) readDiskPreflight(r *http.Request, name string) (*diskPreflight
 		p.options.Reason = "Agent persist volume is not bound"
 		return p, nil
 	}
-	if ref := p.pvc.GetOwnerReferences(); len(ref) > 0 {
-		owned := false
-		for _, owner := range ref {
-			if owner.Kind == "Agent" && owner.UID == p.agent.UID {
-				owned = true
-			}
+	owned := false
+	for _, owner := range p.pvc.GetOwnerReferences() {
+		if owner.Kind == "Agent" && owner.Name == p.agent.Name && owner.UID == p.agent.UID {
+			owned = true
 		}
-		if !owned {
-			p.options.Reason = "Agent persist volume ownership does not match"
-			return p, nil
-		}
+	}
+	if !owned {
+		p.options.Reason = "Agent persist volume ownership does not match"
+		return p, nil
 	}
 	if p.pvc.Spec.VolumeMode != nil && *p.pvc.Spec.VolumeMode != corev1.PersistentVolumeFilesystem {
 		p.options.Reason = "Only filesystem volumes can be expanded"

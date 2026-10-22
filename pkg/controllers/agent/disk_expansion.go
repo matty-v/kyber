@@ -78,6 +78,15 @@ func (r *AgentReconciler) reconcileDiskExpansion(ctx context.Context, agent *kyb
 	if pvc.UID != op.PVCUID || pvc.Spec.VolumeName == "" {
 		return diskExpansionPoll, r.blockDiskExpansion(ctx, agent, "Agent persist PVC changed; expansion stopped to protect data")
 	}
+	owned := false
+	for _, owner := range pvc.OwnerReferences {
+		if owner.Kind == "Agent" && owner.Name == agent.Name && owner.UID == agent.UID {
+			owned = true
+		}
+	}
+	if !owned {
+		return 0, r.blockDiskExpansion(ctx, agent, "Agent persist PVC ownership changed; expansion stopped to protect data")
+	}
 	pv := &corev1.PersistentVolume{}
 	if err := r.Get(ctx, types.NamespacedName{Name: pvc.Spec.VolumeName}, pv); err != nil {
 		if apierrors.IsNotFound(err) {
