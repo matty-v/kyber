@@ -16,7 +16,7 @@ export function AgentDiskControl({ agent }: { agent: Agent }) {
   const options = useAgentDiskOptions(agent.id, true)
   const increase = useIncreaseAgentDisk()
   const data = options.data
-  const operation = agent.status.diskExpansion ?? data?.operation
+  const operation = data?.operation ?? agent.status.diskExpansion
   const active = operation && operation.stage !== 'Complete' && operation.stage !== 'Blocked'
   const minimum = data?.minimumTargetGiB ?? 1
   const valid = Number.isInteger(target) && Number(target) >= minimum && Number(target) <= 65536

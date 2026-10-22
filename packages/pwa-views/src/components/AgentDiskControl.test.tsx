@@ -42,4 +42,14 @@ describe('AgentDiskControl', () => {
     expect(screen.getByRole('button', { name: 'Increase disk' })).toBeDisabled()
     expect(screen.getByText(/Increase unavailable: Local storage/)).toBeInTheDocument()
   })
+
+  it('uses the latest disk operation from the options response', () => {
+    options.mockReturnValue({ data: { supported: true, currentTargetGiB: 50, pvCapacityGiB: 20,
+      stepGiB: 1, minimumTargetGiB: 51, suggestedTargetsGiB: [],
+      operation: { targetGiB: 50, stage: 'Provisioning' } }, isError: false })
+    render(<AgentDiskControl agent={{ ...mockAgent, status: { ...mockAgent.status,
+      diskExpansion: { targetGiB: 100, stage: 'Blocked' } } }} />)
+    expect(screen.getByRole('button', { name: 'Increase disk' })).toBeDisabled()
+    expect(screen.getByRole('status')).toHaveTextContent('Provisioning: 50 GiB')
+  })
 })
