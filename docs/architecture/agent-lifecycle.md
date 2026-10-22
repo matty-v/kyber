@@ -117,7 +117,7 @@ The 14 `AgentPhase` constants (`pkg/api/v1/agent_types.go`):
 
 **Events** (`Event` constants) — the triggers the reconciler feeds in:
 
-`CRDCreated`, `PodScheduled`, `PodScheduleFailed`, `PodReady`,
+`CRDCreated`, `CRDCreatedStopped`, `PodScheduled`, `PodScheduleFailed`, `PodReady`,
 `StartupTimeout`, `DesiredStopped`, `DesiredRestarting`,
 `DesiredNeedsAuth`, `DesiredRunning`, `PodDied`, `LivenessFailed`,
 `PodTerminated`, `GracePeriodExceeded`, `PodDeleted`, `AutoRestartTriggered`,
@@ -271,6 +271,8 @@ is the authoritative table; it mirrors the `transitions` map in
 | Current phase | Event | Action | Next phase |
 |---|---|---|---|
 | *(none)* | `CRDCreated` | `CreatePVAndPod` | `Creating` |
+| *(none)* | `CRDCreatedStopped` | `CreatePVOnly` | `Stopped` |
+
 | `Creating` | `IdentityRepoReady` | `CreatePVAndPod` | `Creating` |
 | `Creating` | `RestoreComplete` | `CreatePVAndPod` | `Creating` |
 | `Creating` | `PodScheduled` | `WaitForStart` | `Starting` |
@@ -330,6 +332,12 @@ is the authoritative table; it mirrors the `transitions` map in
 | `Draining` | `PodDeleted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `Draining` | `MachinePreempted` | `TransitionToWaiting` | `WaitingForMachine` |
 | `WaitingForMachine` | `MachineReady` | `WriteBriefAndCreatePod` | `Creating` |
+
+An Agent created with `desiredPhase: Stopped` provisions both durable claims
+without briefly starting a pod. CPU or memory edits to a stopped Agent keep
+it stopped; the new allocation takes effect on its next explicit Start.
+Running edits set `desiredPhase: Restarting`, replacing the pod on the same
+claims. Transient lifecycle phases reject resource edits until they settle.
 
 † `DesiredRestarting` is derived both by the external `spec.desiredPhase=Restarting`
 write **and** intrinsically by the reconciler's runtime-image-drift check — see the

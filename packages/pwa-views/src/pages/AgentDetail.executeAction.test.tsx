@@ -50,6 +50,12 @@ vi.mock('../hooks/useAPI', () => ({
   useAgentModels: agentModels,
   useSetAgentRuntimeVersion: idleMutation,
   useSetAgentResources: idleMutation,
+  useAgentResourceOptions: () => ({ data: {
+    machine: 'worker-1', provider: 'gce', currentCPU: '1', currentMemory: '2Gi',
+    availableCPU: '4', availableMemory: '8Gi', minimumCPU: '100m', minimumMemory: '128Mi',
+    cpuStep: '50m', memoryStep: '128Mi',
+    cpu: [{ value: '1' }, { value: '2' }], memory: [{ value: '2Gi' }, { value: '4Gi' }],
+  }, isLoading: false, isError: false }),
   usePatchAgent: idleMutation,
   useUpdateAgentProfile: idleMutation,
   useUploadAgentAvatar: idleMutation,

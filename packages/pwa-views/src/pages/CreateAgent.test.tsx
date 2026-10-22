@@ -9,6 +9,7 @@ import type { Agent, ComputeConfig, Machine, ModelInfo } from '../lib/types'
 vi.mock('../hooks/useAPI', () => ({
   useAgents: vi.fn(),
   useMachines: vi.fn(),
+  useMachineAgentResourceOptions: () => ({ data: null }),
   useComputeConfig: vi.fn(),
   // kyber#378 PR-D: useEffectiveModelList composes useAvailable +
   // useComputeConfig. Mock both so the wizard's picker can source

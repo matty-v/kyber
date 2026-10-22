@@ -53,6 +53,11 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch", "delete"]
+  # Resource preflight reads namespace admission limits before replacing an
+  # Agent pod. The API reader is uncached; watch also covers cached fallbacks.
+  - apiGroups: [""]
+    resources: ["limitranges", "resourcequotas"]
+    verbs: ["get", "list", "watch"]
   # Namespace reads — both Agent and Machine reconcilers call
   # isNamespaceTerminating in their handleDeletion paths to detect
   # "namespace is being torn down, skip in-namespace cleanup and

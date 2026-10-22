@@ -629,9 +629,31 @@ export function useSetAgentResources() {
     },
     meta: {
       successMessage: (_d: unknown, v: unknown) =>
-        `Updated resources for ${(v as { name: string }).name}`,
+        `Resource change requested for ${(v as { name: string }).name}`,
       errorPrefix: 'Failed to update resources',
     },
+  })
+}
+
+export function useAgentResourceOptions(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'agents', name, 'resource-options'],
+    queryFn: () => api.getAgentResourceOptions(name),
+    enabled: enabled && Boolean(name),
+    staleTime: 0,
+  })
+}
+
+export function useMachineAgentResourceOptions(name: string, enabled: boolean) {
+  const cluster = useCluster()
+  const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
+  return useQuery({
+    queryKey: ['cluster', cluster.id, 'machines', name, 'agent-resource-options'],
+    queryFn: () => api.getMachineAgentResourceOptions(name),
+    enabled: enabled && Boolean(name),
+    staleTime: 0,
   })
 }
 

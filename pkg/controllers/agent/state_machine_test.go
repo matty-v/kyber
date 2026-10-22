@@ -26,6 +26,13 @@ func TestNextPhase_AllTransitions(t *testing.T) {
 			wantAction: ActionCreatePVAndPod,
 			wantNext:   kyberv1.AgentPhaseCreating,
 		},
+		{
+			name:       "empty phase: stopped CRD created → Stopped without pod",
+			current:    "",
+			event:      EventCRDCreatedStopped,
+			wantAction: ActionCreatePVOnly,
+			wantNext:   kyberv1.AgentPhaseStopped,
+		},
 		// Creating transitions
 		{
 			name:       "Creating: pod scheduled → Starting",

@@ -39,6 +39,7 @@ vi.mock('./hooks/useAPI', () => {
     useFleetSummary: () => empty,
     useAgents: () => emptyList,
     useMachines: () => emptyList,
+    useMachineAgentResourceOptions: () => ({ data: null }),
     useAgent: () => empty,
     useMachine: () => empty,
     useComputeConfig: () => empty,
@@ -60,6 +61,7 @@ vi.mock('./hooks/useAPI', () => {
     useSetAgentModel: () => mutation,
     useSetAgentRuntimeVersion: () => mutation,
     useSetAgentResources: () => mutation,
+    useAgentResourceOptions: () => ({ data: undefined, isLoading: false, isError: false }),
     // kyber#378 PR-D: AgentDetail composes useEffectiveModelList which
     // calls useAvailable. Empty data lets the fallback (useComputeConfig)
     // path render the existing UI without surprises.

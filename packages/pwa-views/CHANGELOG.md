@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.66.1
+
+- Show machine-aware CPU and memory choices in the Agent resource dialog, with stepped custom sizes and clear restart behavior.
+
 ## 0.66.0
 
 - Remove the retired token-cost API client after switching Metrics to durable local usage metadata, and explain unreported and partial token counts in the panel.

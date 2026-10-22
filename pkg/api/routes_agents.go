@@ -861,6 +861,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		s.handleCodexDeviceAuthStatus(w, r, name)
 		return
 	}
+	if action == "resource-options" && r.Method == http.MethodGet {
+		s.getAgentResourceOptions(w, r, name)
+		return
+	}
 
 	// All other sub-actions require POST.
 	if r.Method != http.MethodPost {
@@ -1242,23 +1246,49 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			"resources.memory must be a valid Kubernetes quantity", "resources.memory")
 		return
 	}
+	if err := validateAgentCPU(cpuQ); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "resources.cpu")
+		return
+	}
+	if err := validateAgentMemory(memQ); err != nil {
+		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "resources.memory")
+		return
+	}
 	diskQ, err := resource.ParseQuantity(defaultString(req.Resources.Disk, "50Gi"))
 	if err != nil {
 		writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"resources.disk must be a valid Kubernetes quantity", "resources.disk")
 		return
 	}
+	releaseCapacity, err := s.acquireAgentCapacityLease(r.Context(), req.Machine)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "CAPACITY_BUSY", "could not reserve machine capacity")
+		return
+	}
+	defer releaseCapacity()
+	reader := s.APIReader
+	if reader == nil {
+		reader = s.K8sClient
+	}
+	if err := reader.Get(r.Context(), machineKey, machineObj); err != nil {
+		writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", "machine capacity unavailable")
+		return
+	}
 
 	// Capacity check: fetch all agents in the namespace, then compute what's
 	// still free on the target Machine.
 	var agentList kyberv1.AgentList
-	if err := s.K8sClient.List(r.Context(), &agentList,
+	if err := reader.List(r.Context(), &agentList,
 		client.InNamespace(s.Namespace)); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "INTERNAL",
 			"list agents for capacity check: "+err.Error())
 		return
 	}
-	avail := machineAvailable(machineObj, agentList.Items)
+	avail, err := agentResourceHeadroom(r.Context(), reader, machineObj, agentList.Items, "")
+	if err != nil {
+		writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", err.Error())
+		return
+	}
 	if cpuQ.Cmp(avail.CPU) > 0 || memQ.Cmp(avail.Memory) > 0 {
 		writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY",
 			fmt.Sprintf(
@@ -1268,6 +1298,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 				cpuQ.String(), memQ.String(),
 			),
 		)
+		return
+	}
+	if err := checkAgentResourceAdmission(r.Context(), reader, s.Namespace, cpuQ, memQ, nil); err != nil {
+		writeJSONError(w, http.StatusForbidden, "RESOURCE_POLICY_DENIED", err.Error())
 		return
 	}
 
@@ -1472,6 +1506,99 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
+	// Serialize all Kyber API allocations on this Machine before inspecting
+	// current capacity. The uncached read observes the previous writer.
+	if req.Resources != nil && (req.Resources.CPU != "" || req.Resources.Memory != "") {
+		release, err := s.acquireAgentCapacityLease(r.Context(), agent.Spec.Machine)
+		if err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "CAPACITY_BUSY", "could not reserve machine capacity")
+			return
+		}
+		defer release()
+		reader := s.APIReader
+		if reader == nil {
+			reader = s.K8sClient
+		}
+		if err := reader.Get(r.Context(), key, agent); err != nil {
+			writeJSONError(w, http.StatusConflict, "LIFECYCLE_CONFLICT", "agent changed during resource edit")
+			return
+		}
+	}
+	// Resource policy is checked before other PATCH fields can write related
+	// Secrets. A mixed request that fails sizing must not leave partial effects.
+	proposedCPU := agent.Spec.Resources.CPU.DeepCopy()
+	proposedMemory := agent.Spec.Resources.Memory.DeepCopy()
+	resourceChanged := false
+	if req.Resources != nil {
+		if req.Resources.CPU != "" {
+			q, err := resource.ParseQuantity(req.Resources.CPU)
+			if err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "resources.cpu must be a valid Kubernetes quantity", "resources.cpu")
+				return
+			}
+			if q.Cmp(proposedCPU) != 0 {
+				if err := validateAgentCPU(q); err != nil {
+					writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "resources.cpu")
+					return
+				}
+				resourceChanged = true
+			}
+			proposedCPU = q
+		}
+		if req.Resources.Memory != "" {
+			q, err := resource.ParseQuantity(req.Resources.Memory)
+			if err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", "resources.memory must be a valid Kubernetes quantity", "resources.memory")
+				return
+			}
+			if q.Cmp(proposedMemory) != 0 {
+				if err := validateAgentMemory(q); err != nil {
+					writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "resources.memory")
+					return
+				}
+				resourceChanged = true
+			}
+			proposedMemory = q
+		}
+	}
+	if resourceChanged {
+		probe := agent.DeepCopy()
+		probe.Spec.Resources.CPU = proposedCPU
+		probe.Spec.Resources.Memory = proposedMemory
+		if err := applyResourceEditIntent(probe); err != nil {
+			writeJSONError(w, http.StatusConflict, "LIFECYCLE_CONFLICT", err.Error())
+			return
+		}
+		reader := s.APIReader
+		if reader == nil {
+			reader = s.K8sClient
+		}
+		if proposedCPU.Cmp(agent.Spec.Resources.CPU) > 0 || proposedMemory.Cmp(agent.Spec.Resources.Memory) > 0 {
+			machineObj := &kyberv1.Machine{}
+			if err := reader.Get(r.Context(), types.NamespacedName{Name: agent.Spec.Machine, Namespace: s.Namespace}, machineObj); err != nil {
+				writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", "cannot verify machine capacity")
+				return
+			}
+			var agents kyberv1.AgentList
+			if err := reader.List(r.Context(), &agents, client.InNamespace(s.Namespace)); err != nil {
+				writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to verify machine capacity")
+				return
+			}
+			avail, err := agentResourceHeadroom(r.Context(), reader, machineObj, agents.Items, agent.Name)
+			if err != nil {
+				writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", err.Error())
+				return
+			}
+			if proposedCPU.Cmp(avail.CPU) > 0 || proposedMemory.Cmp(avail.Memory) > 0 {
+				writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", "requested resources exceed machine capacity")
+				return
+			}
+		}
+		if err := checkAgentResourceAdmission(r.Context(), reader, s.Namespace, proposedCPU, proposedMemory, agent); err != nil {
+			writeJSONError(w, http.StatusForbidden, "RESOURCE_POLICY_DENIED", err.Error())
+			return
+		}
+	}
 
 	patch := client.MergeFrom(agent.DeepCopy())
 	_, priorCapabilityDigest, _ := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
@@ -1590,22 +1717,10 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 
 	if req.Resources != nil {
 		if req.Resources.CPU != "" {
-			q, err := resource.ParseQuantity(req.Resources.CPU)
-			if err != nil {
-				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-					"resources.cpu must be a valid Kubernetes quantity", "resources.cpu")
-				return
-			}
-			agent.Spec.Resources.CPU = q
+			agent.Spec.Resources.CPU = proposedCPU
 		}
 		if req.Resources.Memory != "" {
-			q, err := resource.ParseQuantity(req.Resources.Memory)
-			if err != nil {
-				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
-					"resources.memory must be a valid Kubernetes quantity", "resources.memory")
-				return
-			}
-			agent.Spec.Resources.Memory = q
+			agent.Spec.Resources.Memory = proposedMemory
 		}
 		if req.Resources.Disk != "" {
 			q, err := resource.ParseQuantity(req.Resources.Disk)
@@ -1617,6 +1732,12 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			agent.Spec.Resources.Disk = q
 		}
 	}
+	if resourceChanged {
+		if err := applyResourceEditIntent(agent); err != nil {
+			writeJSONError(w, http.StatusConflict, "LIFECYCLE_CONFLICT", err.Error())
+			return
+		}
+	}
 
 	if req.Jobs != nil {
 		jobs, err := validateJobsRequest(*req.Jobs)
@@ -1625,6 +1746,12 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			return
 		}
 		agent.Spec.Jobs = jobs
+	}
+	if resourceChanged && agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
+		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm agent recovery")
+			return
+		}
 	}
 
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
@@ -2293,8 +2420,24 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
+	releaseCapacity, err := s.acquireAgentCapacityLease(r.Context(), agent.Spec.Machine)
+	if err != nil {
+		writeJSONError(w, http.StatusServiceUnavailable, "CAPACITY_BUSY", "could not reserve machine capacity")
+		return
+	}
+	defer releaseCapacity()
+	reader := s.APIReader
+	if reader == nil {
+		reader = s.K8sClient
+	}
+	if err := reader.Get(r.Context(), key, agent); err != nil {
+		writeJSONError(w, http.StatusConflict, "LIFECYCLE_CONFLICT", "agent changed during resource edit")
+		return
+	}
 
 	patch := client.MergeFrom(agent.DeepCopy())
+	oldCPU := agent.Spec.Resources.CPU.DeepCopy()
+	oldMemory := agent.Spec.Resources.Memory.DeepCopy()
 
 	if req.CPU != "" {
 		q, err := resource.ParseQuantity(req.CPU)
@@ -2302,6 +2445,12 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 			writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"cpu must be a valid Kubernetes quantity", "cpu")
 			return
+		}
+		if q.Cmp(oldCPU) != 0 {
+			if err := validateAgentCPU(q); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "cpu")
+				return
+			}
 		}
 		agent.Spec.Resources.CPU = q
 	}
@@ -2312,7 +2461,17 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 				"memory must be a valid Kubernetes quantity", "memory")
 			return
 		}
+		if q.Cmp(oldMemory) != 0 {
+			if err := validateAgentMemory(q); err != nil {
+				writeJSONErrorWithField(w, http.StatusBadRequest, "VALIDATION_ERROR", err.Error(), "memory")
+				return
+			}
+		}
 		agent.Spec.Resources.Memory = q
+	}
+	if oldCPU.Cmp(agent.Spec.Resources.CPU) == 0 && oldMemory.Cmp(agent.Spec.Resources.Memory) == 0 {
+		writeJSON(w, http.StatusOK, agentToResponse(agent))
+		return
 	}
 
 	if req.CPU != "" && agent.Spec.Resources.CPU.Cmp(setResourcesMinCPU) < 0 {
@@ -2326,50 +2485,53 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
-	// Capacity check: available = machine capacity - all agents' allocations,
-	// EXCLUDING this agent's own current allocation (which is about to be
-	// overwritten by the patch below).
-	machineObj := &kyberv1.Machine{}
-	machineKey := types.NamespacedName{Name: agent.Spec.Machine, Namespace: s.Namespace}
-	if err := s.K8sClient.Get(r.Context(), machineKey, machineObj); err != nil {
-		if k8serrors.IsNotFound(err) {
-			writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY",
-				fmt.Sprintf("machine %q not found; cannot verify capacity", agent.Spec.Machine))
+	if agent.Spec.Resources.CPU.Cmp(oldCPU) > 0 || agent.Spec.Resources.Memory.Cmp(oldMemory) > 0 {
+		// Capacity check: available = machine capacity - all agents' allocations,
+		// EXCLUDING this agent's own current allocation (which is about to be
+		// overwritten by the patch below).
+		machineObj := &kyberv1.Machine{}
+		machineKey := types.NamespacedName{Name: agent.Spec.Machine, Namespace: s.Namespace}
+		if err := reader.Get(r.Context(), machineKey, machineObj); err != nil {
+			if k8serrors.IsNotFound(err) {
+				writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY",
+					fmt.Sprintf("machine %q not found; cannot verify capacity", agent.Spec.Machine))
+				return
+			}
+			slog.Error("failed to get machine for capacity check", "machine", agent.Spec.Machine, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to verify capacity")
 			return
 		}
-		slog.Error("failed to get machine for capacity check", "machine", agent.Spec.Machine, "error", err)
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to verify capacity")
-		return
+		var agentList kyberv1.AgentList
+		if err := reader.List(r.Context(), &agentList, client.InNamespace(s.Namespace)); err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "list agents for capacity check: "+err.Error())
+			return
+		}
+		avail, err := agentResourceHeadroom(r.Context(), reader, machineObj, agentList.Items, agent.Name)
+		if err != nil {
+			writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY", err.Error())
+			return
+		}
+		if agent.Spec.Resources.CPU.Cmp(avail.CPU) > 0 || agent.Spec.Resources.Memory.Cmp(avail.Memory) > 0 {
+			writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY",
+				fmt.Sprintf("insufficient capacity on machine %q: available {cpu=%s, memory=%s}, requested {cpu=%s, memory=%s}",
+					machineObj.Name,
+					avail.CPU.String(), avail.Memory.String(),
+					agent.Spec.Resources.CPU.String(), agent.Spec.Resources.Memory.String(),
+				),
+			)
+			return
+		}
 	}
-	var agentList kyberv1.AgentList
-	if err := s.K8sClient.List(r.Context(), &agentList, client.InNamespace(s.Namespace)); err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal_error", "list agents for capacity check: "+err.Error())
-		return
-	}
-	avail := MachineAvailableExcluding(machineObj, agentList.Items, agent.Name)
-	if agent.Spec.Resources.CPU.Cmp(avail.CPU) > 0 || agent.Spec.Resources.Memory.Cmp(avail.Memory) > 0 {
-		writeJSONError(w, http.StatusConflict, "INSUFFICIENT_CAPACITY",
-			fmt.Sprintf("insufficient capacity on machine %q: available {cpu=%s, memory=%s}, requested {cpu=%s, memory=%s}",
-				machineObj.Name,
-				avail.CPU.String(), avail.Memory.String(),
-				agent.Spec.Resources.CPU.String(), agent.Spec.Resources.Memory.String(),
-			),
-		)
+	currentAgent := agent.DeepCopy()
+	currentAgent.Spec.Resources.CPU, currentAgent.Spec.Resources.Memory = oldCPU, oldMemory
+	if err := checkAgentResourceAdmission(r.Context(), reader, s.Namespace, agent.Spec.Resources.CPU, agent.Spec.Resources.Memory, currentAgent); err != nil {
+		writeJSONError(w, http.StatusForbidden, "RESOURCE_POLICY_DENIED", err.Error())
 		return
 	}
 
-	// Trigger a pod roll so the new limits land on the next pod.
-	// Failed/MemoryExhausted/DiskExhausted→Running uses ResetRetry (the human-required
-	// phases need explicit DesiredPhase=Running to fire their state-machine
-	// recovery transitions, per kyber#272). Running→Restarting uses the
-	// normal roll.
-	switch {
-	case archiveHeld(agent):
-		// Lands on the next pod after the disk archive job releases it.
-	case agent.Status.Phase == kyberv1.AgentPhaseFailed, agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted, agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted:
-		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
-	default:
-		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+	if err := applyResourceEditIntent(agent); err != nil {
+		writeJSONError(w, http.StatusConflict, "LIFECYCLE_CONFLICT", err.Error())
+		return
 	}
 
 	// Re-arm the recovery gate (kyber#684), same reasoning as /start. A memory
@@ -2377,10 +2539,9 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	// MemoryExhausted agent does not — and that is still an explicit operator
 	// action that must not be swallowed. Clearing here buys exactly one attempt.
 	// Harmless on Failed, which is not gated.
-	// The MemoryExhausted guard is this handler's own: rearmRecoveryGate also
-	// covers NeedsAuth, and a NeedsAuth agent leaves here on desiredPhase
-	// Restarting, which the gate deliberately does not honour.
-	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted || agent.Status.Phase == kyberv1.AgentPhaseDiskExhausted {
+	// DiskExhausted remains behind its disk recovery gate: changing CPU or
+	// memory cannot make a full filesystem safe to start.
+	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")

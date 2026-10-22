@@ -18,6 +18,7 @@ import {
   useAgentModels,
   useSetAgentRuntimeVersion,
   useSetAgentResources,
+  useAgentResourceOptions,
   useDeleteAgent,
   useTokenUsage,
   useReauthorizeAgent,
@@ -108,6 +109,16 @@ const ACTION_DIALOG: Record<ActionKind, 'confirm' | 'form'> = {
 }
 
 type AgentSection = 'overview' | 'activity' | 'shell' | 'jobs' | 'webhooks' | 'general' | 'comms' | 'secrets' | 'a2a'
+
+function cpuAsCores(value: string): number {
+  return value.endsWith('m') ? Number(value.slice(0, -1)) / 1000 : Number(value)
+}
+
+function memoryAsGiB(value: string): number {
+  if (value.endsWith('Gi')) return Number(value.slice(0, -2))
+  if (value.endsWith('Mi')) return Number(value.slice(0, -2)) / 1024
+  return Number.NaN
+}
 
 const agentNavigation: LocalNavigationGroup<AgentSection>[] = [
   { label: 'Observe', items: [
@@ -578,6 +589,7 @@ export function AgentDetail() {
   const canSelectModel = agent ? supportsModelSelection(agentContract(agent)) : false
   const endpointModel = Boolean(agent?.inference)
   const agentModels = useAgentModels(name, pending === 'set-model' && canSelectModel && !endpointModel)
+  const resourceOptions = useAgentResourceOptions(name, pending === 'set-resources')
 
   useEffect(() => {
     if (pending === 'set-model' && !newModel && agentModels.data?.models[0]) {
@@ -1116,7 +1128,7 @@ export function AgentDetail() {
       {pending === 'set-model' && canSelectModel && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
-          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+          <div className="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
             <h2 className="text-base font-semibold text-text-primary mb-4">Change model</h2>
             {(() => {
               const models = agentModels.data?.models ?? []
@@ -1306,32 +1318,52 @@ export function AgentDetail() {
       {pending === 'set-resources' && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
           <div className="absolute inset-0 bg-surface-sunken/60 backdrop-blur-sm" onClick={() => setPending(null)} />
-          <div className="relative z-10 w-full max-w-sm rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
+          <div className="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-sm overflow-y-auto rounded-xl border border-border-subtle bg-surface-raised p-6 shadow-xl">
             <h2 className="text-base font-semibold text-text-primary mb-4">Set Resources</h2>
             <div className="space-y-3">
-              <label className="block text-sm text-text-secondary">
-                CPU
-                <input
-                  type="text"
-                  value={newCPU}
-                  onChange={(e) => setNewCPU(e.target.value)}
-                  placeholder="e.g. 500m, 1, 2"
-                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
-                />
-              </label>
-              <label className="block text-sm text-text-secondary">
-                Memory
-                <input
-                  type="text"
-                  value={newMemory}
-                  onChange={(e) => setNewMemory(e.target.value)}
-                  placeholder="e.g. 2Gi, 4Gi"
-                  className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary placeholder-text-disabled focus:border-accent focus:outline-none"
-                />
-              </label>
-              <p className="text-xs text-text-muted">
-                Applying this will restart the agent.
-              </p>
+              {resourceOptions.isLoading && <p className="text-sm text-text-muted">Loading sizes…</p>}
+              {resourceOptions.isError && <p className="text-sm text-danger">Could not load available sizes.</p>}
+              {resourceOptions.data && <>
+                <p className="text-xs text-text-muted">On {resourceOptions.data.machine}</p>
+                <label className="block text-sm text-text-secondary">
+                  CPU
+                  <select
+                    value={resourceOptions.data.cpu.some(o => o.value === newCPU) ? newCPU : 'custom'}
+                    onChange={(e) => { if (e.target.value !== 'custom') setNewCPU(e.target.value) }}
+                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+                  >
+                    {resourceOptions.data.cpu.map(o => <option key={o.value} value={o.value} disabled={Boolean(o.reason) && cpuAsCores(o.value) !== cpuAsCores(agent.resources.cpu)}>{o.value}{o.reason ? ` — ${o.reason}` : ''}</option>)}
+                    {!resourceOptions.data.cpu.some(o => o.value === newCPU) && <option value="custom">{newCPU || 'Custom size'}</option>}
+                  </select>
+                </label>
+                <label className="block text-sm text-text-secondary">
+                  Memory
+                  <select
+                    value={resourceOptions.data.memory.some(o => o.value === newMemory) ? newMemory : 'custom'}
+                    onChange={(e) => { if (e.target.value !== 'custom') setNewMemory(e.target.value) }}
+                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-sm text-text-primary"
+                  >
+                    {resourceOptions.data.memory.map(o => <option key={o.value} value={o.value} disabled={Boolean(o.reason) && memoryAsGiB(o.value) !== memoryAsGiB(agent.resources.memory)}>{o.value}{o.reason ? ` — ${o.reason}` : ''}</option>)}
+                    {!resourceOptions.data.memory.some(o => o.value === newMemory) && <option value="custom">{newMemory || 'Custom size'}</option>}
+                  </select>
+                </label>
+                <details className="text-sm text-text-secondary">
+                  <summary className="cursor-pointer">Custom size</summary>
+                  <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <label>CPU (cores)
+                      <input type="number" min="0.1" step="0.05" value={Number.isFinite(cpuAsCores(newCPU)) ? cpuAsCores(newCPU) : ''}
+                        onChange={(e) => setNewCPU(`${Math.round(Number(e.target.value) * 1000)}m`)}
+                        className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-text-primary" />
+                    </label>
+                    <label>Memory (GiB)
+                      <input type="number" min="0.125" step="0.125" value={Number.isFinite(memoryAsGiB(newMemory)) ? memoryAsGiB(newMemory) : ''}
+                        onChange={(e) => setNewMemory(`${Math.round(Number(e.target.value) * 1024)}Mi`)}
+                        className="mt-1 w-full rounded-lg border border-border-default bg-surface-overlay px-3 py-2 text-text-primary" />
+                    </label>
+                  </div>
+                </details>
+                <p className="text-xs text-text-muted">{agent.phase === 'Running' ? 'Applying restarts the agent.' : agent.phase === 'Failed' || agent.phase === 'MemoryExhausted' ? 'Applying retries the agent.' : 'Applies on the next permitted start.'} Files remain on its disk.</p>
+              </>}
             </div>
             <div className="mt-4 flex gap-3 justify-end">
               <Button variant="ghost" size="sm" onClick={() => setPending(null)} disabled={isActing}>
@@ -1344,7 +1376,8 @@ export function AgentDetail() {
                 loading={isActing}
                 disabled={
                   (!newCPU && !newMemory) ||
-                  (newCPU === agent.resources.cpu && newMemory === agent.resources.memory)
+                  (newCPU === agent.resources.cpu && newMemory === agent.resources.memory) ||
+                  !resourceOptions.data
                 }
               >
                 Apply

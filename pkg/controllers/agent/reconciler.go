@@ -996,6 +996,9 @@ func (r *AgentReconciler) classifyEvent(
 
 	// New agent (no phase yet).
 	if phase == "" {
+		if desired == kyberv1.AgentPhaseStopped {
+			return EventCRDCreatedStopped, nil
+		}
 		return EventCRDCreated, nil
 	}
 
@@ -1562,6 +1565,14 @@ func (r *AgentReconciler) executeAction(
 	event Event,
 ) (time.Duration, error) {
 	switch action {
+	case ActionCreatePVOnly:
+		if err := r.ensurePVC(ctx, agent); err != nil {
+			return 0, err
+		}
+		if err := r.ensureOffsetsPVC(ctx, agent); err != nil {
+			return 0, err
+		}
+		return 0, nil
 	case ActionCreatePVAndPod:
 		// Both PVCs are ensured inside createPod, which covers every
 		// pod-creation path including retry recreations, so no

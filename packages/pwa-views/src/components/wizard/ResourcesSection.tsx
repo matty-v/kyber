@@ -1,5 +1,5 @@
 import { legacyRuntimeContracts } from '../../lib/runtime-contract'
-import type { Machine } from '../../lib/types'
+import type { AgentResourceOptions, Machine } from '../../lib/types'
 import { parseCpu, parseMemoryGi, type MachineAvailability } from '../../lib/machineTypes'
 import { bandFor } from './capacity'
 import { inputClass, labelClass } from './styles'
@@ -16,6 +16,7 @@ export interface ResourcesSectionProps {
   selectedMachine: Machine | null
   /** The selected machine's available capacity, or null when unknown. */
   machineAvailable: MachineAvailability | null
+  resourceOptions?: AgentResourceOptions | null
 }
 
 export function ResourcesSection({
@@ -23,7 +24,12 @@ export function ResourcesSection({
   set,
   selectedMachine,
   machineAvailable,
+  resourceOptions,
 }: ResourcesSectionProps) {
+  const cpuOptions: { value: string; reason?: string }[] = resourceOptions?.cpu ?? CPU_OPTIONS.map(value => ({ value }))
+  const memoryOptions: { value: string; reason?: string }[] = resourceOptions?.memory ?? MEMORY_OPTIONS.map(value => ({ value }))
+  const selectedCpu = cpuOptions.find(option => parseCpu(option.value) === parseCpu(state.cpu))?.value ?? state.cpu
+  const selectedMemory = memoryOptions.find(option => parseMemoryGi(option.value) === parseMemoryGi(state.memory))?.value ?? state.memory
   const newCpu = parseCpu(state.cpu)
   const newMem = parseMemoryGi(state.memory)
   const newDisk = parseMemoryGi(state.disk)
@@ -77,15 +83,16 @@ export function ResourcesSection({
         </label>
         <select
           id="agent-cpu"
-          value={state.cpu}
+          value={selectedCpu}
           onChange={(e) => set('cpu', e.target.value)}
           className={inputClass}
         >
-          {CPU_OPTIONS.map((v) => (
-            <option key={v} value={v}>
-              {v} vCPU
+          {cpuOptions.map(({ value, reason }) => (
+            <option key={value} value={value} disabled={Boolean(reason)}>
+              {parseCpu(value)} vCPU{reason ? ` — ${reason}` : ''}
             </option>
           ))}
+          {!cpuOptions.some(option => option.value === selectedCpu) && <option value={selectedCpu}>{parseCpu(selectedCpu)} vCPU</option>}
         </select>
       </div>
 
@@ -99,17 +106,31 @@ export function ResourcesSection({
         </label>
         <select
           id="agent-memory"
-          value={state.memory}
+          value={selectedMemory}
           onChange={(e) => set('memory', e.target.value)}
           className={inputClass}
         >
-          {MEMORY_OPTIONS.map((v) => (
-            <option key={v} value={v}>
-              {v}
+          {memoryOptions.map(({ value, reason }) => (
+            <option key={value} value={value} disabled={Boolean(reason)}>
+              {value}{reason ? ` — ${reason}` : ''}
             </option>
           ))}
+          {!memoryOptions.some(option => option.value === selectedMemory) && <option value={selectedMemory}>{selectedMemory}</option>}
         </select>
       </div>
+      {resourceOptions && <details className="text-sm text-text-secondary">
+        <summary className="cursor-pointer">Custom CPU or memory</summary>
+        <div className="mt-2 grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <label>CPU (cores)
+            <input type="number" min="0.1" step="0.05" value={Number.isFinite(newCpu) ? newCpu : ''}
+              onChange={event => set('cpu', `${Math.round(Number(event.target.value) * 1000)}m`)} className={inputClass} />
+          </label>
+          <label>Memory (GiB)
+            <input type="number" min="0.125" step="0.125" value={Number.isFinite(newMem) ? newMem : ''}
+              onChange={event => set('memory', `${Math.round(Number(event.target.value) * 1024)}Mi`)} className={inputClass} />
+          </label>
+        </div>
+      </details>}
 
       <div
         data-band={diskBand}

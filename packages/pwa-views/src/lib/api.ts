@@ -27,6 +27,7 @@ import type {
   InboundRotateResponse,
   SetModelRequest,
   SetResourcesRequest,
+  AgentResourceOptions,
   Machine,
   MachineListResponse,
   CreateMachineRequest,
@@ -457,6 +458,12 @@ export function createApiClient(cluster: Cluster) {
 
     setAgentResources: (name: string, body: SetResourcesRequest): Promise<Agent> =>
       request<Agent>('POST', `/api/v1/agents/${name}/set-resources`, body),
+
+    getAgentResourceOptions: (name: string): Promise<AgentResourceOptions> =>
+      request<AgentResourceOptions>('GET', `/api/v1/agents/${encodeURIComponent(name)}/resource-options`),
+
+    getMachineAgentResourceOptions: (name: string): Promise<AgentResourceOptions> =>
+      request<AgentResourceOptions>('GET', `/api/v1/machines/${encodeURIComponent(name)}/agent-resource-options`),
 
     // kyber#565: DELETE requires the ?confirm=<name> interlock. The human
     // confirmation happens in the UI dialog before this is called; here we pass

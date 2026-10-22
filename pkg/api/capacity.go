@@ -21,7 +21,7 @@ type AvailableResources struct {
 // the node's allocatable. This matches the k8s scheduler's bin-packing logic.
 //
 // Returns an error if the node doesn't exist or listing pods fails.
-func nodeAvailableResources(ctx context.Context, k8s client.Client, nodeName string) (*AvailableResources, error) {
+func nodeAvailableResources(ctx context.Context, k8s client.Reader, nodeName string) (*AvailableResources, error) {
 	// 1. Get the node's allocatable resources.
 	node := &corev1.Node{}
 	if err := k8s.Get(ctx, client.ObjectKey{Name: nodeName}, node); err != nil {

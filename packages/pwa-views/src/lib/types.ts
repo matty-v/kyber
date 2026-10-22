@@ -595,6 +595,21 @@ export interface SetResourcesRequest {
   memory?: string
 }
 
+export interface AgentResourceOptions {
+  machine: string
+  provider: string
+  currentCPU: string
+  currentMemory: string
+  availableCPU: string
+  availableMemory: string
+  minimumCPU: string
+  minimumMemory: string
+  cpuStep: string
+  memoryStep: string
+  cpu: { value: string; reason?: string }[]
+  memory: { value: string; reason?: string }[]
+}
+
 // ---- Machine types ----
 
 export type MachinePhase =

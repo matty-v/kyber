@@ -21,6 +21,8 @@ type Event string
 const (
 	// EventCRDCreated fires when a new Agent CRD is observed with no prior phase.
 	EventCRDCreated Event = "CRDCreated"
+	// EventCRDCreatedStopped provisions durable storage without booting a pod.
+	EventCRDCreatedStopped Event = "CRDCreatedStopped"
 	// EventPodScheduled fires when the pod has been accepted by the scheduler.
 	EventPodScheduled Event = "PodScheduled"
 	// EventPodScheduleFailed fires when the scheduler cannot place the pod.
@@ -124,6 +126,8 @@ type Action string
 const (
 	// ActionCreatePVAndPod means create the PVC and agent pod (first boot).
 	ActionCreatePVAndPod Action = "CreatePVAndPod"
+	// ActionCreatePVOnly creates durable claims for an initially stopped Agent.
+	ActionCreatePVOnly Action = "CreatePVOnly"
 	// ActionWaitForStart means wait for the pod to start (no k8s action required).
 	ActionWaitForStart Action = "WaitForStart"
 	// ActionLogAndEmitEvent means log the error and emit a k8s event.
@@ -183,6 +187,10 @@ func NextPhase(current kyberv1.AgentPhase, event Event) (TransitionResult, error
 		{phase: "", event: EventCRDCreated}: {
 			Action:    ActionCreatePVAndPod,
 			NextPhase: kyberv1.AgentPhaseCreating,
+		},
+		{phase: "", event: EventCRDCreatedStopped}: {
+			Action:    ActionCreatePVOnly,
+			NextPhase: kyberv1.AgentPhaseStopped,
 		},
 		// Creating transitions
 		{phase: kyberv1.AgentPhaseCreating, event: EventIdentityRepoReady}: {
