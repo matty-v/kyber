@@ -34,6 +34,7 @@ provisioner: pd.csi.storage.gke.io
 # in retaining the underlying disk after the Agent CR is gone.
 reclaimPolicy: Delete
 volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
 parameters:
   type: {{ .Values.storage.gcePD.diskType }}
   replication-type: {{ .Values.storage.gcePD.replicationType }}
