@@ -88,7 +88,7 @@ func TestExecGrantConfigurationRequiresStableIdentityAndExactResources(t *testin
 		if field == "machineResources" {
 			scope = "machines:exec"
 		}
-		for _, resource := range []string{"kyber-system/alpha", "*", "alpha", "kyber-system/*"} {
+		for _, resource := range []string{"kyber-system/alpha", "*", "alpha", "kyber-system/*", "kyber-system/alpha.beta", "kyber-system/1alpha"} {
 			raw := `[{"name":"exec","key":"private","principalId":"principal_exec","tenantId":"tenant_installation","credentialId":"credential_exec","credentialGeneration":1,"scopes":["` + scope + `"],"` + field + `":["` + resource + `"]}]`
 			_, err := api.ParseScopedCallers(raw)
 			if (err == nil) != (resource == "kyber-system/alpha") {

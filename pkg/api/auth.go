@@ -207,7 +207,7 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 			}
 			for _, resource := range grant.resources {
 				parts := strings.Split(resource, "/")
-				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 {
+				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 || !isValidName(parts[1]) {
 					return nil, fmt.Errorf("caller %q: exec resource must be an exact namespace/name", c.Name)
 				}
 			}
