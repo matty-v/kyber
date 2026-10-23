@@ -1581,3 +1581,28 @@ export interface RuntimeFeatureAvailability {
   state: 'available' | 'unavailable' | 'unknown'
   reason: string
 }
+export interface OperatorCredential {
+  id: string
+  name: string
+  displayName: string
+  accessLevel: 'administrator' | 'restricted'
+  state: 'accepted' | 'configured-not-accepted' | 'shared-key'
+  source: 'installation' | 'configuration'
+  scopes: string[]
+  agentResources: string[]
+  permissions: string[]
+  configured: boolean
+  configuredScopes?: string[]
+  configuredResources?: string[]
+  configurationDiffers?: boolean
+  authenticatesAs?: string
+}
+
+export interface OperatorCredentialInventory {
+  observedAt: string
+  inventoryScope: 'current-control-plane'
+  configurationAvailable: boolean
+  usageAvailable: boolean
+  credentials: OperatorCredential[]
+  warnings: string[]
+}

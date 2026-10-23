@@ -32,7 +32,7 @@ func (s *Server) taskEventCursorKey(r *http.Request) ([]byte, error) {
 	}
 	key := ""
 	if s.auth != nil {
-		if caller.Name == "legacy" {
+		if caller.Scopes.full {
 			key = s.auth.currentKey()
 		} else {
 			key, _ = s.auth.scopedCallerKey(caller.Name)
@@ -90,7 +90,7 @@ func (s *Server) decodeTaskEventCursor(r *http.Request, agentName, taskID, value
 	}
 	var c taskEventCursorClaims
 	caller := callerFrom(r.Context())
-	if json.Unmarshal(b, &c) != nil || caller == nil || c.Version != taskEventCursorVersion || c.TaskID != taskID || c.AgentResourceID != s.Namespace+"/"+agentName || c.TenantID != caller.TenantID || c.PrincipalID != caller.PrincipalID || c.CredentialID != caller.CredentialID || c.CredentialGeneration != caller.CredentialGeneration || c.Sequence < 0 {
+	if json.Unmarshal(b, &c) != nil || caller == nil || c.Version != taskEventCursorVersion || c.TaskID != taskID || c.AgentResourceID != s.Namespace+"/"+agentName || c.TenantID != caller.TenantID || c.PrincipalID != caller.PrincipalID || !taskCursorCredentialMatches(c.CredentialID, caller) || c.CredentialGeneration != caller.CredentialGeneration || c.Sequence < 0 {
 		return 0, taskstore.ErrInvalidCursor
 	}
 	return c.Sequence, nil
@@ -109,3 +109,15 @@ func splitCursor(v string) []string {
 }
 
 var errTaskEventStreamUnavailable = errors.New("task event stream requires PostgreSQL")
+
+// Older installation-administrator cursors remain usable after the display and
+// credential identity change. This is applied only after signature verification
+// and the caller/tenant/resource binding checks; a configured name grants no role.
+func taskCursorCredentialMatches(id string, caller *Caller) bool {
+	if id == caller.CredentialID {
+		return true
+	}
+	return caller.Scopes.full && caller.PrincipalID == installationAdminPrincipalID &&
+		caller.TenantID == installationTenantID && caller.CredentialID == installationAdminCredentialID &&
+		id == "credential_legacy_shared_key"
+}

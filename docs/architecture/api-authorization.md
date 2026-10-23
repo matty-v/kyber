@@ -4,6 +4,28 @@
 > single-key authentication wall. Read this before changing `pkg/api/auth.go`,
 > `pkg/api/authz.go`, or the `setAgentDesiredPhase` chokepoint.
 
+## Current operator boundary
+
+Restricted credentials are checked by `operatorBoundary` before
+route dispatch. Routes without an explicit supported delegation require the
+installation administrator, regardless of `KYBER_AUTHZ_ENFORCE`. Machine
+operations, terminal access, logs, secrets, configuration and administrator-key
+rotation are administrator-only. Agent lifecycle delegation requires both a
+lifecycle grant and an exact allowed Agent resource; confirmed Agent deletion
+requires `lifecycle:admin`. Generic Agent PATCH only delegates a sole
+`publicCapabilities` update to `capabilities:write`, returning 204.
+
+`metrics:read` grants only the explicitly listed fleet metric reads in that
+boundary. Task, request, capability, archive and usage routers retain their
+additional scope, resource and ownership checks. New operator routes default
+to administrator-only until deliberately delegated.
+
+The supported full-access identity is `installation-admin`. See
+[operator credential inventory](../operator/operator-credentials.md) for the
+admin UI, accepted/configured distinction and compatibility details. The
+historical rollout discussion below describes individual handler checks; it
+does not relax this always-enforced outer boundary.
+
 ## Why
 
 Authentication answers *"is this a valid key?"*; it does **not** answer *"may

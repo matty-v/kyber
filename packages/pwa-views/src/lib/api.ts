@@ -3,6 +3,7 @@
 // No globals — multiple clusters can coexist in one React tree.
 
 import type {
+  OperatorCredentialInventory,
   AgentAuthType,
   Agent,
   AgentInboundBinding,
@@ -296,10 +297,13 @@ export function createApiClient(cluster: Cluster) {
       request<AgentModelsResponse>('GET', `/api/v1/agents/${encodeURIComponent(name)}/models`),
 
     // Rotate the control-plane API key (#143). Returns the new key, which the
-    // caller is responsible for storing in localStorage and showing to the
-    // operator once. Other browser sessions hit 401 on next request.
+    // UI shows once. Cookie clients receive a refreshed session; bearer
+    // connections must be updated with the replacement credential.
     rotateApiKey: (): Promise<{ apiKey: string }> =>
       request<{ apiKey: string }>('POST', '/api/v1/rotate-api-key'),
+
+    getOperatorCredentials: (): Promise<OperatorCredentialInventory> =>
+      request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials'),
 
     // Anthropic API key — operator-supplied credential the detection
     // poller uses for the Anthropic Models API (kyber#375 PR-A). The
