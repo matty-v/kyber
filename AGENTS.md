@@ -488,6 +488,18 @@ generate audited history reads. UI-owned requests abort on selection/unmount.
 Routine history reads are hidden by default in the UI but still recorded;
 denied/failed/unknown history attempts remain visible. The API defaults to
 including all records, with `includeHistoryViews=false` as an optional filter.
+
+`pkg/operatorcredentials` is a candidate registry persistence foundation, not an
+active authentication source. Its public factory creates a direct Kubernetes
+client with a static Secret mapper and bounded requests. Documents use opaque
+resource-version CAS, immutable identity/provenance, separate material/policy
+revisions, retained revocation tombstones and a bounded pending-operation outbox.
+Material is private; public JSON/diagnostic formatting is blocked/redacted.
+Read `docs/design/2026-10-23-operator-credential-store.md` before integration.
+Runtime adoption, grant compilation, cookie/stream resolution and upgrade/
+rollback compatibility gates must be complete before management activation.
+The opt-in real-API test in this package uses an inert Secret only in the
+verified empty GCP dev cluster; it must never target production credentials.
 `pkg/usagestore` owns the new Postgres schema for local usage evidence and
 detected gaps. Its event identity includes the immutable Agent UID; token
 classes use null for unknown and zero for observed zero. It is not a source of
