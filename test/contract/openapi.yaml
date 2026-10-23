@@ -15,6 +15,54 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/operator-credentials:
+    get:
+      operationId: listOperatorCredentials
+      summary: Inspect active and configured operator credentials
+      description: Requires installation administrator access. Returns safe metadata for this control plane and additional configured records. No key values, key fragments, or historical usage claims are returned.
+      responses:
+        '200':
+          description: Credential inventory and its coverage limitations
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [observedAt, inventoryScope, configurationAvailable, usageAvailable, credentials, warnings]
+                properties:
+                  observedAt: {type: string, format: date-time}
+                  inventoryScope: {type: string, enum: [current-control-plane]}
+                  configurationAvailable: {type: boolean}
+                  usageAvailable: {type: boolean, enum: [false]}
+                  warnings: {type: array, items: {type: string}}
+                  credentials:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id, name, displayName, accessLevel, state, source, scopes, agentResources, permissions, configured]
+                      properties:
+                        id: {type: string}
+                        name: {type: string}
+                        displayName: {type: string}
+                        accessLevel: {type: string, enum: [administrator, restricted]}
+                        state: {type: string, enum: [accepted, configured-not-accepted, shared-key]}
+                        source: {type: string, enum: [installation, configuration]}
+                        scopes: {type: array, items: {type: string}}
+                        agentResources: {type: array, items: {type: string}}
+                        permissions: {type: array, items: {type: string}}
+                        configured: {type: boolean}
+                        configuredScopes: {type: array, items: {type: string}}
+                        configuredResources: {type: array, items: {type: string}}
+                        configurationDiffers: {type: boolean}
+                        authenticatesAs: {type: string}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Installation administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
   /api/v1/rotate-api-key:
     post:
       operationId: rotateInstallationAPIKey

@@ -791,6 +791,11 @@ Installation credential management must use the always-enforced
 `requireInstallationAdmin` gate before backend access. `lifecycle:admin` is an
 Agent lifecycle grant, not installation administrator access; never let the
 observe-only lifecycle flag permit API-key rotation or management.
+The administrator-only `GET /api/v1/operator-credentials` projects whitelisted
+metadata from the live authenticator and configured caller records. Never
+serialize `ScopedCaller` or Kubernetes Secret data. System identities use
+`installation-admin`; old signed task-event cursor IDs have a narrowly scoped
+administrator compatibility reader. See `docs/operator/operator-credentials.md`.
 
 1. Handler in `pkg/api/routes_<group>.go` (new group → new file); register in
    `server.go` `registerProtectedRoutes` (or `registerWebhookRoutes` for

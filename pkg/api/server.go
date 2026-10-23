@@ -835,6 +835,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// and swaps it on the live authenticator so the new key works immediately
 	// and the old key returns 401. See #143.
 	mux.HandleFunc("/api/v1/rotate-api-key", s.handleRotateAPIKey)
+	mux.HandleFunc("/api/v1/operator-credentials", s.handleOperatorCredentials)
 
 	// GitHub repo list + collision check (#134).
 	mux.HandleFunc("/api/v1/github/repos", s.handleGitHubRepos)

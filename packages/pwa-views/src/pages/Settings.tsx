@@ -13,6 +13,7 @@ import { MetricsTab } from './MetricsTab'
 import { Logs } from './Logs'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { useCluster } from '../lib/cluster-context'
+import { OperatorCredentialsCard } from '../components/OperatorCredentialsCard'
 import { useEffectiveModelList } from '../lib/models'
 import type { AvailableModel } from '../lib/types'
 import {
@@ -68,7 +69,7 @@ export function Settings() {
         {activeSection === 'access' && (
           <div className="space-y-4">
             {cluster.id === 'local' && <APIConnectionCard />}
-            <RotateApiKeyCard />
+            <OperatorCredentialsCard><RotateApiKeyCard /></OperatorCredentialsCard>
           </div>
         )}
       </LocalNavigation>
@@ -405,6 +406,7 @@ function HarnessDefaults(props: HarnessDefaultsProps) {
 }
 
 function RotateApiKeyCard() {
+  const cluster = useCluster()
   const rotate = useRotateApiKey()
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [newKey, setNewKey] = useState<string | null>(null)
@@ -434,11 +436,10 @@ function RotateApiKeyCard() {
   return (
     <>
       <Card className="max-w-3xl mt-4">
-        <h2 className="text-sm font-medium text-text-muted mb-1">Rotate API key</h2>
+        <h2 className="text-sm font-medium text-text-muted mb-1">Rotate installation administrator key</h2>
         <p className="text-xs text-text-muted mb-3">
-          Generates a new key, persists it to the kyber-api-credentials Secret,
-          and updates the live authenticator. The old key is rejected
-          immediately. Other browser sessions will need the new key pasted in.
+          Replaces the shared administrator key immediately. Other clients using
+          it need the replacement, and other browser sessions must sign in again.
         </p>
         <Button
           variant="danger"
@@ -448,14 +449,14 @@ function RotateApiKeyCard() {
           disabled={rotate.isPending}
         >
           <RefreshCw className="h-4 w-4" />
-          Rotate API key
+          Rotate administrator key
         </Button>
       </Card>
 
       <ConfirmDialog
         open={confirmOpen}
-        title="Rotate API key?"
-        message="This generates a new control-plane API key and revokes the current one. All other browser sessions will be signed out. Continue?"
+        title="Rotate installation administrator key?"
+        message="Clients using the old administrator key will lose access immediately, and other browser sessions will be signed out. Continue?"
         confirmLabel="Rotate"
         cancelLabel="Cancel"
         dangerous
@@ -480,11 +481,11 @@ function RotateApiKeyCard() {
           />
           <div className="relative z-10 w-full max-w-md rounded-xl border border-border-default bg-surface-overlay p-6 shadow-xl">
             <h2 id="rotated-key-title" className="font-display text-base font-semibold text-text-primary">
-              New API key
+              New administrator key
             </h2>
             <p className="mt-2 text-sm text-text-muted">
-              Copy this now. It will not be shown again. Paste it into other
-              browsers / devices that need access.
+              Copy this now. It will not be shown again. Update administrator
+              clients that need it, and give it only to administrators.
             </p>
             <div className="mt-3 flex items-stretch gap-2">
               <code className="flex-1 break-all rounded-lg border border-border-default bg-surface-base px-3 py-2 font-mono text-xs text-text-primary">
@@ -500,8 +501,9 @@ function RotateApiKeyCard() {
               </button>
             </div>
             <p className="mt-3 text-xs text-text-muted">
-              This browser continues with a refreshed HttpOnly session. The raw
-              key is not stored in browser-readable storage.
+              {cluster.apiKey
+                ? 'Update this connection with the replacement key to continue.'
+                : 'This browser stays signed in. The key is not kept in browser storage.'}
             </p>
             <div className="mt-5 flex justify-end">
               <Button variant="primary" size="sm" onClick={() => setNewKey(null)}>

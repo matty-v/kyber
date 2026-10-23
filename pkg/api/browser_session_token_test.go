@@ -230,7 +230,7 @@ func TestBrowserSessionSurvivesAControlPlaneRestart(t *testing.T) {
 	if err != nil {
 		t.Fatalf("session did not survive the restart: %v", err)
 	}
-	if caller.Name != "legacy" || !caller.Scopes.Has(ScopeLifecycleAdmin) {
+	if caller.Name != "installation-admin" || !caller.Scopes.Has(ScopeLifecycleAdmin) {
 		t.Errorf("caller = %+v, want the full-scope legacy caller", caller)
 	}
 }
@@ -388,5 +388,18 @@ func TestSessionCookieIsReplacedNotAppended(t *testing.T) {
 	cookies := rr.Result().Cookies()
 	if _, err := verifyBrowserSession("rotated-key", cookies[0].Value, time.Now()); err != nil {
 		t.Errorf("the surviving cookie does not verify under the new key: %v", err)
+	}
+}
+
+func TestBrowserSessionRejectsDuplicateCallerNames(t *testing.T) {
+	a := NewAPIKeyAuthenticator("root", []ScopedCaller{
+		{Name: "duplicate", Key: "low", Scopes: []string{}},
+		{Name: "duplicate", Key: "high", Scopes: []string{"lifecycle:admin"}},
+	}...)
+	if _, err := a.CreateBrowserSession(Caller{Name: "duplicate", Scopes: newScopeSet()}); err == nil {
+		t.Fatal("ambiguous caller received a browser session")
+	}
+	if _, err := a.callerForSession(&browserSessionClaims{Name: "duplicate"}); err == nil {
+		t.Fatal("old ambiguous session resolved to another credential's authority")
 	}
 }

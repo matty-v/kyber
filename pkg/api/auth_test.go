@@ -20,7 +20,7 @@ func TestAPIKeyAuthenticator_LegacyKeyIsFullScope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("legacy key should authenticate: %v", err)
 	}
-	if caller.Name != "legacy" {
+	if caller.Name != "installation-admin" {
 		t.Errorf("caller name = %q, want legacy", caller.Name)
 	}
 	// Full scope satisfies every check, including the highest verb.
@@ -83,7 +83,7 @@ func TestAPIKeyAuthenticator_TokenQueryParam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("?token= should authenticate on a WebSocket upgrade: %v", err)
 	}
-	if caller.Name != "legacy" {
+	if caller.Name != "installation-admin" {
 		t.Errorf("caller name = %q, want legacy", caller.Name)
 	}
 

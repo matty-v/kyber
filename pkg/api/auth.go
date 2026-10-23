@@ -65,7 +65,7 @@ type ScopeSet struct {
 }
 
 // newFullScopeSet returns a ScopeSet that satisfies every scope check — used for
-// the legacy shared API key so single-key installs are unaffected by authz.
+// the installation administrator key so single-key installs are unaffected by authz.
 func newFullScopeSet() ScopeSet { return ScopeSet{full: true} }
 
 // newScopeSet builds an explicit scope set.
@@ -234,25 +234,25 @@ type scopedKey struct {
 }
 
 // APIKeyAuthenticator validates the Bearer token in the Authorization header
-// against the legacy shared key (full scope, mutable via SetKey for rotation
+// against the installation administrator key (full scope, mutable via SetKey for rotation
 // #143) and an optional set of named scoped keys (kyber#474).
 type APIKeyAuthenticator struct {
 	mu      sync.RWMutex
-	key     string // legacy full-scope key (rotatable)
+	key     string // installation administrator key (rotatable)
 	callers []scopedKey
 }
 
 const (
-	legacyPrincipalID  = "principal_installation_admin"
-	legacyTenantID     = "tenant_installation"
-	legacyCredentialID = "credential_legacy_shared_key"
+	installationAdminPrincipalID  = "principal_installation_admin"
+	installationTenantID          = "tenant_installation"
+	installationAdminCredentialID = "credential_installation_admin"
 )
 
-func legacyCaller() *Caller {
-	return &Caller{Name: "legacy", PrincipalID: legacyPrincipalID, TenantID: legacyTenantID, Kind: "installation-admin", Issuer: "kyber", Subject: "legacy-shared-key", CredentialID: legacyCredentialID, CredentialGeneration: 1, Scopes: newFullScopeSet(), AgentResources: newResourceSet("*")}
+func installationAdminCaller() *Caller {
+	return &Caller{Name: "installation-admin", PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Kind: "installation-admin", Issuer: "kyber", Subject: "installation-admin-key", CredentialID: installationAdminCredentialID, CredentialGeneration: 1, Scopes: newFullScopeSet(), AgentResources: newResourceSet("*")}
 }
 
-// NewAPIKeyAuthenticator returns an Authenticator that accepts the legacy key
+// NewAPIKeyAuthenticator returns an Authenticator that accepts the installation administrator key
 // (resolving to a full-scope caller) plus any scoped callers. Existing callers
 // pass no scoped callers and get exactly the prior behavior.
 func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenticator {
@@ -305,19 +305,21 @@ func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error
 	return signBrowserSession(apiKey, caller, binding, time.Now(), browserSessionTTL)
 }
 
-// scopedCallerKey returns the current key of the named scoped caller. Matches
-// the LAST entry, because that is what Authenticate does when two entries share
-// a name — the same principal must not resolve differently depending on whether
-// it presents a cookie or a bearer key.
+// scopedCallerKey rejects ambiguous names rather than issuing a cookie bound
+// to a different configured credential with the same name.
 func (a *APIKeyAuthenticator) scopedCallerKey(name string) (string, bool) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
-	for i := len(a.callers) - 1; i >= 0; i-- {
-		if a.callers[i].caller.Name == name {
-			return a.callers[i].key, true
+	key, found := "", false
+	for _, entry := range a.callers {
+		if entry.caller.Name == name {
+			if found {
+				return "", false
+			}
+			key, found = entry.key, true
 		}
 	}
-	return "", false
+	return key, found
 }
 
 // callerForSession resolves verified session claims into the caller's CURRENT
@@ -333,16 +335,29 @@ func (a *APIKeyAuthenticator) callerForSession(claims *browserSessionClaims) (*C
 	defer a.mu.RUnlock()
 
 	if claims.FullScope {
-		// Full scope is the legacy shared key's authority, so it exists only
+		// Full scope is the installation administrator key's authority, so it exists only
 		// as long as that key does.
 		if a.key == "" {
 			return nil, errors.New("browser session names the shared key, which is no longer configured")
 		}
-		return legacyCaller(), nil
+		return installationAdminCaller(), nil
 	}
-	// Last match, mirroring Authenticate's bearer resolution, so a duplicated
-	// caller name cannot grant one authority over the cookie and another over
-	// the Bearer header.
+	// Reject ambiguous session identities, including cookies issued before this
+	// validation existed. A name alone must never select another key's grants.
+	matches := 0
+	for _, entry := range a.callers {
+		configured := entry.caller
+		if claims.PrincipalID != "" {
+			if configured.PrincipalID == claims.PrincipalID && configured.CredentialID == claims.CredentialID && configured.CredentialGeneration == claims.CredentialGeneration {
+				matches++
+			}
+		} else if configured.Name == claims.Name {
+			matches++
+		}
+	}
+	if matches > 1 {
+		return nil, errors.New("browser session identity is ambiguous")
+	}
 	for i := len(a.callers) - 1; i >= 0; i-- {
 		configured := a.callers[i].caller
 		if claims.PrincipalID != "" {
@@ -413,7 +428,7 @@ func (a *APIKeyAuthenticator) SetKey(key string) {
 	a.key = key
 }
 
-// currentKey returns a snapshot of the active legacy key under read-lock.
+// currentKey returns a snapshot of the active installation administrator key under read-lock.
 func (a *APIKeyAuthenticator) currentKey() string {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -432,8 +447,8 @@ func (a *APIKeyAuthenticator) currentKey() string {
 //     keys in URLs leak into proxy/ingress access logs and browser history.
 //
 // Resolution: the presented key is compared (constant-time) against every scoped
-// caller key AND the legacy key. A scoped match resolves to that caller's
-// scopes; the legacy key resolves to a full-scope caller. To avoid a timing
+// caller key AND the installation administrator key. A scoped match resolves to that caller's
+// scopes; the installation administrator key resolves to a full-scope caller. To avoid a timing
 // oracle on WHICH key matched, all comparisons run before a decision is made.
 func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 	if r.Header.Get("Authorization") == "" {
@@ -456,7 +471,7 @@ func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 	}
 
 	a.mu.RLock()
-	legacy := a.key
+	installationKey := a.key
 	callers := a.callers
 	a.mu.RUnlock()
 
@@ -467,8 +482,8 @@ func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 			matched = &c
 		}
 	}
-	if subtle.ConstantTimeCompare([]byte(presented), []byte(legacy)) == 1 {
-		matched = legacyCaller()
+	if subtle.ConstantTimeCompare([]byte(presented), []byte(installationKey)) == 1 {
+		matched = installationAdminCaller()
 	}
 	if matched == nil {
 		return nil, errUnauthorized("invalid API key")

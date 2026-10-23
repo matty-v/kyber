@@ -1,6 +1,10 @@
 # Kyber Platform API Keys
 
-The **Kyber API key** is the single credential that authorizes all operator-facing requests against the control-plane API (`/api/v1/*`). One key per Kyber install. Anyone with the key can do anything the API exposes — create agents, edit specs, restart pods, rotate secrets, the lot.
+Administrators can inspect active and configured operator credentials in
+**Settings → API access**. See [operator credential inventory](operator/operator-credentials.md)
+for its coverage, identity continuity, and current management/history limits.
+
+The Kyber operator API accepts an **installation administrator key** and optional named **restricted integration keys**. The administrator key grants all operator access: creating Agents, changing configuration, opening terminals, and managing credentials. Restricted keys grant only explicitly supported operations and resources.
 
 This doc is the operator reference for managing it: where it lives, how to rotate, how to handle compromise, and what it does (and doesn't) protect.
 
@@ -13,7 +17,7 @@ This doc is the operator reference for managing it: where it lives, how to rotat
 - **Rotate (manual, e.g. compromise)**: `kubectl edit secret kyber-api-credentials` + restart the control-plane pod.
 - **Browser session**: the embedded PWA exchanges the pasted key for an opaque,
   HttpOnly, same-site session cookie; it does not retain the key in readable storage.
-- **Single-tenant**: there is no per-key audit trail or RBAC. The key is a shared secret between operator and control-plane.
+- **Attribution**: a shared administrator key cannot identify individual people or tools. Separate named integration keys provide caller identities; a durable access-history view is not available yet.
 
 ## Where the key lives
 
@@ -75,7 +79,7 @@ Single-tenant install — **everything**:
 - Rotate the API key itself
 - Read fleet summary, telemetry, and OS-level pod logs
 
-The legacy single key grants **everything** (full scope). For agent **lifecycle**
+The installation administrator key grants **everything** (full scope). For agent **lifecycle**
 verbs specifically, you can now issue narrower keys — see below.
 
 ### Caller scopes and principal identity
@@ -135,7 +139,7 @@ principal, tenant, credential-generation, and exact `agentResources`
 envelope. The scope permits only the privacy-safe projection at
 `GET /api/v1/agents/{name}/capabilities`; it never exposes private evidence,
 skill reports, prompts, runtime metadata, or operator configuration. The
-legacy shared key remains full-scope for compatibility.
+installation administrator key remains full-scope for compatibility.
 
 The installation `api-key` keeps its administrator access. The historical
 `api.authz.enforce` setting controls the lifecycle helper's observe-only logs;
@@ -165,7 +169,7 @@ Rules:
 
 - **Exactly one of `key` / `keyFrom`** per entry. Both, or neither, is a parse
   error and — per the existing fail-closed contract — rejects **all** scoped
-  callers for that boot (the legacy key still works).
+  callers for that boot (the installation administrator key still works).
 - **Same namespace only.** The reference resolves in the control plane's own
   namespace. There is no `namespace` field, deliberately: the restriction is
   the application-level boundary that keeps the callers doc from designating

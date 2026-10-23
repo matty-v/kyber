@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.68.0
+
+- Add an administrator-only operator credential inventory to Settings with active/configured access and clear coverage limits.
+
 ## 0.67.0
 
 - Add an Agent disk increase control with integer GiB choices, preflight support and capacity details, restart confirmation, and expansion progress. The control offers no shrink action.
