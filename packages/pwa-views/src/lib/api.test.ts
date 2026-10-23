@@ -75,6 +75,18 @@ describe('getComputeConfig', () => {
   })
 })
 
+describe('security history', () => {
+  it('encodes filters and preserves wide counter strings', async () => {
+    const page = { observedAt: '2026-10-23T00:00:00Z', snapshot: '9007199254740993',
+      coverage: 'partial-sensitive-access', warnings: [], items: [{ credentialGeneration: '18446744073709551615' }] }
+    mockFetch(page)
+    const result = await createApiClient(mockCluster).getSecurityEvents({ credentialId: 'issuer/monitor', action: 'logs:read', limit: 2, cursor: 'opaque-continuation' })
+    expect(fetch).toHaveBeenCalledWith('http://localhost:8080/api/v1/security-events?credentialId=issuer%2Fmonitor&action=logs%3Aread&limit=2&cursor=opaque-continuation', expect.any(Object))
+    expect(result.snapshot).toBe('9007199254740993')
+    expect(result.items[0].credentialGeneration).toBe('18446744073709551615')
+  })
+})
+
 describe('logging discovery', () => {
   beforeEach(() => {
     localStorage.clear()

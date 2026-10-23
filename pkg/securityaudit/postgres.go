@@ -92,6 +92,15 @@ type Page struct {
 	Snapshot int64
 }
 
+// Validate checks the same bounded whitelist used by Query without touching
+// storage, so public readers can reject invalid input before audit admission.
+func (f Filter) Validate() error {
+	if !f.valid() {
+		return ErrInvalid
+	}
+	return nil
+}
+
 func (f Filter) valid() bool {
 	if !namespaceName.MatchString(f.Namespace) || f.Limit < 1 || f.Limit > 200 {
 		return false

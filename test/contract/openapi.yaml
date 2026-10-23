@@ -259,6 +259,57 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
+  /api/v1/security-events:
+    get:
+      operationId: listSecurityEvents
+      summary: Read retained operator security events
+      description: Administrator only, no-store. Partial sensitive-access history, not a complete authentication or credential lifecycle ledger. Each page is audited before reading. Cursors are filter-bound continuations, never authorization tokens. Records are newest recorded first; retention may remove records between pages.
+      parameters:
+        - {in: query, name: since, schema: {type: string, format: date-time}}
+        - {in: query, name: until, schema: {type: string, format: date-time}, description: Exclusive upper observation time}
+        - {in: query, name: principalId, schema: {type: string, maxLength: 512}}
+        - {in: query, name: credentialId, schema: {type: string, maxLength: 512}}
+        - {in: query, name: action, schema: {type: string}}
+        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, log-container]}}
+        - {in: query, name: resourceName, schema: {type: string, maxLength: 512}}
+        - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
+        - {in: query, name: cursor, schema: {type: string, maxLength: 1024}}
+      responses:
+        '200':
+          description: Retained events and explicit collection limitations
+          headers:
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [observedAt, items, snapshot, coverage, warnings]
+                properties:
+                  observedAt: {type: string, format: date-time}
+                  items: {type: array, maxItems: 200, items: {$ref: '#/components/schemas/SecurityEvent'}}
+                  nextCursor: {type: string}
+                  snapshot: {type: string, pattern: '^[0-9]+$'}
+                  coverage: {type: string, enum: [partial-sensitive-access]}
+                  warnings: {type: array, items: {type: string}}
+        '400':
+          description: Invalid or mismatched filters or continuation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: Required audit write or history query unavailable
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
   /api/v1/rotate-api-key:
     post:
       operationId: rotateInstallationAPIKey
@@ -4033,6 +4084,31 @@ components:
           type: string
           description: Stable failure code, present only for failed requests.
 
+    SecurityEvent:
+      type: object
+      additionalProperties: false
+      required: [id, operationId, observedAt, namespace, principalId, credentialId, credentialGeneration, requestId, action, resourceKind, resourceName, phase, outcome, sequence, storedAt]
+      properties:
+        id: {type: string, format: uuid}
+        operationId: {type: string, format: uuid}
+        observedAt: {type: string, format: date-time}
+        storedAt: {type: string, format: date-time}
+        sequence: {type: string, pattern: '^[1-9][0-9]*$'}
+        namespace: {type: string}
+        principalId: {type: string}
+        credentialId: {type: string}
+        credentialGeneration: {type: string, pattern: '^[0-9]+$'}
+        credentialAuthority: {type: string, enum: [configuration]}
+        requestId: {type: string}
+        method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
+        action: {type: string}
+        resourceKind: {type: string, enum: [installation, agent, machine, credential, log-container]}
+        resourceName: {type: string}
+        phase: {type: string, enum: [authentication, authorization, completion]}
+        outcome: {type: string, enum: [allow, deny, success, failure, unknown]}
+        logComponent: {type: string}
+        logWorkload: {type: string}
+        container: {type: string}
     ErrorDetail:
       type: object
       required: [code, message]
