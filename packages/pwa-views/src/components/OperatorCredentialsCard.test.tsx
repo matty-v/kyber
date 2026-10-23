@@ -55,4 +55,15 @@ describe('operator credential inventory', () => {
     expect(screen.queryByText('jack-bridge')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Administrator rotation' })).not.toBeInTheDocument()
   })
+  it('keeps rotation controls mounted during a pending inventory refresh', async () => {
+    state.api.getOperatorCredentials.mockResolvedValueOnce(inventory)
+      .mockImplementationOnce(() => new Promise(() => {}))
+    const user = userEvent.setup()
+    render(<OperatorCredentialsCard><button>Administrator rotation</button></OperatorCredentialsCard>)
+    const rotation = await screen.findByRole('button', { name: 'Administrator rotation' })
+    await user.click(screen.getByRole('button', { name: 'Refresh' }))
+    expect(await screen.findByRole('status')).toHaveTextContent('Loading credentials')
+    expect(screen.getByRole('button', { name: 'Administrator rotation' })).toBe(rotation)
+  })
+
 })

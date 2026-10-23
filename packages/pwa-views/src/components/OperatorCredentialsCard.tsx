@@ -24,7 +24,11 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
     async function load() {
       if (inFlight) return
       inFlight = true
-      setResult({ client: api, loading: true })
+      // Keep an open rotation dialog mounted while a same-connection
+      // refresh runs. A denied response still clears all protected content.
+      setResult((previous) => previous?.client === api
+        ? { ...previous, loading: true }
+        : { client: api, loading: true })
       try {
         const data = await api.getOperatorCredentials()
         if (!cancelled) setResult({ client: api, data, loading: false })
