@@ -1633,6 +1633,7 @@ export interface SecurityEvent {
 }
 
 export interface SecurityEventFilters {
+  includeHistoryViews?: boolean
   since?: string
   until?: string
   principalId?: string

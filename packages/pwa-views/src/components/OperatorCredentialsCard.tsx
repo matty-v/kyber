@@ -4,6 +4,7 @@ import { useCluster } from '../lib/cluster-context'
 import type { OperatorCredentialInventory } from '../lib/types'
 import { Button } from './Button'
 import { Card } from './Card'
+import { SecurityHistoryCard } from './SecurityHistoryCard'
 
 export function OperatorCredentialsCard({ children }: { children?: ReactNode }) {
   const cluster = useCluster()
@@ -21,27 +22,32 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
   useEffect(() => {
     let cancelled = false
     let inFlight = false
+    let controller: AbortController | undefined
+    let timeout: ReturnType<typeof setTimeout> | undefined
     async function load() {
       if (inFlight) return
       inFlight = true
+      controller = new AbortController()
+      timeout = setTimeout(() => controller?.abort(), 4_000)
       // Keep an open rotation dialog mounted while a same-connection
       // refresh runs. A denied response still clears all protected content.
       setResult((previous) => previous?.client === api
         ? { ...previous, loading: true }
         : { client: api, loading: true })
       try {
-        const data = await api.getOperatorCredentials()
+        const data = await api.getOperatorCredentials(controller.signal)
         if (!cancelled) setResult({ client: api, data, loading: false })
       } catch (error) {
         const status = typeof error === 'object' && error !== null && 'status' in error ? Number(error.status) : 0
         if (!cancelled) setResult({ client: api, error: status, loading: false })
       } finally {
+        clearTimeout(timeout)
         inFlight = false
       }
     }
     void load()
-    const timer = setInterval(() => { void load() }, 30_000)
-    return () => { cancelled = true; clearInterval(timer) }
+    const timer = setInterval(() => { void load() }, 5_000)
+    return () => { cancelled = true; clearInterval(timer); clearTimeout(timeout); controller?.abort() }
   }, [api, refresh])
 
   const current = result?.client === api ? result : undefined
@@ -88,11 +94,11 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
           </details>}
         </li>)}
       </ul>}
-      <p className="mt-4 text-xs text-text-muted">Checked {new Date(data.observedAt).toLocaleString()}. Usage history is not available yet.</p>
+      <p className="mt-4 text-xs text-text-muted">Inventory checked {new Date(data.observedAt).toLocaleString()}. Complete usage totals are not available.</p>
       <details className="mt-2 text-xs text-text-muted">
         <summary className="cursor-pointer">About this inventory</summary>
         <p className="mt-2">Keys shared by several people or tools cannot identify individual users. Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.</p>
       </details>
     </>}
-  </Card>{data && children}</>
+  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && children}</>
 }

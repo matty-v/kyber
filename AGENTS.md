@@ -479,6 +479,15 @@ durable admission before backend effects. Administrator-only
 every history read is itself audited. This is partial sensitive-access history,
 not complete authentication usage or credential lifecycle coverage. See
 `docs/architecture/api-authorization.md` before extending collection or readers.
+The shared Settings API-access view includes a private, connection-bound recent
+access card. It distinguishes authorization from completion and reports partial
+coverage. Inventory checks run every five seconds with a four-second abort;
+failure or denied access unmounts protected history and management controls.
+History itself loads on demand, so opening the page does not continuously
+generate audited history reads. UI-owned requests abort on selection/unmount.
+Routine history reads are hidden by default in the UI but still recorded;
+denied/failed/unknown history attempts remain visible. The API defaults to
+including all records, with `includeHistoryViews=false` as an optional filter.
 `pkg/usagestore` owns the new Postgres schema for local usage evidence and
 detected gaps. Its event identity includes the immutable Agent UID; token
 classes use null for unknown and zero for observed zero. It is not a source of

@@ -74,12 +74,20 @@ func TestSecurityHistoryBoundedFilterPaginationAndAudit(t *testing.T) {
 	if w.Code != 400 || store.queries != before {
 		t.Fatal("cursor reused for another filter")
 	}
+	w = get(query + "&includeHistoryViews=false&cursor=" + url.QueryEscape(body.NextCursor))
+	if w.Code != 400 || store.queries != before {
+		t.Fatal("cursor reused across history-view selection")
+	}
+	w = get(query + "&includeHistoryViews=false")
+	if w.Code != 200 || !store.filter.ExcludeRoutineAuditReads {
+		t.Fatal("history-view filter was not applied")
+	}
 }
 
 func TestSecurityHistoryInvalidInputDoesNotReadOrEcho(t *testing.T) {
 	store := &historyStore{SecurityAudit: testutil.NewSecurityAudit()}
 	h := (&api.Server{APIKey: testAPIKey, Namespace: "kyber-system", SecurityAudit: store}).BuildHandler()
-	for _, query := range []string{"?limit=201", "?limit=0", "?limit=1&limit=2", "?namespace=other", "?action=private-marker", "?since=wrong", "?since=2026-10-24T00:00:00Z&until=2026-10-23T00:00:00Z", "?cursor=private-marker", "?credentialId=", "?since=%xx", "?resourceName=alpha", "?resourceKind=unknown"} {
+	for _, query := range []string{"?limit=201", "?limit=0", "?limit=1&limit=2", "?namespace=other", "?action=private-marker", "?since=wrong", "?since=2026-10-24T00:00:00Z&until=2026-10-23T00:00:00Z", "?cursor=private-marker", "?credentialId=", "?since=%xx", "?resourceName=alpha", "?resourceKind=unknown", "?includeHistoryViews=0"} {
 		r := httptest.NewRequest("GET", "/api/v1/security-events"+query, nil)
 		r.Header.Set("Authorization", "Bearer "+testAPIKey)
 		w := httptest.NewRecorder()

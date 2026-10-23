@@ -265,6 +265,7 @@ paths:
       summary: Read retained operator security events
       description: Administrator only, no-store. Partial sensitive-access history, not a complete authentication or credential lifecycle ledger. Each page is audited before reading. Cursors are filter-bound continuations, never authorization tokens. Records are newest recorded first; retention may remove records between pages.
       parameters:
+        - {in: query, name: includeHistoryViews, schema: {type: boolean, default: true}, description: Set false to omit routine allowed/successful audit-read records. Denied/failed/unknown attempts remain visible. Recording is unchanged.}
         - {in: query, name: since, schema: {type: string, format: date-time}}
         - {in: query, name: until, schema: {type: string, format: date-time}, description: Exclusive upper observation time}
         - {in: query, name: principalId, schema: {type: string, maxLength: 512}}

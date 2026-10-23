@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { OperatorCredentialsCard } from './OperatorCredentialsCard'
 import type { OperatorCredentialInventory } from '../lib/types'
@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
 }))
 vi.mock('../lib/cluster-context', () => ({ useCluster: () => state.cluster }))
 vi.mock('../lib/api', () => ({ createApiClient: () => state.api }))
+vi.mock('./SecurityHistoryCard', () => ({ SecurityHistoryCard: () => <div>Recent access</div> }))
 
 const inventory: OperatorCredentialInventory = {
   observedAt: '2026-10-23T13:00:00Z', inventoryScope: 'current-control-plane', configurationAvailable: true,
@@ -20,7 +21,7 @@ const inventory: OperatorCredentialInventory = {
   ],
 }
 
-afterEach(() => { cleanup(); vi.clearAllMocks() })
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
 
 describe('operator credential inventory', () => {
   it('explains actual access and unavailable history without exposing key controls', async () => {
@@ -31,7 +32,8 @@ describe('operator credential inventory', () => {
     expect(screen.getByText('Submit tasks')).toBeInTheDocument()
     expect(screen.getByText('Agent access: kyber-system/jack')).toBeInTheDocument()
     expect(screen.getByText('Configured, not active')).toBeInTheDocument()
-    expect(screen.getByText(/Usage history is not available yet/)).toBeInTheDocument()
+    expect(screen.getByText(/Complete usage totals are not available/)).toBeInTheDocument()
+    expect(screen.getByText('Recent access')).toBeInTheDocument()
     expect(screen.queryByText(/Never used/i)).not.toBeInTheDocument()
     expect(screen.queryByText('legacy')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Administrator rotation' })).toBeInTheDocument()
@@ -43,6 +45,7 @@ describe('operator credential inventory', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(status === 403 ? 'Administrator access is required' : 'not available on this installation')
     expect(screen.queryByText('No accepted credentials were reported.')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Administrator rotation' })).not.toBeInTheDocument()
+    expect(screen.queryByText('Recent access')).not.toBeInTheDocument()
   })
 
   it('clears previously loaded administrator metadata and controls on denial', async () => {
@@ -64,6 +67,23 @@ describe('operator credential inventory', () => {
     await user.click(screen.getByRole('button', { name: 'Refresh' }))
     expect(await screen.findByRole('status')).toHaveTextContent('Loading credentials')
     expect(screen.getByRole('button', { name: 'Administrator rotation' })).toBe(rotation)
+  })
+
+  it('clears protected content when a periodic access check stalls', async () => {
+    vi.useFakeTimers()
+    state.api.getOperatorCredentials.mockResolvedValueOnce(inventory).mockImplementation((signal: AbortSignal) => new Promise((_, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true })
+    }))
+    render(<OperatorCredentialsCard><button>Administrator rotation</button></OperatorCredentialsCard>)
+    await act(async () => {})
+    expect(screen.getByText('jack-bridge')).toBeInTheDocument()
+    expect(screen.getByText('Recent access')).toBeInTheDocument()
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(4_000) })
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load operator credentials')
+    expect(screen.queryByText('jack-bridge')).not.toBeInTheDocument()
+    expect(screen.queryByText('Recent access')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Administrator rotation' })).not.toBeInTheDocument()
   })
 
   it.each(['machines:exec', 'machines:logs:read'])('shows Machine targets separately from Agent access (%s)', async (scope) => {

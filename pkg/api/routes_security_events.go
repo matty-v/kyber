@@ -70,7 +70,7 @@ func securityHistoryView(r securityaudit.Record) securityEventView {
 
 func securityEventFilter(q url.Values, namespace string) (securityaudit.Filter, *securityaudit.Cursor, error) {
 	f := securityaudit.Filter{Namespace: namespace, Limit: 50}
-	allowed := map[string]bool{"since": true, "until": true, "principalId": true, "credentialId": true, "action": true, "resourceKind": true, "resourceName": true, "limit": true, "cursor": true}
+	allowed := map[string]bool{"since": true, "until": true, "principalId": true, "credentialId": true, "action": true, "resourceKind": true, "resourceName": true, "limit": true, "cursor": true, "includeHistoryViews": true}
 	for k, values := range q {
 		if !allowed[k] || len(values) != 1 || values[0] == "" {
 			return f, nil, securityaudit.ErrInvalid
@@ -94,6 +94,13 @@ func securityEventFilter(q url.Values, namespace string) (securityaudit.Filter, 
 	}
 	f.PrincipalID, f.CredentialID, f.Action = q.Get("principalId"), q.Get("credentialId"), q.Get("action")
 	f.ResourceKind, f.ResourceName = q.Get("resourceKind"), q.Get("resourceName")
+	switch q.Get("includeHistoryViews") {
+	case "", "true":
+	case "false":
+		f.ExcludeRoutineAuditReads = true
+	default:
+		return f, nil, securityaudit.ErrInvalid
+	}
 	if err := f.Validate(); err != nil {
 		return f, nil, err
 	}

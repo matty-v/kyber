@@ -11,6 +11,9 @@ and supplied invalid filters are not returned.
 
 Filters: `since` (inclusive), `until` (exclusive), `principalId`, `credentialId`,
 `action`, `resourceKind`, `resourceName`, and `limit` (default 50, maximum 200).
+`includeHistoryViews` defaults to true for API compatibility. Set false to omit
+routine allowed/successful history-read records from results; denied, failed and
+unknown history access remains visible. All reads are still durably recorded.
 Times are RFC3339 observation timestamps. Namespace is always selected by the
 server. Unknown, duplicate or empty query parameters are rejected. Use the
 returned `nextCursor` with the same filters to continue the commit-sequence
@@ -29,6 +32,21 @@ last healthy ingestion time. No event is not proof of no use. Shared keys do
 not identify a person, and configuration-reported credential generations do not
 establish a complete material rotation ledger. Do not derive lifetime usage or
 complete session inventories from this endpoint.
+
+Settings → API access exposes these records in a mobile-friendly Recent access
+card, with key selection, older pages and manual refresh. It labels allowed
+access separately from completed work and keeps coverage details available.
+Routine history views are hidden by default to avoid obscuring useful activity;
+the Include history views checkbox restores them. Denied, failed and uncertain
+history attempts remain visible even with the checkbox off.
+No last-used or lifetime totals are inferred from this partial stream.
+Administrator metadata is held only in connection-bound component state,
+outside shared query caches. Switching installations/selections cancels old
+requests and ignores late responses. A periodic inventory check (every five
+seconds, four-second timeout) clears protected content on denied or unavailable
+access. This UI polling is separate from the registry's still-required server
+revocation guarantees; it does not claim current startup configuration can
+revoke active keys across replicas.
 
 > How Kyber decides *who* may drive an agent lifecycle verb, on top of the
 > single-key authentication wall. Read this before changing `pkg/api/auth.go`,
