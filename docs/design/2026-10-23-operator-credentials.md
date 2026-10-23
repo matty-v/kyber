@@ -1,7 +1,7 @@
 # Operator credentials and access visibility
 
-Status: proposed implementation design, following Matt's 2026-10-23 product direction.
-Related: MAT-94, MAT-95, MAT-96, MAT-97.
+Status: implementation in progress, following Matt's 2026-10-23 product direction.
+Related: MAT-94, MAT-95, MAT-96, MAT-97, MAT-134.
 
 ## Product outcome
 
@@ -112,7 +112,10 @@ administration, SSO, and mutually untrusted tenants are not new product goals.
 | Browser-session exchange | Authenticate the presented credential; the session never adds access. |
 | Self identity/effective permissions | Authenticated caller's own safe projection only. |
 | Credential inventory/creation/rotation/revocation, including the existing shared-key rotation endpoint | Administrator only. |
-| Agent/Machine list, detail, creation, arbitrary PATCH, deletion, fleet, events, metrics, config/export, updates, GitHub repository access, fleet defaults, logging settings, inference credentials, development simulation | Administrator only initially; no implicit inheritance from task or lifecycle scope. |
+| Agent/Machine list, detail, creation, arbitrary PATCH, Machine deletion, fleet, events, config/export, updates, GitHub repository access, fleet defaults, logging settings, inference credentials, development simulation | Administrator only initially; no implicit inheritance from task or lifecycle scope. |
+| Confirmed Agent deletion | `lifecycle:admin` plus exact Agent resource; both confirmation and authorization remain required. |
+| Fleet metrics | `metrics:read` only for the six explicitly enumerated operational metric GET routes; not logs, generic exports or future subpaths. |
+| Published capability PATCH | `capabilities:write` plus exact Agent resource, only a sole `publicCapabilities` property; 204 without private Agent readback. |
 | Agent lifecycle actions and bounded model/runtime/resource changes | Explicit existing lifecycle grant plus exact Agent resource; no observe-only authorization for restricted credentials. Authentication/credential-changing actions require administrator access initially. |
 | Agent/Machine exec | Explicit exec action and exact Agent/Machine resource; includes direct commands, Shell, attach/history, device-auth terminal, and preview transport. |
 | User secrets | Exact Agent plus separate metadata, read-value, or mutation action. |
@@ -210,3 +213,51 @@ is not a complete security audit trail; MAT-97 owns durable action auditing.
   background fetches, and small-screen access summaries in both PWA hosts.
 - Migration/rollback fixtures preserve task/result ownership and prove that
   revoked credentials cannot be restored by stale configuration or rollback.
+
+
+## Implemented slices and remaining review gates
+
+- PR #357 requires installation-administrator authority before shared-key
+  rotation, before any backend read or key mutation, for bearer and browser
+  sessions. Sensitive responses are not cached.
+- PR #358 adds the always-enforced restricted route boundary described above.
+  Existing task, archive, capability, request and usage policies remain in
+  force. Exec, secret and log access remain administrator-only pending their
+  explicit scoped grants; MAT-94/95 are not complete merely because the broad
+  bypass is closed. Verified against the empty GCP dev installation.
+- PR #359 adds the first read-only inventory and supported administrator
+  identity. It reports responding-control-plane runtime access separately
+  from source configuration, never fabricated issuance/use history. Shared
+  key aliases show actual authentication precedence. Ambiguous duplicate-name
+  browser sessions are rejected. Existing installation keys and signed admin
+  sessions remain usable, and task ownership remains unchanged. Existing
+  usage pagination may need refresh after the credential ID change.
+
+Before named-key management ships, review these concrete gates:
+
+1. Select one durable registry authority and show the source owner for each
+   imported record. All replicas must resolve the same current credential
+   state; startup environment snapshots are insufficient.
+2. Define a measurable revocation bound for request authentication, browser
+   cookies, SSE and terminals. Rotation invalidates the old key and its
+   sessions; changing a display name must not transfer identity or ownership.
+3. Imported GitOps/Helm credentials are not silently editable. A management
+   action must either be authoritative for that record or explain the source
+   change required. It must never report a revoked key while authentication
+   still accepts it.
+4. A restart, repeated import, stale configuration or supported rollback must
+   not revive a revoked credential. Test this with durable tombstones and
+   import revisions before claiming rollback safety. Older images that cannot
+   enforce the registry need an explicit compatibility boundary.
+5. Key issuance/rotation/revocation and access changes need durable audit
+   records, optimistic concurrency, redacted failures and last-administrator
+   protection. The one-time value is returned only after a successful commit;
+   an uncertain response cannot be recovered by revealing existing keys.
+6. Distinguish successful authentication from an allowed action and completed
+   work. History has a defined observation window and retention; shared keys
+   do not identify individual clients. Denied attempts do not update a
+   misleading successful-use timestamp.
+
+These gates are implementation requirements, not permission requests. Continue
+within the approved scope; ask Matt only if an unresolved product decision or
+external access is necessary.
