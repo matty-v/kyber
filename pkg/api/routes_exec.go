@@ -9,12 +9,11 @@ import (
 	"strings"
 
 	"github.com/gorilla/websocket"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/remotecommand"
-
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // execControlMsg is a JSON text frame sent by the client to control the exec session.
@@ -228,13 +227,17 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 
 	// Goroutine: exec stdout → WebSocket binary frames.
 	execReadDone := make(chan struct{})
+	outputFailed := make(chan struct{}, 1)
 	go func() {
 		defer close(execReadDone)
+		defer stdoutR.Close()
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := stdoutR.Read(buf)
 			if n > 0 {
 				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
+					cancelExec()
+					outputFailed <- struct{}{}
 					return
 				}
 			}
@@ -259,15 +262,29 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	// Do not wait for the client reader: it can be waiting for this exit.
 	<-execReadDone
 
+	outcome := "success"
+	if streamErr != nil || execCtx.Err() != nil {
+		outcome = "failure"
+	}
+	select {
+	case <-outputFailed:
+		outcome = "failure"
+	default:
+	}
+	var exitWriteErr error
 	// Send a close frame, optionally carrying the exit error.
 	if streamErr != nil {
 		payload, err := encodeExecExitPayload(streamErr.Error())
 		if err == nil {
-			_ = conn.WriteMessage(websocket.TextMessage, payload)
+			exitWriteErr = conn.WriteMessage(websocket.TextMessage, payload)
 		}
 	} else {
-		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
+		exitWriteErr = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
 	}
+	if exitWriteErr != nil {
+		outcome = "failure"
+	}
+	markSensitiveOutcome(r, outcome)
 	// Closing the connection unblocks the reader after reporting completion.
 	_ = conn.Close()
 	<-wsReadDone

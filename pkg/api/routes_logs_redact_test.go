@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
@@ -66,7 +67,7 @@ func TestAgentLogs_StreamError_RedactsError(t *testing.T) {
 	agent := sampleAgentCRD("dave")
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(agent).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fakeClient,
 		APIKey:    testAPIKey,
 		Namespace: "kyber-system",

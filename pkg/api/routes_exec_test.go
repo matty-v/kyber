@@ -6,12 +6,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/matty-v/kyber/internal/testutil"
+	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/matty-v/kyber/pkg/api"
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // buildExecHandler creates a test handler. RestConfig and Clientset are intentionally nil
@@ -20,7 +20,7 @@ func buildExecHandler(t *testing.T, objs ...runtime.Object) http.Handler {
 	t.Helper()
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fakeClient,
 		APIKey:    testAPIKey,
 		Namespace: "kyber-system",

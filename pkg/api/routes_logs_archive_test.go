@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -51,7 +51,7 @@ func buildArchiveHandler(t *testing.T, reader api.ArchiveReader, objs ...runtime
 	t.Helper()
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
@@ -233,7 +233,7 @@ func TestArchiveLogs_NoReader_NamesMissingConfig(t *testing.T) {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithRuntimeObjects(sampleAgentCRD("dave")).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:             fakeClient,
 		APIKey:                testAPIKey,
 		Namespace:             "kyber-system",
@@ -350,7 +350,7 @@ func buildArchiveHandlerWithCap(t *testing.T, reader api.ArchiveReader, cap int,
 	t.Helper()
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:          fakeClient,
 		APIKey:             testAPIKey,
 		Namespace:          "kyber-system",

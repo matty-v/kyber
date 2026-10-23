@@ -25,6 +25,7 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 			generation = caller.CredentialGeneration
 		}
 		action, resource := "operator-route", ""
+		auditAction, auditKind, auditName := "operator:unclassified", "installation", ""
 		// Classify only known operations and validated names. Never log query
 		// strings, command arguments or unknown path content.
 		for _, kind := range []string{"agents", "machines"} {
@@ -38,11 +39,18 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 					}
 					if known {
 						action, resource = string(scope), s.Namespace+"/"+target
+						auditAction, auditName = string(scope), target
+						if kind == "machines" {
+							auditKind = "machine"
+						} else {
+							auditKind = "agent"
+						}
 					}
 				}
 			}
 		}
 		slog.Warn("authz deny", "caller", name, "principal_id", principal, "credential_id", credential, "credential_generation", generation, "action", action, "resource", resource, "decision", "deny", "enforce", true)
+		s.auditOperatorDenial(w, r, auditAction, auditKind, auditName)
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
 	})

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"regexp"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 )
@@ -20,6 +22,11 @@ var (
 // Event deliberately has no body, URL, error-text or arbitrary-attributes field.
 // IDs identify credentials and principals, never their authentication material.
 type Event struct {
+	// CredentialAuthority qualifies the reported identity/generation. Existing
+	// configuration snapshots are not a complete material-rotation ledger.
+	CredentialAuthority string `json:"credentialAuthority,omitempty"`
+	Method              string `json:"method,omitempty"`
+
 	ID           string    `json:"id"`
 	OperationID  string    `json:"operationId"`
 	ObservedAt   time.Time `json:"observedAt"`
@@ -61,6 +68,15 @@ func (e Event) normalized() Event {
 }
 
 func (e Event) Validate() error {
+	if e.CredentialAuthority != "" && e.CredentialAuthority != "configuration" {
+		return ErrInvalid
+	}
+	switch e.Method {
+	case "", "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "OTHER":
+	default:
+		return ErrInvalid
+	}
+
 	if _, err := uuid.Parse(e.ID); err != nil {
 		return ErrInvalid
 	}
@@ -85,8 +101,8 @@ func (e Event) Validate() error {
 	if e.Phase == "authentication" && e.Action != "authenticate" || e.Action == "authenticate" && e.Phase != "authentication" {
 		return ErrInvalid
 	}
-	anonymous := e.Phase == "authentication" && e.Outcome == "deny" && e.PrincipalID == "" && e.CredentialID == "" && e.Generation == 0
-	if !anonymous && (!identifier.MatchString(e.PrincipalID) || !identifier.MatchString(e.CredentialID) || e.Generation == 0 || e.Generation > 1<<63-1) {
+	anonymous := (e.Phase == "authentication" || e.Phase == "authorization") && e.Outcome == "deny" && e.PrincipalID == "" && e.CredentialID == "" && e.Generation == 0
+	if !anonymous && (!validActorID(e.PrincipalID) || !validActorID(e.CredentialID) || e.Generation == 0) {
 		return ErrInvalid
 	}
 	switch e.ResourceKind {
@@ -106,4 +122,18 @@ func (e Event) Validate() error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+// Configured identities are opaque: existing task principals can be emails or
+// issuer-qualified IDs. Preserve them without accepting unbounded/control data.
+func validActorID(value string) bool {
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+		return false
+	}
+	for _, r := range value {
+		if unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }

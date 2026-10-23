@@ -61,6 +61,7 @@ import (
 	"github.com/matty-v/kyber/pkg/runtimes/claudecode"
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"
@@ -212,6 +213,7 @@ func main() {
 	var skillStore skillstore.Store
 	var archiveJobs archivejob.Store
 	var usageStore *usagestore.PostgresStore
+	var securityHistory securityaudit.Store
 	var agentTaskStore taskstore.Store
 	taskLimits, taskConfigErr := loadTaskLimits()
 	if taskConfigErr != nil {
@@ -315,7 +317,21 @@ func main() {
 			os.Exit(1)
 		}
 		usageStore = pgUsage
+		pgSecurity, securityErr := securityaudit.NewPostgresStore(db)
+		if securityErr != nil {
+			setupLog.Error(securityErr, "initializing operator security history")
+			os.Exit(1)
+		}
+		securityMigrateCtx, cancelSecurity := context.WithTimeout(ctx, 2*time.Minute+30*time.Second)
+		securityErr = briefstore.MigrateWithRetry(securityMigrateCtx, pgSecurity.Migrate, 2*time.Minute, 5*time.Second, setupLog.Info)
+		cancelSecurity()
+		if securityErr != nil {
+			setupLog.Error(securityErr, "operator security history migration failed")
+			os.Exit(1)
+		}
+		securityHistory = pgSecurity
 	} else {
+		setupLog.Info("Security history unavailable: operator terminal, user-secret and log operations require PostgreSQL; sign-in and credential inventory remain available")
 		setupLog.Info("BriefStore: KYBER_POSTGRES_URL not set — using in-memory store (briefs will not survive pod restart)")
 		briefStore = briefstore.NewMemoryStore()
 		setupLog.Info("SkillStore: KYBER_POSTGRES_URL not set — using in-memory store (agents re-report on their next boot or identity sync)")
@@ -441,6 +457,19 @@ func main() {
 	if kyberNamespace == "" {
 		kyberNamespace = "kyber-system"
 		setupLog.Info("KYBER_NAMESPACE not set — defaulting to kyber-system")
+	}
+
+	auditRetention, auditRetentionErr := securityaudit.ParseRetention(os.Getenv("KYBER_SECURITY_AUDIT_RETENTION_DAYS"), os.Getenv("KYBER_SECURITY_AUDIT_MAX_RECORDS"))
+	if auditRetentionErr != nil {
+		setupLog.Error(securityaudit.ErrInvalid, "invalid security history retention configuration")
+		os.Exit(1)
+	}
+	if pruner, ok := securityHistory.(securityaudit.RetentionPruner); ok {
+		go func() {
+			if err := securityaudit.RunRetention(ctx, pruner, kyberNamespace, auditRetention); err != nil && ctx.Err() == nil {
+				setupLog.Error(err, "security history retention worker stopped")
+			}
+		}()
 	}
 
 	// GitHub App client (optional): drives identity-repo scaffolding and the
@@ -1440,6 +1469,7 @@ func main() {
 	}
 
 	publicAPI = &internalapi.Server{
+		SecurityAudit:                 securityHistory,
 		K8sClient:                     mgr.GetClient(),
 		APIReader:                     mgr.GetAPIReader(),
 		TokenStore:                    tokenStore,

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -83,7 +84,7 @@ func TestSensitiveGrantsDenyBeforeBackendReads(t *testing.T) {
 			t.Run(tc.name+map[bool]string{false: " bearer", true: " cookie"}[browser], func(t *testing.T) {
 				// Any Kubernetes lookup would panic; denials must happen first, even with
 				// the observe-only migration flag at its default false value.
-				s := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system", Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
+				s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: testAPIKey, Namespace: "kyber-system", Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
 				h := s.BuildHandler()
 				req := sensitiveFixtureRequest(t, h, browser, tc.method, tc.path)
 				res := httptest.NewRecorder()
@@ -106,7 +107,7 @@ func TestSecretGrantsSeparateMetadataValuesAndMutation(t *testing.T) {
 				agent := sampleAgentCRD("alpha")
 				agent.Status.Phase = kyberv1.AgentPhaseStopped
 				c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, defaultMachine()).Build()
-				s := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, Callers: []api.ScopedCaller{sensitiveFixtureCaller(scope)}}
+				s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, Callers: []api.ScopedCaller{sensitiveFixtureCaller(scope)}}
 				h := s.BuildHandler()
 				for _, req := range []*http.Request{
 					authedJSONRequest(t, "PUT", "/api/v1/agents/alpha/secrets/TOKEN", map[string]string{"value": "fixture-private-value"}),
@@ -181,7 +182,7 @@ func TestLogGrantsReadOnlyTheirDeclaredLane(t *testing.T) {
 				archive := &fakeArchiveReader{byAgent: map[string][]api.LogLine{"alpha": {{Timestamp: timestamp, Text: "operational fixture"}}}}
 				transcript := &fakeArchiveReader{byAgent: map[string][]api.LogLine{"alpha": {{Timestamp: timestamp, Text: "transcript fixture"}}}}
 				c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(sampleAgentCRD("alpha")).Build()
-				s := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, ArchiveReader: archive, TranscriptReader: transcript, Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
+				s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, ArchiveReader: archive, TranscriptReader: transcript, Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
 				h := s.BuildHandler()
 				path := "/api/v1/agents/alpha/logs?source=" + tc.source + "&since=2026-06-03T10:00:00Z&until=2026-06-03T11:00:00Z"
 				res := httptest.NewRecorder()
@@ -214,7 +215,7 @@ func TestScopedLiveAgentAndMachineLogsAreNotCacheable(t *testing.T) {
 	for _, browser := range []bool{false, true} {
 		for _, tc := range []struct{ scope, path string }{{"logs:read", "/api/v1/agents/alpha/logs"}, {"machines:logs:read", "/api/v1/machines/worker-1/logs"}} {
 			c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(sampleAgentCRD("alpha"), defaultMachine()).Build()
-			s := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, Clientset: clientset, Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
+			s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: testAPIKey, Namespace: "kyber-system", K8sClient: c, Clientset: clientset, Callers: []api.ScopedCaller{sensitiveFixtureCaller(tc.scope)}}
 			h := s.BuildHandler()
 			res := httptest.NewRecorder()
 			h.ServeHTTP(res, sensitiveFixtureRequest(t, h, browser, "GET", tc.path))

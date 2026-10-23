@@ -8,12 +8,11 @@ import (
 	"strings"
 	"time"
 
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
-
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // defaultAgentLogsContainer is the container the agent logs endpoint
@@ -174,7 +173,7 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request, name st
 		if err != nil {
 			if err != io.EOF {
 				// Stream broken — we've already started writing, so just stop.
-				_ = err
+				markSensitiveOutcome(r, "failure")
 			}
 			return
 		}
@@ -274,6 +273,9 @@ func (s *Server) handleMachineLogs(w http.ResponseWriter, r *http.Request, name 
 			}
 		}
 		if err != nil {
+			if err != io.EOF {
+				markSensitiveOutcome(r, "failure")
+			}
 			return
 		}
 	}

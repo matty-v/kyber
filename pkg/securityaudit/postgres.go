@@ -100,7 +100,7 @@ func (f Filter) valid() bool {
 		return false
 	}
 	for _, v := range []string{f.PrincipalID, f.CredentialID} {
-		if v != "" && !identifier.MatchString(v) {
+		if v != "" && !validActorID(v) {
 			return false
 		}
 	}
@@ -189,16 +189,26 @@ func (s *PostgresStore) Query(ctx context.Context, f Filter, cursor *Cursor) (Pa
 // expiring late/backdated observations. Retention configuration lives above
 // this storage primitive and must be validated before calling it.
 func (s *PostgresStore) Prune(ctx context.Context, namespace string, cutoff time.Time, batch int) (int64, error) {
-	if !namespaceName.MatchString(namespace) || cutoff.IsZero() || batch < 1 || batch > 1000 {
+	return s.EnforceRetention(ctx, namespace, cutoff, 0, batch)
+}
+
+// EnforceRetention also bounds retained row count. The cap is enforced by the
+// periodic bounded worker, so a burst can temporarily exceed it between sweeps.
+// Zero keep means age-only pruning for the lower-level Prune interface.
+func (s *PostgresStore) EnforceRetention(ctx context.Context, namespace string, cutoff time.Time, keep int64, batch int) (int64, error) {
+	if !namespaceName.MatchString(namespace) || cutoff.IsZero() || keep < 0 || batch < 1 || batch > 1000 {
 		return 0, ErrInvalid
 	}
-	r, err := s.db.ExecContext(ctx, `DELETE FROM operator_security_events WHERE id IN (SELECT id FROM operator_security_events WHERE namespace=$1 AND stored_at<$2 ORDER BY stored_at,sequence LIMIT $3)`, namespace, cutoff.UTC(), batch)
+	r, err := s.db.ExecContext(ctx, `DELETE FROM operator_security_events WHERE id IN (
+ SELECT id FROM operator_security_events WHERE namespace=$1 AND (stored_at<$2 OR ($3::bigint>0 AND sequence<=COALESCE((SELECT sequence FROM operator_security_events WHERE namespace=$1 ORDER BY sequence DESC OFFSET $3 LIMIT 1),0)))
+ ORDER BY sequence LIMIT $4)`, namespace, cutoff.UTC(), keep, batch)
 	if err != nil {
 		return 0, databaseError(ctx, err)
 	}
 	n, err := r.RowsAffected()
 	return n, databaseError(ctx, err)
 }
+
 func optionalTime(t time.Time) any {
 	if t.IsZero() {
 		return nil

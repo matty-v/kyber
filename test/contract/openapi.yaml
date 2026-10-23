@@ -3,6 +3,8 @@ info:
   title: Kyber Control Plane API
   description: >
     Public HTTP API for the Kyber agent fleet control plane.
+    Sensitive terminal, user-secret and log operations require durable security
+    records before backend access and return 503 when history is unavailable.
     Protected /api/v1/* endpoints accept Bearer authentication or an opaque
     embedded-browser session established from a bearer key.
     Webhook endpoints at /webhooks/* bypass Bearer auth.
@@ -49,6 +51,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/agents/{name}/secrets/{key}:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -73,6 +76,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     put:
       operationId: writeUserSecretValue
       summary: Create or replace an allowed user secret
@@ -105,6 +109,7 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '409': {$ref: '#/components/responses/Conflict'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
     delete:
       operationId: deleteUserSecret
       summary: Delete an allowed user secret
@@ -119,6 +124,7 @@ paths:
         '403': {$ref: '#/components/responses/Forbidden'}
         '404': {$ref: '#/components/responses/NotFound'}
         '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/machines/{name}/logs:
     parameters:
       - $ref: '#/components/parameters/ResourceName'

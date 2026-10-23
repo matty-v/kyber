@@ -96,7 +96,15 @@ var wsUpgrader = websocket.Upgrader{
 // connection. On error it writes the appropriate HTTP error and returns nil —
 // the caller should return immediately when nil is returned.
 func upgradeWebSocket(w http.ResponseWriter, r *http.Request) *websocket.Conn {
-	conn, err := wsUpgrader.Upgrade(w, r, nil)
+	// Gorilla writes the upgrade response after hijacking; ordinary writer
+	// headers would otherwise be lost. Copy only safe correlation/cache fields.
+	responseHeaders := http.Header{}
+	for _, name := range []string{RequestIDHeader, "Cache-Control"} {
+		if value := w.Header().Get(name); value != "" {
+			responseHeaders.Set(name, value)
+		}
+	}
+	conn, err := wsUpgrader.Upgrade(w, r, responseHeaders)
 	if err != nil {
 		// wsUpgrader.Upgrade already wrote an HTTP error response; nothing left to do.
 		return nil

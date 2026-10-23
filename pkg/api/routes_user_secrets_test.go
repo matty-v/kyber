@@ -9,14 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/matty-v/kyber/internal/testutil"
+	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/matty-v/kyber/pkg/api"
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
 // buildUserSecretsHandler returns an API handler backed by a fake client with
@@ -66,7 +66,7 @@ func buildUserSecretsHandlerWithPhase(t *testing.T, agentName string, phase kybe
 		WithScheme(scheme).
 		WithRuntimeObjects(defaultMachine(), agent, kvSec, fileSec).
 		Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
