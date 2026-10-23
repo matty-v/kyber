@@ -782,6 +782,11 @@ If docs/contributing/code-quality.md's table and `test.yml` disagree, the workfl
 ## 7. Common-task recipes
 
 ### A. Add/modify a REST endpoint
+Installation credential management must use the always-enforced
+`requireInstallationAdmin` gate before backend access. `lifecycle:admin` is an
+Agent lifecycle grant, not installation administrator access; never let the
+observe-only lifecycle flag permit API-key rotation or management.
+
 1. Handler in `pkg/api/routes_<group>.go` (new group → new file); register in
    `server.go` `registerProtectedRoutes` (or `registerWebhookRoutes` for
    unauthenticated webhook paths).

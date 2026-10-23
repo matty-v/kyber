@@ -7,6 +7,24 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
+// requireInstallationAdmin protects installation credential management. A
+// lifecycle:admin grant manages Agent lifecycle; it is not installation-wide
+// administrator access. This check never uses the observe-only migration flag.
+func (s *Server) requireInstallationAdmin(w http.ResponseWriter, r *http.Request, action string) bool {
+	caller := callerFrom(r.Context())
+	name := "unknown"
+	if caller != nil {
+		name = caller.Name
+		if caller.Scopes.full {
+			slog.Info("authz allow", "caller", name, "action", action, "decision", "allow", "enforce", true)
+			return true
+		}
+	}
+	slog.Warn("authz deny", "caller", name, "action", action, "decision", "deny", "enforce", true)
+	writeJSONError(w, http.StatusForbidden, "forbidden", "administrator access required")
+	return false
+}
+
 // Caller-level authorization for agent lifecycle mutations (kyber#474).
 //
 // Authentication (auth.go) answers "is this a valid key?"; authorization here

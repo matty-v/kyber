@@ -15,6 +15,42 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/rotate-api-key:
+    post:
+      operationId: rotateInstallationAPIKey
+      summary: Rotate the installation administrator key
+      description: Requires installation administrator access. Restricted lifecycle administrator credentials cannot rotate the key. Returns the new value once and invalidates the old key.
+      responses:
+        '200':
+          description: The new installation administrator key
+          headers:
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [apiKey]
+                additionalProperties: false
+                properties:
+                  apiKey: {type: string}
+        '401':
+          description: Authentication required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '403':
+          description: Installation administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          description: Key rotation is not configured
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
   /api/v1/usage/events:
     get:
       operationId: listUsageEvents

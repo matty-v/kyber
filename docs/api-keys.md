@@ -9,7 +9,7 @@ This doc is the operator reference for managing it: where it lives, how to rotat
 ## TL;DR
 
 - **Generate**: `openssl rand -hex 32` at install time, stored in the `kyber-api-credentials` Kubernetes Secret under key `api-key`.
-- **Rotate (in-PWA, no downtime)**: `POST /api/v1/rotate-api-key` swaps the key in-memory and updates the Secret. Old key 401s on the next request.
+- **Rotate (in-PWA, no downtime)**: `POST /api/v1/rotate-api-key` requires installation administrator access, swaps the key in-memory, and updates the Secret. Old key 401s on the next request. Restricted keys cannot rotate it, including keys granted `lifecycle:admin`; that grant only covers Agent lifecycle. This restriction is enforced regardless of `api.authz.enforce`.
 - **Rotate (manual, e.g. compromise)**: `kubectl edit secret kyber-api-credentials` + restart the control-plane pod.
 - **Browser session**: the embedded PWA exchanges the pasted key for an opaque,
   HttpOnly, same-site session cookie; it does not retain the key in readable storage.
