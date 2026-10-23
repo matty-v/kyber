@@ -16,7 +16,7 @@ installation, and inspect credentials when needed. Integration credentials are
 an explicit administrator choice. Their advertised restrictions must hold
 across the entire public API before Kyber offers them as limited access.
 
-## Current evidence
+## Evidence at the start of this work
 
 - `pkg/api/auth.go` authenticates an installation key and optional `callers`
   entries. The installation key receives the hard-coded name `legacy` and full
@@ -36,7 +36,7 @@ across the entire public API before Kyber offers them as limited access.
   callers. No demo-caller use was observed in the examined logs. This is not an
   issuance history or proof of non-use.
 - The read-only Falcon audit on 2026-10-23 confirmed the running control plane
-  loads `lando-metrics` (empty declared scopes) and `jack-bridge` (task actions
+  loaded `lando-metrics` (empty declared scopes) and `jack-bridge` (task actions
   on `kyber-system/jack`). A read-only task metadata query found 26 tasks owned
   by `principal_jack_bridge`, created 2026-10-15 through 2026-10-18; latest
   creation was 2026-10-18 19:01:41 UTC. Recent request logs do not attribute
@@ -222,9 +222,9 @@ is not a complete security audit trail; MAT-97 owns durable action auditing.
   sessions. Sensitive responses are not cached.
 - PR #358 adds the always-enforced restricted route boundary described above.
   Existing task, archive, capability, request and usage policies remain in
-  force. Exec, secret and log access remain administrator-only pending their
-  explicit scoped grants; MAT-94/95 are not complete merely because the broad
-  bypass is closed. Verified against the empty GCP dev installation.
+  force. Subsequent PRs #360/#361 add the explicit terminal and sensitive-data
+  grants. The broad boundary alone was not completion of MAT-94/95. Verified
+  against the empty GCP dev installation.
 - PR #359 adds the first read-only inventory and supported administrator
   identity. It reports responding-control-plane runtime access separately
   from source configuration, never fabricated issuance/use history. Shared
@@ -261,3 +261,75 @@ Before named-key management ships, review these concrete gates:
 These gates are implementation requirements, not permission requests. Continue
 within the approved scope; ask Matt only if an unresolved product decision or
 external access is necessary.
+
+- PR #360 delivers MAT-94: separate exact-Agent and exact-Machine terminal
+  grants, before backend lookup/upgrade; verified command output and exit
+  delivery, disconnect cancellation, TLS/proxy behavior and redacted failures.
+- PR #361 delivers the MAT-95 implementation: separate secret metadata/value/
+  mutation, operational log, transcript and host-log grants. Metadata-only
+  lists hide value fingerprints. GCP dev bearer/cookie checks and desktop/
+  mobile screenshots passed; temporary credentials and workloads were removed.
+  Merge remains conditional on its complete CI gate.
+
+## Next implementation: durable audit foundation (MAT-97)
+
+Use the installation's existing PostgreSQL connection and migration pattern
+for a separate security-event table. The default Helm installation already
+provides PostgreSQL; do not add another service or route security events through
+Agent transcripts, Redis pub/sub, or Kubernetes Events. Installations without
+a durable store must report security history as unavailable. An in-memory
+store is useful for tests, not a durability guarantee.
+
+The storage interface accepts only a typed, bounded metadata event: event and
+operation IDs, installation namespace, observed time, principal ID, credential
+ID/generation, enumerated action, resource kind and namespace/name, request ID,
+and enumerated phase/outcome. It must not accept arbitrary attributes, request
+URLs, body text, credentials, terminal arguments or backend error strings.
+Do not let callers label an authorization decision as a completed operation.
+
+Use an idempotent append keyed by event ID, rejecting reuse with different
+content. Required intent/allow events are persisted before sensitive bytes or
+high-risk effects. Persist a separate completion/failure event after the
+operation. A crash can leave an admitted operation without a completion; show
+that uncertainty rather than manufacturing success. If a completion write
+fails after an external effect, do not claim the effect rolled back or replay
+it automatically. Record the unresolved operation for operator reconciliation.
+Credential mutations require a durable operation/outbox reference in the
+registry commit; the registry implementation must resolve that atomicity gate
+before those endpoints ship.
+
+Audit-store failure returns a clear 503 before protected reads/mutations.
+Authentication, safe self-identification, and administrator inventory do not
+require an audit write simply to let an operator discover the outage. Never
+fall back to allowing high-risk operations when the store is down. Existing
+independently authenticated Agent-internal APIs are outside this operator
+policy and retain their current boundary.
+
+Queries are administrator-only, no-store, bounded and filtered by timestamp,
+principal/credential, action and exact resource. Use descending timestamp plus
+immutable event ID as a stable pagination key and constrain a query to its
+initial upper time bound. Default retention is 30 days, configurable by the
+operator; record the oldest covered time and store/collection status so empty
+results cannot be mistaken for lifetime non-use. Delete in bounded batches.
+Successful authentication, allowed actions, denied actions, and completed
+operations have separate counters/labels in the later UI projection.
+
+Review and tests before connecting handlers:
+
+1. Real PostgreSQL round trips, duplicate/reused IDs, identical timestamps,
+   filters, pagination, retention boundaries and replacement of the store
+   object against the same database.
+2. Reject oversized/unknown event fields and unsafe resource/request identity
+   values; JSON/list responses must be a whitelist with no secret material.
+3. Explicitly unavailable database and canceled/deadline requests return errors,
+   never an empty successful history or a successful required append.
+4. At the API boundary, deny unauthorized audit reads before store access;
+   audit failure must prevent backend secret reads, terminal upgrades and
+   mutations. Verify completion semantics for synchronous and stream actions.
+5. Preserve a supported single-operator recovery procedure and document the
+   availability impact before enabling required audit writes in runtime.
+
+The audit store can land as a tested foundation before handler integration;
+such a PR does not complete MAT-97 or make access-history claims. Authoritative
+credential storage, configuration adoption, active stream reauthorization and
+UI-managed lifecycle remain MAT-134 implementation gates above.
