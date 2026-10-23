@@ -31,7 +31,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  CREATE INDEX IF NOT EXISTS operator_security_events_namespace_sequence ON operator_security_events(namespace,sequence DESC);
  CREATE INDEX IF NOT EXISTS operator_security_events_retention ON operator_security_events(stored_at,sequence);
  CREATE INDEX IF NOT EXISTS operator_security_events_credential ON operator_security_events(namespace,credential_id,sequence DESC);`)
-	return storeError(err)
+	return databaseError(ctx, err)
 }
 
 // Append is idempotent only for identical content. The lock orders commits
@@ -48,28 +48,28 @@ func (s *PostgresStore) Append(ctx context.Context, e Event) (Record, error) {
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return Record{}, storeError(err)
+		return Record{}, databaseError(ctx, err)
 	}
 	defer tx.Rollback()
 	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
-		return Record{}, storeError(err)
+		return Record{}, databaseError(ctx, err)
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO operator_security_events(id,operation_id,namespace,observed_at,principal_id,credential_id,action,resource_kind,resource_name,document)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING`, e.ID, e.OperationID, e.Namespace, e.ObservedAt, e.PrincipalID, e.CredentialID, e.Action, e.ResourceKind, e.ResourceName, payload)
 	if err != nil {
-		return Record{}, storeError(err)
+		return Record{}, databaseError(ctx, err)
 	}
 	var got Record
 	var same bool
 	err = tx.QueryRowContext(ctx, `SELECT sequence,stored_at,document=$2::jsonb FROM operator_security_events WHERE id=$1`, e.ID, payload).Scan(&got.Sequence, &got.StoredAt, &same)
 	if err != nil {
-		return Record{}, storeError(err)
+		return Record{}, databaseError(ctx, err)
 	}
 	if !same {
 		return Record{}, ErrConflict
 	}
 	if err = tx.Commit(); err != nil {
-		return Record{}, storeError(err)
+		return Record{}, databaseError(ctx, err)
 	}
 	got.Event = e
 	got.StoredAt = got.StoredAt.UTC()
@@ -127,16 +127,16 @@ func (s *PostgresStore) Query(ctx context.Context, f Filter, cursor *Cursor) (Pa
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		return page, storeError(err)
+		return page, databaseError(ctx, err)
 	}
 	defer tx.Rollback()
 	if cursor == nil {
 		if _, err = tx.ExecContext(ctx, commitLock); err != nil {
-			return page, storeError(err)
+			return page, databaseError(ctx, err)
 		}
 		err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sequence),0) FROM operator_security_events WHERE namespace=$1`, f.Namespace).Scan(&page.Snapshot)
 		if err != nil {
-			return page, storeError(err)
+			return page, databaseError(ctx, err)
 		}
 	} else {
 		if cursor.MaxSequence < 1 || cursor.BeforeSequence < 1 || cursor.BeforeSequence > cursor.MaxSequence {
@@ -153,14 +153,14 @@ func (s *PostgresStore) Query(ctx context.Context, f Filter, cursor *Cursor) (Pa
  AND ($6='' OR principal_id=$6) AND ($7='' OR credential_id=$7) AND ($8='' OR action=$8)
  AND ($9='' OR resource_kind=$9) AND ($10='' OR resource_name=$10) ORDER BY sequence DESC LIMIT $11`, f.Namespace, page.Snapshot, before, optionalTime(f.Since), optionalTime(f.Until), f.PrincipalID, f.CredentialID, f.Action, f.ResourceKind, f.ResourceName, f.Limit+1)
 	if err != nil {
-		return page, storeError(err)
+		return page, databaseError(ctx, err)
 	}
 	for rows.Next() {
 		var record Record
 		var doc []byte
 		if err = rows.Scan(&record.Sequence, &record.StoredAt, &doc); err != nil {
 			rows.Close()
-			return Page{}, storeError(err)
+			return Page{}, databaseError(ctx, err)
 		}
 		if err = json.Unmarshal(doc, &record.Event); err != nil {
 			rows.Close()
@@ -172,14 +172,14 @@ func (s *PostgresStore) Query(ctx context.Context, f Filter, cursor *Cursor) (Pa
 	err = rows.Err()
 	rows.Close()
 	if err != nil {
-		return Page{}, storeError(err)
+		return Page{}, databaseError(ctx, err)
 	}
 	if len(page.Items) > f.Limit {
 		page.Items = page.Items[:f.Limit]
 		page.Next = &Cursor{MaxSequence: page.Snapshot, BeforeSequence: page.Items[len(page.Items)-1].Sequence}
 	}
 	if err = tx.Commit(); err != nil {
-		return Page{}, storeError(err)
+		return Page{}, databaseError(ctx, err)
 	}
 	return page, nil
 }
@@ -194,10 +194,10 @@ func (s *PostgresStore) Prune(ctx context.Context, namespace string, cutoff time
 	}
 	r, err := s.db.ExecContext(ctx, `DELETE FROM operator_security_events WHERE id IN (SELECT id FROM operator_security_events WHERE namespace=$1 AND stored_at<$2 ORDER BY stored_at,sequence LIMIT $3)`, namespace, cutoff.UTC(), batch)
 	if err != nil {
-		return 0, storeError(err)
+		return 0, databaseError(ctx, err)
 	}
 	n, err := r.RowsAffected()
-	return n, storeError(err)
+	return n, databaseError(ctx, err)
 }
 func optionalTime(t time.Time) any {
 	if t.IsZero() {
@@ -216,4 +216,14 @@ func storeError(err error) error {
 		return context.DeadlineExceeded
 	}
 	return ErrUnavailable
+}
+
+// Some PostgreSQL drivers return a statement-cancellation error instead of
+// wrapping the context deadline. Preserve that distinction without exposing
+// the driver's response text.
+func databaseError(ctx context.Context, err error) error {
+	if err != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return storeError(err)
 }

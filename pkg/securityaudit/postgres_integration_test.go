@@ -181,8 +181,19 @@ func TestPostgresRetentionAndFailures(t *testing.T) {
 	if _, err := s.Append(ctx, other); err != nil {
 		t.Fatal(err)
 	}
+	for i := 0; i < 2; i++ {
+		extra := e
+		extra.ID = uuid.NewString()
+		if _, err := s.Append(ctx, extra); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if n, err := s.Prune(ctx, e.Namespace, time.Now().Add(time.Hour), 1); err != nil || n != 1 {
 		t.Fatal("bounded retention", err)
+	}
+	remaining, err := s.Query(ctx, Filter{Namespace: e.Namespace, Limit: 10}, nil)
+	if err != nil || len(remaining.Items) != 2 {
+		t.Fatal("retention exceeded batch limit", err)
 	}
 	page, err := s.Query(ctx, Filter{Namespace: other.Namespace, Limit: 10}, nil)
 	if err != nil || len(page.Items) != 1 {
@@ -250,5 +261,30 @@ func TestPostgresConcurrentReplay(t *testing.T) {
 	e.ID = uuid.NewString()
 	if _, err := s.Append(expired, e); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("expired append succeeded", err)
+	}
+}
+
+func TestPostgresBlockedAppendDeadline(t *testing.T) {
+	s, db := postgresFixture(t)
+	ctx := context.Background()
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
+		t.Fatal(err)
+	}
+	short, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	if _, err = s.Append(short, fixtureEvent()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("blocked append did not preserve deadline", err)
+	}
+	if err = tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Query(ctx, Filter{Namespace: "kyber-system", Limit: 10}, nil)
+	if err != nil || len(page.Items) != 0 {
+		t.Fatal("timed-out append persisted an event", err)
 	}
 }
