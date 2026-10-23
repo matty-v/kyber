@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -64,6 +65,9 @@ func TestRotateAPIKey_HappyPath(t *testing.T) {
 	handler.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 OK, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatal("rotation response containing the new key must not be cached")
 	}
 	var resp struct {
 		APIKey string `json:"apiKey"`
@@ -197,6 +201,61 @@ func TestRotateAPIKey_RequiresAuth(t *testing.T) {
 	handler.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 (wrong key), got %d", rec2.Code)
+	}
+}
+
+func TestRotateAPIKey_RestrictedCallersCannotRotateAdministratorKey(t *testing.T) {
+	for _, scopes := range [][]string{nil, {"lifecycle:admin"}, {"tasks:create", "tasks:read"}} {
+		for _, browser := range []bool{false, true} {
+			t.Run(fmt.Sprintf("scopes=%v/browser=%v", scopes, browser), func(t *testing.T) {
+				const seed, restricted = "installation-test-key", "integration-test-key"
+				srv, handler, _ := buildRotateAPIKeyHandler(t, "kyber-api-credentials", "kyber-system", seed,
+					api.ScopedCaller{Name: "integration", Key: restricted, Scopes: scopes})
+				// Authorization must hold even in observe-only lifecycle mode.
+				srv.AuthzEnforce = false
+				req := httptest.NewRequest(http.MethodPost, "/api/v1/rotate-api-key", nil)
+				if browser {
+					login := httptest.NewRequest(http.MethodPost, "/api/v1/browser-session", nil)
+					login.Header.Set("Authorization", "Bearer "+restricted)
+					result := httptest.NewRecorder()
+					handler.ServeHTTP(result, login)
+					if result.Code != http.StatusNoContent || len(result.Result().Cookies()) == 0 {
+						t.Fatalf("restricted browser login failed: %d", result.Code)
+					}
+					req.AddCookie(result.Result().Cookies()[0])
+				} else {
+					req.Header.Set("Authorization", "Bearer "+restricted)
+				}
+				result := httptest.NewRecorder()
+				handler.ServeHTTP(result, req)
+				if result.Code != http.StatusForbidden {
+					t.Fatalf("restricted credential rotated administrator key: status %d", result.Code)
+				}
+				secret := &corev1.Secret{}
+				if err := srv.K8sClient.Get(context.Background(), types.NamespacedName{Name: "kyber-api-credentials", Namespace: "kyber-system"}, secret); err != nil {
+					t.Fatal(err)
+				}
+				if string(secret.Data["api-key"]) != seed {
+					t.Fatal("denied rotation changed stored administrator key")
+				}
+				check := httptest.NewRequest(http.MethodGet, "/api/v1/config", nil)
+				check.Header.Set("Authorization", "Bearer "+seed)
+				verified := httptest.NewRecorder()
+				handler.ServeHTTP(verified, check)
+				if verified.Code != http.StatusOK {
+					t.Fatalf("denied rotation changed live administrator key: %d", verified.Code)
+				}
+				// With no backend configured, denial must still be 403, not a
+				// backend-dependent 503 or panic.
+				srv.K8sClient = nil
+				srv.APIKeySecretName = ""
+				second := httptest.NewRecorder()
+				handler.ServeHTTP(second, req)
+				if second.Code != http.StatusForbidden {
+					t.Fatalf("authorization did not precede backend access: %d", second.Code)
+				}
+			})
+		}
 	}
 }
 

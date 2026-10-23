@@ -37,12 +37,15 @@ const apiKeyByteLen = 32
 // Mirrors `key: api-key` in the helm Secret template.
 const apiKeySecretField = "api-key"
 
-// handleRotateAPIKey is wired in registerProtectedRoutes. The handler is
-// gated by API-key auth like every other protected route — only an
-// already-authenticated session can rotate. There is no opt-out.
+// handleRotateAPIKey requires installation administrator access before any
+// backend access. It is wired in registerProtectedRoutes.
 func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "POST required")
+		return
+	}
+	if !s.requireInstallationAdmin(w, r, "rotate-installation-key") {
 		return
 	}
 
