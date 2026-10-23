@@ -101,3 +101,39 @@ Before the mutation/audit mapper is connected, extend the audit model's current
 configuration-only authority qualifier and strict credential-target identifier
 validation to support registry authority and existing opaque credential IDs.
 Do not enable handlers that cannot write a valid, attributable audit admission.
+
+
+## Durable authority selection primitive
+
+`AuthorityStore` adds an inert adoption boundary; it is not connected to HTTP
+handlers or authentication yet. `Bind` creates a separate immutable, Kyber-owned
+Secret with protocol version 1 and the candidate registry's name and Kubernetes
+UID. It checks the reviewed candidate's resource version before creating the
+marker. It never updates or implicitly replaces a marker. Both Secrets have no
+workload owner reference and must remain outside Helm-rendered resources.
+
+`Load` uses direct reads for the marker and current registry with one shared
+two-second deadline. Only an authoritative missing marker before this resolver
+has observed adoption returns `ErrUninitialized`. An unavailable API never means
+bootstrap. After adoption, missing, corrupt or recreated registry state cannot
+fall back to configuration keys. UID binding survives a process restart and
+rejects a replacement registry even if its name and document match. A process
+that has observed a marker also rejects its later disappearance. An uncertain
+marker-create response suppresses bootstrap in that process; reconcile with a
+read rather than automatically repeating the write.
+
+This is a persistence primitive, **not the complete rollback guarantee**.
+Activation must remain unavailable until source ownership, audit admission,
+permission/cookie/stream compilation and the upgrade/rollback compatibility
+floor are implemented and verified. Existing old binaries do not understand the
+marker. Supported downgrade paths must reject those binaries after adoption;
+merely adding this marker does not make them safe. Privileged external deletion
+of the marker on a fresh process or restoration of old backups is also outside
+this primitive's guarantee. Recovery must preserve the marker and registry
+identity, rather than instructing an operator to delete them to restore access.
+
+The opt-in GCP dev test uses random probe names for both Secrets. It verifies
+real API immutability, independent replica reads and missing/recreated registry
+rejection, then checks UID/ownership before deleting only its own fixtures.
+Live installation credential Secret UID/resourceVersion and zero-Agent state
+are checked before and after the probe.

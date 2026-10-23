@@ -495,6 +495,11 @@ client with a static Secret mapper and bounded requests. Documents use opaque
 resource-version CAS, immutable identity/provenance, separate material/policy
 revisions, retained revocation tombstones and a bounded pending-operation outbox.
 Material is private; public JSON/diagnostic formatting is blocked/redacted.
+The inert `AuthorityStore` binds a separate immutable adoption marker to the
+registry Secret UID. Direct reads reject missing/replaced adopted registries;
+only a verified missing marker before adoption signals bootstrap. This does
+not protect downgrades to old binaries: the upgrade compatibility floor remains
+an activation prerequisite. Neither Secret belongs in Helm templates.
 Read `docs/design/2026-10-23-operator-credential-store.md` before integration.
 Runtime adoption, grant compilation, cookie/stream resolution and upgrade/
 rollback compatibility gates must be complete before management activation.
