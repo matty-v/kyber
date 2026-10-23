@@ -108,7 +108,8 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
         </li>)}
       </ul>}
       {data.nextCursor && <Button className="mt-4" size="sm" onClick={() => setCursor(data.nextCursor)}>Older activity</Button>}
-      <p className="mt-4 text-xs text-text-muted">No recorded activity does not mean a key has never been used. Shared keys cannot identify individual people or applications.</p>
+      <p className="mt-4 text-xs text-text-muted">Loaded {new Date(data.observedAt).toLocaleString()}.</p>
+      <p className="mt-2 text-xs text-text-muted">No recorded activity does not mean a key has never been used. Shared keys cannot identify individual people or applications.</p>
       <details className="mt-2 text-xs text-text-muted">
         <summary className="cursor-pointer">History coverage</summary>
         {data.warnings.map((warning) => <p key={warning} className="mt-2">{warning}</p>)}
