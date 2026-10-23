@@ -153,6 +153,89 @@ func TestGCPDevSecretStoreResourceVersions(t *testing.T) {
 	if err != nil || confirmed.Document.Credentials[1].Name != "Verified integration" {
 		t.Fatal("conflicting data persisted")
 	}
+	// Verify adoption selection using a second inert Secret, never the live
+	// authentication registry or installation credentials.
+	authorityName := name + "-authority"
+	authority, err := NewAuthorityStore(config, namespace, name, authorityName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorityKey := client.ObjectKey{Namespace: namespace, Name: authorityName}
+	var markerUID types.UID
+	originalRegistryUID := createdUID
+	t.Cleanup(func() {
+		cleanupCtx, done := context.WithTimeout(context.Background(), 15*time.Second)
+		defer done()
+		marker := &corev1.Secret{}
+		if err := direct.Get(cleanupCtx, authorityKey, marker); apierrors.IsNotFound(err) {
+			return
+		} else if err != nil {
+			t.Error("marker cleanup lookup failed")
+			return
+		}
+		if marker.Labels[authorityLabel] != "v1" || string(marker.Data["registryUID"]) != string(originalRegistryUID) || marker.UID == "" || markerUID != "" && marker.UID != markerUID {
+			t.Error("marker cleanup ownership mismatch")
+			return
+		}
+		uid := marker.UID
+		if err := direct.Delete(cleanupCtx, marker, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
+			t.Error("marker cleanup deletion failed")
+			return
+		}
+		if err := direct.Get(cleanupCtx, authorityKey, &corev1.Secret{}); !apierrors.IsNotFound(err) {
+			t.Error("marker remains after cleanup")
+		}
+	})
+	if _, err := authority.Load(ctx); !errors.Is(err, ErrUninitialized) {
+		t.Fatal("inert marker unexpectedly exists")
+	}
+	if err := authority.Bind(ctx, confirmed.Version); err != nil {
+		t.Fatal("inert authority binding failed")
+	}
+	marker := &corev1.Secret{}
+	if err := direct.Get(ctx, authorityKey, marker); err != nil {
+		t.Fatal("marker identity lookup failed")
+	}
+	markerUID = marker.UID
+	if _, err := authority.Load(ctx); err != nil {
+		t.Fatal("bound authority could not load")
+	}
+	replica, err := NewAuthorityStore(config, namespace, name, authorityName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := replica.Load(ctx); err != nil {
+		t.Fatal("independent replica lost adoption selection")
+	}
+	marker.Data["registryUID"] = []byte("replacement")
+	if err := direct.Update(ctx, marker); !apierrors.IsInvalid(err) {
+		t.Fatal("real API did not enforce immutable marker data")
+	}
+	// Delete and recreate only our disposable candidate. The bound UID must
+	// reject a replacement even when its name and valid document are identical.
+	if err := direct.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: namespace, Name: name}}, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &createdUID}}); err != nil {
+		t.Fatal("inert candidate deletion failed")
+	}
+	if _, err := replica.Load(ctx); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("missing adopted candidate allowed fallback")
+	}
+	if _, err := a.Create(ctx, doc); err != nil {
+		t.Fatal("inert candidate recreation failed")
+	}
+	if err := direct.Get(ctx, client.ObjectKey{Namespace: namespace, Name: name}, secret); err != nil {
+		t.Fatal("replacement identity lookup failed")
+	}
+	createdUID = secret.UID
+	if createdUID == originalRegistryUID {
+		t.Fatal("API reused registry UID")
+	}
+	freshReplica, err := NewAuthorityStore(config, namespace, name, authorityName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := freshReplica.Load(ctx); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("new replica accepted replacement registry")
+	}
 	rootAfter := &metav1.PartialObjectMetadata{}
 	rootAfter.SetGroupVersionKind(schema.GroupVersionKind{Version: "v1", Kind: "Secret"})
 	if err = direct.Get(ctx, rootKey, rootAfter); err != nil || rootBefore.UID != rootAfter.UID || rootBefore.ResourceVersion != rootAfter.ResourceVersion {
@@ -161,5 +244,5 @@ func TestGCPDevSecretStoreResourceVersions(t *testing.T) {
 	if err = direct.List(ctx, &agents, client.InNamespace(namespace)); err != nil || len(agents.Items) != 0 {
 		t.Fatal("dev Agent postflight failed")
 	}
-	t.Log("Independent readers, stale-version and raced-write rejection passed; live credential metadata unchanged; zero Agents. Probe deletion is verified by cleanup.")
+	t.Log("Independent readers, stale-version and raced-write rejection passed; live credential metadata unchanged; zero Agents. Immutable adoption marker, replica selection and missing/replaced registry rejection passed. Both probe deletions are verified by cleanup.")
 }
