@@ -49,6 +49,9 @@ const (
 	// ScopeMetricsRead permits fleet-wide operational metrics, not logs,
 	// transcripts, credentials, or arbitrary Agent configuration reads.
 	ScopeMetricsRead Scope = "metrics:read"
+	// Exec grants are separate because Machine terminals control the host.
+	ScopeAgentExec   Scope = "agents:exec"
+	ScopeMachineExec Scope = "machines:exec"
 	// ScopeArchivesAdmin permits exporting an agent's disk, downloading the
 	// archive, and creating agents from archives (MAT-87/MAT-88). A disk
 	// archive can contain local credentials, so this is its own grant and is
@@ -107,6 +110,7 @@ type Caller struct {
 	CredentialGeneration uint64
 	Scopes               ScopeSet
 	AgentResources       ResourceSet
+	MachineResources     ResourceSet
 }
 
 type ResourceSet struct {
@@ -153,6 +157,7 @@ type ScopedCaller struct {
 	CredentialID         string        `json:"credentialId,omitempty"`
 	CredentialGeneration uint64        `json:"credentialGeneration,omitempty"`
 	AgentResources       []string      `json:"agentResources,omitempty"`
+	MachineResources     []string      `json:"machineResources,omitempty"`
 	Key                  string        `json:"key,omitempty"`
 	KeyFrom              *SecretKeyRef `json:"keyFrom,omitempty"`
 	Scopes               []string      `json:"scopes"`
@@ -184,6 +189,29 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		case c.KeyFrom != nil && (c.KeyFrom.Secret == "" || c.KeyFrom.Key == ""):
 			return nil, fmt.Errorf("caller %q: keyFrom requires both secret and key names", c.Name)
 		}
+		for _, grant := range []struct {
+			scope     Scope
+			resources []string
+		}{{ScopeAgentExec, c.AgentResources}, {ScopeMachineExec, c.MachineResources}} {
+			has := false
+			for _, value := range c.Scopes {
+				if value == string(grant.scope) {
+					has = true
+				}
+			}
+			if !has {
+				continue
+			}
+			if c.PrincipalID == "" || c.TenantID == "" || c.CredentialID == "" || c.CredentialGeneration == 0 || len(grant.resources) == 0 {
+				return nil, fmt.Errorf("caller %q: exec grants require stable identity and exact resources", c.Name)
+			}
+			for _, resource := range grant.resources {
+				parts := strings.Split(resource, "/")
+				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 {
+					return nil, fmt.Errorf("caller %q: exec resource must be an exact namespace/name", c.Name)
+				}
+			}
+		}
 		hasTaskScope := false
 		for _, sc := range c.Scopes {
 			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") || strings.HasPrefix(sc, "capabilities:") || sc == string(ScopeUsageRead) {
@@ -213,7 +241,7 @@ func validScope(sc Scope) bool {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
 		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
-		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeMetricsRead, ScopeArchivesAdmin:
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeMetricsRead, ScopeArchivesAdmin, ScopeAgentExec, ScopeMachineExec:
 		return true
 	default:
 		return false
@@ -249,7 +277,7 @@ const (
 )
 
 func installationAdminCaller() *Caller {
-	return &Caller{Name: "installation-admin", PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Kind: "installation-admin", Issuer: "kyber", Subject: "installation-admin-key", CredentialID: installationAdminCredentialID, CredentialGeneration: 1, Scopes: newFullScopeSet(), AgentResources: newResourceSet("*")}
+	return &Caller{Name: "installation-admin", PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Kind: "installation-admin", Issuer: "kyber", Subject: "installation-admin-key", CredentialID: installationAdminCredentialID, CredentialGeneration: 1, Scopes: newFullScopeSet(), AgentResources: newResourceSet("*"), MachineResources: newResourceSet("*")}
 }
 
 // NewAPIKeyAuthenticator returns an Authenticator that accepts the installation administrator key
@@ -264,7 +292,7 @@ func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenti
 		}
 		a.callers = append(a.callers, scopedKey{
 			key:    c.Key,
-			caller: Caller{Name: c.Name, PrincipalID: c.PrincipalID, TenantID: c.TenantID, Kind: c.Kind, Issuer: c.Issuer, Subject: c.Subject, CredentialID: c.CredentialID, CredentialGeneration: c.CredentialGeneration, Scopes: newScopeSet(scopes...), AgentResources: newResourceSet(c.AgentResources...)},
+			caller: Caller{Name: c.Name, PrincipalID: c.PrincipalID, TenantID: c.TenantID, Kind: c.Kind, Issuer: c.Issuer, Subject: c.Subject, CredentialID: c.CredentialID, CredentialGeneration: c.CredentialGeneration, Scopes: newScopeSet(scopes...), AgentResources: newResourceSet(c.AgentResources...), MachineResources: newResourceSet(c.MachineResources...)},
 		})
 	}
 	return a

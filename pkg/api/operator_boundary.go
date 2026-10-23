@@ -22,7 +22,19 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 		if caller != nil {
 			name = caller.Name
 		}
-		slog.Warn("authz deny", "caller", name, "action", "operator-route", "decision", "deny", "enforce", true)
+		action, resource := "operator-route", ""
+		// Attribute denied terminal requests without logging command arguments,
+		// query strings or unknown path content.
+		for _, kind := range []string{"agents", "machines"} {
+			prefix := "/api/v1/" + kind + "/"
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				target, operation, ok := splitAction(strings.TrimPrefix(r.URL.Path, prefix))
+				if ok && isValidName(target) && operation == "exec" {
+					action, resource = kind+":exec", s.Namespace+"/"+target
+				}
+			}
+		}
+		slog.Warn("authz deny", "caller", name, "action", action, "resource", resource, "decision", "deny", "enforce", true)
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
 	})
@@ -60,6 +72,10 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	if strings.HasPrefix(p, "/a2a/v1/agents/") {
 		return true // protocol handlers enforce task/capability resource policy
 	}
+	if strings.HasPrefix(p, "/api/v1/machines/") {
+		name, action, ok := splitAction(strings.TrimPrefix(p, "/api/v1/machines/"))
+		return ok && isValidName(name) && action == "exec" && r.Method == http.MethodGet && caller.Scopes.Has(ScopeMachineExec) && caller.MachineResources.Has(s.Namespace+"/"+name)
+	}
 	const prefix = "/api/v1/agents/"
 	if !strings.HasPrefix(p, prefix) {
 		return false
@@ -90,6 +106,9 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 		default:
 			return false
 		}
+	}
+	if action == "exec" {
+		return r.Method == http.MethodGet && caller.Scopes.Has(ScopeAgentExec)
 	}
 	if action == "requests" || strings.HasPrefix(action, "requests/") {
 		return true // request action scopes are checked by the handler

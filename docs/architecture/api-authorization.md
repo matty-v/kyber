@@ -9,8 +9,10 @@
 Restricted credentials are checked by `operatorBoundary` before
 route dispatch. Routes without an explicit supported delegation require the
 installation administrator, regardless of `KYBER_AUTHZ_ENFORCE`. Machine
-operations, terminal access, logs, secrets, configuration and administrator-key
-rotation are administrator-only. Agent lifecycle delegation requires both a
+management, logs, secrets, configuration and administrator-key rotation are
+administrator-only. Terminal access delegates only `agents:exec` or
+`machines:exec` with the corresponding exact resource list; handler guards run
+before lookup and WebSocket upgrade, independent of the rollout flag. Agent lifecycle delegation requires both a
 lifecycle grant and an exact allowed Agent resource; confirmed Agent deletion
 requires `lifecycle:admin`. Generic Agent PATCH only delegates a sole
 `publicCapabilities` update to `capabilities:write`, returning 204.

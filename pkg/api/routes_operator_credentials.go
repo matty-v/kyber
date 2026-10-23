@@ -23,10 +23,12 @@ type operatorCredentialView struct {
 	Source               string   `json:"source"`
 	Scopes               []string `json:"scopes"`
 	AgentResources       []string `json:"agentResources"`
+	MachineResources     []string `json:"machineResources,omitempty"`
 	Permissions          []string `json:"permissions"`
 	Configured           bool     `json:"configured"`
 	ConfiguredScopes     []string `json:"configuredScopes,omitempty"`
 	ConfiguredResources  []string `json:"configuredResources,omitempty"`
+	ConfiguredMachines   []string `json:"configuredMachines,omitempty"`
 	ConfigurationDiffers bool     `json:"configurationDiffers,omitempty"`
 	AuthenticatesAs      string   `json:"authenticatesAs,omitempty"`
 }
@@ -73,6 +75,10 @@ func credentialPermissions(scopes []string) []string {
 			out = append(out, "Publish or remove Agent capabilities")
 		case ScopeUsageRead:
 			out = append(out, "Read observed token usage")
+		case ScopeAgentExec:
+			out = append(out, "Open terminals and run commands on allowed Agents")
+		case ScopeMachineExec:
+			out = append(out, "Open host terminals and run commands on allowed Machines")
 		case ScopeMetricsRead:
 			out = append(out, "Read fleet operational metrics")
 		case ScopeArchivesAdmin:
@@ -114,7 +120,7 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 		views = append(views, operatorCredentialView{
 			ID: installationAdminCredentialID, Name: "installation-admin", DisplayName: "Installation administrator",
 			AccessLevel: "administrator", State: "accepted", Source: "installation",
-			Scopes: []string{}, AgentResources: []string{"*"}, Permissions: []string{"Full access to this Kyber installation"},
+			Scopes: []string{}, AgentResources: []string{"*"}, MachineResources: []string{"*"}, Permissions: []string{"Full access to this Kyber installation"},
 		})
 	}
 	for i, entry := range a.callers {
@@ -145,7 +151,7 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 		}
 		view := operatorCredentialView{
 			ID: id, Name: declared.Name, DisplayName: declared.Name, AccessLevel: "restricted", State: state, Source: "configuration",
-			Scopes: scopes, AgentResources: sortedResources(c.AgentResources), Permissions: credentialPermissions(scopes),
+			Scopes: scopes, AgentResources: sortedResources(c.AgentResources), MachineResources: sortedResources(c.MachineResources), Permissions: credentialPermissions(scopes),
 			AuthenticatesAs: authenticatesAs,
 		}
 		if c.Scopes.full {
@@ -155,7 +161,7 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 		if entry.key == "" {
 			view.State, view.AuthenticatesAs = "configured-not-accepted", ""
 			view.AccessLevel = "restricted"
-			view.Scopes, view.AgentResources, view.Permissions = []string{}, []string{}, []string{}
+			view.Scopes, view.AgentResources, view.MachineResources, view.Permissions = []string{}, []string{}, []string{}, []string{}
 		}
 		views = append(views, view)
 	}
@@ -193,10 +199,11 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 	// Parse only safe metadata. Even malformed configuration must never appear
 	// in an error message: the original document can contain inline key values.
 	var configured []struct {
-		Name           string   `json:"name"`
-		CredentialID   string   `json:"credentialId"`
-		Scopes         []string `json:"scopes"`
-		AgentResources []string `json:"agentResources"`
+		Name             string   `json:"name"`
+		CredentialID     string   `json:"credentialId"`
+		Scopes           []string `json:"scopes"`
+		AgentResources   []string `json:"agentResources"`
+		MachineResources []string `json:"machineResources"`
 	}
 	if raw := secret.Data["callers"]; len(raw) > 0 && json.Unmarshal(raw, &configured) != nil {
 		response.Warnings = append(response.Warnings, "The configured credential list could not be read. Active credentials are shown.")
@@ -212,6 +219,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 	for i, config := range configured {
 		sort.Strings(config.Scopes)
 		sort.Strings(config.AgentResources)
+		sort.Strings(config.MachineResources)
 		matched := false
 		for j := range response.Credentials {
 			view := &response.Credentials[j]
@@ -219,7 +227,8 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 				view.Configured = true
 				view.ConfiguredScopes = config.Scopes
 				view.ConfiguredResources = config.AgentResources
-				view.ConfigurationDiffers = !equalStringSet(view.Scopes, config.Scopes) || !equalStringSet(view.AgentResources, config.AgentResources)
+				view.ConfiguredMachines = config.MachineResources
+				view.ConfigurationDiffers = !equalStringSet(view.Scopes, config.Scopes) || !equalStringSet(view.AgentResources, config.AgentResources) || !equalStringSet(view.MachineResources, config.MachineResources)
 				matched = true
 			}
 		}
@@ -231,7 +240,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 			response.Credentials = append(response.Credentials, operatorCredentialView{
 				ID: id, Name: config.Name, DisplayName: config.Name, AccessLevel: "restricted", State: "configured-not-accepted", Source: "configuration",
 				Scopes: []string{}, AgentResources: []string{}, Permissions: []string{}, Configured: true,
-				ConfiguredScopes: config.Scopes, ConfiguredResources: config.AgentResources,
+				ConfiguredScopes: config.Scopes, ConfiguredResources: config.AgentResources, ConfiguredMachines: config.MachineResources,
 			})
 		}
 	}

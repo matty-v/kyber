@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -49,6 +50,9 @@ type execControlMsg struct {
 //	Client → server: binary frames are stdin bytes; text frames are JSON control msgs.
 //	Server → client: binary frames are stdout/stderr bytes interleaved.
 func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.requireExecAccess(w, r, name, ScopeAgentExec) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -90,6 +94,9 @@ func (s *Server) handleAgentExec(w http.ResponseWriter, r *http.Request, name st
 // GET /api/v1/machines/{name}/exec (Upgrade: websocket) — see handleAgentExec
 // for why this is GET and not POST.
 func (s *Server) handleMachineExec(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.requireExecAccess(w, r, name, ScopeMachineExec) {
+		return
+	}
 	machine := &kyberv1.Machine{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, machine); err != nil {
@@ -169,7 +176,9 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		execReq = execReq.Param("command", c)
 	}
 
-	executor, err := remotecommand.NewSPDYExecutor(s.RestConfig, "POST", execReq.URL())
+	execCtx, cancelExec := context.WithCancel(r.Context())
+	defer cancelExec()
+	executor, err := newExecExecutor(execCtx, s.RestConfig, execReq.URL())
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error",
 			"failed to create executor: "+err.Error())
@@ -190,6 +199,7 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	wsReadDone := make(chan struct{})
 	go func() {
 		defer close(wsReadDone)
+		defer cancelExec()
 		defer stdinW.Close()
 		for {
 			msgType, data, err := conn.ReadMessage()
@@ -235,7 +245,7 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	}()
 
 	// Run the exec session (blocks until the command exits or streams close).
-	streamErr := executor.StreamWithContext(r.Context(), remotecommand.StreamOptions{
+	streamErr := executor.StreamWithContext(execCtx, remotecommand.StreamOptions{
 		Stdin:             stdinR,
 		Stdout:            stdoutW,
 		Stderr:            stdoutW, // interleave stderr into the same binary stream
@@ -245,8 +255,8 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	stdoutW.Close()
 	stdinR.Close()
 
-	// Wait for I/O goroutines to finish.
-	<-wsReadDone
+	// Drain stdout before the exit frame so there is only one writer.
+	// Do not wait for the client reader: it can be waiting for this exit.
 	<-execReadDone
 
 	// Send a close frame, optionally carrying the exit error.
@@ -258,6 +268,9 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	} else {
 		_ = conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"exit"}`))
 	}
+	// Closing the connection unblocks the reader after reporting completion.
+	_ = conn.Close()
+	<-wsReadDone
 }
 
 func encodeExecExitPayload(message string) ([]byte, error) {
