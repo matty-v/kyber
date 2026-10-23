@@ -1586,8 +1586,8 @@ export interface OperatorCredential {
   name: string
   displayName: string
   accessLevel: 'administrator' | 'restricted'
-  state: 'accepted' | 'configured-not-accepted' | 'shared-key'
-  source: 'installation' | 'configuration'
+  state: 'accepted' | 'configured-not-accepted' | 'shared-key' | 'revoked' | 'expired'
+  source: 'installation' | 'configuration' | 'managed' | 'external'
   scopes: string[]
   agentResources: string[]
   machineResources?: string[]
@@ -1602,7 +1602,7 @@ export interface OperatorCredential {
 
 export interface OperatorCredentialInventory {
   observedAt: string
-  inventoryScope: 'current-control-plane'
+  inventoryScope: 'current-control-plane' | 'installation-registry'
   configurationAvailable: boolean
   usageAvailable: boolean
   credentials: OperatorCredential[]
@@ -1619,7 +1619,7 @@ export interface SecurityEvent {
   principalId: string
   credentialId: string
   credentialGeneration: string
-  credentialAuthority?: 'configuration'
+  credentialAuthority?: 'configuration' | 'registry'
   requestId: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER'
   action: string

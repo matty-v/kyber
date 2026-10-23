@@ -399,3 +399,20 @@ func TestPostgresMatchedLogTargetMetadata(t *testing.T) {
 		t.Fatal("validated log target metadata lost", err)
 	}
 }
+
+func TestPostgresRegistryCredentialOpaqueTarget(t *testing.T) {
+	store, _ := postgresFixture(t)
+	ctx := context.Background()
+	event := fixtureEvent()
+	event.CredentialAuthority = "registry"
+	event.Action = "credential:revoke"
+	event.ResourceKind = "credential"
+	event.ResourceName = "https://issuer.example.invalid/credentials/one"
+	if _, err := store.Append(ctx, event); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.Query(ctx, Filter{Namespace: event.Namespace, ResourceKind: event.ResourceKind, ResourceName: event.ResourceName, Limit: 10}, nil)
+	if err != nil || len(page.Items) != 1 || page.Items[0].CredentialAuthority != "registry" || page.Items[0].ResourceName != event.ResourceName {
+		t.Fatal("registry authority or opaque target lost", err)
+	}
+}

@@ -129,6 +129,9 @@ func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.R
 		event.PrincipalID = caller.PrincipalID
 		event.CredentialID = caller.CredentialID
 		event.Generation = caller.CredentialGeneration
+		if caller.CredentialAuthority == "registry" {
+			event.CredentialAuthority = "registry"
+		}
 	}
 	if allowed {
 		event.Outcome = "allow"
@@ -170,6 +173,9 @@ func (s *Server) auditOperatorDenial(w http.ResponseWriter, r *http.Request, act
 		e.PrincipalID = c.PrincipalID
 		e.CredentialID = c.CredentialID
 		e.Generation = c.CredentialGeneration
+		if c.CredentialAuthority == "registry" {
+			e.CredentialAuthority = "registry"
+		}
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), securityAuditTimeout)
 	defer cancel()

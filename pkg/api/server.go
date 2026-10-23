@@ -115,6 +115,11 @@ type Server struct {
 	// rotations take effect immediately without a process restart.
 	auth *APIKeyAuthenticator
 
+	// OperatorCredentialAuthority is an optional staged integration seam. A
+	// configured authority must distinguish unadopted state from an outage.
+	// The control-plane command does not enable adoption through this seam yet.
+	OperatorCredentialAuthority OperatorCredentialAuthority
+
 	// APIKeySecretName is the name of the Kubernetes Secret holding the api-key
 	// the control-plane authenticates against. The rotate handler patches this
 	// Secret's `api-key` field. Defaults to "" (rotation disabled — the handler
@@ -634,6 +639,8 @@ func (s *Server) buildTopHandler() http.Handler {
 	// after updating the Secret, without a pod restart.
 	if s.auth == nil {
 		s.auth = NewAPIKeyAuthenticator(s.APIKey, s.Callers...)
+		s.auth.authority = s.OperatorCredentialAuthority
+		s.auth.namespace = s.Namespace
 	}
 	s.registerProtectedRoutes(protectedMux)
 	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)))

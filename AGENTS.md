@@ -907,3 +907,13 @@ on exact Machines. `sensitive_routes.go` enumerates method/action/source pairs;
 new log sources/subpaths do not inherit grants. Guards precede backend reads,
 ignore observe-only authorization, and set no-store. Metadata-only secret lists
 redact value fingerprints. Generic logging/export stays administrator-only.
+
+The staged `Server.OperatorCredentialAuthority` seam resolves one current
+registry authority per request; only an exact uninitialized result before
+adoption permits bootstrap configuration. The control-plane command does not
+wire it yet. Registry cookies use per-credential V2 signing; private immutable
+V1 compatibility signing state preserves existing sessions without retaining a
+second accepted bearer key. Read
+`docs/design/2026-10-23-current-operator-credential-resolution.md` before enabling
+or changing this seam. Do not activate it before ownership, audited management,
+stream revocation and upgrade/rollback compatibility gates are complete.

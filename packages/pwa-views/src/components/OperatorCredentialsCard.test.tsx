@@ -24,6 +24,29 @@ const inventory: OperatorCredentialInventory = {
 afterEach(() => { cleanup(); vi.useRealTimers(); vi.clearAllMocks() })
 
 describe('operator credential inventory', () => {
+  it('shows registry ownership and keeps former grants out of active access', async () => {
+    state.api.getOperatorCredentials.mockResolvedValue({
+      ...inventory,
+      inventoryScope: 'installation-registry',
+      configurationAvailable: false,
+      credentials: [
+        { ...inventory.credentials[1], source: 'managed', state: 'revoked', displayName: 'Revoked integration', permissions: ['Previously could delete Agents'] },
+        { ...inventory.credentials[1], id: 'expired', source: 'external', state: 'expired', displayName: 'Expired integration', permissions: ['Previously could read secrets'] },
+      ],
+    })
+    render(<OperatorCredentialsCard />)
+    expect(await screen.findByText('Revoked integration')).toBeInTheDocument()
+    expect(screen.getByText('Revoked')).toBeInTheDocument()
+    expect(screen.getByText('Expired')).toBeInTheDocument()
+    expect(screen.getByText(/revoked and cannot authenticate/)).toBeInTheDocument()
+    expect(screen.getByText(/expired and cannot authenticate/)).toBeInTheDocument()
+    expect(screen.getByText(/Managed in Kyber/)).toBeInTheDocument()
+    expect(screen.queryByText('Previously could delete Agents')).not.toBeInTheDocument()
+    expect(screen.queryByText('Previously could read secrets')).not.toBeInTheDocument()
+    expect(screen.queryByText(/Still active, but/)).not.toBeInTheDocument()
+    expect(screen.getByText(/Access is read from the current credential registry/)).toBeInTheDocument()
+  })
+
   it('explains actual access and unavailable history without exposing key controls', async () => {
     state.api.getOperatorCredentials.mockResolvedValue(inventory)
     render(<OperatorCredentialsCard><button>Administrator rotation</button></OperatorCredentialsCard>)

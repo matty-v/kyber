@@ -128,7 +128,7 @@ func (f Filter) valid() bool {
 	case "log-container":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
 	case "credential":
-		return f.ResourceName == "" || identifier.MatchString(f.ResourceName)
+		return f.ResourceName == "" || validActorID(f.ResourceName)
 	default:
 		return false
 	}

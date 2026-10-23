@@ -160,6 +160,13 @@ func verifyBrowserSession(apiKey, token string, now time.Time) (*browserSessionC
 		return nil, err
 	}
 
+	return verifyBrowserSessionWithSigningKey(key, token, now)
+}
+
+func verifyBrowserSessionWithSigningKey(key []byte, token string, now time.Time) (*browserSessionClaims, error) {
+	if len(key) != browserSessionKeyLen {
+		return nil, errNoBrowserSessionKey
+	}
 	version, rest, ok := strings.Cut(token, ".")
 	if !ok || version != browserSessionTokenVersion {
 		return nil, errMalformedBrowserSession

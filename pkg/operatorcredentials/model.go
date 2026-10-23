@@ -112,15 +112,32 @@ type Operation struct {
 }
 
 type Document struct {
-	SchemaVersion int
-	Namespace     string
-	Credentials   []Credential
-	Operations    []Operation
+	SchemaVersion           int
+	Namespace               string
+	Credentials             []Credential
+	Operations              []Operation
+	legacyBrowserSigningKey []byte
 }
 
 // Clone gives mutation builders an independent, normalized candidate. Loaded
 // snapshots remain unchanged when callers edit nested grants or source refs.
 func (d Document) Clone() Document { return normalized(d) }
+
+// WithLegacyBrowserSigningKey preserves only the derived V1 cookie signing
+// key during adoption, never a second accepted bearer key. It cannot change
+// after insertion. The private storage codec is its only serialization path.
+func (d Document) WithLegacyBrowserSigningKey(key []byte) Document {
+	d.legacyBrowserSigningKey = bytes.Clone(key)
+	return d
+}
+func (d Document) LegacyBrowserSigningKey() []byte { return bytes.Clone(d.legacyBrowserSigningKey) }
+
+// Validate checks the complete bounded storage shape without exposing its
+// private encoding. Permission compilation must still reject unsupported grants.
+func (d Document) Validate() error {
+	_, _, err := encode(d)
+	return err
+}
 
 func (Document) String() string               { return "operator credential document [redacted]" }
 func (d Document) GoString() string           { return d.String() }
@@ -177,6 +194,7 @@ func distinct(values []string) bool {
 
 // normalized returns an independent candidate without mutating caller arrays.
 func normalized(d Document) Document {
+	d.legacyBrowserSigningKey = bytes.Clone(d.legacyBrowserSigningKey)
 	d.Credentials = append([]Credential{}, d.Credentials...)
 	for i, c := range d.Credentials {
 		c.material = bytes.Clone(c.material)
@@ -209,6 +227,9 @@ func normalized(d Document) Document {
 }
 
 func validate(d Document) error {
+	if len(d.legacyBrowserSigningKey) != 0 && len(d.legacyBrowserSigningKey) != 32 {
+		return ErrInvalid
+	}
 	if d.SchemaVersion != SchemaVersion {
 		return ErrUnsupported
 	}

@@ -538,3 +538,45 @@ func TestCloneAndFullWidthGenerations(t *testing.T) {
 		t.Fatal("generation wrapped")
 	}
 }
+
+func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
+	seed := bytes.Repeat([]byte{42}, 32)
+	document := fixtureDocument().WithLegacyBrowserSigningKey(seed)
+	seed[0] = 1
+	if document.LegacyBrowserSigningKey()[0] != 42 {
+		t.Fatal("seed aliases input")
+	}
+	exposed := document.LegacyBrowserSigningKey()
+	exposed[0] = 2
+	clone := document.Clone()
+	clone.legacyBrowserSigningKey[0] = 3
+	if document.LegacyBrowserSigningKey()[0] != 42 {
+		t.Fatal("seed getter/clone exposes mutable state")
+	}
+	raw, _, err := encode(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := decode(raw)
+	if err != nil || !bytes.Equal(loaded.LegacyBrowserSigningKey(), document.LegacyBrowserSigningKey()) {
+		t.Fatal("seed lost in storage codec", err)
+	}
+	if document.WithLegacyBrowserSigningKey([]byte("invalid")).Validate() == nil {
+		t.Fatal("invalid cookie seed length accepted")
+	}
+	store, _ := fixtureStore(t)
+	snapshot, err := store.Create(context.Background(), document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := snapshot.Document.WithLegacyBrowserSigningKey(bytes.Repeat([]byte{43}, 32))
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("compatibility signing seed changed", err)
+	}
+	if _, err := json.Marshal(document); !errors.Is(err, ErrSensitive) {
+		t.Fatal("public JSON exposes compatibility signing seed")
+	}
+	if strings.Contains(fmt.Sprintf("%+v", document), "legacyBrowserSigningKey") {
+		t.Fatal("diagnostic exposes compatibility state")
+	}
+}

@@ -27,7 +27,7 @@ func transition(old *Document, next Document) error {
 	previous := map[string]Credential{}
 	operations := map[string]Operation{}
 	if old != nil {
-		if old.Namespace != next.Namespace || old.SchemaVersion != next.SchemaVersion {
+		if old.Namespace != next.Namespace || old.SchemaVersion != next.SchemaVersion || !bytes.Equal(old.legacyBrowserSigningKey, next.legacyBrowserSigningKey) {
 			return ErrInvalid
 		}
 		for _, c := range old.Credentials {

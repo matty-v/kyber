@@ -225,7 +225,7 @@ paths:
                 required: [observedAt, inventoryScope, configurationAvailable, usageAvailable, credentials, warnings]
                 properties:
                   observedAt: {type: string, format: date-time}
-                  inventoryScope: {type: string, enum: [current-control-plane]}
+                  inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
                   configurationAvailable: {type: boolean}
                   usageAvailable: {type: boolean, enum: [false]}
                   warnings: {type: array, items: {type: string}}
@@ -240,8 +240,8 @@ paths:
                         name: {type: string}
                         displayName: {type: string}
                         accessLevel: {type: string, enum: [administrator, restricted]}
-                        state: {type: string, enum: [accepted, configured-not-accepted, shared-key]}
-                        source: {type: string, enum: [installation, configuration]}
+                        state: {type: string, enum: [accepted, configured-not-accepted, shared-key, revoked, expired]}
+                        source: {type: string, enum: [installation, configuration, managed, external]}
                         scopes: {type: array, items: {type: string}}
                         agentResources: {type: array, items: {type: string}}
                         machineResources: {type: array, items: {type: string}}
@@ -4099,7 +4099,7 @@ components:
         principalId: {type: string}
         credentialId: {type: string}
         credentialGeneration: {type: string, pattern: '^[0-9]+$'}
-        credentialAuthority: {type: string, enum: [configuration]}
+        credentialAuthority: {type: string, enum: [configuration, registry]}
         requestId: {type: string}
         method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         action: {type: string}

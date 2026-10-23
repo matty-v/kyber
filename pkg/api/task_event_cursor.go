@@ -32,10 +32,10 @@ func (s *Server) taskEventCursorKey(r *http.Request) ([]byte, error) {
 	}
 	key := ""
 	if s.auth != nil {
-		if caller.Scopes.full {
-			key = s.auth.currentKey()
-		} else {
-			key, _ = s.auth.scopedCallerKey(caller.Name)
+		var err error
+		key, err = s.auth.credentialKey(r.Context(), caller)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		key = s.APIKey
