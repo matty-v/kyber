@@ -6,7 +6,7 @@
 
 ## Current operator boundary
 
-Restricted credentials are checked by `operatorCredentialBoundary` before
+Restricted credentials are checked by `operatorBoundary` before
 route dispatch. Routes without an explicit supported delegation require the
 installation administrator, regardless of `KYBER_AUTHZ_ENFORCE`. Machine
 operations, terminal access, logs, secrets, configuration and administrator-key
