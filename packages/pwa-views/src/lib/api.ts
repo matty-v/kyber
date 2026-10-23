@@ -182,6 +182,7 @@ export function createApiClient(cluster: Cluster) {
     method: string,
     path: string,
     body?: unknown,
+    signal?: AbortSignal,
   ): Promise<T> {
     const url = `${baseURL}${path}`
     const headers: Record<string, string> = {
@@ -194,6 +195,7 @@ export function createApiClient(cluster: Cluster) {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(signal ? { signal } : {}),
     })
     return parseResponse<T>(res)
   }
@@ -304,15 +306,15 @@ export function createApiClient(cluster: Cluster) {
     rotateApiKey: (): Promise<{ apiKey: string }> =>
       request<{ apiKey: string }>('POST', '/api/v1/rotate-api-key'),
 
-    getOperatorCredentials: (): Promise<OperatorCredentialInventory> =>
-      request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials'),
+    getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
+      request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
 
-    getSecurityEvents: (filters: SecurityEventFilters = {}): Promise<SecurityEventPage> => {
+    getSecurityEvents: (filters: SecurityEventFilters = {}, signal?: AbortSignal): Promise<SecurityEventPage> => {
       const query = new URLSearchParams()
       for (const [key, value] of Object.entries(filters)) {
         if (value !== undefined) query.set(key, String(value))
       }
-      return request<SecurityEventPage>('GET', `/api/v1/security-events${query.size ? `?${query}` : ''}`)
+      return request<SecurityEventPage>('GET', `/api/v1/security-events${query.size ? `?${query}` : ''}`, undefined, signal)
     },
 
     // Anthropic API key — operator-supplied credential the detection

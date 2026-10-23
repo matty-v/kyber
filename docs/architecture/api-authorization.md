@@ -30,6 +30,18 @@ not identify a person, and configuration-reported credential generations do not
 establish a complete material rotation ledger. Do not derive lifetime usage or
 complete session inventories from this endpoint.
 
+Settings → API access exposes these records in a mobile-friendly Recent access
+card, with key selection, older pages and manual refresh. It labels allowed
+access separately from completed work and keeps coverage details available.
+No last-used or lifetime totals are inferred from this partial stream.
+Administrator metadata is held only in connection-bound component state,
+outside shared query caches. Switching installations/selections cancels old
+requests and ignores late responses. A periodic inventory check (every five
+seconds, four-second timeout) clears protected content on denied or unavailable
+access. This UI polling is separate from the registry's still-required server
+revocation guarantees; it does not claim current startup configuration can
+revoke active keys across replicas.
+
 > How Kyber decides *who* may drive an agent lifecycle verb, on top of the
 > single-key authentication wall. Read this before changing `pkg/api/auth.go`,
 > `pkg/api/authz.go`, or the `setAgentDesiredPhase` chokepoint.
