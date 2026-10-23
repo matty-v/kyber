@@ -187,7 +187,7 @@ spec:
             - name: KYBER_SECURITY_AUDIT_RETENTION_DAYS
               value: {{ if hasKey $securityAudit "retentionDays" }}{{ get $securityAudit "retentionDays" | quote }}{{ else }}"30"{{ end }}
             - name: KYBER_SECURITY_AUDIT_MAX_RECORDS
-              value: {{ if hasKey $securityAudit "maxRecords" }}{{ get $securityAudit "maxRecords" | quote }}{{ else }}"1000000"{{ end }}
+              value: {{ if hasKey $securityAudit "maxRecords" }}{{- $maxRecords := get $securityAudit "maxRecords" -}}{{ if kindIs "string" $maxRecords }}{{ $maxRecords | quote }}{{ else }}{{ $maxRecords | toJson | quote }}{{ end }}{{ else }}"1000000"{{ end }}
             - name: KYBER_AUTHZ_ENFORCE
               value: {{ .Values.api.authz.enforce | default false | quote }}
             # Internal-API per-agent authentication (kyber#566). The signing key
