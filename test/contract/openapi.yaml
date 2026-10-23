@@ -830,6 +830,40 @@ paths:
   /api/v1/agents/{name}:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
+    patch:
+      operationId: patchAgent
+      summary: Update Agent configuration
+      description: Installation administrators may update supported Agent fields. Restricted capabilities writers may update only publicCapabilities on an explicitly allowed Agent and receive no Agent representation.
+      tags: [agents]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {type: object, additionalProperties: true}
+      responses:
+        '200':
+          description: Administrator update succeeded
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Agent'}
+        '204':
+          description: Restricted public capability update succeeded without disclosing private Agent configuration
+        '400':
+          $ref: '#/components/responses/ValidationError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: The requested operation is not granted
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '413':
+          description: Request body is too large
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
     get:
       operationId: getAgent
       summary: Get an agent by name

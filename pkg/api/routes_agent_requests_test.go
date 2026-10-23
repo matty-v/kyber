@@ -54,6 +54,10 @@ func buildRequestHarnessWithHandler(t *testing.T, store requeststore.Store, hand
 	for _, object := range objects {
 		builder = builder.WithObjects(object)
 	}
+	resources := make([]string, 0, len(agents))
+	for _, name := range agents {
+		resources = append(resources, "kyber-system/"+name)
+	}
 	server := &api.Server{
 		K8sClient:    builder.Build(),
 		APIKey:       testAPIKey,
@@ -61,9 +65,9 @@ func buildRequestHarnessWithHandler(t *testing.T, store requeststore.Store, hand
 		RequestStore: store,
 		InboundQueue: queue,
 		Callers: []api.ScopedCaller{
-			{Name: "writer", Key: requestWriteKey, Scopes: []string{"requests:write"}},
-			{Name: "reader", Key: requestReadKey, Scopes: []string{"requests:read"}},
-			{Name: "pwa", Key: lifecycleKey, Scopes: []string{"lifecycle:write"}},
+			{Name: "writer", Key: requestWriteKey, AgentResources: resources, Scopes: []string{"requests:write"}},
+			{Name: "reader", Key: requestReadKey, AgentResources: resources, Scopes: []string{"requests:read"}},
+			{Name: "pwa", Key: lifecycleKey, AgentResources: resources, Scopes: []string{"lifecycle:write"}},
 		},
 	}
 	return &requestHarness{handler: server.BuildHandler(), store: store, queue: queue, k8s: server.K8sClient}
@@ -397,7 +401,9 @@ func TestAgentRequests_AgentAndRequestIsolation(t *testing.T) {
 		t.Fatalf("cross-agent GET = %d: %s", wrongAgent.Code, wrongAgent.Body.String())
 	}
 	unknownAgent := h.do(t, http.MethodPost, "/api/v1/agents/ghost/requests", requestWriteKey, map[string]string{"prompt": "hello"})
-	if unknownAgent.Code != http.StatusNotFound {
+	// The credential has no grant for ghost. Deny before looking it up,
+	// regardless of whether that Agent exists.
+	if unknownAgent.Code != http.StatusForbidden {
 		t.Fatalf("unknown-agent POST = %d: %s", unknownAgent.Code, unknownAgent.Body.String())
 	}
 }

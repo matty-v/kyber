@@ -149,8 +149,8 @@ func buildScopedAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler
 		APIKey:       testAPIKey,
 		AuthzEnforce: true,
 		Callers: []api.ScopedCaller{
-			{Name: "write-caller", Key: writeScopedKey, Scopes: []string{"lifecycle:write"}},
-			{Name: "admin-caller", Key: adminScopedKey, Scopes: []string{"lifecycle:admin"}},
+			{Name: "write-caller", Key: writeScopedKey, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:write"}},
+			{Name: "admin-caller", Key: adminScopedKey, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:admin"}},
 		},
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},

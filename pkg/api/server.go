@@ -128,7 +128,8 @@ type Server struct {
 	// but never block, so single-key installs are unaffected. Set true
 	// (KYBER_AUTHZ_ENFORCE=true) to return 403 on an authenticated-but-
 	// unauthorized caller. The legacy key is full-scope, so enforcement only bites
-	// once an operator issues scoped (sub-full) keys.
+	// once an operator issues scoped (sub-full) keys. The public operator
+	// boundary is always enforced and cannot be disabled by this flag.
 	AuthzEnforce bool
 
 	// Addr is the listen address. Defaults to ":8080".
@@ -631,7 +632,7 @@ func (s *Server) buildTopHandler() http.Handler {
 		s.auth = NewAPIKeyAuthenticator(s.APIKey, s.Callers...)
 	}
 	s.registerProtectedRoutes(protectedMux)
-	protected := authMiddleware(s.auth, protectedMux)
+	protected := authMiddleware(s.auth, s.operatorBoundary(protectedMux))
 
 	// Webhook routes: bypass API key auth, use their own secret-header validation.
 	webhookMux := http.NewServeMux()

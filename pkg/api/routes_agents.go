@@ -1486,12 +1486,26 @@ func (s *Server) getAgent(w http.ResponseWriter, r *http.Request, name string) {
 func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string) {
 	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // 1 MB
 	var req PatchAgentRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var wire json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
 		var maxBytesErr *http.MaxBytesError
 		if errors.As(err, &maxBytesErr) {
 			writeJSONError(w, http.StatusRequestEntityTooLarge, "payload_too_large", "request body exceeds 1MB")
 			return
 		}
+		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
+		return
+	}
+	caller := callerFrom(r.Context())
+	restricted := caller == nil || !caller.Scopes.full
+	if restricted {
+		var fields map[string]json.RawMessage
+		if json.Unmarshal(wire, &fields) != nil || len(fields) != 1 || len(fields["publicCapabilities"]) == 0 {
+			writeJSONError(w, http.StatusForbidden, "forbidden", "only public capability updates are granted")
+			return
+		}
+	}
+	if err := json.Unmarshal(wire, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
 	}
@@ -1788,6 +1802,11 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			"capability_ids", publicCapabilityIDs(agent.Spec.PublicCapabilities), "valid", validationErr == nil)
 	}
 
+	if restricted {
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
 	writeJSON(w, http.StatusOK, agentToResponse(agent))
 }
 

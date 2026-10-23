@@ -164,8 +164,12 @@ api:
   existingSecret: ""
   # authz (kyber#474): caller-level authorization on agent lifecycle mutations.
   # Scoped API keys are an optional `callers` JSON doc on the api-key Secret, e.g.
-  #   [ {"name":"pwa","key":"<32-byte hex>","scopes":["lifecycle:write"]},
-  #     {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
+  #   [ {"name":"agent-ops","key":"<32-byte hex>","agentResources":["kyber-system/dave"],"scopes":["lifecycle:write"]},
+  #     {"name":"monitor","key":"<32-byte hex>","scopes":["metrics:read"]} ]
+  # Restricted public API access always requires an explicit route policy;
+  # this switch cannot permit unclassified operations or cross-Agent access.
+  # Empty scopes do not grant metrics access. See docs/api-keys.md before
+  # upgrading existing restricted integrations.
   # Task-scoped callers also require stable principalId, tenantId, credentialId,
   # credentialGeneration, and exact agentResources ("namespace/name"). Public
   # task routes enforce their narrow scopes and ownership regardless of the
@@ -174,12 +178,9 @@ api:
   # compatible). Scopes nest: lifecycle:admin ⊃ lifecycle:write — the impactful
   # verb (force-needs-auth) requires admin; start/stop/restart require write.
   authz:
-    # enforce: when false (default) authz decisions are audit-logged but never
-    # block (permissive/observation mode) — single-key installs are unaffected.
-    # Set true to return 403 to an authenticated-but-under-scoped caller. Only
-    # bites once scoped (sub-full) keys are issued. Opt-in is a 🚦-gated operator
-    # action (per-cluster). Roll out: define scoped callers → watch the
-    # permissive-mode audit log → flip enforce on.
+    # Historical lifecycle helper setting. The public operator boundary and
+    # task/archive/usage authorization are always enforced, even when false.
+    # This is not a compatibility switch for under-scoped integrations.
     enforce: false
   service:
     type: ClusterIP
