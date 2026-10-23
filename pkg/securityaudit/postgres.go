@@ -84,6 +84,8 @@ type Filter struct {
 	Since, Until                                                  time.Time
 	PrincipalID, CredentialID, Action, ResourceKind, ResourceName string
 	Limit                                                         int
+	// Omit false when binding cursors, preserving existing default continuations.
+	ExcludeRoutineAuditReads bool `json:",omitempty"`
 }
 type Cursor struct{ MaxSequence, BeforeSequence int64 }
 type Page struct {
@@ -162,7 +164,8 @@ func (s *PostgresStore) Query(ctx context.Context, f Filter, cursor *Cursor) (Pa
 	rows, err := tx.QueryContext(ctx, `SELECT sequence,stored_at,document FROM operator_security_events WHERE namespace=$1 AND sequence<=$2 AND ($3::bigint IS NULL OR sequence<$3)
  AND ($4::timestamptz IS NULL OR observed_at >= $4) AND ($5::timestamptz IS NULL OR observed_at < $5)
  AND ($6='' OR principal_id=$6) AND ($7='' OR credential_id=$7) AND ($8='' OR action=$8)
- AND ($9='' OR resource_kind=$9) AND ($10='' OR resource_name=$10) ORDER BY sequence DESC LIMIT $11`, f.Namespace, page.Snapshot, before, optionalTime(f.Since), optionalTime(f.Until), f.PrincipalID, f.CredentialID, f.Action, f.ResourceKind, f.ResourceName, f.Limit+1)
+ AND ($9='' OR resource_kind=$9) AND ($10='' OR resource_name=$10)
+ AND ($12::boolean=false OR action<>'audit:read' OR COALESCE(document->>'outcome','unknown') NOT IN ('allow','success')) ORDER BY sequence DESC LIMIT $11`, f.Namespace, page.Snapshot, before, optionalTime(f.Since), optionalTime(f.Until), f.PrincipalID, f.CredentialID, f.Action, f.ResourceKind, f.ResourceName, f.Limit+1, f.ExcludeRoutineAuditReads)
 	if err != nil {
 		return page, databaseError(ctx, err)
 	}

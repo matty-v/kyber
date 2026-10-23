@@ -37,7 +37,7 @@ describe('security history', () => {
     expect(screen.getAllByText('Read Agent credential values')).toHaveLength(2)
     expect(screen.getByText(/No recorded activity does not mean/)).toBeInTheDocument()
     expect(screen.getByText('Selected sensitive access only.')).toBeInTheDocument()
-    expect(state.api.getSecurityEvents).toHaveBeenCalledWith({ limit: 25, credentialId: undefined, cursor: undefined }, expect.any(AbortSignal))
+    expect(state.api.getSecurityEvents).toHaveBeenCalledWith({ limit: 25, credentialId: undefined, cursor: undefined, includeHistoryViews: false }, expect.any(AbortSignal))
   })
 
   it('keeps key filters on older pages and resets pagination on refresh', async () => {
@@ -46,11 +46,22 @@ describe('security history', () => {
     render(<SecurityHistoryCard credentials={credentials} />)
     await screen.findByText('Access allowed')
     await user.selectOptions(screen.getByRole('combobox', { name: 'Operator key' }), 'administrator')
-    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: undefined }, expect.any(AbortSignal)))
+    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: undefined, includeHistoryViews: false }, expect.any(AbortSignal)))
     await user.click(await screen.findByRole('button', { name: 'Older activity' }))
-    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: 'older-records' }, expect.any(AbortSignal)))
+    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: 'older-records', includeHistoryViews: false }, expect.any(AbortSignal)))
     await user.click(await screen.findByRole('button', { name: 'Refresh activity' }))
-    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: undefined }, expect.any(AbortSignal)))
+    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: 'administrator', cursor: undefined, includeHistoryViews: false }, expect.any(AbortSignal)))
+  })
+
+  it('can include history views without reusing the other selection cursor', async () => {
+    state.api.getSecurityEvents.mockResolvedValue({ ...page(), nextCursor: 'older-records' })
+    const user = userEvent.setup()
+    render(<SecurityHistoryCard credentials={credentials} />)
+    await screen.findByText('Access allowed')
+    await user.click(screen.getByRole('button', { name: 'Older activity' }))
+    await screen.findByText('Access allowed')
+    await user.click(screen.getByRole('checkbox', { name: 'Include history views' }))
+    await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: undefined, cursor: undefined, includeHistoryViews: true }, expect.any(AbortSignal)))
   })
 
   it.each([403, 404, 503])('does not present an error as empty successful history (%s)', async (status) => {

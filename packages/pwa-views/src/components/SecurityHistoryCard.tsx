@@ -36,28 +36,29 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
   const cluster = useCluster()
   const api = useMemo(() => createApiClient(cluster), [cluster.id, cluster.baseURL, cluster.apiKey])
   const [credential, setCredential] = useState('')
+  const [includeHistoryViews, setIncludeHistoryViews] = useState(false)
   const [cursor, setCursor] = useState<string>()
   const [refresh, setRefresh] = useState(0)
   // Administrator metadata stays out of shared caches. Match connection AND
   // selection before painting, and ignore responses from abandoned requests.
   const [result, setResult] = useState<{
-    client: typeof api; credential: string; cursor?: string
+    client: typeof api; credential: string; cursor?: string; includeHistoryViews: boolean
     data?: SecurityEventPage; error?: number; loading: boolean
   }>()
   useEffect(() => {
     let cancelled = false
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 10_000)
-    setResult({ client: api, credential, cursor, loading: true })
-    void api.getSecurityEvents({ limit: 25, credentialId: credential || undefined, cursor }, controller.signal).then(
-      (data) => { if (!cancelled) setResult({ client: api, credential, cursor, data, loading: false }) },
+    setResult({ client: api, credential, cursor, includeHistoryViews, loading: true })
+    void api.getSecurityEvents({ limit: 25, credentialId: credential || undefined, cursor, includeHistoryViews }, controller.signal).then(
+      (data) => { if (!cancelled) setResult({ client: api, credential, cursor, includeHistoryViews, data, loading: false }) },
       (error: unknown) => {
         const status = typeof error === 'object' && error !== null && 'status' in error ? Number(error.status) : 0
-        if (!cancelled) setResult({ client: api, credential, cursor, error: status, loading: false })
+        if (!cancelled) setResult({ client: api, credential, cursor, includeHistoryViews, error: status, loading: false })
       },
     ).finally(() => clearTimeout(timeout))
     return () => { cancelled = true; clearTimeout(timeout); controller.abort() }
-  }, [api, credential, cursor, refresh])
+  }, [api, credential, cursor, includeHistoryViews, refresh])
 
   const names = new Map<string, string>()
   const duplicates = new Set<string>()
@@ -66,7 +67,7 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
     names.set(item.id, item.displayName || item.id)
   }
   for (const id of duplicates) names.set(id, id)
-  const current = result?.client === api && result.credential === credential && result.cursor === cursor ? result : undefined
+  const current = result?.client === api && result.credential === credential && result.cursor === cursor && result.includeHistoryViews === includeHistoryViews ? result : undefined
   const data = current?.data
   const loading = !current || current.loading
 
@@ -84,6 +85,11 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
         {credential && !names.has(credential) && <option value={credential}>Previously selected key</option>}
       </select>
     </label>
+    <label className="mt-3 flex items-center gap-2 text-sm text-text-muted">
+      <input type="checkbox" checked={includeHistoryViews} onChange={(e) => { setIncludeHistoryViews(e.target.checked); setCursor(undefined) }} />
+      Include history views
+    </label>
+    <p className="mt-1 text-xs text-text-muted">Denied, failed and uncertain attempts are always shown.</p>
     {loading && <p className="mt-4 text-sm text-text-muted" role="status">Loading activity…</p>}
     {!loading && !data && <p className="mt-4 text-sm text-warning" role="alert">
       {current?.error === 403 ? 'Administrator access is required to view activity.'

@@ -107,6 +107,38 @@ func TestPostgresIdentityPersistenceAndIsolation(t *testing.T) {
 		}
 	}
 }
+
+func TestPostgresHistoryViewFilterKeepsAuditRecords(t *testing.T) {
+	s, _ := postgresFixture(t)
+	ctx := context.Background()
+	e := fixtureEvent()
+	if _, err := s.Append(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	for _, result := range []struct{ phase, outcome string }{{"authorization", "allow"}, {"authorization", "deny"}, {"completion", "success"}, {"completion", "failure"}, {"completion", "unknown"}} {
+		e.ID = uuid.NewString()
+		e.Action = "audit:read"
+		e.Phase, e.Outcome = result.phase, result.outcome
+		if _, err := s.Append(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f := Filter{Namespace: e.Namespace, Limit: 10, ExcludeRoutineAuditReads: true}
+	p, err := s.Query(ctx, f, nil)
+	if err != nil || len(p.Items) != 4 {
+		t.Fatal("history view hid important activity", err)
+	}
+	for _, record := range p.Items {
+		if record.Action == "audit:read" && (record.Outcome == "allow" || record.Outcome == "success") {
+			t.Fatal("routine view crowded out activity")
+		}
+	}
+	f.ExcludeRoutineAuditReads = false
+	p, err = s.Query(ctx, f, nil)
+	if err != nil || len(p.Items) != 6 {
+		t.Fatal("view filter discarded audit records", err)
+	}
+}
 func TestPostgresConcurrentAppendsAndSnapshot(t *testing.T) {
 	s, _ := postgresFixture(t)
 	ctx := context.Background()
