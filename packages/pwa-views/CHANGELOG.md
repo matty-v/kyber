@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.69.0
+
+- Show exact Machine targets and explicit Agent/Machine terminal permissions in the administrator credential inventory.
+
 ## 0.68.0
 
 - Add an administrator-only operator credential inventory to Settings with active/configured access and clear coverage limits.

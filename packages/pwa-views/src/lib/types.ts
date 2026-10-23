@@ -1590,10 +1590,12 @@ export interface OperatorCredential {
   source: 'installation' | 'configuration'
   scopes: string[]
   agentResources: string[]
+  machineResources?: string[]
   permissions: string[]
   configured: boolean
   configuredScopes?: string[]
   configuredResources?: string[]
+  configuredMachines?: string[]
   configurationDiffers?: boolean
   authenticatesAs?: string
 }

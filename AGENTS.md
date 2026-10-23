@@ -860,3 +860,14 @@ Ambiguities known at time of writing: `make lint` is intentionally only
 older docs refer to the pre-workspace layout (now `packages/pwa-views` +
 `apps/embedded-pwa`); `test/prod-e2e/` largely moved to kyber-deploy but a stub
 dir remains here. Trust current code over any doc, including this one.
+
+Operator terminal delegation uses `agents:exec` + exact `agentResources`, or
+`machines:exec` + separate exact `machineResources`. Both require stable caller
+identity in configuration and are checked before lookup/upgrade; lifecycle
+scopes do not imply exec. Machine terminals control the host. The credential
+inventory reports Machine targets separately; never conflate them with Agents.
+
+`pkg/api/exec_transport.go` isolates cancellable Kubernetes exec upgrade headers
+while retaining client-go TLS/proxy/authentication and SPDY streams. Do not
+replace it with the standard executor without preserving stalled-handshake
+cancellation, redirect rejection and upstream error-body redaction tests.

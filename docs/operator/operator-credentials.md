@@ -49,3 +49,37 @@ reads. The UI clears loaded inventory when a refresh is denied; it does not
 put this metadata in the shared query cache. Key rotation controls appear only
 after administrator inventory access is verified. Older installations show an
 explicit unsupported state until upgraded.
+
+
+## Terminal permissions
+
+Terminal access is explicit. `agents:exec` permits terminal modes and commands
+only on exact `agentResources`; `machines:exec` uses a separate
+`machineResources` list. An Agent grant does not grant a Machine terminal,
+and a Machine grant does not grant the Agent terminal API. Lifecycle and task
+permissions do not imply either. The installation administrator retains both.
+
+Machine terminals control the host and may expose other Agents on that host.
+Only give this permission to a trusted host administrator. Agent terminals may
+read the Agent's own files and credentials; they are not a read-only log view.
+The same check protects shell, direct commands, attach, history and device-auth
+modes before Kubernetes lookup and WebSocket upgrade. Generic terminal-preview
+routes remain administrator-only.
+
+Configured terminal integrations require stable principal, tenant, credential
+ID and generation plus exact namespace/name targets. Wildcards are rejected.
+For example, add `scopes: ["machines:exec"]` and
+`machineResources: ["kyber-system/worker-1"]` to an explicitly named integration
+with those identity fields and a `keyFrom` reference. The inventory shows this
+as host terminal access and lists the Machines separately from Agents.
+
+Changes to externally configured credentials still require reload/restart as
+described above. Bounded revocation of active streams and durable security
+audit records remain part of MAT-96/MAT-97; current decision events are sanitized
+control-plane logs, not a durable audit trail.
+
+Terminal completion reports exit before closing the client connection. Client
+disconnect cancels the exec context and closes an upstream connection waiting
+for upgrade headers. The transport retains Kubernetes TLS verification,
+authentication and configured proxy selection; exec redirects are rejected,
+and failed upgrades do not copy upstream response bodies into terminal errors.

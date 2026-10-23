@@ -15,6 +15,70 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/agents/{name}/exec:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: execAgentTerminal
+      summary: Open an authorized Agent terminal WebSocket
+      description: >
+        Requires installation administrator access or agents:exec with the
+        exact namespace/name in agentResources. Authorization precedes
+        resource lookup and WebSocket upgrade. Applies to direct commands,
+        shell, attach, history and device-auth modes. Machine terminals
+        control the host. Lifecycle and task grants do not imply exec.
+      parameters:
+        - name: mode
+          in: query
+          schema: {type: string, enum: [shell, attach, history, device-auth]}
+        - name: cmd
+          in: query
+          description: Repeated command arguments; overrides mode.
+          style: form
+          explode: true
+          schema: {type: array, items: {type: string}}
+      responses:
+        '101':
+          description: Authorized WebSocket upgraded; terminal frames follow.
+        '400':
+          description: Invalid mode or WebSocket upgrade.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Scope/resource authorization or WebSocket origin denied.
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/machines/{name}/exec:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: execMachineTerminal
+      summary: Open an authorized Machine terminal WebSocket
+      description: >
+        Requires installation administrator access or machines:exec with the
+        exact namespace/name in machineResources. Authorization precedes
+        resource lookup and WebSocket upgrade. Applies to direct commands,
+        shell, attach, history and device-auth modes. Machine terminals
+        control the host. Lifecycle and task grants do not imply exec.
+      parameters:
+        - name: mode
+          in: query
+          schema: {type: string, enum: [shell, attach, history, device-auth]}
+        - name: cmd
+          in: query
+          description: Repeated command arguments; overrides mode.
+          style: form
+          explode: true
+          schema: {type: array, items: {type: string}}
+      responses:
+        '101':
+          description: Authorized WebSocket upgraded; terminal frames follow.
+        '400':
+          description: Invalid mode or WebSocket upgrade.
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Scope/resource authorization or WebSocket origin denied.
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credentials:
     get:
       operationId: listOperatorCredentials
@@ -50,10 +114,12 @@ paths:
                         source: {type: string, enum: [installation, configuration]}
                         scopes: {type: array, items: {type: string}}
                         agentResources: {type: array, items: {type: string}}
+                        machineResources: {type: array, items: {type: string}}
                         permissions: {type: array, items: {type: string}}
                         configured: {type: boolean}
                         configuredScopes: {type: array, items: {type: string}}
                         configuredResources: {type: array, items: {type: string}}
+                        configuredMachines: {type: array, items: {type: string}}
                         configurationDiffers: {type: boolean}
                         authenticatesAs: {type: string}
         '401':

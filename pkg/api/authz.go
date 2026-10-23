@@ -135,3 +135,29 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, agentName,
 	writeJSONError(w, http.StatusForbidden, "forbidden", "insufficient scope for this action")
 	return false
 }
+
+// requireExecAccess is always enforced before lookup or WebSocket upgrade.
+// Command/query parameters are deliberately absent from the decision log.
+func (s *Server) requireExecAccess(w http.ResponseWriter, r *http.Request, name string, scope Scope) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	caller := callerFrom(r.Context())
+	allowed := false
+	actor := "unknown"
+	if caller != nil {
+		actor = caller.Name
+		resources := caller.AgentResources
+		if scope == ScopeMachineExec {
+			resources = caller.MachineResources
+		}
+		allowed = caller.Scopes.full || (caller.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name))
+	}
+	decision := "deny"
+	if allowed {
+		decision = "allow"
+	}
+	slog.Info("exec authorization", "caller", actor, "action", string(scope), "resource", s.Namespace+"/"+name, "decision", decision)
+	if !allowed {
+		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
+	}
+	return allowed
+}
