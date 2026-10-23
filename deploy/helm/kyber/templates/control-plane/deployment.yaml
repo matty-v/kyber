@@ -174,15 +174,20 @@ spec:
               value: {{ include "kyber.secretName" . | quote }}
             # Caller-level authorization (kyber#474). KYBER_API_CALLERS is an
             # optional `callers` JSON doc on the api-key Secret (scoped keys);
-            # absent ⇒ only the legacy full-scope api-key is accepted (prior
-            # behavior). KYBER_AUTHZ_ENFORCE (default false) gates whether an
-            # under-scoped caller is blocked (403) vs. permissive/audit-only.
+            # absent means only the installation administrator key is accepted.
+            # Restricted operator access always follows the explicit route policy;
+            # KYBER_AUTHZ_ENFORCE is a historical lifecycle-helper setting.
             - name: KYBER_API_CALLERS
               valueFrom:
                 secretKeyRef:
                   name: {{ include "kyber.secretName" . }}
                   key: callers
                   optional: true
+            {{- $securityAudit := .Values.api.securityAudit | default dict }}
+            - name: KYBER_SECURITY_AUDIT_RETENTION_DAYS
+              value: {{ if hasKey $securityAudit "retentionDays" }}{{ get $securityAudit "retentionDays" | quote }}{{ else }}"30"{{ end }}
+            - name: KYBER_SECURITY_AUDIT_MAX_RECORDS
+              value: {{ if hasKey $securityAudit "maxRecords" }}{{- $maxRecords := get $securityAudit "maxRecords" -}}{{ if kindIs "string" $maxRecords }}{{ $maxRecords | quote }}{{ else }}{{ $maxRecords | toJson | quote }}{{ end }}{{ else }}"1000000"{{ end }}
             - name: KYBER_AUTHZ_ENFORCE
               value: {{ .Values.api.authz.enforce | default false | quote }}
             # Internal-API per-agent authentication (kyber#566). The signing key

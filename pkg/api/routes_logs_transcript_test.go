@@ -6,9 +6,9 @@ import (
 	"strings"
 	"testing"
 
-	"k8s.io/apimachinery/pkg/runtime"
-
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
+	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -19,7 +19,7 @@ func buildTranscriptHandler(t *testing.T, transcript api.ArchiveReader, archive 
 	t.Helper()
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:        fakeClient,
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",
@@ -118,7 +118,7 @@ func TestTranscriptLogs_NoReader(t *testing.T) {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithRuntimeObjects(sampleAgentCRD("dave")).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:                fakeClient,
 		APIKey:                   testAPIKey,
 		Namespace:                "kyber-system",

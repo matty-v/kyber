@@ -17,20 +17,21 @@ func TestMetadataBoundary(t *testing.T) {
 		t.Fatal(err)
 	}
 	for label, mutate := range map[string]func(*Event){
-		"raw URL action":                   func(e *Event) { e.Action = "/api/v1/agents/x/secrets?token=private" },
-		"arbitrary outcome":                func(e *Event) { e.Outcome = "private backend error" },
-		"decision cannot claim completion": func(e *Event) { e.Outcome = "success" },
-		"missing credential":               func(e *Event) { e.CredentialID = "" },
-		"missing generation":               func(e *Event) { e.Generation = 0 },
-		"generation overflow":              func(e *Event) { e.Generation = 1 << 63 },
-		"resource traversal":               func(e *Event) { e.ResourceName = "../private" },
-		"raw command":                      func(e *Event) { e.ResourceName = "example; cat /secrets" },
-		"unbounded identity":               func(e *Event) { e.PrincipalID = string(make([]byte, 200)) },
-		"namespace wildcard":               func(e *Event) { e.Namespace = "*" },
-		"unknown phase":                    func(e *Event) { e.Phase = "backend-response" },
-		"invalid event identity":           func(e *Event) { e.ID = "arbitrary" },
-		"no time":                          func(e *Event) { e.ObservedAt = time.Time{} },
-		"auth mislabeled":                  func(e *Event) { e.Action = "authenticate" },
+		"raw URL action":                    func(e *Event) { e.Action = "/api/v1/agents/x/secrets?token=private" },
+		"arbitrary outcome":                 func(e *Event) { e.Outcome = "private backend error" },
+		"decision cannot claim completion":  func(e *Event) { e.Outcome = "success" },
+		"missing credential":                func(e *Event) { e.CredentialID = "" },
+		"missing generation":                func(e *Event) { e.Generation = 0 },
+		"resource traversal":                func(e *Event) { e.ResourceName = "../private" },
+		"raw command":                       func(e *Event) { e.ResourceName = "example; cat /secrets" },
+		"unbounded identity":                func(e *Event) { e.PrincipalID = string(make([]byte, 200)) },
+		"namespace wildcard":                func(e *Event) { e.Namespace = "*" },
+		"unknown phase":                     func(e *Event) { e.Phase = "backend-response" },
+		"invalid event identity":            func(e *Event) { e.ID = "arbitrary" },
+		"unrecognized credential authority": func(e *Event) { e.CredentialAuthority = "private-source-url" },
+		"raw HTTP method":                   func(e *Event) { e.Method = "PRIVATE_REQUEST_DATA" },
+		"no time":                           func(e *Event) { e.ObservedAt = time.Time{} },
+		"auth mislabeled":                   func(e *Event) { e.Action = "authenticate" },
 	} {
 		t.Run(label, func(t *testing.T) {
 			e := original
@@ -71,5 +72,15 @@ func TestUnavailableStoreAndErrorRedaction(t *testing.T) {
 		if storeError(err) != ErrUnavailable {
 			t.Fatal("backend details leaked")
 		}
+	}
+}
+
+func TestConfiguredOpaqueIdentityCompatibility(t *testing.T) {
+	e := fixtureEvent()
+	e.PrincipalID = "user@example.invalid"
+	e.CredentialID = "https://issuer.example.invalid/credentials/one"
+	e.Generation = ^uint64(0)
+	if err := e.Validate(); err != nil {
+		t.Fatal("existing identity format rejected", err)
 	}
 }

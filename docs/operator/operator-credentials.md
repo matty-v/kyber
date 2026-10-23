@@ -112,6 +112,67 @@ both list and value-read access retain the existing fingerprint view.
 
 Terminal and disk-archive access can expose local credentials independently of
 the user-secret API permissions. Host log access can expose activity from other
-Agents on that host. Grant these only to trusted integrations. Decision logs
+Agents on that host. Operational logs can contain sensitive application output;
+a log grant is not a content-redaction boundary. Grant these only to trusted integrations. Decision logs
 contain actor, action, exact Agent/Machine and outcome, never values or log
-content. Durable security history remains MAT-97.
+content. The required durable records below add a bounded first collection
+slice; complete security history remains MAT-97.
+
+## Required records for sensitive access
+
+The operator terminal, `/agents/{name}/secrets` and Agent/Machine log or
+transcript endpoints, including fleet log viewer/export aliases, require a durable authorization record before any backend
+lookup, content read or terminal upgrade. The control plane uses its existing
+PostgreSQL connection. Without that store, or when a required write fails,
+these operations return `503 security_audit_unavailable` and do not start.
+Sign-in, version information and the administrator credential inventory remain
+available; an invalid permission still returns 403 without reading the backend.
+
+Records contain credential/principal identifiers, action, bounded HTTP method,
+exact Agent/Machine, request/operation IDs and timestamps. They do not include
+credential values, user-secret names/values, request bodies, terminal arguments,
+log text or transcripts. Denied unclassified routes record an installation-level
+decision without copying unknown paths. Older configured callers without stable
+IDs can have unknown attribution on denial; Kyber does not invent a person or
+credential identity for them.
+
+An allowed authorization and a completed operation are different records.
+Failed lookups/validation are failed operations, not successful sensitive reads.
+Terminal completion includes transport/command failure rather than treating a
+WebSocket handshake as success. Client disconnects do not cancel the bounded
+attempt to write completion history. A completion write can fail after content
+or an external effect has already been delivered; its earlier admission remains
+without a confirmed outcome. Treat that as incomplete history, not a rollback
+or a reason to replay a mutation automatically. Failed/interrupted requests
+can have partial effects or data delivery. A confirmed user-secret mutation
+remains successful even when its response is lost; an unconfirmed delivery is
+unknown rather than falsely reported as completed or rolled back.
+
+This collection covers the sensitive operations above and restricted-route
+denials. Durable lifecycle/archive/credential mutation records, authentication
+usage summaries and administrator history/query UI remain
+MAT-97/MAT-134 work. The read-only inventory still does not claim general last
+use or complete usage coverage. Bounded credential revocation is separate from
+this audit collection and is not provided by an authorization record alone.
+
+Retention runs in bounded batches each minute. By default it retains up to
+30 days and 1,000,000 records per installation; either age or capacity can
+shorten the window. Helm settings `api.securityAudit.retentionDays` (1–365)
+and `api.securityAudit.maxRecords` (1,000–100,000,000) control these limits.
+Invalid settings fail startup. The row cap is periodic, so a burst can exceed
+it temporarily between sweeps. Size PostgreSQL for the selected policy and
+its other data. Subsequent history/usage views must show actual retained
+coverage, not promise a full time window when the capacity limit has trimmed it.
+
+Current records label credential authority as `configuration`: IDs/generation
+are those reported by the responding authenticator, not an independent
+issuance or rotation ledger. In particular, the current shared installation
+key does not track material generations. The canonical registry must own and
+validate those versions before the later UI can claim per-key version history.
+
+Fleet logging remains administrator-only. Its initial installation-level
+admission covers target discovery; a second decision records the backend-matched
+pod UID, container, component and workload before content reads/exports. Both
+share one operation ID and completion; consumers must count operations rather
+than treating each decision as a separate read. Unknown query selectors are not
+copied into events. Fleet log responses also use no-store.

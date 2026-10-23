@@ -2,12 +2,6 @@ package api_test
 
 import (
 	"encoding/json"
-	"github.com/gorilla/websocket"
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -15,7 +9,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
@@ -34,7 +35,7 @@ func TestExecGrantsRequireExactKindAndResourceForBearerAndCookie(t *testing.T) {
 			{"lifecycle is not exec", "lifecycle:admin", "agents", "alpha", false},
 		} {
 			t.Run(tc.name+map[bool]string{false: " bearer", true: " cookie"}[browser], func(t *testing.T) {
-				s := &api.Server{APIKey: "exec-root", Namespace: "kyber-system", Callers: []api.ScopedCaller{{Name: "integration", Key: "exec-integration", Scopes: []string{tc.scope}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/alpha"}}}}
+				s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: "exec-root", Namespace: "kyber-system", Callers: []api.ScopedCaller{{Name: "integration", Key: "exec-integration", PrincipalID: "principal_exec_test", TenantID: "tenant_test", CredentialID: "credential_exec_test", CredentialGeneration: 1, Scopes: []string{tc.scope}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/alpha"}}}}
 				// An unauthorized lookup would panic. Allowed routes use an empty backend
 				// and must return 404, proving authorization admitted exactly that target.
 				if tc.allowed {
@@ -129,9 +130,9 @@ func TestExecGrantedWebSocketUpgradeForBearerAndCookie(t *testing.T) {
 				if kind == "machines" {
 					scope = "machines:exec"
 				}
-				s := &api.Server{APIKey: "exec-root", Namespace: "kyber-system", RestConfig: config, Clientset: clientset,
+				s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: "exec-root", Namespace: "kyber-system", RestConfig: config, Clientset: clientset,
 					K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, machine).Build(),
-					Callers:   []api.ScopedCaller{{Name: "integration", Key: "exec-integration", Scopes: []string{scope}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/alpha"}}},
+					Callers:   []api.ScopedCaller{{Name: "integration", Key: "exec-integration", PrincipalID: "principal_exec_test", TenantID: "tenant_test", CredentialID: "credential_exec_test", CredentialGeneration: 1, Scopes: []string{scope}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/alpha"}}},
 				}
 				h := s.BuildHandler()
 				headers := http.Header{"Authorization": []string{"Bearer exec-integration"}}
@@ -148,7 +149,7 @@ func TestExecGrantedWebSocketUpgradeForBearerAndCookie(t *testing.T) {
 				}
 				server := httptest.NewServer(h)
 				defer server.Close()
-				for _, query := range []string{"?mode=shell", "?mode=attach", "?mode=history", "?mode=device-auth", "?cmd=echo&cmd=test"} {
+				for _, query := range []string{"?mode=shell", "?mode=attach", "?mode=history", "?mode=device-auth", "?cmd=echo&cmd=PRIVATE_EXEC_ARGUMENT"} {
 					dialer := websocket.Dialer{HandshakeTimeout: 5 * time.Second}
 					conn, res, err := dialer.Dial("ws"+strings.TrimPrefix(server.URL, "http")+"/api/v1/"+kind+"/alpha/exec"+query, headers)
 					if err != nil {
@@ -156,6 +157,9 @@ func TestExecGrantedWebSocketUpgradeForBearerAndCookie(t *testing.T) {
 					}
 					if res.StatusCode != http.StatusSwitchingProtocols {
 						t.Fatal("upgrade status incorrect")
+					}
+					if res.Header.Get(api.RequestIDHeader) == "" || res.Header.Get("Cache-Control") != "no-store" {
+						t.Fatal("terminal upgrade lost audit correlation/cache headers")
 					}
 					_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 					// The stub returns a controlled executor error after authorization and
@@ -168,6 +172,31 @@ func TestExecGrantedWebSocketUpgradeForBearerAndCookie(t *testing.T) {
 				}
 				if execCalls.Load() != 5 {
 					t.Fatalf("authorized executor calls = %d, want 5", execCalls.Load())
+				}
+				audit := s.SecurityAudit.(*testutil.SecurityAudit)
+				deadline := time.Now().Add(2 * time.Second)
+				for len(audit.Records()) < 10 && time.Now().Before(deadline) {
+					time.Sleep(5 * time.Millisecond)
+				}
+				records := audit.Records()
+				if len(records) != 10 {
+					t.Fatalf("terminal audit records=%d, want 10", len(records))
+				}
+				completions := 0
+				for _, record := range records {
+					if record.Phase == "completion" {
+						completions++
+						if record.Outcome != "failure" {
+							t.Fatal("upgrade was confused with successful exec", record.Outcome)
+						}
+					}
+				}
+				if completions != 5 {
+					t.Fatal("missing terminal completion records", completions)
+				}
+				encoded, _ := json.Marshal(records)
+				if strings.Contains(string(encoded), "PRIVATE_EXEC_ARGUMENT") || strings.Contains(string(encoded), "test executor stopped") {
+					t.Fatal("terminal arguments/errors entered audit history")
 				}
 			})
 		}
@@ -191,9 +220,9 @@ func TestExecDisconnectCancelsKubernetesTransport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &api.Server{APIKey: "exec-root", Namespace: "kyber-system", RestConfig: config, Clientset: clientset,
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: "exec-root", Namespace: "kyber-system", RestConfig: config, Clientset: clientset,
 		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(sampleAgentForExec("alpha", "agent-alpha")).Build(),
-		Callers:   []api.ScopedCaller{{Name: "integration", Key: "exec-integration", Scopes: []string{"agents:exec"}, AgentResources: []string{"kyber-system/alpha"}}},
+		Callers:   []api.ScopedCaller{{Name: "integration", Key: "exec-integration", PrincipalID: "principal_exec_test", TenantID: "tenant_test", CredentialID: "credential_exec_test", CredentialGeneration: 1, Scopes: []string{"agents:exec"}, AgentResources: []string{"kyber-system/alpha"}}},
 	}
 	server := httptest.NewServer(s.BuildHandler())
 	defer server.Close()

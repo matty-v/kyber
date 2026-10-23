@@ -15,8 +15,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
-	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	"image"
 	"image/png"
 	"io"
@@ -29,17 +27,19 @@ import (
 	"github.com/getkin/kin-openapi/openapi3filter"
 	"github.com/getkin/kin-openapi/routers"
 	"github.com/getkin/kin-openapi/routers/gorillamux"
+	"github.com/matty-v/kyber/internal/testutil"
+	"github.com/matty-v/kyber/pkg/api"
+	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/inbound"
+	"github.com/matty-v/kyber/pkg/requeststore"
+	_ "github.com/matty-v/kyber/pkg/runtimes/claudecode"
+	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-
-	"github.com/matty-v/kyber/pkg/api"
-	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
-	"github.com/matty-v/kyber/pkg/inbound"
-	"github.com/matty-v/kyber/pkg/requeststore"
 )
 
 const (
@@ -103,7 +103,7 @@ func newContractServer(t *testing.T, objs ...runtime.Object) http.Handler {
 	}
 	queue := inbound.NewQueue(func(context.Context, inbound.Job) {})
 	t.Cleanup(queue.Stop)
-	srv := &api.Server{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:    fakeClient,
 		APIKey:       contractAPIKey,
 		Namespace:    contractNS,

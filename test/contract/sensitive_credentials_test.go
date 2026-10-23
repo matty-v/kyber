@@ -5,6 +5,7 @@ package contract
 import (
 	"testing"
 
+	"github.com/matty-v/kyber/internal/testutil"
 	"github.com/matty-v/kyber/pkg/api"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -35,7 +36,7 @@ func TestContract_SensitiveCredentialGrants(t *testing.T) {
 			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alpha-user-secrets-kv", Namespace: contractNS}, Data: map[string][]byte{"TOKEN": []byte("contract-value-fixture")}}
 			machine := &kyberv1.Machine{ObjectMeta: metav1.ObjectMeta{Name: "worker-1", Namespace: contractNS}}
 			c := fake.NewClientBuilder().WithScheme(newContractScheme(t)).WithObjects(agent, secret, machine).Build()
-			srv := &api.Server{APIKey: contractAPIKey, Namespace: contractNS, K8sClient: c, Callers: []api.ScopedCaller{{Name: "integration", Key: "contract-sensitive-integration", PrincipalID: "principal_contract", TenantID: "tenant_contract", CredentialID: "credential_contract", CredentialGeneration: 1, Scopes: []string{tc.scope}, AgentResources: []string{contractNS + "/alpha"}, MachineResources: []string{contractNS + "/worker-1"}}}}
+			srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: contractAPIKey, Namespace: contractNS, K8sClient: c, Callers: []api.ScopedCaller{{Name: "integration", Key: "contract-sensitive-integration", PrincipalID: "principal_contract", TenantID: "tenant_contract", CredentialID: "credential_contract", CredentialGeneration: 1, Scopes: []string{tc.scope}, AgentResources: []string{contractNS + "/alpha"}, MachineResources: []string{contractNS + "/worker-1"}}}}
 			req := authedReq(t, tc.method, tc.path, tc.body)
 			req.Header.Set("Authorization", "Bearer contract-sensitive-integration")
 			res := validateContract(t, srv.BuildHandler(), req)
@@ -44,6 +45,30 @@ func TestContract_SensitiveCredentialGrants(t *testing.T) {
 			}
 			if res.Header().Get("Cache-Control") != "no-store" {
 				t.Fatal("sensitive response can be cached")
+			}
+		})
+	}
+}
+
+func TestContract_SensitiveAuditUnavailable(t *testing.T) {
+	for _, tc := range []struct {
+		method, path string
+		body         interface{}
+	}{
+		{"GET", "/api/v1/agents/alpha/secrets", nil},
+		{"GET", "/api/v1/agents/alpha/secrets/TOKEN", nil},
+		{"PUT", "/api/v1/agents/alpha/secrets/TOKEN", map[string]string{"value": "contract-fixture"}},
+		{"DELETE", "/api/v1/agents/alpha/secrets/TOKEN", nil},
+		{"GET", "/api/v1/agents/alpha/logs", nil},
+		{"GET", "/api/v1/machines/worker-1/logs", nil},
+		{"GET", "/api/v1/agents/alpha/exec", nil},
+		{"GET", "/api/v1/machines/worker-1/exec", nil},
+	} {
+		t.Run(tc.method+tc.path, func(t *testing.T) {
+			srv := &api.Server{APIKey: contractAPIKey, Namespace: contractNS}
+			res := validateContract(t, srv.BuildHandler(), authedReq(t, tc.method, tc.path, tc.body))
+			if res.Code != 503 || res.Header().Get("Cache-Control") != "no-store" {
+				t.Fatalf("audit unavailable status=%d", res.Code)
 			}
 		})
 	}

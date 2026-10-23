@@ -21,12 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/record"
-	"sigs.k8s.io/controller-runtime/pkg/cache"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-
 	"github.com/matty-v/kyber/pkg/adapters"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/configexport"
@@ -38,6 +32,7 @@ import (
 	"github.com/matty-v/kyber/pkg/oauth"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskobject"
@@ -45,6 +40,11 @@ import (
 	"github.com/matty-v/kyber/pkg/tokenstore"
 	"github.com/matty-v/kyber/pkg/updates"
 	"github.com/matty-v/kyber/pkg/usagestore"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/record"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // DefaultPublicPort is the default listen address for the public HTTP API.
@@ -53,6 +53,10 @@ const DefaultPublicPort = ":8080"
 // Server is the public HTTP API server for the Kyber control plane.
 // It is registered as a controller-runtime Runnable and starts alongside the controllers.
 type Server struct {
+	// SecurityAudit commits sensitive access decisions before backend effects.
+	// Nil fails closed on sensitive operations; ordinary authentication remains available.
+	SecurityAudit securityaudit.Store
+
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
 	// APIReader, when set, reads straight from the API server, bypassing
@@ -632,7 +636,7 @@ func (s *Server) buildTopHandler() http.Handler {
 		s.auth = NewAPIKeyAuthenticator(s.APIKey, s.Callers...)
 	}
 	s.registerProtectedRoutes(protectedMux)
-	protected := authMiddleware(s.auth, s.operatorBoundary(protectedMux))
+	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)))
 
 	// Webhook routes: bypass API key auth, use their own secret-header validation.
 	webhookMux := http.NewServeMux()

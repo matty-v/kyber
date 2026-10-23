@@ -288,3 +288,82 @@ func TestPostgresBlockedAppendDeadline(t *testing.T) {
 		t.Fatal("timed-out append persisted an event", err)
 	}
 }
+
+func TestPostgresCapacityRetentionKeepsNewestAndOtherNamespaces(t *testing.T) {
+	s, _ := postgresFixture(t)
+	ctx := context.Background()
+	e := fixtureEvent()
+	for i := 0; i < 6; i++ {
+		e.ID = uuid.NewString()
+		if _, err := s.Append(ctx, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	other := e
+	other.ID = uuid.NewString()
+	other.Namespace = "other-installation"
+	if _, err := s.Append(ctx, other); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.Query(ctx, Filter{Namespace: e.Namespace, Limit: 20}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := s.EnforceRetention(ctx, e.Namespace, time.Now().Add(-time.Hour), 3, 2)
+	if err != nil || n != 2 {
+		t.Fatal("capacity pruning did not respect batch", n, err)
+	}
+	n, err = s.EnforceRetention(ctx, e.Namespace, time.Now().Add(-time.Hour), 3, 2)
+	if err != nil || n != 1 {
+		t.Fatal("capacity pruning removed wrong count", n, err)
+	}
+	after, err := s.Query(ctx, Filter{Namespace: e.Namespace, Limit: 20}, nil)
+	if err != nil || len(after.Items) != 3 {
+		t.Fatal("newest retention", err)
+	}
+	for i := range after.Items {
+		if after.Items[i].ID != before.Items[i].ID {
+			t.Fatal("capacity pruning lost newer event")
+		}
+	}
+	preserved, err := s.Query(ctx, Filter{Namespace: other.Namespace, Limit: 20}, nil)
+	if err != nil || len(preserved.Items) != 1 {
+		t.Fatal("capacity pruning crossed installation", err)
+	}
+}
+
+func TestPostgresPreservesOpaqueConfiguredIdentityAndGeneration(t *testing.T) {
+	s, _ := postgresFixture(t)
+	ctx := context.Background()
+	e := fixtureEvent()
+	e.PrincipalID = "user@example.invalid"
+	e.CredentialID = "https://issuer.example.invalid/credentials/one"
+	e.Generation = ^uint64(0)
+	if _, err := s.Append(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Query(ctx, Filter{Namespace: e.Namespace, PrincipalID: e.PrincipalID, CredentialID: e.CredentialID, Limit: 10}, nil)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Generation != e.Generation || page.Items[0].PrincipalID != e.PrincipalID {
+		t.Fatal("existing identity metadata lost", err)
+	}
+}
+
+func TestPostgresMatchedLogTargetMetadata(t *testing.T) {
+	s, _ := postgresFixture(t)
+	ctx := context.Background()
+	e := fixtureEvent()
+	e.Action = "logs:read"
+	e.ResourceKind = "log-container"
+	e.ResourceName = "known-pod-uid"
+	e.Container = "agent"
+	e.LogComponent = "agent"
+	e.LogWorkload = "alpha"
+	e.CredentialAuthority = "configuration"
+	if _, err := s.Append(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Query(ctx, Filter{Namespace: e.Namespace, ResourceKind: e.ResourceKind, ResourceName: e.ResourceName, Limit: 10}, nil)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Container != e.Container || page.Items[0].LogWorkload != e.LogWorkload {
+		t.Fatal("validated log target metadata lost", err)
+	}
+}

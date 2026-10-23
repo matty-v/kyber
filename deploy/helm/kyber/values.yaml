@@ -177,6 +177,12 @@ api:
   # The legacy api-key above always resolves to a full-scope caller (backward-
   # compatible). Scopes nest: lifecycle:admin ⊃ lifecycle:write — the impactful
   # verb (force-needs-auth) requires admin; start/stop/restart require write.
+  # Durable operator security metadata uses the existing PostgreSQL service.
+  # Retention is age- and capacity-bounded; the retained window may be shorter
+  # under heavy traffic. Invalid values fail startup rather than disable pruning.
+  securityAudit:
+    retentionDays: 30  # integer, 1–365
+    maxRecords: 1000000  # 1,000–100,000,000; size the database accordingly
   authz:
     # Historical lifecycle helper setting. The public operator boundary and
     # task/archive/usage authorization are always enforced, even when false.

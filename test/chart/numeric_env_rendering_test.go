@@ -330,3 +330,23 @@ func helmTemplateWithValues(t *testing.T, valuesYAML string) string {
 	}
 	return stdout.String()
 }
+
+// Audit startup parses integers strictly. Helm YAML numbers must not use
+// scientific notation, and invalid fractional/zero inputs must not be rounded
+// into an apparently valid policy by the renderer.
+func TestSecurityAuditPolicyEnvValues(t *testing.T) {
+	for _, tc := range []struct{ name, yaml, want string }{
+		{"yaml integer", "1000000", "1000000"},
+		{"quoted integer", `"1000000"`, "1000000"},
+		{"fraction stays invalid", "3.14", "3.14"},
+		{"zero stays invalid", "0", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rendered := helmTemplateWithValues(t, "api:\n  securityAudit:\n    retentionDays: 30\n    maxRecords: "+tc.yaml+"\n")
+			env := controlPlaneContainerEnvLiterals(t, rendered)
+			if env["KYBER_SECURITY_AUDIT_RETENTION_DAYS"] != "30" || env["KYBER_SECURITY_AUDIT_MAX_RECORDS"] != tc.want {
+				t.Fatal("audit policy integer formatting changed")
+			}
+		})
+	}
+}

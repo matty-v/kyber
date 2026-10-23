@@ -1,8 +1,11 @@
 # Operator security history persistence
 
-This package is the durable storage foundation for MAT-97. It is not yet wired
-into authentication, handlers, Settings or retention jobs, and does not by
-itself provide an audit trail for a running installation.
+This package is the durable storage foundation for MAT-97. It is used by the
+sensitive operator handlers and bounded retention worker.
+Settings history and complete operator audit coverage remain subsequent work.
+The credential authority field distinguishes configuration-reported identities
+and generations from a future authoritative registry. Do not interpret current
+shared-key/configuration generations as a complete key-material rotation ledger.
 
 Events contain typed identity/action/resource metadata. Callers must generate
 an immutable event ID and preserve the complete event when retrying a failed
@@ -16,7 +19,9 @@ later pages of an existing query. Pagination is newest recorded first, not a
 claim that clocks on all replicas agree. Future API cursors must bind the
 namespace, filters, snapshot and caller authorization; the internal Cursor is
 not a public access token. Retention can remove rows while a query is paged.
-Pruning uses recorded time and a bounded per-namespace batch.
+Pruning uses recorded time and a bounded per-namespace batch. The runtime
+policy also caps row count; its minute sweeps can temporarily lag a traffic
+burst. Queries must disclose actual retained coverage.
 
 Database failures are errors, never an empty successful history or a successful
 append. Backend errors are redacted; context cancellation/deadlines remain

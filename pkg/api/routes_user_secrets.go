@@ -289,6 +289,7 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 	}
 
 	slog.Info("user-secret set", "agent", agentName, "key", key, "kind", kind, "size", len(value))
+	markSensitiveOutcome(r, "success")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -333,6 +334,7 @@ func (s *Server) deleteUserSecret(w http.ResponseWriter, r *http.Request, agentN
 	}
 
 	slog.Info("user-secret deleted", "agent", agentName, "key", key)
+	markSensitiveOutcome(r, "success")
 	w.WriteHeader(http.StatusNoContent)
 }
 

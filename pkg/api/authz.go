@@ -166,6 +166,9 @@ func (s *Server) requireSensitiveResource(w http.ResponseWriter, r *http.Request
 		event = "exec authorization"
 	}
 	slog.Info(event, "caller", actor, "principal_id", principal, "credential_id", credential, "credential_generation", generation, "action", string(scope), "method", r.Method, "resource", s.Namespace+"/"+name, "decision", decision)
+	if !s.auditSensitiveDecision(w, r, name, scope, allowed) {
+		return false
+	}
 	if !allowed {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
 	}

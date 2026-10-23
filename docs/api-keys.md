@@ -339,3 +339,10 @@ These are deliberate "not yet" choices, not bugs:
 - [`docs/agents-identity-repos.md`](agents-identity-repos.md) — separate auth surface for agents (the agent's identity repo is managed exclusively by the Kyber Platform GitHub App — reads and writes, no PAT fallback; the generic PAT user-secret is used only for the agent's other repos)
 - `pkg/api/auth.go` — the authenticator
 - `pkg/api/routes_rotate_api_key.go` — the programmatic rotation endpoint
+
+Sensitive terminal, user-secret and log/transcript operations require a durable
+security record before backend access. If PostgreSQL/security history is
+unavailable they return 503 without starting; sign-in and administrator
+credential inventory remain available. See
+[operator credential records](operator/operator-credentials.md#required-records-for-sensitive-access)
+for coverage and incomplete-completion semantics.
