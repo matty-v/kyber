@@ -306,9 +306,9 @@ independently authenticated Agent-internal APIs are outside this operator
 policy and retain their current boundary.
 
 Queries are administrator-only, no-store, bounded and filtered by timestamp,
-principal/credential, action and exact resource. Use descending timestamp plus
-immutable event ID as a stable pagination key and constrain a query to its
-initial upper time bound. Default retention is 30 days, configurable by the
+principal/credential, action and exact resource. Use a commit-ordered sequence snapshot for stable pagination, newest
+recorded first. Observation timestamps remain filterable without letting a
+backdated append enter a later page of an existing snapshot. Default retention is 30 days, configurable by the
 operator; record the oldest covered time and store/collection status so empty
 results cannot be mistaken for lifetime non-use. Delete in bounded batches.
 Successful authentication, allowed actions, denied actions, and completed
@@ -333,3 +333,93 @@ The audit store can land as a tested foundation before handler integration;
 such a PR does not complete MAT-97 or make access-history claims. Authoritative
 credential storage, configuration adoption, active stream reauthorization and
 UI-managed lifecycle remain MAT-134 implementation gates above.
+
+## Registry source/rollback review — implementation constraints
+
+Source review confirmed:
+
+- `callers_resolve.go` restricts `keyFrom` to the installation namespace, but
+  resolution currently happens at boot. Keep that namespace restriction.
+- `templates/control-plane/secret.yaml` preserves the live installation key
+  with Helm lookup. All four audited installations use `api.existingSecret`,
+  so that template is not the owner of their credential configuration.
+- `selfupgrade/runner.go` automatically rolls back failed upgrades. A design
+  that only tests successful upgrade/restart cannot claim revoked access stays
+  revoked. The target-image and automatic-rollback paths both need a credential
+  compatibility check before registry activation/management is exposed.
+- PostgreSQL is bundled by default but is optional in current boot code. Do
+  not silently make ordinary authentication depend on it merely because the
+  audit store uses it. Audit-required sensitive operations have their separate
+  documented fail-closed availability requirement.
+
+Use a Kyber-owned Kubernetes Secret as the proposed credential state authority,
+read through the uncached API reader. This adds no cloud-specific service and
+works with the existing Kubernetes installation contract on local/GCP/EKS.
+Do not treat informer delivery or startup environment state as proof that a
+revocation has propagated. Bound each authoritative read; distinguish an
+unavailable authority (503) from an invalid credential (401) in both API and UI.
+
+The canonical record owns immutable credential/principal IDs, role, enabled or
+revoked state, material generation, permission revision, grants/targets, source
+ownership and issuance information. External Secret references can own key
+material while the canonical record owns acceptance and permissions. This is
+one resolver and one credential model, not a second bypass around revocation.
+Initial import preserves actual authentication precedence and existing stable
+principal/tenant IDs. Ambiguous aliases appear as source conflicts; they are
+not silently assigned independent identities. No UI projection returns raw
+material, hashes, bindings, fragments or a recoverable existing key.
+
+Use compare-and-swap resource versions for mutations, including tombstones and
+operation references. Revoked records cannot be revived by a startup re-import
+or a stale external configuration file. Explicit adoption/change of source
+ownership must be audited and show its impact before committing. A UI action
+must not overwrite a GitOps-owned source and then claim permanent success.
+Changes in a configured source are pending candidates until the canonical
+policy accepts them; they never grant new authority implicitly. Limit document
+size and pending operations explicitly; never discard tombstones or audit
+references to make room.
+
+Keep permission revision separate from material generation and stable
+principal identity. A display-name or grant edit must not transfer ownership
+of existing tasks. Rotation invalidates that credential's old bearer/cookie
+bindings while preserving principal/tenant ownership. Signed cursors bound to
+the old generation may require refreshing; records/results remain readable
+under current authorized ownership. Review task/archive/download-token paths
+against current identity at each effect, rather than inventing a new task
+ownership model.
+
+Target a ten-second maximum for invalidating active operator streams, including
+bounded authoritative reads and cancellation. New requests use current state;
+existing streams recheck credential acceptance and permission revision on a
+bounded timer and close on authority failure. Test real terminal and SSE/log
+connections, not just the initial HTTP response. A stale replica may not keep
+using its last successful grants indefinitely. Explain interrupted streams
+plainly in the UI and clear protected content after access changes.
+
+Credential changes need a persisted audit intent before writes and a durable
+operation/outbox reference with the registry update. Drain completion to the
+PostgreSQL audit store idempotently. If an external-material update and registry
+commit cannot be atomic, model the pending/uncertain state explicitly, refuse
+conflicting changes and reconcile through the recorded operation. Never return
+a newly issued value before its authoritative acceptance is committed. A lost
+one-time response is recovered by rotating again or the documented installation
+recovery procedure, not by revealing an existing value.
+
+Before implementation enables management, add fixtures proving:
+
+1. Original installation/admin and task integration credentials still work;
+   stable principal/tenant ownership survives import, rename and rotation.
+2. Two replicas see creation, narrowing, rotation and revocation consistently;
+   authority failure is 503 and closes affected active streams within the bound.
+3. Re-import, external source replacement, process replacement and a supported
+   rollback cannot revive a revoked key. Enforce the compatibility floor in
+   explicit update requests and automatic failure rollback; do not claim that
+   manually running an arbitrary old binary is a supported security boundary.
+4. Simultaneous edits, last-administrator protection, partial writes and lost
+   responses have deterministic, attributable outcomes and a tested recovery.
+5. Secret values, reference bindings and audit internals never enter inventory,
+   logs, UI errors, screenshots or exports. The admin sees accepted authority
+   and source ownership without needing Kubernetes access for daily operation.
+
+These source/rollout constraints are reviewed design gates, not a claim that
+registry management or stream revocation has already shipped.
