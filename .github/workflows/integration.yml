@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - 'pkg/briefstore/**'
+      - 'pkg/securityaudit/**'
       - 'pkg/api/**'
       - 'test/integration/**'
       - 'test/contract/**'
@@ -84,7 +85,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y tmux jq
 
       - name: Run integration tests
-        run: go test -tags integration -v -timeout 15m ./test/integration/... ./test/contract/... ./images/claude-code/... ./images/codex/... ./images/hermes/... ./images/shared/...
+        run: go test -tags integration -v -timeout 15m ./test/integration/... ./test/contract/... ./pkg/securityaudit/... ./images/claude-code/... ./images/codex/... ./images/hermes/... ./images/shared/...
         env:
           KYBER_PG_DSN: postgres://kyber:test@localhost:5433/kyber?sslmode=disable
           KYBER_REDIS_ADDR: localhost:6380
