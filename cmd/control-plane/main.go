@@ -1564,8 +1564,8 @@ func main() {
 		publicAPI.ComputeSimulation = computeSimulation
 		setupLog.Info("development compute scenario control enabled")
 	}
-	if publicAPI.APIKey == "" {
-		setupLog.Info("warning: KYBER_API_KEY not set — public API will reject all requests")
+	if strings.TrimSpace(publicAPI.APIKey) == "" {
+		setupLog.Info("installation administrator key not configured — administrator access is unavailable")
 	}
 	// Inbound event aggregator (kyber#208 audit slice): batches high-
 	// volume Events (rate-limited, queue-full) so a flood produces 1

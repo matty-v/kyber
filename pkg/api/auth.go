@@ -218,6 +218,9 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 				}
 			}
 		}
+		if c.Key != "" && strings.TrimSpace(c.Key) == "" {
+			return nil, fmt.Errorf("caller %q: key must not be blank", c.Name)
+		}
 		hasTaskScope := false
 		for _, sc := range c.Scopes {
 			if strings.HasPrefix(sc, "tasks:") || strings.HasPrefix(sc, "task-results:") || strings.HasPrefix(sc, "task-events:") || strings.HasPrefix(sc, "capabilities:") || sc == string(ScopeUsageRead) {
@@ -290,8 +293,14 @@ func installationAdminCaller() *Caller {
 // (resolving to a full-scope caller) plus any scoped callers. Existing callers
 // pass no scoped callers and get exactly the prior behavior.
 func NewAPIKeyAuthenticator(key string, callers ...ScopedCaller) *APIKeyAuthenticator {
+	if strings.TrimSpace(key) == "" {
+		key = ""
+	}
 	a := &APIKeyAuthenticator{key: key}
 	for _, c := range callers {
+		if strings.TrimSpace(c.Key) == "" {
+			continue
+		}
 		scopes := make([]Scope, 0, len(c.Scopes))
 		for _, sc := range c.Scopes {
 			scopes = append(scopes, Scope(sc))
@@ -457,6 +466,9 @@ func (a *APIKeyAuthenticator) RenewBrowserSession(w http.ResponseWriter, r *http
 // OLD key produces 401 and the NEW key authenticates as full-scope. Used by the
 // API-key rotation endpoint (#143). Scoped callers are unaffected.
 func (a *APIKeyAuthenticator) SetKey(key string) {
+	if strings.TrimSpace(key) == "" {
+		key = ""
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.key = key
@@ -502,6 +514,9 @@ func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
 	presented, err := presentedKey(r)
 	if err != nil {
 		return nil, err
+	}
+	if strings.TrimSpace(presented) == "" {
+		return nil, errUnauthorized("missing API key")
 	}
 
 	a.mu.RLock()
