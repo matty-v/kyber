@@ -34,7 +34,16 @@ across the entire public API before Kyber offers them as limited access.
   accepted-credential inventory or per-key usage view.
 - On 2026-10-23, Datawire had no named operator callers; dev loaded two demo
   callers. No demo-caller use was observed in the examined logs. This is not an
-  issuance history or proof of non-use. Falcon audit is tracked separately.
+  issuance history or proof of non-use.
+- The read-only Falcon audit on 2026-10-23 confirmed the running control plane
+  loads `lando-metrics` (empty declared scopes) and `jack-bridge` (task actions
+  on `kyber-system/jack`). A read-only task metadata query found 26 tasks owned
+  by `principal_jack_bridge`, created 2026-10-15 through 2026-10-18; latest
+  creation was 2026-10-18 19:01:41 UTC. Recent request logs do not attribute
+  general requests to credentials, so `lando-metrics` usage and later task
+  reads/polling could not be established. No live keys were changed or used to
+  exercise privileged endpoints. Empty scopes must not be shown as safe
+  metrics-only access while ungated public operator routes exist.
 
 ## Credential model
 
