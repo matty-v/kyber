@@ -134,6 +134,11 @@ func TestAuthorityNeverFallsBackAfterAdoption(t *testing.T) {
 			if _, err := a.Load(ctx); err == nil || errors.Is(err, ErrUninitialized) {
 				t.Fatal("adopted authority allowed bootstrap fallback", err)
 			}
+			if mode == "missing marker" {
+				if err := a.Bind(ctx, snapshot.Version); !errors.Is(err, ErrConflict) {
+					t.Fatal("observed authority silently rebound after marker deletion", err)
+				}
+			}
 			// Missing/corrupt registry remains fail closed on a fresh replica as well.
 			if mode != "missing marker" {
 				fresh, err := newAuthorityStore(a.registry, a.key.Name)
