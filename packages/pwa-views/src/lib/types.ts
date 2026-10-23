@@ -1608,3 +1608,47 @@ export interface OperatorCredentialInventory {
   credentials: OperatorCredential[]
   warnings: string[]
 }
+
+export interface SecurityEvent {
+  id: string
+  operationId: string
+  observedAt: string
+  storedAt: string
+  sequence: string
+  namespace: string
+  principalId: string
+  credentialId: string
+  credentialGeneration: string
+  credentialAuthority?: 'configuration'
+  requestId: string
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER'
+  action: string
+  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'log-container'
+  resourceName: string
+  phase: 'authentication' | 'authorization' | 'completion'
+  outcome: 'allow' | 'deny' | 'success' | 'failure' | 'unknown'
+  logComponent?: string
+  logWorkload?: string
+  container?: string
+}
+
+export interface SecurityEventFilters {
+  since?: string
+  until?: string
+  principalId?: string
+  credentialId?: string
+  action?: string
+  resourceKind?: SecurityEvent['resourceKind']
+  resourceName?: string
+  limit?: number
+  cursor?: string
+}
+
+export interface SecurityEventPage {
+  observedAt: string
+  items: SecurityEvent[]
+  nextCursor?: string
+  snapshot: string
+  coverage: 'partial-sensitive-access'
+  warnings: string[]
+}

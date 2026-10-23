@@ -1,5 +1,35 @@
 # API authorization — caller scopes on lifecycle mutations (kyber#474)
 
+## Security history reader
+
+`GET /api/v1/security-events` is administrator-only and returns metadata from
+the existing PostgreSQL security audit store. Every read requires a durable
+`audit:read` admission before querying, followed by a separate completion event.
+Missing storage or a failed required write/query returns 503, never empty
+successful history. Responses use `Cache-Control: no-store`; driver error text
+and supplied invalid filters are not returned.
+
+Filters: `since` (inclusive), `until` (exclusive), `principalId`, `credentialId`,
+`action`, `resourceKind`, `resourceName`, and `limit` (default 50, maximum 200).
+Times are RFC3339 observation timestamps. Namespace is always selected by the
+server. Unknown, duplicate or empty query parameters are rejected. Use the
+returned `nextCursor` with the same filters to continue the commit-sequence
+snapshot, newest recorded first. A cursor binds normalized filters, including
+namespace and limit; it is a continuation, not an authorization token. Every
+page requires current administrator authentication. Retention can remove rows
+between pages; a snapshot does not reserve deleted data.
+Event sequences, snapshot sequences and credential generations are decimal
+strings so JavaScript clients do not round wide integer identities.
+
+The response labels coverage `partial-sensitive-access`: current collectors
+cover selected secret/log/transcript/terminal access and restricted-route
+denials. It does not establish complete sign-in, credential lifecycle or
+operator activity history. `observedAt` is query time, not collection start or
+last healthy ingestion time. No event is not proof of no use. Shared keys do
+not identify a person, and configuration-reported credential generations do not
+establish a complete material rotation ledger. Do not derive lifetime usage or
+complete session inventories from this endpoint.
+
 > How Kyber decides *who* may drive an agent lifecycle verb, on top of the
 > single-key authentication wall. Read this before changing `pkg/api/auth.go`,
 > `pkg/api/authz.go`, or the `setAgentDesiredPhase` chokepoint.

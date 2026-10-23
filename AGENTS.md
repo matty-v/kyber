@@ -471,6 +471,14 @@ token-usage events), `cmd/transcript-compact`.
 Backing stores: k8s API (resource state), Redis (events/token budgets/metrics),
 Postgres (session briefs, skills, durable tasks). Briefs and telemetry have
 in-memory fallbacks; production durable tasks require PostgreSQL and fail closed.
+
+Operator security events use `pkg/securityaudit` and the existing PostgreSQL
+connection, without an in-memory runtime fallback. Sensitive access requires a
+durable admission before backend effects. Administrator-only
+`GET /api/v1/security-events` exposes bounded, filter-bound snapshot pagination;
+every history read is itself audited. This is partial sensitive-access history,
+not complete authentication usage or credential lifecycle coverage. See
+`docs/architecture/api-authorization.md` before extending collection or readers.
 `pkg/usagestore` owns the new Postgres schema for local usage evidence and
 detected gaps. Its event identity includes the immutable Agent UID; token
 classes use null for unknown and zero for observed zero. It is not a source of

@@ -4,6 +4,8 @@
 
 import type {
   OperatorCredentialInventory,
+  SecurityEventFilters,
+  SecurityEventPage,
   AgentAuthType,
   Agent,
   AgentInboundBinding,
@@ -304,6 +306,14 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentials: (): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials'),
+
+    getSecurityEvents: (filters: SecurityEventFilters = {}): Promise<SecurityEventPage> => {
+      const query = new URLSearchParams()
+      for (const [key, value] of Object.entries(filters)) {
+        if (value !== undefined) query.set(key, String(value))
+      }
+      return request<SecurityEventPage>('GET', `/api/v1/security-events${query.size ? `?${query}` : ''}`)
+    },
 
     // Anthropic API key — operator-supplied credential the detection
     // poller uses for the Anthropic Models API (kyber#375 PR-A). The
