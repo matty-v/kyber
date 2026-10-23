@@ -50,8 +50,14 @@ const (
 	// transcripts, credentials, or arbitrary Agent configuration reads.
 	ScopeMetricsRead Scope = "metrics:read"
 	// Exec grants are separate because Machine terminals control the host.
-	ScopeAgentExec   Scope = "agents:exec"
-	ScopeMachineExec Scope = "machines:exec"
+	ScopeAgentExec       Scope = "agents:exec"
+	ScopeMachineExec     Scope = "machines:exec"
+	ScopeSecretsList     Scope = "secrets:list"
+	ScopeSecretsRead     Scope = "secrets:read"
+	ScopeSecretsWrite    Scope = "secrets:write"
+	ScopeLogsRead        Scope = "logs:read"
+	ScopeTranscriptsRead Scope = "transcripts:read"
+	ScopeMachineLogsRead Scope = "machines:logs:read"
 	// ScopeArchivesAdmin permits exporting an agent's disk, downloading the
 	// archive, and creating agents from archives (MAT-87/MAT-88). A disk
 	// archive can contain local credentials, so this is its own grant and is
@@ -192,7 +198,7 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 		for _, grant := range []struct {
 			scope     Scope
 			resources []string
-		}{{ScopeAgentExec, c.AgentResources}, {ScopeMachineExec, c.MachineResources}} {
+		}{{ScopeAgentExec, c.AgentResources}, {ScopeMachineExec, c.MachineResources}, {ScopeSecretsList, c.AgentResources}, {ScopeSecretsRead, c.AgentResources}, {ScopeSecretsWrite, c.AgentResources}, {ScopeLogsRead, c.AgentResources}, {ScopeTranscriptsRead, c.AgentResources}, {ScopeMachineLogsRead, c.MachineResources}} {
 			has := false
 			for _, value := range c.Scopes {
 				if value == string(grant.scope) {
@@ -203,12 +209,12 @@ func ParseScopedCallers(raw string) ([]ScopedCaller, error) {
 				continue
 			}
 			if c.PrincipalID == "" || c.TenantID == "" || c.CredentialID == "" || c.CredentialGeneration == 0 || len(grant.resources) == 0 {
-				return nil, fmt.Errorf("caller %q: exec grants require stable identity and exact resources", c.Name)
+				return nil, fmt.Errorf("caller %q: sensitive grants require stable identity and exact resources", c.Name)
 			}
 			for _, resource := range grant.resources {
 				parts := strings.Split(resource, "/")
 				if len(parts) != 2 || len(utilvalidation.IsDNS1123Label(parts[0])) != 0 || len(utilvalidation.IsDNS1123Subdomain(parts[1])) != 0 || !isValidName(parts[1]) {
-					return nil, fmt.Errorf("caller %q: exec resource must be an exact namespace/name", c.Name)
+					return nil, fmt.Errorf("caller %q: sensitive resource must be an exact namespace/name", c.Name)
 				}
 			}
 		}
@@ -241,7 +247,7 @@ func validScope(sc Scope) bool {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
 		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
-		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeMetricsRead, ScopeArchivesAdmin, ScopeAgentExec, ScopeMachineExec:
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeMetricsRead, ScopeArchivesAdmin, ScopeAgentExec, ScopeMachineExec, ScopeSecretsList, ScopeSecretsRead, ScopeSecretsWrite, ScopeLogsRead, ScopeTranscriptsRead, ScopeMachineLogsRead:
 		return true
 	default:
 		return false

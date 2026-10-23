@@ -58,6 +58,9 @@ var agentLogsAllowedContainers = map[string]struct{}{
 //	                   "agent", "session-brief", "kyber-status-sidecar").
 //	                   Unknown values return 400 invalid_container.
 func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.requireSensitiveResource(w, r, name, requiredAgentLogScope(r)) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
@@ -139,7 +142,7 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request, name st
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Transfer-Encoding", "chunked")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
@@ -186,6 +189,9 @@ func (s *Server) handleAgentLogs(w http.ResponseWriter, r *http.Request, name st
 // "app.kubernetes.io/name=node-agent,kyber.io/machine=<name>".
 // If no such pod is found, 404 is returned.
 func (s *Server) handleMachineLogs(w http.ResponseWriter, r *http.Request, name string) {
+	if !s.requireSensitiveResource(w, r, name, ScopeMachineLogsRead) {
+		return
+	}
 	if r.Method != http.MethodGet {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
@@ -242,7 +248,7 @@ func (s *Server) handleMachineLogs(w http.ResponseWriter, r *http.Request, name 
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Transfer-Encoding", "chunked")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 
@@ -440,7 +446,7 @@ func (s *Server) serveWindowedLines(w http.ResponseWriter, r *http.Request, name
 	}
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	// kyber#455: a windowed read is memory-bounded and may be capped. When it is,
 	// signal it explicitly via a response header (set before WriteHeader, so it's

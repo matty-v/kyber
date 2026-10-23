@@ -136,26 +136,36 @@ func (s *Server) requireScope(w http.ResponseWriter, r *http.Request, agentName,
 	return false
 }
 
-// requireExecAccess is always enforced before lookup or WebSocket upgrade.
-// Command/query parameters are deliberately absent from the decision log.
+// requireExecAccess remains the terminal entry point; sensitive data uses the
+// same always-enforced exact-resource check with separate action grants.
 func (s *Server) requireExecAccess(w http.ResponseWriter, r *http.Request, name string, scope Scope) bool {
+	return s.requireSensitiveResource(w, r, name, scope)
+}
+
+func (s *Server) requireSensitiveResource(w http.ResponseWriter, r *http.Request, name string, scope Scope) bool {
 	w.Header().Set("Cache-Control", "no-store")
 	caller := callerFrom(r.Context())
 	allowed := false
-	actor := "unknown"
+	actor, principal, credential := "unknown", "", ""
+	generation := uint64(0)
 	if caller != nil {
-		actor = caller.Name
+		actor, principal, credential = caller.Name, caller.PrincipalID, caller.CredentialID
+		generation = caller.CredentialGeneration
 		resources := caller.AgentResources
-		if scope == ScopeMachineExec {
+		if scope == ScopeMachineExec || scope == ScopeMachineLogsRead {
 			resources = caller.MachineResources
 		}
-		allowed = caller.Scopes.full || (caller.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name))
+		allowed = caller.Scopes.full || (scope != "" && caller.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name))
 	}
 	decision := "deny"
 	if allowed {
 		decision = "allow"
 	}
-	slog.Info("exec authorization", "caller", actor, "action", string(scope), "resource", s.Namespace+"/"+name, "decision", decision)
+	event := "data authorization"
+	if scope == ScopeAgentExec || scope == ScopeMachineExec {
+		event = "exec authorization"
+	}
+	slog.Info(event, "caller", actor, "principal_id", principal, "credential_id", credential, "credential_generation", generation, "action", string(scope), "method", r.Method, "resource", s.Namespace+"/"+name, "decision", decision)
 	if !allowed {
 		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
 	}

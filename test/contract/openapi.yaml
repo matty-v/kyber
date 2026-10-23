@@ -15,6 +15,130 @@ security:
   - BearerAuth: []
 
 paths:
+  /api/v1/agents/{name}/secrets:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: listUserSecrets
+      summary: List allowed Agent user-secret metadata
+      description: Requires administrator or secrets:list and exact Agent access before backend reads. Values are never returned; fingerprints are empty unless value-read access is also granted. Response is no-store.
+      responses:
+        '200':
+          description: User-secret metadata
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      required: [key, kind, size, sha256Prefix, createdAt, updatedAt]
+                      properties:
+                        key: {type: string}
+                        kind: {type: string, enum: [kv, file]}
+                        size: {type: integer, minimum: 0}
+                        sha256Prefix: {type: string, description: Empty for metadata-only callers or unknown metadata.}
+                        createdAt: {type: string}
+                        updatedAt: {type: string}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/agents/{name}/secrets/{key}:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+      - name: key
+        in: path
+        required: true
+        schema: {type: string}
+    get:
+      operationId: readUserSecretValue
+      summary: Read an allowed user-secret value
+      description: Requires administrator or secrets:read and exact Agent access before any Secret read. Does not imply metadata listing or mutation. Response is no-store.
+      responses:
+        '200':
+          description: User-secret value
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            text/plain: {schema: {type: string}}
+            application/octet-stream: {schema: {type: string, format: binary}}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    put:
+      operationId: writeUserSecretValue
+      summary: Create or replace an allowed user secret
+      description: Requires administrator or secrets:write and exact Agent access before backend access. Does not grant value read or listing. Existing env/kind changes can restart the Agent. Cookie mutations retain same-origin protection. Response is no-store.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: {type: string}
+                kind: {type: string, enum: [kv]}
+          multipart/form-data:
+            schema:
+              type: object
+              required: [kind, file]
+              properties:
+                kind: {type: string, enum: [file]}
+                file: {type: string, format: binary}
+      responses:
+        '204':
+          description: Secret written
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '500': {$ref: '#/components/responses/InternalError'}
+    delete:
+      operationId: deleteUserSecret
+      summary: Delete an allowed user secret
+      description: Requires administrator or secrets:write and exact Agent access before backend access. Existing restart behavior applies. Cookie mutations retain same-origin protection. Response is no-store.
+      responses:
+        '204':
+          description: Secret deleted
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+  /api/v1/machines/{name}/logs:
+    parameters:
+      - $ref: '#/components/parameters/ResourceName'
+    get:
+      operationId: readMachineOperationalLogs
+      summary: Read allowed Machine operational logs
+      description: Requires administrator or machines:logs:read and exact machineResources access before lookup or log reads. Does not grant Agent logs or transcripts. Restricted callers cannot select unknown sources. Response is no-store.
+      responses:
+        '200':
+          description: Operational log text
+          headers:
+            Cache-Control: {schema: {type: string, enum: [no-store]}}
+          content:
+            text/plain: {schema: {type: string}}
+        '400': {$ref: '#/components/responses/ValidationError'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {$ref: '#/components/responses/Forbidden'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '500': {$ref: '#/components/responses/InternalError'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/agents/{name}/exec:
     parameters:
       - $ref: '#/components/parameters/ResourceName'
@@ -1923,9 +2047,12 @@ paths:
       summary: Stream or query an agent's logs
       description: >
         Returns an agent's logs as a `text/plain` stream, one line per log line.
+        Requires installation administrator access or exact Agent access plus
+        logs:read for kubelet/archive, or transcripts:read for transcript.
+        Authorization precedes Kubernetes/archive reads. Responses are no-store.
 
 
-        Two sources, selected by the `source` query param:
+        Three sources, selected by the `source` query param:
 
           * `source=kubelet` (default) — the live kubelet ring-buffer tail. Window
             params are RELATIVE: `since` is a Go duration (e.g. `5m`, `1h`) meaning
@@ -1940,6 +2067,9 @@ paths:
             the archive surface is not configured.
 
 
+          * `source=transcript` — archived conversation content. Uses the same
+            required absolute since/until window as archive, with its own grant.
+
         Note the deliberate per-source overload of `since`: a Go duration for
         `kubelet`, an RFC3339 instant for `archive`.
       tags: [agents]
@@ -1947,10 +2077,10 @@ paths:
         - name: source
           in: query
           required: false
-          description: Log source. `kubelet` (default) is the live tail; `archive` is the durable absolute-window surface.
+          description: Log source. `kubelet` (default) is the live tail; `archive` is operational history; `transcript` is conversation history.
           schema:
             type: string
-            enum: [kubelet, archive]
+            enum: [kubelet, archive, transcript]
             default: kubelet
         - name: since
           in: query
@@ -2010,8 +2140,10 @@ paths:
           $ref: '#/components/responses/ValidationError'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403': {$ref: '#/components/responses/Forbidden'}
         '404':
           $ref: '#/components/responses/NotFound'
+        '500': {$ref: '#/components/responses/InternalError'}
         '502':
           description: Archive read failed (upstream object store error).
           content:

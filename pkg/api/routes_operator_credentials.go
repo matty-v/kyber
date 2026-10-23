@@ -79,10 +79,22 @@ func credentialPermissions(scopes []string) []string {
 			out = append(out, "Open terminals and run commands on allowed Agents")
 		case ScopeMachineExec:
 			out = append(out, "Open host terminals and run commands on allowed Machines")
+		case ScopeSecretsList:
+			out = append(out, "List user credential names and metadata on allowed Agents")
+		case ScopeSecretsRead:
+			out = append(out, "Read user credential values on allowed Agents")
+		case ScopeSecretsWrite:
+			out = append(out, "Create, replace, or delete user credentials on allowed Agents")
+		case ScopeLogsRead:
+			out = append(out, "Read operational logs on allowed Agents")
+		case ScopeTranscriptsRead:
+			out = append(out, "Read conversation transcripts on allowed Agents")
+		case ScopeMachineLogsRead:
+			out = append(out, "Read host operational logs on allowed Machines")
 		case ScopeMetricsRead:
 			out = append(out, "Read fleet operational metrics")
 		case ScopeArchivesAdmin:
-			out = append(out, "Export and import allowed Agent disks")
+			out = append(out, "Export and import allowed Agent disks, including local files and credentials")
 		case ScopeTasksAdmin, ScopeTasksPlatformAdmin:
 			out = append(out, "Reserved task permission; no additional access")
 		default:
@@ -228,7 +240,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 				view.ConfiguredScopes = config.Scopes
 				view.ConfiguredResources = config.AgentResources
 				view.ConfiguredMachines = config.MachineResources
-				view.ConfigurationDiffers = !equalStringSet(view.Scopes, config.Scopes) || !equalStringSet(view.AgentResources, config.AgentResources) || !equalStringSet(view.MachineResources, config.MachineResources)
+				view.ConfigurationDiffers = !equalStringSet(view.Scopes, config.Scopes) || !equalStringSet(view.AgentResources, sortedResources(newResourceSet(config.AgentResources...))) || !equalStringSet(view.MachineResources, sortedResources(newResourceSet(config.MachineResources...)))
 				matched = true
 			}
 		}
@@ -248,11 +260,18 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 }
 
 func equalStringSet(a, b []string) bool {
-	if len(a) != len(b) {
+	left, right := make(map[string]bool, len(a)), make(map[string]bool, len(b))
+	for _, value := range a {
+		left[value] = true
+	}
+	for _, value := range b {
+		right[value] = true
+	}
+	if len(left) != len(right) {
 		return false
 	}
-	for i := range a {
-		if a[i] != b[i] {
+	for value := range left {
+		if !right[value] {
 			return false
 		}
 	}

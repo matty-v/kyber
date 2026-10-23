@@ -871,3 +871,10 @@ inventory reports Machine targets separately; never conflate them with Agents.
 while retaining client-go TLS/proxy/authentication and SPDY streams. Do not
 replace it with the standard executor without preserving stalled-handshake
 cancellation, redirect rejection and upstream error-body redaction tests.
+
+Sensitive data uses independent `secrets:list`, `secrets:read`, `secrets:write`,
+`logs:read`, `transcripts:read` grants on exact Agents, and `machines:logs:read`
+on exact Machines. `sensitive_routes.go` enumerates method/action/source pairs;
+new log sources/subpaths do not inherit grants. Guards precede backend reads,
+ignore observe-only authorization, and set no-store. Metadata-only secret lists
+redact value fingerprints. Generic logging/export stays administrator-only.
