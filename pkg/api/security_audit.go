@@ -27,12 +27,30 @@ type sensitiveAuditWriter struct {
 }
 
 func (w *sensitiveAuditWriter) Write(b []byte) (int, error) {
+	// Protected API payloads with no declared type are text, never browser-
+	// sniffed markup. Preserve explicitly declared JSON/binary/image responses.
+	if w.responseWriter.Header().Get("Content-Type") == "" {
+		w.responseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
 	n, err := w.responseWriter.Write(b)
 	if err != nil {
 		w.failed = true
 	}
 	return n, err
 }
+func (w *sensitiveAuditWriter) prepareHeaders() {
+	if w.responseWriter.Header().Get("Content-Type") == "" {
+		w.responseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.responseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+}
+func (w *sensitiveAuditWriter) WriteHeader(status int) {
+	w.prepareHeaders()
+	w.responseWriter.WriteHeader(status)
+}
+func (w *sensitiveAuditWriter) Flush() { w.prepareHeaders(); w.responseWriter.Flush() }
+
 func (w *sensitiveAuditWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	c, r, err := w.responseWriter.Hijack()
 	if err == nil {
