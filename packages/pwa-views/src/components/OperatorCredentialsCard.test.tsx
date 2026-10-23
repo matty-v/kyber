@@ -66,9 +66,9 @@ describe('operator credential inventory', () => {
     expect(screen.getByRole('button', { name: 'Administrator rotation' })).toBe(rotation)
   })
 
-  it('shows Machine terminal targets separately from Agent access', async () => {
+  it.each(['machines:exec', 'machines:logs:read'])('shows Machine targets separately from Agent access (%s)', async (scope) => {
     state.api.getOperatorCredentials.mockResolvedValue({ ...inventory, credentials: [{
-      ...inventory.credentials[1], scopes: ['machines:exec'], agentResources: [],
+      ...inventory.credentials[1], scopes: [scope], agentResources: [],
       machineResources: ['kyber-system/worker-1'],
       permissions: ['Open host terminals and run commands on allowed Machines'],
     }] })

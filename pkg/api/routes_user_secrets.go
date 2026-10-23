@@ -86,6 +86,7 @@ type putUserSecretKVBody struct {
 // appropriate kind-aware handler. Called from handleAgents when the action
 // starts with "secrets".
 func (s *Server) handleUserSecrets(w http.ResponseWriter, r *http.Request, agentName, action string) {
+	w.Header().Set("Cache-Control", "no-store")
 	// action is "secrets" (list) or "secrets/{key}" (single entry).
 	rest := strings.TrimPrefix(action, "secrets")
 	rest = strings.TrimPrefix(rest, "/")
@@ -122,6 +123,9 @@ func (s *Server) handleUserSecrets(w http.ResponseWriter, r *http.Request, agent
 // Returns all entries across both kv and file Secrets, sorted by key.
 // Never returns values — only metadata.
 func (s *Server) listUserSecrets(w http.ResponseWriter, r *http.Request, agentName string) {
+	if !s.requireSensitiveResource(w, r, agentName, ScopeSecretsList) {
+		return
+	}
 	if _, err := s.getAgentOr404(r, w, agentName); err != nil {
 		return
 	}
@@ -140,6 +144,11 @@ func (s *Server) listUserSecrets(w http.ResponseWriter, r *http.Request, agentNa
 		meta := readUserSecretMetadata(sec)
 		for key, dataKey := range enumerateUserSecretKeys(sec, kind) {
 			m := meta[key]
+			// A value digest can verify guesses of low-entropy secrets. A metadata
+			// grant must not act as an offline value oracle.
+			if caller := callerFrom(r.Context()); caller == nil || !caller.Scopes.Has(ScopeSecretsRead) {
+				m.Sha256Prefix = ""
+			}
 			items = append(items, userSecretListItem{
 				Key:          key,
 				Kind:         string(kind),
@@ -158,6 +167,9 @@ func (s *Server) listUserSecrets(w http.ResponseWriter, r *http.Request, agentNa
 // getUserSecret handles GET /api/v1/agents/{name}/secrets/{key}.
 // Returns text/plain for kv, application/octet-stream for file.
 func (s *Server) getUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
+	if !s.requireSensitiveResource(w, r, agentName, ScopeSecretsRead) {
+		return
+	}
 	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return
@@ -194,6 +206,9 @@ func (s *Server) getUserSecret(w http.ResponseWriter, r *http.Request, agentName
 // Creating a new entry never rolls the agent; replacing an env-projected entry
 // or changing an entry's kind rolls a live agent so stale env state is removed.
 func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
+	if !s.requireSensitiveResource(w, r, agentName, ScopeSecretsWrite) {
+		return
+	}
 	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return
@@ -281,6 +296,9 @@ func (s *Server) putUserSecret(w http.ResponseWriter, r *http.Request, agentName
 // Looks in both kv and file; removes whichever holds the key. Rolls the agent
 // on success.
 func (s *Server) deleteUserSecret(w http.ResponseWriter, r *http.Request, agentName, key string) {
+	if !s.requireSensitiveResource(w, r, agentName, ScopeSecretsWrite) {
+		return
+	}
 	if err := usersecrets.ValidateFileKey(key); err != nil {
 		writeUserSecretValidationError(w, "key", err)
 		return

@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.70.0
+
+- Show sensitive-data permissions and Machine log targets without implying Agent access.
+
 ## 0.69.0
 
 - Show exact Machine targets and explicit Agent/Machine terminal permissions in the administrator credential inventory.

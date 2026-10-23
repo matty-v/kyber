@@ -155,3 +155,33 @@ func TestOperatorCredentialInventoryReportsActualSharedKeyAuthority(t *testing.T
 		}
 	}
 }
+
+func TestOperatorCredentialInventoryComparesEffectiveSets(t *testing.T) {
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "api-credentials", Namespace: "kyber-system"}, Data: map[string][]byte{"api-key": []byte("root-fixture"), "callers": []byte(`[{"name":"monitor","key":"monitor-fixture","scopes":["metrics:read","metrics:read"],"agentResources":["kyber-system/alpha","kyber-system/alpha"]}]`)}}
+	s := &api.Server{APIKey: "root-fixture", APIKeySecretName: secret.Name, Namespace: secret.Namespace, K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(secret).Build(), Callers: []api.ScopedCaller{{Name: "monitor", Key: "monitor-fixture", Scopes: []string{"metrics:read"}, AgentResources: []string{"kyber-system/alpha"}}}}
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/operator-credentials", nil)
+	req.Header.Set("Authorization", "Bearer root-fixture")
+	res := httptest.NewRecorder()
+	s.BuildHandler().ServeHTTP(res, req)
+	var body struct {
+		Credentials []struct {
+			Name                 string
+			ConfigurationDiffers bool
+		}
+	}
+	if res.Code != 200 || json.Unmarshal(res.Body.Bytes(), &body) != nil {
+		t.Fatal("inventory unavailable")
+	}
+	found := false
+	for _, entry := range body.Credentials {
+		if entry.Name == "monitor" {
+			found = true
+			if entry.ConfigurationDiffers {
+				t.Fatal("duplicate entries produced a false access difference")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("active integration missing from inventory")
+	}
+}

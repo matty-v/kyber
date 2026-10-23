@@ -83,3 +83,35 @@ disconnect cancels the exec context and closes an upstream connection waiting
 for upgrade headers. The transport retains Kubernetes TLS verification,
 authentication and configured proxy selection; exec redirects are rejected,
 and failed upgrades do not copy upstream response bodies into terminal errors.
+
+
+## Sensitive-data permissions
+
+| Permission | Allowed action | Resource list |
+| --- | --- | --- |
+| `secrets:list` | List user-secret names, sizes and recorded timestamps | `agentResources` |
+| `secrets:read` | Read user-secret values, including files | `agentResources` |
+| `secrets:write` | Create, replace or delete user secrets; existing restart behavior applies | `agentResources` |
+| `logs:read` | Read live and archived operational logs | `agentResources` |
+| `transcripts:read` | Read archived conversation transcripts | `agentResources` |
+| `machines:logs:read` | Read host/node-agent operational logs | `machineResources` |
+
+These permissions are independent. Value read does not imply listing or
+mutation; mutation does not imply value read. Operational log permission does
+not grant `source=transcript`, and transcript permission does not grant other
+log sources. Unknown source aliases are not delegated to restricted callers.
+The generic fleet logging/export routes remain administrator-only.
+
+All grants require stable credential identity and exact resources, matching
+the terminal configuration rules. Authorization runs before Kubernetes or
+archive reads, regardless of the lifecycle rollout flag. Sensitive responses
+use `Cache-Control: no-store`. Browser mutations retain same-origin CSRF
+protection. Metadata-only secret lists omit value fingerprints because a digest
+could verify guesses of low-entropy values; administrators and callers with
+both list and value-read access retain the existing fingerprint view.
+
+Terminal and disk-archive access can expose local credentials independently of
+the user-secret API permissions. Host log access can expose activity from other
+Agents on that host. Grant these only to trusted integrations. Decision logs
+contain actor, action, exact Agent/Machine and outcome, never values or log
+content. Durable security history remains MAT-97.

@@ -9,8 +9,9 @@
 Restricted credentials are checked by `operatorBoundary` before
 route dispatch. Routes without an explicit supported delegation require the
 installation administrator, regardless of `KYBER_AUTHZ_ENFORCE`. Machine
-management, logs, secrets, configuration and administrator-key rotation are
-administrator-only. Terminal access delegates only `agents:exec` or
+management, generic logging/export, configuration and administrator-key rotation
+are administrator-only. User-secret metadata, values and mutations, operational
+logs and transcripts have separate always-enforced exact-resource grants. Terminal access delegates only `agents:exec` or
 `machines:exec` with the corresponding exact resource list; handler guards run
 before lookup and WebSocket upgrade, independent of the rollout flag. Agent lifecycle delegation requires both a
 lifecycle grant and an exact allowed Agent resource; confirmed Agent deletion

@@ -18,23 +18,31 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		name := "unknown"
+		name, principal, credential := "unknown", "", ""
+		generation := uint64(0)
 		if caller != nil {
-			name = caller.Name
+			name, principal, credential = caller.Name, caller.PrincipalID, caller.CredentialID
+			generation = caller.CredentialGeneration
 		}
 		action, resource := "operator-route", ""
-		// Attribute denied terminal requests without logging command arguments,
-		// query strings or unknown path content.
+		// Classify only known operations and validated names. Never log query
+		// strings, command arguments or unknown path content.
 		for _, kind := range []string{"agents", "machines"} {
 			prefix := "/api/v1/" + kind + "/"
 			if strings.HasPrefix(r.URL.Path, prefix) {
 				target, operation, ok := splitAction(strings.TrimPrefix(r.URL.Path, prefix))
-				if ok && isValidName(target) && operation == "exec" {
-					action, resource = kind+":exec", s.Namespace+"/"+target
+				if ok && isValidName(target) {
+					scope, known := agentSensitiveScope(r, operation)
+					if kind == "machines" {
+						scope, known = machineSensitiveScope(r, operation)
+					}
+					if known {
+						action, resource = string(scope), s.Namespace+"/"+target
+					}
 				}
 			}
 		}
-		slog.Warn("authz deny", "caller", name, "action", action, "resource", resource, "decision", "deny", "enforce", true)
+		slog.Warn("authz deny", "caller", name, "principal_id", principal, "credential_id", credential, "credential_generation", generation, "action", action, "resource", resource, "decision", "deny", "enforce", true)
 		w.Header().Set("Cache-Control", "no-store")
 		writeJSONError(w, http.StatusForbidden, "forbidden", "access to this operation is not granted")
 	})
@@ -74,7 +82,11 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	}
 	if strings.HasPrefix(p, "/api/v1/machines/") {
 		name, action, ok := splitAction(strings.TrimPrefix(p, "/api/v1/machines/"))
-		return ok && isValidName(name) && action == "exec" && r.Method == http.MethodGet && caller.Scopes.Has(ScopeMachineExec) && caller.MachineResources.Has(s.Namespace+"/"+name)
+		if !ok || !isValidName(name) || !caller.MachineResources.Has(s.Namespace+"/"+name) {
+			return false
+		}
+		scope, known := machineSensitiveScope(r, action)
+		return known && caller.Scopes.Has(scope)
 	}
 	const prefix = "/api/v1/agents/"
 	if !strings.HasPrefix(p, prefix) {
@@ -107,8 +119,8 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 			return false
 		}
 	}
-	if action == "exec" {
-		return r.Method == http.MethodGet && caller.Scopes.Has(ScopeAgentExec)
+	if scope, known := agentSensitiveScope(r, action); known {
+		return caller.Scopes.Has(scope)
 	}
 	if action == "requests" || strings.HasPrefix(action, "requests/") {
 		return true // request action scopes are checked by the handler

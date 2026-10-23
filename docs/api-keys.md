@@ -52,13 +52,16 @@ operator:
 
 There are two levers, from broadest to narrowest:
 
-- **Rotate the shared API key.** The signing key is derived from it, so every
-  outstanding session everywhere stops working immediately. The browser that
-  performed the rotation is re-issued a cookie and stays signed in.
-- **Change or remove a scoped caller** in the `callers` document. A session
-  names its caller and carries no authority of its own, so narrowing that
-  caller's scopes, replacing its key value, or deleting the entry takes effect
-  on that caller's next request — no restart, and nobody else is signed out.
+- **Rotate the installation administrator key.** Sessions signed with the old
+  key fail on their next request to an instance accepting the replacement.
+  The initiating browser receives a replacement cookie. Verify all replicas
+  accept the new configuration; already-open streams are not closed by this
+  current mechanism.
+- **Change or remove a configured integration** in `callers`, then reload the
+  control planes. Editing the Secret alone does not update their startup
+  snapshots. After reload, changed grants/key values and removed entries are
+  enforced on subsequent requests. Verify the inventory on each instance.
+  Bounded automatic revocation across replicas and streams remains MAT-96.
 
 There is no per-browser revocation: two browsers signed in as the same caller
 cannot be told apart, so signing one out signs both out.
@@ -86,8 +89,9 @@ verbs specifically, you can now issue narrower keys — see below.
 
 The public operator API has an always-enforced restricted-access boundary.
 Unclassified operations require installation administrator access, including
-credential rotation, generic fleet/configuration reads, terminals, secrets,
-and logs. The existing task, request, archive, capability, and usage handlers
+credential rotation and generic fleet/configuration reads. Terminals,
+user secrets, operational logs and transcripts use separate explicit grants
+and exact allowed resources; see [the credential permission guide](operator/operator-credentials.md). The existing task, request, archive, capability, and usage handlers
 retain their stricter action and resource checks. Agent lifecycle operations
 also require the exact `namespace/name` in `agentResources`. A narrow key cannot
 inherit access through the historical observe-only lifecycle setting.
