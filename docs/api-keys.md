@@ -80,13 +80,34 @@ verbs specifically, you can now issue narrower keys — see below.
 
 ### Caller scopes and principal identity
 
+The public operator API has an always-enforced restricted-access boundary.
+Unclassified operations require installation administrator access, including
+credential rotation, generic fleet/configuration reads, terminals, secrets,
+and logs. The existing task, request, archive, capability, and usage handlers
+retain their stricter action and resource checks. Agent lifecycle operations
+also require the exact `namespace/name` in `agentResources`. A narrow key cannot
+inherit access through the historical observe-only lifecycle setting.
+
+`metrics:read` grants read-only fleet operational metrics under
+`/api/v1/metrics/`; it does not grant Agent configuration, logs, transcripts,
+terminals, or secrets. Existing monitoring credentials with empty scopes must
+be explicitly granted this permission before upgrading; a name such as
+`lando-metrics` does not grant access by itself. No existing credential is
+automatically broadened. Credential-changing Agent actions and runtime
+switching remain administrator-only until an explicit restricted policy exists.
+`lifecycle:admin` retains confirmed deletion on explicitly allowed Agents.
+A `capabilities:write` caller may PATCH only the isolated `publicCapabilities`
+field on an allowed Agent; success returns 204 with no private Agent details.
+Mixed or unrelated configuration changes require installation administrator
+access, even if the caller also has lifecycle grants.
+
 You can issue **scoped API keys** that are limited to certain agent lifecycle
 actions, instead of handing out the full-scope key. Scoped keys live in an
 optional `callers` JSON document on the same `kyber-api-credentials` Secret:
 
 ```json
-[ {"name":"pwa","key":"<32-byte hex>","scopes":["lifecycle:write"]},
-  {"name":"ops","key":"<32-byte hex>","scopes":["lifecycle:admin"]} ]
+[ {"name":"agent-automation","key":"<32-byte hex>","agentResources":["kyber-system/dave"],"scopes":["lifecycle:write"]},
+  {"name":"agent-ops","key":"<32-byte hex>","agentResources":["kyber-system/dave"],"scopes":["lifecycle:admin"]} ]
 ```
 
 - `lifecycle:write` — `start` / `stop` / `restart` (and OAuth re-auth resume).
@@ -116,14 +137,12 @@ envelope. The scope permits only the privacy-safe projection at
 skill reports, prompts, runtime metadata, or operator configuration. The
 legacy shared key remains full-scope for compatibility.
 
-The legacy `api-key` keeps working as a **full-scope** caller, so this is
-backward-compatible. Enforcement is **off by default** (`api.authz.enforce:
-false`): under-scoped callers are audit-logged but not blocked. Set
-`api.authz.enforce: true` (a 🚦-gated per-cluster operator step) to return **403**
-to an under-scoped caller. Roll out by defining scoped callers, watching the
-permissive-mode audit log, then enabling enforcement.
-
-Other routes without a documented scope still accept any valid key. See
+The installation `api-key` keeps its administrator access. The historical
+`api.authz.enforce` setting controls the lifecycle helper's observe-only logs;
+it cannot disable the public operator boundary or the strict task/archive/usage
+checks. Operators upgrading restricted integrations must review their grants;
+unclassified public routes now return **403**, even when that setting is false.
+See
 [`architecture/api-authorization.md`](architecture/api-authorization.md) for the
 full model and [Out of scope](#out-of-scope) for the broader "RBAC" follow-up.
 

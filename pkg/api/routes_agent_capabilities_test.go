@@ -50,6 +50,7 @@ func capabilityHandler(t *testing.T) http.Handler {
 			{Name: "wrong-resource", PrincipalID: "principal_wrong", TenantID: "tenant_test", CredentialID: "credential_wrong", CredentialGeneration: 1, AgentResources: []string{"kyber-system/other"}, Key: "wrong-resource", Scopes: []string{"capabilities:read"}},
 			{Name: "no-scope", Key: "no-scope", Scopes: []string{"requests:read"}},
 			{Name: "writer", PrincipalID: "principal_writer", TenantID: "tenant_test", CredentialID: "credential_writer", CredentialGeneration: 1, AgentResources: []string{"kyber-system/reviewer"}, Key: "capability-writer", Scopes: []string{"capabilities:write"}},
+			{Name: "combined-writer", PrincipalID: "principal_combined", TenantID: "tenant_test", CredentialID: "credential_combined", CredentialGeneration: 1, AgentResources: []string{"kyber-system/reviewer"}, Key: "combined-writer", Scopes: []string{"capabilities:write", "lifecycle:admin"}},
 		},
 	}
 	return server.BuildHandler()
@@ -71,10 +72,13 @@ func TestAgentCapabilitiesWriteRequiresScopeAndSupportsUnpublish(t *testing.T) {
 	if got := request("capability-writer", `{"publicCapabilities":null,"model":"smuggled-model"}`); got.Code != http.StatusForbidden {
 		t.Fatalf("mixed lifecycle mutation=%d %s", got.Code, got.Body.String())
 	}
+	if got := request("combined-writer", `{"publicCapabilities":null,"profile":{"alias":"smuggled-profile"}}`); got.Code != http.StatusForbidden {
+		t.Fatalf("combined grants admitted arbitrary configuration=%d %s", got.Code, got.Body.String())
+	}
 	if got := request("no-scope", `{"a2aPeers":[{"name":"auditor","url":"https://agents.example/a2a","credential":{"existingSecret":"auditor-token","key":"token"}}]}`); got.Code != http.StatusForbidden {
 		t.Fatalf("A2A peer mutation without lifecycle scope=%d %s", got.Code, got.Body.String())
 	}
-	if got := request("capability-writer", `{"publicCapabilities":null}`); got.Code != http.StatusOK {
+	if got := request("capability-writer", `{"publicCapabilities":null}`); got.Code != http.StatusNoContent || got.Body.Len() != 0 {
 		t.Fatalf("writer=%d %s", got.Code, got.Body.String())
 	}
 }

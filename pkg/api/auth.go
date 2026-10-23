@@ -46,6 +46,9 @@ const (
 	ScopeCapabilitiesRead   Scope = "capabilities:read"
 	ScopeCapabilitiesWrite  Scope = "capabilities:write"
 	ScopeUsageRead          Scope = "usage:read"
+	// ScopeMetricsRead permits fleet-wide operational metrics, not logs,
+	// transcripts, credentials, or arbitrary Agent configuration reads.
+	ScopeMetricsRead Scope = "metrics:read"
 	// ScopeArchivesAdmin permits exporting an agent's disk, downloading the
 	// archive, and creating agents from archives (MAT-87/MAT-88). A disk
 	// archive can contain local credentials, so this is its own grant and is
@@ -210,7 +213,7 @@ func validScope(sc Scope) bool {
 	case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeRequestsWrite, ScopeRequestsRead,
 		ScopeTasksCreate, ScopeTasksRead, ScopeTasksList, ScopeTasksContinue, ScopeTasksCancel,
 		ScopeTaskResultsRead, ScopeTaskEventsRead, ScopeTasksAdmin, ScopeTasksPlatformAdmin,
-		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeArchivesAdmin:
+		ScopeCapabilitiesRead, ScopeCapabilitiesWrite, ScopeUsageRead, ScopeMetricsRead, ScopeArchivesAdmin:
 		return true
 	default:
 		return false

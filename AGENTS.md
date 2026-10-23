@@ -782,6 +782,11 @@ If docs/contributing/code-quality.md's table and `test.yml` disagree, the workfl
 ## 7. Common-task recipes
 
 ### A. Add/modify a REST endpoint
+The operator boundary defaults new public routes to administrator-only.
+Restricted access requires an explicit classification in `operator_boundary.go`
+plus the handler's action/resource checks. Do not admit a route merely because
+it is authenticated, and do not let `AuthzEnforce=false` bypass that boundary.
+
 Installation credential management must use the always-enforced
 `requireInstallationAdmin` gate before backend access. `lifecycle:admin` is an
 Agent lifecycle grant, not installation administrator access; never let the
