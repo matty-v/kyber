@@ -121,7 +121,7 @@ slice; complete security history remains MAT-97.
 ## Required records for sensitive access
 
 The operator terminal, `/agents/{name}/secrets` and Agent/Machine log or
-transcript endpoints require a durable authorization record before any backend
+transcript endpoints, including fleet log viewer/export aliases, require a durable authorization record before any backend
 lookup, content read or terminal upgrade. The control plane uses its existing
 PostgreSQL connection. Without that store, or when a required write fails,
 these operations return `503 security_audit_unavailable` and do not start.
@@ -169,3 +169,10 @@ are those reported by the responding authenticator, not an independent
 issuance or rotation ledger. In particular, the current shared installation
 key does not track material generations. The canonical registry must own and
 validate those versions before the later UI can claim per-key version history.
+
+Fleet logging remains administrator-only. Its initial installation-level
+admission covers target discovery; a second decision records the backend-matched
+pod UID, container, component and workload before content reads/exports. Both
+share one operation ID and completion; consumers must count operations rather
+than treating each decision as a separate read. Unknown query selectors are not
+copied into events. Fleet log responses also use no-store.

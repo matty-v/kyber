@@ -347,3 +347,23 @@ func TestPostgresPreservesOpaqueConfiguredIdentityAndGeneration(t *testing.T) {
 		t.Fatal("existing identity metadata lost", err)
 	}
 }
+
+func TestPostgresMatchedLogTargetMetadata(t *testing.T) {
+	s, _ := postgresFixture(t)
+	ctx := context.Background()
+	e := fixtureEvent()
+	e.Action = "logs:read"
+	e.ResourceKind = "log-container"
+	e.ResourceName = "known-pod-uid"
+	e.Container = "agent"
+	e.LogComponent = "agent"
+	e.LogWorkload = "alpha"
+	e.CredentialAuthority = "configuration"
+	if _, err := s.Append(ctx, e); err != nil {
+		t.Fatal(err)
+	}
+	page, err := s.Query(ctx, Filter{Namespace: e.Namespace, ResourceKind: e.ResourceKind, ResourceName: e.ResourceName, Limit: 10}, nil)
+	if err != nil || len(page.Items) != 1 || page.Items[0].Container != e.Container || page.Items[0].LogWorkload != e.LogWorkload {
+		t.Fatal("validated log target metadata lost", err)
+	}
+}

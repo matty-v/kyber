@@ -91,13 +91,17 @@ func markSensitiveOutcome(r *http.Request, outcome string) {
 }
 
 func (s *Server) auditSensitiveDecision(w http.ResponseWriter, r *http.Request, name string, scope Scope, allowed bool) bool {
-	action := string(scope)
-	if action == "" {
-		action = "operator:unclassified"
-	}
 	kind := "agent"
 	if scope == ScopeMachineExec || scope == ScopeMachineLogsRead {
 		kind = "machine"
+	}
+	return s.auditSensitiveResourceDecision(w, r, name, scope, kind, allowed)
+}
+
+func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.Request, name string, scope Scope, kind string, allowed bool) bool {
+	action := string(scope)
+	if action == "" {
+		action = "operator:unclassified"
 	}
 	event := securityaudit.Event{CredentialAuthority: "configuration", ID: uuid.NewString(), OperationID: uuid.NewString(), ObservedAt: time.Now().UTC(), Namespace: s.Namespace, RequestID: w.Header().Get(RequestIDHeader), Action: action, ResourceKind: kind, ResourceName: name, Phase: "authorization", Outcome: "deny", Method: auditMethod(r.Method)}
 	if event.RequestID == "" {
@@ -163,4 +167,40 @@ func auditMethod(method string) string {
 	default:
 		return "OTHER"
 	}
+}
+
+func (s *Server) requirePlatformLogAudit(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Cache-Control", "no-store")
+	if !s.requireInstallationAdmin(w, r, "read-platform-logs") {
+		return false
+	}
+	return s.auditSensitiveResourceDecision(w, r, "", ScopeLogsRead, "installation", true)
+}
+
+// Add a target decision after discovery has matched trusted backend metadata,
+// before opening content. Both decisions share an operation, so a successful
+// lookup is never confused with a second independent read or an incomplete job.
+func (s *Server) auditPlatformLogTarget(w http.ResponseWriter, r *http.Request, selection GenericArchiveSelection) bool {
+	state, _ := r.Context().Value(sensitiveAuditContextKey{}).(*sensitiveAuditState)
+	if state == nil || state.admission == nil || s.SecurityAudit == nil {
+		writeJSONError(w, 503, "security_audit_unavailable", "security history is unavailable; content was not read")
+		return false
+	}
+	e := *state.admission
+	e.ID = uuid.NewString()
+	e.ObservedAt = time.Now().UTC()
+	e.ResourceKind = "log-container"
+	e.ResourceName = selection.PodUID
+	e.Container = selection.Container
+	e.LogComponent = selection.Component
+	e.LogWorkload = selection.Workload
+	ctx, cancel := context.WithTimeout(r.Context(), securityAuditTimeout)
+	defer cancel()
+	if _, err := s.SecurityAudit.Append(ctx, e); err != nil {
+		slog.Error("security audit target decision unavailable", "operation_id", e.OperationID, "resource", e.ResourceName)
+		writeJSONError(w, 503, "security_audit_unavailable", "security history is unavailable; content was not read")
+		return false
+	}
+	state.admission = &e
+	return true
 }

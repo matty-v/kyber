@@ -114,6 +114,8 @@ func (f Filter) valid() bool {
 		return f.ResourceName == ""
 	case "agent", "machine":
 		return f.ResourceName == "" || resourceName.MatchString(f.ResourceName)
+	case "log-container":
+		return f.ResourceName == "" || validActorID(f.ResourceName)
 	case "credential":
 		return f.ResourceName == "" || identifier.MatchString(f.ResourceName)
 	default:

@@ -134,6 +134,10 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
+	if !s.requirePlatformLogAudit(w, r) {
+		return
+	}
+
 	if s.K8sClient == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "log streaming not available")
 		return
@@ -172,8 +176,15 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "invalid_target", "component, workload, podUid, and container are required")
 			return
 		}
+		if s.PlatformArchiveReader == nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "archive log surface not configured")
+			return
+		}
 		if !s.isArchivedSelection(r, selection) {
 			writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
+			return
+		}
+		if !s.auditPlatformLogTarget(w, r, selection) {
 			return
 		}
 		s.serveGenericArchivedLogs(w, r, selection)
@@ -206,6 +217,10 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release()
 
+	target := s.loggingTarget(pod)
+	if !s.auditPlatformLogTarget(w, r, GenericArchiveSelection{Component: target.Component, Workload: target.Workload, PodUID: string(pod.UID), Container: container}) {
+		return
+	}
 	opts := parsePodLogOptions(r)
 	opts.Container = container
 	stream, err := s.Clientset.CoreV1().Pods(s.Namespace).GetLogs(podName, opts).Stream(r.Context())
@@ -217,7 +232,7 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 	defer stream.Close()
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	flusher, canFlush := w.(http.Flusher)
@@ -240,6 +255,7 @@ func (s *Server) handleLoggingLogs(w http.ResponseWriter, r *http.Request) {
 		}
 		if err != nil {
 			if err != io.EOF {
+				markSensitiveOutcome(r, "failure")
 				slog.Debug("generic log stream ended", "pod", podName, "container", container, "error", err)
 			}
 			return
@@ -252,6 +268,10 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
 	}
+	if !s.requirePlatformLogAudit(w, r) {
+		return
+	}
+
 	if s.K8sClient == nil || s.PlatformArchiveReader == nil {
 		writeJSONError(w, http.StatusServiceUnavailable, "service_unavailable", "archive export not available")
 		return
@@ -288,6 +308,10 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not_found", "logging target not found")
 		return
 	}
+	if !s.auditPlatformLogTarget(w, r, selection) {
+		return
+	}
+
 	release, ok := s.tryAcquireExportSlot()
 	if !ok {
 		w.Header().Set("Retry-After", "2")
@@ -331,6 +355,7 @@ func (s *Server) handleLoggingExport(w http.ResponseWriter, r *http.Request) {
 	} else {
 		_, _ = io.WriteString(w, "[kyber export truncated: limit or upstream error]\n")
 	}
+	markSensitiveOutcome(r, "failure")
 	if !errors.Is(err, errLoggingExportLimit) {
 		slog.Error("generic log export failed", "pod", podName, "container", container, "error", err)
 	}
@@ -364,7 +389,7 @@ func (s *Server) serveGenericArchivedLogs(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if result.Truncated {
 		w.Header().Set("X-Kyber-Log-Truncated", "true")

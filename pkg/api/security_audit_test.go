@@ -21,7 +21,7 @@ import (
 )
 
 func TestSensitiveAuditFailureBlocksBeforeBackend(t *testing.T) {
-	for _, path := range []string{"/api/v1/agents/alpha/secrets/TOKEN", "/api/v1/agents/alpha/secrets", "/api/v1/agents/alpha/logs", "/api/v1/agents/alpha/exec", "/api/v1/machines/worker-1/logs", "/api/v1/machines/worker-1/exec"} {
+	for _, path := range []string{"/api/v1/agents/alpha/secrets/TOKEN", "/api/v1/agents/alpha/secrets", "/api/v1/agents/alpha/logs", "/api/v1/agents/alpha/exec", "/api/v1/machines/worker-1/logs", "/api/v1/machines/worker-1/exec", "/api/v1/logging/logs", "/api/v1/logging/export"} {
 		for _, unavailable := range []bool{false, true} {
 			t.Run(path+map[bool]string{false: "/unconfigured", true: "/failed"}[unavailable], func(t *testing.T) {
 				s := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system"}

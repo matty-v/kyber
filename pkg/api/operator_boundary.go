@@ -26,6 +26,9 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 		}
 		action, resource := "operator-route", ""
 		auditAction, auditKind, auditName := "operator:unclassified", "installation", ""
+		if r.Method == http.MethodGet && (r.URL.Path == "/api/v1/logging/logs" || r.URL.Path == "/api/v1/logging/export") {
+			auditAction = string(ScopeLogsRead)
+		}
 		// Classify only known operations and validated names. Never log query
 		// strings, command arguments or unknown path content.
 		for _, kind := range []string{"agents", "machines"} {

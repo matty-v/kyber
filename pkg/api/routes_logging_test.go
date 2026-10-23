@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/matty-v/kyber/internal/testutil"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,6 +20,7 @@ import (
 )
 
 type fakePlatformArchiveReader struct {
+	beforeRead func()
 	selection  GenericArchiveSelection
 	selections []GenericArchiveSelection
 	records    []string
@@ -32,11 +35,17 @@ func (f *fakePlatformArchiveReader) ListContainerSelections(_ context.Context, l
 }
 
 func (f *fakePlatformArchiveReader) ReadContainerLines(_ context.Context, selection GenericArchiveSelection, _, _ time.Time) (ReadResult, error) {
+	if f.beforeRead != nil {
+		f.beforeRead()
+	}
 	f.selection = selection
 	return ReadResult{Lines: []LogLine{{Text: "archived line"}}}, nil
 }
 
 func (f *fakePlatformArchiveReader) StreamContainerRecords(_ context.Context, selection GenericArchiveSelection, _, _ time.Time, emit func(string, LogLine) error) error {
+	if f.beforeRead != nil {
+		f.beforeRead()
+	}
 	f.selection = selection
 	for _, raw := range f.records {
 		line, _ := parseArchiveLine(raw)
@@ -208,7 +217,7 @@ func TestLoggingLogsValidatesDiscoveredTarget(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
-			s.handleLoggingLogs(rr, httptest.NewRequest(http.MethodGet, tc.url, nil))
+			serveLoggingAuditTest(s, rr, httptest.NewRequest(http.MethodGet, tc.url, nil))
 			if rr.Code != tc.code {
 				t.Errorf("status = %d, want %d: %s", rr.Code, tc.code, rr.Body.String())
 			}
@@ -252,7 +261,7 @@ func TestLoggingLogsReadsGenericArchive(t *testing.T) {
 	}
 	url := "/api/v1/logging/logs?pod=agent-sol&podUid=uid-1&container=agent&component=agent&workload=sol&source=archive&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
 	rr := httptest.NewRecorder()
-	s.handleLoggingLogs(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	serveLoggingAuditTest(s, rr, httptest.NewRequest(http.MethodGet, url, nil))
 	if rr.Code != http.StatusOK || rr.Body.String() != "archived line\n" {
 		t.Fatalf("response = %d %q", rr.Code, rr.Body.String())
 	}
@@ -282,7 +291,7 @@ func TestLoggingExportStreamsAndSignalsLimit(t *testing.T) {
 	}
 	url := "/api/v1/logging/export?pod=agent-sol&podUid=uid-1&container=agent&component=agent&workload=sol&format=text&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
 	rr := httptest.NewRecorder()
-	s.handleLoggingExport(rr, httptest.NewRequest(http.MethodGet, url, nil))
+	serveLoggingAuditTest(s, rr, httptest.NewRequest(http.MethodGet, url, nil))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "first\n") || !strings.Contains(rr.Body.String(), "truncated") {
 		t.Fatalf("response = %d %q", rr.Code, rr.Body.String())
 	}
@@ -309,5 +318,94 @@ func TestLoggingRoutesRejectUnsupportedMethods(t *testing.T) {
 				t.Errorf("status = %d, want 405", rr.Code)
 			}
 		})
+	}
+}
+
+func serveLoggingAuditTest(s *Server, w http.ResponseWriter, r *http.Request) {
+	if s.APIKey == "" {
+		s.APIKey = "logging-audit-root-fixture"
+	}
+	if s.SecurityAudit == nil {
+		s.SecurityAudit = testutil.NewSecurityAudit()
+	}
+	if s.Namespace == "" {
+		s.Namespace = "kyber-system"
+	}
+	r.Header.Set("Authorization", "Bearer "+s.APIKey)
+	s.BuildHandler().ServeHTTP(w, r)
+}
+
+func TestLoggingArchiveUnavailableIsNotAPanic(t *testing.T) {
+	scheme := runtime.NewScheme()
+	if err := corev1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{K8sClient: fake.NewClientBuilder().WithScheme(scheme).Build(), Namespace: "kyber-system"}
+	rec := httptest.NewRecorder()
+	serveLoggingAuditTest(s, rec, httptest.NewRequest("GET", "/api/v1/logging/logs?source=archive&pod=old-pod&podUid=old-uid&container=agent&component=agent&workload=alpha", nil))
+	if rec.Code != 503 || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("unavailable archive response=%d", rec.Code)
+	}
+}
+
+type failLogTargetAudit struct {
+	*testutil.SecurityAudit
+	calls int
+}
+
+func (s *failLogTargetAudit) Append(ctx context.Context, e securityaudit.Event) (securityaudit.Record, error) {
+	s.calls++
+	if s.calls == 2 {
+		return securityaudit.Record{}, securityaudit.ErrUnavailable
+	}
+	return s.SecurityAudit.Append(ctx, e)
+}
+func TestPlatformLogAliasesAuditMatchedTargetBeforeContent(t *testing.T) {
+	for _, prefix := range []string{"/api/v1/logging/logs?source=archive&", "/api/v1/logging/export?"} {
+		for _, failTarget := range []bool{false, true} {
+			scheme := runtime.NewScheme()
+			if err := corev1.AddToScheme(scheme); err != nil {
+				t.Fatal(err)
+			}
+			audit := testutil.NewSecurityAudit()
+			var store securityaudit.Store = audit
+			if failTarget {
+				store = &failLogTargetAudit{SecurityAudit: audit}
+			}
+			selected := GenericArchiveSelection{Component: "agent", Workload: "alpha", PodUID: "known-pod-uid", Container: "agent"}
+			reads := 0
+			reader := &fakePlatformArchiveReader{selections: []GenericArchiveSelection{selected}, records: []string{`{"timestamp":"2026-06-03T10:00:00Z","message":"private-content-fixture"}`}}
+			reader.beforeRead = func() {
+				reads++
+				records := audit.Records()
+				if len(records) != 2 || records[0].OperationID != records[1].OperationID || records[1].ResourceKind != "log-container" || records[1].ResourceName != selected.PodUID || records[1].Container != selected.Container {
+					t.Fatal("content preceded matched-target audit")
+				}
+			}
+			server := &Server{K8sClient: fake.NewClientBuilder().WithScheme(scheme).Build(), Namespace: "kyber-system", SecurityAudit: store, PlatformArchiveReader: reader}
+			query := "pod=old-pod&podUid=known-pod-uid&container=agent&component=agent&workload=alpha&since=2026-06-03T09:00:00Z&until=2026-06-03T11:00:00Z"
+			rec := httptest.NewRecorder()
+			serveLoggingAuditTest(server, rec, httptest.NewRequest("GET", prefix+query, nil))
+			if failTarget {
+				if rec.Code != 503 || reads != 0 {
+					t.Fatal("failed target audit allowed content", rec.Code, reads)
+				}
+			} else {
+				if rec.Code != 200 || reads != 1 {
+					t.Fatal("matched target failed", rec.Code, reads)
+				}
+				records := audit.Records()
+				if len(records) != 3 || records[2].Outcome != "success" || records[2].OperationID != records[0].OperationID {
+					t.Fatal("target discovery became a separate/incomplete read")
+				}
+			}
+			if rec.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("fleet log content is cacheable")
+			}
+			encoded, _ := json.Marshal(audit.Records())
+			if strings.Contains(string(encoded), "private-content-fixture") {
+				t.Fatal("log contents entered history")
+			}
+		}
 	}
 }

@@ -22,6 +22,9 @@ var (
 // Event deliberately has no body, URL, error-text or arbitrary-attributes field.
 // IDs identify credentials and principals, never their authentication material.
 type Event struct {
+	LogComponent string `json:"logComponent,omitempty"`
+	LogWorkload  string `json:"logWorkload,omitempty"`
+	Container    string `json:"container,omitempty"`
 	// CredentialAuthority qualifies the reported identity/generation. Existing
 	// configuration snapshots are not a complete material-rotation ledger.
 	CredentialAuthority string `json:"credentialAuthority,omitempty"`
@@ -105,6 +108,9 @@ func (e Event) Validate() error {
 	if !anonymous && (!validActorID(e.PrincipalID) || !validActorID(e.CredentialID) || e.Generation == 0) {
 		return ErrInvalid
 	}
+	if e.ResourceKind != "log-container" && (e.LogComponent != "" || e.LogWorkload != "" || e.Container != "") {
+		return ErrInvalid
+	}
 	switch e.ResourceKind {
 	case "installation":
 		if e.ResourceName != "" {
@@ -112,6 +118,10 @@ func (e Event) Validate() error {
 		}
 	case "agent", "machine":
 		if !resourceName.MatchString(e.ResourceName) {
+			return ErrInvalid
+		}
+	case "log-container":
+		if !validActorID(e.ResourceName) || !namespaceName.MatchString(e.Container) || (e.LogComponent != "" && !validActorID(e.LogComponent)) || (e.LogWorkload != "" && !validActorID(e.LogWorkload)) {
 			return ErrInvalid
 		}
 	case "credential":
