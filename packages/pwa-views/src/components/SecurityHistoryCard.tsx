@@ -89,11 +89,12 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
       <input type="checkbox" checked={includeHistoryViews} onChange={(e) => { setIncludeHistoryViews(e.target.checked); setCursor(undefined) }} />
       Include history views
     </label>
-    <p className="mt-1 text-xs text-text-muted">Denied, failed and uncertain attempts are always shown.</p>
+    <p className="mt-1 text-xs text-text-muted">Recorded denials, failures and uncertain outcomes remain visible.</p>
     {loading && <p className="mt-4 text-sm text-text-muted" role="status">Loading activity…</p>}
     {!loading && !data && <p className="mt-4 text-sm text-warning" role="alert">
       {current?.error === 403 ? 'Administrator access is required to view activity.'
         : current?.error === 404 ? 'Access history is not available on this installation. Upgrade Kyber to view it here.'
+          : current?.error === 400 ? 'Could not apply these history filters. Refresh activity or upgrade Kyber.'
           : 'Access history is unavailable. Try refreshing.'}
     </p>}
     {data && <>

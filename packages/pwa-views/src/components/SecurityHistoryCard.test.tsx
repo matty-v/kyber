@@ -64,10 +64,10 @@ describe('security history', () => {
     await waitFor(() => expect(state.api.getSecurityEvents).toHaveBeenLastCalledWith({ limit: 25, credentialId: undefined, cursor: undefined, includeHistoryViews: true }, expect.any(AbortSignal)))
   })
 
-  it.each([403, 404, 503])('does not present an error as empty successful history (%s)', async (status) => {
+  it.each([400, 403, 404, 503])('does not present an error as empty successful history (%s)', async (status) => {
     state.api.getSecurityEvents.mockRejectedValue({ status })
     render(<SecurityHistoryCard credentials={credentials} />)
-    expect(await screen.findByRole('alert')).toHaveTextContent(status === 403 ? 'Administrator access' : status === 404 ? 'not available on this installation' : 'unavailable')
+    expect(await screen.findByRole('alert')).toHaveTextContent(status === 403 ? 'Administrator access' : status === 404 ? 'not available on this installation' : status === 400 ? 'history filters' : 'unavailable')
     expect(screen.queryByText('No recorded activity for this selection.')).not.toBeInTheDocument()
   })
 
