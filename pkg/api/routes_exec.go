@@ -262,7 +262,6 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		for {
 			n, err := stdoutR.Read(buf)
 			if n > 0 {
-				_ = conn.SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
 					cancelExec()
 					outputFailed <- struct{}{}
@@ -307,7 +306,6 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		outcome = "failure"
 	default:
 	}
-	_ = conn.SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 	var exitWriteErr error
 	// Send a close frame, optionally carrying the exit error.
 	if streamErr != nil {

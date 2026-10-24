@@ -15,7 +15,7 @@ import (
 )
 
 func TestLiveAccessBoundAndCancelledWriter(t *testing.T) {
-	if operatorAccessCheckInterval+operatorAccessCheckTimeout+operatorStreamWriteTimeout+operatorWebSocketCloseGrace >= 10*time.Second {
+	if operatorAccessCheckInterval+operatorAccessCheckTimeout+operatorWebSocketCloseGrace >= 10*time.Second {
 		t.Fatal("access cancellation bound exceeds ten seconds")
 	}
 	ctx, cancel := context.WithCancelCause(context.Background())

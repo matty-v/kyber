@@ -18,7 +18,7 @@ const (
 	taskEventPoll       = time.Second
 	taskEventHeartbeat  = 20 * time.Second
 	taskEventMaxAge     = 5 * time.Minute
-	taskEventWriteLimit = operatorStreamWriteTimeout
+	taskEventWriteLimit = 10 * time.Second
 )
 
 func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, agentName, taskID string) {

@@ -106,6 +106,62 @@ func TestLiveAccessInterruptsStalledUpload(t *testing.T) {
 	}
 }
 
+func TestLiveAccessInterruptsBackpressuredHTTPWrite(t *testing.T) {
+	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
+	s := &Server{Namespace: "kyber-system", SecurityAudit: testutil.NewSecurityAudit(), auth: registryFixtureAuthenticator(t, authority)}
+	started, stopped := make(chan struct{}), make(chan struct{})
+	type connectionKey struct{}
+	handler := authMiddleware(s.auth, s.auditSensitiveRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.requireSensitiveResource(w, r, "alpha", ScopeLogsRead) {
+			return
+		}
+		if tcp, ok := r.Context().Value(connectionKey{}).(*net.TCPConn); ok {
+			_ = tcp.SetWriteBuffer(1024)
+		}
+		close(started)
+		_, _ = w.Write(make([]byte, 2*1024*1024))
+		close(stopped)
+	})))
+	server := httptest.NewUnstartedServer(handler)
+	server.Config.ConnContext = func(ctx context.Context, conn net.Conn) context.Context {
+		return context.WithValue(ctx, connectionKey{}, conn)
+	}
+	server.Start()
+	defer server.Close()
+	conn, err := net.DialTimeout("tcp", strings.TrimPrefix(server.URL, "http://"), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetReadBuffer(1024)
+	}
+	_, err = io.WriteString(conn, "GET /api/v1/agents/alpha/logs HTTP/1.1\r\nHost: fixture\r\nAuthorization: Bearer client-key-fixture\r\n\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(3 * time.Second):
+		t.Fatal("download did not start")
+	}
+	// A healthy slow reader must survive longer than the former blanket timeout.
+	select {
+	case <-stopped:
+		t.Fatal("healthy backpressured write stopped early")
+	case <-time.After(3500 * time.Millisecond):
+	}
+	authority.edit(func(d *operatorcredentials.Document) {
+		d.Credentials[2].AgentResources = []string{"kyber-system/other"}
+		d.Credentials[2].PermissionRevision++
+	})
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("revoked HTTP write remained blocked")
+	}
+}
+
 func TestLiveAccessClosesBackpressuredHijackedConnection(t *testing.T) {
 	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
 	s := &Server{Namespace: "kyber-system", SecurityAudit: testutil.NewSecurityAudit(), auth: registryFixtureAuthenticator(t, authority)}

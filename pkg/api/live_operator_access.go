@@ -16,7 +16,6 @@ import (
 
 const operatorAccessCheckInterval = 3 * time.Second
 const operatorAccessCheckTimeout = 2 * time.Second
-const operatorStreamWriteTimeout = 3 * time.Second
 const operatorWebSocketCloseGrace = 200 * time.Millisecond
 
 var errOperatorAccessChanged = errors.New("operator access changed")
@@ -115,10 +114,8 @@ func (s *Server) liveOperatorRequests(next http.Handler) http.Handler {
 			cancel(nil)
 			<-done
 			cause := context.Cause(r.Context())
-			if !errors.Is(cause, errOperatorAccessChanged) && !errors.Is(cause, errOperatorAuthorityUnavailable) {
-				// Give net/http a fresh bounded deadline for its final buffered bytes,
-				// including after a long idle stream or bounded completion auditing.
-				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
+			if errors.Is(cause, errOperatorAccessChanged) || errors.Is(cause, errOperatorAuthorityUnavailable) {
+				interruptOperatorTransport(w, r)
 			}
 		}()
 		next.ServeHTTP(writer, r)
@@ -174,7 +171,6 @@ func (w *liveOperatorWriter) ready() error {
 	if err := w.ctx.Err(); err != nil {
 		return err
 	}
-	_ = http.NewResponseController(w.ResponseWriter).SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 	return nil
 }
 func (w *liveOperatorWriter) prepareHeaders() {
