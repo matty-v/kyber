@@ -1,8 +1,9 @@
 # Coordinate credential adoption and upgrades
 
-Status: implementing the maintenance reservation primitive for MAT-134. Runtime
-registry activation and upgrade compatibility enforcement remain disabled until
-the remaining gates are complete. This change does not make old binaries safe.
+Status: maintenance reservation foundation implemented for MAT-134. Supervised
+upgrade integration is described in the [upgrade compatibility design](2026-10-24-credential-upgrade-compatibility.md).
+Runtime registry activation remains unavailable until the remaining gates are
+complete. These changes do not make old binaries safe.
 
 ## Problem and outcome
 
@@ -51,7 +52,7 @@ The primitive is necessary coordination, not complete upgrade protection:
 
 - Upgrade entrypoints must acquire the same live reservation before inspecting
   authority/release state and retain it through upgrade, verification, rollback
-  and uncertain effects. They are not connected in this slice.
+  and uncertain effects. The supervised entrypoint prepares this boundary, gated on runtime protocol one; see the linked design.
 - Before adoption, prove that all control-plane replicas support the authority
   protocol and no old upgrade Job can execute later. Reservation-aware new Jobs
   must recheck current authority rather than trust a pre-adoption decision.
@@ -78,8 +79,9 @@ reconcile the release/marker/registry state, then release only the inspected UID
 and resource version. Merely observing an old timestamp or a failed HTTP request
 is insufficient. Do not offer an unconditional force-unlock button.
 
-Until that workflow and upgrade integration exist, the live maintenance primitive
-is not invoked by the runtime. Tests use disposable probe names only. Recovery
+The recovery UI remains pending. The protocol-one supervisor will use live
+maintenance; protocol zero remains read-only at this boundary. Authority-binding
+probes reserve separate names. Recovery
 of a test failure should inspect its exact probe, never delete the live marker,
 registry or installation credential Secret to restore access.
 

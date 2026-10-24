@@ -106,7 +106,8 @@ yet, and pulling an unverified binary to supervise the upgrade would be backward
 
 ### What the Job does
 
-Seven steps. Steps 1–4 all happen **before the cluster is touched**, so a bad
+Once the complete credential protocol is enabled, the Job first reserves
+installation credential maintenance, then runs the steps below. Steps 1–4 all happen **before release/CRD changes**, so a bad
 version, an unreachable registry, or a disqualifying values file fails against a
 still-healthy cluster.
 
@@ -121,13 +122,18 @@ still-healthy cluster.
    `image.*.tag` or `image.*.digest`, the Job **stops**. See
    [Why pinned images are refused](#why-pinned-images-are-refused).
 4. **Pull the target chart** from `selfUpgrade.chartRef` at the exact version.
-5. **Apply the chart's CRDs.** Fail-closed, and **Helm will not do this** — Helm
+5. **Check credential authority compatibility.** If registry authority is selected,
+   verify the effective target, the starting rollback revision and live control
+   plane before any release/CRD changes. Image overrides cannot borrow the
+   published release's compatibility declaration. An unknown/unavailable
+   authority or unsupported image refuses safely.
+6. **Apply the chart's CRDs.** Fail-closed, and **Helm will not do this** — Helm
    installs `crds/` once and never touches them again, so without this step a
    schema change would never reach the cluster.
-6. **`helm upgrade --wait`.** Helm's `--atomic` is deliberately unused: it would
+7. **`helm upgrade --wait`.** Helm's `--atomic` is deliberately unused: it would
    create a second rollback path with different logging and timeouts. There is one
    rollback path, and it is always Kyber's.
-7. **Verify against the running cluster** — not against Helm's opinion of it.
+8. **Verify against the running cluster** — not against Helm's opinion of it.
 
 Dry-run validation does not publish rendered manifests or render diagnostics
 into the Job log: those can include credential values in Secrets, ConfigMaps,
@@ -144,10 +150,29 @@ clusters while another was false:**
   templates but left the old images running.
 - `/healthz` answers 200 — the new binary is *serving*, not merely scheduled.
 
-**Any failure after the release is written rolls back** to the revision that was
-live when the Job started. The Job never retries (`backoffLimit: 0`): a failed
-upgrade has already rolled back, so a second attempt would start from a cluster
-that is already where it should be.
+**An upgrade or health-verification failure attempts rollback** to the revision
+that was live when the Job started. Ownership, current authority and the approved
+rollback revision are checked again before that write. A changed or incompatible
+revision is refused. The Job never retries (`backoffLimit: 0`).
+
+Read-only/preflight refusals attempt to release only the Job's own reservation;
+an unavailable ownership read leaves the block in place. A verified successful
+upgrade releases it before reporting completion. If an external write may be
+incomplete, maintenance remains blocked for recovery even after a rollback
+attempt; process exit alone does not prove that every API write has settled.
+Another upgrade or credential adoption must not proceed until the old writers
+are stopped and the release/authority state is reconciled. Do not clear the block
+by deleting the credential registry or authority marker, and do not take over a
+reservation merely because it is old. See the [maintenance recovery contract](design/2026-10-24-credential-maintenance.md).
+
+The current runtime explicitly advertises protocol zero: registry adoption is
+still unavailable. It performs fail-closed authority checks without creating
+persistent maintenance locks, so ordinary retry behavior stays available while
+recovery UI is unfinished. The protocol-one reservation behavior above is staged,
+not enabled by this change. Supported supervised
+upgrade/rollback protection does not cover arbitrary privileged manual Helm or
+GitOps writes. Those deployment paths require a reviewed compatibility boundary
+before adoption can be offered.
 
 ### How each component actually gets its new image
 
