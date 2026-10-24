@@ -97,6 +97,12 @@ func (a *registryCredentials) compatibleBrowserCaller(token string, now time.Tim
 	if err != nil {
 		return nil, time.Time{}, errMalformedBrowserSession
 	}
+	// Only tokens from the bounded pre-cutover window are compatible. The
+	// preserved signer must not mint renewable sessions indefinitely after the
+	// original installation material has rotated. Current grants still apply.
+	if a.compatibilityIssuedBefore.IsZero() || a.compatibilityExpiresBefore.IsZero() || !now.Before(a.compatibilityExpiresBefore) || claims.ExpiresAt > a.compatibilityExpiresBefore.Unix() || claims.IssuedAt < 946684800 || claims.IssuedAt > a.compatibilityIssuedBefore.Unix() || claims.IssuedAt > now.Add(time.Minute).Unix() || claims.ExpiresAt <= claims.IssuedAt || claims.ExpiresAt-claims.IssuedAt > int64(browserSessionTTL/time.Second) {
+		return nil, time.Time{}, errMalformedBrowserSession
+	}
 	if claims.FullScope {
 		entry, ok := a.byID[installationAdminCredentialID]
 		if !ok || entry.caller.PrincipalID != installationAdminPrincipalID || entry.caller.TenantID != installationTenantID || entry.caller.CredentialGeneration != a.compatibilityGeneration || a.legacyGenerations[entry.caller.CredentialID] != entry.caller.CredentialGeneration {
@@ -113,6 +119,13 @@ func (a *registryCredentials) compatibleBrowserCaller(token string, now time.Tim
 		}
 		caller := entry.caller
 		return &caller, claims.expiresAt(), nil
+	}
+	// Scoped V1 tokens share the preserved installation signer. Retire that
+	// trust when the installation key rotates, expires, is revoked or loses
+	// administrator authority. V2 sessions remain independently key-bound.
+	installation, ok := a.byID[installationAdminCredentialID]
+	if !ok || installation.caller.PrincipalID != installationAdminPrincipalID || installation.caller.TenantID != installationTenantID || !installation.caller.Scopes.full || installation.caller.CredentialGeneration != a.compatibilityGeneration || a.legacyGenerations[installation.caller.CredentialID] != installation.caller.CredentialGeneration {
+		return nil, time.Time{}, errMalformedBrowserSession
 	}
 	var found *Caller
 	for _, entry := range a.entries {

@@ -541,7 +541,8 @@ func TestCloneAndFullWidthGenerations(t *testing.T) {
 
 func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	seed := bytes.Repeat([]byte{42}, 32)
-	document := fixtureDocument().WithLegacyBrowserSigningKey(seed, 1)
+	cutoff := time.Date(2026, 10, 24, 17, 0, 0, 0, time.UTC)
+	document := fixtureDocument().WithLegacyBrowserSigningKey(seed, 1, cutoff, cutoff.Add(30*24*time.Hour))
 	document.Credentials[0] = document.Credentials[0].WithLegacyBrowserGeneration(1)
 	seed[0] = 1
 	if document.LegacyBrowserSigningKey()[0] != 42 {
@@ -562,7 +563,10 @@ func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	if err != nil || !bytes.Equal(loaded.LegacyBrowserSigningKey(), document.LegacyBrowserSigningKey()) {
 		t.Fatal("seed lost in storage codec", err)
 	}
-	if document.WithLegacyBrowserSigningKey([]byte("invalid"), 1).Validate() == nil {
+	if !loaded.LegacyBrowserIssuedBefore().Equal(cutoff) || !loaded.LegacyBrowserExpiresBefore().Equal(cutoff.Add(30*24*time.Hour)) {
+		t.Fatal("compatibility cutoff lost in storage")
+	}
+	if document.WithLegacyBrowserSigningKey([]byte("invalid"), 1, cutoff, cutoff.Add(30*24*time.Hour)).Validate() == nil {
 		t.Fatal("invalid cookie seed length accepted")
 	}
 	store, _ := fixtureStore(t)
@@ -570,13 +574,27 @@ func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := snapshot.Document.WithLegacyBrowserSigningKey(bytes.Repeat([]byte{43}, 32), 1)
+	next := snapshot.Document.WithLegacyBrowserSigningKey(bytes.Repeat([]byte{43}, 32), 1, cutoff, cutoff.Add(30*24*time.Hour))
 	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
 		t.Fatal("compatibility signing seed changed", err)
 	}
-	next = snapshot.Document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 2)
+	next = snapshot.Document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 2, cutoff, cutoff.Add(30*24*time.Hour))
 	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
 		t.Fatal("compatibility generation changed", err)
+	}
+	next = snapshot.Document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 1, cutoff.Add(time.Minute), cutoff.Add(30*24*time.Hour))
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("compatibility cutoff extended", err)
+	}
+	if document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 1, time.Time{}, cutoff.Add(30*24*time.Hour)).Validate() == nil {
+		t.Fatal("unbounded compatibility seed accepted")
+	}
+	next = snapshot.Document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 1, cutoff, cutoff.Add(31*24*time.Hour))
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("compatibility expiration extended", err)
+	}
+	if document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 1, cutoff, time.Time{}).Validate() == nil {
+		t.Fatal("missing compatibility expiration accepted")
 	}
 	if loaded.Credentials[0].LegacyBrowserGeneration() != 1 {
 		t.Fatal("credential compatibility generation lost in codec")
@@ -598,7 +616,7 @@ func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	if loaded.LegacyBrowserSigningGeneration() != 1 {
 		t.Fatal("compatibility generation lost in codec")
 	}
-	if document.WithLegacyBrowserSigningKey(nil, 1).Validate() == nil || document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 0).Validate() == nil {
+	if document.WithLegacyBrowserSigningKey(nil, 1, cutoff, cutoff.Add(30*24*time.Hour)).Validate() == nil || document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 0, cutoff, cutoff.Add(30*24*time.Hour)).Validate() == nil {
 		t.Fatal("incomplete compatibility state accepted")
 	}
 	if _, err := json.Marshal(document); !errors.Is(err, ErrSensitive) {
