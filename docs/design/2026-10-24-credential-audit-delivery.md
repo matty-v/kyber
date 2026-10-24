@@ -10,7 +10,9 @@ that another key should be issued. Audit completion and registry cleanup cannot
 share a transaction across PostgreSQL and Kubernetes.
 
 `api.OperatorCredentialDelivery.RunOnce` reads the selected, UID-pinned registry
-and checks at most sixteen references under a ten-second deadline. For each
+and checks at most sixteen references under a ten-second deadline. Journal work
+has a separate five-second budget, leaving time for the final registry CAS even
+when a later lookup stalls. For each
 supported registry operation it loads the original journal intent and verifies
 all outbox proof fields against that intent and registry identity. A missing,
 conflicting or unavailable journal record retains the reference. A committed

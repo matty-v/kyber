@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/matty-v/kyber/pkg/operatorcredentials"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 )
 
 func committedDeliveryFixture(t *testing.T, completionUnavailable bool) (*OperatorCredentialDelivery, *managedAuthorityFixture, *credentialJournalFixture, string) {
@@ -106,5 +107,34 @@ func TestManagedCredentialDeliveryRejectsAnotherRegistryProof(t *testing.T) {
 	}
 	if authority.writes != 1 || authority.document.Operations[0].Status != "pending" {
 		t.Fatal("unrelated proof permitted cleanup")
+	}
+}
+
+type stalledDeliveryJournal struct {
+	*credentialJournalFixture
+	committedID string
+}
+
+func (j *stalledDeliveryJournal) GetCredentialOperation(ctx context.Context, namespace, id string) (securityaudit.CredentialOperation, error) {
+	if id == j.committedID {
+		return j.credentialJournalFixture.GetCredentialOperation(ctx, namespace, id)
+	}
+	<-ctx.Done()
+	return securityaudit.CredentialOperation{}, securityaudit.ErrUnavailable
+}
+func TestManagedCredentialDeliveryReservesCommitTimeAfterStalledLookups(t *testing.T) {
+	delivery, authority, journal, id := committedDeliveryFixture(t, false)
+	reference := authority.document.Operations[0]
+	for i := 0; i < 3; i++ {
+		stalled := reference
+		stalled.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
+		stalled.AdmissionEventID, stalled.CompletionEventID = uuid.NewString(), uuid.NewString()
+		authority.document.Operations = append(authority.document.Operations, stalled)
+		delivery.after = stalled.ID
+	}
+	delivery.server.SecurityAudit = &stalledDeliveryJournal{credentialJournalFixture: journal, committedID: id}
+	result, err := delivery.RunOnce(context.Background())
+	if !errors.Is(err, operatorcredentials.ErrUnavailable) || result.Marked != 1 || authority.writes != 2 {
+		t.Fatal("stalled lookups consumed the cleanup commit budget", result, err)
 	}
 }

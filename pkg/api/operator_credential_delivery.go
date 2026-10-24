@@ -63,9 +63,12 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 	if start == len(references) {
 		start = 0
 	}
+	// Reserve time for the final two-second CAS even when journal work stalls.
+	workCtx, workCancel := context.WithTimeout(ctx, 5*time.Second)
+	defer workCancel()
 	mark, prune := map[string]bool{}, map[string]bool{}
 	var deliveryErr error
-	for n := 0; n < len(references) && n < 16 && ctx.Err() == nil; n++ {
+	for n := 0; n < len(references) && n < 16 && workCtx.Err() == nil; n++ {
 		reference := references[(start+n)%len(references)]
 		d.after = reference.ID
 		result.Inspected++
@@ -74,7 +77,7 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 		if reference.Authority != "registry" || reference.Action == "adopt" {
 			continue
 		}
-		lookupCtx, lookupCancel := context.WithTimeout(ctx, securityAuditTimeout)
+		lookupCtx, lookupCancel := context.WithTimeout(workCtx, securityAuditTimeout)
 		operation, lookupErr := journal.GetCredentialOperation(lookupCtx, d.server.Namespace, reference.ID)
 		lookupCancel()
 		if lookupErr != nil || operation.Intent.Validate() != nil || operation.Intent.Admission.OperationID != reference.ID {
@@ -87,7 +90,7 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 			continue
 		}
 		if operation.Completion == nil {
-			finishCtx, finishCancel := context.WithTimeout(ctx, securityAuditTimeout)
+			finishCtx, finishCancel := context.WithTimeout(workCtx, securityAuditTimeout)
 			completion, finishErr := journal.FinishCredentialOperation(finishCtx, d.server.Namespace, reference.ID, "success", time.Now())
 			finishCancel()
 			if finishErr != nil {
@@ -109,7 +112,7 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 			mark[reference.ID] = true
 		}
 	}
-	if ctx.Err() != nil {
+	if workCtx.Err() != nil {
 		deliveryErr = operatorcredentials.ErrUnavailable
 	}
 	if len(mark)+len(prune) == 0 {
