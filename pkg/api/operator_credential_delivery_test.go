@@ -125,16 +125,28 @@ func (j *stalledDeliveryJournal) GetCredentialOperation(ctx context.Context, nam
 func TestManagedCredentialDeliveryReservesCommitTimeAfterStalledLookups(t *testing.T) {
 	delivery, authority, journal, id := committedDeliveryFixture(t, false)
 	reference := authority.document.Operations[0]
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 6; i++ {
 		stalled := reference
 		stalled.ID = fmt.Sprintf("00000000-0000-4000-8000-%012d", i+1)
 		stalled.AdmissionEventID, stalled.CompletionEventID = uuid.NewString(), uuid.NewString()
 		authority.document.Operations = append(authority.document.Operations, stalled)
 		delivery.after = stalled.ID
 	}
+	delivery.server.OperatorCredentialAuthority = &deliveryContextAuthority{managedAuthorityFixture: authority}
 	delivery.server.SecurityAudit = &stalledDeliveryJournal{credentialJournalFixture: journal, committedID: id}
 	result, err := delivery.RunOnce(context.Background())
 	if !errors.Is(err, operatorcredentials.ErrUnavailable) || result.Marked != 1 || authority.writes != 2 {
 		t.Fatal("stalled lookups consumed the cleanup commit budget", result, err)
 	}
+}
+
+// The unit authority normally ignores context; enforce the API server's actual
+// cancelled-write behavior so this test detects exhausting the outer deadline.
+type deliveryContextAuthority struct{ *managedAuthorityFixture }
+
+func (a *deliveryContextAuthority) Replace(ctx context.Context, uid, version string, next operatorcredentials.Document) (operatorcredentials.Snapshot, error) {
+	if ctx.Err() != nil {
+		return operatorcredentials.Snapshot{}, operatorcredentials.ErrUnavailable
+	}
+	return a.managedAuthorityFixture.Replace(ctx, uid, version, next)
 }
