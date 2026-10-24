@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"time"
 
@@ -116,15 +117,18 @@ func prepareManagedCredentialMutation(snapshot operatorcredentials.Snapshot, act
 				return invalid()
 			}
 			for _, scope := range policy.Scopes {
-				if !validScope(Scope(scope)) || Scope(scope) == ScopeTasksAdmin || Scope(scope) == ScopeTasksPlatformAdmin {
+				if !validScope(Scope(scope)) {
 					return invalid()
 				}
-				switch Scope(scope) {
-				case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeAgentExec, ScopeSecretsList, ScopeSecretsRead, ScopeSecretsWrite, ScopeLogsRead, ScopeTranscriptsRead, ScopeArchivesAdmin, ScopeRequestsWrite, ScopeTasksCreate, ScopeCapabilitiesWrite:
+				if (Scope(scope) == ScopeTasksAdmin || Scope(scope) == ScopeTasksPlatformAdmin) && (request.Action != "update" || !slices.Contains(credential.Scopes, scope)) {
+					return invalid()
+				}
+				switch managedPermissionTarget(Scope(scope)) {
+				case "agent":
 					if len(policy.AgentResources) == 0 {
 						return invalid()
 					}
-				case ScopeMachineExec, ScopeMachineLogsRead:
+				case "machine":
 					if len(policy.MachineResources) == 0 {
 						return invalid()
 					}

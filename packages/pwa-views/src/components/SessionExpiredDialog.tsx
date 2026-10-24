@@ -3,24 +3,9 @@ import { Button } from './Button'
 import { Input } from './ui/input'
 import { establishEmbeddedBrowserSession, onSessionExpired } from '../lib/api'
 
-/**
- * Blocking re-authentication prompt for a missing or expired browser session.
- *
- * Browser sessions are process-local to the control plane, so every restart
- * — an upgrade, a rollout, a crash — invalidates every open browser at once.
- * Before this, that surfaced as "invalid browser session" rendered inline by
- * whichever query happened to fail first: an error with no explanation and
- * no way out, on a page whose data would never load. The operator had to
- * already know that Settings holds the API key field.
- *
- * Mount once, near the app root. It listens for the control plane's
- * session-expiry signal and puts the key field in front of the operator at
- * the moment it stops working. That signal also covers a cookie that reached
- * its Max-Age and was removed by the browser before the next request.
- *
- * Embedded app only. Hub mode authenticates with a bearer key per request,
- * so the control plane never emits session_expired there and this never
- * opens.
+/** Prompts for a missing, expired or retired key session. Signed sessions
+ * survive control-plane restarts; every request resolves current key access.
+ * Embedded mode only; bearer connection credentials belong to the host app.
  */
 export function SessionExpiredDialog() {
   const [open, setOpen] = useState(false)
@@ -69,9 +54,7 @@ export function SessionExpiredDialog() {
           Session expired
         </h2>
         <p className="mt-2 text-sm text-text-muted">
-          Your browser session is missing or no longer valid. This normally
-          means it expired or the control plane restarted. Paste the API key
-          to reconnect.
+          Sign in again with a Kyber access key.
         </p>
         <form
           className="mt-4"

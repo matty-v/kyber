@@ -1603,6 +1603,7 @@ export interface OperatorCredential {
 }
 
 export interface OperatorCredentialInventory {
+  currentCredentialId?: string
   version?: string
   managementAvailable?: boolean
   observedAt: string
@@ -1611,6 +1612,17 @@ export interface OperatorCredentialInventory {
   usageAvailable: boolean
   credentials: OperatorCredential[]
   warnings: string[]
+}
+
+export interface OperatorCredentialOptions {
+  version: number
+  namespace: string
+  permissions: { scope: string; label: string; target: 'none' | 'agent' | 'machine' }[]
+}
+
+export interface OperatorCredentialPendingPage {
+  items: OperatorCredentialOperation[]
+  next?: string
 }
 
 export interface OperatorCredentialPolicy {

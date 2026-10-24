@@ -852,6 +852,8 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credentials/mutations", s.handleOperatorCredentialMutation)
 	mux.HandleFunc("/api/v1/operator-credential-operations", s.handleOperatorCredentialOperation)
 	mux.HandleFunc("/api/v1/operator-credential-operations/reconcile", s.handleReconcileOperatorCredentialOperation)
+	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
+	mux.HandleFunc("/api/v1/operator-credential-operations/pending", s.handlePendingOperatorCredentialOperations)
 	mux.HandleFunc("/api/v1/security-events", s.handleSecurityEvents)
 
 	// GitHub repo list + collision check (#134).
