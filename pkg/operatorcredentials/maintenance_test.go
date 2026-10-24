@@ -186,6 +186,7 @@ func TestMaintenanceOutageDoesNotReuseOwnershipOrRelease(t *testing.T) {
 	}
 	s.direct.reader = &failingReader{Reader: direct, failure: errors.New("private backend response")}
 	checks := []func() error{
+		func() error { _, err := s.Inspect(ctx); return err },
 		func() error { return r.Check(ctx, MaintenanceAdoption) },
 		func() error { _, err := s.Acquire(ctx, MaintenanceUpgrade); return err },
 		func() error { return r.Release(ctx) },
@@ -204,6 +205,11 @@ func TestMaintenanceOutageDoesNotReuseOwnershipOrRelease(t *testing.T) {
 	defer cancel()
 	if err := r.Check(bounded, MaintenanceAdoption); !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal("deadline not preserved", err)
+	}
+	inspectCtx, stop := context.WithTimeout(ctx, 25*time.Millisecond)
+	defer stop()
+	if _, err := s.Inspect(inspectCtx); !errors.Is(err, ErrUnavailable) || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("inspection deadline not preserved", err)
 	}
 }
 

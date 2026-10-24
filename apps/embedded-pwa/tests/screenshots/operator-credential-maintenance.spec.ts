@@ -17,7 +17,7 @@ test('maintenance block fits desktop and mobile', async ({ page }, info) => {
     }
   }, usageCredential)
   await page.goto('/settings/access')
-  const block = page.getByText('Credential changes are blocked by an upgrade operation.', { exact: true }).locator('..')
+  const block = page.getByText('An upgrade operation holds credential maintenance.', { exact: true }).locator('..')
   await expect(block).toBeVisible()
   await block.getByText('Operation details').click()
   await block.evaluate(el => el.scrollIntoView({ block: 'center' }))

@@ -2606,6 +2606,12 @@ components:
   schemas:
     OperatorCredentialMaintenance:
       type: object
+      oneOf:
+        - properties:
+            blocked: {enum: [false]}
+        - required: [version, operation]
+          properties:
+            blocked: {enum: [true]}
       additionalProperties: false
       required: [observedAt, blocked]
       properties:

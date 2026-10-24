@@ -42,7 +42,7 @@ export function OperatorCredentialMaintenance({ api, enabled, revision = 0 }: { 
   const data = current.data
   if (!data.blocked) return <p className="mt-3 text-xs text-text-muted">No credential maintenance block.</p>
   return <div role="status" className="mt-3 space-y-2 rounded-lg border border-warning p-3 text-sm text-warning">
-    <p>Credential changes are blocked by {data.operation!.kind === 'upgrade' ? 'an upgrade' : 'a key adoption'} operation.</p>
+    <p>{data.operation!.kind === 'upgrade' ? 'An upgrade' : 'A key adoption'} operation holds credential maintenance.</p>
     <p className="text-xs">Started {new Date(data.operation!.startedAt).toLocaleString()}. This block does not expire automatically.</p>
     <details className="text-xs"><summary className="cursor-pointer">Operation details</summary>
       <p className="mt-2 break-all">Execution {data.operation!.executionId}</p>

@@ -8,7 +8,7 @@ describe('credential maintenance visibility', () => {
  it('keeps an old operation blocked and exposes no release action', async () => {
   const api = client(async () => blocked)
   render(<OperatorCredentialMaintenance api={api} enabled />)
-  expect(await screen.findByText('Credential changes are blocked by an upgrade operation.')).toBeVisible()
+  expect(await screen.findByText('An upgrade operation holds credential maintenance.')).toBeVisible()
   expect(screen.getByText(/does not expire automatically/)).toBeVisible()
   expect(screen.queryByRole('button')).not.toBeInTheDocument()
  })
@@ -24,11 +24,11 @@ describe('credential maintenance visibility', () => {
  it('suppresses the previous connection while another request is pending', async () => {
   const api = client(async () => blocked)
   const view = render(<OperatorCredentialMaintenance api={api} enabled />)
-  await screen.findByText('Credential changes are blocked by an upgrade operation.')
+  await screen.findByText('An upgrade operation holds credential maintenance.')
   let finish!: (value: unknown) => void
   const second = client(() => new Promise(resolve => { finish = resolve }))
   view.rerender(<OperatorCredentialMaintenance api={second} enabled />)
-  expect(screen.queryByText('Credential changes are blocked by an upgrade operation.')).not.toBeInTheDocument()
+  expect(screen.queryByText('An upgrade operation holds credential maintenance.')).not.toBeInTheDocument()
   await act(async () => { finish({ observedAt: blocked.observedAt, blocked: false }) })
   expect(await screen.findByText('No credential maintenance block.')).toBeVisible()
  })

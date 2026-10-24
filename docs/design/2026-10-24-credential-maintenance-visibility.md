@@ -9,7 +9,9 @@ reservation exists. Administrators can expand its operation kind, execution ID,
 start time and check time. An old start time never makes the block expire.
 Unknown, malformed and unavailable reads remain unavailable rather than idle.
 Protocol-zero supervised upgrades do not reserve maintenance; an idle reservation
-therefore is not an inventory of all running upgrades.
+therefore is not an inventory of all running upgrades. The reservation coordinates
+adoption and upgrades; this read-only view must not claim to block every managed
+key edit or rotation.
 
 The store reads directly within its shared two-second bound, validates the
 existing immutable reservation contract and returns whitelisted metadata. The
