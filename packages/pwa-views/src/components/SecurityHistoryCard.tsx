@@ -13,7 +13,7 @@ const actions: Record<string, string> = {
   'audit:read': 'View access history', 'operator:unclassified': 'Other protected action',
   'authenticate': 'Authenticate', 'credential:create': 'Create operator key',
   'credential:update': 'Change operator key access', 'credential:rotate': 'Rotate operator key',
-  'credential:revoke': 'Revoke operator key', 'lifecycle:write': 'Change lifecycle',
+  'credential:revoke': 'Revoke operator key', 'credential:recover': 'Resolve interrupted key change', 'lifecycle:write': 'Change lifecycle',
   'lifecycle:delete': 'Delete resource', 'archives:export': 'Request disk export', 'archives:import': 'Request disk import',
   'archives:read': 'Read archive details', 'archives:download': 'Download disk archive', 'archives:link': 'Create archive download link',
   'archives:upload': 'Upload disk archive', 'archives:cancel': 'Cancel archive operation', 'archives:delete': 'Delete disk archive',

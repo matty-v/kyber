@@ -1001,3 +1001,18 @@ the outcome; completion ID/outcome/timestamp are immutable on replay. Pending
 work survives ordinary event retention. Recovery scans page by operation ID and
 restart periodically; they are not a frozen snapshot. The journal alone does not
 authorize callers, perform credential writes or activate authority.
+
+Staged managed-key mutation candidates preserve principal/tenant/provenance and
+separate material generation from permission revision. Client input cannot assign
+those identities or source ownership. Registry writes pin both the selected
+Secret UID and original resource version; missing authority is unavailable.
+The staged management endpoints expose explicit changes, original operation
+lookup and audited recovery. Inventory versions are opaque If-Match values bound to the selected registry UID
+and resource version; management forms must remain bound to their connection.
+Pending is unconfirmed, never a successful/failed key change; GET never fences.
+Explicit recovery pins UID/version and outbox identity, fences late CAS writes
+before final failure, and never issues/re-reveals material. `credential:recover`
+audits the current administrator separately from the original key change.
+The typed client never automatically retries mutation POSTs. Issuance time is
+reported only when known. Runtime protocol remains zero and cmd/control-plane
+registry activation, full UI and usage visibility remain outstanding.

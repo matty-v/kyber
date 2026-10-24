@@ -1582,6 +1582,8 @@ export interface RuntimeFeatureAvailability {
   reason: string
 }
 export interface OperatorCredential {
+  createdAt?: string
+  expiresAt?: string
   id: string
   name: string
   displayName: string
@@ -1601,12 +1603,39 @@ export interface OperatorCredential {
 }
 
 export interface OperatorCredentialInventory {
+  version?: string
+  managementAvailable?: boolean
   observedAt: string
   inventoryScope: 'current-control-plane' | 'installation-registry'
   configurationAvailable: boolean
   usageAvailable: boolean
   credentials: OperatorCredential[]
   warnings: string[]
+}
+
+export interface OperatorCredentialPolicy {
+  name: string
+  role: 'administrator' | 'restricted'
+  scopes: string[]
+  agentResources: string[]
+  machineResources: string[]
+  expiresAt?: string | null
+}
+
+// Key material belongs only in the calling form's ephemeral memory. Mutations
+// are never automatically retried; resolve the operation after a lost response.
+export type OperatorCredentialMutationRequest =
+  | { operationId: string; action: 'create'; policy: OperatorCredentialPolicy; key: string }
+  | { operationId: string; action: 'update'; credentialId: string; policy: OperatorCredentialPolicy }
+  | { operationId: string; action: 'rotate'; credentialId: string; key: string }
+  | { operationId: string; action: 'revoke'; credentialId: string }
+
+export interface OperatorCredentialOperation {
+  operationId: string
+  action: 'credential:create' | 'credential:update' | 'credential:rotate' | 'credential:revoke'
+  credentialId: string
+  status: 'pending' | 'success' | 'failure'
+  observedAt: string
 }
 
 export interface SecurityEvent {

@@ -269,7 +269,7 @@ func (s *Server) auditPlatformLogTarget(w http.ResponseWriter, r *http.Request, 
 // remotely. Closing access cannot be described as rolling that effect back.
 func securityActionMayMutate(action string) bool {
 	switch action {
-	case "secrets:write", "credential:create", "credential:update", "credential:rotate", "credential:revoke", "lifecycle:write", "lifecycle:delete", "archives:export", "archives:import", "archives:upload", "archives:cancel", "archives:delete":
+	case "secrets:write", "credential:create", "credential:update", "credential:rotate", "credential:revoke", "credential:recover", "lifecycle:write", "lifecycle:delete", "archives:export", "archives:import", "archives:upload", "archives:cancel", "archives:delete":
 		return true
 	default:
 		return false

@@ -175,7 +175,7 @@ jobs:
           GOMAXPROCS: '3'
         run: |
           go test -race -p 1 ./pkg/operatorcredentials ./pkg/securityaudit ./pkg/selfupgrade ./cmd/kyber-upgrade -count=1
-          go test -race -p 1 ./pkg/api -run '^Test(Live(Access|Sensitive|Task|Exec)|CurrentArchiveDownload|ArchiveDownload|ManagementAudit|CredentialAdoption)' -count=1
+          go test -race -p 1 ./pkg/api -run '^Test(Live(Access|Sensitive|Task|Exec)|CurrentArchiveDownload|ArchiveDownload|ManagementAudit|CredentialAdoption|ManagedCredential)' -count=1
 
   pwa-build:
     needs: changes

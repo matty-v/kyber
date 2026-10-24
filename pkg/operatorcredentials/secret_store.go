@@ -29,6 +29,7 @@ const (
 )
 
 type Snapshot struct {
+	UID      string
 	Version  string
 	Document Document
 }
@@ -68,7 +69,7 @@ func (s *SecretStore) Fence(ctx context.Context, version string) (Snapshot, erro
 	if secret.ResourceVersion == "" || secret.ResourceVersion == version {
 		return Snapshot{}, ErrUnavailable
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: previous.Document.Clone()}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: previous.Document.Clone()}, nil
 }
 
 func (Snapshot) String() string                   { return "operator credential snapshot [redacted]" }
@@ -136,7 +137,7 @@ func (s *SecretStore) read(ctx context.Context) (*corev1.Secret, Snapshot, error
 	if d.Namespace != s.key.Namespace {
 		return nil, Snapshot{}, ErrInvalid
 	}
-	return secret, Snapshot{Version: secret.ResourceVersion, Document: d}, nil
+	return secret, Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: d}, nil
 }
 
 func (s *SecretStore) Load(ctx context.Context) (Snapshot, error) {
@@ -163,7 +164,7 @@ func (s *SecretStore) Create(ctx context.Context, d Document) (Snapshot, error) 
 	if err = s.writer.Create(ctx, secret); err != nil {
 		return Snapshot{}, authorityError(ctx, err)
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: d}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: d}, nil
 }
 
 func (s *SecretStore) Replace(ctx context.Context, version string, next Document) (Snapshot, error) {
@@ -198,7 +199,7 @@ func (s *SecretStore) Replace(ctx context.Context, version string, next Document
 	if err = s.writer.Update(ctx, secret); err != nil {
 		return Snapshot{}, authorityError(ctx, err)
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: next}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: next}, nil
 }
 
 func authorityError(ctx context.Context, err error) error {

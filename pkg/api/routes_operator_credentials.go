@@ -15,6 +15,8 @@ import (
 // These DTOs deliberately have no key, key fragment, digest, cookie, or Secret
 // data fields. Inventory describes accepted authority, never credential values.
 type operatorCredentialView struct {
+	CreatedAt            string   `json:"createdAt,omitempty"`
+	ExpiresAt            string   `json:"expiresAt,omitempty"`
 	ID                   string   `json:"id"`
 	Name                 string   `json:"name"`
 	DisplayName          string   `json:"displayName"`
@@ -34,6 +36,8 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
+	Version                string                   `json:"version,omitempty"`
+	ManagementAvailable    bool                     `json:"managementAvailable,omitempty"`
 	ObservedAt             string                   `json:"observedAt"`
 	InventoryScope         string                   `json:"inventoryScope"`
 	ConfigurationAvailable bool                     `json:"configurationAvailable"`
@@ -195,7 +199,14 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if resolved.registry != nil {
-		writeJSON(w, http.StatusOK, operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}})
+		response := operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
+		_, _, supported := s.credentialManagementDependencies()
+		if resolved.registry.version != "" && resolved.registry.uid != "" {
+			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
+			w.Header().Set("ETag", response.Version)
+		}
+		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != ""
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	response := operatorCredentialInventory{
