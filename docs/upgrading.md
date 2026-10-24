@@ -106,8 +106,8 @@ yet, and pulling an unverified binary to supervise the upgrade would be backward
 
 ### What the Job does
 
-The Job first reserves installation credential maintenance, then runs the steps
-below. Steps 1–4 all happen **before release/CRD changes**, so a bad
+Once the complete credential protocol is enabled, the Job first reserves
+installation credential maintenance, then runs the steps below. Steps 1–4 all happen **before release/CRD changes**, so a bad
 version, an unreachable registry, or a disqualifying values file fails against a
 still-healthy cluster.
 
@@ -166,7 +166,10 @@ by deleting the credential registry or authority marker, and do not take over a
 reservation merely because it is old. See the [maintenance recovery contract](design/2026-10-24-credential-maintenance.md).
 
 The current runtime explicitly advertises protocol zero: registry adoption is
-still unavailable. These upgrade guards do not enable it. Supported supervised
+still unavailable. It performs fail-closed authority checks without creating
+persistent maintenance locks, so ordinary retry behavior stays available while
+recovery UI is unfinished. The protocol-one reservation behavior above is staged,
+not enabled by this change. Supported supervised
 upgrade/rollback protection does not cover arbitrary privileged manual Helm or
 GitOps writes. Those deployment paths require a reviewed compatibility boundary
 before adoption can be offered.

@@ -82,11 +82,18 @@ revision and refuse a changed image, unsupported protocol or unavailable record.
 Never echo rendered manifests, raw parse errors or render diagnostics: they may
 contain credentials. Normal pre-adoption targets remain supported; both dry runs
 and real attempts recheck current authority. Dry runs reserve nothing and change
-no cluster state. Actual operations reserve before reading release state.
+no cluster state. Protocol-one operations reserve before reading release state.
+
+Pre-activation protocol zero performs fail-closed authority reads but does not
+create persistent maintenance reservations. A selected authority is unsupported
+in that runtime and refuses. This preserves existing upgrade retry behavior
+until recovery UI and full activation support are available. Tests exercise
+the future protocol-one coordinator explicitly. Do not enable that protocol
+merely because these supervisor mechanics are implemented.
 
 The supervisor uses statically mapped Deployment and CRD clients; discovery must
 not extend the guard's bounded read. Read-only/preflight failures attempt to release owned
-reservations; unavailable ownership reads leave the block in place. Successful verified operations release before logging completion.
+reservations; unavailable ownership reads leave the block in place. Protocol-one successful verified operations release before logging completion.
 Once a CRD/Helm write may have happened, failures retain maintenance even after an
 attempted rollback. Do not infer that every in-flight write is settled merely
 because Helm exited. Failed release is not reported as a successful operation.

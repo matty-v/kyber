@@ -19,6 +19,7 @@ type UpgradeCredentialReservation interface {
 // Implementations must use direct reads and never substitute bootstrap state
 // for an unavailable authority. The live constructor fixes both Secret names.
 type UpgradeCredentialCoordinator interface {
+	MaintenanceRequired() bool
 	Reserve(context.Context) (UpgradeCredentialReservation, error)
 	Selected(context.Context) (bool, error)
 }
@@ -26,6 +27,7 @@ type UpgradeCredentialCoordinator interface {
 type credentialUpgradeCoordinator struct {
 	authority   *operatorcredentials.AuthorityStore
 	maintenance *operatorcredentials.MaintenanceStore
+	protocol    int
 }
 
 type credentialUpgradeReservation struct {
@@ -33,6 +35,10 @@ type credentialUpgradeReservation struct {
 }
 
 func NewUpgradeCredentialCoordinator(config *rest.Config, namespace string) (UpgradeCredentialCoordinator, error) {
+	return newUpgradeCredentialCoordinator(config, namespace, operatorcredentials.RuntimeAuthorityProtocolVersion)
+}
+
+func newUpgradeCredentialCoordinator(config *rest.Config, namespace string, protocol int) (UpgradeCredentialCoordinator, error) {
 	authority, err := operatorcredentials.NewAuthorityStore(config, namespace, operatorcredentials.DefaultSecretName, operatorcredentials.DefaultAuthoritySecretName)
 	if err != nil {
 		return nil, err
@@ -41,10 +47,15 @@ func NewUpgradeCredentialCoordinator(config *rest.Config, namespace string) (Upg
 	if err != nil {
 		return nil, err
 	}
-	return &credentialUpgradeCoordinator{authority: authority, maintenance: maintenance}, nil
+	return &credentialUpgradeCoordinator{authority: authority, maintenance: maintenance, protocol: protocol}, nil
 }
 
+func (c *credentialUpgradeCoordinator) MaintenanceRequired() bool { return c.protocol >= 1 }
+
 func (c *credentialUpgradeCoordinator) Reserve(ctx context.Context) (UpgradeCredentialReservation, error) {
+	if !c.MaintenanceRequired() {
+		return nil, operatorcredentials.ErrUnsupported
+	}
 	r, err := c.maintenance.Acquire(ctx, operatorcredentials.MaintenanceUpgrade)
 	if err != nil {
 		return nil, fmt.Errorf("reserve operator credential maintenance: %w", err)
@@ -59,6 +70,9 @@ func (c *credentialUpgradeCoordinator) Selected(ctx context.Context) (bool, erro
 	}
 	if err != nil {
 		return false, fmt.Errorf("read operator credential authority: %w", err)
+	}
+	if !c.MaintenanceRequired() {
+		return false, operatorcredentials.ErrUnsupported
 	}
 	return true, nil
 }

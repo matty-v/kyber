@@ -33,7 +33,7 @@ func (r *Runner) Run(ctx context.Context) error {
 	}
 	started := r.now()
 	session := &credentialUpgradeRun{coordinator: r.CredentialCoordinator, safeToRelease: true}
-	if !r.Cfg.DryRun {
+	if !r.Cfg.DryRun && r.CredentialCoordinator.MaintenanceRequired() {
 		var err error
 		session.reservation, err = r.CredentialCoordinator.Reserve(ctx)
 		if err != nil {

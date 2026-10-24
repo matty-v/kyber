@@ -13,17 +13,20 @@ import (
 )
 
 type fakeCredentialCoordinator struct {
-	selected   bool
-	readErr    error
-	reserveErr error
-	checkErr   error
-	releaseErr error
-	reserved   int
-	released   int
-	checked    int
-	reads      int
-	onRead     func(int) (bool, error)
+	selected            bool
+	readErr             error
+	reserveErr          error
+	checkErr            error
+	releaseErr          error
+	reserved            int
+	released            int
+	checked             int
+	reads               int
+	onRead              func(int) (bool, error)
+	maintenanceDisabled bool
 }
+
+func (c *fakeCredentialCoordinator) MaintenanceRequired() bool { return !c.maintenanceDisabled }
 
 func (c *fakeCredentialCoordinator) Reserve(context.Context) (UpgradeCredentialReservation, error) {
 	c.reserved++

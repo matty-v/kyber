@@ -957,13 +957,16 @@ Read `docs/design/2026-10-24-required-management-audit.md` before changing these
 boundaries. Handler deadline changes pass through the live writer's serialized
 setters; never let a later timeout undo an access-cancellation deadline.
 
-Supervised upgrades require `UpgradeCredentialCoordinator`: reserve before any
+Supervised upgrades require `UpgradeCredentialCoordinator`. Once runtime protocol
+one is enabled, reserve before any
 release/authority decision, retain through writes/verification/rollback, and
 retain uncertain effects for recovery. Dry runs reserve nothing. Selected
 registry authority requires compatible effective target, initial rollback and
 live workloads; recheck the recorded revision before rollback. Published chart
 protocol/image metadata is independent of image-value overrides. The current
 runtime/chart advertise protocol zero until full activation support is ready.
+Protocol zero performs fail-closed authority reads but creates no persistent
+maintenance lock; keep existing retry behavior until the recovery UI ships.
 Read `docs/design/2026-10-24-credential-upgrade-compatibility.md` before changing
 these gates. The Go upgrade client maps Deployments and CRDs statically.
 

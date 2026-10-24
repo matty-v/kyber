@@ -52,7 +52,7 @@ The primitive is necessary coordination, not complete upgrade protection:
 
 - Upgrade entrypoints must acquire the same live reservation before inspecting
   authority/release state and retain it through upgrade, verification, rollback
-  and uncertain effects. The supervised entrypoint now connects this boundary; see the linked design.
+  and uncertain effects. The supervised entrypoint prepares this boundary, gated on runtime protocol one; see the linked design.
 - Before adoption, prove that all control-plane replicas support the authority
   protocol and no old upgrade Job can execute later. Reservation-aware new Jobs
   must recheck current authority rather than trust a pre-adoption decision.
@@ -79,8 +79,9 @@ reconcile the release/marker/registry state, then release only the inspected UID
 and resource version. Merely observing an old timestamp or a failed HTTP request
 is insufficient. Do not offer an unconditional force-unlock button.
 
-The recovery UI remains pending. The supervised upgrade entrypoint uses live
-maintenance, while authority-binding probes reserve separate names. Recovery
+The recovery UI remains pending. The protocol-one supervisor will use live
+maintenance; protocol zero remains read-only at this boundary. Authority-binding
+probes reserve separate names. Recovery
 of a test failure should inspect its exact probe, never delete the live marker,
 registry or installation credential Secret to restore access.
 
