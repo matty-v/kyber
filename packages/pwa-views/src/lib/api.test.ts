@@ -521,3 +521,17 @@ describe('interrupted credential change recovery', () => {
     expect(JSON.parse(String(options?.body))).toEqual({ operationId: 'operation-fixture' })
   })
 })
+
+describe('key management choices and pending changes', () => {
+  it('reads choices without key material and encodes pending continuations', async () => {
+    mockFetch({ version: 1, namespace: 'kyber-system', permissions: [] })
+    const api = createApiClient(mockCluster)
+    await api.getOperatorCredentialOptions()
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('http://localhost:8080/api/v1/operator-credentials/options')
+    mockFetch({ items: [], next: 'next-fixture' })
+    await api.getPendingOperatorCredentialOperations('cursor /?')
+    const [url, options] = vi.mocked(fetch).mock.calls.at(-1)!
+    expect(url).toBe('http://localhost:8080/api/v1/operator-credential-operations/pending?after=cursor+%2F%3F')
+    expect(options?.method).toBe('GET'); expect(options?.body).toBeUndefined()
+  })
+})

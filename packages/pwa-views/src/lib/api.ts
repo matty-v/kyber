@@ -4,6 +4,8 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialOptions,
+  OperatorCredentialPendingPage,
   OperatorCredentialMutationRequest,
   OperatorCredentialOperation,
   SecurityEventFilters,
@@ -279,8 +281,8 @@ export function createApiClient(cluster: Cluster) {
   return {
     // ---- Agents ----
 
-    listAgents: async (): Promise<Agent[]> => {
-      const res = await request<AgentListResponse>('GET', '/api/v1/agents')
+    listAgents: async (signal?: AbortSignal): Promise<Agent[]> => {
+      const res = await request<AgentListResponse>('GET', '/api/v1/agents', undefined, signal)
       return res.items
     },
 
@@ -312,6 +314,12 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
+
+    getOperatorCredentialOptions: (signal?: AbortSignal): Promise<OperatorCredentialOptions> =>
+      request<OperatorCredentialOptions>('GET', '/api/v1/operator-credentials/options', undefined, signal),
+
+    getPendingOperatorCredentialOperations: (after?: string, signal?: AbortSignal): Promise<OperatorCredentialPendingPage> =>
+      request<OperatorCredentialPendingPage>('GET', `/api/v1/operator-credential-operations/pending${after ? `?${new URLSearchParams({ after })}` : ''}`, undefined, signal),
 
     mutateOperatorCredential: (body: OperatorCredentialMutationRequest, version: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
       request<OperatorCredentialOperation>('POST', '/api/v1/operator-credentials/mutations', body, signal, version),
@@ -783,8 +791,8 @@ export function createApiClient(cluster: Cluster) {
 
     // ---- Machines ----
 
-    listMachines: async (): Promise<Machine[]> => {
-      const res = await request<MachineListResponse>('GET', '/api/v1/machines')
+    listMachines: async (signal?: AbortSignal): Promise<Machine[]> => {
+      const res = await request<MachineListResponse>('GET', '/api/v1/machines', undefined, signal)
       return res.items
     },
 

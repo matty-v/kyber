@@ -212,3 +212,34 @@ func TestManagedCredentialRenameDoesNotRotateOrReviseGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestManagedCredentialImportedReservedGrantsCanBeRetainedButNotAdded(t *testing.T) {
+	snapshot, actor := mutationFixture(t)
+	target := "https://issuer.invalid/credential/client"
+	for i := range snapshot.Document.Credentials {
+		if snapshot.Document.Credentials[i].ID == target {
+			snapshot.Document.Credentials[i].Scopes = append(snapshot.Document.Credentials[i].Scopes, string(ScopeTasksAdmin))
+		}
+	}
+	var prior operatorcredentials.Credential
+	for _, entry := range snapshot.Document.Credentials {
+		if entry.ID == target {
+			prior = entry
+		}
+	}
+	request := credentialMutationRequest{OperationID: uuid.NewString(), Action: "update", CredentialID: target, Policy: &credentialMutationPolicy{Name: "Renamed imported client", Role: prior.Role, Scopes: append([]string{}, prior.Scopes...), AgentResources: append([]string{}, prior.AgentResources...)}}
+	next, _, err := prepareManagedCredentialMutation(snapshot, actor, request, time.Now())
+	if err != nil {
+		t.Fatal("rename rejected retained imported grants", err)
+	}
+	for _, entry := range next.Credentials {
+		if entry.ID == target && entry.PermissionRevision != prior.PermissionRevision {
+			t.Fatal("rename revised retained grants")
+		}
+	}
+	request.OperationID = uuid.NewString()
+	request.Policy.Scopes = append(request.Policy.Scopes, string(ScopeTasksPlatformAdmin))
+	if _, _, err := prepareManagedCredentialMutation(snapshot, actor, request, time.Now()); !errors.Is(err, errCredentialMutationInvalid) {
+		t.Fatal("new reserved grant accepted", err)
+	}
+}

@@ -36,6 +36,7 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
+	CurrentCredentialID    string                   `json:"currentCredentialId,omitempty"`
 	Version                string                   `json:"version,omitempty"`
 	ManagementAvailable    bool                     `json:"managementAvailable,omitempty"`
 	ObservedAt             string                   `json:"observedAt"`
@@ -199,7 +200,13 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if resolved.registry != nil {
-		response := operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
+		actor := callerFrom(r.Context())
+		entry, ok := resolved.registry.byID[actor.CredentialID]
+		if !ok || !entry.caller.Scopes.full || !sameCredentialIdentity(*actor, entry.caller) {
+			writeJSONError(w, http.StatusForbidden, "forbidden", "Current administrator access required")
+			return
+		}
+		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
 		_, _, supported := s.credentialManagementDependencies()
 		if resolved.registry.version != "" && resolved.registry.uid != "" {
 			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
@@ -210,7 +217,8 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	response := operatorCredentialInventory{
-		ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
+		CurrentCredentialID: callerFrom(r.Context()).CredentialID,
+		ObservedAt:          time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
 		Credentials: s.auth.credentialInventory(), Warnings: []string{},
 	}
 	reader := s.APIReader

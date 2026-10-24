@@ -1016,3 +1016,11 @@ audits the current administrator separately from the original key change.
 The typed client never automatically retries mutation POSTs. Issuance time is
 reported only when known. Runtime protocol remains zero and cmd/control-plane
 registry activation, full UI and usage visibility remain outstanding.
+
+Operator key management forms use server-provided permission target choices from
+`/api/v1/operator-credentials/options`. Prepared key values stay in component
+memory, never React Query variables/cache or browser storage. Forms retain the
+reviewed inventory version through polling. GET operation status/pending scans
+never fence writes; only explicit POST reconciliation can do that. Cookie self
+rotation refreshes the same principal/tenant session; bearer hosts update their
+connection separately. Runtime authority activation remains staged.
