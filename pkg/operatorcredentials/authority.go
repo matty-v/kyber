@@ -78,14 +78,34 @@ func (s *AuthorityStore) validateMarker(marker *corev1.Secret) error {
 	return nil
 }
 
+// ReserveAdoption reserves the registry's maintenance boundary. The live
+// registry uses DefaultMaintenanceSecretName, also used by upgrade supervision.
+// Probe registries have separate names and never reserve live maintenance.
+func (s *AuthorityStore) ReserveAdoption(ctx context.Context) (*MaintenanceReservation, error) {
+	maintenance, err := newMaintenanceStore(s.registry, s.registry.key.Name+"-maintenance")
+	if err != nil {
+		return nil, err
+	}
+	return maintenance.Acquire(ctx, MaintenanceAdoption)
+}
+
 // Bind creates an immutable adoption marker, never updates an existing one.
 // The expected version comes from the candidate reviewed by the adoption flow.
 // A failed/lost response is NOT retried: Load reconciles whether binding won.
 // A registry change after the final read is safe: Load always uses its CURRENT
 // contents, with the same UID, rather than freezing grants at adoption time.
-func (s *AuthorityStore) Bind(ctx context.Context, expectedVersion string) error {
+// The caller must reserve BEFORE adoption preflight and retain the reservation
+// until marker creation and every uncertain write are reconciled. Bind never
+// releases it on the caller's behalf.
+func (s *AuthorityStore) Bind(ctx context.Context, expectedVersion string, reservation *MaintenanceReservation) error {
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
+	if reservation == nil || reservation.store == nil || reservation.store.key.Namespace != s.registry.key.Namespace || reservation.store.key.Name != s.registry.key.Name+"-maintenance" {
+		return ErrInvalid
+	}
+	if err := reservation.Check(ctx, MaintenanceAdoption); err != nil {
+		return err
+	}
 	if expectedVersion == "" || s.observed.Load() {
 		return ErrConflict
 	}
@@ -98,6 +118,9 @@ func (s *AuthorityStore) Bind(ctx context.Context, expectedVersion string) error
 	}
 	if secret.UID == "" {
 		return ErrInvalid
+	}
+	if err := reservation.Check(ctx, MaintenanceAdoption); err != nil {
+		return err
 	}
 	immutable := true
 	marker := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: s.key.Namespace, Name: s.key.Name, Labels: map[string]string{authorityLabel: "v1", "app.kubernetes.io/managed-by": "kyber"}}, Type: corev1.SecretTypeOpaque, Immutable: &immutable, Data: map[string][]byte{"protocol": []byte("1"), "registryName": []byte(s.registry.key.Name), "registryUID": []byte(secret.UID)}}
