@@ -137,3 +137,47 @@ func TestCredentialUsageCollectorSeparatesUnidentifiedOutcomes(t *testing.T) {
 		t.Fatal("unidentified traffic gained a guessed identity or false zero")
 	}
 }
+
+func TestCredentialUsageCollectorRunClosesItsObservationWindow(t *testing.T) {
+	first := make(chan struct{})
+	var once sync.Once
+	writer := &capturedUsageWriter{hook: func(context.Context) error { once.Do(func() { close(first) }); return nil }}
+	collector, err := NewCredentialUsageCollector(writer, "kyber-system", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	collector.ObserveCredentialUsage(acceptedUsageObservation())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan struct{})
+	go func() { collector.Run(ctx); close(done) }()
+	select {
+	case <-first:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reporter did not start")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reporter did not drain")
+	}
+	writer.mu.Lock()
+	defer writer.mu.Unlock()
+	if len(writer.batches) < 2 || !writer.batches[len(writer.batches)-1].Stopped || writer.batches[0].Items[0].Authenticated != 1 {
+		t.Fatal("runtime reporter lost activity or left its window open")
+	}
+}
+
+func TestCredentialUsageUnidentifiedObservationRejectsTenant(t *testing.T) {
+	for _, outcome := range []string{"unrecognized", "unavailable", "unattributed"} {
+		observation := CredentialUsageObservation{Outcome: outcome}
+		if !observation.valid() {
+			t.Fatalf("empty %s observation rejected", outcome)
+		}
+		observation.TenantID = "tenant-fixture"
+		if observation.valid() {
+			t.Fatalf("%s accepted identity metadata", outcome)
+		}
+	}
+}

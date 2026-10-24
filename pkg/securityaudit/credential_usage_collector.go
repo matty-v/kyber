@@ -25,7 +25,7 @@ type CredentialUsageObservation struct {
 func (o CredentialUsageObservation) valid() bool {
 	switch o.Outcome {
 	case "unrecognized", "unavailable", "unattributed":
-		return o.CredentialID == "" && o.PrincipalID == "" && o.Authority == "" && o.Transport == "" && o.Action == "" && o.At.IsZero() && o.Generation == 0
+		return o.CredentialID == "" && o.PrincipalID == "" && o.TenantID == "" && o.Authority == "" && o.Transport == "" && o.Action == "" && o.At.IsZero() && o.Generation == 0
 	case "accepted", "denied":
 		if !o.CredentialUsageIdentity.valid() {
 			return false

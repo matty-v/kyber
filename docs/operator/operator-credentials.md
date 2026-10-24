@@ -1,7 +1,7 @@
 # Inspect operator credentials
 
 As an installation administrator, open **Settings → API access → Operator
-credentials**. The read-only inventory shows the installation administrator
+credentials**. The inventory shows the installation administrator
 and integration credentials currently accepted by the responding control
 plane, plus additional entries in its configuration when that source can be
 read. It never returns existing key values or fragments.
@@ -29,11 +29,15 @@ Separate names do not create separate access for identical key values.
 Duplicate caller names cannot start browser sessions; existing sessions with
 ambiguous identities are rejected. Give integrations unique names and keys.
 
-Creation times and general per-key usage summaries are not collected by this
-inventory. Recent recorded access appears below it in Settings, with explicit
-coverage limits. Unknown/unavailable usage does not imply a credential was never
-used. The remaining creation/rotation/revocation and usage
-work is tracked in MAT-134; the authorization/registry model is MAT-96.
+Creation time is shown only when actual issuance was recorded. Imported keys
+show **Creation time unknown**. Secret creation time does not establish when a
+key was issued. Recent recorded sensitive access appears below the inventory.
+
+Managed installations offer named key creation, grant changes, individual
+rotation and revocation here. Save a newly prepared value before activating it;
+it cannot be retrieved later. Kyber protects the last non-expiring administrator.
+These controls are capability-gated while adoption is completed in MAT-134.
+Configuration-controlled installations retain their current rotation workflow.
 
 The supported system identity is `installation-admin`, displayed as
 **Installation administrator**. Existing administrator keys remain valid and
@@ -50,6 +54,40 @@ reads. The UI clears loaded inventory when a refresh is denied; it does not
 put this metadata in the shared query cache. Key rotation controls appear only
 after administrator inventory access is verified. Older installations show an
 explicit unsupported state until upgraded.
+
+
+## Observed key activity
+
+With activity reporting available, each identifiable key shows **Last observed
+use**, authenticated requests, HTTP denials after authentication, request types
+and authentication methods. The stated collection window and update time apply
+to those observations. Counts remain exact for large values.
+
+A successful authentication means Kyber accepted that credential. It does not
+mean an action completed; use **Recent access** for sensitive-action decisions
+and outcomes. API-key requests, browser sign-ins/sessions and authorized archive
+links are included. Long-lived connections count their initial HTTP request,
+not terminal commands or each streamed message. UI polling also uses its key.
+
+Coverage is partial. Reporting delay, observations awaiting confirmation,
+recorded loss and missing attribution are shown explicitly. Unavailable reporting
+does not become a successful zero. **No accepted use recorded in this window**
+is narrower than a claim that a key has never been used.
+
+Keys without a complete stable identity, or distinct values sharing one identity,
+cannot receive separate per-key attribution. Those accepted requests remain
+unattributed; permission checks are unchanged. Shared key values identify their
+actual selected credential, not individual people. Separate named credentials
+provide clearer attribution. Stable credential/principal/tenant identities retain
+observed history through managed adoption and material rotation.
+
+Activity metadata is durable in Kyber's PostgreSQL store. A bounded asynchronous
+collector keeps database writes outside authentication, reports overflow, and
+retries acknowledgement-lost batches without double-counting. It stores no key
+values, cookies, request content, raw paths or IP addresses. Reporter replay
+cursors and aggregate counts are retained across control-plane replacement;
+collection gaps remain explicit. Activity collection requires PostgreSQL, while
+ordinary authentication continues during reporting failure.
 
 
 ## Terminal permissions
@@ -75,9 +113,9 @@ with those identity fields and a `keyFrom` reference. The inventory shows this
 as host terminal access and lists the Machines separately from Agents.
 
 Changes to externally configured credentials still require reload/restart as
-described above. Bounded revocation of active streams and durable security
-audit records remain part of MAT-96/MAT-97; current decision events are sanitized
-control-plane logs, not a durable audit trail.
+described above. Current-key checks also protect active streams; managed authority
+updates are rechecked within the documented ten-second bound. Required durable
+records for sensitive access are described below.
 
 Terminal completion reports exit before closing the client connection. Client
 disconnect cancels the exec context and closes an upstream connection waiting
