@@ -117,7 +117,7 @@ func taskCursorCredentialMatches(id string, caller *Caller) bool {
 	if id == caller.CredentialID {
 		return true
 	}
-	return caller.Scopes.full && caller.PrincipalID == installationAdminPrincipalID &&
+	return (caller.Scopes.full || caller.CredentialAuthority == "registry") && caller.PrincipalID == installationAdminPrincipalID &&
 		caller.TenantID == installationTenantID && caller.CredentialID == installationAdminCredentialID &&
 		id == "credential_legacy_shared_key"
 }

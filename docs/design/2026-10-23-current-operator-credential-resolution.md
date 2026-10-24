@@ -22,7 +22,9 @@ expired records cannot authenticate. Administrator authority comes from explicit
 role, never a display name, the historical cookie's full-scope bit, or a union
 with installation configuration. Principal, tenant, credential ID and generation
 remain intact. Exact Agent/Machine grants and existing route policy still apply.
-Unknown permission vocabulary fails closed rather than being interpreted by an
+Material containing HTTP-invalid controls or trailing whitespace that the HTTP
+parser would strip is rejected before activation. Unknown permission vocabulary
+fails closed rather than being interpreted by an
 older binary. This is not a promise that every supported grant combination is
 appropriate for issuance; the management permission editor must validate its
 supported action/target combinations before writing them.

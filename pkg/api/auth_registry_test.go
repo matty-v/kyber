@@ -348,3 +348,53 @@ func TestRegistryCookieRejectsTamperingExpiryAndForeignIdentity(t *testing.T) {
 		t.Fatal("foreign tenant session minted")
 	}
 }
+
+func TestRegistryExpiryAndHistoricalAdministratorDemotion(t *testing.T) {
+	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
+	a := registryFixtureAuthenticator(t, authority)
+	client := mustRegistryCaller(t, a, registryBearer("client-key-fixture"))
+	clientCookie := mustRegistryCookie(t, a, *client)
+	oldRoot, err := signBrowserSession("original-installation-fixture", *installationAdminCaller(), "", time.Now(), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authority.edit(func(d *operatorcredentials.Document) {
+		expired := time.Now().Add(-time.Second)
+		d.Credentials[2].ExpiresAt = &expired
+		d.Credentials[2].PermissionRevision++
+		root := &d.Credentials[0]
+		root.Role = "restricted"
+		root.Scopes = []string{"task-events:read"}
+		root.AgentResources = []string{"kyber-system/alpha"}
+		root.PermissionRevision++
+	})
+	for _, request := range []*http.Request{registryBearer("client-key-fixture"), registryCookie(clientCookie)} {
+		if _, err := a.Authenticate(request); err == nil {
+			t.Fatal("expired key or session accepted")
+		}
+	}
+	root := mustRegistryCaller(t, a, registryCookie(oldRoot))
+	if root.Scopes.full || !root.Scopes.Has(ScopeTaskEventsRead) {
+		t.Fatal("historical full-scope bit retained administrator access")
+	}
+	if !taskCursorCredentialMatches("credential_legacy_shared_key", root) {
+		t.Fatal("historical installation cursor lost identity after grant narrowing")
+	}
+	impostor := *root
+	impostor.PrincipalID = "other-principal"
+	if taskCursorCredentialMatches("credential_legacy_shared_key", &impostor) {
+		t.Fatal("foreign principal borrowed historical installation identity")
+	}
+}
+
+func TestRegistryRejectsUnusableHTTPMaterial(t *testing.T) {
+	for _, key := range []string{"line\nbreak", "nul\x00byte", "trailing ", "trailing\t", "delete\x7fbyte"} {
+		authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
+		authority.edit(func(d *operatorcredentials.Document) {
+			d.Credentials[2] = d.Credentials[2].WithSecretMaterial([]byte(key))
+		})
+		if _, err := registryFixtureAuthenticator(t, authority).Authenticate(registryBearer("other-admin-fixture")); err != errOperatorAuthorityUnavailable {
+			t.Fatal("unusable credential accepted for activation", err)
+		}
+	}
+}

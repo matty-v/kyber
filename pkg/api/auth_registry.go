@@ -84,6 +84,10 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 		if credential.State != operatorcredentials.StateActive || credential.ExpiresAt != nil && !now.Before(*credential.ExpiresAt) {
 			continue
 		}
+		if !validOperatorHTTPKey(string(credential.SecretMaterial())) {
+			return nil, errOperatorAuthorityUnavailable
+		}
+
 		caller := Caller{Name: credential.Name, PrincipalID: credential.PrincipalID, TenantID: credential.TenantID, Kind: credential.Kind, Issuer: credential.Issuer, Subject: credential.Subject, CredentialID: credential.ID, CredentialGeneration: credential.Generation, CredentialAuthority: "registry", Scopes: newScopeSet(scopes...), AgentResources: newResourceSet(credential.AgentResources...), MachineResources: newResourceSet(credential.MachineResources...)}
 		if credential.Role == operatorcredentials.RoleAdministrator {
 			caller.Scopes = newFullScopeSet()
@@ -160,4 +164,19 @@ func sameCredentialIdentity(current, presented Caller) bool {
 func writeOperatorAuthenticationUnavailable(w http.ResponseWriter) {
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSONError(w, http.StatusServiceUnavailable, "authentication_unavailable", "operator authentication is temporarily unavailable")
+}
+
+// Go's HTTP parser rejects controls and strips trailing optional whitespace.
+// Such material cannot be a usable bearer credential, even if the storage
+// codec correctly preserves its bytes. Reject it before authority activation.
+func validOperatorHTTPKey(key string) bool {
+	if len(key) == 0 || key[len(key)-1] == ' ' || key[len(key)-1] == '\t' {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] == 0x7f || key[i] < 0x20 && key[i] != '\t' {
+			return false
+		}
+	}
+	return true
 }
