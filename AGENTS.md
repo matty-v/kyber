@@ -922,3 +922,19 @@ second accepted bearer key. Read
 `docs/design/2026-10-23-current-operator-credential-resolution.md` before enabling
 or changing this seam. Do not activate it before ownership, audited management,
 stream revocation and upgrade/rollback compatibility gates are complete.
+
+Protected requests install `liveOperatorRequests` inside authentication via the
+sensitive-audit wrapper. It rechecks identity/current route policy every three
+seconds with a two-second authority deadline. Sensitive handlers add exact
+resource/action requirements; task event streams add their read requirement.
+Do not replace these checks with the original request's grants or the task
+heartbeat. Cursor replay captures signing material once while the independent
+watcher enforces revocation. Read
+`docs/design/2026-10-24-operator-stream-access.md` before changing cancellation,
+write deadlines, WebSocket close behavior or completion outcome handling.
+
+The required `test` job also runs the focused live-operator access tests with
+Go's race detector when authentication, stream authorization, credential-store
+code, Go module inputs or the workflow change. The change detector keeps this
+on the security-sensitive surface and forces Go setup for that path. Ordinary
+local API tests do not substitute for the race check on concurrent guard changes.

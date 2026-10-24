@@ -3,6 +3,7 @@ package api
 import (
 	"bufio"
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"net/http"
@@ -63,7 +64,7 @@ func (w *sensitiveAuditWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // has been committed. The wrapper persists a separate outcome; it never treats
 // a WebSocket handshake as proof that a command completed successfully.
 func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.liveOperatorRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := &sensitiveAuditState{}
 		r = r.WithContext(context.WithValue(r.Context(), sensitiveAuditContextKey{}, state))
 		observed := &sensitiveAuditWriter{responseWriter: newResponseWriter(w)}
@@ -79,8 +80,16 @@ func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
 			result.Outcome = "unknown"
 			if completed {
 				switch {
+				// A confirmed mutation remains committed even if its response is lost
+				// or access changes afterward. Separate denials describe closed access.
 				case state.outcome != "":
 					result.Outcome = state.outcome
+				case r.Context().Err() != nil && securityActionMayMutate(result.Action):
+					result.Outcome = "unknown"
+				case errors.Is(context.Cause(r.Context()), errOperatorAuthorityUnavailable):
+					result.Outcome = "unknown"
+				case errors.Is(context.Cause(r.Context()), errOperatorAccessChanged):
+					result.Outcome = "failure"
 				case observed.status >= 400:
 					result.Outcome = "failure"
 				case observed.failed || r.Context().Err() != nil:
@@ -99,7 +108,7 @@ func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(observed, r)
 		completed = true
-	})
+	}))
 }
 
 func markSensitiveOutcome(r *http.Request, outcome string) {
@@ -137,7 +146,8 @@ func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.R
 		event.Outcome = "allow"
 	}
 	state, _ := r.Context().Value(sensitiveAuditContextKey{}).(*sensitiveAuditState)
-	if s.SecurityAudit == nil || (allowed && state == nil) {
+	liveState, _ := r.Context().Value(liveOperatorContextKey{}).(*liveOperatorAccess)
+	if s.SecurityAudit == nil || (allowed && (state == nil || liveState == nil)) {
 		if allowed {
 			writeJSONError(w, http.StatusServiceUnavailable, "security_audit_unavailable", "security history is unavailable; this operation was not started")
 		}
@@ -154,6 +164,16 @@ func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.R
 	}
 	if allowed {
 		state.admission = &event
+		registerLiveOperatorAccess(r, func(current *Caller) bool {
+			if kind == "installation" {
+				return current.Scopes.full
+			}
+			resources := current.AgentResources
+			if kind == "machine" {
+				resources = current.MachineResources
+			}
+			return current.Scopes.full || scope != "" && current.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name)
+		}, &event)
 	}
 	return true
 }
@@ -162,10 +182,14 @@ func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.R
 // strings into durable history. An unaffiliated/old key may lack stable IDs;
 // represent that as unknown attribution rather than inventing an identity.
 func (s *Server) auditOperatorDenial(w http.ResponseWriter, r *http.Request, action, kind, name string) {
+	s.auditOperatorDenialForRequest(r, w.Header().Get(RequestIDHeader), action, kind, name)
+}
+
+func (s *Server) auditOperatorDenialForRequest(r *http.Request, requestID, action, kind, name string) {
 	if s.SecurityAudit == nil {
 		return
 	}
-	e := securityaudit.Event{CredentialAuthority: "configuration", ID: uuid.NewString(), OperationID: uuid.NewString(), ObservedAt: time.Now().UTC(), Namespace: s.Namespace, RequestID: w.Header().Get(RequestIDHeader), Action: action, ResourceKind: kind, ResourceName: name, Phase: "authorization", Outcome: "deny", Method: auditMethod(r.Method)}
+	e := securityaudit.Event{CredentialAuthority: "configuration", ID: uuid.NewString(), OperationID: uuid.NewString(), ObservedAt: time.Now().UTC(), Namespace: s.Namespace, RequestID: requestID, Action: action, ResourceKind: kind, ResourceName: name, Phase: "authorization", Outcome: "deny", Method: auditMethod(r.Method)}
 	if e.RequestID == "" {
 		e.RequestID = uuid.NewString()
 	}
@@ -226,5 +250,17 @@ func (s *Server) auditPlatformLogTarget(w http.ResponseWriter, r *http.Request, 
 		return false
 	}
 	state.admission = &e
+	registerLiveOperatorAccess(r, nil, &e)
 	return true
+}
+
+// A cancelled mutation without a confirmed acknowledgement may have committed
+// remotely. Closing access cannot be described as rolling that effect back.
+func securityActionMayMutate(action string) bool {
+	switch action {
+	case "secrets:write", "credential:create", "credential:update", "credential:rotate", "credential:revoke", "lifecycle:write", "lifecycle:delete", "archives:export", "archives:import":
+		return true
+	default:
+		return false
+	}
 }

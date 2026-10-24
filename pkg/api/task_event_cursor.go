@@ -47,8 +47,21 @@ func (s *Server) taskEventCursorKey(r *http.Request) ([]byte, error) {
 }
 
 func (s *Server) encodeTaskEventCursor(r *http.Request, agentName, taskID string, sequence int64) (string, error) {
+	if sequence < 0 {
+		return "", taskstore.ErrInvalidCursor
+	}
+	key, err := s.taskEventCursorKey(r)
+	if err != nil {
+		return "", err
+	}
+	return s.signTaskEventCursor(r, agentName, taskID, sequence, key)
+}
+
+// A stream captures its signing material once; live authorization independently
+// cancels it on rotation, expiry, revocation or an authority outage.
+func (s *Server) signTaskEventCursor(r *http.Request, agentName, taskID string, sequence int64, key []byte) (string, error) {
 	caller := callerFrom(r.Context())
-	if caller == nil || sequence < 0 {
+	if caller == nil || sequence < 0 || len(key) == 0 {
 		return "", taskstore.ErrInvalidCursor
 	}
 	c := taskEventCursorClaims{Version: taskEventCursorVersion, TaskID: taskID, TenantID: caller.TenantID, PrincipalID: caller.PrincipalID, AgentResourceID: s.Namespace + "/" + agentName, CredentialID: caller.CredentialID, CredentialGeneration: caller.CredentialGeneration, Sequence: sequence}
@@ -57,10 +70,6 @@ func (s *Server) encodeTaskEventCursor(r *http.Request, agentName, taskID string
 		return "", err
 	}
 	body := base64.RawURLEncoding.EncodeToString(b)
-	key, err := s.taskEventCursorKey(r)
-	if err != nil {
-		return "", err
-	}
 	mac := hmac.New(sha256.New, key)
 	_, _ = mac.Write([]byte("kyber-task-event-cursor-v1." + body))
 	return strconv.Itoa(taskEventCursorVersion) + "." + body + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil

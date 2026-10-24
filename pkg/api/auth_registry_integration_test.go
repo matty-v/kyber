@@ -5,6 +5,7 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/matty-v/kyber/internal/testutil"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/operatorcredentials"
 	appsv1 "k8s.io/api/apps/v1"
@@ -194,6 +196,31 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		t.Fatal(err)
 	}
 	handlers = append(handlers, server(freshSource).BuildHandler())
+	// Verify a live HTTP stream against the same real GCP authority. No real
+	// Agent or runtime is created; the protected backend is a blocked fixture.
+	liveStopped := make(chan struct{})
+	liveService := &Server{Namespace: namespace, SecurityAudit: testutil.NewSecurityAudit(), auth: a.auth}
+	liveServer := httptest.NewServer(authMiddleware(a.auth, liveService.auditSensitiveRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !liveService.requireSensitiveResource(w, r, "alpha", ScopeLogsRead) {
+			return
+		}
+		_, _ = io.WriteString(w, "ready\n")
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+		close(liveStopped)
+	}))))
+	defer liveServer.Close()
+	liveRequest, _ := http.NewRequest(http.MethodGet, liveServer.URL+"/api/v1/agents/alpha/logs", nil)
+	liveRequest.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: cookie})
+	liveResponse, err := liveServer.Client().Do(liveRequest)
+	if err != nil || liveResponse.StatusCode != 200 {
+		t.Fatal("live authority stream did not establish")
+	}
+	defer liveResponse.Body.Close()
+	ready := make([]byte, len("ready\n"))
+	if _, err := io.ReadFull(liveResponse.Body, ready); err != nil {
+		t.Fatal("live stream did not flush")
+	}
 	next = rotated.Document.Clone()
 	clientCredential := registryFixtureCredential(t, &next, scoped.CredentialID)
 	clientCredential.Scopes = []string{"tasks:read"}
@@ -203,6 +230,13 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal("probe grant edit failed")
 	}
+	select {
+	case <-liveStopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("real authority grant narrowing did not close live access")
+	}
+	_, _ = io.Copy(io.Discard, liveResponse.Body)
+
 	for _, auth := range []*APIKeyAuthenticator{a.auth, b.auth} {
 		current := mustRegistryCaller(t, auth, registryCookie(cookie))
 		if current.Scopes.Has(ScopeMetricsRead) || current.PrincipalID != scoped.PrincipalID || current.TenantID != scoped.TenantID {
@@ -245,7 +279,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		t.Fatal("dev Agent postflight failed")
 	}
 	// A bounded safe diagnostic, with no handler bodies, keys, cookies or seed.
-	t.Log(strings.Join([]string{"Real dev authority reads: adoption, V1/V2 compatibility, independent replica resolution, isolated rotation, current grants, revocation and 503 outage passed.", "Live credential metadata unchanged; zero Agents; owned probe cleanup verified."}, " "))
+	t.Log(strings.Join([]string{"Real dev authority reads: adoption, V1/V2 compatibility, independent replica resolution, isolated rotation, current grants, bounded live-stream cancellation, revocation and 503 outage passed.", "Live credential metadata unchanged; zero Agents; owned probe cleanup verified."}, " "))
 }
 
 func registryFixtureCredential(t *testing.T, document *operatorcredentials.Document, id string) *operatorcredentials.Credential {
