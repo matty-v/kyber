@@ -46,6 +46,7 @@ jobs:
     outputs:
       go: ${{ steps.filter.outputs.go }}
       pwa: ${{ steps.filter.outputs.pwa }}
+      operator-access: ${{ steps.filter.outputs.operator_access }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -59,6 +60,7 @@ jobs:
           if [ "$EVENT" != "pull_request" ]; then
             echo "go=true"  >> "$GITHUB_OUTPUT"
             echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "operator_access=true" >> "$GITHUB_OUTPUT"
             echo "non-PR event ($EVENT) → run everything."
             exit 0
           fi
@@ -66,6 +68,7 @@ jobs:
           if [ -z "$CHANGED" ]; then
             echo "go=true"  >> "$GITHUB_OUTPUT"
             echo "pwa=true" >> "$GITHUB_OUTPUT"
+            echo "operator_access=true" >> "$GITHUB_OUTPUT"
             echo "could not determine changed files → run everything (fail-safe)."
             exit 0
           fi
@@ -77,6 +80,11 @@ jobs:
           if echo "$CHANGED" | grep -qvE "$SAFE"; then GO=true; else GO=false; fi
           # PWA build/test runs when frontend sources or the lockfile change.
           if echo "$CHANGED" | grep -qE '^(packages|apps)/|^package(-lock)?\.json$'; then PWA=true; else PWA=false; fi
+          # Concurrent credential checks must remain race-free. Keep the
+          # expensive race build on the authentication/stream change surface.
+          AUTH_PATHS='^pkg/api/(live_operator_.*|auth.*|browser_session.*|security_audit.*|routes_exec|routes_agent_task_events|task_event_cursor).*\.go$|^pkg/operatorcredentials/|^go\.(mod|sum)$|^\.github/workflows/test\.yml$'
+          if echo "$CHANGED" | grep -qE "$AUTH_PATHS"; then AUTH=true; GO=true; else AUTH=false; fi
+          echo "operator_access=$AUTH" >> "$GITHUB_OUTPUT"
           echo "go=$GO"  >> "$GITHUB_OUTPUT"
           echo "pwa=$PWA" >> "$GITHUB_OUTPUT"
           echo "Decision: go=$GO pwa=$PWA"
@@ -158,6 +166,13 @@ jobs:
       - name: Test
         if: needs.changes.outputs.go == 'true'
         run: make test
+
+      - name: Race check live operator access
+        if: needs.changes.outputs['operator-access'] == 'true'
+        env:
+          CGO_ENABLED: '1'
+          GOMAXPROCS: '3'
+        run: go test -race -p 1 ./pkg/api -run '^TestLive(Access|Sensitive|Task|Exec)' -count=1
 
   pwa-build:
     needs: changes

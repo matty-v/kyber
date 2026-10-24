@@ -932,3 +932,9 @@ heartbeat. Cursor replay captures signing material once while the independent
 watcher enforces revocation. Read
 `docs/design/2026-10-24-operator-stream-access.md` before changing cancellation,
 write deadlines, WebSocket close behavior or completion outcome handling.
+
+The required `test` job also runs the focused live-operator access tests with
+Go's race detector when authentication, stream authorization, credential-store
+code, Go module inputs or the workflow change. The change detector keeps this
+on the security-sensitive surface and forces Go setup for that path. Ordinary
+local API tests do not substitute for the race check on concurrent guard changes.
