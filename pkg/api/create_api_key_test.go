@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -19,7 +20,7 @@ import (
 func createWithSecrets(t *testing.T, runtime, secrets string, objs ...client.Object) *httptest.ResponseRecorder {
 	t.Helper()
 	objs = append(objs, defaultMachine())
-	server := &api.Server{
+	server := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(objs...).Build(),
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",

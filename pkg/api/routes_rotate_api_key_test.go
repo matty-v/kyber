@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -40,7 +41,7 @@ func buildRotateAPIKeyHandler(t *testing.T, secretName, namespace, seedKey strin
 		},
 	}
 	cb := fake.NewClientBuilder().WithObjects(secret)
-	srv := &api.Server{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:        cb.Build(),
 		APIKey:           seedKey,
 		APIKeySecretName: secretName,
@@ -147,7 +148,7 @@ func TestRotateAPIKey_GeneratesUniqueKeys(t *testing.T) {
 
 func TestRotateAPIKey_ReturnsServiceUnavailable_WhenSecretNameUnset(t *testing.T) {
 	const seedKey = "seed-key"
-	srv := &api.Server{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fake.NewClientBuilder().Build(),
 		APIKey:    seedKey,
 		Namespace: "kyber-system",

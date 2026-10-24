@@ -13,12 +13,14 @@ const actions: Record<string, string> = {
   'audit:read': 'View access history', 'operator:unclassified': 'Other protected action',
   'authenticate': 'Authenticate', 'credential:create': 'Create operator key',
   'credential:update': 'Change operator key access', 'credential:rotate': 'Rotate operator key',
-  'credential:revoke': 'Revoke operator key', 'lifecycle:write': 'Change Agent lifecycle',
-  'lifecycle:delete': 'Delete Agent', 'archives:export': 'Export Agent disk', 'archives:import': 'Import Agent disk',
+  'credential:revoke': 'Revoke operator key', 'lifecycle:write': 'Change lifecycle',
+  'lifecycle:delete': 'Delete resource', 'archives:export': 'Request disk export', 'archives:import': 'Request disk import',
+  'archives:read': 'Read archive details', 'archives:download': 'Download disk archive', 'archives:link': 'Create archive download link',
+  'archives:upload': 'Upload disk archive', 'archives:cancel': 'Cancel archive operation', 'archives:delete': 'Delete disk archive',
 }
 
 function resultLabel(event: SecurityEvent): string {
-  if (event.phase === 'completion') return event.outcome === 'success' ? 'Completed' : event.outcome === 'failure' ? 'Failed' : 'Completion unknown'
+  if (event.phase === 'completion') return event.outcome === 'success' ? 'Request completed' : event.outcome === 'failure' ? 'Failed' : 'Completion unknown'
   return event.outcome === 'allow' ? 'Access allowed' : 'Access denied'
 }
 

@@ -61,7 +61,7 @@ var actions = map[string]bool{
 	"logs:read": true, "transcripts:read": true, "machines:logs:read": true,
 	"credential:create": true, "credential:update": true, "credential:rotate": true,
 	"credential:revoke": true, "lifecycle:write": true, "lifecycle:delete": true,
-	"archives:export": true, "archives:import": true, "audit:read": true,
+	"archives:read": true, "archives:export": true, "archives:import": true, "archives:download": true, "archives:link": true, "archives:upload": true, "archives:cancel": true, "archives:delete": true, "audit:read": true,
 	"operator:unclassified": true,
 }
 

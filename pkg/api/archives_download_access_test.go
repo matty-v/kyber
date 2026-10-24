@@ -3,15 +3,19 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
 func TestArchiveDownloadLinkStopsAfterRootRotation(t *testing.T) {
 	h := newExportHarness(t)
+	audit := testutil.NewSecurityAudit()
+	h.server.SecurityAudit = audit
 	id, _ := h.completedExport()
 	login := h.do(http.MethodPost, "/api/v1/browser-session", testAPIKey)
 	cookies := login.Result().Cookies()
@@ -47,6 +51,17 @@ func TestArchiveDownloadLinkStopsAfterRootRotation(t *testing.T) {
 	}
 	if rr.Header().Get("Cache-Control") != "no-store" || rr.Header().Get("Referrer-Policy") != "no-referrer" {
 		t.Fatal("download error is cacheable or leaks referrer")
+	}
+	records := audit.Records()
+	last := records[len(records)-1]
+	if last.Action != "archives:download" || last.Outcome != "deny" || last.CredentialID != "credential_installation_admin" || last.ResourceName != exportAgent {
+		t.Fatal("revoked capability denial lost verified issuer attribution", last)
+	}
+	metadata, _ := json.Marshal(records)
+	for _, private := range []string{testAPIKey, rotated.APIKey, link.URL} {
+		if strings.Contains(string(metadata), private) {
+			t.Fatal("archive audit metadata exposed credential or capability material")
+		}
 	}
 	if rr := h.do(http.MethodGet, "/api/v1/agents/"+exportAgent+"/exports/"+id, rotated.APIKey); rr.Code != http.StatusOK {
 		t.Fatal("rotation damaged retained archive", rr.Code)

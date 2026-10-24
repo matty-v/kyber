@@ -71,6 +71,9 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request, ag
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", agentName, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	if err := s.K8sClient.Get(r.Context(),
 		types.NamespacedName{Name: agentName, Namespace: s.Namespace}, agent); err != nil {
@@ -123,6 +126,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request, ag
 	ctx, cancel := context.WithTimeout(r.Context(), 60*time.Second)
 	defer cancel()
 
+	beginManagementMutation(r)
 	stdout, stderr, err := s.execRestartSession(ctx, "agent-"+agentName, cmd)
 	if err != nil {
 		slog.Error("restart-session exec failed",
@@ -140,6 +144,7 @@ func (s *Server) handleRestartSession(w http.ResponseWriter, r *http.Request, ag
 			"in-pod tmux session killed and re-launched for runtime=%s", agent.Spec.Runtime)
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agent":   agentName,
 		"runtime": agent.Spec.Runtime,

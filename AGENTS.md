@@ -941,6 +941,16 @@ Configuration resolution keeps ordinary bearer duplicate-key precedence. Old V1
 or pre-adoption links require regeneration; retained archives are unchanged. Read
 `docs/design/2026-10-24-current-archive-download-access.md` before changing this path.
 
+Management mutations use `requireManagementAudit`/explicit current permission
+predicates before effects, `beginManagementMutation` before remote writes and
+`completeManagementMutation` only after confirmation. Imports reuse their private,
+same-actor/same-target import admission during nested Agent creation. Public
+archive downloads collect outcomes inside their narrow capability guard. A
+verified old link may supply denial attribution only, never caller permissions.
+Read `docs/design/2026-10-24-required-management-audit.md` before changing these
+boundaries. Handler deadline changes pass through the live writer's serialized
+setters; never let a later timeout undo an access-cancellation deadline.
+
 The required `test` job also runs the focused live-operator access tests with
 Go's race detector when authentication, stream authorization, credential-store
 code, Go module inputs or the workflow change. The change detector keeps this

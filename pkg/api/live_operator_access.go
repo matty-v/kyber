@@ -100,7 +100,7 @@ func (s *Server) liveOperatorRequestsWithAccess(next http.Handler, resolve func(
 				}
 				if errors.Is(err, errOperatorAuthorityUnavailable) {
 					cancel(errOperatorAuthorityUnavailable)
-					interruptOperatorTransport(w, r)
+					interruptOperatorTransport(writer, r)
 					return
 				}
 				allowed := err == nil && before != nil && after != nil && sameCredentialIdentity(*before, *after) && permits(r, after) && state.permits(after)
@@ -110,7 +110,7 @@ func (s *Server) liveOperatorRequestsWithAccess(next http.Handler, resolve func(
 				cancel(errOperatorAccessChanged)
 				// Interrupt blocked writes immediately; do not wait for the audit store
 				// before closing access. New writes also observe the cancelled context.
-				interruptOperatorTransport(w, r)
+				interruptOperatorTransport(writer, r)
 				s.auditLiveOperatorDenial(r, state)
 				return
 			}
@@ -120,7 +120,7 @@ func (s *Server) liveOperatorRequestsWithAccess(next http.Handler, resolve func(
 			<-done
 			cause := context.Cause(r.Context())
 			if errors.Is(cause, errOperatorAccessChanged) || errors.Is(cause, errOperatorAuthorityUnavailable) {
-				interruptOperatorTransport(w, r)
+				interruptOperatorTransport(writer, r)
 			}
 		}()
 		next.ServeHTTP(writer, r)
@@ -168,10 +168,34 @@ func interruptOperatorTransport(w http.ResponseWriter, r *http.Request) {
 
 type liveOperatorWriter struct {
 	http.ResponseWriter
-	ctx context.Context
+	ctx        context.Context
+	deadlineMu sync.Mutex
 }
 
 func (w *liveOperatorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
+// Serialize handler deadline changes with cancellation. A late upload/download
+// timeout must not undo the deadline that closed this credential's access.
+func (w *liveOperatorWriter) SetReadDeadline(deadline time.Time) error {
+	w.deadlineMu.Lock()
+	defer w.deadlineMu.Unlock()
+	if w.accessCancelled() {
+		deadline = time.Now()
+	}
+	return http.NewResponseController(w.ResponseWriter).SetReadDeadline(deadline)
+}
+func (w *liveOperatorWriter) SetWriteDeadline(deadline time.Time) error {
+	w.deadlineMu.Lock()
+	defer w.deadlineMu.Unlock()
+	if w.accessCancelled() {
+		deadline = time.Now()
+	}
+	return http.NewResponseController(w.ResponseWriter).SetWriteDeadline(deadline)
+}
+func (w *liveOperatorWriter) accessCancelled() bool {
+	cause := context.Cause(w.ctx)
+	return errors.Is(cause, errOperatorAccessChanged) || errors.Is(cause, errOperatorAuthorityUnavailable)
+}
 func (w *liveOperatorWriter) ready() error {
 	if err := w.ctx.Err(); err != nil {
 		return err

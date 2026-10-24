@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -56,7 +57,7 @@ func newIdentityTestServer(t *testing.T, in identityInstall) (*api.Server, clien
 		WithScheme(mustNewScheme(t)).
 		WithRuntimeObjects(defaultMachine()).
 		Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:         fakeClient,
 		APIKey:            testAPIKey,
 		Namespace:         "kyber-system",

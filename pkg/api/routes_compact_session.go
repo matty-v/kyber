@@ -85,6 +85,9 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", agentName, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	if err := s.K8sClient.Get(r.Context(),
 		types.NamespacedName{Name: agentName, Namespace: s.Namespace}, agent); err != nil {
@@ -153,6 +156,7 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 	// Reuses execRestartSession — it is a plain "exec this argv in the agent
 	// container, no stdin, no TTY" helper with nothing restart-specific in
 	// it beyond its name.
+	beginManagementMutation(r)
 	stdout, stderr, err := s.execRestartSession(ctx, "agent-"+agentName, cmd)
 	if err != nil {
 		code := execExitCode(err)
@@ -205,6 +209,7 @@ func (s *Server) handleCompactSession(w http.ResponseWriter, r *http.Request, ag
 			"compaction requested in-session for runtime=%s", agent.Spec.Runtime)
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"agent":   agentName,
 		"runtime": agent.Spec.Runtime,

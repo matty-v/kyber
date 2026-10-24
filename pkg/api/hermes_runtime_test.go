@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,7 +18,7 @@ import (
 
 func TestHermesCreationUsesGenericRuntimeCredential(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(defaultMachine()).Build()
-	server := &api.Server{
+	server := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     client,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
@@ -60,7 +61,7 @@ func TestHermesCreationUsesGenericRuntimeCredential(t *testing.T) {
 
 func TestHermesCreationRejectsUnpinnedImage(t *testing.T) {
 	client := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(defaultMachine()).Build()
-	server := &api.Server{
+	server := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     client,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
