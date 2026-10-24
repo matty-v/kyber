@@ -256,6 +256,7 @@ func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 	}
 	claims, ok := s.parseCurrentArchiveDownload(strings.TrimPrefix(r.URL.Path, archiveDownloadPrefix))
 	if !ok {
+		observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
 		s.auditOperatorDenial(w, r, "archives:download", "installation", "")
 		writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is invalid or has expired")
 		return
@@ -263,13 +264,19 @@ func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 	caller, err := s.resolveArchiveDownload(r.Context(), claims)
 	if err != nil {
 		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unavailable")
 			writeOperatorAuthenticationUnavailable(w)
 		} else {
+			observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
 			s.auditArchiveCapabilityDenial(w, r, claims)
 			writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is no longer authorized; request a new link")
 		}
 		return
 	}
+	observer := s.credentialUsageObserver()
+	unique := observer == nil || s.auth.credentialUsageIdentityUnique(caller)
+	observeAcceptedCredentialUsage(observer, caller, "archive-capability", "archives:download", unique)
+	w = observeCredentialUsageResponse(w, observer, caller, "archive-capability", unique)
 	r = r.WithContext(context.WithValue(r.Context(), callerCtxKey{}, caller))
 	handler := s.liveOperatorRequestsWithAccess(s.auditOperatorOutcomes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.streamArchiveDownload(w, r, claims)

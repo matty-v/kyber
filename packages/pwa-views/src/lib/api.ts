@@ -4,6 +4,7 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialUsage,
   OperatorCredentialOptions,
   OperatorCredentialPendingPage,
   OperatorCredentialMutationRequest,
@@ -314,6 +315,9 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
+
+    getOperatorCredentialUsage: (signal?: AbortSignal): Promise<OperatorCredentialUsage> =>
+      request<OperatorCredentialUsage>('GET', '/api/v1/operator-credentials/usage', undefined, signal),
 
     getOperatorCredentialOptions: (signal?: AbortSignal): Promise<OperatorCredentialOptions> =>
       request<OperatorCredentialOptions>('GET', '/api/v1/operator-credentials/options', undefined, signal),

@@ -57,6 +57,9 @@ type Server struct {
 	// Nil fails closed on sensitive operations; ordinary authentication remains available.
 	SecurityAudit securityaudit.Store
 
+	// OperatorCredentialUsage accepts bounded metadata without database work on requests.
+	OperatorCredentialUsage securityaudit.CredentialUsageObserver
+
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
 	// APIReader, when set, reads straight from the API server, bypassing
@@ -645,7 +648,7 @@ func (s *Server) buildTopHandler() http.Handler {
 		s.auth.namespace = s.Namespace
 	}
 	s.registerProtectedRoutes(protectedMux)
-	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)))
+	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)), s.credentialUsageObserver())
 
 	// Webhook routes: bypass API key auth, use their own secret-header validation.
 	webhookMux := http.NewServeMux()
@@ -853,6 +856,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credential-operations", s.handleOperatorCredentialOperation)
 	mux.HandleFunc("/api/v1/operator-credential-operations/reconcile", s.handleReconcileOperatorCredentialOperation)
 	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
+	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
 	mux.HandleFunc("/api/v1/operator-credential-operations/pending", s.handlePendingOperatorCredentialOperations)
 	mux.HandleFunc("/api/v1/security-events", s.handleSecurityEvents)
 
