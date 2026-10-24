@@ -37,7 +37,7 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  intent JSONB NOT NULL, completion JSONB,
  PRIMARY KEY(namespace,operation_id)
  );
- CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,admitted_at) WHERE completion IS NULL;`)
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,operation_id) WHERE completion IS NULL;`)
 	return databaseError(ctx, err)
 }
 
