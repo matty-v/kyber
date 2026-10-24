@@ -187,7 +187,12 @@ func (w *liveOperatorWriter) Write(b []byte) (int, error) {
 	if err := w.ready(); err != nil {
 		return 0, err
 	}
-	w.prepareHeaders()
+	// Keep the MIME guard at the actual write boundary, including when this
+	// writer is used without the sensitive-audit wrapper.
+	if w.ResponseWriter.Header().Get("Content-Type") == "" {
+		w.ResponseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.ResponseWriter.Header().Set("X-Content-Type-Options", "nosniff")
 	return w.ResponseWriter.Write(b)
 }
 func (w *liveOperatorWriter) WriteHeader(status int) {
