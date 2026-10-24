@@ -1024,3 +1024,10 @@ reviewed inventory version through polling. GET operation status/pending scans
 never fence writes; only explicit POST reconciliation can do that. Cookie self
 rotation refreshes the same principal/tenant session; bearer hosts update their
 connection separately. Runtime authority activation remains staged.
+
+Credential audit delivery uses `api.OperatorCredentialDelivery.RunOnce` as a
+staged bounded helper. It confirms the immutable journal/outbox proof, marks a
+reference delivered only after durable success, then rechecks before pruning on
+a later pass. It never reissues/fences keys or changes access, and never retries
+a stale CAS candidate. Its rotating cursor prevents missing journal records from
+starving unrelated work. Runtime scheduling is not enabled by the helper alone.

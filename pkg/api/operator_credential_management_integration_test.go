@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -213,6 +214,30 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 		page, err := audit.Query(ctx, securityaudit.Filter{Namespace: namespace, Action: action, Limit: 10}, nil)
 		if err != nil || len(page.Items) != 2 {
 			t.Fatal("real required admission/completion pair missing")
+		}
+	}
+	// Audit delivery/compaction is a separate, idempotent metadata process.
+	beforeDelivery, err := authority.Load(ctx)
+	if err != nil {
+		t.Fatal("delivery snapshot unavailable")
+	}
+	delivery := NewOperatorCredentialDelivery(server)
+	marked, err := delivery.RunOnce(ctx)
+	if err != nil || marked.Marked != 4 || marked.Pruned != 0 {
+		t.Fatal("real delivery marking failed", marked, err)
+	}
+	pruned, err := delivery.RunOnce(ctx)
+	if err != nil || pruned.Pruned != 4 {
+		t.Fatal("real delivered reference compaction failed", pruned, err)
+	}
+	afterDelivery, err := authority.Load(ctx)
+	if err != nil || !reflect.DeepEqual(beforeDelivery.Document.Clone().Credentials, afterDelivery.Document.Clone().Credentials) || len(afterDelivery.Document.Operations) != 1 || afterDelivery.Document.Operations[0].Action != "adopt" {
+		t.Fatal("real compaction changed credentials or removed unsupported adoption proof")
+	}
+	for _, action := range []string{"credential:create", "credential:update", "credential:rotate", "credential:revoke"} {
+		page, err := audit.Query(ctx, securityaudit.Filter{Namespace: namespace, Action: action, Limit: 10}, nil)
+		if err != nil || len(page.Items) != 2 {
+			t.Fatal("real delivery duplicated required audit events")
 		}
 	}
 	// Simulate a crash after durable admission but before any key write.
