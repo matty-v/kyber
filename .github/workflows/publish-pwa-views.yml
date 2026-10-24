@@ -67,8 +67,8 @@ jobs:
 
   # ---------------------------------------------------------------------------
   # Release-coupled consumer bump: as soon as a new pwa-views version publishes,
-  # open (and auto-merge) a PR on Holocron bumping its @matty-v/kyber-pwa-views
-  # dependency, so Holocron always tracks the latest release with NO manual step.
+  # open a PR on Holocron bumping its @matty-v/kyber-pwa-views dependency.
+  # The maintainer reviews and explicitly approves each downstream merge.
   # (Holocron's Dependabot ignores this package to avoid duplicate PRs.)
   # ---------------------------------------------------------------------------
   bump-holocron:
@@ -108,7 +108,7 @@ jobs:
           registry-url: 'https://npm.pkg.github.com'
           scope: '@matty-v'
 
-      - name: Bump @matty-v/kyber-pwa-views and open an auto-merge PR
+      - name: Bump @matty-v/kyber-pwa-views and open a review PR
         env:
           # GHCR_PAT (read:packages) so `npm install` can resolve the private
           # @matty-v package and update package.json + package-lock.json.
@@ -125,7 +125,7 @@ jobs:
           fi
           # Never open a DOWNGRADE PR: a stale pwa-views/v* tag pushed from an
           # old clone, or an out-of-order publish, must not walk holocron
-          # backwards via an auto-merging PR. Numeric field-wise compare (this
+          # backwards via a dependency-update PR. Numeric field-wise compare (this
           # job checks out holocron, so kyber's pwa-views-should-tag.sh isn't
           # on disk — keep the ordering rule in sync with that script).
           CUR_CORE="${CURRENT#[\^~]}"; CUR_CORE="${CUR_CORE%%-*}"
@@ -156,11 +156,9 @@ jobs:
           npm install --save-exact "@matty-v/kyber-pwa-views@${VERSION}"
           git add package.json package-lock.json
           git commit -m "chore(deps): bump @matty-v/kyber-pwa-views to ${VERSION}" \
-                     -m "Auto-bumped by the kyber pwa-views release (publish-pwa-views.yml) so Holocron always tracks the latest published pwa-views — no manual step (kyber#417 follow-up)."
+                     -m "Auto-bumped by the kyber pwa-views release (publish-pwa-views.yml) for maintainer review before the downstream merge."
           git push origin "${BRANCH}"
           PR_URL="$(gh pr create --repo matty-v/holocron --base main --head "${BRANCH}" \
             --title "chore(deps): bump @matty-v/kyber-pwa-views to ${VERSION}" \
-            --body "Release-coupled auto-bump from the kyber pwa-views publish. Tracks \`@matty-v/kyber-pwa-views@${VERSION}\`. Auto-merges once CI is green.")"
+            --body "Release-coupled auto-bump from the kyber pwa-views publish. Tracks \`@matty-v/kyber-pwa-views@${VERSION}\`. Requires maintainer review and explicit merge approval after CI passes.")"
           echo "opened ${PR_URL}"
-          gh pr merge --auto --squash "${PR_URL}" \
-            || echo "::warning::could not enable auto-merge on ${PR_URL} — merge it manually"

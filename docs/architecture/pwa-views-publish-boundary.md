@@ -37,6 +37,12 @@ the pinned version. Changes to `packages/pwa-views` are invisible to Holocron un
 1. A new version is published to GitHub Packages, AND
 2. Holocron's `package.json` dependency is updated to reference that version.
 
+The publisher opens the release-coupled Holocron dependency PR automatically,
+but does not merge it or enable auto-merge. The maintainer must review and
+explicitly approve the downstream merge after CI passes. Existing open PRs and
+Holocron's own merge workflows require separate reconciliation; changing this
+publisher does not revoke auto-merge requests already queued there.
+
 ---
 
 ## Why the version boundary matters

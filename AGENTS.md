@@ -874,7 +874,10 @@ administrator compatibility reader. See `docs/operator/operator-credentials.md`.
 2. Reaching Holocron requires successful package publication and a host
    dependency bump. Main-branch version changes trigger auto-publish; inspect
    both auto-publish and tag-publish runs before using the recovery dispatch.
-   See `CONTRIBUTING.md` and the publish-boundary architecture document.
+   The publisher opens Holocron dependency PRs for maintainer review; it must
+   not merge them or enable auto-merge. Existing queued requests and Holocron
+   workflows need separate reconciliation. See `CONTRIBUTING.md` and the
+   publish-boundary architecture document.
 3. Verify in a browser (`make pwa-dev` or devenv), not just type-check.
 
 ### F. Add a new runtime type
