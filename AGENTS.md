@@ -981,3 +981,12 @@ authorization, upgrade/credential-store code, authority artifact declarations,
 Go module inputs or publishing/test workflows change. The change detector keeps this
 on the security-sensitive surface and forces Go setup for that path. Ordinary
 local API tests do not substitute for the race check on concurrent guard changes.
+
+Credential mutation recovery uses `pkg/securityaudit.CredentialIntent` for registry
+writes: admission and the original registry UID/opaque CAS version commit in one
+Postgres transaction before effects. This is private metadata, never candidate
+or key storage. Unknown writes stay pending until authority/outbox/fencing proves
+the outcome; completion ID/outcome/timestamp are immutable on replay. Pending
+work survives ordinary event retention. Recovery scans page by operation ID and
+restart periodically; they are not a frozen snapshot. The journal alone does not
+authorize callers, perform credential writes or activate authority.

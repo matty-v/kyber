@@ -30,7 +30,14 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  );
  CREATE INDEX IF NOT EXISTS operator_security_events_namespace_sequence ON operator_security_events(namespace,sequence DESC);
  CREATE INDEX IF NOT EXISTS operator_security_events_retention ON operator_security_events(stored_at,sequence);
- CREATE INDEX IF NOT EXISTS operator_security_events_credential ON operator_security_events(namespace,credential_id,sequence DESC);`)
+ CREATE INDEX IF NOT EXISTS operator_security_events_credential ON operator_security_events(namespace,credential_id,sequence DESC);
+ CREATE TABLE IF NOT EXISTS operator_credential_operations (
+ namespace TEXT NOT NULL, operation_id UUID NOT NULL,
+ admitted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ intent JSONB NOT NULL, completion JSONB,
+ PRIMARY KEY(namespace,operation_id)
+ );
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,admitted_at) WHERE completion IS NULL;`)
 	return databaseError(ctx, err)
 }
 
@@ -54,7 +61,22 @@ func (s *PostgresStore) Append(ctx context.Context, e Event) (Record, error) {
 	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
 		return Record{}, databaseError(ctx, err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operator_security_events(id,operation_id,namespace,observed_at,principal_id,credential_id,action,resource_kind,resource_name,document)
+	got, err := appendEventInTransaction(ctx, tx, e, payload)
+	if err != nil {
+		return Record{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Record{}, databaseError(ctx, err)
+	}
+	got.Event = e
+	got.StoredAt = got.StoredAt.UTC()
+	return got, nil
+}
+
+// The caller holds commitLock until commit, preserving history ordering across
+// ordinary appends and atomic credential admission.
+func appendEventInTransaction(ctx context.Context, tx *sql.Tx, e Event, payload []byte) (Record, error) {
+	_, err := tx.ExecContext(ctx, `INSERT INTO operator_security_events(id,operation_id,namespace,observed_at,principal_id,credential_id,action,resource_kind,resource_name,document)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING`, e.ID, e.OperationID, e.Namespace, e.ObservedAt, e.PrincipalID, e.CredentialID, e.Action, e.ResourceKind, e.ResourceName, payload)
 	if err != nil {
 		return Record{}, databaseError(ctx, err)
@@ -67,9 +89,6 @@ func (s *PostgresStore) Append(ctx context.Context, e Event) (Record, error) {
 	}
 	if !same {
 		return Record{}, ErrConflict
-	}
-	if err = tx.Commit(); err != nil {
-		return Record{}, databaseError(ctx, err)
 	}
 	got.Event = e
 	got.StoredAt = got.StoredAt.UTC()

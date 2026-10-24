@@ -83,7 +83,7 @@ jobs:
           if echo "$CHANGED" | grep -qE '^(packages|apps)/|^package(-lock)?\.json$'; then PWA=true; else PWA=false; fi
           # Concurrent credential checks must remain race-free. Keep the
           # expensive race build on the authentication/stream change surface.
-          AUTH_PATHS='^pkg/api/(live_operator_.*|management_audit.*|archives.*|routes_agents|routes_machines.*|routes_agent_disk|routes_(restart_session|compact_session|repair_runtime|switch_runtime)|archive_download_.*|archives_download_.*|auth.*|browser_session.*|security_audit.*|operator_boundary.*|server|routes_exec|routes_agent_task_events|routes_archives.*|routes_operator_.*|routes_rotate_api_key|task_event_cursor).*\.go$|^pkg/(operatorcredentials|selfupgrade|updates)/|^cmd/(control-plane|kyber-upgrade)/|^deploy/helm/kyber/(Chart\.yaml|templates/control-plane/deployment\.yaml)$|^go\.(mod|sum)$|^\.github/workflows/(test|build|release)\.yml$'
+          AUTH_PATHS='^pkg/api/(live_operator_.*|management_audit.*|archives.*|routes_agents|routes_machines.*|routes_agent_disk|routes_(restart_session|compact_session|repair_runtime|switch_runtime)|archive_download_.*|archives_download_.*|auth.*|browser_session.*|security_audit.*|operator_boundary.*|server|routes_exec|routes_agent_task_events|routes_archives.*|routes_operator_.*|routes_rotate_api_key|task_event_cursor).*\.go$|^pkg/(operatorcredentials|securityaudit|selfupgrade|updates)/|^cmd/(control-plane|kyber-upgrade)/|^deploy/helm/kyber/(Chart\.yaml|templates/control-plane/deployment\.yaml)$|^go\.(mod|sum)$|^\.github/workflows/(test|build|release)\.yml$'
           if echo "$CHANGED" | grep -qE "$AUTH_PATHS"; then AUTH=true; GO=true; else AUTH=false; fi
           echo "operator_access=$AUTH" >> "$GITHUB_OUTPUT"
           echo "go=$GO"  >> "$GITHUB_OUTPUT"
@@ -174,7 +174,7 @@ jobs:
           CGO_ENABLED: '1'
           GOMAXPROCS: '3'
         run: |
-          go test -race -p 1 ./pkg/operatorcredentials ./pkg/selfupgrade ./cmd/kyber-upgrade -count=1
+          go test -race -p 1 ./pkg/operatorcredentials ./pkg/securityaudit ./pkg/selfupgrade ./cmd/kyber-upgrade -count=1
           go test -race -p 1 ./pkg/api -run '^Test(Live(Access|Sensitive|Task|Exec)|CurrentArchiveDownload|ArchiveDownload|ManagementAudit)' -count=1
 
   pwa-build:

@@ -42,3 +42,24 @@ only their own random schemas; their database role needs that capability.
 The CI integration workflow runs these tests against its disposable database.
 Do not run the general `test/integration` suite on a live installation: other
 suites deliberately truncate shared application tables.
+
+Registry key changes have a separate recovery journal. `AdmitCredentialOperation`
+atomically stores the authorization event and the original registry UID/opaque
+resource version. A retry must supply the identical intent; it cannot silently
+refresh the expected version. The journal never stores keys or candidates.
+
+`PendingCredentialOperations` returns a bounded, namespace-scoped live scan.
+Continue with the last operation ID, then restart periodically to discover new
+work inserted earlier in UUID order. Required history admission, current admin
+authorization, registry UID checks, mutation/outbox writes and write-fence recovery
+must be integrated by the API executor before activation; this seam alone does
+none of those external effects.
+
+Only a definitive reconciled success/failure can be finalized. Unknown effects
+remain pending. The completion event and final marker commit together with a
+stable ID. A lost acknowledgement can be replayed without changing its timestamp
+or outcome. Ordinary history retention does not delete recovery/replay metadata
+or cause retries to recreate old events. Recovery rows currently remain durable;
+there is no automatic age-based expiry or claim of a complete public operation UI.
+This initial journal handles already-adopted registry writes; adoption admission
+and maintenance recovery still require their own runtime integration.
