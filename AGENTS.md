@@ -957,6 +957,11 @@ Read `docs/design/2026-10-24-required-management-audit.md` before changing these
 boundaries. Handler deadline changes pass through the live writer's serialized
 setters; never let a later timeout undo an access-cancellation deadline.
 
+Self-upgrade dry-run rendering must use captured output, never a streamed Helm
+render. Hide Secret objects and discard all render stdout and diagnostics:
+ConfigMaps, environment values and chart notes may also contain credentials.
+Keep safe cancellation causes without echoing Helm's rendered/error text.
+
 The required `test` job also runs the focused live-operator access tests with
 Go's race detector when authentication, stream authorization, credential-store
 code, Go module inputs or the workflow change. The change detector keeps this
