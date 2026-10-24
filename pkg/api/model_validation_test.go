@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,7 +66,7 @@ func TestValidateModelValue(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			s := &Server{RuntimeDetectCache: tt.cache}
+			s := &Server{SecurityAudit: testutil.NewSecurityAudit(), RuntimeDetectCache: tt.cache}
 			msg := s.validateModelValue(context.Background(), tt.runtime, tt.model, "")
 			if (msg != "") != tt.wantReject {
 				t.Fatalf("validateModelValue(%s, %q) = %q, wantReject=%v", tt.runtime, tt.model, msg, tt.wantReject)
@@ -82,7 +83,7 @@ func TestValidateModelValue_AgentCatalogExtendsAcceptance(t *testing.T) {
 		"wedge", "claude-code", []runtimedetect.Model{{ID: "claude-secret-preview"}}); err != nil {
 		t.Fatalf("PutAgentModels: %v", err)
 	}
-	s := &Server{RuntimeDetectCache: cache}
+	s := &Server{SecurityAudit: testutil.NewSecurityAudit(), RuntimeDetectCache: cache}
 	if msg := s.validateModelValue(context.Background(), "claude-code", "claude-secret-preview", "wedge"); msg != "" {
 		t.Fatalf("agent-catalog model rejected: %s", msg)
 	}
@@ -92,7 +93,7 @@ func TestValidateModelValue_AgentCatalogExtendsAcceptance(t *testing.T) {
 }
 
 func TestFleetDefaultsPut_RejectsUnknownModel(t *testing.T) {
-	s := &Server{
+	s := &Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:                  newFDClient(t),
 		Namespace:                  fdNS,
 		FleetDefaultsConfigMapName: fdCM,
@@ -111,7 +112,7 @@ func TestFleetDefaultsPut_RejectsUnknownModel(t *testing.T) {
 }
 
 func TestFleetDefaultsPut_ForceWritesUnknownModel(t *testing.T) {
-	s := &Server{
+	s := &Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:                  newFDClient(t),
 		Namespace:                  fdNS,
 		FleetDefaultsConfigMapName: fdCM,
@@ -127,7 +128,7 @@ func TestFleetDefaultsPut_ForceWritesUnknownModel(t *testing.T) {
 }
 
 func TestFleetDefaultsPut_AcceptsKnownModel(t *testing.T) {
-	s := &Server{
+	s := &Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:                  newFDClient(t),
 		Namespace:                  fdNS,
 		FleetDefaultsConfigMapName: fdCM,
@@ -160,7 +161,7 @@ func newSetModelServer(t *testing.T, cache runtimedetect.Cache) *Server {
 		WithStatusSubresource(agent).
 		WithObjects(agent).
 		Build()
-	return &Server{K8sClient: fakeClient, Namespace: fdNS, RuntimeDetectCache: cache}
+	return &Server{SecurityAudit: testutil.NewSecurityAudit(), APIKey: "model-validation-fixture", K8sClient: fakeClient, Namespace: fdNS, RuntimeDetectCache: cache}
 }
 
 func TestSetModel_RejectsUnknownModel(t *testing.T) {
@@ -168,7 +169,8 @@ func TestSetModel_RejectsUnknownModel(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
 		bytes.NewBufferString(`{"model":"claude-opus-4-canary-marker"}`))
 	rr := httptest.NewRecorder()
-	s.setAgentModel(rr, req, "wedge")
+	req.Header.Set("Authorization", "Bearer model-validation-fixture")
+	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400; body=%s", rr.Code, rr.Body.String())
 	}
@@ -179,7 +181,8 @@ func TestSetModel_ForceBypassesValidation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
 		bytes.NewBufferString(`{"model":"claude-brand-new-model","force":true}`))
 	rr := httptest.NewRecorder()
-	s.setAgentModel(rr, req, "wedge")
+	req.Header.Set("Authorization", "Bearer model-validation-fixture")
+	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 with force; body=%s", rr.Code, rr.Body.String())
 	}
@@ -190,7 +193,8 @@ func TestSetModel_AcceptsKnownModel(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
 		bytes.NewBufferString(`{"model":"claude-sonnet-5"}`))
 	rr := httptest.NewRecorder()
-	s.setAgentModel(rr, req, "wedge")
+	req.Header.Set("Authorization", "Bearer model-validation-fixture")
+	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -218,7 +222,8 @@ func TestSetModel_OpenRouterRouteUsesEndpointModelRules(t *testing.T) {
 		body := fmt.Sprintf(`{"model":%q}`, tc.model)
 		req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model", bytes.NewBufferString(body))
 		rr := httptest.NewRecorder()
-		s.setAgentModel(rr, req, "wedge")
+		req.Header.Set("Authorization", "Bearer model-validation-fixture")
+		s.BuildHandler().ServeHTTP(rr, req)
 		if rr.Code != tc.want {
 			t.Errorf("model %q: status = %d, want %d; body=%s", tc.model, rr.Code, tc.want, rr.Body.String())
 		}
@@ -242,7 +247,7 @@ func TestFleetDefaultsPut_UnchangedBadModelDoesNotBlockOtherEdits(t *testing.T) 
 			fleetdefaults.KeyDefaultRuntimeVersion: "latest",
 		},
 	}
-	s := &Server{
+	s := &Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:                  newFDClient(t, cm),
 		Namespace:                  fdNS,
 		FleetDefaultsConfigMapName: fdCM,
@@ -273,14 +278,16 @@ func TestSetModel_UnchangedModelSkipsValidation(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
 		bytes.NewBufferString(`{"model":"claude-brand-new-model","force":true}`))
 	rr := httptest.NewRecorder()
-	s.setAgentModel(rr, req, "wedge")
+	req.Header.Set("Authorization", "Bearer model-validation-fixture")
+	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("force write: status = %d; body=%s", rr.Code, rr.Body.String())
 	}
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/agents/wedge/set-model",
 		bytes.NewBufferString(`{"model":"claude-brand-new-model"}`))
 	rr = httptest.NewRecorder()
-	s.setAgentModel(rr, req, "wedge")
+	req.Header.Set("Authorization", "Bearer model-validation-fixture")
+	s.BuildHandler().ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("unchanged re-post: status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}

@@ -171,7 +171,7 @@ func (s *Server) handleSecurityEvents(w http.ResponseWriter, r *http.Request) {
 		items = append(items, securityHistoryView(record))
 	}
 	response := securityEventsResponse{ObservedAt: time.Now().UTC(), Items: items, Snapshot: strconv.FormatInt(page.Snapshot, 10), Coverage: "partial-sensitive-access", Warnings: []string{
-		"History currently covers selected sensitive access and restricted-route denials; it is not a complete authentication or credential lifecycle history.",
+		"History includes selected sensitive access, lifecycle/archive requests and restricted-route denials. Authentication and credential management coverage is still incomplete.",
 		"Retention and collection gaps can omit earlier events. No recorded use does not mean never used.",
 		"Shared administrator credentials identify the credential, not the person or application using it. Configuration-reported generations are not a complete key rotation ledger.",
 	}}

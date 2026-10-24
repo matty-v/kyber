@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -30,7 +31,7 @@ func newCompactSessionServer(t *testing.T, cmds map[string][]string, objs ...run
 	scheme := mustNewScheme(t)
 	all := append([]runtime.Object{defaultMachine()}, objs...)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
-	return &api.Server{
+	return &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:              fakeClient,
 		APIKey:                 testAPIKey,
 		Namespace:              "kyber-system",
@@ -326,7 +327,7 @@ func TestCompactSession_CooldownIndependentOfRestart(t *testing.T) {
 	scheme := mustNewScheme(t)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).
 		WithRuntimeObjects(defaultMachine(), agent).Build()
-	srv := &api.Server{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:              fakeClient,
 		APIKey:                 testAPIKey,
 		Namespace:              "kyber-system",

@@ -29,9 +29,10 @@ Separate names do not create separate access for identical key values.
 Duplicate caller names cannot start browser sessions; existing sessions with
 ambiguous identities are rejected. Give integrations unique names and keys.
 
-Creation times and usage history are not collected by this first inventory
-release. The UI reports them as unknown/unavailable rather than implying a
-credential was never used. The remaining creation/rotation/revocation and usage
+Creation times and general per-key usage summaries are not collected by this
+inventory. Recent recorded access appears below it in Settings, with explicit
+coverage limits. Unknown/unavailable usage does not imply a credential was never
+used. The remaining creation/rotation/revocation and usage
 work is tracked in MAT-134; the authorization/registry model is MAT-96.
 
 The supported system identity is `installation-admin`, displayed as
@@ -124,7 +125,11 @@ The operator terminal, `/agents/{name}/secrets` and Agent/Machine log or
 transcript endpoints, including fleet log viewer/export aliases, require a durable authorization record before any backend
 lookup, content read or terminal upgrade. The control plane uses its existing
 PostgreSQL connection. Without that store, or when a required write fails,
-these operations return `503 security_audit_unavailable` and do not start.
+these operations return `503 security_audit_unavailable` and do not start. The
+same admission rule covers Agent/Machine lifecycle and deletion requests, model/
+runtime/resource/disk changes, session maintenance, disk export/import/upload/
+delete/cancel operations, download-link issuance and public archive downloads.
+Installation-key rotation also requires a record before changing the Secret.
 Sign-in, version information and the administrator credential inventory remain
 available; an invalid permission still returns 403 without reading the backend.
 
@@ -134,7 +139,9 @@ credential values, user-secret names/values, request bodies, terminal arguments,
 log text or transcripts. Denied unclassified routes record an installation-level
 decision without copying unknown paths. Older configured callers without stable
 IDs can have unknown attribution on denial; Kyber does not invent a person or
-credential identity for them.
+credential identity for them. Keys missing identification needed for an allowed
+management action receive `403 credential_identity_required`; the operation does
+not start and an administrator must update their configuration.
 
 An allowed authorization and a completed operation are different records.
 Failed lookups/validation are failed operations, not successful sensitive reads.
@@ -144,13 +151,19 @@ attempt to write completion history. A completion write can fail after content
 or an external effect has already been delivered; its earlier admission remains
 without a confirmed outcome. Treat that as incomplete history, not a rollback
 or a reason to replay a mutation automatically. Failed/interrupted requests
-can have partial effects or data delivery. A confirmed user-secret mutation
+can have partial effects or data delivery. A confirmed mutation
 remains successful even when its response is lost; an unconfirmed delivery is
 unknown rather than falsely reported as completed or rolled back.
 
-This collection covers the sensitive operations above and restricted-route
-denials. Durable lifecycle/archive/credential mutation records, authentication
-usage summaries and administrator history/query UI remain
+This collection covers the operations above and restricted-route denials.
+A successful asynchronous request records accepted intent, not completion of the
+background Agent/controller/archive job. A verified but revoked download link
+can identify its issuing credential for a denial; that reference never grants
+access. Invalid/unverifiable links remain unattributed, and an unavailable
+authority is not recorded as a permission denial.
+
+The administrator can query recent history in Settings. Canonical credential
+CRUD/adoption reconciliation and general authentication/usage summaries remain
 MAT-97/MAT-134 work. The read-only inventory still does not claim general last
 use or complete usage coverage. Bounded credential revocation is separate from
 this audit collection and is not provided by an authorization record alone.

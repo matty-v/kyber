@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -24,7 +25,7 @@ func newTestPublicServer(t *testing.T, apiKey string) *api.Server {
 		t.Fatalf("AddToScheme corev1: %v", err)
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).Build()
-	return &api.Server{
+	return &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fakeClient,
 		APIKey:    apiKey,
 		Namespace: "kyber-system",

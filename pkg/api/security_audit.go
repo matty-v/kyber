@@ -64,7 +64,12 @@ func (w *sensitiveAuditWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 // has been committed. The wrapper persists a separate outcome; it never treats
 // a WebSocket handshake as proof that a command completed successfully.
 func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
-	return s.liveOperatorRequests(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return s.liveOperatorRequests(s.auditOperatorOutcomes(next))
+}
+
+// Public capability routes use this collector inside their narrow live guard.
+func (s *Server) auditOperatorOutcomes(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state := &sensitiveAuditState{}
 		r = r.WithContext(context.WithValue(r.Context(), sensitiveAuditContextKey{}, state))
 		observed := &sensitiveAuditWriter{responseWriter: newResponseWriter(w)}
@@ -108,7 +113,7 @@ func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
 		}()
 		next.ServeHTTP(observed, r)
 		completed = true
-	}))
+	})
 }
 
 func markSensitiveOutcome(r *http.Request, outcome string) {
@@ -126,7 +131,22 @@ func (s *Server) auditSensitiveDecision(w http.ResponseWriter, r *http.Request, 
 }
 
 func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.Request, name string, scope Scope, kind string, allowed bool) bool {
-	action := string(scope)
+	check := func(current *Caller) bool {
+		if kind == "installation" {
+			return current.Scopes.full
+		}
+		resources := current.AgentResources
+		if kind == "machine" {
+			resources = current.MachineResources
+		}
+		return current.Scopes.full || scope != "" && current.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name)
+	}
+	return s.auditRequiredOperatorDecision(w, r, string(scope), kind, name, allowed, check)
+}
+
+// Management actions and capabilities supply their actual permission predicate,
+// rather than treating every installation target as administrator-only.
+func (s *Server) auditRequiredOperatorDecision(w http.ResponseWriter, r *http.Request, action, kind, name string, allowed bool, check func(*Caller) bool) bool {
 	if action == "" {
 		action = "operator:unclassified"
 	}
@@ -164,16 +184,7 @@ func (s *Server) auditSensitiveResourceDecision(w http.ResponseWriter, r *http.R
 	}
 	if allowed {
 		state.admission = &event
-		registerLiveOperatorAccess(r, func(current *Caller) bool {
-			if kind == "installation" {
-				return current.Scopes.full
-			}
-			resources := current.AgentResources
-			if kind == "machine" {
-				resources = current.MachineResources
-			}
-			return current.Scopes.full || scope != "" && current.Scopes.Has(scope) && resources.Has(s.Namespace+"/"+name)
-		}, &event)
+		registerLiveOperatorAccess(r, check, &event)
 	}
 	return true
 }
@@ -258,7 +269,7 @@ func (s *Server) auditPlatformLogTarget(w http.ResponseWriter, r *http.Request, 
 // remotely. Closing access cannot be described as rolling that effect back.
 func securityActionMayMutate(action string) bool {
 	switch action {
-	case "secrets:write", "credential:create", "credential:update", "credential:rotate", "credential:revoke", "lifecycle:write", "lifecycle:delete", "archives:export", "archives:import":
+	case "secrets:write", "credential:create", "credential:update", "credential:rotate", "credential:revoke", "lifecycle:write", "lifecycle:delete", "archives:export", "archives:import", "archives:upload", "archives:cancel", "archives:delete":
 		return true
 	default:
 		return false

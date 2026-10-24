@@ -1,5 +1,21 @@
 # @matty-v/kyber-pwa-views
 
+## 0.74.0
+
+- Name lifecycle and archive audit actions plainly and distinguish completed requests from their background operations.
+
+## 0.73.0
+
+- Show current registry credential states and hide inactive credentials' former permissions.
+
+## 0.72.0
+
+- Show administrator access history in Settings with private connection-bound state and pagination.
+
+## 0.71.0
+
+- Add typed administrator security history API access and preserve large sequence/generation values as strings.
+
 ## 0.70.0
 
 - Show sensitive-data permissions and Machine log targets without implying Agent access.

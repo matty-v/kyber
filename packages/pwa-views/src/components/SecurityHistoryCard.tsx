@@ -13,12 +13,14 @@ const actions: Record<string, string> = {
   'audit:read': 'View access history', 'operator:unclassified': 'Other protected action',
   'authenticate': 'Authenticate', 'credential:create': 'Create operator key',
   'credential:update': 'Change operator key access', 'credential:rotate': 'Rotate operator key',
-  'credential:revoke': 'Revoke operator key', 'lifecycle:write': 'Change Agent lifecycle',
-  'lifecycle:delete': 'Delete Agent', 'archives:export': 'Export Agent disk', 'archives:import': 'Import Agent disk',
+  'credential:revoke': 'Revoke operator key', 'lifecycle:write': 'Change lifecycle',
+  'lifecycle:delete': 'Delete resource', 'archives:export': 'Request disk export', 'archives:import': 'Request disk import',
+  'archives:read': 'Read archive details', 'archives:download': 'Download disk archive', 'archives:link': 'Create archive download link',
+  'archives:upload': 'Upload disk archive', 'archives:cancel': 'Cancel archive operation', 'archives:delete': 'Delete disk archive',
 }
 
 function resultLabel(event: SecurityEvent): string {
-  if (event.phase === 'completion') return event.outcome === 'success' ? 'Completed' : event.outcome === 'failure' ? 'Failed' : 'Completion unknown'
+  if (event.phase === 'completion') return event.outcome === 'success' ? 'Request completed' : event.outcome === 'failure' ? 'Failed' : 'Completion unknown'
   return event.outcome === 'allow' ? 'Access allowed' : 'Access denied'
 }
 
@@ -76,7 +78,7 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
       <h2 className="text-sm font-medium text-text-muted">Recent access</h2>
       <Button size="sm" disabled={loading} onClick={() => { setCursor(undefined); setRefresh((n) => n + 1) }}>Refresh activity</Button>
     </div>
-    <p className="mt-3 text-sm text-text-muted">Selected sensitive activity. Access allowed and work completed are separate records.</p>
+    <p className="mt-3 text-sm text-text-muted">Access decisions and request results appear separately.</p>
     <label className="mt-4 block text-sm text-text-muted">
       Operator key
       <select value={credential} onChange={(e) => { setCredential(e.target.value); setCursor(undefined) }} className="mt-1 block w-full min-w-0 rounded border border-border-subtle bg-surface-subtle p-2 text-text-primary">

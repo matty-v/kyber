@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -62,7 +63,7 @@ func registerExtensionRuntime() {
 func TestNewRuntimeDiscoveryAndCredentialCreation(t *testing.T) {
 	registerExtensionRuntime()
 	client := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(defaultMachine()).Build()
-	server := &api.Server{K8sClient: client, APIKey: testAPIKey, Namespace: "kyber-system", ValidRuntimes: map[string]bool{"extension-fixture": true}, RuntimeImages: map[string]string{"extension-fixture": "test.invalid/fixture:pinned"}}
+	server := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: client, APIKey: testAPIKey, Namespace: "kyber-system", ValidRuntimes: map[string]bool{"extension-fixture": true}, RuntimeImages: map[string]string{"extension-fixture": "test.invalid/fixture:pinned"}}
 	handler := server.BuildHandler()
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, authedRequest(t, "GET", "/api/v1/config", nil))

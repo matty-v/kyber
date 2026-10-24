@@ -33,7 +33,7 @@ describe('security history', () => {
     state.api.getSecurityEvents.mockResolvedValue(page([event, { ...event, id: 'record-two', sequence: '9007199254740994', phase: 'completion', outcome: 'success' }]))
     render(<SecurityHistoryCard credentials={credentials} />)
     expect(await screen.findByText('Access allowed')).toBeInTheDocument()
-    expect(screen.getByText('Completed')).toBeInTheDocument()
+    expect(screen.getByText('Request completed')).toBeInTheDocument()
     expect(screen.getAllByText('Read Agent credential values')).toHaveLength(2)
     expect(screen.getByText(/No recorded activity does not mean/)).toBeInTheDocument()
     expect(screen.getByText('Selected sensitive access only.')).toBeInTheDocument()

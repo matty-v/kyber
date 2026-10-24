@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -24,7 +25,7 @@ func buildRestartAgentsHandler(t *testing.T, scheme *runtime.Scheme, objs ...run
 	t.Helper()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
 	rec := record.NewFakeRecorder(16)
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fakeClient,
 		APIKey:    testAPIKey,
 		Namespace: "kyber-system",
