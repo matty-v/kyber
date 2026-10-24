@@ -224,6 +224,8 @@ paths:
                 additionalProperties: false
                 required: [observedAt, inventoryScope, configurationAvailable, usageAvailable, credentials, warnings]
                 properties:
+                  version: {type: string, description: Opaque reviewed registry version for If-Match; not key material.}
+                  managementAvailable: {type: boolean, description: "Whether the selected authority and required journal support management. This is capability metadata, not a database health guarantee."}
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
                   configurationAvailable: {type: boolean}
@@ -236,6 +238,8 @@ paths:
                       additionalProperties: false
                       required: [id, name, displayName, accessLevel, state, source, scopes, agentResources, permissions, configured]
                       properties:
+                        createdAt: {type: string, format: date-time, description: Present only when actual issuance time is known.}
+                        expiresAt: {type: string, format: date-time}
                         id: {type: string}
                         name: {type: string}
                         displayName: {type: string}
@@ -259,6 +263,130 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
+  /api/v1/operator-credentials/mutations:
+    post:
+      operationId: mutateOperatorCredential
+      summary: Create, edit, rotate or revoke a Kyber-managed key
+      description: Current administrator only. Requires selected registry authority, required durable admission and the exact version from the reviewed inventory. New material is client-prepared and saved before activation; no existing key is returned. Never automatically retry a POST after a lost response; inspect its operation ID. Pending is not a successful or failed key change. Runtime activation remains separately gated.
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: {type: string}
+          description: Exact opaque version returned by the key inventory, including quotes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialMutation'}
+      responses:
+        '200':
+          description: Definitive original operation outcome, with no credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '202':
+          description: Admitted change requires reconciliation; outcome is not confirmed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid, ambiguous or unsupported key change
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '409':
+          description: Reviewed version changed, or operation already recorded; inspect its original outcome
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/ErrorResponse'}
+                  - {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '428':
+          description: Reviewed inventory version required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: Authority or required admission unavailable; an unconfirmed admission must be checked before retrying
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+  /api/v1/operator-credential-operations/reconcile:
+    post:
+      operationId: reconcileOperatorCredentialOperation
+      summary: Resolve an interrupted key change
+      description: Current administrator only, with required audit admission. Reads the original intent and current selected authority. It can fence the original compare-and-swap so a late write cannot follow a final failure. It never issues or returns key material. Unknown authority or completion stays pending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Definitive original operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '202':
+          description: Original outcome still unconfirmed; no new key issued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid operation identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credential-operations:
+    get:
+      operationId: getOperatorCredentialOperation
+      summary: Inspect the recorded outcome of a key change
+      description: Current administrator only, no-store. Returns safe outcome metadata and never performs a new key write. Not found means unobserved, not proof of failure. Unknown writes stay pending until separately reconciled.
+      parameters:
+        - in: query
+          name: operationId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Original recorded operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid operation identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/security-events:
     get:
       operationId: listSecurityEvents
@@ -2381,6 +2509,37 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialPolicy:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 256}
+        role: {type: string, enum: [administrator, restricted]}
+        scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string}}
+        agentResources: {type: array, maxItems: 256, uniqueItems: true, items: {type: string}}
+        machineResources: {type: array, maxItems: 256, uniqueItems: true, items: {type: string}}
+        expiresAt: {type: string, format: date-time, nullable: true}
+    OperatorCredentialMutation:
+      type: object
+      additionalProperties: false
+      required: [operationId, action]
+      properties:
+        operationId: {type: string, format: uuid}
+        action: {type: string, enum: [create, update, rotate, revoke]}
+        credentialId: {type: string}
+        policy: {$ref: '#/components/schemas/OperatorCredentialPolicy'}
+        key: {type: string, writeOnly: true, description: "Client-prepared 32-byte base64url value, saved before activation. Required for create/rotate and forbidden for update/revoke."}
+    OperatorCredentialOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, action, credentialId, status, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        action: {type: string, enum: ['credential:create', 'credential:update', 'credential:rotate', 'credential:revoke']}
+        credentialId: {type: string}
+        status: {type: string, enum: [pending, success, failure]}
+        observedAt: {type: string, format: date-time}
     AgentResourceOptions:
       type: object
       required: [machine, provider, currentCPU, currentMemory, availableCPU, availableMemory, minimumCPU, minimumMemory, cpuStep, memoryStep, cpu, memory]

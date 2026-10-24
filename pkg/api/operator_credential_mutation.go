@@ -14,6 +14,7 @@ import (
 )
 
 var errCredentialMutationInvalid = errors.New("credential change is invalid")
+var errCredentialLastAdministrator = errors.New("a durable administrator must remain")
 var errCredentialMutationForbidden = errors.New("current administrator access is required")
 
 // Explicit input only: identities, provenance, source ownership, generations
@@ -28,6 +29,7 @@ type credentialMutationPolicy struct {
 }
 
 type credentialMutationRequest struct {
+	requestID    string
 	OperationID  string                    `json:"operationId"`
 	Action       string                    `json:"action"`
 	CredentialID string                    `json:"credentialId"`
@@ -117,6 +119,16 @@ func prepareManagedCredentialMutation(snapshot operatorcredentials.Snapshot, act
 				if !validScope(Scope(scope)) || Scope(scope) == ScopeTasksAdmin || Scope(scope) == ScopeTasksPlatformAdmin {
 					return invalid()
 				}
+				switch Scope(scope) {
+				case ScopeLifecycleWrite, ScopeLifecycleAdmin, ScopeAgentExec, ScopeSecretsList, ScopeSecretsRead, ScopeSecretsWrite, ScopeLogsRead, ScopeTranscriptsRead, ScopeArchivesAdmin, ScopeRequestsWrite, ScopeTasksCreate, ScopeCapabilitiesWrite:
+					if len(policy.AgentResources) == 0 {
+						return invalid()
+					}
+				case ScopeMachineExec, ScopeMachineLogsRead:
+					if len(policy.MachineResources) == 0 {
+						return invalid()
+					}
+				}
 			}
 		} else {
 			return invalid()
@@ -169,12 +181,25 @@ func prepareManagedCredentialMutation(snapshot operatorcredentials.Snapshot, act
 		credential.PermissionRevision = 1
 	}
 	next.Credentials[index] = credential
+	requestID := request.requestID
+	if requestID == "" {
+		requestID = request.OperationID
+	}
 	operation := operatorcredentials.Operation{
-		ID: request.OperationID, AdmissionEventID: uuid.NewSHA1(operationID, []byte("admission")).String(), CompletionEventID: uuid.NewSHA1(operationID, []byte("completion")).String(), RequestID: request.OperationID,
+		ID: request.OperationID, AdmissionEventID: uuid.NewSHA1(operationID, []byte("admission")).String(), CompletionEventID: uuid.NewSHA1(operationID, []byte("completion")).String(), RequestID: requestID,
 		Action: request.Action, ActorPrincipalID: actor.PrincipalID, ActorCredentialID: actor.CredentialID, ActorGeneration: actor.CredentialGeneration, Authority: "registry", TargetCredentialID: target, At: now.UTC().Truncate(time.Microsecond), Status: "pending",
 	}
 	next.Operations = append(next.Operations, operation)
 	next = next.Clone()
+	durableAdministrators := 0
+	for _, record := range next.Credentials {
+		if record.Role == operatorcredentials.RoleAdministrator && record.State == operatorcredentials.StateActive && record.ExpiresAt == nil && (record.Source.Kind == "managed" || record.Source.Kind == "installation") {
+			durableAdministrators++
+		}
+	}
+	if durableAdministrators == 0 {
+		return operatorcredentials.Document{}, operatorcredentials.Operation{}, errors.Join(errCredentialMutationInvalid, errCredentialLastAdministrator)
+	}
 	if _, err := compileRegistryCredentials(next, now); err != nil {
 		return invalid()
 	}

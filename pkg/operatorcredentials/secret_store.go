@@ -69,7 +69,7 @@ func (s *SecretStore) Fence(ctx context.Context, version string) (Snapshot, erro
 	if secret.ResourceVersion == "" || secret.ResourceVersion == version {
 		return Snapshot{}, ErrUnavailable
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: previous.Document.Clone()}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: previous.Document.Clone()}, nil
 }
 
 func (Snapshot) String() string                   { return "operator credential snapshot [redacted]" }

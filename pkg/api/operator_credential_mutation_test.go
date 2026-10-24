@@ -164,6 +164,11 @@ func TestManagedCredentialChangesRequireCurrentAdminAndProtectLastAdmin(t *testi
 
 func TestManagedCredentialPolicyRejectsUnsupportedOrMisleadingInput(t *testing.T) {
 	for label, mutate := range map[string]func(*credentialMutationRequest){
+		"missing Agent targets": func(r *credentialMutationRequest) {
+			r.Policy.Scopes = []string{string(ScopeLogsRead)}
+			r.Policy.AgentResources = nil
+		},
+		"missing Machine targets":         func(r *credentialMutationRequest) { r.Policy.Scopes = []string{string(ScopeMachineExec)} },
 		"weak key":                        func(r *credentialMutationRequest) { r.Key = "short" },
 		"reserved permission":             func(r *credentialMutationRequest) { r.Policy.Scopes = []string{string(ScopeTasksPlatformAdmin)} },
 		"unknown permission":              func(r *credentialMutationRequest) { r.Policy.Scopes = []string{"invented:access"} },

@@ -4,6 +4,8 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialMutationRequest,
+  OperatorCredentialOperation,
   SecurityEventFilters,
   SecurityEventPage,
   AgentAuthType,
@@ -183,6 +185,7 @@ export function createApiClient(cluster: Cluster) {
     path: string,
     body?: unknown,
     signal?: AbortSignal,
+    ifMatch?: string,
   ): Promise<T> {
     const url = `${baseURL}${path}`
     const headers: Record<string, string> = {
@@ -191,6 +194,7 @@ export function createApiClient(cluster: Cluster) {
     if (cluster.apiKey) {
       headers['Authorization'] = `Bearer ${cluster.apiKey}`
     }
+    if (ifMatch !== undefined) headers['If-Match'] = ifMatch
     const res = await fetch(url, {
       method,
       headers,
@@ -308,6 +312,15 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
+
+    mutateOperatorCredential: (body: OperatorCredentialMutationRequest, version: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('POST', '/api/v1/operator-credentials/mutations', body, signal, version),
+
+    getOperatorCredentialOperation: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('GET', `/api/v1/operator-credential-operations?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    reconcileOperatorCredentialOperation: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('POST', '/api/v1/operator-credential-operations/reconcile', { operationId }, signal),
 
     getSecurityEvents: (filters: SecurityEventFilters = {}, signal?: AbortSignal): Promise<SecurityEventPage> => {
       const query = new URLSearchParams()

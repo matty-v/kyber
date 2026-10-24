@@ -23,6 +23,8 @@ type OperatorCredentialAuthority interface {
 var errOperatorAuthorityUnavailable = errors.New("operator authentication unavailable")
 
 type registryCredentials struct {
+	version                    string
+	uid                        string
 	entries                    []scopedKey
 	byID                       map[string]scopedKey
 	compatibilityKey           []byte
@@ -62,6 +64,7 @@ func (a *APIKeyAuthenticator) resolve(ctx context.Context) (*APIKeyAuthenticator
 	if err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
+	registry.version, registry.uid = snapshot.Version, snapshot.UID
 	return &APIKeyAuthenticator{registry: registry}, nil
 }
 
@@ -87,6 +90,12 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 			state = "expired"
 		}
 		view := operatorCredentialView{ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
+		if credential.CreatedAt != nil {
+			view.CreatedAt = credential.CreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if credential.ExpiresAt != nil {
+			view.ExpiresAt = credential.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
 		if credential.Role == operatorcredentials.RoleAdministrator {
 			view.AgentResources, view.MachineResources = []string{"*"}, []string{"*"}
 			view.Permissions = []string{"Full access to this Kyber installation"}

@@ -157,3 +157,18 @@ func (s *AuthorityStore) Replace(ctx context.Context, expectedUID, expectedVersi
 	}
 	return s.registry.Replace(ctx, expectedVersion, next)
 }
+
+// Fence prevents an old CAS from committing only in the selected incarnation.
+// A missing/replaced authority cannot be interpreted as a failed key change.
+func (s *AuthorityStore) Fence(ctx context.Context, expectedUID, expectedVersion string) (Snapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	current, err := s.Load(ctx)
+	if err != nil {
+		return Snapshot{}, authorityUnavailable(ctx, err)
+	}
+	if expectedUID == "" || expectedVersion == "" || current.UID != expectedUID || current.Version != expectedVersion {
+		return Snapshot{}, ErrConflict
+	}
+	return s.registry.Fence(ctx, expectedVersion)
+}

@@ -60,7 +60,7 @@ var actions = map[string]bool{
 	"secrets:list": true, "secrets:read": true, "secrets:write": true,
 	"logs:read": true, "transcripts:read": true, "machines:logs:read": true,
 	"credential:create": true, "credential:update": true, "credential:rotate": true,
-	"credential:revoke": true, "lifecycle:write": true, "lifecycle:delete": true,
+	"credential:revoke": true, "credential:recover": true, "lifecycle:write": true, "lifecycle:delete": true,
 	"archives:read": true, "archives:export": true, "archives:import": true, "archives:download": true, "archives:link": true, "archives:upload": true, "archives:cancel": true, "archives:delete": true, "audit:read": true,
 	"operator:unclassified": true,
 }

@@ -1006,4 +1006,12 @@ Staged managed-key mutation candidates preserve principal/tenant/provenance and
 separate material generation from permission revision. Client input cannot assign
 those identities or source ownership. Registry writes pin both the selected
 Secret UID and original resource version; missing authority is unavailable.
-These private builders are not public management endpoints or activation.
+The staged management endpoints expose explicit changes, original operation
+lookup and audited recovery. Inventory versions are opaque If-Match values.
+Pending is unconfirmed, never a successful/failed key change; GET never fences.
+Explicit recovery pins UID/version and outbox identity, fences late CAS writes
+before final failure, and never issues/re-reveals material. `credential:recover`
+audits the current administrator separately from the original key change.
+The typed client never automatically retries mutation POSTs. Issuance time is
+reported only when known. Runtime protocol remains zero and cmd/control-plane
+registry activation, full UI and usage visibility remain outstanding.

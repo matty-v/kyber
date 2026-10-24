@@ -60,3 +60,22 @@ func TestAuthorityMutationMissingMarkerNeverWritesRegistry(t *testing.T) {
 		t.Fatal("unselected registry changed", err)
 	}
 }
+
+func TestAuthorityFencePinsIncarnationAndPreservesDocument(t *testing.T) {
+	authority, direct, initial := fixtureAuthority(t)
+	bindFixture(t, authority, direct, initial.Version)
+	current, err := authority.Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := authority.Fence(context.Background(), "another-registry", current.Version); !errors.Is(err, ErrConflict) {
+		t.Fatal("wrong incarnation fenced", err)
+	}
+	fenced, err := authority.Fence(context.Background(), current.UID, current.Version)
+	if err != nil || fenced.UID != current.UID || fenced.Version == current.Version {
+		t.Fatal("selected fence failed", err)
+	}
+	if _, err := authority.Replace(context.Background(), current.UID, current.Version, current.Document); !errors.Is(err, ErrConflict) {
+		t.Fatal("fenced version remained writable", err)
+	}
+}
