@@ -188,7 +188,7 @@ func TestManagedCredentialHTTPRequiresAdmissionBeforeEffectAndReturnsNoKey(t *te
 			t.Error("key write preceded required admission")
 		}
 	}
-	response := managedMutationHTTP(t, handler, request, credentialRegistryETag("1"), "original-installation-fixture")
+	response := managedMutationHTTP(t, handler, request, credentialRegistryETag("managed-fixture", "1"), "original-installation-fixture")
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d", response.Code)
 	}
@@ -214,24 +214,27 @@ func TestManagedCredentialHTTPRequiresAdmissionBeforeEffectAndReturnsNoKey(t *te
 	if observed.Code != http.StatusOK || strings.Contains(observed.Body.String(), request.Key) {
 		t.Fatal("operation lookup exposed material or failed")
 	}
-	replay := managedMutationHTTP(t, handler, request, credentialRegistryETag("2"), "original-installation-fixture")
+	replay := managedMutationHTTP(t, handler, request, credentialRegistryETag("managed-fixture", "2"), "original-installation-fixture")
 	if replay.Code < 400 || authority.writes != 1 {
 		t.Fatal("repeated POST reissued a key or claimed a new success")
 	}
 }
 
 func TestManagedCredentialHTTPAuditFailureAndStaleReviewNeverWrite(t *testing.T) {
-	for _, kind := range []string{"audit unavailable", "stale review", "restricted caller"} {
+	for _, kind := range []string{"audit unavailable", "stale review", "wrong registry review", "restricted caller"} {
 		t.Run(kind, func(t *testing.T) {
 			_, authority, journal, handler := managedHTTPFixture(t)
-			etag := credentialRegistryETag("1")
+			etag := credentialRegistryETag("managed-fixture", "1")
 			key := "original-installation-fixture"
 			want := http.StatusServiceUnavailable
 			switch kind {
 			case "audit unavailable":
 				journal.failAdmission = true
 			case "stale review":
-				etag = credentialRegistryETag("old")
+				etag = credentialRegistryETag("managed-fixture", "old")
+				want = http.StatusConflict
+			case "wrong registry review":
+				etag = credentialRegistryETag("other-registry", "1")
 				want = http.StatusConflict
 			case "restricted caller":
 				key = "client-key-fixture"
@@ -258,7 +261,7 @@ func TestManagedCredentialHTTPRechecksAdminAfterAdmission(t *testing.T) {
 		}
 		authority.version++
 	}
-	response := managedMutationHTTP(t, handler, managedCreateFixtureRequest(), credentialRegistryETag("1"), "original-installation-fixture")
+	response := managedMutationHTTP(t, handler, managedCreateFixtureRequest(), credentialRegistryETag("managed-fixture", "1"), "original-installation-fixture")
 	var view credentialOperationView
 	if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &view) != nil || view.Status != "failure" || authority.writes != 0 {
 		t.Fatal("post-admission policy change did not stop mutation")
@@ -275,7 +278,7 @@ func TestManagedCredentialHTTPUnknownEffectOrCompletionRemainsPending(t *testing
 				journal.failCompletion = true
 			}
 			request := managedCreateFixtureRequest()
-			response := managedMutationHTTP(t, handler, request, credentialRegistryETag("1"), "original-installation-fixture")
+			response := managedMutationHTTP(t, handler, request, credentialRegistryETag("managed-fixture", "1"), "original-installation-fixture")
 			var view credentialOperationView
 			if response.Code != http.StatusAccepted || json.Unmarshal(response.Body.Bytes(), &view) != nil || view.Status != "pending" || authority.writes != 1 {
 				t.Fatal("unknown acknowledgement became false success/failure")
@@ -311,7 +314,7 @@ func TestManagedCredentialRecoveryConfirmsCommittedWriteWithoutReissuing(t *test
 	_, authority, journal, handler := managedHTTPFixture(t)
 	authority.commitThenLoseAck = true
 	request := managedCreateFixtureRequest()
-	initial := managedMutationHTTP(t, handler, request, credentialRegistryETag("1"), "original-installation-fixture")
+	initial := managedMutationHTTP(t, handler, request, credentialRegistryETag("managed-fixture", "1"), "original-installation-fixture")
 	if initial.Code != http.StatusAccepted {
 		t.Fatal("lost acknowledgement not pending")
 	}

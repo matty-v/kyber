@@ -201,8 +201,8 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 	if resolved.registry != nil {
 		response := operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
 		_, _, supported := s.credentialManagementDependencies()
-		if resolved.registry.version != "" {
-			response.Version = credentialRegistryETag(resolved.registry.version)
+		if resolved.registry.version != "" && resolved.registry.uid != "" {
+			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
 			w.Header().Set("ETag", response.Version)
 		}
 		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != ""

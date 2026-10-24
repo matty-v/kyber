@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -38,8 +39,12 @@ func credentialOperationProjection(operation securityaudit.CredentialOperation) 
 	}
 	return view
 }
-func credentialRegistryETag(version string) string {
-	return `"` + base64.RawURLEncoding.EncodeToString([]byte(version)) + `"`
+func credentialRegistryETag(uid, version string) string {
+	// Hash metadata only. A reviewed version from another registry must not
+	// match merely because two clusters share the same opaque resource version.
+	encoded, _ := json.Marshal([2]string{uid, version})
+	digest := sha256.Sum256(encoded)
+	return `"` + base64.RawURLEncoding.EncodeToString(digest[:]) + `"`
 }
 func (s *Server) credentialManagementDependencies() (managedOperatorCredentialAuthority, securityaudit.CredentialJournal, bool) {
 	authority, ok := s.OperatorCredentialAuthority.(managedOperatorCredentialAuthority)
@@ -126,7 +131,7 @@ func (s *Server) handleOperatorCredentialMutation(w http.ResponseWriter, r *http
 		writeJSONError(w, http.StatusPreconditionRequired, "credential_version_required", "Refresh the key list before making a change.")
 		return
 	}
-	if r.Header.Get("If-Match") != credentialRegistryETag(snapshot.Version) {
+	if r.Header.Get("If-Match") != credentialRegistryETag(snapshot.UID, snapshot.Version) {
 		writeJSONError(w, http.StatusConflict, "credential_version_changed", "The key list changed. Refresh and review the change again.")
 		return
 	}

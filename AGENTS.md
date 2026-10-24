@@ -1007,7 +1007,8 @@ separate material generation from permission revision. Client input cannot assig
 those identities or source ownership. Registry writes pin both the selected
 Secret UID and original resource version; missing authority is unavailable.
 The staged management endpoints expose explicit changes, original operation
-lookup and audited recovery. Inventory versions are opaque If-Match values.
+lookup and audited recovery. Inventory versions are opaque If-Match values bound to the selected registry UID
+and resource version; management forms must remain bound to their connection.
 Pending is unconfirmed, never a successful/failed key change; GET never fences.
 Explicit recovery pins UID/version and outbox identity, fences late CAS writes
 before final failure, and never issues/re-reveals material. `credential:recover`

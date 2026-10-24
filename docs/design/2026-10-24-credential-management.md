@@ -20,7 +20,9 @@ responses, operation lookups nor recovery return a stored key. Request material
 is private, bounded, redacted from diagnostics and never serialized outward.
 Creation time is shown only when known; adoption does not invent issuance dates.
 
-The registry inventory returns an opaque reviewed version. Every change supplies
+The registry inventory returns an opaque reviewed version bound to the registry
+UID as well as its opaque resource version. Forms must also stay bound to their
+connection context. Every change supplies
 that exact value in `If-Match`; a conflict requires refresh and another review,
 not a transparent retry with current permissions. The server reauthorizes the
 current administrator after admission and pins the selected Secret UID/version
