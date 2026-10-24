@@ -35,8 +35,11 @@ type CredentialJournal interface {
 var _ CredentialJournal = (*PostgresStore)(nil)
 
 type CredentialOperation struct {
-	Intent     CredentialIntent
-	Completion *Event
+	// NewlyAdmitted is true only for this call's acknowledged first commit.
+	// Replayed/pending operations must reconcile; they do not own a new write.
+	NewlyAdmitted bool
+	Intent        CredentialIntent
+	Completion    *Event
 }
 
 func (i CredentialIntent) Validate() error {
@@ -79,6 +82,7 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
 		return CredentialOperation{}, databaseError(ctx, err)
 	}
+	newlyAdmitted := false
 	var same bool
 	var completion []byte
 	err = tx.QueryRowContext(ctx, `SELECT intent=$3::jsonb,completion FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2`, intent.Admission.Namespace, intent.Admission.OperationID, payload).Scan(&same, &completion)
@@ -90,6 +94,7 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 		if err != nil {
 			return CredentialOperation{}, databaseError(ctx, err)
 		}
+		newlyAdmitted = true
 	} else if err != nil {
 		return CredentialOperation{}, databaseError(ctx, err)
 	} else if !same {
@@ -99,7 +104,7 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	result := CredentialOperation{Intent: intent, Completion: completionEvent}
+	result := CredentialOperation{Intent: intent, Completion: completionEvent, NewlyAdmitted: newlyAdmitted}
 	if err = tx.Commit(); err != nil {
 		return CredentialOperation{}, databaseError(ctx, err)
 	}

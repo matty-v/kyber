@@ -46,7 +46,10 @@ suites deliberately truncate shared application tables.
 Registry key changes have a separate recovery journal. `AdmitCredentialOperation`
 atomically stores the authorization event and the original registry UID/opaque
 resource version. A retry must supply the identical intent; it cannot silently
-refresh the expected version. The journal never stores keys or candidates.
+refresh the expected version. Only the call that receives the acknowledged first
+commit gets `NewlyAdmitted`; replays must reconcile, not start another write. A
+lost admission response can be looked up by operation ID. The journal never
+stores keys or candidates.
 
 `PendingCredentialOperations` returns a bounded, namespace-scoped live scan.
 Continue with the last operation ID, then restart periodically to discover new

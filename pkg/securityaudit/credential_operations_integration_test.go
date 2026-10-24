@@ -15,12 +15,17 @@ func TestPostgresCredentialIntentAtomicityRecoveryAndFinality(t *testing.T) {
 	s, db := postgresFixture(t)
 	ctx := context.Background()
 	intent := fixtureCredentialIntent()
-	if _, err := s.AdmitCredentialOperation(ctx, intent); err != nil {
-		t.Fatal(err)
+	firstAdmission, err := s.AdmitCredentialOperation(ctx, intent)
+	if err != nil || !firstAdmission.NewlyAdmitted {
+		t.Fatal("first acknowledged admission not owned", err)
+	}
+	replayedAdmission, err := s.AdmitCredentialOperation(ctx, intent)
+	if err != nil || replayedAdmission.NewlyAdmitted {
+		t.Fatal("replayed admission claimed a new write", err)
 	}
 	restarted, _ := NewPostgresStore(db)
 	status, err := restarted.GetCredentialOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID)
-	if err != nil || status.Intent.ExpectedVersion != intent.ExpectedVersion || status.Completion != nil {
+	if err != nil || status.Intent.ExpectedVersion != intent.ExpectedVersion || status.Completion != nil || status.NewlyAdmitted {
 		t.Fatal("lost admission acknowledgement lookup", err)
 	}
 	if _, err := restarted.GetCredentialOperation(ctx, "another-installation", intent.Admission.OperationID); !errors.Is(err, ErrOperationNotFound) {
@@ -172,5 +177,43 @@ func TestPostgresCredentialRecoveryScanContinuesPastUnresolvedWork(t *testing.T)
 	}
 	if _, err := s.PendingCredentialOperations(ctx, "kyber-system", "invalid-cursor", 1); !errors.Is(err, ErrInvalid) {
 		t.Fatal("invalid recovery cursor accepted", err)
+	}
+}
+
+func TestPostgresConcurrentCredentialAdmissionHasOneWriter(t *testing.T) {
+	s, _ := postgresFixture(t)
+	intent := fixtureCredentialIntent()
+	var wg sync.WaitGroup
+	results := make(chan CredentialOperation, 8)
+	failures := make(chan error, 8)
+	for range 8 {
+		wg.Go(func() {
+			result, err := s.AdmitCredentialOperation(context.Background(), intent)
+			if err != nil {
+				failures <- err
+				return
+			}
+			results <- result
+		})
+	}
+	wg.Wait()
+	close(results)
+	close(failures)
+	for err := range failures {
+		t.Fatal(err)
+	}
+	writers, total := 0, 0
+	for result := range results {
+		total++
+		if result.NewlyAdmitted {
+			writers++
+		}
+	}
+	if total != 8 || writers != 1 {
+		t.Fatal("duplicate admission claimed write ownership")
+	}
+	history, err := s.Query(context.Background(), Filter{Namespace: intent.Admission.Namespace, Limit: 10}, nil)
+	if err != nil || len(history.Items) != 1 {
+		t.Fatal("concurrent admission duplicated history", err)
 	}
 }
