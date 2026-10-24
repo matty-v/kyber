@@ -227,3 +227,16 @@ pod UID, container, component and workload before content reads/exports. Both
 share one operation ID and completion; consumers must count operations rather
 than treating each decision as a separate read. Unknown query selectors are not
 copied into events. Fleet log responses also use no-store.
+
+## Credential maintenance
+
+When supported, Settings shows whether an adoption or upgrade operation has
+left a credential maintenance block. Expand **Operation details** for its type,
+execution ID, start time and check time. The block has no automatic expiry.
+
+Unavailable status does not mean idle. No block means only that the reservation
+was absent when checked; it does not list every running upgrade. Older runtimes
+can run upgrades without reserving this boundary. This view cannot release a
+block. Recovery must first verify that the original writer has stopped and
+reconcile its changes. Do not delete credential authority or registry Secrets
+to restore access.

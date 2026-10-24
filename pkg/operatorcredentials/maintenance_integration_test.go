@@ -69,7 +69,7 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 	checkAgents := func() {
 		t.Helper()
 		var agents kyberv1.AgentList
-		if err := direct.List(ctx, &agents, client.InNamespace(ns)); err != nil || len(agents.Items) != 0 {
+		if err := direct.List(ctx, &agents); err != nil || len(agents.Items) != 0 {
 			t.Fatal("zero-Agent verification failed")
 		}
 	}
@@ -121,11 +121,17 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 			t.Error("probe cleanup not confirmed")
 		}
 	})
+	if status, err := a.Inspect(ctx); err != nil || status.Present {
+		t.Fatal("new probe reservation was not idle")
+	}
 	first, err := a.Acquire(ctx, MaintenanceAdoption)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ownedUIDs[string(first.uid)] = true
+	if status, err := b.Inspect(ctx); err != nil || !status.Present || status.ExecutionID != first.owner || status.UID != string(first.uid) || status.Version != first.version || status.Kind != MaintenanceAdoption {
+		t.Fatal("independent inspection lost exact reservation metadata")
+	}
 	if _, err := b.Acquire(ctx, MaintenanceUpgrade); !errors.Is(err, ErrConflict) {
 		t.Fatal("independent executor stole reservation", err)
 	}
@@ -159,6 +165,9 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 	}
 	if err := replacement.Release(ctx); err != nil {
 		t.Fatal("replacement release failed", err)
+	}
+	if status, err := a.Inspect(ctx); err != nil || status.Present {
+		t.Fatal("released probe reservation remained blocked")
 	}
 	// Separately prove the resource-version precondition with an unchanged UID.
 	third, err := b.Acquire(ctx, MaintenanceAdoption)

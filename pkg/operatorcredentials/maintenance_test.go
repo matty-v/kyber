@@ -206,3 +206,45 @@ func TestMaintenanceOutageDoesNotReuseOwnershipOrRelease(t *testing.T) {
 		t.Fatal("deadline not preserved", err)
 	}
 }
+
+func TestMaintenanceInspectionIsReadOnlyAndNeverInfersExpiry(t *testing.T) {
+	s, c := fixtureMaintenance(t, false)
+	ctx := context.Background()
+	idle, err := s.Inspect(ctx)
+	if err != nil || idle.Present {
+		t.Fatal("missing reservation not idle", err)
+	}
+	reservation, err := s.Acquire(ctx, MaintenanceAdoption)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := &corev1.Secret{}
+	if err := c.Get(ctx, s.key, before); err != nil {
+		t.Fatal(err)
+	}
+	before.Data["startedAt"] = []byte("2000-01-01T00:00:00Z")
+	if err := c.Update(ctx, before); err != nil {
+		t.Fatal(err)
+	}
+	status, err := s.Inspect(ctx)
+	if err != nil || !status.Present || status.ExecutionID != reservation.owner || status.Kind != MaintenanceAdoption || status.StartedAt.Year() != 2000 || status.UID == "" || status.Version == "" {
+		t.Fatal("inspection lost blocking execution", err)
+	}
+	after := &corev1.Secret{}
+	if err := c.Get(ctx, s.key, after); err != nil {
+		t.Fatal(err)
+	}
+	if before.ResourceVersion != after.ResourceVersion {
+		t.Fatal("inspection changed reservation")
+	}
+	if _, err := s.Acquire(ctx, MaintenanceUpgrade); !errors.Is(err, ErrConflict) {
+		t.Fatal("inspection permitted takeover", err)
+	}
+	after.Data["private-value"] = []byte("must-not-appear")
+	if err := c.Update(ctx, after); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Inspect(ctx); !errors.Is(err, ErrUnsupported) {
+		t.Fatal("malformed reservation looked idle", err)
+	}
+}

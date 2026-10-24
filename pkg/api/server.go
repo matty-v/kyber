@@ -125,6 +125,9 @@ type Server struct {
 	// The control-plane command does not enable adoption through this seam yet.
 	OperatorCredentialAuthority OperatorCredentialAuthority
 
+	// Read-only maintenance visibility; does not enable acquisition or recovery.
+	OperatorCredentialMaintenance OperatorCredentialMaintenanceReader
+
 	// APIKeySecretName is the name of the Kubernetes Secret holding the api-key
 	// the control-plane authenticates against. The rotate handler patches this
 	// Secret's `api-key` field. Defaults to "" (rotation disabled — the handler
@@ -857,6 +860,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credential-operations/reconcile", s.handleReconcileOperatorCredentialOperation)
 	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
 	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance", s.handleOperatorCredentialMaintenance)
 	mux.HandleFunc("/api/v1/operator-credential-operations/pending", s.handlePendingOperatorCredentialOperations)
 	mux.HandleFunc("/api/v1/security-events", s.handleSecurityEvents)
 

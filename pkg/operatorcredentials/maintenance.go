@@ -166,3 +166,43 @@ func (r *MaintenanceReservation) Release(ctx context.Context) error {
 	}
 	return authorityError(ctx, err)
 }
+
+// MaintenanceStatus is a whitelisted, value-free observation. Inspecting it does
+// not confer the private reservation capability or permission to release it.
+type MaintenanceStatus struct {
+	Present     bool
+	Kind        string
+	ExecutionID string
+	StartedAt   time.Time
+	UID         string
+	Version     string
+}
+
+// Inspect uses an authoritative bounded read. Only a verified NotFound means
+// idle; malformed objects and read failures remain unavailable. It never writes.
+func (s *MaintenanceStore) Inspect(ctx context.Context) (MaintenanceStatus, error) {
+	if s == nil || s.direct == nil {
+		return MaintenanceStatus{}, ErrInvalid
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	current := &corev1.Secret{}
+	if err := s.direct.reader.Get(ctx, s.key, current); err != nil {
+		if apierrors.IsNotFound(err) && ctx.Err() == nil {
+			return MaintenanceStatus{}, nil
+		}
+		return MaintenanceStatus{}, authorityUnavailable(ctx, err)
+	}
+	if err := s.validate(current); err != nil {
+		return MaintenanceStatus{}, err
+	}
+	started, _ := time.Parse(time.RFC3339Nano, string(current.Data["startedAt"]))
+	return MaintenanceStatus{Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
+}
+
+func (s *MaintenanceStore) Namespace() string {
+	if s == nil {
+		return ""
+	}
+	return s.key.Namespace
+}
