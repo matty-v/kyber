@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -75,6 +76,44 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		return metadata
 	}
 	rootBefore := readMetadata("kyber-api-credentials")
+	// Convert the current configured values in memory only. This verifies the
+	// source snapshot, not activation or agreement across deployed replicas.
+	var source corev1.Secret
+	if err := direct.Get(ctx, client.ObjectKey{Namespace: namespace, Name: "kyber-api-credentials"}, &source); err != nil || source.UID != rootBefore.UID || source.ResourceVersion != rootBefore.ResourceVersion {
+		t.Fatal("configured credential snapshot unavailable or changed")
+	}
+	configured, err := ParseScopedCallers(string(source.Data["callers"]))
+	if err != nil {
+		t.Fatal("configured caller snapshot invalid")
+	}
+	resolvedCallers, rejected := ResolveScopedCallers(ctx, direct, namespace, configured)
+	if len(rejected) != 0 {
+		t.Fatal("configured caller dependencies unavailable")
+	}
+	rootValue := string(source.Data["api-key"])
+	configuredAuth := NewAPIKeyAuthenticator(rootValue, resolvedCallers...)
+	candidate, err := configuredAuth.prepareCredentialAdoption(ctx, namespace, adoptionFixtureOperation())
+	if err != nil {
+		t.Fatal("current configured snapshot could not be converted")
+	}
+	converted, err := compileRegistryCredentials(candidate.document, time.Now())
+	if err != nil {
+		t.Fatal("converted configured snapshot did not compile")
+	}
+	values := []string{rootValue}
+	for _, caller := range resolvedCallers {
+		values = append(values, caller.Key)
+	}
+	for _, value := range values {
+		before, beforeErr := configuredAuth.authenticateConfigured(adoptionBearer(value))
+		after, afterErr := converted.authenticate(adoptionBearer(value))
+		if beforeErr != nil || afterErr != nil || before == nil || after == nil {
+			t.Fatal("configured value lost during conversion")
+		}
+		if !reflect.DeepEqual(before.Scopes, after.Scopes) || !reflect.DeepEqual(before.AgentResources, after.AgentResources) || !reflect.DeepEqual(before.MachineResources, after.MachineResources) || before.PrincipalID != "" && before.PrincipalID != after.PrincipalID || before.TenantID != "" && before.TenantID != after.TenantID || before.CredentialID != "" && before.CredentialID != after.CredentialID || before.CredentialGeneration != 0 && before.CredentialGeneration != after.CredentialGeneration {
+			t.Fatal("configured identity or grants changed during conversion")
+		}
+	}
 	name := "operator-auth-probe-" + uuid.NewString()
 	markerName := name + "-authority"
 	owned := map[string]types.UID{}
