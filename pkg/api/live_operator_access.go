@@ -177,10 +177,17 @@ func (w *liveOperatorWriter) ready() error {
 	_ = http.NewResponseController(w.ResponseWriter).SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 	return nil
 }
+func (w *liveOperatorWriter) prepareHeaders() {
+	if w.ResponseWriter.Header().Get("Content-Type") == "" {
+		w.ResponseWriter.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	}
+	w.ResponseWriter.Header().Set("X-Content-Type-Options", "nosniff")
+}
 func (w *liveOperatorWriter) Write(b []byte) (int, error) {
 	if err := w.ready(); err != nil {
 		return 0, err
 	}
+	w.prepareHeaders()
 	return w.ResponseWriter.Write(b)
 }
 func (w *liveOperatorWriter) WriteHeader(status int) {
@@ -191,6 +198,7 @@ func (w *liveOperatorWriter) WriteHeader(status int) {
 		return
 	}
 	if w.ctx.Err() != nil || w.ready() == nil {
+		w.prepareHeaders()
 		w.ResponseWriter.WriteHeader(status)
 	}
 }
@@ -198,6 +206,7 @@ func (w *liveOperatorWriter) Flush() {
 	if w.ready() != nil {
 		return
 	}
+	w.prepareHeaders()
 	_ = http.NewResponseController(w.ResponseWriter).Flush()
 }
 func (w *liveOperatorWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {

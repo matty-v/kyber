@@ -84,13 +84,12 @@ func (s *Server) auditSensitiveRequests(next http.Handler) http.Handler {
 				// or access changes afterward. Separate denials describe closed access.
 				case state.outcome != "":
 					result.Outcome = state.outcome
+				case r.Context().Err() != nil && securityActionMayMutate(result.Action):
+					result.Outcome = "unknown"
 				case errors.Is(context.Cause(r.Context()), errOperatorAuthorityUnavailable):
 					result.Outcome = "unknown"
 				case errors.Is(context.Cause(r.Context()), errOperatorAccessChanged):
 					result.Outcome = "failure"
-					if securityActionMayMutate(result.Action) {
-						result.Outcome = "unknown"
-					}
 				case observed.status >= 400:
 					result.Outcome = "failure"
 				case observed.failed || r.Context().Err() != nil:

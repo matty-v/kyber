@@ -245,3 +245,39 @@ func TestSensitiveAuditCommittedMutationSurvivesResponseCancellation(t *testing.
 		t.Fatal("confirmed mutation was confused with rollback")
 	}
 }
+
+// Simulate the API server committing before cancellation causes the client to
+// lose its acknowledgement. The HTTP failure is not proof of rollback.
+type cancelAfterAmbiguousSecretCommit struct {
+	client.Client
+	cancel context.CancelFunc
+}
+
+func (c cancelAfterAmbiguousSecretCommit) Patch(ctx context.Context, obj client.Object, patch client.Patch, opts ...client.PatchOption) error {
+	err := c.Client.Patch(ctx, obj, patch, opts...)
+	if err == nil && obj.GetName() == "alpha-user-secrets-kv" {
+		c.cancel()
+		return context.Canceled
+	}
+	return err
+}
+func TestSensitiveAuditUnacknowledgedCommitIsUnknown(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	agent := sampleAgentCRD("alpha")
+	agent.Status.Phase = "Stopped"
+	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "alpha-user-secrets-kv", Namespace: "kyber-system"}, Data: map[string][]byte{"TOKEN": []byte("original-fixture")}}
+	base := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, secret).Build()
+	audit := testutil.NewSecurityAudit()
+	server := &api.Server{APIKey: testAPIKey, Namespace: "kyber-system", SecurityAudit: audit, K8sClient: cancelAfterAmbiguousSecretCommit{base, cancel}}
+	request := authedJSONRequest(t, "PUT", "/api/v1/agents/alpha/secrets/TOKEN", map[string]string{"value": "replacement-fixture"}).WithContext(ctx)
+	server.BuildHandler().ServeHTTP(httptest.NewRecorder(), request)
+	committed := &corev1.Secret{}
+	if err := base.Get(context.Background(), client.ObjectKey{Namespace: "kyber-system", Name: "alpha-user-secrets-kv"}, committed); err != nil || string(committed.Data["TOKEN"]) != "replacement-fixture" {
+		t.Fatal("fixture did not commit")
+	}
+	records := audit.Records()
+	if len(records) != 2 || records[1].Phase != "completion" || records[1].Outcome != "unknown" {
+		t.Fatal("unacknowledged write was misreported as failed or completed")
+	}
+}

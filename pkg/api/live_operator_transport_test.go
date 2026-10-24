@@ -205,3 +205,29 @@ func TestLiveTaskEventStreamDoesNotWaitForHeartbeat(t *testing.T) {
 		t.Fatal("task access persisted until the twenty-second heartbeat")
 	}
 }
+
+func TestLiveWriterHasSafeDirectBrowserDefaults(t *testing.T) {
+	for _, early := range []string{"body", "header", "flush"} {
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			writer := &liveOperatorWriter{ResponseWriter: w, ctx: r.Context()}
+			if early == "header" {
+				writer.WriteHeader(200)
+			}
+			if early == "flush" {
+				writer.Flush()
+			}
+			_, _ = io.WriteString(writer, r.URL.Query().Get("input"))
+		}))
+		response, err := server.Client().Get(server.URL + "?input=%3Cscript%3Efixture%3C/script%3E")
+		if err != nil {
+			server.Close()
+			t.Fatal(err)
+		}
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		server.Close()
+		if err != nil || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/plain") || response.Header.Get("X-Content-Type-Options") != "nosniff" || string(body) != "<script>fixture</script>" {
+			t.Fatal("live writer exposed browser-sniffed markup", early)
+		}
+	}
+}
