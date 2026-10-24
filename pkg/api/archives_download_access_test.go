@@ -20,11 +20,12 @@ func TestArchiveDownloadLinkStopsAfterRootRotation(t *testing.T) {
 	}
 	request := httptest.NewRequest(http.MethodPost, "/api/v1/agents/"+exportAgent+"/exports/"+id+"/download-link", nil)
 	request.AddCookie(cookies[0])
+	request.Header.Set("Origin", "http://"+request.Host)
 	rr := httptest.NewRecorder()
 	h.server.BuildHandler().ServeHTTP(rr, request)
 	var link struct{ URL string }
 	if rr.Code != http.StatusOK || json.Unmarshal(rr.Body.Bytes(), &link) != nil || link.URL == "" {
-		t.Fatal("could not issue download link")
+		t.Fatal("could not issue download link", rr.Code)
 	}
 	if rr := h.do(http.MethodHead, link.URL, ""); rr.Code != http.StatusOK {
 		t.Fatal("fresh link rejected", rr.Code)
