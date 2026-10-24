@@ -225,6 +225,7 @@ paths:
                 required: [observedAt, inventoryScope, configurationAvailable, usageAvailable, credentials, warnings]
                 properties:
                   version: {type: string, description: Opaque reviewed registry version for If-Match; not key material.}
+                  currentCredentialId: {type: string, description: Identifier of the key authenticating this request.}
                   managementAvailable: {type: boolean, description: "Whether the selected authority and required journal support management. This is capability metadata, not a database health guarantee."}
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
@@ -357,6 +358,65 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/options:
+    get:
+      operationId: getOperatorCredentialOptions
+      summary: Read supported key permission choices
+      description: Current registry administrator only. No key material. Version 1 uses exact namespace/name resource targets.
+      responses:
+        '200':
+          description: Supported permission choices
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, namespace, permissions]
+                properties:
+                  version: {type: integer, enum: [1]}
+                  namespace: {type: string}
+                  permissions:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [scope, label, target]
+                      properties:
+                        scope: {type: string}
+                        label: {type: string}
+                        target: {type: string, enum: [none, agent, machine]}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credential-operations/pending:
+    get:
+      operationId: getPendingOperatorCredentialOperations
+      summary: Read pending key changes
+      description: Current registry administrator only. Bounded live namespace-scoped scan, no mutation or automatic fencing. Restart from the first page periodically to find newly admitted operations.
+      parameters:
+        - {in: query, name: after, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: At most 25 pending key changes
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 25
+                    items: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+                  next: {type: string, format: uuid}
+        '400':
+          description: Invalid continuation
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credential-operations:
     get:

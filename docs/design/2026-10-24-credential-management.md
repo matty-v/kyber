@@ -73,3 +73,20 @@ The UI forms, saved-value/reconnect behavior, activation preflight, bootstrap
 rotation serialization, maintenance recovery, outbox delivery/compaction and
 usage collection remain subsequent integration. Do not advertise protocol one
 or claim those end-to-end gates from these API tests alone.
+
+### Admin forms (staged)
+
+The registry inventory identifies the current key and supplies a reviewed version.
+Permission choices come from the server's versioned options endpoint, including
+whether each action requires Agent or Machine targets. New values are generated
+with browser cryptographic randomness, held in the active form only, and saved
+before activation. They never enter the shared query cache or browser storage.
+Forms preserve their opening review version while inventory polling continues.
+
+Create, edit, rotate and revoke call the SDK once. Interrupted requests expose
+read-only status checks and explicit reconciliation, without issuing a fresh
+mutation. The pending endpoint exposes a bounded live scan for recovery after a
+form closes. A same-key browser rotation refreshes the signed session for the
+same principal and tenant; bearer connections require updating their configured
+value. Registry management hides the earlier configuration rotation control.
+These controls remain capability-gated while runtime authority activation is staged.

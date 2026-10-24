@@ -202,6 +202,9 @@ func (s *Server) handleOperatorCredentialMutation(w http.ResponseWriter, r *http
 	case errors.Is(err, operatorcredentials.ErrConflict), errors.Is(err, operatorcredentials.ErrInvalid), errors.Is(err, errCredentialMutationForbidden):
 		outcome = "failure"
 	}
+	if outcome == "success" {
+		s.refreshManagedRotationSession(w, r, request, *actor)
+	}
 	// Disconnection or self-rotation must not cancel the record of a confirmed
 	// effect. Unknown writes remain pending for authority/outbox reconciliation.
 	completionCtx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), securityAuditTimeout)
