@@ -65,6 +65,12 @@ func TestCredentialUsagePostgresReplayPrecisionAndIdentity(t *testing.T) {
 	if err != nil || len(view.Items) != 0 {
 		t.Fatal("same credential ID leaked another principal's activity", err)
 	}
+	otherTenant := batch.Items[0].CredentialUsageIdentity
+	otherTenant.TenantID = "another-tenant"
+	view, err = store.ReadCredentialUsage(ctx, batch.Namespace, batch.ObserverID, []CredentialUsageIdentity{otherTenant})
+	if err != nil || len(view.Items) != 0 {
+		t.Fatal("tenant ownership was mixed", err)
+	}
 	view, err = store.ReadCredentialUsage(ctx, "another-namespace", batch.ObserverID, []CredentialUsageIdentity{batch.Items[0].CredentialUsageIdentity})
 	if err != nil || len(view.Items) != 0 || view.Coverage.Since != nil {
 		t.Fatal("cross-namespace activity leaked", err)
@@ -100,5 +106,43 @@ func TestCredentialUsagePostgresMergesCountsAndStopsObserver(t *testing.T) {
 	next.Sequence = 3
 	if err := store.WriteCredentialUsage(ctx, next); !errors.Is(err, ErrConflict) {
 		t.Fatal("stopped observer resumed under the old identity", err)
+	}
+}
+
+func TestCredentialUsagePostgresConcurrentObserversAndRestart(t *testing.T) {
+	store, db := postgresFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	first := usageBatchFixture()
+	other := first.Items[0]
+	other.CredentialID = "another-credential"
+	first.Items = append(first.Items, other)
+	second := usageBatchFixture()
+	second.Items = append(second.Items, other)
+	// Opposite input order must still acquire aggregate-row locks consistently.
+	second.Items[0], second.Items[1] = second.Items[1], second.Items[0]
+	for i := range second.Items {
+		second.Items[i].Generation = 2
+	}
+	failures := make(chan error, 2)
+	go func() { failures <- store.WriteCredentialUsage(ctx, first) }()
+	go func() { failures <- store.WriteCredentialUsage(ctx, second) }()
+	for i := 0; i < 2; i++ {
+		if err := <-failures; err != nil {
+			t.Fatal("concurrent reporters conflicted", err)
+		}
+	}
+	restarted, err := NewPostgresStore(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := restarted.ReadCredentialUsage(ctx, first.Namespace, first.ObserverID, []CredentialUsageIdentity{first.Items[0].CredentialUsageIdentity, other.CredentialUsageIdentity})
+	if err != nil || len(view.Items) != 2 || view.Coverage.FreshObservers != 2 {
+		t.Fatal("reporter state did not survive store replacement", err)
+	}
+	for _, item := range view.Items {
+		if item.Authenticated != "6" || item.Generation != "2" {
+			t.Fatal("concurrent counters or tied generation lost an update")
+		}
 	}
 }

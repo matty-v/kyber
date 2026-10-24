@@ -51,6 +51,10 @@ spec:
             - --metrics-bind-address=:{{ .Values.api.service.metricsPort }}
             - --leader-elect={{ .Values.controlPlane.leaderElection.enabled }}
           env:
+            - name: KYBER_OPERATOR_USAGE_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             - name: KYBER_LOG_LEVEL
               value: {{ include "kyber.loggingLevel" (dict "root" . "component" "control-plane") | quote }}
             - name: KYBER_LOG_POD

@@ -1564,6 +1564,18 @@ func main() {
 		publicAPI.ComputeSimulation = computeSimulation
 		setupLog.Info("development compute scenario control enabled")
 	}
+	if writer, ok := securityHistory.(securityaudit.CredentialUsageWriter); ok {
+		collector, usageErr := securityaudit.NewCredentialUsageCollector(writer, publicAPI.Namespace, os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"))
+		if usageErr != nil {
+			setupLog.Info("Operator key activity collection unavailable; authentication remains available")
+		} else {
+			publicAPI.OperatorCredentialUsage = collector
+			if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error { collector.Run(runCtx); return nil })); err != nil {
+				setupLog.Error(err, "registering operator key activity collector")
+				os.Exit(1)
+			}
+		}
+	}
 	if strings.TrimSpace(publicAPI.APIKey) == "" {
 		setupLog.Info("installation administrator key not configured — administrator access is unavailable")
 	}

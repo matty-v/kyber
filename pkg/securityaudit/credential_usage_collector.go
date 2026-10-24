@@ -47,6 +47,7 @@ func (o CredentialUsageObservation) valid() bool {
 type CredentialUsageObserver interface {
 	ObserveCredentialUsage(CredentialUsageObservation)
 	CredentialUsageObserverID() string
+	CredentialUsageNamespace() string
 }
 
 // CredentialUsageCollector keeps database work outside the request path. A
@@ -285,3 +286,10 @@ func (c *CredentialUsageCollector) Run(ctx context.Context) {
 }
 
 var _ CredentialUsageObserver = (*CredentialUsageCollector)(nil)
+
+func (c *CredentialUsageCollector) CredentialUsageNamespace() string {
+	if c == nil {
+		return ""
+	}
+	return c.namespace
+}

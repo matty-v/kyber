@@ -1582,6 +1582,11 @@ export interface RuntimeFeatureAvailability {
   reason: string
 }
 export interface OperatorCredential {
+  principalId?: string
+  tenantId?: string
+  activityTrackable?: boolean
+  activityUnavailableReason?: 'identity-incomplete' | 'identity-shared' | 'shared-key'
+
   createdAt?: string
   expiresAt?: string
   id: string
@@ -1612,6 +1617,42 @@ export interface OperatorCredentialInventory {
   usageAvailable: boolean
   credentials: OperatorCredential[]
   warnings: string[]
+}
+
+export interface OperatorCredentialUsageIdentity {
+  credentialId: string
+  principalId: string
+  tenantId: string
+  authority: 'configuration' | 'registry'
+}
+export interface OperatorCredentialUsage {
+  version: 1
+  observedAt: string
+  partial: true
+  truncated: boolean
+  entryPoints: Array<'operator-api' | 'browser-sign-in' | 'archive-download'>
+  identities: OperatorCredentialUsageIdentity[]
+  coverage: {
+    since?: string
+    latestProgress?: string
+    currentObserverReported: boolean
+    currentObserverFresh: boolean
+    freshObservers: number
+    staleObservers: number
+    dropped: string
+    unrecognized: string
+    unattributed: string
+    unavailable: string
+  }
+  local?: { pendingObservations: number; lossReportsAwaitingConfirmation: string; closed: boolean }
+  items: Array<OperatorCredentialUsageIdentity & {
+    transport: 'bearer' | 'browser-session' | 'archive-capability'
+    authenticated: string
+    denied: string
+    generation: string
+    lastAcceptedAt?: string
+    actions: Record<string, string>
+  }>
 }
 
 export interface OperatorCredentialOptions {

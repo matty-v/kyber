@@ -230,7 +230,7 @@ paths:
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
                   configurationAvailable: {type: boolean}
-                  usageAvailable: {type: boolean, enum: [false]}
+                  usageAvailable: {type: boolean, description: Activity API capability; collection health is reported by the usage response.}
                   warnings: {type: array, items: {type: string}}
                   credentials:
                     type: array
@@ -239,6 +239,10 @@ paths:
                       additionalProperties: false
                       required: [id, name, displayName, accessLevel, state, source, scopes, agentResources, permissions, configured]
                       properties:
+                        principalId: {type: string}
+                        tenantId: {type: string}
+                        activityTrackable: {type: boolean}
+                        activityUnavailableReason: {type: string, enum: [identity-incomplete, identity-shared, shared-key]}
                         createdAt: {type: string, format: date-time, description: Present only when actual issuance time is known.}
                         expiresAt: {type: string, format: date-time}
                         id: {type: string}
@@ -358,6 +362,21 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/usage:
+    get:
+      operationId: getOperatorCredentialUsage
+      summary: Read observed operator key activity and coverage
+      description: Administrator only, no-store. Reports observed HTTP authentications and denied requests separately from completed actions. Partial coverage, pending acknowledgements and losses remain explicit. Stable imported identities retain their pre-adoption observations. No credential material or raw request content is collected.
+      responses:
+        '200':
+          description: Observed activity with collection limitations
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialUsage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credentials/options:
     get:
@@ -2569,6 +2588,71 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialUsage:
+      type: object
+      additionalProperties: false
+      required: [version, observedAt, partial, truncated, entryPoints, identities, coverage, items]
+      properties:
+        version: {type: integer, enum: [1]}
+        observedAt: {type: string, format: date-time}
+        partial: {type: boolean, enum: [true]}
+        truncated: {type: boolean}
+        entryPoints: {type: array, items: {type: string, enum: [operator-api, browser-sign-in, archive-download]}}
+        identities:
+          type: array
+          maxItems: 128
+          items: {$ref: '#/components/schemas/OperatorCredentialUsageIdentity'}
+        coverage:
+          type: object
+          additionalProperties: false
+          required: [currentObserverReported, currentObserverFresh, freshObservers, staleObservers, dropped, unrecognized, unattributed, unavailable]
+          properties:
+            since: {type: string, format: date-time}
+            latestProgress: {type: string, format: date-time}
+            currentObserverReported: {type: boolean}
+            currentObserverFresh: {type: boolean}
+            freshObservers: {type: integer, minimum: 0}
+            staleObservers: {type: integer, minimum: 0}
+            dropped: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unrecognized: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unattributed: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unavailable: {$ref: '#/components/schemas/OperatorUsageCount'}
+        local:
+          type: object
+          additionalProperties: false
+          required: [pendingObservations, lossReportsAwaitingConfirmation, closed]
+          properties:
+            pendingObservations: {type: integer, minimum: 0}
+            lossReportsAwaitingConfirmation: {$ref: '#/components/schemas/OperatorUsageCount'}
+            closed: {type: boolean}
+        items:
+          type: array
+          maxItems: 768
+          items:
+            allOf:
+              - {$ref: '#/components/schemas/OperatorCredentialUsageIdentity'}
+              - type: object
+                required: [transport, authenticated, denied, generation, actions]
+                properties:
+                  transport: {type: string, enum: [bearer, browser-session, archive-capability]}
+                  authenticated: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  denied: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  generation: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  lastAcceptedAt: {type: string, format: date-time}
+                  actions:
+                    type: object
+                    additionalProperties: {$ref: '#/components/schemas/OperatorUsageCount'}
+    OperatorCredentialUsageIdentity:
+      type: object
+      required: [credentialId, principalId, tenantId, authority]
+      properties:
+        credentialId: {type: string}
+        principalId: {type: string}
+        tenantId: {type: string}
+        authority: {type: string, enum: [configuration, registry]}
+    OperatorUsageCount:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,39})$'
     OperatorCredentialPolicy:
       type: object
       additionalProperties: false

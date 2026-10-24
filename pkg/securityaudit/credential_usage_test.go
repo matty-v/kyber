@@ -9,7 +9,7 @@ import (
 
 func usageBatchFixture() CredentialUsageBatch {
 	at := time.Date(2026, 10, 24, 12, 0, 0, 0, time.UTC)
-	return CredentialUsageBatch{Namespace: "kyber-system", ObserverID: uuid.NewString(), StartedAt: at, Sequence: 1, Items: []CredentialUsageDelta{{CredentialUsageIdentity: CredentialUsageIdentity{CredentialID: "credential-fixture", PrincipalID: "principal-fixture", Authority: "registry"}, Transport: "bearer", Authenticated: 3, Denied: 1, LastAcceptedAt: &at, Generation: 1, Actions: map[string]uint64{"agents:read": 2, "logs:read": 1}}}}
+	return CredentialUsageBatch{Namespace: "kyber-system", ObserverID: uuid.NewString(), StartedAt: at, Sequence: 1, Items: []CredentialUsageDelta{{CredentialUsageIdentity: CredentialUsageIdentity{CredentialID: "credential-fixture", PrincipalID: "principal-fixture", TenantID: "tenant-fixture", Authority: "registry"}, Transport: "bearer", Authenticated: 3, Denied: 1, LastAcceptedAt: &at, Generation: 1, Actions: map[string]uint64{"agents:read": 2, "logs:read": 1}}}}
 }
 func TestCredentialUsageValidationRejectsUnboundedOrUnattributableData(t *testing.T) {
 	cases := map[string]func(*CredentialUsageBatch){

@@ -45,9 +45,9 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  PRIMARY KEY(namespace,observer_id)
  );
  CREATE TABLE IF NOT EXISTS operator_credential_usage_totals (
- namespace TEXT NOT NULL,credential_id TEXT NOT NULL,principal_id TEXT NOT NULL,authority TEXT NOT NULL CHECK(authority IN ('configuration','registry')),transport TEXT NOT NULL CHECK(transport IN ('bearer','browser-session','archive-capability')),
+ namespace TEXT NOT NULL,credential_id TEXT NOT NULL,principal_id TEXT NOT NULL,tenant_id TEXT NOT NULL,authority TEXT NOT NULL CHECK(authority IN ('configuration','registry')),transport TEXT NOT NULL CHECK(transport IN ('bearer','browser-session','archive-capability')),
  authenticated NUMERIC(40,0) NOT NULL CHECK(authenticated>=0),denied NUMERIC(40,0) NOT NULL CHECK(denied>=0),last_accepted_at TIMESTAMPTZ,generation NUMERIC(20,0) NOT NULL CHECK(generation>=0),actions JSONB NOT NULL,
- PRIMARY KEY(namespace,credential_id,principal_id,authority,transport)
+ PRIMARY KEY(namespace,credential_id,principal_id,tenant_id,authority,transport)
  );`)
 	return databaseError(ctx, err)
 }

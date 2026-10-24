@@ -89,7 +89,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 		} else if credential.ExpiresAt != nil && !now.Before(*credential.ExpiresAt) {
 			state = "expired"
 		}
-		view := operatorCredentialView{ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
+		view := operatorCredentialView{PrincipalID: credential.PrincipalID, TenantID: credential.TenantID, ActivityTrackable: true, ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
 		if credential.CreatedAt != nil {
 			view.CreatedAt = credential.CreatedAt.UTC().Format(time.RFC3339Nano)
 		}

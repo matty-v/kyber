@@ -34,7 +34,7 @@ func (w *capturedUsageWriter) WriteCredentialUsage(ctx context.Context, batch Cr
 	return nil
 }
 func acceptedUsageObservation() CredentialUsageObservation {
-	return CredentialUsageObservation{CredentialUsageIdentity: CredentialUsageIdentity{CredentialID: "credential-fixture", PrincipalID: "principal-fixture", Authority: "registry"}, Transport: "browser-session", Outcome: "accepted", Action: "agents:read", At: time.Now().UTC(), Generation: 1}
+	return CredentialUsageObservation{CredentialUsageIdentity: CredentialUsageIdentity{CredentialID: "credential-fixture", PrincipalID: "principal-fixture", TenantID: "tenant-fixture", Authority: "registry"}, Transport: "browser-session", Outcome: "accepted", Action: "agents:read", At: time.Now().UTC(), Generation: 1}
 }
 func TestCredentialUsageCollectorRetainsLostAcknowledgementAndReportsOverflow(t *testing.T) {
 	writer := &capturedUsageWriter{fail: true}

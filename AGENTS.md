@@ -1031,5 +1031,6 @@ content, raw paths or IP addresses. Collection is non-blocking; bounded queue
 loss, pending acknowledgement and partial coverage must stay visible. Aggregate
 counters and cursor advance commit together, with exact replay checks; cursor
 rows cannot be deleted and recreated without risking duplicate old batches.
-Counters cross the API as decimal strings. Runtime/API/UI wiring is being added;
-the persistence and collector types alone do not enable collection.
+Counters cross the API as decimal strings. With PostgreSQL configured, main starts a reporter for its installation.
+Authentication never waits for reporter writes. Admin activity reads recheck
+current access before output; the UI presents windowed counts and explicit gaps.

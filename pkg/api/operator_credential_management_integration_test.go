@@ -61,7 +61,7 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 	checkEmpty := func() {
 		t.Helper()
 		var agents kyberv1.AgentList
-		if direct.List(ctx, &agents, client.InNamespace(namespace)) != nil || len(agents.Items) != 0 {
+		if direct.List(ctx, &agents) != nil || len(agents.Items) != 0 {
 			t.Fatal("dev Agent preflight/postflight failed")
 		}
 	}
@@ -135,6 +135,18 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 	}
 	owned[markerName] = metadata(markerName).UID
 	server := &Server{Namespace: namespace, APIKey: "original-installation-fixture", OperatorCredentialAuthority: authority, SecurityAudit: audit}
+	collector, err := securityaudit.NewCredentialUsageCollector(audit, namespace, "")
+	if err != nil {
+		t.Fatal("usage collector unavailable", err)
+	}
+	server.OperatorCredentialUsage = collector
+	t.Cleanup(func() {
+		cleanup, done := context.WithTimeout(context.Background(), 5*time.Second)
+		defer done()
+		if collector.Close(cleanup) != nil {
+			t.Error("usage collector cleanup failed")
+		}
+	})
 	handler := server.BuildHandler()
 	reviewedVersion := func() string {
 		t.Helper()
@@ -285,6 +297,43 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 	}
 	if _, err := server.auth.Authenticate(registryCookie(priorCookie)); err == nil {
 		t.Fatal("old browser session survived self-rotation")
+	}
+	deniedUsage := registryBearer("client-key-fixture")
+	deniedUsage.URL.Path = "/api/v1/operator-credentials/usage"
+	deniedUsageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(deniedUsageResponse, deniedUsage)
+	if deniedUsageResponse.Code != http.StatusForbidden {
+		t.Fatal("restricted usage read allowed")
+	}
+	acceptedUsage := registryBearer(newValue)
+	acceptedUsage.URL.Path = "/api/v1/operator-credentials"
+	acceptedUsageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(acceptedUsageResponse, acceptedUsage)
+	if acceptedUsageResponse.Code != http.StatusOK {
+		t.Fatal("rotated key failed observation request")
+	}
+	if collector.Flush(ctx) != nil {
+		t.Fatal("real usage batch was not durable")
+	}
+	usageRequest := registryBearer(newValue)
+	usageRequest.URL.Path = "/api/v1/operator-credentials/usage"
+	usageResponse := httptest.NewRecorder()
+	handler.ServeHTTP(usageResponse, usageRequest)
+	var usage operatorCredentialUsageView
+	if usageResponse.Code != http.StatusOK || json.Unmarshal(usageResponse.Body.Bytes(), &usage) != nil || !usage.Partial || !usage.Coverage.CurrentObserverReported || !usage.Coverage.CurrentObserverFresh {
+		t.Fatal("real usage coverage unavailable")
+	}
+	rootObserved, denialObserved := false, false
+	for _, item := range usage.Items {
+		if item.CredentialID == actor.CredentialID && item.PrincipalID == actor.PrincipalID && item.TenantID == actor.TenantID && item.Authenticated != "0" && item.LastAcceptedAt != nil && item.Generation == "2" {
+			rootObserved = true
+		}
+		if item.CredentialID == "https://issuer.invalid/credential/client" && item.Denied == "1" {
+			denialObserved = true
+		}
+	}
+	if !rootObserved || !denialObserved {
+		t.Fatal("real authentication/denial observations lost identity or precision")
 	}
 	rootAfter := metadata("kyber-api-credentials")
 	if rootBefore.UID != rootAfter.UID || rootBefore.ResourceVersion != rootAfter.ResourceVersion {

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
 
@@ -608,8 +609,7 @@ func presentedKey(r *http.Request) (string, error) {
 
 // ErrCodeSessionExpired is the error code returned when a request carried a
 // browser-session cookie that is no longer valid — expired, evicted, or
-// (the common one) wiped by a control-plane restart, since sessions are
-// process-local.
+// retired by a key change. Signed sessions survive control-plane restarts.
 //
 // It exists as its OWN code rather than sharing "unauthorized" because the
 // client's response differs: an expired session is recoverable in place by
@@ -640,7 +640,7 @@ func (e *authError) Code() string {
 func errUnauthorized(msg string) error { return &authError{msg: msg} }
 
 // errSessionExpired is errUnauthorized for the specific recoverable case of
-// a dead browser session.
+// a missing, expired or retired browser session.
 func errSessionExpired(msg string) error {
 	return &authError{msg: msg, code: ErrCodeSessionExpired}
 }
@@ -659,10 +659,15 @@ func callerFrom(ctx context.Context) *Caller {
 // authMiddleware wraps next with API key authentication. Requests that pass are
 // forwarded with the resolved Caller stashed in the request context; requests
 // that fail receive 401.
-func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
+func authMiddleware(auth Authenticator, next http.Handler, usage ...securityaudit.CredentialUsageObserver) http.Handler {
+	var observer securityaudit.CredentialUsageObserver
+	if len(usage) > 0 {
+		observer = usage[0]
+	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") == "" && r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
 			if _, err := r.Cookie(browserSessionCookie); err == nil && !sameOriginRequest(r) {
+				observeUnidentifiedCredentialUsage(observer, "unrecognized")
 				writeJSONError(w, http.StatusForbidden, "forbidden_origin", "browser session requests require a same-origin Origin header")
 				return
 			}
@@ -670,9 +675,11 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 		caller, err := auth.Authenticate(r)
 		if err != nil {
 			if errors.Is(err, errOperatorAuthorityUnavailable) {
+				observeUnidentifiedCredentialUsage(observer, "unavailable")
 				writeOperatorAuthenticationUnavailable(w)
 				return
 			}
+			observeUnidentifiedCredentialUsage(observer, "unrecognized")
 			// Preserve the specific code when the authenticator supplied one
 			// (session_expired); everything else stays "unauthorized".
 			code := "unauthorized"
@@ -682,6 +689,18 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 			}
 			writeJSONError(w, http.StatusUnauthorized, code, err.Error())
 			return
+		}
+		if observer != nil {
+			transport := credentialUsageTransport(r)
+			unique := true
+			if observer != nil {
+				if inspector, ok := auth.(interface{ credentialUsageIdentityUnique(*Caller) bool }); ok {
+					unique = inspector.credentialUsageIdentityUnique(caller)
+				}
+			}
+			observeAcceptedCredentialUsage(observer, caller, transport, credentialUsageRequestAction(r), unique)
+			w = observeCredentialUsageResponse(w, observer, caller, transport, unique)
+
 		}
 		// Slide the browser-session cookie forward before the handler runs —
 		// once next.ServeHTTP writes a body, Set-Cookie is too late.

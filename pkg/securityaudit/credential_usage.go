@@ -20,7 +20,7 @@ var credentialUsageActions = map[string]bool{
 	"credentials:read": true, "credentials:write": true, "audit:read": true,
 	"agents:exec": true, "machines:exec": true, "logs:read": true, "transcripts:read": true,
 	"secrets:read": true, "secrets:write": true, "archives:read": true, "archives:write": true,
-	"browser:sign-in": true,
+	"browser:sign-in": true, "secrets:list": true, "archives:download": true,
 }
 
 func ValidCredentialUsageAction(action string) bool { return credentialUsageActions[action] }
@@ -30,11 +30,19 @@ func ValidCredentialUsageAction(action string) bool { return credentialUsageActi
 type CredentialUsageIdentity struct {
 	CredentialID string `json:"credentialId"`
 	PrincipalID  string `json:"principalId"`
+	TenantID     string `json:"tenantId"`
 	Authority    string `json:"authority"`
 }
 
 func (i CredentialUsageIdentity) valid() bool {
-	return validActorID(i.CredentialID) && validActorID(i.PrincipalID) && (i.Authority == "configuration" || i.Authority == "registry")
+	return validActorID(i.CredentialID) && validActorID(i.PrincipalID) && validActorID(i.TenantID) && (i.Authority == "configuration" || i.Authority == "registry")
+}
+
+func (i CredentialUsageIdentity) Validate() error {
+	if !i.valid() {
+		return ErrInvalid
+	}
+	return nil
 }
 
 type CredentialUsageDelta struct {
@@ -48,7 +56,7 @@ type CredentialUsageDelta struct {
 }
 
 func (d CredentialUsageDelta) key() string {
-	return d.Authority + "\x00" + d.CredentialID + "\x00" + d.PrincipalID + "\x00" + d.Transport
+	return d.Authority + "\x00" + d.CredentialID + "\x00" + d.PrincipalID + "\x00" + d.TenantID + "\x00" + d.Transport
 }
 
 type CredentialUsageBatch struct {
@@ -172,10 +180,10 @@ func (s *PostgresStore) WriteCredentialUsage(ctx context.Context, batch Credenti
 	if stopped || sequence == math.MaxInt64 || sequence+1 != batch.Sequence {
 		return ErrConflict
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operator_credential_usage_totals AS existing(namespace,credential_id,principal_id,authority,transport,authenticated,denied,last_accepted_at,generation,actions)
- SELECT $1,i."credentialId",i."principalId",i.authority,i.transport,i.authenticated,i.denied,i."lastAcceptedAt",i.generation,i.actions
- FROM jsonb_to_recordset($2::jsonb) AS i("credentialId" text,"principalId" text,authority text,transport text,authenticated numeric,denied numeric,"lastAcceptedAt" timestamptz,generation numeric,actions jsonb) WHERE true
- ON CONFLICT(namespace,credential_id,principal_id,authority,transport) DO UPDATE SET
+	_, err = tx.ExecContext(ctx, `INSERT INTO operator_credential_usage_totals AS existing(namespace,credential_id,principal_id,tenant_id,authority,transport,authenticated,denied,last_accepted_at,generation,actions)
+ SELECT $1,i."credentialId",i."principalId",i."tenantId",i.authority,i.transport,i.authenticated,i.denied,i."lastAcceptedAt",i.generation,i.actions
+ FROM jsonb_to_recordset($2::jsonb) AS i("credentialId" text,"principalId" text,"tenantId" text,authority text,transport text,authenticated numeric,denied numeric,"lastAcceptedAt" timestamptz,generation numeric,actions jsonb) WHERE true ORDER BY i.authority COLLATE "C",i."credentialId" COLLATE "C",i."principalId" COLLATE "C",i."tenantId" COLLATE "C",i.transport COLLATE "C"
+ ON CONFLICT(namespace,credential_id,principal_id,tenant_id,authority,transport) DO UPDATE SET
  authenticated=existing.authenticated+excluded.authenticated,denied=existing.denied+excluded.denied,
  last_accepted_at=GREATEST(existing.last_accepted_at,excluded.last_accepted_at),
  generation=CASE WHEN excluded.last_accepted_at IS NOT NULL AND (existing.last_accepted_at IS NULL OR excluded.last_accepted_at>existing.last_accepted_at) THEN excluded.generation WHEN excluded.last_accepted_at=existing.last_accepted_at THEN GREATEST(existing.generation,excluded.generation) ELSE existing.generation END,
@@ -233,7 +241,7 @@ func (s *PostgresStore) ReadCredentialUsage(ctx context.Context, namespace, obse
 	}
 	seen := map[string]bool{}
 	for _, identity := range identities {
-		key := identity.Authority + "\x00" + identity.CredentialID + "\x00" + identity.PrincipalID
+		key := identity.Authority + "\x00" + identity.CredentialID + "\x00" + identity.PrincipalID + "\x00" + identity.TenantID
 		if seen[key] {
 			return result, ErrInvalid
 		}
@@ -264,7 +272,7 @@ func (s *PostgresStore) ReadCredentialUsage(ctx context.Context, namespace, obse
 		at := latest.Time.UTC()
 		result.Coverage.LatestProgress = &at
 	}
-	rows, err := tx.QueryContext(ctx, `SELECT totals.credential_id,totals.principal_id,totals.authority,totals.transport,totals.authenticated::text,totals.denied::text,totals.last_accepted_at,totals.generation::text,totals.actions FROM operator_credential_usage_totals totals JOIN jsonb_to_recordset($2::jsonb) AS wanted("credentialId" text,"principalId" text,authority text) ON totals.credential_id=wanted."credentialId" AND totals.principal_id=wanted."principalId" AND totals.authority=wanted.authority WHERE totals.namespace=$1 ORDER BY totals.credential_id,totals.principal_id,totals.authority,totals.transport LIMIT 769`, namespace, requested)
+	rows, err := tx.QueryContext(ctx, `SELECT totals.credential_id,totals.principal_id,totals.tenant_id,totals.authority,totals.transport,totals.authenticated::text,totals.denied::text,totals.last_accepted_at,totals.generation::text,totals.actions FROM operator_credential_usage_totals totals JOIN jsonb_to_recordset($2::jsonb) AS wanted("credentialId" text,"principalId" text,"tenantId" text,authority text) ON totals.credential_id=wanted."credentialId" AND totals.principal_id=wanted."principalId" AND totals.tenant_id=wanted."tenantId" AND totals.authority=wanted.authority WHERE totals.namespace=$1 ORDER BY totals.credential_id,totals.principal_id,totals.tenant_id,totals.authority,totals.transport LIMIT 769`, namespace, requested)
 	if err != nil {
 		return result, databaseError(ctx, err)
 	}
@@ -272,7 +280,7 @@ func (s *PostgresStore) ReadCredentialUsage(ctx context.Context, namespace, obse
 		var item CredentialUsageTotals
 		var accepted sql.NullTime
 		var actions []byte
-		if rows.Scan(&item.CredentialID, &item.PrincipalID, &item.Authority, &item.Transport, &item.Authenticated, &item.Denied, &accepted, &item.Generation, &actions) != nil {
+		if rows.Scan(&item.CredentialID, &item.PrincipalID, &item.TenantID, &item.Authority, &item.Transport, &item.Authenticated, &item.Denied, &accepted, &item.Generation, &actions) != nil {
 			rows.Close()
 			return result, ErrUnavailable
 		}

@@ -1,6 +1,7 @@
 # Observe operator key use
 
-Status: implementation design for the approved MAT-97/MAT-134 scope. Key
+Status: implemented in draft PR #386 for the approved MAT-97/MAT-134 scope;
+full dev/browser acceptance and review are in progress. Key
 management and adoption remain separate from activity collection.
 
 ## Operator outcome
@@ -27,7 +28,8 @@ catalog, never raw paths, query strings, bodies or client-supplied labels.
 Normal authentication has no PostgreSQL dependency. A full queue, restart,
 missing reporter or database outage produces explicit partial coverage and
 freshness information. Browser sessions and bearer keys use the same stable
-credential identity. Long-lived connections contribute their initial request,
+credential/principal/tenant identity. Incomplete or shared configured identities
+remain explicitly unattributed; authentication and authorization are unchanged. Long-lived connections contribute their initial request,
 with continuing sensitive actions represented by the existing security history.
 
 Each process has a fresh observer UUID and monotonic batch sequence. PostgreSQL
