@@ -1015,7 +1015,7 @@ before final failure, and never issues/re-reveals material. `credential:recover`
 audits the current administrator separately from the original key change.
 The typed client never automatically retries mutation POSTs. Issuance time is
 reported only when known. Runtime protocol remains zero and cmd/control-plane
-registry activation, full UI and usage visibility remain outstanding.
+registry activation, adoption/recovery UI and final acceptance remain outstanding.
 
 Operator key management forms use server-provided permission target choices from
 `/api/v1/operator-credentials/options`. Prepared key values stay in component
@@ -1025,12 +1025,20 @@ never fence writes; only explicit POST reconciliation can do that. Cookie self
 rotation refreshes the same principal/tenant session; bearer hosts update their
 connection separately. Runtime authority activation remains staged.
 
+Credential audit delivery uses `api.OperatorCredentialDelivery.RunOnce` as a
+staged bounded helper. It confirms the immutable journal/outbox proof, marks a
+reference delivered only after durable success, then rechecks before pruning on
+a later pass. It never reissues/fences keys or changes access, and never retries
+a stale CAS candidate. Its rotating cursor prevents missing journal records from
+starving unrelated work. Runtime scheduling is not enabled by the helper alone.
+
 Operator key activity uses separate `securityaudit` usage aggregates and observer
 batch cursors. Accepted request metadata never includes credential material,
 content, raw paths or IP addresses. Collection is non-blocking; bounded queue
 loss, pending acknowledgement and partial coverage must stay visible. Aggregate
 counters and cursor advance commit together, with exact replay checks; cursor
 rows cannot be deleted and recreated without risking duplicate old batches.
-Counters cross the API as decimal strings. With PostgreSQL configured, main starts a reporter for its installation.
+Counters cross the API as decimal strings. With PostgreSQL configured, main
+starts a reporter for its installation.
 Authentication never waits for reporter writes. Admin activity reads recheck
 current access before output; the UI presents windowed counts and explicit gaps.
