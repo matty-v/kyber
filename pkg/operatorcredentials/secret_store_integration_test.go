@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -152,6 +153,44 @@ func TestGCPDevSecretStoreResourceVersions(t *testing.T) {
 	confirmed, err := b.Load(ctx)
 	if err != nil || confirmed.Document.Credentials[1].Name != "Verified integration" {
 		t.Fatal("conflicting data persisted")
+	}
+	// Real API proof that a write held after its read cannot commit past a
+	// metadata fence. Both stores use independent direct clients.
+	delayed := delayedCredentialWriter{Client: a.writer, ready: make(chan struct{}), release: make(chan struct{})}
+	unpause := sync.OnceFunc(func() { close(delayed.release) })
+	t.Cleanup(unpause)
+	lateStore, err := newSecretStore(a.reader, delayed, namespace, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late := confirmed.Document.Clone()
+	late.Credentials[1].Name = "Late rejected change"
+	late.Operations = append(late.Operations, fixtureOperation("update", fixtureServiceID))
+	lateResult := make(chan error, 1)
+	go func() { _, err := lateStore.Replace(ctx, confirmed.Version, late); lateResult <- err }()
+	select {
+	case <-delayed.ready:
+	case err := <-lateResult:
+		t.Fatal("late-write fixture refused before fence", err)
+	case <-ctx.Done():
+		t.Fatal("late-write fixture timed out")
+	}
+	fenced, fenceErr := b.Fence(ctx, confirmed.Version)
+	unpause()
+	if fenceErr != nil || fenced.Version == confirmed.Version {
+		t.Fatal("real API fence failed", fenceErr)
+	}
+	select {
+	case err := <-lateResult:
+		if !errors.Is(err, ErrConflict) {
+			t.Fatal("real API accepted late update", err)
+		}
+	case <-ctx.Done():
+		t.Fatal("late update did not settle")
+	}
+	confirmed, err = b.Load(ctx)
+	if err != nil || confirmed.Version != fenced.Version || confirmed.Document.Credentials[1].Name != "Verified integration" {
+		t.Fatal("fence changed policy or missed late commit")
 	}
 	// Verify adoption selection using a second inert Secret, never the live
 	// authentication registry or installation credentials.

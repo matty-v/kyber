@@ -957,6 +957,17 @@ Read `docs/design/2026-10-24-required-management-audit.md` before changing these
 boundaries. Handler deadline changes pass through the live writer's serialized
 setters; never let a later timeout undo an access-cancellation deadline.
 
+Credential adoption candidate conversion is private and inert. Keep actual
+root/final duplicate-material precedence, stable identities/grants and unknown
+issuance times. Never borrow another principal's tenant while filling missing
+identity. The V1 compatibility signer has immutable issuance/expiry cutoffs and
+bounded lifetime; retiring the installation signer ends scoped V1 trust while
+V2 stays per-key. Unknown credential writes are fenced at their original opaque
+resource version, then resolved through current authority/outbox; never replay
+issuance. Read `docs/design/2026-10-24-credential-adoption.md` before connecting
+adoption or mutation endpoints. Admission, root/source mutation coordination,
+replica checks, reconciliation and recovery UI remain activation gates.
+
 Supervised upgrades require `UpgradeCredentialCoordinator`. Once runtime protocol
 one is enabled, reserve before any
 release/authority decision, retain through writes/verification/rollback, and
