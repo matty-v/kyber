@@ -1024,3 +1024,12 @@ reviewed inventory version through polling. GET operation status/pending scans
 never fence writes; only explicit POST reconciliation can do that. Cookie self
 rotation refreshes the same principal/tenant session; bearer hosts update their
 connection separately. Runtime authority activation remains staged.
+
+Operator key activity uses separate `securityaudit` usage aggregates and observer
+batch cursors. Accepted request metadata never includes credential material,
+content, raw paths or IP addresses. Collection is non-blocking; bounded queue
+loss, pending acknowledgement and partial coverage must stay visible. Aggregate
+counters and cursor advance commit together, with exact replay checks; cursor
+rows cannot be deleted and recreated without risking duplicate old batches.
+Counters cross the API as decimal strings. Runtime/API/UI wiring is being added;
+the persistence and collector types alone do not enable collection.

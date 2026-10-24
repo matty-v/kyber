@@ -37,7 +37,18 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  intent JSONB NOT NULL, completion JSONB,
  PRIMARY KEY(namespace,operation_id)
  );
- CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,operation_id) WHERE completion IS NULL;`)
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,operation_id) WHERE completion IS NULL;
+ CREATE TABLE IF NOT EXISTS operator_credential_usage_observers (
+ namespace TEXT NOT NULL,observer_id UUID NOT NULL,started_at TIMESTAMPTZ NOT NULL,pod_uid TEXT NOT NULL,
+ sequence BIGINT NOT NULL, payload JSONB,progress_at TIMESTAMPTZ,stopped BOOLEAN NOT NULL DEFAULT false,
+ dropped NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(dropped>=0),unrecognized NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unrecognized>=0),unavailable NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unavailable>=0),unattributed NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unattributed>=0),
+ PRIMARY KEY(namespace,observer_id)
+ );
+ CREATE TABLE IF NOT EXISTS operator_credential_usage_totals (
+ namespace TEXT NOT NULL,credential_id TEXT NOT NULL,principal_id TEXT NOT NULL,authority TEXT NOT NULL CHECK(authority IN ('configuration','registry')),transport TEXT NOT NULL CHECK(transport IN ('bearer','browser-session','archive-capability')),
+ authenticated NUMERIC(40,0) NOT NULL CHECK(authenticated>=0),denied NUMERIC(40,0) NOT NULL CHECK(denied>=0),last_accepted_at TIMESTAMPTZ,generation NUMERIC(20,0) NOT NULL CHECK(generation>=0),actions JSONB NOT NULL,
+ PRIMARY KEY(namespace,credential_id,principal_id,authority,transport)
+ );`)
 	return databaseError(ctx, err)
 }
 
