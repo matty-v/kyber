@@ -23,12 +23,14 @@ type OperatorCredentialAuthority interface {
 var errOperatorAuthorityUnavailable = errors.New("operator authentication unavailable")
 
 type registryCredentials struct {
-	entries                 []scopedKey
-	byID                    map[string]scopedKey
-	compatibilityKey        []byte
-	compatibilityGeneration uint64
-	legacyGenerations       map[string]uint64
-	inventory               []operatorCredentialView
+	entries                    []scopedKey
+	byID                       map[string]scopedKey
+	compatibilityKey           []byte
+	compatibilityGeneration    uint64
+	compatibilityIssuedBefore  time.Time
+	compatibilityExpiresBefore time.Time
+	legacyGenerations          map[string]uint64
+	inventory                  []operatorCredentialView
 }
 
 func (registryCredentials) String() string { return "operator credential resolution [redacted]" }
@@ -67,7 +69,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 	if err := document.Validate(); err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
-	registry := &registryCredentials{legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration()}
+	registry := &registryCredentials{legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration(), compatibilityIssuedBefore: document.LegacyBrowserIssuedBefore(), compatibilityExpiresBefore: document.LegacyBrowserExpiresBefore()}
 	for _, credential := range document.Credentials {
 		// Validate supported permissions even for inactive records; do not silently
 		// reinterpret an unsupported registry after a downgrade.
