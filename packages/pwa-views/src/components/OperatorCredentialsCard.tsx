@@ -67,7 +67,7 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
           : 'Could not load operator credentials. Try refreshing.'}
     </p>}
     {data && <>
-      <p className="mt-3 text-sm text-text-muted">Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.</p>
+      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Operator keys for this Kyber installation. Secret values are never shown.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
       {data.warnings.map((warning) => <p key={warning} role="alert" className="mt-3 text-sm text-warning">{warning}</p>)}
       {data.credentials.length === 0 ? <p className="mt-4 text-sm text-text-muted">No accepted credentials were reported.</p> : <ul className="mt-4 space-y-3">
         {data.credentials.map((credential, index) => <li key={`${credential.source}:${credential.id}:${index}`} className="min-w-0 rounded-lg border border-border-subtle p-4">

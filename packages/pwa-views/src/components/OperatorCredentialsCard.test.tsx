@@ -37,6 +37,7 @@ describe('operator credential inventory', () => {
     render(<OperatorCredentialsCard />)
     expect(await screen.findByText('Revoked integration')).toBeInTheDocument()
     expect(screen.getByText('Revoked')).toBeInTheDocument()
+    expect(screen.getByText('Operator keys for this Kyber installation. Secret values are never shown.')).toBeInTheDocument()
     expect(screen.getByText('Expired')).toBeInTheDocument()
     expect(screen.getByText(/revoked and cannot authenticate/)).toBeInTheDocument()
     expect(screen.getByText(/expired and cannot authenticate/)).toBeInTheDocument()
