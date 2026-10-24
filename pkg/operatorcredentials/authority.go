@@ -141,3 +141,19 @@ func authorityUnavailable(ctx context.Context, err error) error {
 	}
 	return safe
 }
+
+// Replace changes only the currently selected registry incarnation and original
+// opaque resource version. It does not authorize the actor or admit audit; those
+// gates belong to the management executor. Unknown writes are never retried.
+func (s *AuthorityStore) Replace(ctx context.Context, expectedUID, expectedVersion string, next Document) (Snapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	current, err := s.Load(ctx)
+	if err != nil {
+		return Snapshot{}, authorityUnavailable(ctx, err)
+	}
+	if expectedUID == "" || expectedVersion == "" || current.UID != expectedUID || current.Version != expectedVersion {
+		return Snapshot{}, ErrConflict
+	}
+	return s.registry.Replace(ctx, expectedVersion, next)
+}

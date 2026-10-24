@@ -990,3 +990,9 @@ the outcome; completion ID/outcome/timestamp are immutable on replay. Pending
 work survives ordinary event retention. Recovery scans page by operation ID and
 restart periodically; they are not a frozen snapshot. The journal alone does not
 authorize callers, perform credential writes or activate authority.
+
+Staged managed-key mutation candidates preserve principal/tenant/provenance and
+separate material generation from permission revision. Client input cannot assign
+those identities or source ownership. Registry writes pin both the selected
+Secret UID and original resource version; missing authority is unavailable.
+These private builders are not public management endpoints or activation.
