@@ -18,7 +18,7 @@ const (
 	taskEventPoll       = time.Second
 	taskEventHeartbeat  = 20 * time.Second
 	taskEventMaxAge     = 5 * time.Minute
-	taskEventWriteLimit = 10 * time.Second
+	taskEventWriteLimit = operatorStreamWriteTimeout
 )
 
 func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, agentName, taskID string) {
@@ -33,6 +33,12 @@ func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, a
 	}
 	auth, ok := s.taskAuthorizationContext(w, r, agentName)
 	if !ok {
+		return
+	}
+	if !registerLiveOperatorAccess(r, func(current *Caller) bool {
+		return (current.Scopes.Has(ScopeTaskEventsRead) || current.Scopes.Has(ScopeRequestsRead)) && current.AgentResources.Has(s.Namespace+"/"+agentName)
+	}, nil) {
+		writeJSONError(w, http.StatusServiceUnavailable, "streaming_unavailable", "live authorization is unavailable")
 		return
 	}
 	release, retryAfter, ok := s.acquireTaskEventStream(r, taskID)
@@ -65,6 +71,15 @@ func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, a
 			return
 		}
 	}
+	signingKey, keyErr := s.taskEventCursorKey(r)
+	if keyErr != nil {
+		if errors.Is(keyErr, errOperatorAuthorityUnavailable) {
+			writeOperatorAuthenticationUnavailable(w)
+		} else {
+			writeJSONError(w, http.StatusForbidden, "access_changed", "task access has changed")
+		}
+		return
+	}
 	a := taskstore.AgentRef{Namespace: s.Namespace, Name: agentName}
 	initial, err := events.ReadEvents(r.Context(), taskstore.EventReadParams{Agent: a, TaskID: taskID, Authorization: auth, AfterSequence: last, Limit: taskEventReplayPage, Resume: cursor != ""})
 	if errors.Is(err, taskstore.ErrNotFound) {
@@ -72,7 +87,7 @@ func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	if errors.Is(err, taskstore.ErrEventCursorExpired) {
-		current, _ := s.encodeTaskEventCursor(r, agentName, taskID, initialHighWater(initial))
+		current, _ := s.signTaskEventCursor(r, agentName, taskID, initialHighWater(initial), signingKey)
 		writeJSON(w, http.StatusGone, map[string]any{"code": "event_cursor_expired", "taskId": taskID, "snapshotRequired": true, "currentCursor": current})
 		return
 	}
@@ -101,11 +116,14 @@ func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, a
 	page := initial
 	for {
 		for _, event := range page.Events {
+			if r.Context().Err() != nil {
+				return
+			}
 			encoded, marshalErr := json.Marshal(event)
 			if marshalErr != nil {
 				return
 			}
-			id, cursorErr := s.encodeTaskEventCursor(r, agentName, taskID, event.Sequence)
+			id, cursorErr := s.signTaskEventCursor(r, agentName, taskID, event.Sequence, signingKey)
 			if cursorErr != nil {
 				return
 			}

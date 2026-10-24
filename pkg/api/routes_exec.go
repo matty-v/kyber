@@ -3,10 +3,13 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -189,6 +192,30 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		return
 	}
 	defer conn.Close()
+	var accessClose sync.Once
+	closeChangedAccess := func() bool {
+		cause := context.Cause(r.Context())
+		code, reason := websocket.ClosePolicyViolation, "access changed"
+		if errors.Is(cause, errOperatorAuthorityUnavailable) {
+			code, reason = websocket.CloseTryAgainLater, "access temporarily unavailable"
+		} else if !errors.Is(cause, errOperatorAccessChanged) {
+			return false
+		}
+		accessClose.Do(func() {
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(100*time.Millisecond))
+			_ = conn.Close()
+		})
+		return true
+	}
+	accessWatchDone := make(chan struct{})
+	defer close(accessWatchDone)
+	go func() {
+		select {
+		case <-r.Context().Done():
+			closeChangedAccess()
+		case <-accessWatchDone:
+		}
+	}()
 
 	stdinR, stdinW := io.Pipe()
 	stdoutR, stdoutW := io.Pipe()
@@ -235,6 +262,7 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		for {
 			n, err := stdoutR.Read(buf)
 			if n > 0 {
+				_ = conn.SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
 					cancelExec()
 					outputFailed <- struct{}{}
@@ -261,6 +289,14 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 	// Drain stdout before the exit frame so there is only one writer.
 	// Do not wait for the client reader: it can be waiting for this exit.
 	<-execReadDone
+	if closeChangedAccess() {
+		outcome := "failure"
+		if errors.Is(context.Cause(r.Context()), errOperatorAuthorityUnavailable) {
+			outcome = "unknown"
+		}
+		markSensitiveOutcome(r, outcome)
+		return
+	}
 
 	outcome := "success"
 	if streamErr != nil || execCtx.Err() != nil {
@@ -271,6 +307,7 @@ func (s *Server) execIntoPod(w http.ResponseWriter, r *http.Request, podName, co
 		outcome = "failure"
 	default:
 	}
+	_ = conn.SetWriteDeadline(time.Now().Add(operatorStreamWriteTimeout))
 	var exitWriteErr error
 	// Send a close frame, optionally carrying the exit error.
 	if streamErr != nil {
