@@ -161,6 +161,14 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 		}
 		return result
 	}
+	optionsRequest := registryBearer("original-installation-fixture")
+	optionsRequest.URL.Path = "/api/v1/operator-credentials/options"
+	optionsResponse := httptest.NewRecorder()
+	handler.ServeHTTP(optionsResponse, optionsRequest)
+	var choices operatorCredentialOptions
+	if optionsResponse.Code != http.StatusOK || json.Unmarshal(optionsResponse.Body.Bytes(), &choices) != nil || choices.Version != 1 || choices.Namespace != namespace || len(choices.Permissions) != len(managedPermissionLabels) {
+		t.Fatal("real managed permission choices unavailable")
+	}
 	staleVersion := reviewedVersion()
 	request := managedCreateFixtureRequest()
 	result := post(request)
@@ -227,6 +235,14 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 	if _, err := audit.AdmitCredentialOperation(ctx, intent); err != nil {
 		t.Fatal("interrupted intent admission failed")
 	}
+	pendingRequest := registryBearer("original-installation-fixture")
+	pendingRequest.URL.Path = "/api/v1/operator-credential-operations/pending"
+	pendingResponse := httptest.NewRecorder()
+	handler.ServeHTTP(pendingResponse, pendingRequest)
+	var pending operatorCredentialPendingPage
+	if pendingResponse.Code != http.StatusOK || json.Unmarshal(pendingResponse.Body.Bytes(), &pending) != nil || len(pending.Items) != 1 || pending.Items[0].OperationID != reference.ID {
+		t.Fatal("real pending journal operation not visible")
+	}
 	recovery := reconcileMutationHTTP(t, handler, reference.ID)
 	var recovered credentialOperationView
 	if recovery.Code != http.StatusOK || json.Unmarshal(recovery.Body.Bytes(), &recovered) != nil || recovered.Status != "failure" {
@@ -238,12 +254,44 @@ func TestGCPDevManagedCredentialLifecycle(t *testing.T) {
 	if _, err := server.auth.Authenticate(registryBearer(interrupted.Key)); err == nil {
 		t.Fatal("interrupted key was issued")
 	}
+	// Refresh only this browser's same-identity session after acknowledged
+	// self-rotation of the disposable registry's installation key.
+	resolved, err := server.auth.resolve(ctx)
+	if err != nil || resolved.registry == nil {
+		t.Fatal("probe registry unavailable")
+	}
+	priorCookie, err := resolved.registry.createBrowserSession(*actor, time.Now())
+	if err != nil {
+		t.Fatal("probe browser session unavailable")
+	}
+	newValue := base64.RawURLEncoding.EncodeToString([]byte(strings.Repeat("-", 32)))
+	body, err := json.Marshal(map[string]string{"operationId": uuid.NewString(), "action": "rotate", "credentialId": actor.CredentialID, "key": newValue})
+	if err != nil {
+		t.Fatal("probe request encoding failed")
+	}
+	browserRequest := httptest.NewRequest(http.MethodPost, "/api/v1/operator-credentials/mutations", strings.NewReader(string(body)))
+	browserRequest.Header.Set("If-Match", reviewedVersion())
+	browserRequest.Header.Set("Origin", "http://example.com")
+	browserRequest.AddCookie(&http.Cookie{Name: browserSessionCookie, Value: priorCookie})
+	browserResponse := httptest.NewRecorder()
+	handler.ServeHTTP(browserResponse, browserRequest)
+	cookies := browserResponse.Result().Cookies()
+	if browserResponse.Code != http.StatusOK || len(cookies) != 1 {
+		t.Fatal("real browser self-rotation did not refresh session")
+	}
+	currentBrowser, err := server.auth.Authenticate(registryCookie(cookies[0].Value))
+	if err != nil || currentBrowser.PrincipalID != actor.PrincipalID || currentBrowser.TenantID != actor.TenantID || currentBrowser.CredentialID != actor.CredentialID || currentBrowser.CredentialGeneration != actor.CredentialGeneration+1 {
+		t.Fatal("real browser rotation changed identity", err)
+	}
+	if _, err := server.auth.Authenticate(registryCookie(priorCookie)); err == nil {
+		t.Fatal("old browser session survived self-rotation")
+	}
 	rootAfter := metadata("kyber-api-credentials")
 	if rootBefore.UID != rootAfter.UID || rootBefore.ResourceVersion != rootAfter.ResourceVersion {
 		t.Fatal("live credential metadata changed")
 	}
 	checkEmpty()
-	t.Log("Real dev create/edit/rotate/revoke and durable audit passed; interrupted-write recovery fenced the original version without issuance. Live credentials unchanged; zero Agents; owned probe/schema cleanup verified.")
+	t.Log("Real dev choices, pending recovery, same-identity browser rotation, create/edit/rotate/revoke and durable audit passed; interrupted-write recovery fenced the original version without issuance. Live credentials unchanged; zero Agents; owned probe/schema cleanup verified.")
 }
 
 func isolatedCredentialManagementAudit(t *testing.T, ctx context.Context) *securityaudit.PostgresStore {
