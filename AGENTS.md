@@ -933,6 +933,14 @@ watcher enforces revocation. Read
 `docs/design/2026-10-24-operator-stream-access.md` before changing cancellation,
 write deadlines, WebSocket close behavior or completion outcome handling.
 
+Public archive download capabilities use signed V2 claims bound to one job,
+Agent/namespace, credential identity and a private-keyed material proof. Resolve
+the current authority at admission and during the transfer; never use the link
+as a general API key. URL expiry limits admission, not healthy transfer duration.
+Configuration resolution keeps ordinary bearer duplicate-key precedence. Old V1
+or pre-adoption links require regeneration; retained archives are unchanged. Read
+`docs/design/2026-10-24-current-archive-download-access.md` before changing this path.
+
 The required `test` job also runs the focused live-operator access tests with
 Go's race detector when authentication, stream authorization, credential-store
 code, Go module inputs or the workflow change. The change detector keeps this

@@ -1,10 +1,7 @@
 package api
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -165,8 +162,17 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 				return
 			}
 			exp := a.now().Add(a.limits().LinkTTL)
+			token, err := s.signCurrentArchiveDownload(r, j, exp)
+			if err != nil {
+				if errors.Is(err, errOperatorAuthorityUnavailable) {
+					writeOperatorAuthenticationUnavailable(w)
+				} else {
+					writeJSONError(w, http.StatusForbidden, "download_access_changed", "archive access changed; request a new download link")
+				}
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"url":       "/api/v1/archive-downloads/" + a.signDownload(j, exp),
+				"url":       "/api/v1/archive-downloads/" + token,
 				"expiresAt": exp,
 				"filename":  archiveFilename(j),
 			})
@@ -177,8 +183,7 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 }
 
 // requireArchiveAccess requires archives:admin and that the caller's agent
-// resources include this agent ("*" for installation-wide callers such as
-// the legacy key). A disk archive can hold credentials, so a scoped key
+// resources include this agent ("*" for installation administrators). A disk archive can hold credentials, so a scoped key
 // never reaches an agent it was not explicitly granted.
 func (s *Server) requireArchiveAccess(w http.ResponseWriter, r *http.Request, name string) bool {
 	if !s.requireScope(w, r, name, "disk-archive", ScopeArchivesAdmin) {
@@ -197,54 +202,15 @@ func archiveFilename(j *archivejob.Job) string {
 	return fmt.Sprintf("%s-disk-%s.zip", j.Agent, ts)
 }
 
-// Download tokens are job ID, expiry and an HMAC over both under a key
-// derived from the signing key. They are bearer credentials for one job's
-// bytes for a few minutes, which is what lets a browser download a large
-// archive with a plain navigation instead of buffering it in memory.
-func (a *ArchiveService) downloadMAC(id string, exp time.Time) []byte {
-	m := hmac.New(sha256.New, a.SigningKey)
-	m.Write([]byte("kyber archive download v1\x00"))
-	m.Write([]byte(id))
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(exp.Unix()))
-	m.Write(b[:])
-	return m.Sum(nil)
-}
-
-func (a *ArchiveService) signDownload(j *archivejob.Job, exp time.Time) string {
-	payload := j.ID + "." + strconv.FormatInt(exp.Unix(), 10)
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." +
-		base64.RawURLEncoding.EncodeToString(a.downloadMAC(j.ID, exp))
-}
-
-func (a *ArchiveService) parseDownload(token string) (string, bool) {
-	p, sig, ok := strings.Cut(token, ".")
-	if !ok {
-		return "", false
-	}
-	raw, err1 := base64.RawURLEncoding.DecodeString(p)
-	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
-	if err1 != nil || err2 != nil {
-		return "", false
-	}
-	id, expRaw, ok := strings.Cut(string(raw), ".")
-	unix, err := strconv.ParseInt(expRaw, 10, 64)
-	if !ok || err != nil {
-		return "", false
-	}
-	exp := time.Unix(unix, 0)
-	if !hmac.Equal(mac, a.downloadMAC(id, exp)) || !a.now().Before(exp) {
-		return "", false
-	}
-	return id, true
-}
-
 // archiveDownloadPrefix is outside the authenticated API: the path token is
 // the credential. loggingMiddleware redacts it.
 const archiveDownloadPrefix = "/api/v1/archive-downloads/"
 
 // handleArchiveDownload streams a completed export as a plain ZIP.
 func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
@@ -254,13 +220,33 @@ func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "archives_unavailable", "disk archives are unavailable")
 		return
 	}
-	id, ok := a.parseDownload(strings.TrimPrefix(r.URL.Path, archiveDownloadPrefix))
+	claims, ok := s.parseCurrentArchiveDownload(strings.TrimPrefix(r.URL.Path, archiveDownloadPrefix))
 	if !ok {
 		writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is invalid or has expired")
 		return
 	}
-	j, err := a.Jobs.Get(r.Context(), id)
-	if err != nil || j.Kind != archivejob.KindExport || j.State != archivejob.StateCompleted {
+	caller, err := s.resolveArchiveDownload(r.Context(), claims)
+	if err != nil {
+		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			writeOperatorAuthenticationUnavailable(w)
+		} else {
+			writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is no longer authorized; request a new link")
+		}
+		return
+	}
+	r = r.WithContext(context.WithValue(r.Context(), callerCtxKey{}, caller))
+	handler := s.liveOperatorRequestsWithAccess(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.streamArchiveDownload(w, r, claims)
+	}), func(r *http.Request) (*Caller, error) { return s.resolveArchiveDownload(r.Context(), claims) }, func(_ *http.Request, c *Caller) bool {
+		return c.Scopes.Has(ScopeArchivesAdmin) && c.AgentResources.Has(claims.Namespace+"/"+claims.Agent)
+	})
+	handler.ServeHTTP(w, r)
+}
+
+func (s *Server) streamArchiveDownload(w http.ResponseWriter, r *http.Request, claims archiveDownloadClaims) {
+	a := s.Archives
+	j, err := a.Jobs.Get(r.Context(), claims.Job)
+	if err != nil || j.Kind != archivejob.KindExport || j.State != archivejob.StateCompleted || j.Agent != claims.Agent {
 		writeJSONError(w, http.StatusNotFound, "not_found", "this export is no longer available")
 		return
 	}

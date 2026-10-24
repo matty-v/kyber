@@ -84,7 +84,15 @@ every sync.
   `kyber.io/agent` label, so the agent network policies apply to it, and a
   per-job token that can upload to its own job and nothing else.
 - A download link is valid for ten minutes and for one job. The token is in
-  the URL path, which the control plane redacts from its request log. Treat a
+  the URL path, which the control plane redacts from its request log. The issuing
+  key must still have `archives:admin` and access to that Agent. Rotation,
+  revocation, expiry or removing that permission/Agent grant invalidates its links
+  and closes active transfers within the live-access check window (target: ten
+  seconds). An unavailable credential authority returns 503 before transfer or
+  closes an active transfer. A healthy download already started may continue past
+  the link's ten-minute start limit. After upgrading from V1 links or adopting the
+  credential registry, click Download again to generate a new link; archives and
+  Agent disks are unchanged. Treat a
   downloaded archive as sensitive: it can contain local credential files
   (`~/.claude/.credentials.json`, `~/.codex/auth.json`, SSH keys). The console
   lists files that look like credentials, and the harness login files

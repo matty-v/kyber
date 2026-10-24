@@ -61,6 +61,17 @@ func registerLiveOperatorAccess(r *http.Request, check func(*Caller) bool, admis
 // Short operations finish before a tick; long operations cannot retain a
 // permission snapshot until their connection or browser cookie expires.
 func (s *Server) liveOperatorRequests(next http.Handler) http.Handler {
+	return s.liveOperatorRequestsWithAccess(next, func(r *http.Request) (*Caller, error) {
+		if s.auth == nil {
+			return nil, errOperatorAuthorityUnavailable
+		}
+		return s.auth.Authenticate(r)
+	}, func(r *http.Request, c *Caller) bool { return c.Scopes.full || s.restrictedOperatorRoute(r, c) })
+}
+
+// Public capability routes provide their own verified, narrowly bound resolver.
+// They never turn a download capability into a bearer key for other API routes.
+func (s *Server) liveOperatorRequestsWithAccess(next http.Handler, resolve func(*http.Request) (*Caller, error), permits func(*http.Request, *Caller) bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithCancelCause(r.Context())
 		state := &liveOperatorAccess{requestID: w.Header().Get(RequestIDHeader)}
@@ -82,13 +93,7 @@ func (s *Server) liveOperatorRequests(next http.Handler) http.Handler {
 					return
 				}
 				checkCtx, stop := context.WithTimeout(r.Context(), operatorAccessCheckTimeout)
-				var after *Caller
-				var err error
-				if s.auth == nil {
-					err = errOperatorAuthorityUnavailable
-				} else {
-					after, err = s.auth.Authenticate(r.WithContext(checkCtx))
-				}
+				after, err := resolve(r.WithContext(checkCtx))
 				stop()
 				if ctx.Err() != nil {
 					return
@@ -98,7 +103,7 @@ func (s *Server) liveOperatorRequests(next http.Handler) http.Handler {
 					interruptOperatorTransport(w, r)
 					return
 				}
-				allowed := err == nil && before != nil && after != nil && sameCredentialIdentity(*before, *after) && (after.Scopes.full || s.restrictedOperatorRoute(r, after)) && state.permits(after)
+				allowed := err == nil && before != nil && after != nil && sameCredentialIdentity(*before, *after) && permits(r, after) && state.permits(after)
 				if allowed {
 					continue
 				}
