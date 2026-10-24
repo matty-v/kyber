@@ -22,7 +22,9 @@ type fakeCommander struct {
 	// values is what `helm get values` returns.
 	values string
 	// status is what `helm status -o json` returns.
-	status string
+	status           string
+	templateManifest string
+	rollbackManifest string
 	// failOn fails the first command whose joined args contain this string.
 	failOn string
 	// failRollback fails the rollback too, simulating the worst case.
@@ -51,6 +53,10 @@ func (f *fakeCommander) Output(_ context.Context, _ string, args ...string) (str
 		return `{"name":"kyber","version":4,"info":{"status":"deployed"},"chart":{"metadata":{"version":"1.0.1","appVersion":"1.0.1"}}}`, nil
 	case strings.HasPrefix(joined, "get values"):
 		return f.values, nil
+	case strings.HasPrefix(joined, "get manifest"):
+		return f.rollbackManifest, nil
+	case strings.HasPrefix(joined, "template"):
+		return f.templateManifest, nil
 	}
 	return "", nil
 }
@@ -117,13 +123,15 @@ func newRunner(t *testing.T, cmd *fakeCommander, ver Verifier) *Runner {
 	}
 
 	return &Runner{
+		CredentialCoordinator: &fakeCredentialCoordinator{},
 		Cfg: Config{
-			Release:       "kyber-canary",
-			Namespace:     "kyber-system",
-			ChartRef:      "oci://ghcr.io/matty-v/charts/kyber",
-			TargetVersion: "1.0.2",
-			HelmBin:       "helm",
-			WorkDir:       work,
+			Release:                "kyber-canary",
+			Namespace:              "kyber-system",
+			ControlPlaneDeployment: "kyber-control-plane",
+			ChartRef:               "oci://ghcr.io/matty-v/charts/kyber",
+			TargetVersion:          "1.0.2",
+			HelmBin:                "helm",
+			WorkDir:                work,
 		},
 		Cmd: cmd,
 		Ver: ver,

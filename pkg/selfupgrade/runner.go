@@ -48,13 +48,16 @@ const DefaultVerifyTimeout = 5 * time.Minute
 // upgrades itself with.
 const chartName = "kyber"
 
-// Config is everything the upgrade needs to know. All fields except the
-// timeouts are required.
+// Config identifies the release, artifact and upgrade execution settings. The
+// deployment name is required for adopted-authority compatibility validation;
+// the production entrypoint always supplies it.
 type Config struct {
 	// Release and Namespace identify the Helm release to upgrade. This must
 	// already BE a Helm release — see Run's first step.
 	Release   string
 	Namespace string
+	// ControlPlaneDeployment pins compatibility validation to this installation.
+	ControlPlaneDeployment string
 
 	// ChartRef is the OCI repository holding the chart, without a version:
 	// oci://ghcr.io/matty-v/charts/kyber
@@ -141,12 +144,13 @@ type Verifier interface {
 
 // Runner executes one upgrade.
 type Runner struct {
-	Cfg Config
-	Cmd Commander
-	K8s client.Client
-	Ver Verifier
-	Log *slog.Logger
-	Now func() time.Time
+	Cfg                   Config
+	Cmd                   Commander
+	K8s                   client.Client
+	Ver                   Verifier
+	Log                   *slog.Logger
+	Now                   func() time.Time
+	CredentialCoordinator UpgradeCredentialCoordinator
 
 	// ApplyCRDsFn overrides how CRDs are applied. Nil uses ApplyCRDs against
 	// K8s, which is what the Job does. The seam exists because the fake
@@ -195,7 +199,7 @@ type releaseStatus struct {
 // revision that was live when Run started and returns an error describing both
 // the original failure and the rollback outcome. A rollback that itself fails
 // is reported loudly — that is the state a human has to look at.
-func (r *Runner) Run(ctx context.Context) error {
+func (r *Runner) runReserved(ctx context.Context, session *credentialUpgradeRun) error {
 	if err := r.Cfg.Validate(); err != nil {
 		return err
 	}
@@ -219,6 +223,7 @@ func (r *Runner) Run(ctx context.Context) error {
 		return err
 	}
 	log.Info("current release", "revision", current.Version, "status", current.Info.Status)
+	session.fromRevision = current.Version
 
 	// 2. Capture the operator's values explicitly. NOT `--reuse-values`:
 	// that flag carries values forward invisibly, so what a release is
@@ -246,18 +251,29 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := session.check(ctx); err != nil {
+		return err
+	}
+	if session.selected {
+		if err := r.validateCredentialCompatibility(ctx, current.Version, chartDir, valuesPath, session); err != nil {
+			return err
+		}
+	}
 
 	// 5. CRDs, before the upgrade, fail-closed. Helm will not do this.
-	if err := r.applyCRDs(ctx, chartDir); err != nil {
+	if err := r.applyCRDs(ctx, chartDir, session); err != nil {
 		return err
 	}
 
 	// 6. The upgrade itself.
+	if err := session.check(ctx); err != nil {
+		return err
+	}
 	if err := r.upgrade(ctx, chartDir, valuesPath); err != nil {
 		if r.Cfg.DryRun {
 			return err
 		}
-		return r.rollback(ctx, current.Version, err)
+		return r.rollback(ctx, current.Version, err, session)
 	}
 	if r.Cfg.DryRun {
 		log.Info("dry run complete: no CRDs applied, no release written", "elapsed", r.now().Sub(started).String())
@@ -268,13 +284,12 @@ func (r *Runner) Run(ctx context.Context) error {
 	// "deployed" is a statement about the release record; it has been true of
 	// clusters serving a stale build before.
 	if err := r.verify(ctx); err != nil {
-		return r.rollback(ctx, current.Version, err)
+		return r.rollback(ctx, current.Version, err, session)
 	}
-
-	log.Info("self-upgrade complete",
-		"targetVersion", r.Cfg.TargetVersion,
-		"fromRevision", current.Version,
-		"elapsed", r.now().Sub(started).String())
+	if err := session.check(ctx); err != nil {
+		return err
+	}
+	session.safeToRelease = true
 	return nil
 }
 
@@ -345,7 +360,7 @@ func (r *Runner) crdDir(chartDir string) string {
 	return filepath.Join(chartDir, "crds")
 }
 
-func (r *Runner) applyCRDs(ctx context.Context, chartDir string) error {
+func (r *Runner) applyCRDs(ctx context.Context, chartDir string, session *credentialUpgradeRun) error {
 	dir := r.crdDir(chartDir)
 	crds, err := LoadCRDs(dir)
 	if err != nil {
@@ -374,6 +389,10 @@ func (r *Runner) applyCRDs(ctx context.Context, chartDir string) error {
 			return ApplyCRDs(ctx, r.K8s, crds)
 		}
 	}
+	if err := session.check(ctx); err != nil {
+		return err
+	}
+	session.safeToRelease = false
 	applied, err := apply(ctx, crds)
 	if err != nil {
 		return fmt.Errorf("apply CRDs before upgrading (nothing else has been changed): %w", err)
@@ -427,12 +446,18 @@ func (r *Runner) verify(ctx context.Context) error {
 // The context is deliberately detached from the caller's: if the Job is being
 // torn down or the upgrade timed out, that same expiry must not also kill the
 // rollback and leave the cluster on the half-applied release.
-func (r *Runner) rollback(ctx context.Context, revision int, cause error) error {
+func (r *Runner) rollback(ctx context.Context, revision int, cause error, session *credentialUpgradeRun) error {
 	log := r.log()
-	log.Error("upgrade failed; rolling back", "toRevision", revision, "error", cause.Error())
 
 	rbCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), r.Cfg.upgradeTimeout())
 	defer cancel()
+	if err := session.check(rbCtx); err != nil {
+		return errors.Join(cause, fmt.Errorf("refusing rollback without current credential maintenance ownership: %w", err))
+	}
+	if err := r.checkCredentialRollback(rbCtx, revision, session); err != nil {
+		return errors.Join(cause, fmt.Errorf("refusing incompatible or changed rollback revision: %w", err))
+	}
+	log.Error("upgrade failed; rolling back", "toRevision", revision, "error", cause.Error())
 
 	err := r.Cmd.Stream(rbCtx, r.Cfg.HelmBin,
 		"rollback", r.Cfg.Release, fmt.Sprint(revision),
