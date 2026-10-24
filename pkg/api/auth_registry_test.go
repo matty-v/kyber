@@ -43,7 +43,7 @@ func registryFixtureDocument(t *testing.T) operatorcredentials.Document {
 		(operatorcredentials.Credential{ID: installationAdminCredentialID, PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Name: "Installation administrator", Role: "administrator", State: "active", Generation: 1, PermissionRevision: 1, Source: operatorcredentials.Source{Kind: "installation"}}).WithSecretMaterial([]byte("original-installation-fixture")).WithLegacyBrowserGeneration(1),
 		(operatorcredentials.Credential{ID: "other-admin", PrincipalID: "other-principal", TenantID: installationTenantID, Name: "Other administrator", Role: "administrator", State: "active", Generation: 1, PermissionRevision: 1, Source: operatorcredentials.Source{Kind: "managed"}}).WithSecretMaterial([]byte("other-admin-fixture")),
 		(operatorcredentials.Credential{ID: "https://issuer.invalid/credential/client", PrincipalID: "client@example.invalid", TenantID: "tenant_client", Name: "Task client", Role: "restricted", State: "active", Generation: 1, PermissionRevision: 1, Scopes: []string{"tasks:read", "task-events:read", "metrics:read", "logs:read"}, AgentResources: []string{"kyber-system/alpha"}, Source: operatorcredentials.Source{Kind: "managed"}}).WithSecretMaterial([]byte("client-key-fixture")).WithLegacyBrowserGeneration(1),
-	}}).WithLegacyBrowserSigningKey(seed, 1)
+	}}).WithLegacyBrowserSigningKey(seed, 1, time.Now().UTC().Add(time.Minute), time.Now().UTC().Add(time.Minute+browserSessionTTL))
 }
 func registryFixtureAuthenticator(t *testing.T, authority *memoryOperatorAuthority) *APIKeyAuthenticator {
 	t.Helper()
@@ -148,8 +148,11 @@ func TestRegistrySessionsSurviveOtherCredentialRotation(t *testing.T) {
 		d.Credentials[0] = d.Credentials[0].WithSecretMaterial([]byte("rotated-installation-fixture"))
 		d.Credentials[0].Generation++
 	})
-	for _, token := range []string{clientV1, clientV2, otherCookie} {
+	for _, token := range []string{clientV2, otherCookie} {
 		mustRegistryCaller(t, a, registryCookie(token))
+	}
+	if _, err := a.Authenticate(registryCookie(clientV1)); err == nil {
+		t.Fatal("retired installation signer still accepted a scoped V1 session")
 	}
 	for _, request := range []*http.Request{registryCookie(rootV1), registryBearer("original-installation-fixture")} {
 		if _, err := a.Authenticate(request); err == nil {
@@ -233,7 +236,9 @@ func TestRegistryCompilerRejectsUnsupportedAuthority(t *testing.T) {
 			d.Credentials[2] = d.Credentials[2].WithSecretMaterial(d.Credentials[1].SecretMaterial())
 		},
 		"unsupported schema": func(d *operatorcredentials.Document) { d.SchemaVersion = 2 },
-		"malformed seed":     func(d *operatorcredentials.Document) { *d = d.WithLegacyBrowserSigningKey([]byte("bad"), 1) },
+		"malformed seed": func(d *operatorcredentials.Document) {
+			*d = d.WithLegacyBrowserSigningKey([]byte("bad"), 1, d.LegacyBrowserIssuedBefore(), d.LegacyBrowserExpiresBefore())
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}

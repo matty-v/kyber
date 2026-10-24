@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"time"
 )
 
 // A distinct private type removes public transport methods. Only this codec
@@ -22,6 +23,8 @@ type storedDocument struct {
 	Operations                     []Operation        `json:"operations"`
 	LegacyBrowserSigningKey        []byte             `json:"legacyBrowserSigningKey,omitempty"`
 	LegacyBrowserSigningGeneration uint64             `json:"legacyBrowserSigningGeneration,omitempty"`
+	LegacyBrowserIssuedBefore      *time.Time         `json:"legacyBrowserIssuedBefore,omitempty"`
+	LegacyBrowserExpiresBefore     *time.Time         `json:"legacyBrowserExpiresBefore,omitempty"`
 }
 
 func encode(d Document) ([]byte, Document, error) {
@@ -38,6 +41,12 @@ func encode(d Document) ([]byte, Document, error) {
 		return nil, Document{}, err
 	}
 	wire := storedDocument{LegacyBrowserSigningGeneration: d.legacyBrowserSigningGeneration, LegacyBrowserSigningKey: d.legacyBrowserSigningKey, SchemaVersion: d.SchemaVersion, Namespace: d.Namespace, Operations: d.Operations, Credentials: make([]storedCredential, 0, len(d.Credentials))}
+	if !d.legacyBrowserIssuedBefore.IsZero() {
+		cutoff := d.legacyBrowserIssuedBefore
+		wire.LegacyBrowserIssuedBefore = &cutoff
+		expiry := d.legacyBrowserExpiresBefore
+		wire.LegacyBrowserExpiresBefore = &expiry
+	}
 	for _, c := range d.Credentials {
 		wire.Credentials = append(wire.Credentials, storedCredential{Record: credentialData(c), Material: c.material, LegacyBrowserGeneration: c.legacyBrowserGeneration})
 	}
@@ -78,6 +87,12 @@ func decode(raw []byte) (Document, error) {
 		return Document{}, ErrInvalid
 	}
 	d := Document{legacyBrowserSigningGeneration: wire.LegacyBrowserSigningGeneration, legacyBrowserSigningKey: bytes.Clone(wire.LegacyBrowserSigningKey), SchemaVersion: wire.SchemaVersion, Namespace: wire.Namespace, Operations: wire.Operations, Credentials: make([]Credential, 0, len(wire.Credentials))}
+	if wire.LegacyBrowserIssuedBefore != nil {
+		d.legacyBrowserIssuedBefore = *wire.LegacyBrowserIssuedBefore
+	}
+	if wire.LegacyBrowserExpiresBefore != nil {
+		d.legacyBrowserExpiresBefore = *wire.LegacyBrowserExpiresBefore
+	}
 	for _, c := range wire.Credentials {
 		d.Credentials = append(d.Credentials, Credential(c.Record).WithSecretMaterial(c.Material).WithLegacyBrowserGeneration(c.LegacyBrowserGeneration))
 	}
