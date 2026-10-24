@@ -84,3 +84,22 @@ func TestConfiguredOpaqueIdentityCompatibility(t *testing.T) {
 		t.Fatal("existing identity format rejected", err)
 	}
 }
+
+func TestRegistryCredentialAuthorityAndOpaqueTarget(t *testing.T) {
+	e := fixtureEvent()
+	e.CredentialAuthority = "registry"
+	e.Action = "credential:revoke"
+	e.ResourceKind = "credential"
+	e.ResourceName = "https://issuer.example.invalid/credentials/one"
+	if err := e.Validate(); err != nil {
+		t.Fatal("registry identity/opaque credential target rejected", err)
+	}
+	if err := (Filter{Namespace: e.Namespace, ResourceKind: e.ResourceKind, ResourceName: e.ResourceName, Limit: 10}).Validate(); err != nil {
+		t.Fatal("valid credential event cannot be filtered", err)
+	}
+
+	e.ResourceName = "private\ncontrol"
+	if !errors.Is(e.Validate(), ErrInvalid) {
+		t.Fatal("control characters accepted in credential target")
+	}
+}

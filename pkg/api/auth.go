@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -114,6 +115,7 @@ type Caller struct {
 	Subject              string
 	CredentialID         string
 	CredentialGeneration uint64
+	CredentialAuthority  string
 	Scopes               ScopeSet
 	AgentResources       ResourceSet
 	MachineResources     ResourceSet
@@ -274,9 +276,13 @@ type scopedKey struct {
 // against the installation administrator key (full scope, mutable via SetKey for rotation
 // #143) and an optional set of named scoped keys (kyber#474).
 type APIKeyAuthenticator struct {
-	mu      sync.RWMutex
-	key     string // installation administrator key (rotatable)
-	callers []scopedKey
+	mu                sync.RWMutex
+	authority         OperatorCredentialAuthority
+	authorityObserved atomic.Bool
+	namespace         string
+	registry          *registryCredentials
+	key               string // installation administrator key (rotatable)
+	callers           []scopedKey
 }
 
 const (
@@ -333,6 +339,21 @@ const (
 // cookie is a signed statement ABOUT the caller, verifiable without any
 // server-side session state (see browser_session_token.go).
 func (a *APIKeyAuthenticator) CreateBrowserSession(caller Caller) (string, error) {
+	return a.createBrowserSession(context.Background(), caller)
+}
+
+func (a *APIKeyAuthenticator) createBrowserSession(ctx context.Context, caller Caller) (string, error) {
+	resolved, err := a.resolve(ctx)
+	if err != nil {
+		return "", err
+	}
+	if resolved.registry != nil {
+		return resolved.registry.createBrowserSession(caller, time.Now())
+	}
+	return resolved.createConfiguredBrowserSession(caller)
+}
+
+func (a *APIKeyAuthenticator) createConfiguredBrowserSession(caller Caller) (string, error) {
 	apiKey := a.currentKey()
 	binding := ""
 	if !caller.Scopes.full {
@@ -441,6 +462,21 @@ func (a *APIKeyAuthenticator) RenewBrowserSession(w http.ResponseWriter, r *http
 	if r.Header.Get("Authorization") != "" || websocket.IsWebSocketUpgrade(r) {
 		return
 	}
+	resolved, err := a.resolve(r.Context())
+	if err != nil {
+		return
+	}
+	if resolved.registry != nil {
+		resolved.registry.renewBrowserSession(w, r)
+		return
+	}
+	resolved.renewConfiguredBrowserSession(w, r)
+}
+
+func (a *APIKeyAuthenticator) renewConfiguredBrowserSession(w http.ResponseWriter, r *http.Request) {
+	if r.Header.Get("Authorization") != "" || websocket.IsWebSocketUpgrade(r) {
+		return
+	}
 	cookie, err := r.Cookie(browserSessionCookie)
 	if err != nil || cookie.Value == "" {
 		return
@@ -497,6 +533,17 @@ func (a *APIKeyAuthenticator) currentKey() string {
 // scopes; the installation administrator key resolves to a full-scope caller. To avoid a timing
 // oracle on WHICH key matched, all comparisons run before a decision is made.
 func (a *APIKeyAuthenticator) Authenticate(r *http.Request) (*Caller, error) {
+	resolved, err := a.resolve(r.Context())
+	if err != nil {
+		return nil, err
+	}
+	if resolved.registry != nil {
+		return resolved.registry.authenticate(r)
+	}
+	return resolved.authenticateConfigured(r)
+}
+
+func (a *APIKeyAuthenticator) authenticateConfigured(r *http.Request) (*Caller, error) {
 	if r.Header.Get("Authorization") == "" {
 		if cookie, err := r.Cookie(browserSessionCookie); err == nil && cookie.Value != "" {
 			if claims, err := verifyBrowserSession(a.currentKey(), cookie.Value, time.Now()); err == nil {
@@ -622,6 +669,10 @@ func authMiddleware(auth Authenticator, next http.Handler) http.Handler {
 		}
 		caller, err := auth.Authenticate(r)
 		if err != nil {
+			if errors.Is(err, errOperatorAuthorityUnavailable) {
+				writeOperatorAuthenticationUnavailable(w)
+				return
+			}
 			// Preserve the specific code when the authenticator supplied one
 			// (session_expired); everything else stays "unauthorized".
 			code := "unauthorized"

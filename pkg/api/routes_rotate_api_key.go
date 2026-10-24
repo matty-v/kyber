@@ -61,6 +61,16 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	resolved, resolveErr := s.auth.resolve(r.Context())
+	if resolveErr != nil {
+		writeOperatorAuthenticationUnavailable(w)
+		return
+	}
+	if resolved.registry != nil {
+		writeJSONError(w, http.StatusConflict, "credential_management_required", "use individual credential management after adoption")
+		return
+	}
+
 	// Note the initiating browser BEFORE the key changes. Its replacement
 	// cookie has to be signed under the NEW key, so it is minted after the
 	// swap — but whether this request even used a cookie is a fact about the

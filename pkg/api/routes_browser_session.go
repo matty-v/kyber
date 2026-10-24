@@ -23,11 +23,19 @@ func (s *Server) handleBrowserSession(w http.ResponseWriter, r *http.Request) {
 	}
 	caller, err := s.auth.Authenticate(r)
 	if err != nil {
+		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			writeOperatorAuthenticationUnavailable(w)
+			return
+		}
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 		return
 	}
-	token, err := s.auth.CreateBrowserSession(*caller)
+	token, err := s.auth.createBrowserSession(r.Context(), *caller)
 	if err != nil {
+		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			writeOperatorAuthenticationUnavailable(w)
+			return
+		}
 		// Session cookies are signed with a key derived from the shared API
 		// key, so an install without one cannot issue them at all. That is a
 		// configuration answer, not a server fault — say so rather than

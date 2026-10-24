@@ -189,6 +189,15 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 	if !s.requireInstallationAdmin(w, r, "list-operator-credentials") {
 		return
 	}
+	resolved, err := s.auth.resolve(r.Context())
+	if err != nil {
+		writeOperatorAuthenticationUnavailable(w)
+		return
+	}
+	if resolved.registry != nil {
+		writeJSON(w, http.StatusOK, operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}})
+		return
+	}
 	response := operatorCredentialInventory{
 		ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
 		Credentials: s.auth.credentialInventory(), Warnings: []string{},

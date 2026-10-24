@@ -57,6 +57,10 @@ func (s *Server) streamAgentTaskEvents(w http.ResponseWriter, r *http.Request, a
 	if cursor != "" {
 		last, err = s.decodeTaskEventCursor(r, agentName, taskID, cursor)
 		if err != nil {
+			if errors.Is(err, errOperatorAuthorityUnavailable) {
+				writeOperatorAuthenticationUnavailable(w)
+				return
+			}
 			writeJSONError(w, http.StatusBadRequest, "invalid_cursor", "invalid event cursor")
 			return
 		}

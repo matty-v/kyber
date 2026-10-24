@@ -71,7 +71,7 @@ func (e Event) normalized() Event {
 }
 
 func (e Event) Validate() error {
-	if e.CredentialAuthority != "" && e.CredentialAuthority != "configuration" {
+	if e.CredentialAuthority != "" && e.CredentialAuthority != "configuration" && e.CredentialAuthority != "registry" {
 		return ErrInvalid
 	}
 	switch e.Method {
@@ -125,7 +125,7 @@ func (e Event) Validate() error {
 			return ErrInvalid
 		}
 	case "credential":
-		if !identifier.MatchString(e.ResourceName) {
+		if !validActorID(e.ResourceName) {
 			return ErrInvalid
 		}
 	default:

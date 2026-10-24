@@ -32,10 +32,10 @@ func (s *Server) taskEventCursorKey(r *http.Request) ([]byte, error) {
 	}
 	key := ""
 	if s.auth != nil {
-		if caller.Scopes.full {
-			key = s.auth.currentKey()
-		} else {
-			key, _ = s.auth.scopedCallerKey(caller.Name)
+		var err error
+		key, err = s.auth.credentialKey(r.Context(), caller)
+		if err != nil {
+			return nil, err
 		}
 	} else {
 		key = s.APIKey
@@ -117,7 +117,7 @@ func taskCursorCredentialMatches(id string, caller *Caller) bool {
 	if id == caller.CredentialID {
 		return true
 	}
-	return caller.Scopes.full && caller.PrincipalID == installationAdminPrincipalID &&
+	return (caller.Scopes.full || caller.CredentialAuthority == "registry") && caller.PrincipalID == installationAdminPrincipalID &&
 		caller.TenantID == installationTenantID && caller.CredentialID == installationAdminCredentialID &&
 		id == "credential_legacy_shared_key"
 }

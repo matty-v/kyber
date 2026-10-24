@@ -67,17 +67,17 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
           : 'Could not load operator credentials. Try refreshing.'}
     </p>}
     {data && <>
-      <p className="mt-3 text-sm text-text-muted">Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.</p>
+      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Operator keys for this Kyber installation. Secret values are never shown.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
       {data.warnings.map((warning) => <p key={warning} role="alert" className="mt-3 text-sm text-warning">{warning}</p>)}
       {data.credentials.length === 0 ? <p className="mt-4 text-sm text-text-muted">No accepted credentials were reported.</p> : <ul className="mt-4 space-y-3">
         {data.credentials.map((credential, index) => <li key={`${credential.source}:${credential.id}:${index}`} className="min-w-0 rounded-lg border border-border-subtle p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="break-words text-sm font-medium text-text-primary">{credential.displayName || 'Unnamed credential'}</h3>
-            <span className="text-xs text-text-muted">{credential.state === 'accepted' ? 'Active' : credential.state === 'shared-key' ? 'Shared key' : 'Configured, not active'}</span>
+            <span className="text-xs text-text-muted">{credential.state === 'accepted' ? 'Active' : credential.state === 'shared-key' ? 'Shared key' : credential.state === 'revoked' ? 'Revoked' : credential.state === 'expired' ? 'Expired' : 'Configured, not active'}</span>
           </div>
-          <p className="mt-1 text-xs text-text-muted">{credential.accessLevel === 'administrator' ? 'Administrator' : 'Restricted integration'} · {credential.source === 'installation' ? 'Provided by the installation' : 'Managed outside Kyber'}</p>
+          <p className="mt-1 text-xs text-text-muted">{credential.accessLevel === 'administrator' ? 'Administrator' : 'Restricted integration'} · {credential.source === 'installation' ? 'Provided by the installation' : credential.source === 'managed' ? 'Managed in Kyber' : 'Managed outside Kyber'}</p>
           {credential.authenticatesAs && <p className="mt-2 break-words text-sm text-warning">This key authenticates as {credential.authenticatesAs}. It does not have separate access.</p>}
-          {credential.state !== 'configured-not-accepted' ? <>
+          {credential.state === 'accepted' || credential.state === 'shared-key' ? <>
             {credential.permissions.length > 0 ? <ul className="mt-3 space-y-1 text-sm text-text-primary">
               {credential.permissions.map((permission, i) => <li key={i}>{permission}</li>)}
             </ul> : <p className="mt-3 text-sm text-text-muted">No additional operator permissions.</p>}
@@ -85,11 +85,11 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
             {credential.accessLevel === 'restricted' && credential.agentResources.length === 0 && credential.scopes.some((scope) => scope !== 'metrics:read' && scope !== 'machines:exec' && scope !== 'machines:logs:read') && <p className="mt-2 text-xs text-text-muted">Agent-specific permissions have no allowed target.</p>}
             {(!!credential.machineResources?.length || credential.scopes.includes('machines:exec')) && <p className="mt-2 break-words text-xs text-text-muted">Machine access: {credential.machineResources?.includes('*') ? 'All Machines' : credential.machineResources?.length ? credential.machineResources.join(', ') : 'No Machines specified'}</p>}
             {data.configurationAvailable && !credential.configured && <p className="mt-2 text-sm text-warning">Still active, but no longer present in configuration.</p>}
-          </> : <p className="mt-3 text-sm text-text-muted">This credential is configured but is not accepted by the current control plane. Configuration may need correction or a restart.</p>}
+          </> : <p className="mt-3 text-sm text-text-muted">{credential.state === 'revoked' ? 'This credential has been revoked and cannot authenticate.' : credential.state === 'expired' ? 'This credential has expired and cannot authenticate.' : 'This credential is configured but is not accepted by the current control plane. Configuration may need correction or a restart.'}</p>}
           {credential.configurationDiffers && <p className="mt-2 text-sm text-warning">Configured permissions differ from active access. Active access is shown above.</p>}
           <p className="mt-3 text-xs text-text-muted">Creation time unknown · Last use unavailable</p>
           {credential.scopes.length > 0 && <details className="mt-2 text-xs text-text-muted">
-            <summary className="cursor-pointer">Permission identifiers</summary>
+            <summary className="cursor-pointer">{credential.state === 'revoked' || credential.state === 'expired' ? 'Previous permission identifiers' : 'Permission identifiers'}</summary>
             <p className="mt-1 break-words">{credential.scopes.join(', ')}</p>
           </details>}
         </li>)}
@@ -97,7 +97,7 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
       <p className="mt-4 text-xs text-text-muted">Inventory checked {new Date(data.observedAt).toLocaleString()}. Complete usage totals are not available.</p>
       <details className="mt-2 text-xs text-text-muted">
         <summary className="cursor-pointer">About this inventory</summary>
-        <p className="mt-2">Keys shared by several people or tools cannot identify individual users. Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.</p>
+        <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Changes to keys apply across this installation.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
       </details>
     </>}
   </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && children}</>
