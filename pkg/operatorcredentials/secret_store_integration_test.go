@@ -189,7 +189,16 @@ func TestGCPDevSecretStoreResourceVersions(t *testing.T) {
 	if _, err := authority.Load(ctx); !errors.Is(err, ErrUninitialized) {
 		t.Fatal("inert marker unexpectedly exists")
 	}
-	if err := authority.Bind(ctx, confirmed.Version); err != nil {
+	reservation, err := authority.ReserveAdoption(ctx)
+	if err != nil {
+		t.Fatal("probe maintenance reservation failed")
+	}
+	t.Cleanup(func() {
+		if err := reservation.Release(context.Background()); err != nil {
+			t.Error("probe reservation cleanup failed")
+		}
+	})
+	if err := authority.Bind(ctx, confirmed.Version, reservation); err != nil {
 		t.Fatal("inert authority binding failed")
 	}
 	marker := &corev1.Secret{}

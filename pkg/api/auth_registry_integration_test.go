@@ -149,7 +149,16 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authority.Bind(ctx, created.Version); err != nil {
+	reservation, err := authority.ReserveAdoption(ctx)
+	if err != nil {
+		t.Fatal("probe maintenance reservation failed")
+	}
+	t.Cleanup(func() {
+		if err := reservation.Release(context.Background()); err != nil {
+			t.Error("probe reservation cleanup failed")
+		}
+	})
+	if err := authority.Bind(ctx, created.Version, reservation); err != nil {
 		t.Fatal("probe authority binding failed")
 	}
 	owned[markerName] = readMetadata(markerName).UID

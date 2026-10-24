@@ -922,6 +922,12 @@ second accepted bearer key. Read
 `docs/design/2026-10-23-current-operator-credential-resolution.md` before enabling
 or changing this seam. Do not activate it before ownership, audited management,
 stream revocation and upgrade/rollback compatibility gates are complete.
+`AuthorityStore.Bind` additionally requires a live adoption reservation from
+`ReserveAdoption`, held before preflight and through uncertain-write recovery.
+The immutable maintenance Secret has no automatic expiry; never release it from
+an unconditional defer or steal it based on age. Upgrade integration and
+compatibility enforcement remain activation gates. Read
+`docs/design/2026-10-24-credential-maintenance.md` before using the reservation.
 
 Protected requests install `liveOperatorRequests` inside authentication via the
 sensitive-audit wrapper. It rechecks identity/current route policy every three
