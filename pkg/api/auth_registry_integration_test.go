@@ -252,7 +252,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		check(handler, registryCookie(oldRoot), 401)
 		check(handler, registryCookie(forgedCookie), 401)
 		check(handler, registryBearer("original-installation-fixture"), 401)
-		check(handler, registryCookie(oldClient), 200)
+		check(handler, registryCookie(oldClient), 401)
 		check(handler, registryCookie(cookie), 200)
 	}
 	// A newly constructed server/authority simulates a fresh replica, retaining
