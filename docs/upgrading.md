@@ -129,6 +129,11 @@ still-healthy cluster.
    rollback path, and it is always Kyber's.
 7. **Verify against the running cluster** — not against Helm's opinion of it.
 
+Dry-run validation does not publish rendered manifests or render diagnostics
+into the Job log: those can include credential values in Secrets, ConfigMaps,
+environment variables or chart notes. The log reports validation success or a
+safe failure instead. Captured release values remain in the Job's private file.
+
 **Verification checks three separate things, because each has been true on these
 clusters while another was false:**
 

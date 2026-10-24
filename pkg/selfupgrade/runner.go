@@ -391,7 +391,16 @@ func (r *Runner) upgrade(ctx context.Context, chartDir, valuesPath string) error
 		"--timeout", r.Cfg.upgradeTimeout().String(),
 	}
 	if r.Cfg.DryRun {
-		args = append(args, "--dry-run")
+		args = append(args, "--dry-run", "--hide-secret")
+		// Helm renders complete manifests here. Secret objects are not the only
+		// possible source of credential values: ConfigMaps and Deployment env
+		// values may contain them too. Never stream the rendered output or echo
+		// render diagnostics into the upgrade Job log.
+		if _, err := r.Cmd.Output(ctx, r.Cfg.HelmBin, args...); err != nil {
+			return errors.Join(errors.New("helm dry-run validation failed; rendered output and diagnostics were withheld because they may contain credentials"), ctx.Err())
+		}
+		r.log().Info("dry-run manifests validated; rendered output withheld")
+		return nil
 	}
 	if err := r.Cmd.Stream(ctx, r.Cfg.HelmBin, args...); err != nil {
 		return fmt.Errorf("helm upgrade to %s failed: %w", r.Cfg.TargetVersion, err)
