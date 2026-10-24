@@ -1016,3 +1016,10 @@ audits the current administrator separately from the original key change.
 The typed client never automatically retries mutation POSTs. Issuance time is
 reported only when known. Runtime protocol remains zero and cmd/control-plane
 registry activation, full UI and usage visibility remain outstanding.
+
+Credential audit delivery uses `api.OperatorCredentialDelivery.RunOnce` as a
+staged bounded helper. It confirms the immutable journal/outbox proof, marks a
+reference delivered only after durable success, then rechecks before pruning on
+a later pass. It never reissues/fences keys or changes access, and never retries
+a stale CAS candidate. Its rotating cursor prevents missing journal records from
+starving unrelated work. Runtime scheduling is not enabled by the helper alone.
