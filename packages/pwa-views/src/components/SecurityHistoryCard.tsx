@@ -78,7 +78,7 @@ export function SecurityHistoryCard({ credentials }: { credentials: OperatorCred
       <h2 className="text-sm font-medium text-text-muted">Recent access</h2>
       <Button size="sm" disabled={loading} onClick={() => { setCursor(undefined); setRefresh((n) => n + 1) }}>Refresh activity</Button>
     </div>
-    <p className="mt-3 text-sm text-text-muted">Selected sensitive activity. Access allowed and work completed are separate records.</p>
+    <p className="mt-3 text-sm text-text-muted">Access decisions and request results appear separately.</p>
     <label className="mt-4 block text-sm text-text-muted">
       Operator key
       <select value={credential} onChange={(e) => { setCredential(e.target.value); setCursor(undefined) }} className="mt-1 block w-full min-w-0 rounded border border-border-subtle bg-surface-subtle p-2 text-text-primary">
