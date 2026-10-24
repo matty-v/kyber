@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,10 +40,10 @@ func registryFixtureDocument(t *testing.T) operatorcredentials.Document {
 		t.Fatal(err)
 	}
 	return (operatorcredentials.Document{SchemaVersion: 1, Namespace: "kyber-system", Credentials: []operatorcredentials.Credential{
-		(operatorcredentials.Credential{ID: installationAdminCredentialID, PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Name: "Installation administrator", Role: "administrator", State: "active", Generation: 1, PermissionRevision: 1, Source: operatorcredentials.Source{Kind: "installation"}}).WithSecretMaterial([]byte("original-installation-fixture")),
+		(operatorcredentials.Credential{ID: installationAdminCredentialID, PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, Name: "Installation administrator", Role: "administrator", State: "active", Generation: 1, PermissionRevision: 1, Source: operatorcredentials.Source{Kind: "installation"}}).WithSecretMaterial([]byte("original-installation-fixture")).WithLegacyBrowserGeneration(1),
 		(operatorcredentials.Credential{ID: "other-admin", PrincipalID: "other-principal", TenantID: installationTenantID, Name: "Other administrator", Role: "administrator", State: "active", Generation: 1, PermissionRevision: 1, Source: operatorcredentials.Source{Kind: "managed"}}).WithSecretMaterial([]byte("other-admin-fixture")),
-		(operatorcredentials.Credential{ID: "https://issuer.invalid/credential/client", PrincipalID: "client@example.invalid", TenantID: "tenant_client", Name: "Task client", Role: "restricted", State: "active", Generation: 1, PermissionRevision: 1, Scopes: []string{"tasks:read", "task-events:read", "metrics:read", "logs:read"}, AgentResources: []string{"kyber-system/alpha"}, Source: operatorcredentials.Source{Kind: "managed"}}).WithSecretMaterial([]byte("client-key-fixture")),
-	}}).WithLegacyBrowserSigningKey(seed)
+		(operatorcredentials.Credential{ID: "https://issuer.invalid/credential/client", PrincipalID: "client@example.invalid", TenantID: "tenant_client", Name: "Task client", Role: "restricted", State: "active", Generation: 1, PermissionRevision: 1, Scopes: []string{"tasks:read", "task-events:read", "metrics:read", "logs:read"}, AgentResources: []string{"kyber-system/alpha"}, Source: operatorcredentials.Source{Kind: "managed"}}).WithSecretMaterial([]byte("client-key-fixture")).WithLegacyBrowserGeneration(1),
+	}}).WithLegacyBrowserSigningKey(seed, 1)
 }
 func registryFixtureAuthenticator(t *testing.T, authority *memoryOperatorAuthority) *APIKeyAuthenticator {
 	t.Helper()
@@ -156,6 +157,18 @@ func TestRegistrySessionsSurviveOtherCredentialRotation(t *testing.T) {
 		}
 	}
 	mustRegistryCaller(t, a, registryBearer("rotated-installation-fixture"))
+	// Knowing the retired installation key must not let an attacker mint a V1
+	// cookie that merely claims the new generation. Pin compatibility to adoption.
+	forgedRoot := *installationAdminCaller()
+	forgedRoot.CredentialGeneration = 2
+	forged, err := signBrowserSession("original-installation-fixture", forgedRoot, "", time.Now(), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.Authenticate(registryCookie(forged)); err == nil {
+		t.Fatal("retired administrator key forged a current-generation cookie")
+	}
+
 	authority.edit(func(d *operatorcredentials.Document) {
 		d.Credentials[2] = d.Credentials[2].WithSecretMaterial([]byte("rotated-client-fixture"))
 		d.Credentials[2].Generation++
@@ -220,7 +233,7 @@ func TestRegistryCompilerRejectsUnsupportedAuthority(t *testing.T) {
 			d.Credentials[2] = d.Credentials[2].WithSecretMaterial(d.Credentials[1].SecretMaterial())
 		},
 		"unsupported schema": func(d *operatorcredentials.Document) { d.SchemaVersion = 2 },
-		"malformed seed":     func(d *operatorcredentials.Document) { *d = d.WithLegacyBrowserSigningKey([]byte("bad")) },
+		"malformed seed":     func(d *operatorcredentials.Document) { *d = d.WithLegacyBrowserSigningKey([]byte("bad"), 1) },
 	} {
 		t.Run(name, func(t *testing.T) {
 			authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
@@ -395,6 +408,67 @@ func TestRegistryRejectsUnusableHTTPMaterial(t *testing.T) {
 		})
 		if _, err := registryFixtureAuthenticator(t, authority).Authenticate(registryBearer("other-admin-fixture")); err != errOperatorAuthorityUnavailable {
 			t.Fatal("unusable credential accepted for activation", err)
+		}
+	}
+}
+
+func TestRegistryPreIdentityCookieSurvivesRename(t *testing.T) {
+	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
+	a := registryFixtureAuthenticator(t, authority)
+	binding, err := browserSessionKeyBinding("original-installation-fixture", "client-key-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := signBrowserSession("original-installation-fixture", Caller{Name: "Earlier display name", Scopes: newScopeSet(ScopeMetricsRead)}, binding, time.Now(), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := mustRegistryCaller(t, a, registryCookie(token))
+	authority.edit(func(d *operatorcredentials.Document) { d.Credentials[2].Name = "Renamed integration" })
+	renamed := mustRegistryCaller(t, a, registryCookie(token))
+	if renamed.Name != "Renamed integration" || !sameCredentialIdentity(*current, *renamed) {
+		t.Fatal("rename changed identity or invalidated pre-identity cookie")
+	}
+}
+
+func TestRegistryPreIdentityCookieCannotRebindAfterRotation(t *testing.T) {
+	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
+	a := registryFixtureAuthenticator(t, authority)
+	binding, err := browserSessionKeyBinding("original-installation-fixture", "client-key-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := signBrowserSession("original-installation-fixture", Caller{Name: "Old client", Scopes: newScopeSet(ScopeMetricsRead)}, binding, time.Now(), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mustRegistryCaller(t, a, registryCookie(token))
+	authority.edit(func(d *operatorcredentials.Document) { d.Credentials[2].Generation += 2 })
+	if _, err := a.Authenticate(registryCookie(token)); err == nil {
+		t.Fatal("pre-identity cookie revived after key material reuse")
+	}
+	// New credentials have no V1 adoption binding, even if an administrator
+	// deliberately reuses material that once signed an older client's session.
+	authority.edit(func(d *operatorcredentials.Document) {
+		d.Credentials[2].ID = "new-client"
+		d.Credentials[2] = d.Credentials[2].WithLegacyBrowserGeneration(0)
+	})
+	if _, err := a.Authenticate(registryCookie(token)); err == nil {
+		t.Fatal("pre-identity cookie rebound to a newly issued credential")
+	}
+}
+
+func TestRegistryCompiledDiagnosticsAreRedacted(t *testing.T) {
+	compiled, err := compileRegistryCredentials(registryFixtureDocument(t), time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []any{compiled, *compiled} {
+		for _, format := range []string{"%v", "%+v", "%#v", "%q", "%d", "%x"} {
+			diagnostic := fmt.Sprintf(format, value)
+			if !strings.Contains(diagnostic, "[redacted]") || strings.Contains(diagnostic, "fixture") || strings.Contains(diagnostic, "compatibilityKey") {
+				t.Fatal("compiled authority exposed private diagnostics")
+			}
 		}
 	}
 }

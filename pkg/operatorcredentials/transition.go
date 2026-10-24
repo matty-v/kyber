@@ -27,7 +27,7 @@ func transition(old *Document, next Document) error {
 	previous := map[string]Credential{}
 	operations := map[string]Operation{}
 	if old != nil {
-		if old.Namespace != next.Namespace || old.SchemaVersion != next.SchemaVersion || !bytes.Equal(old.legacyBrowserSigningKey, next.legacyBrowserSigningKey) {
+		if old.Namespace != next.Namespace || old.SchemaVersion != next.SchemaVersion || !bytes.Equal(old.legacyBrowserSigningKey, next.legacyBrowserSigningKey) || old.legacyBrowserSigningGeneration != next.legacyBrowserSigningGeneration {
 			return ErrInvalid
 		}
 		for _, c := range old.Credentials {
@@ -77,7 +77,7 @@ func transition(old *Document, next Document) error {
 		prior, exists := previous[c.ID]
 		if exists {
 			delete(previous, c.ID)
-			if prior.PrincipalID != c.PrincipalID || prior.TenantID != c.TenantID || prior.Kind != c.Kind || prior.Issuer != c.Issuer || prior.Subject != c.Subject || !sameCreation(prior, c) {
+			if prior.PrincipalID != c.PrincipalID || prior.TenantID != c.TenantID || prior.Kind != c.Kind || prior.Issuer != c.Issuer || prior.Subject != c.Subject || prior.legacyBrowserGeneration != c.legacyBrowserGeneration || !sameCreation(prior, c) {
 				return ErrInvalid
 			}
 			materialChanged := !bytes.Equal(prior.material, c.material)
@@ -109,6 +109,9 @@ func transition(old *Document, next Document) error {
 			if reflect.DeepEqual(prior, c) {
 				continue
 			}
+		}
+		if !exists && old != nil && c.legacyBrowserGeneration != 0 {
+			return ErrInvalid
 		}
 		if !newReferences[c.ID] && !newReferences[""] {
 			return ErrInvalid

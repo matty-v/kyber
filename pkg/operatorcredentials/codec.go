@@ -11,15 +11,17 @@ import (
 // combines metadata with material, and its output goes into Secret data.
 type credentialData Credential
 type storedCredential struct {
-	Record   credentialData `json:"record"`
-	Material []byte         `json:"material,omitempty"`
+	Record                  credentialData `json:"record"`
+	Material                []byte         `json:"material,omitempty"`
+	LegacyBrowserGeneration uint64         `json:"legacyBrowserGeneration,omitempty"`
 }
 type storedDocument struct {
-	SchemaVersion           int                `json:"schemaVersion"`
-	Namespace               string             `json:"namespace"`
-	Credentials             []storedCredential `json:"credentials"`
-	Operations              []Operation        `json:"operations"`
-	LegacyBrowserSigningKey []byte             `json:"legacyBrowserSigningKey,omitempty"`
+	SchemaVersion                  int                `json:"schemaVersion"`
+	Namespace                      string             `json:"namespace"`
+	Credentials                    []storedCredential `json:"credentials"`
+	Operations                     []Operation        `json:"operations"`
+	LegacyBrowserSigningKey        []byte             `json:"legacyBrowserSigningKey,omitempty"`
+	LegacyBrowserSigningGeneration uint64             `json:"legacyBrowserSigningGeneration,omitempty"`
 }
 
 func encode(d Document) ([]byte, Document, error) {
@@ -35,9 +37,9 @@ func encode(d Document) ([]byte, Document, error) {
 	if err := validate(d); err != nil {
 		return nil, Document{}, err
 	}
-	wire := storedDocument{LegacyBrowserSigningKey: d.legacyBrowserSigningKey, SchemaVersion: d.SchemaVersion, Namespace: d.Namespace, Operations: d.Operations, Credentials: make([]storedCredential, 0, len(d.Credentials))}
+	wire := storedDocument{LegacyBrowserSigningGeneration: d.legacyBrowserSigningGeneration, LegacyBrowserSigningKey: d.legacyBrowserSigningKey, SchemaVersion: d.SchemaVersion, Namespace: d.Namespace, Operations: d.Operations, Credentials: make([]storedCredential, 0, len(d.Credentials))}
 	for _, c := range d.Credentials {
-		wire.Credentials = append(wire.Credentials, storedCredential{Record: credentialData(c), Material: c.material})
+		wire.Credentials = append(wire.Credentials, storedCredential{Record: credentialData(c), Material: c.material, LegacyBrowserGeneration: c.legacyBrowserGeneration})
 	}
 	raw, err := json.Marshal(wire)
 	if err != nil {
@@ -75,9 +77,9 @@ func decode(raw []byte) (Document, error) {
 	if parser.Decode(&wire) != nil {
 		return Document{}, ErrInvalid
 	}
-	d := Document{legacyBrowserSigningKey: bytes.Clone(wire.LegacyBrowserSigningKey), SchemaVersion: wire.SchemaVersion, Namespace: wire.Namespace, Operations: wire.Operations, Credentials: make([]Credential, 0, len(wire.Credentials))}
+	d := Document{legacyBrowserSigningGeneration: wire.LegacyBrowserSigningGeneration, legacyBrowserSigningKey: bytes.Clone(wire.LegacyBrowserSigningKey), SchemaVersion: wire.SchemaVersion, Namespace: wire.Namespace, Operations: wire.Operations, Credentials: make([]Credential, 0, len(wire.Credentials))}
 	for _, c := range wire.Credentials {
-		d.Credentials = append(d.Credentials, Credential(c.Record).WithSecretMaterial(c.Material))
+		d.Credentials = append(d.Credentials, Credential(c.Record).WithSecretMaterial(c.Material).WithLegacyBrowserGeneration(c.LegacyBrowserGeneration))
 	}
 	_, d, err := encode(d)
 	return d, err

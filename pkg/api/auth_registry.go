@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -21,10 +23,17 @@ type OperatorCredentialAuthority interface {
 var errOperatorAuthorityUnavailable = errors.New("operator authentication unavailable")
 
 type registryCredentials struct {
-	entries          []scopedKey
-	byID             map[string]scopedKey
-	compatibilityKey []byte
-	inventory        []operatorCredentialView
+	entries                 []scopedKey
+	byID                    map[string]scopedKey
+	compatibilityKey        []byte
+	compatibilityGeneration uint64
+	legacyGenerations       map[string]uint64
+	inventory               []operatorCredentialView
+}
+
+func (registryCredentials) String() string { return "operator credential resolution [redacted]" }
+func (r registryCredentials) Format(state fmt.State, _ rune) {
+	_, _ = io.WriteString(state, r.String())
 }
 
 // resolve chooses one authority for this operation, never a union of configured
@@ -58,7 +67,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 	if err := document.Validate(); err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
-	registry := &registryCredentials{byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey()}
+	registry := &registryCredentials{legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration()}
 	for _, credential := range document.Credentials {
 		// Validate supported permissions even for inactive records; do not silently
 		// reinterpret an unsupported registry after a downgrade.
@@ -96,6 +105,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 		entry := scopedKey{key: string(credential.SecretMaterial()), caller: caller}
 		registry.entries = append(registry.entries, entry)
 		registry.byID[credential.ID] = entry
+		registry.legacyGenerations[credential.ID] = credential.LegacyBrowserGeneration()
 	}
 	return registry, nil
 }

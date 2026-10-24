@@ -48,13 +48,22 @@ rotation does not invalidate the session.
 
 Adoption preserves the **derived V1 cookie signing key**, not a second accepted
 bearer key, in the private registry codec. It is immutable after registry
-creation, copied on access/clone, length-checked and excluded from public JSON
+creation, together with the original installation generation, copied on access/clone, length-checked and excluded from public JSON
 and diagnostic formatting. This permits V1 scoped cookies to survive installation
 key rotation while still checking their material binding against the scoped
 credential's current key. The installation cookie additionally checks its own
-current generation, so its old cookie is rejected after its rotation. Historical
+current generation against the immutable adoption generation, so **all** V1
+installation cookies are rejected after rotation—even a forged cookie signed
+with the retired key claiming the new generation. Merely comparing the claim
+with the current generation would let the retired key mint a replacement. Historical
 installation credential IDs are accepted only by the compatibility reader and
-resolved to the current supported identity. Successful V1 browser requests renew
+resolved to the current supported identity. Pre-identity named cookies resolve
+by their verified unique material binding, preserving access after a rename.
+Each eligible credential also retains an immutable adoption generation. New
+credentials cannot acquire that binding after insertion. Every V1 resolution
+requires its current generation to equal that adoption generation, so rotation
+or later material reuse cannot revive an old pre-identity cookie or attach it
+to a new credential. Successful V1 browser requests renew
 to V2. V1 compatibility is a reader, not a second management or bearer-key path.
 
 Task event cursors select signing material by immutable credential identity,

@@ -60,24 +60,25 @@ type Source struct {
 }
 
 type Credential struct {
-	ID                 string     `json:"id"`
-	PrincipalID        string     `json:"principalId"`
-	TenantID           string     `json:"tenantId"`
-	Kind               string     `json:"kind,omitempty"`
-	Issuer             string     `json:"issuer,omitempty"`
-	Subject            string     `json:"subject,omitempty"`
-	Name               string     `json:"name"`
-	Role               string     `json:"role"`
-	State              string     `json:"state"`
-	Generation         uint64     `json:"generation"`
-	PermissionRevision uint64     `json:"permissionRevision"`
-	Scopes             []string   `json:"scopes"`
-	AgentResources     []string   `json:"agentResources"`
-	MachineResources   []string   `json:"machineResources"`
-	Source             Source     `json:"source"`
-	CreatedAt          *time.Time `json:"createdAt,omitempty"`
-	ExpiresAt          *time.Time `json:"expiresAt,omitempty"`
-	material           []byte
+	ID                      string     `json:"id"`
+	PrincipalID             string     `json:"principalId"`
+	TenantID                string     `json:"tenantId"`
+	Kind                    string     `json:"kind,omitempty"`
+	Issuer                  string     `json:"issuer,omitempty"`
+	Subject                 string     `json:"subject,omitempty"`
+	Name                    string     `json:"name"`
+	Role                    string     `json:"role"`
+	State                   string     `json:"state"`
+	Generation              uint64     `json:"generation"`
+	PermissionRevision      uint64     `json:"permissionRevision"`
+	Scopes                  []string   `json:"scopes"`
+	AgentResources          []string   `json:"agentResources"`
+	MachineResources        []string   `json:"machineResources"`
+	Source                  Source     `json:"source"`
+	CreatedAt               *time.Time `json:"createdAt,omitempty"`
+	ExpiresAt               *time.Time `json:"expiresAt,omitempty"`
+	material                []byte
+	legacyBrowserGeneration uint64
 }
 
 // WithSecretMaterial and SecretMaterial copy bytes. Material is intentionally
@@ -86,12 +87,20 @@ func (c Credential) WithSecretMaterial(material []byte) Credential {
 	c.material = bytes.Clone(material)
 	return c
 }
-func (c Credential) SecretMaterial() []byte     { return bytes.Clone(c.material) }
-func (Credential) String() string               { return "operator credential [redacted]" }
-func (c Credential) GoString() string           { return c.String() }
-func (c Credential) Format(s fmt.State, _ rune) { _, _ = io.WriteString(s, c.String()) }
-func (Credential) MarshalJSON() ([]byte, error) { return nil, ErrSensitive }
-func (*Credential) UnmarshalJSON([]byte) error  { return ErrSensitive }
+
+// WithLegacyBrowserGeneration marks only credentials present at adoption as
+// eligible for V1 compatibility. New registry credentials must leave this zero.
+func (c Credential) WithLegacyBrowserGeneration(generation uint64) Credential {
+	c.legacyBrowserGeneration = generation
+	return c
+}
+func (c Credential) LegacyBrowserGeneration() uint64 { return c.legacyBrowserGeneration }
+func (c Credential) SecretMaterial() []byte          { return bytes.Clone(c.material) }
+func (Credential) String() string                    { return "operator credential [redacted]" }
+func (c Credential) GoString() string                { return c.String() }
+func (c Credential) Format(s fmt.State, _ rune)      { _, _ = io.WriteString(s, c.String()) }
+func (Credential) MarshalJSON() ([]byte, error)      { return nil, ErrSensitive }
+func (*Credential) UnmarshalJSON([]byte) error       { return ErrSensitive }
 
 // Operation is a bounded outbox reference, not arbitrary request data. Pending
 // means delivery is pending; a committed document proves its state mutation.
@@ -112,11 +121,12 @@ type Operation struct {
 }
 
 type Document struct {
-	SchemaVersion           int
-	Namespace               string
-	Credentials             []Credential
-	Operations              []Operation
-	legacyBrowserSigningKey []byte
+	SchemaVersion                  int
+	Namespace                      string
+	Credentials                    []Credential
+	Operations                     []Operation
+	legacyBrowserSigningKey        []byte
+	legacyBrowserSigningGeneration uint64
 }
 
 // Clone gives mutation builders an independent, normalized candidate. Loaded
@@ -126,11 +136,13 @@ func (d Document) Clone() Document { return normalized(d) }
 // WithLegacyBrowserSigningKey preserves only the derived V1 cookie signing
 // key during adoption, never a second accepted bearer key. It cannot change
 // after insertion. The private storage codec is its only serialization path.
-func (d Document) WithLegacyBrowserSigningKey(key []byte) Document {
+func (d Document) WithLegacyBrowserSigningKey(key []byte, generation uint64) Document {
 	d.legacyBrowserSigningKey = bytes.Clone(key)
+	d.legacyBrowserSigningGeneration = generation
 	return d
 }
-func (d Document) LegacyBrowserSigningKey() []byte { return bytes.Clone(d.legacyBrowserSigningKey) }
+func (d Document) LegacyBrowserSigningKey() []byte        { return bytes.Clone(d.legacyBrowserSigningKey) }
+func (d Document) LegacyBrowserSigningGeneration() uint64 { return d.legacyBrowserSigningGeneration }
 
 // Validate checks the complete bounded storage shape without exposing its
 // private encoding. Permission compilation must still reject unsupported grants.
@@ -227,7 +239,11 @@ func normalized(d Document) Document {
 }
 
 func validate(d Document) error {
-	if len(d.legacyBrowserSigningKey) != 0 && len(d.legacyBrowserSigningKey) != 32 {
+	if len(d.legacyBrowserSigningKey) == 0 {
+		if d.legacyBrowserSigningGeneration != 0 {
+			return ErrInvalid
+		}
+	} else if len(d.legacyBrowserSigningKey) != 32 || d.legacyBrowserSigningGeneration == 0 {
 		return ErrInvalid
 	}
 	if d.SchemaVersion != SchemaVersion {
@@ -244,6 +260,9 @@ func validate(d Document) error {
 	generations := map[string]uint64{}
 	administrator := false
 	for _, c := range d.Credentials {
+		if c.legacyBrowserGeneration > c.Generation || c.legacyBrowserGeneration > 0 && len(d.legacyBrowserSigningKey) == 0 {
+			return ErrInvalid
+		}
 		name := strings.ToLower(strings.TrimSpace(c.Name))
 		if !opaque(c.ID) || !opaque(c.PrincipalID) || !opaque(c.TenantID) || !displayName(c.Name) || ids[c.ID] || names[name] || c.Generation == 0 || c.PermissionRevision == 0 {
 			return ErrInvalid

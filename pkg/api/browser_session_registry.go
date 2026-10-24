@@ -99,7 +99,7 @@ func (a *registryCredentials) compatibleBrowserCaller(token string, now time.Tim
 	}
 	if claims.FullScope {
 		entry, ok := a.byID[installationAdminCredentialID]
-		if !ok || entry.caller.PrincipalID != installationAdminPrincipalID || entry.caller.TenantID != installationTenantID {
+		if !ok || entry.caller.PrincipalID != installationAdminPrincipalID || entry.caller.TenantID != installationTenantID || entry.caller.CredentialGeneration != a.compatibilityGeneration || a.legacyGenerations[entry.caller.CredentialID] != entry.caller.CredentialGeneration {
 			return nil, time.Time{}, errMalformedBrowserSession
 		}
 		if claims.PrincipalID != "" && claims.PrincipalID != installationAdminPrincipalID {
@@ -116,13 +116,16 @@ func (a *registryCredentials) compatibleBrowserCaller(token string, now time.Tim
 	}
 	var found *Caller
 	for _, entry := range a.entries {
+		if a.legacyGenerations[entry.caller.CredentialID] == 0 || a.legacyGenerations[entry.caller.CredentialID] != entry.caller.CredentialGeneration {
+			continue
+		}
 		if claims.PrincipalID != "" {
 			if claims.PrincipalID != entry.caller.PrincipalID || claims.CredentialID != entry.caller.CredentialID || claims.CredentialGeneration != entry.caller.CredentialGeneration {
 				continue
 			}
-		} else if claims.Name != entry.caller.Name {
-			continue
 		}
+		// Pre-identity V1 cookies resolve by their unique current material binding,
+		// so renaming the credential does not silently sign it out.
 		binding := base64.RawURLEncoding.EncodeToString(browserSessionMAC(a.compatibilityKey, "caller-key:"+entry.key)[:16])
 		if !hmac.Equal([]byte(binding), []byte(claims.KeyBinding)) {
 			continue

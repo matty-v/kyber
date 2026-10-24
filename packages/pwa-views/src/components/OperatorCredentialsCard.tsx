@@ -97,7 +97,7 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
       <p className="mt-4 text-xs text-text-muted">Inventory checked {new Date(data.observedAt).toLocaleString()}. Complete usage totals are not available.</p>
       <details className="mt-2 text-xs text-text-muted">
         <summary className="cursor-pointer">About this inventory</summary>
-        <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Access is read from the current credential registry.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
+        <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Changes to keys apply across this installation.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
       </details>
     </>}
   </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && children}</>

@@ -195,7 +195,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if resolved.registry != nil {
-		writeJSON(w, http.StatusOK, operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage collection is not available. External source reconciliation is a separate adoption prerequisite."}})
+		writeJSON(w, http.StatusOK, operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}})
 		return
 	}
 	response := operatorCredentialInventory{

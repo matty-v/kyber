@@ -44,7 +44,7 @@ describe('operator credential inventory', () => {
     expect(screen.queryByText('Previously could delete Agents')).not.toBeInTheDocument()
     expect(screen.queryByText('Previously could read secrets')).not.toBeInTheDocument()
     expect(screen.queryByText(/Still active, but/)).not.toBeInTheDocument()
-    expect(screen.getByText(/Access is read from the current credential registry/)).toBeInTheDocument()
+    expect(screen.getByText(/Changes to keys apply across this installation/)).toBeInTheDocument()
   })
 
   it('explains actual access and unavailable history without exposing key controls', async () => {

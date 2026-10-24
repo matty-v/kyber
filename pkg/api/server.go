@@ -117,6 +117,8 @@ type Server struct {
 
 	// OperatorCredentialAuthority is an optional staged integration seam. A
 	// configured authority must distinguish unadopted state from an outage.
+	// Set this before BuildHandler; adoption changes its durable marker, not
+	// this installation-wide resolver.
 	// The control-plane command does not enable adoption through this seam yet.
 	OperatorCredentialAuthority OperatorCredentialAuthority
 

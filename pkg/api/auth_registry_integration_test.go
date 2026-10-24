@@ -174,8 +174,15 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal("probe individual rotation failed")
 	}
+	forgedRoot := *installationAdminCaller()
+	forgedRoot.CredentialGeneration = 2
+	forgedCookie, err := signBrowserSession("original-installation-fixture", forgedRoot, "", time.Now(), browserSessionTTL)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, handler := range handlers {
 		check(handler, registryCookie(oldRoot), 401)
+		check(handler, registryCookie(forgedCookie), 401)
 		check(handler, registryBearer("original-installation-fixture"), 401)
 		check(handler, registryCookie(oldClient), 200)
 		check(handler, registryCookie(cookie), 200)

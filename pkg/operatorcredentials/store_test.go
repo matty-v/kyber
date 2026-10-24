@@ -541,7 +541,8 @@ func TestCloneAndFullWidthGenerations(t *testing.T) {
 
 func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	seed := bytes.Repeat([]byte{42}, 32)
-	document := fixtureDocument().WithLegacyBrowserSigningKey(seed)
+	document := fixtureDocument().WithLegacyBrowserSigningKey(seed, 1)
+	document.Credentials[0] = document.Credentials[0].WithLegacyBrowserGeneration(1)
 	seed[0] = 1
 	if document.LegacyBrowserSigningKey()[0] != 42 {
 		t.Fatal("seed aliases input")
@@ -561,7 +562,7 @@ func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	if err != nil || !bytes.Equal(loaded.LegacyBrowserSigningKey(), document.LegacyBrowserSigningKey()) {
 		t.Fatal("seed lost in storage codec", err)
 	}
-	if document.WithLegacyBrowserSigningKey([]byte("invalid")).Validate() == nil {
+	if document.WithLegacyBrowserSigningKey([]byte("invalid"), 1).Validate() == nil {
 		t.Fatal("invalid cookie seed length accepted")
 	}
 	store, _ := fixtureStore(t)
@@ -569,9 +570,36 @@ func TestLegacyBrowserSeedIsPrivateCopiedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next := snapshot.Document.WithLegacyBrowserSigningKey(bytes.Repeat([]byte{43}, 32))
+	next := snapshot.Document.WithLegacyBrowserSigningKey(bytes.Repeat([]byte{43}, 32), 1)
 	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
 		t.Fatal("compatibility signing seed changed", err)
+	}
+	next = snapshot.Document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 2)
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("compatibility generation changed", err)
+	}
+	if loaded.Credentials[0].LegacyBrowserGeneration() != 1 {
+		t.Fatal("credential compatibility generation lost in codec")
+	}
+	next = snapshot.Document.Clone()
+	next.Credentials[0] = next.Credentials[0].WithLegacyBrowserGeneration(0)
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("credential adoption binding changed", err)
+	}
+	next = snapshot.Document.Clone()
+	newCredential := next.Credentials[1].WithLegacyBrowserGeneration(1).WithSecretMaterial([]byte("new-fixture-material"))
+	newCredential.ID = "credential_new_fixture"
+	newCredential.Name = "New integration"
+	next.Credentials = append(next.Credentials, newCredential)
+	next.Operations = append(next.Operations, fixtureOperation("create", newCredential.ID))
+	if _, err := store.Replace(context.Background(), snapshot.Version, next); !errors.Is(err, ErrInvalid) {
+		t.Fatal("new credential acquired a V1 adoption binding", err)
+	}
+	if loaded.LegacyBrowserSigningGeneration() != 1 {
+		t.Fatal("compatibility generation lost in codec")
+	}
+	if document.WithLegacyBrowserSigningKey(nil, 1).Validate() == nil || document.WithLegacyBrowserSigningKey(document.LegacyBrowserSigningKey(), 0).Validate() == nil {
+		t.Fatal("incomplete compatibility state accepted")
 	}
 	if _, err := json.Marshal(document); !errors.Is(err, ErrSensitive) {
 		t.Fatal("public JSON exposes compatibility signing seed")
