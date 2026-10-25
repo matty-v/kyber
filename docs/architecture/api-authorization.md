@@ -1,4 +1,17 @@
-# API authorization — caller scopes on lifecycle mutations (kyber#474)
+# API authorization and operator credentials
+
+## Current credential authority
+
+A compatible installation reads one selected authority. Before explicit setup,
+loaded installation configuration is authoritative. After the administrator
+confirms setup, the sealed installation registry owns keys, identities,
+generations and grants; configured source keys are no longer an alternate path.
+Current reads are bounded and fail closed, independently of audit database health.
+Managed revocation/narrowing applies to bearer, cookie and live connections within
+ten seconds. Native setup and recovery require durable admission, exact process
+proof and confirmed effects; status reads never replay writes. See the
+[operator guide](../operator/operator-credentials.md) and
+[API-key reference](../api-keys.md) for the current contract.
 
 ## Security history reader
 
@@ -25,9 +38,9 @@ Event sequences, snapshot sequences and credential generations are decimal
 strings so JavaScript clients do not round wide integer identities.
 
 The response labels coverage `partial-sensitive-access`: current collectors
-cover selected secret/log/transcript/terminal access and restricted-route
-denials. It does not establish complete sign-in, credential lifecycle or
-operator activity history. `observedAt` is query time, not collection start or
+cover sensitive reads, privileged mutations, credential lifecycle/setup and
+restricted-route denials. This remains partial sensitive-access history rather
+than complete sign-in or operator-activity reporting. `observedAt` is query time, not collection start or
 last healthy ingestion time. No event is not proof of no use. Shared keys do
 not identify a person, and configuration-reported credential generations do not
 establish a complete material rotation ledger. Do not derive lifetime usage or
@@ -44,12 +57,12 @@ Administrator metadata is held only in connection-bound component state,
 outside shared query caches. Switching installations/selections cancels old
 requests and ignores late responses. A periodic inventory check (every five
 seconds, four-second timeout) clears protected content on denied or unavailable
-access. This UI polling is separate from the registry's still-required server
-revocation guarantees; it does not claim current startup configuration can
-revoke active keys across replicas.
+access. This UI polling is separate from server-side current-authority checks;
+managed access changes do not depend on UI polling. Configuration-owned changes
+still require reload and replica verification before setup.
 
 > How Kyber decides *who* may drive an agent lifecycle verb, on top of the
-> single-key authentication wall. Read this before changing `pkg/api/auth.go`,
+> operator authentication boundary. Read this before changing `pkg/api/auth.go`,
 > `pkg/api/authz.go`, or the `setAgentDesiredPhase` chokepoint.
 
 ## Current operator boundary
@@ -184,7 +197,14 @@ principal in the installation tenant (satisfies every
 check), so single-key installs are unaffected. The vocabulary is designed to
 extend later to non-lifecycle routes (e.g. `agents:write`) behind the same seam.
 
-## Enforcement is opt-in (backward-compatible)
+## Historical lifecycle-helper rollout
+
+The following describes the original helper rollout, not today's public API
+boundary. `operatorBoundary` and strict handler checks always enforce supported
+scopes/resources regardless of this flag; the historical permissive setting
+cannot make an under-scoped public request succeed.
+
+### Original observe/enforce helper
 
 `KYBER_AUTHZ_ENFORCE` (chart value `api.authz.enforce`, default **false**)
 governs behavior:
@@ -204,7 +224,7 @@ permissive-mode audit log to confirm no legitimate caller would be denied → fl
 
 ## Scoped-key configuration
 
-Scoped keys are an optional `callers` JSON document on the existing
+Before explicit managed setup, scoped keys can be supplied as a `callers` JSON document on the existing
 `kyber-api-credentials` Secret (no new Secret/infra), surfaced to the process as
 `KYBER_API_CALLERS`:
 

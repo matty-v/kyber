@@ -1,4 +1,4 @@
-# Inspect operator credentials
+# Manage operator credentials
 
 As an installation administrator, open **Settings → API access → Operator
 credentials**. The inventory shows the installation administrator
@@ -232,11 +232,11 @@ can identify its issuing credential for a denial; that reference never grants
 access. Invalid/unverifiable links remain unattributed, and an unavailable
 authority is not recorded as a permission denial.
 
-The administrator can query recent history in Settings. Canonical credential
-CRUD/adoption reconciliation and general authentication/usage summaries remain
-MAT-97/MAT-134 work. The read-only inventory still does not claim general last
-use or complete usage coverage. Bounded credential revocation is separate from
-this audit collection and is not provided by an authorization record alone.
+The administrator can query recent history in Settings. Key changes and setup
+recovery have durable operation outcomes reconciled against the selected registry;
+unknown effects remain pending instead of being replayed automatically. Observed
+usage is a separate, partial collection described above. An audit record alone
+does not revoke access: current credential authority enforces revocation.
 
 Retention runs in bounded batches each minute. By default it retains up to
 30 days and 1,000,000 records per installation; either age or capacity can
@@ -244,14 +244,14 @@ shorten the window. Helm settings `api.securityAudit.retentionDays` (1–365)
 and `api.securityAudit.maxRecords` (1,000–100,000,000) control these limits.
 Invalid settings fail startup. The row cap is periodic, so a burst can exceed
 it temporarily between sweeps. Size PostgreSQL for the selected policy and
-its other data. Subsequent history/usage views must show actual retained
-coverage, not promise a full time window when the capacity limit has trimmed it.
+its other data. History and usage views show their actual retained coverage;
+the capacity limit can shorten the available window.
 
-Current records label credential authority as `configuration`: IDs/generation
-are those reported by the responding authenticator, not an independent
-issuance or rotation ledger. In particular, the current shared installation
-key does not track material generations. The canonical registry must own and
-validate those versions before the later UI can claim per-key version history.
+Records identify their credential authority as `configuration` before setup and
+`registry` after the explicit handoff. Configuration-owned IDs/generations describe
+loaded settings rather than an independent issuance ledger. Managed credentials
+have durable identities and generations; individual rotation changes the target's
+generation. Historical records retain their original authority and attribution.
 
 Fleet logging remains administrator-only. Its initial installation-level
 admission covers target discovery; a second decision records the backend-matched
@@ -269,9 +269,13 @@ execution ID, start time and check time. The block has no automatic expiry.
 Unavailable status does not mean idle. No block means only that the reservation
 was absent when checked; it does not list every running upgrade. Older runtimes
 can run upgrades without reserving this boundary. This view cannot release a
-block. Recovery must first verify that the original writer has stopped and
-reconcile its changes. Do not delete credential authority or registry Secrets
-to restore access.
+block just because it is old. For an interrupted upgrade, **Check recovery**
+verifies the stopped writer and current release before **Recover maintenance**
+becomes available. Pending recoveries offer **Check outcome** and an explicit
+**Resolve recovery**; status reads never replay an operation. Interrupted key
+setup uses **Check key setup → Continue setup** instead. Both paths require
+current administrator access and confirmed process/release evidence. Do not
+delete credential authority or registry Secrets to restore access.
 
 
 ## Current credential metadata
@@ -282,6 +286,7 @@ response includes the serving control-plane Pod UID when available and reports
 unknown identity explicitly. Generation is a decimal string. Reads recheck
 current authentication and return no-store metadata without a database dependency.
 
-This supports verifying each key on each replica before the planned ownership
-transfer. Registry adoption remains capability-gated; this read neither activates
-management nor adds another way to authenticate.
+This supports verifying each key on each replica before explicit ownership
+transfer. Setup requires the complete compatible release and administrator
+confirmation; this metadata read neither activates management nor adds another
+way to authenticate.
