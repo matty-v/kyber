@@ -1161,3 +1161,7 @@ still at reserved (no candidate admission), finish this operation as failure
 before releasing its reservation. Never leave an effect-free late launch holding
 maintenance over an already-managed installation. Candidate-or-later uncertainty
 still cannot be finalized as failure merely from missing evidence.
+Credential-material uniqueness validation sorts a private, bounded scratch list
+and compares adjacent values exactly. Never persist or expose material-derived
+fingerprints for this check. It is independent of presented-bearer matching,
+which retains constant-time authentication comparisons.
