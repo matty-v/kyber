@@ -1110,3 +1110,14 @@ its own current-credential response and compares the accepted/shadowed inventory
 Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
 and rechecks frozen sources, but does not discover all replicas, establish image
 ownership, quiesce old writers or authorize an adoption effect by itself.
+
+Native adoption recovery uses an exact UID/resource-version annotation CAS only
+after the old single-execution Job/Pod is proven stopped. The active writer
+projection follows the replacement receipt, and the original admission version
+survives every replacement. Original handles fail after fencing; do not use age
+or missing objects as shutdown evidence. Maintenance Secret data stays immutable.
+Completed handoff must seal the selected marker UID in registry metadata before
+final audit/outbox completion. A sealed registry prevents configuration fallback
+across a fresh process if its marker is missing; an unsealed candidate remains
+recoverable through the still-configured administrator. Normal mutations preserve
+this receipt. These are integration gates, not runtime activation by themselves.
