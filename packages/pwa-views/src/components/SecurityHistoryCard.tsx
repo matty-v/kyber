@@ -13,6 +13,7 @@ const actions: Record<string, string> = {
   'audit:read': 'View access history', 'operator:unclassified': 'Other protected action',
   'authenticate': 'Authenticate', 'credential:create': 'Create operator key',
   'credential:update': 'Change operator key access', 'credential:rotate': 'Rotate operator key',
+  'credential:adopt': 'Manage existing keys in Kyber',
   'credential:recover-maintenance': 'Recover credential maintenance',
   'credential:revoke': 'Revoke operator key', 'credential:recover': 'Resolve interrupted key change', 'lifecycle:write': 'Change lifecycle',
   'lifecycle:delete': 'Delete resource', 'archives:export': 'Request disk export', 'archives:import': 'Request disk import',
@@ -30,6 +31,7 @@ function targetLabel(event: SecurityEvent): string {
     case 'installation': return 'This installation'
     case 'agent': return `Agent ${event.resourceName}`
     case 'machine': return `Machine ${event.resourceName}`
+    case 'credential-adoption': return 'This installation’s API access'
     case 'credential-maintenance': return `Maintenance operation ${event.resourceName}`
     case 'credential': return `Operator key ${event.resourceName}`
     case 'log-container': return `Logs: ${event.container || event.resourceName}`

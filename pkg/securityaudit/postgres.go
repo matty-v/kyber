@@ -159,7 +159,7 @@ func (f Filter) valid() bool {
 		return f.ResourceName == "" || resourceName.MatchString(f.ResourceName)
 	case "log-container":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
-	case "credential-maintenance":
+	case "credential-maintenance", "credential-adoption":
 		return f.ResourceName == "" || validMaintenanceUID(f.ResourceName)
 	case "credential":
 		return f.ResourceName == "" || validActorID(f.ResourceName)

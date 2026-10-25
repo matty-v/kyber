@@ -17,11 +17,12 @@ import (
 // pins a maintenance object. The resource kind strictly selects one identity.
 // Admission and intent commit together before any credential effect is allowed.
 type CredentialIntent struct {
-	Admission         Event  `json:"admission"`
-	CompletionEventID string `json:"completionEventId"`
-	ExpectedVersion   string `json:"expectedVersion"`
-	RegistryUID       string `json:"registryUid"`
-	MaintenanceUID    string `json:"maintenanceUid,omitempty"`
+	Admission         Event                        `json:"admission"`
+	CompletionEventID string                       `json:"completionEventId"`
+	ExpectedVersion   string                       `json:"expectedVersion"`
+	RegistryUID       string                       `json:"registryUid"`
+	MaintenanceUID    string                       `json:"maintenanceUid,omitempty"`
+	Adoption          *CredentialAdoptionAdmission `json:"adoption,omitempty"`
 }
 
 var ErrOperationNotFound = errors.New("credential operation not found")
@@ -40,10 +41,11 @@ var _ CredentialJournal = (*PostgresStore)(nil)
 type CredentialOperation struct {
 	// NewlyAdmitted is true only for this call's acknowledged first commit.
 	// Replayed/pending operations must reconcile; they do not own a new write.
-	NewlyAdmitted bool
-	Intent        CredentialIntent
-	Completion    *Event
-	Effect        *CredentialMaintenanceEffect
+	NewlyAdmitted  bool
+	Intent         CredentialIntent
+	Completion     *Event
+	Effect         *CredentialMaintenanceEffect
+	AdoptionEffect *CredentialAdoptionEffect
 }
 
 func (i CredentialIntent) Validate() error {
@@ -56,7 +58,7 @@ func (i CredentialIntent) Validate() error {
 	}
 	switch e.ResourceKind {
 	case "credential":
-		if e.CredentialAuthority != "registry" || !validActorID(i.RegistryUID) || i.MaintenanceUID != "" {
+		if e.CredentialAuthority != "registry" || !validActorID(i.RegistryUID) || i.MaintenanceUID != "" || i.Adoption != nil {
 			return ErrInvalid
 		}
 		switch e.Action {
@@ -66,10 +68,12 @@ func (i CredentialIntent) Validate() error {
 			return ErrInvalid
 		}
 	case "credential-maintenance":
-		if !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || e.Action != "credential:recover-maintenance" || (e.CredentialAuthority != "registry" && e.CredentialAuthority != "configuration") || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) {
+		if !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || e.Action != "credential:recover-maintenance" || (e.CredentialAuthority != "registry" && e.CredentialAuthority != "configuration") || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) || i.Adoption != nil {
 			return ErrInvalid
 		}
 		return nil
+	case "credential-adoption":
+		return i.validateAdoption()
 	default:
 		return ErrInvalid
 	}
@@ -80,6 +84,11 @@ func (i CredentialIntent) Validate() error {
 // key write failed or resubmitting it with a refreshed resource version.
 func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent CredentialIntent) (CredentialOperation, error) {
 	intent.Admission = intent.Admission.normalized()
+	if intent.Adoption != nil {
+		adoption := *intent.Adoption
+		adoption.Sources = append([]CredentialAdoptionSource(nil), adoption.Sources...)
+		intent.Adoption = &adoption
+	}
 	if err := intent.Validate(); err != nil {
 		return CredentialOperation{}, err
 	}
@@ -121,11 +130,11 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+	effectIntent, adoptionEffect, err := decodeCredentialEffects(intent, effect)
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	result := CredentialOperation{Intent: intent, Completion: completionEvent, NewlyAdmitted: newlyAdmitted, Effect: effectIntent}
+	result := CredentialOperation{Intent: intent, Completion: completionEvent, NewlyAdmitted: newlyAdmitted, Effect: effectIntent, AdoptionEffect: adoptionEffect}
 	if err = tx.Commit(); err != nil {
 		return CredentialOperation{}, databaseError(ctx, err)
 	}
@@ -157,11 +166,11 @@ func (s *PostgresStore) GetCredentialOperation(ctx context.Context, namespace, o
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+	effectIntent, adoptionEffect, err := decodeCredentialEffects(intent, effect)
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	return CredentialOperation{Intent: intent, Completion: completion, Effect: effectIntent}, nil
+	return CredentialOperation{Intent: intent, Completion: completion, Effect: effectIntent, AdoptionEffect: adoptionEffect}, nil
 }
 
 // PendingCredentialOperations returns bounded recovery work. Pending intents
@@ -173,7 +182,7 @@ func (s *PostgresStore) PendingCredentialOperations(ctx context.Context, namespa
 }
 
 func (s *PostgresStore) pendingCredentialOperations(ctx context.Context, namespace, afterOperationID string, limit int, kind string) ([]CredentialOperation, error) {
-	if kind != "credential" && kind != "credential-maintenance" {
+	if kind != "credential" && kind != "credential-maintenance" && kind != "credential-adoption" {
 		return nil, ErrInvalid
 	}
 	if !namespaceName.MatchString(namespace) || limit < 1 || limit > 200 {
@@ -199,11 +208,11 @@ func (s *PostgresStore) pendingCredentialOperations(ctx context.Context, namespa
 		if json.Unmarshal(raw, &intent) != nil || intent.Validate() != nil || intent.Admission.Namespace != namespace || intent.Admission.ResourceKind != kind {
 			return nil, ErrUnavailable
 		}
-		effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+		effectIntent, adoptionEffect, err := decodeCredentialEffects(intent, effect)
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, CredentialOperation{Intent: intent, Effect: effectIntent})
+		result = append(result, CredentialOperation{Intent: intent, Effect: effectIntent, AdoptionEffect: adoptionEffect})
 	}
 	if err = rows.Err(); err != nil {
 		return nil, databaseError(ctx, err)
@@ -216,10 +225,10 @@ func (s *PostgresStore) pendingCredentialOperations(ctx context.Context, namespa
 // fenced or observed committed before failure/success can become final.
 // The caller, not this metadata journal, proves that outcome against authority.
 func (s *PostgresStore) FinishCredentialOperation(ctx context.Context, namespace, operationID, outcome string, observedAt time.Time) (Event, error) {
-	return s.finishCredentialOperation(ctx, namespace, operationID, outcome, observedAt, false, nil)
+	return s.finishCredentialOperation(ctx, namespace, operationID, outcome, observedAt, "credential", nil, nil)
 }
 
-func (s *PostgresStore) finishCredentialOperation(ctx context.Context, namespace, operationID, outcome string, observedAt time.Time, maintenance bool, expectedEffect *CredentialMaintenanceEffect) (Event, error) {
+func (s *PostgresStore) finishCredentialOperation(ctx context.Context, namespace, operationID, outcome string, observedAt time.Time, kind string, expectedEffect *CredentialMaintenanceEffect, expectedAdoption *CredentialAdoptionEffect) (Event, error) {
 	if !namespaceName.MatchString(namespace) || (outcome != "success" && outcome != "failure") || observedAt.IsZero() {
 		return Event{}, ErrInvalid
 	}
@@ -247,14 +256,17 @@ func (s *PostgresStore) finishCredentialOperation(ctx context.Context, namespace
 		return Event{}, ErrUnavailable
 	}
 
-	if maintenance != (intent.Admission.ResourceKind == "credential-maintenance") {
+	if kind != intent.Admission.ResourceKind {
 		return Event{}, ErrInvalid
 	}
-	actualEffect, err := decodeCredentialMaintenanceEffect(intent, effect)
+	actualEffect, actualAdoption, err := decodeCredentialEffects(intent, effect)
 	if err != nil {
 		return Event{}, err
 	}
-	if maintenance && !reflect.DeepEqual(actualEffect, expectedEffect) {
+	if kind == "credential-maintenance" && !reflect.DeepEqual(actualEffect, expectedEffect) {
+		return Event{}, ErrConflict
+	}
+	if kind == "credential-adoption" && (!reflect.DeepEqual(actualAdoption, expectedAdoption) || outcome == "failure" && actualAdoption != nil && actualAdoption.Stage != "reserved" || outcome == "success" && (actualAdoption == nil || actualAdoption.Stage != "selected")) {
 		return Event{}, ErrConflict
 	}
 	event := intent.Admission

@@ -1751,7 +1751,7 @@ export interface SecurityEvent {
   requestId: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER'
   action: string
-  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'credential-maintenance' | 'log-container'
+  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'credential-maintenance' | 'credential-adoption' | 'log-container'
   resourceName: string
   phase: 'authentication' | 'authorization' | 'completion'
   outcome: 'allow' | 'deny' | 'success' | 'failure' | 'unknown'
