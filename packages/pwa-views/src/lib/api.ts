@@ -4,6 +4,7 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialCurrent,
   OperatorCredentialMaintenanceStatus,
   MaintenanceRecoveryReadiness, MaintenanceRecoveryOperation, MaintenanceRecoveryPendingPage,
   OperatorCredentialUsage,
@@ -314,6 +315,9 @@ export function createApiClient(cluster: Cluster) {
     // connections must be updated with the replacement credential.
     rotateApiKey: (): Promise<{ apiKey: string }> =>
       request<{ apiKey: string }>('POST', '/api/v1/rotate-api-key'),
+
+    getCurrentOperatorCredential: (signal?: AbortSignal): Promise<OperatorCredentialCurrent> =>
+      request<OperatorCredentialCurrent>('GET', '/api/v1/operator-credentials/current', undefined, signal),
 
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),

@@ -126,6 +126,9 @@ type Server struct {
 	OperatorCredentialAuthority OperatorCredentialAuthority
 
 	// Read-only maintenance visibility; does not enable acquisition or recovery.
+	// OperatorCredentialPodUID is non-secret Downward-API metadata for replica
+	// verification. Empty/invalid values are omitted, never invented.
+	OperatorCredentialPodUID      string
 	OperatorCredentialMaintenance OperatorCredentialMaintenanceReader
 
 	// Reconciliation is wired only when the complete recovery path is ready.
@@ -863,6 +866,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credential-operations/reconcile", s.handleReconcileOperatorCredentialOperation)
 	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
 	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
+	mux.HandleFunc("/api/v1/operator-credentials/current", s.handleCurrentOperatorCredential)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance", s.handleOperatorCredentialMaintenance)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/readiness", s.handleMaintenanceRecoveryReadiness)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/recover", s.handleRecoverOperatorCredentialMaintenance)
