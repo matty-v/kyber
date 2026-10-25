@@ -9,7 +9,8 @@ read. It never returns existing key values or fragments.
 Each entry shows its access level, accepted permissions and allowed Agents.
 Fleet metrics access is installation-wide, not restricted by an Agent list.
 Empty integration permissions grant no additional operator operations; every
-valid credential can still read basic API version information. Reserved task
+valid credential can still read basic API version information and its own
+current identity/access metadata. Reserved task
 administration permissions currently grant no additional access.
 
 `Active` describes accepted runtime access. `Configured, not active` does not
@@ -240,3 +241,16 @@ can run upgrades without reserving this boundary. This view cannot release a
 block. Recovery must first verify that the original writer has stopped and
 reconcile its changes. Do not delete credential authority or registry Secrets
 to restore access.
+
+
+## Current credential metadata
+
+An authenticated client can read `GET /api/v1/operator-credentials/current` to
+check its own currently accepted identity, role, grants and exact targets. The
+response includes the serving control-plane Pod UID when available and reports
+unknown identity explicitly. Generation is a decimal string. Reads recheck
+current authentication and return no-store metadata without a database dependency.
+
+This supports verifying each key on each replica before the planned ownership
+transfer. Registry adoption remains capability-gated; this read neither activates
+management nor adds another way to authenticate.

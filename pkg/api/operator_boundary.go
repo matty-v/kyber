@@ -107,6 +107,9 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	if path.Clean(p) != strings.TrimSuffix(p, "/") {
 		return false
 	}
+	if p == "/api/v1/operator-credentials/current" {
+		return r.Method == http.MethodGet // own current metadata only; no inventory or management
+	}
 	if p == "/api/v1/version" {
 		return r.Method == http.MethodGet
 	}

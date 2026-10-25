@@ -1062,3 +1062,10 @@ never fence or delete. Only explicit audited resolution retries the same intent.
 The new recovery API/UI remains disabled while the runtime protocol is zero;
 writer-evidence retention and complete adoption acceptance are activation gates.
 Read `docs/design/2026-10-24-credential-execution-recovery.md` before changing it.
+
+The authenticated `GET /api/v1/operator-credentials/current` exposes only the
+presented credential's freshly resolved identity and grants, with no-store and
+no database dependency. Restricted callers may GET only; it does not permit
+inventory or management. Missing identity/Pod UID is not invented. This supports
+adoption replica checks without adding an authentication method or activating
+protocol one. See `docs/design/2026-10-25-credential-adoption-preflight.md`.
