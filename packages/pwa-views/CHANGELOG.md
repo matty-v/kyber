@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.81.0
+
+- Describe credential ownership handoff events plainly in administrator access history. This adds no adoption control or runtime activation.
+
 ## 0.80.0
 
 - Add typed read-only access to the authenticated credential’s own current identity and grants for safe adoption preflight. No new UI flow or authentication method.

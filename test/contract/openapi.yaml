@@ -624,7 +624,7 @@ paths:
         - {in: query, name: principalId, schema: {type: string, maxLength: 512}}
         - {in: query, name: credentialId, schema: {type: string, maxLength: 512}}
         - {in: query, name: action, schema: {type: string}}
-        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, log-container]}}
+        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, credential-adoption, log-container]}}
         - {in: query, name: resourceName, schema: {type: string, maxLength: 512}}
         - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {in: query, name: cursor, schema: {type: string, maxLength: 1024}}
@@ -4629,7 +4629,7 @@ components:
         requestId: {type: string}
         method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         action: {type: string}
-        resourceKind: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, log-container]}
+        resourceKind: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, credential-adoption, log-container]}
         resourceName: {type: string}
         phase: {type: string, enum: [authentication, authorization, completion]}
         outcome: {type: string, enum: [allow, deny, success, failure, unknown]}

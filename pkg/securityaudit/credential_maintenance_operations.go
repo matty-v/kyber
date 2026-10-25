@@ -117,5 +117,5 @@ func (s *PostgresStore) RecordCredentialMaintenanceEffect(ctx context.Context, n
 	return CredentialOperation{Intent: intent, Completion: final, Effect: &effect}, nil
 }
 func (s *PostgresStore) FinishCredentialMaintenanceOperation(ctx context.Context, namespace, operationID, outcome string, at time.Time, expectedEffect *CredentialMaintenanceEffect) (Event, error) {
-	return s.finishCredentialOperation(ctx, namespace, operationID, outcome, at, true, expectedEffect)
+	return s.finishCredentialOperation(ctx, namespace, operationID, outcome, at, "credential-maintenance", expectedEffect, nil)
 }

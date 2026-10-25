@@ -1089,3 +1089,11 @@ opaque resource version, reject any partial set, and recheck the full source
 graph. Format/JSON and errors must not expose values or parser diagnostics.
 This does not prove replica acceptance or activate authority. See
 `docs/design/2026-10-25-credential-adoption-sources.md`.
+
+Credential adoption journal rows use their own credential-adoption kind and a
+sorted complete source name/UID/version graph, never a pretend registry UID.
+Effect checkpoints advance candidate -> registry -> selection -> selected with
+immutable observed UIDs. Once a create is admitted, absence cannot finalize
+failure; success requires the exact selected checkpoint. Generic key/maintenance
+finalizers and pending scans cannot consume adoption rows. The journal remains
+staged until the native worker enforces ownership and external-effect evidence.
