@@ -16,6 +16,9 @@ func TestPostgresAdoptionJournalImmutableSourcesStagesAndRestart(t *testing.T) {
 	store, db := postgresFixture(t)
 	ctx := context.Background()
 	intent := fixtureAdoptionIntent()
+	if _, err := store.Append(ctx, intent.Admission); err != nil {
+		t.Fatal("pre-launch authorization audit failed", err)
+	}
 	first, err := store.AdmitCredentialOperation(ctx, intent)
 	if err != nil || !first.NewlyAdmitted {
 		t.Fatal("adoption admission failed", err)

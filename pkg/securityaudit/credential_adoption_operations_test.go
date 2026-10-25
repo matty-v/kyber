@@ -13,7 +13,7 @@ func fixtureAdoptionIntent() CredentialIntent {
 	i.Admission.Action = "credential:adopt"
 	i.Admission.ResourceKind = "credential-adoption"
 	i.Admission.CredentialAuthority = "configuration"
-	i.Admission.ResourceName = i.MaintenanceUID
+	i.Admission.ResourceName = i.Admission.OperationID
 	i.Adoption = &CredentialAdoptionAdmission{RootSourceName: "root-source", Sources: []CredentialAdoptionSource{{Name: "reference-source", UID: uuid.NewString(), Version: "reference-version"}, {Name: "root-source", UID: uuid.NewString(), Version: "root-version"}}}
 	return i
 }
@@ -35,7 +35,7 @@ func TestCredentialAdoptionIntentPinsCompleteMetadataWithoutRegistryIdentity(t *
 		},
 		"registry claim":      func(i *CredentialIntent) { i.RegistryUID = uuid.NewString() },
 		"selected authority":  func(i *CredentialIntent) { i.Admission.CredentialAuthority = "registry" },
-		"other maintenance":   func(i *CredentialIntent) { i.Admission.ResourceName = uuid.NewString() },
+		"other operation":     func(i *CredentialIntent) { i.Admission.ResourceName = uuid.NewString() },
 		"missing maintenance": func(i *CredentialIntent) { i.MaintenanceUID = "" },
 		"wrong action":        func(i *CredentialIntent) { i.Admission.Action = "credential:rotate" },
 	} {

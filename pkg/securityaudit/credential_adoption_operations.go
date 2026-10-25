@@ -27,7 +27,7 @@ type CredentialAdoptionAdmission struct {
 
 func (i CredentialIntent) validateAdoption() error {
 	e := i.Admission
-	if e.Action != "credential:adopt" || e.CredentialAuthority != "configuration" || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) || e.ResourceName != i.MaintenanceUID || !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || i.Adoption == nil {
+	if e.Action != "credential:adopt" || e.CredentialAuthority != "configuration" || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) || e.ResourceName != e.OperationID || !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || i.Adoption == nil {
 		return ErrInvalid
 	}
 	a := i.Adoption
