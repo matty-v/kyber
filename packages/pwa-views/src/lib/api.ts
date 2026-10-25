@@ -5,6 +5,7 @@
 import type {
   OperatorCredentialInventory,
   OperatorCredentialMaintenanceStatus,
+  MaintenanceRecoveryReadiness, MaintenanceRecoveryOperation, MaintenanceRecoveryPendingPage,
   OperatorCredentialUsage,
   OperatorCredentialOptions,
   OperatorCredentialPendingPage,
@@ -319,6 +320,21 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentialMaintenance: (signal?: AbortSignal): Promise<OperatorCredentialMaintenanceStatus> =>
       request<OperatorCredentialMaintenanceStatus>('GET', '/api/v1/operator-credentials/maintenance', undefined, signal),
+
+    checkMaintenanceRecovery: (signal?: AbortSignal): Promise<MaintenanceRecoveryReadiness> =>
+      request<MaintenanceRecoveryReadiness>('GET', '/api/v1/operator-credentials/maintenance/readiness', undefined, signal),
+
+    recoverCredentialMaintenance: (operationId: string, version: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('POST', '/api/v1/operator-credentials/maintenance/recover', { operationId }, signal, version),
+
+    getMaintenanceRecoveryOperation: (operationId: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('GET', `/api/v1/operator-credentials/maintenance/operations?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    getPendingMaintenanceRecoveryOperations: (after?: string, signal?: AbortSignal): Promise<MaintenanceRecoveryPendingPage> =>
+      request<MaintenanceRecoveryPendingPage>('GET', `/api/v1/operator-credentials/maintenance/operations/pending${after ? `?${new URLSearchParams({ after })}` : ''}`, undefined, signal),
+
+    resolveMaintenanceRecovery: (operationId: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('POST', '/api/v1/operator-credentials/maintenance/operations/resolve', { operationId }, signal),
 
     getOperatorCredentialUsage: (signal?: AbortSignal): Promise<OperatorCredentialUsage> =>
       request<OperatorCredentialUsage>('GET', '/api/v1/operator-credentials/usage', undefined, signal),

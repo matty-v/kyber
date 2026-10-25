@@ -379,6 +379,123 @@ paths:
         '403':
           description: Current administrator access required
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/readiness:
+    get:
+      operationId: checkMaintenanceRecovery
+      summary: Check whether stopped upgrade maintenance can be recovered
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryReadiness'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/recover:
+    post:
+      operationId: recoverCredentialMaintenance
+      summary: Explicitly recover verified stopped maintenance
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: header, name: If-Match, required: true, schema: {type: string}, description: Exact opaque version returned by the recovery readiness check.}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '202':
+          description: Outcome remains pending; no automatic retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '400': {description: Invalid operation ID or payload}
+        '409': {description: Maintenance changed or recovery is not verified}
+        '428': {description: Reviewed metadata version required for initial recovery}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations:
+    get:
+      operationId: getMaintenanceRecoveryOperation
+      summary: Read a recovery outcome without retrying effects
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: query, name: operationId, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations/pending:
+    get:
+      operationId: getPendingMaintenanceRecoveryOperations
+      summary: List unresolved maintenance recoveries
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: query, name: after, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryPendingPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations/resolve:
+    post:
+      operationId: resolveMaintenanceRecovery
+      summary: Explicitly resolve an interrupted recovery
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '202':
+          description: Outcome remains pending; no automatic retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '400': {description: Invalid operation ID or payload}
+        '409': {description: Maintenance changed or recovery is not verified}
+        '428': {description: Reviewed metadata version required for initial recovery}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credentials/usage:
     get:
       operationId: getOperatorCredentialUsage
@@ -494,7 +611,7 @@ paths:
         - {in: query, name: principalId, schema: {type: string, maxLength: 512}}
         - {in: query, name: credentialId, schema: {type: string, maxLength: 512}}
         - {in: query, name: action, schema: {type: string}}
-        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, log-container]}}
+        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, log-container]}}
         - {in: query, name: resourceName, schema: {type: string, maxLength: 512}}
         - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {in: query, name: cursor, schema: {type: string, maxLength: 1024}}
@@ -2604,6 +2721,30 @@ components:
             additionalProperties: true
 
   schemas:
+    MaintenanceRecoveryReadiness:
+      type: object
+      additionalProperties: false
+      required: [ready, reason]
+      properties:
+        ready: {type: boolean}
+        reason: {type: string, enum: [ready, idle, writer-unverified, writer-running, release-unverified, metadata-changed, recovery-pending, recovery-unverified]}
+        version: {type: string}
+        operationId: {type: string, format: uuid}
+    MaintenanceRecoveryOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, status, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, success, failure]}
+        observedAt: {type: string, format: date-time}
+    MaintenanceRecoveryPendingPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, maxItems: 25, items: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}}
+        next: {type: string, format: uuid}
     OperatorCredentialMaintenance:
       type: object
       oneOf:
@@ -2615,6 +2756,15 @@ components:
       additionalProperties: false
       required: [observedAt, blocked]
       properties:
+        recoveryAvailable: {type: boolean}
+        recoveryOperationId: {type: string, format: uuid}
+        writer:
+          type: object
+          additionalProperties: false
+          required: [podName, jobName]
+          properties:
+            podName: {type: string}
+            jobName: {type: string}
         observedAt: {type: string, format: date-time}
         blocked: {type: boolean}
         version: {type: string, description: Opaque reviewed metadata version; not a release capability.}
@@ -4444,7 +4594,7 @@ components:
         requestId: {type: string}
         method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         action: {type: string}
-        resourceKind: {type: string, enum: [installation, agent, machine, credential, log-container]}
+        resourceKind: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, log-container]}
         resourceName: {type: string}
         phase: {type: string, enum: [authentication, authorization, completion]}
         outcome: {type: string, enum: [allow, deny, success, failure, unknown]}

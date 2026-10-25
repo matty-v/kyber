@@ -33,6 +33,24 @@ func (c maintenanceDeleteRaceClient) Delete(ctx context.Context, obj client.Obje
 	return c.Client.Delete(ctx, obj, opts...)
 }
 
+// Secret metadata uses the real API server; writer lifecycle objects are explicit
+// fixtures. This proves CAS/delete transport, not real Pod shutdown or a complete
+// runtime recovery, which remains an activation acceptance requirement.
+type maintenanceRecoveryTransportReader struct {
+	real      client.Reader
+	lifecycle client.Reader
+}
+
+func (r maintenanceRecoveryTransportReader) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+	if _, ok := obj.(*corev1.Secret); ok {
+		return r.real.Get(ctx, key, obj, opts...)
+	}
+	return r.lifecycle.Get(ctx, key, obj, opts...)
+}
+func (r maintenanceRecoveryTransportReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+	return r.lifecycle.List(ctx, list, opts...)
+}
+
 // This probe never uses the installation's real reservation name. It exercises
 // server-side immutable Secrets and UID/RV delete preconditions, which the fake
 // client does not implement. No accepted credential or Agent is modified.
@@ -60,7 +78,7 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal("dev client unavailable")
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 	var deployment appsv1.Deployment
 	if err := direct.Get(ctx, client.ObjectKey{Namespace: ns, Name: "kyber-dev-control-plane"}, &deployment); err != nil || deployment.Labels["app.kubernetes.io/instance"] != "kyber-dev" {
@@ -190,6 +208,75 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 	if err := direct.Get(ctx, b.key, retained); err != nil || retained.UID != third.uid {
 		t.Fatal("metadata race deleted reservation")
 	}
+
+	// Clear the retained, owned third probe before the recovery transport probe.
+	retainedUID, retainedRV := retained.UID, retained.ResourceVersion
+	if err := direct.Delete(ctx, retained, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &retainedUID, ResourceVersion: &retainedRV}}); err != nil {
+		t.Fatal("retained probe cleanup failed")
+	}
+	_, lifecycle, writerPod, writerJob := writerFixture(t)
+	recoveryTransport, err := NewSecretStore(cfg, ns, DefaultSecretName)
+	if err != nil {
+		t.Fatal("recovery transport unavailable")
+	}
+	recoveryTransport.reader = maintenanceRecoveryTransportReader{real: direct, lifecycle: lifecycle}
+	recoveryStore, err := newMaintenanceStore(recoveryTransport, name)
+	if err != nil {
+		t.Fatal("recovery store unavailable")
+	}
+	original, err := recoveryStore.AcquireForPod(ctx, MaintenanceUpgrade, writerPod.Name, string(writerPod.UID))
+	if err != nil {
+		t.Fatal("bound transport probe acquisition failed", err)
+	}
+	ownedUIDs[string(original.uid)] = true
+	stopWriterFixture(t, lifecycle, writerPod, writerJob)
+	status, err := recoveryStore.Inspect(ctx)
+	if err != nil {
+		t.Fatal("recovery transport inspection failed")
+	}
+	operationID := uuid.NewString()
+	capability, err := recoveryStore.PrepareRecovery(ctx, status.UID, status.Version, operationID, "")
+	if err != nil {
+		t.Fatal("recovery transport fence failed", err)
+	}
+	if err := original.Release(ctx); !errors.Is(err, ErrConflict) {
+		t.Fatal("old owner survived recovery CAS", err)
+	}
+	proof := capability.Proof()
+	resumed, err := recoveryStore.ResumeRecovery(ctx, operationID, proof)
+	if err != nil {
+		t.Fatal("exact recovery proof could not resume", err)
+	}
+	recoveryTransport.writer = maintenanceDeleteRaceClient{Client: direct, beforeDelete: func() error {
+		current := &corev1.Secret{}
+		if err := direct.Get(ctx, recoveryStore.key, current); err != nil {
+			return err
+		}
+		current.Annotations["kyber.io/probe-race"] = "recovery-changed"
+		return direct.Update(ctx, current)
+	}}
+	if err := resumed.Release(ctx); !errors.Is(err, ErrConflict) {
+		t.Fatal("recovery delete ignored resource-version precondition", err)
+	}
+	if _, err := recoveryStore.ResumeRecovery(ctx, operationID, proof); !errors.Is(err, ErrConflict) {
+		t.Fatal("stale journal proof refreshed itself", err)
+	}
+	recoveryTransport.writer = direct
+	status, err = recoveryStore.Inspect(ctx)
+	if err != nil || !status.Present {
+		t.Fatal("recovery race deleted reservation")
+	}
+	capability, err = recoveryStore.PrepareRecovery(ctx, status.UID, status.Version, operationID, "")
+	if err != nil {
+		t.Fatal("transport probe refence failed", err)
+	}
+	if err := capability.Release(ctx); err != nil {
+		t.Fatal("exact recovery transport release failed", err)
+	}
+	if status, err := recoveryStore.Inspect(ctx); err != nil || status.Present {
+		t.Fatal("recovery transport cleanup not confirmed")
+	}
+
 	after := &metav1.PartialObjectMetadata{}
 	after.SetGroupVersionKind(root.GroupVersionKind())
 	if err := direct.Get(ctx, rootKey, after); err != nil || after.UID != root.UID || after.ResourceVersion != root.ResourceVersion {

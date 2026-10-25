@@ -120,7 +120,7 @@ func run(cfg selfupgrade.Config, deployment, healthURL string, logger *slog.Logg
 	if err != nil {
 		return fmt.Errorf("build Kubernetes client: %w", err)
 	}
-	credentialCoordinator, err := selfupgrade.NewUpgradeCredentialCoordinator(restCfg, cfg.Namespace)
+	credentialCoordinator, err := selfupgrade.NewUpgradeCredentialCoordinator(restCfg, cfg.Namespace, selfupgrade.UpgradeCredentialExecution{PodName: os.Getenv("KYBER_UPGRADE_POD_NAME"), PodUID: os.Getenv("KYBER_UPGRADE_POD_UID")})
 	if err != nil {
 		return fmt.Errorf("build operator credential upgrade coordinator: %w", err)
 	}

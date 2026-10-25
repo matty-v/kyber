@@ -1051,3 +1051,14 @@ version is not a release capability. Keep metadata connection-local in the UI
 and clear it on denial/failure. Protocol-zero upgrades may reserve nothing, so
 idle is not an assertion that no upgrade runs. Read
 `docs/design/2026-10-24-credential-maintenance-visibility.md` before recovery work.
+
+
+Staged maintenance recovery binds supervised non-retrying Pod/Job UIDs and
+requires known termination, release/authority reconciliation, current admin
+access and durable journal admission before metadata fencing. The journal stores
+an immutable UID/resource-version/proof-ID delete intent before release. A
+pending recovery cannot be displaced; GET readiness/outcome/pending requests
+never fence or delete. Only explicit audited resolution retries the same intent.
+The new recovery API/UI remains disabled while the runtime protocol is zero;
+writer-evidence retention and complete adoption acceptance are activation gates.
+Read `docs/design/2026-10-24-credential-execution-recovery.md` before changing it.

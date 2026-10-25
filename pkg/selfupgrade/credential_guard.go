@@ -2,6 +2,7 @@ package selfupgrade
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/matty-v/kyber/pkg/operatorcredentials"
@@ -24,21 +25,51 @@ type UpgradeCredentialCoordinator interface {
 	Selected(context.Context) (bool, error)
 }
 
+// UpgradeCredentialExecution is supplied by the supervised Job downward API.
+// It contains no operator key and is verified against live Pod/Job ownership.
+type UpgradeCredentialExecution struct {
+	PodName string
+	PodUID  string
+}
+
 type credentialUpgradeCoordinator struct {
+	execution   UpgradeCredentialExecution
 	authority   *operatorcredentials.AuthorityStore
 	maintenance *operatorcredentials.MaintenanceStore
 	protocol    int
 }
 
+type UpgradeCredentialEffects struct {
+	Release                string
+	InitialRevision        int
+	TargetVersion          string
+	ControlPlaneDeployment string
+	Selected               bool
+}
+
+// UpgradeCredentialEffectsRecorder must acknowledge the durable checkpoint
+// before the supervisor is permitted to apply any CRD or Helm effect.
+type UpgradeCredentialEffectsRecorder interface {
+	RecordEffects(context.Context, UpgradeCredentialEffects) error
+}
+
 type credentialUpgradeReservation struct {
+	authority   *operatorcredentials.AuthorityStore
 	reservation *operatorcredentials.MaintenanceReservation
 }
 
-func NewUpgradeCredentialCoordinator(config *rest.Config, namespace string) (UpgradeCredentialCoordinator, error) {
-	return newUpgradeCredentialCoordinator(config, namespace, operatorcredentials.RuntimeAuthorityProtocolVersion)
+func NewUpgradeCredentialCoordinator(config *rest.Config, namespace string, execution ...UpgradeCredentialExecution) (UpgradeCredentialCoordinator, error) {
+	return newUpgradeCredentialCoordinator(config, namespace, operatorcredentials.RuntimeAuthorityProtocolVersion, execution...)
 }
 
-func newUpgradeCredentialCoordinator(config *rest.Config, namespace string, protocol int) (UpgradeCredentialCoordinator, error) {
+func newUpgradeCredentialCoordinator(config *rest.Config, namespace string, protocol int, executions ...UpgradeCredentialExecution) (UpgradeCredentialCoordinator, error) {
+	if len(executions) > 1 {
+		return nil, operatorcredentials.ErrInvalid
+	}
+	var execution UpgradeCredentialExecution
+	if len(executions) == 1 {
+		execution = executions[0]
+	}
 	authority, err := operatorcredentials.NewAuthorityStore(config, namespace, operatorcredentials.DefaultSecretName, operatorcredentials.DefaultAuthoritySecretName)
 	if err != nil {
 		return nil, err
@@ -47,7 +78,7 @@ func newUpgradeCredentialCoordinator(config *rest.Config, namespace string, prot
 	if err != nil {
 		return nil, err
 	}
-	return &credentialUpgradeCoordinator{authority: authority, maintenance: maintenance, protocol: protocol}, nil
+	return &credentialUpgradeCoordinator{authority: authority, maintenance: maintenance, protocol: protocol, execution: execution}, nil
 }
 
 func (c *credentialUpgradeCoordinator) MaintenanceRequired() bool { return c.protocol >= 1 }
@@ -56,11 +87,11 @@ func (c *credentialUpgradeCoordinator) Reserve(ctx context.Context) (UpgradeCred
 	if !c.MaintenanceRequired() {
 		return nil, operatorcredentials.ErrUnsupported
 	}
-	r, err := c.maintenance.Acquire(ctx, operatorcredentials.MaintenanceUpgrade)
+	r, err := c.maintenance.AcquireForPod(ctx, operatorcredentials.MaintenanceUpgrade, c.execution.PodName, c.execution.PodUID)
 	if err != nil {
 		return nil, fmt.Errorf("reserve operator credential maintenance: %w", err)
 	}
-	return &credentialUpgradeReservation{reservation: r}, nil
+	return &credentialUpgradeReservation{reservation: r, authority: c.authority}, nil
 }
 
 func (c *credentialUpgradeCoordinator) Selected(ctx context.Context) (bool, error) {
@@ -83,4 +114,33 @@ func (r *credentialUpgradeReservation) Check(ctx context.Context) error {
 
 func (r *credentialUpgradeReservation) Release(ctx context.Context) error {
 	return r.reservation.Release(ctx)
+}
+
+func (r *credentialUpgradeReservation) RecordEffects(ctx context.Context, effects UpgradeCredentialEffects) error {
+	if r == nil || r.authority == nil || r.reservation == nil {
+		return operatorcredentials.ErrInvalid
+	}
+	snapshot, err := r.authority.Load(ctx)
+	checkpoint := operatorcredentials.UpgradeEffectsCheckpoint{Release: effects.Release, InitialRevision: effects.InitialRevision, TargetVersion: effects.TargetVersion, ControlPlaneDeployment: effects.ControlPlaneDeployment}
+	switch {
+	case errors.Is(err, operatorcredentials.ErrUninitialized):
+		if effects.Selected {
+			return operatorcredentials.ErrUnavailable
+		}
+		checkpoint.Authority = "unselected"
+	case err != nil:
+		return err
+	default:
+		if !effects.Selected {
+			return operatorcredentials.ErrConflict
+		}
+		checkpoint.Authority = "registry"
+		checkpoint.RegistryUID = snapshot.UID
+	}
+	next, err := r.reservation.RecordUpgradeEffects(ctx, checkpoint)
+	if err != nil {
+		return err
+	}
+	r.reservation = next
+	return nil
 }

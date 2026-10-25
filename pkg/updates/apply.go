@@ -336,6 +336,8 @@ func (a *Applier) buildJob(target, image string) *batchv1.Job {
 						Command: []string{"/usr/local/bin/kyber-upgrade"},
 						Env: []corev1.EnvVar{
 							{Name: "KYBER_UPGRADE_RELEASE", Value: a.ReleaseName},
+							{Name: "KYBER_UPGRADE_POD_NAME", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+							{Name: "KYBER_UPGRADE_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 							{Name: "KYBER_UPGRADE_NAMESPACE", Value: a.Namespace},
 							{Name: "KYBER_UPGRADE_CHART_REF", Value: a.ChartRef},
 							{Name: "KYBER_UPGRADE_TARGET_VERSION", Value: target},

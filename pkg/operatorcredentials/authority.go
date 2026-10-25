@@ -89,6 +89,16 @@ func (s *AuthorityStore) ReserveAdoption(ctx context.Context) (*MaintenanceReser
 	return maintenance.Acquire(ctx, MaintenanceAdoption)
 }
 
+// ReserveAdoptionForPod binds the handoff to its non-retrying supervised Job.
+// It is inert until an audited adoption executor completes all activation gates.
+func (s *AuthorityStore) ReserveAdoptionForPod(ctx context.Context, podName, podUID string) (*MaintenanceReservation, error) {
+	maintenance, err := newMaintenanceStore(s.registry, s.registry.key.Name+"-maintenance")
+	if err != nil {
+		return nil, err
+	}
+	return maintenance.AcquireForPod(ctx, MaintenanceAdoption, podName, podUID)
+}
+
 // Bind creates an immutable adoption marker, never updates an existing one.
 // The expected version comes from the candidate reviewed by the adoption flow.
 // A failed/lost response is NOT retried: Load reconciles whether binding won.

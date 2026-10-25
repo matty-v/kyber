@@ -63,6 +63,7 @@ import (
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
 	"github.com/matty-v/kyber/pkg/securityaudit"
+	"github.com/matty-v/kyber/pkg/selfupgrade"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"
@@ -1570,6 +1571,16 @@ func main() {
 		setupLog.Info("Operator credential maintenance visibility unavailable")
 	} else {
 		publicAPI.OperatorCredentialMaintenance = maintenanceReader
+		// Recovery is part of the complete authority protocol. Keep it staged
+		// until adoption, release compatibility and durable audit are enabled.
+		if operatorcredentials.RuntimeAuthorityProtocolVersion >= 1 {
+			verifier, err := selfupgrade.NewMaintenanceReleaseVerifier(restCfg, publicAPI.Namespace)
+			if err != nil {
+				setupLog.Info("Operator credential maintenance recovery unavailable")
+			} else {
+				publicAPI.OperatorCredentialMaintenanceReconciler = verifier
+			}
+		}
 	}
 	if writer, ok := securityHistory.(securityaudit.CredentialUsageWriter); ok {
 		collector, usageErr := securityaudit.NewCredentialUsageCollector(writer, publicAPI.Namespace, os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"))
