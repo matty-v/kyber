@@ -154,6 +154,17 @@ func (s *MaintenanceStore) validate(secret *corev1.Secret) error {
 			return ErrUnsupported
 		}
 	}
+	if raw, found := secret.Annotations[maintenanceRecoveryAnnotation]; found {
+		if kind != MaintenanceUpgrade {
+			return ErrUnsupported
+		}
+		if _, err := decodeMaintenanceWriter(secret.Data["writer"]); err != nil {
+			return ErrUnsupported
+		}
+		if _, err := decodeMaintenanceRecovery(raw); err != nil {
+			return ErrUnsupported
+		}
+	}
 	if _, err := time.Parse(time.RFC3339Nano, string(secret.Data["startedAt"])); err != nil {
 		return ErrUnsupported
 	}
@@ -204,14 +215,15 @@ func (r *MaintenanceReservation) Release(ctx context.Context) error {
 // MaintenanceStatus is a whitelisted, value-free observation. Inspecting it does
 // not confer the private reservation capability or permission to release it.
 type MaintenanceStatus struct {
-	Upgrade     *UpgradeEffectsCheckpoint
-	Writer      *MaintenanceWriter
-	Present     bool
-	Kind        string
-	ExecutionID string
-	StartedAt   time.Time
-	UID         string
-	Version     string
+	RecoveryOperationID string
+	Upgrade             *UpgradeEffectsCheckpoint
+	Writer              *MaintenanceWriter
+	Present             bool
+	Kind                string
+	ExecutionID         string
+	StartedAt           time.Time
+	UID                 string
+	Version             string
 }
 
 // Inspect uses an authoritative bounded read. Only a verified NotFound means
@@ -249,7 +261,15 @@ func (s *MaintenanceStore) Inspect(ctx context.Context) (MaintenanceStatus, erro
 		}
 		upgrade = &record.Checkpoint
 	}
-	return MaintenanceStatus{Upgrade: upgrade, Writer: writer, Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
+	recoveryOperationID := ""
+	if raw, found := current.Annotations[maintenanceRecoveryAnnotation]; found {
+		record, err := decodeMaintenanceRecovery(raw)
+		if err != nil {
+			return MaintenanceStatus{}, ErrUnsupported
+		}
+		recoveryOperationID = record.OperationID
+	}
+	return MaintenanceStatus{RecoveryOperationID: recoveryOperationID, Upgrade: upgrade, Writer: writer, Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
 }
 
 func (s *MaintenanceStore) Namespace() string {

@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.79.0
+
+- Add staged administrator maintenance readiness, outcome checks and explicit recovery controls. Reads never retry recovery, and uncertain writes retain their operation ID.
+
 ## 0.74.0
 
 - Name lifecycle and archive audit actions plainly and distinguish completed requests from their background operations.

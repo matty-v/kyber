@@ -86,7 +86,7 @@ func TestMaintenanceWriterBindsExactNonRetryingJob(t *testing.T) {
 	}
 }
 func TestMaintenanceWriterNeverTrustsAgeMissingOrUnknownTermination(t *testing.T) {
-	for _, scenario := range []string{"missing-pod", "replaced-pod", "node-loss", "missing-container-status", "still-active-job", "extra-running-pod"} {
+	for _, scenario := range []string{"missing-pod", "replaced-pod", "node-loss", "missing-container-status", "node-lost-pod", "still-active-job", "extra-running-pod"} {
 		t.Run(scenario, func(t *testing.T) {
 			s, c, pod, job := writerFixture(t)
 			ctx := context.Background()
@@ -111,6 +111,11 @@ func TestMaintenanceWriterNeverTrustsAgeMissingOrUnknownTermination(t *testing.T
 				}
 			case "node-loss":
 				pod.Status.ContainerStatuses[0].State.Terminated.Reason = "ContainerStatusUnknown"
+				if err := c.Status().Update(ctx, pod); err != nil {
+					t.Fatal(err)
+				}
+			case "node-lost-pod":
+				pod.Status.Reason = "NodeLost"
 				if err := c.Status().Update(ctx, pod); err != nil {
 					t.Fatal(err)
 				}

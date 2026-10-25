@@ -33,6 +33,13 @@ func (c UpgradeEffectsCheckpoint) valid() bool {
 	return c.Authority == "registry" && canonicalWriterUID(c.RegistryUID) || c.Authority == "unselected" && c.RegistryUID == ""
 }
 
+func (c UpgradeEffectsCheckpoint) Validate() error {
+	if !c.valid() {
+		return ErrInvalid
+	}
+	return nil
+}
+
 type upgradeEffectsRecord struct {
 	Nonce      string                   `json:"nonce"`
 	Checkpoint UpgradeEffectsCheckpoint `json:"checkpoint"`

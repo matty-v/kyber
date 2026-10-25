@@ -15,11 +15,19 @@ type OperatorCredentialMaintenanceReader interface {
 }
 
 type credentialMaintenanceView struct {
-	ObservedAt string                              `json:"observedAt"`
-	Blocked    bool                                `json:"blocked"`
-	Version    string                              `json:"version,omitempty"`
-	Operation  *credentialMaintenanceOperationView `json:"operation,omitempty"`
+	RecoveryAvailable   bool                                `json:"recoveryAvailable,omitempty"`
+	RecoveryOperationID string                              `json:"recoveryOperationId,omitempty"`
+	Writer              *credentialMaintenanceWriterView    `json:"writer,omitempty"`
+	ObservedAt          string                              `json:"observedAt"`
+	Blocked             bool                                `json:"blocked"`
+	Version             string                              `json:"version,omitempty"`
+	Operation           *credentialMaintenanceOperationView `json:"operation,omitempty"`
 }
+type credentialMaintenanceWriterView struct {
+	PodName string `json:"podName"`
+	JobName string `json:"jobName"`
+}
+
 type credentialMaintenanceOperationView struct {
 	Kind        string `json:"kind"`
 	ExecutionID string `json:"executionId"`
@@ -65,8 +73,12 @@ func (s *Server) handleOperatorCredentialMaintenance(w http.ResponseWriter, r *h
 		writeJSONError(w, http.StatusForbidden, "forbidden", "Current administrator access required")
 		return
 	}
-	response := credentialMaintenanceView{ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Blocked: status.Present}
+	_, _, _, recoveryAvailable := s.maintenanceRecoveryDependencies()
+	response := credentialMaintenanceView{RecoveryAvailable: recoveryAvailable, RecoveryOperationID: status.RecoveryOperationID, ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Blocked: status.Present}
 	if status.Present {
+		if status.Writer != nil {
+			response.Writer = &credentialMaintenanceWriterView{PodName: status.Writer.PodName, JobName: status.Writer.JobName}
+		}
 		if status.UID == "" || status.Version == "" || (status.Kind != operatorcredentials.MaintenanceAdoption && status.Kind != operatorcredentials.MaintenanceUpgrade) || status.ExecutionID == "" || status.StartedAt.IsZero() {
 			writeJSONError(w, http.StatusServiceUnavailable, "credential_maintenance_unavailable", "Maintenance status could not be verified.")
 			return

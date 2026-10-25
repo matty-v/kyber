@@ -1607,7 +1607,25 @@ export interface OperatorCredential {
   authenticatesAs?: string
 }
 
+export interface MaintenanceRecoveryReadiness {
+  ready: boolean
+  reason: string
+  version?: string
+  operationId?: string
+}
+export interface MaintenanceRecoveryOperation {
+  operationId: string
+  status: 'pending' | 'success' | 'failure'
+  observedAt: string
+}
+export interface MaintenanceRecoveryPendingPage {
+  items: MaintenanceRecoveryOperation[]
+  next?: string
+}
 export interface OperatorCredentialMaintenanceStatus {
+  recoveryAvailable?: boolean
+  recoveryOperationId?: string
+  writer?: { podName: string; jobName: string }
   observedAt: string
   blocked: boolean
   version?: string
@@ -1713,7 +1731,7 @@ export interface SecurityEvent {
   requestId: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER'
   action: string
-  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'log-container'
+  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'credential-maintenance' | 'log-container'
   resourceName: string
   phase: 'authentication' | 'authorization' | 'completion'
   outcome: 'allow' | 'deny' | 'success' | 'failure' | 'unknown'

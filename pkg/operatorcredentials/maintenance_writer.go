@@ -211,6 +211,9 @@ func (s *MaintenanceStore) WriterState(ctx context.Context, uid, version string)
 	return MaintenanceWriterStopped, nil
 }
 func knownTerminatedWriterPod(pod *corev1.Pod, container string) bool {
+	if pod.Status.Reason == "NodeLost" || pod.Status.Reason == "NodeShutdown" || pod.Status.Reason == "Shutdown" {
+		return false
+	}
 	if pod.Status.Phase != corev1.PodSucceeded && pod.Status.Phase != corev1.PodFailed {
 		return false
 	}

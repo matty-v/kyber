@@ -1,8 +1,8 @@
 # Identify maintenance writers before recovery
 
 Draft implementation slice for the approved MAT-134 recovery flow. Runtime
-protocol remains zero. No recovery endpoint, release shortcut or activation is
-introduced by recording a writer.
+protocol remains zero. Recovery endpoints and admin controls remain staged until the complete
+authority protocol is enabled. Recording a writer does not activate them.
 
 A recovery cannot infer termination from reservation age, an HTTP failure, a
 missing Pod, or a Job label alone. Kubernetes can mark Pods Failed after losing
@@ -57,3 +57,31 @@ a confirmed absence of this checkpoint can support the preflight-only case only
 for these bound upgrade writers, after the original writer has stopped and old
 metadata writes are fenced. It does not describe adoption effects, which need
 their own durable handoff journal contract.
+
+## Staged native recovery
+
+The API and admin controls are staged behind the complete authority protocol;
+protocol zero still exposes inspection only. A readiness check reads shutdown,
+release and authority evidence without writing. Initial recovery requires the
+exact inspected metadata version and a new operation ID. The existing durable
+journal admits the operation before metadata fencing, then stores the exact
+UID, resource version and fresh proof ID before any conditional deletion.
+No key material or candidate data is stored in that journal.
+
+A lost acknowledgement stays pending. Outcome and pending-list GETs do not
+retry effects. An explicit resolve request requires current administrator access
+and required audit before reconciling that same immutable delete intent. A
+pending operation cannot be displaced by another recovery. A terminal failed
+operation can be superseded only when its old delete version is fenced.
+
+The release verifier performs bounded read-only Helm status/manifest and direct
+Deployment/ReplicaSet/Pod checks, with fresh authority checks. Missing checkpoint
+means no supervised upgrade effects were admitted; a checkpoint alone does not
+prove completion. Unavailable, unhealthy or incompatible release state retains
+the reservation. These observations concern supervised Kyber upgrades, not
+arbitrary privileged cluster edits or an atomic transaction across cloud APIs.
+
+Writer-evidence retention, the complete adoption handoff and activation tests
+remain protocol-one gates. The API/UI does not offer force unlock for old,
+unidentified, missing or node-lost writers. The usage and access-history features
+remain independent of activating the new credential authority.
