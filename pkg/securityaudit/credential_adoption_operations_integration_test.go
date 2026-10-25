@@ -62,7 +62,7 @@ func TestPostgresAdoptionJournalImmutableSourcesStagesAndRestart(t *testing.T) {
 		t.Fatal("adoption leaked into maintenance recovery", err)
 	}
 	registry, authority := uuid.NewString(), uuid.NewString()
-	stages := []CredentialAdoptionEffect{{Stage: "candidate"}, {Stage: "registry", RegistryUID: registry}, {Stage: "selection", RegistryUID: registry}, {Stage: "selected", RegistryUID: registry, AuthorityUID: authority}}
+	stages := fixtureAdoptionEffects(registry, authority)
 	restarted, _ := NewPostgresStore(db)
 	for _, stage := range stages {
 		if _, err := restarted.RecordCredentialAdoptionEffect(ctx, intent.Admission.Namespace, intent.Admission.OperationID, stage); err != nil {
@@ -72,8 +72,10 @@ func TestPostgresAdoptionJournalImmutableSourcesStagesAndRestart(t *testing.T) {
 		if err != nil || state.AdoptionEffect == nil || *state.AdoptionEffect != stage || state.Effect != nil {
 			t.Fatal("checkpoint lost on restart", err)
 		}
-		if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "failure", time.Now(), &stage); !errors.Is(err, ErrConflict) {
-			t.Fatal("potential late create finalized as failure", err)
+		if stage.Stage != "reserved" {
+			if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "failure", time.Now(), &stage); !errors.Is(err, ErrConflict) {
+				t.Fatal("potential late create finalized as failure", err)
+			}
 		}
 	}
 	if _, err := store.FinishCredentialOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now()); !errors.Is(err, ErrInvalid) {
@@ -82,15 +84,15 @@ func TestPostgresAdoptionJournalImmutableSourcesStagesAndRestart(t *testing.T) {
 	if _, err := store.FinishCredentialMaintenanceOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), nil); !errors.Is(err, ErrInvalid) {
 		t.Fatal("maintenance finalizer bypassed adoption proof", err)
 	}
-	stale := stages[2]
+	stale := stages[3]
 	if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), &stale); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale checkpoint finalized success", err)
 	}
-	final, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), &stages[3])
+	final, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), &stages[4])
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := restarted.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now().Add(time.Hour), &stages[3])
+	again, err := restarted.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now().Add(time.Hour), &stages[4])
 	if err != nil || final != again {
 		t.Fatal("completion retry changed audit", err)
 	}
@@ -104,7 +106,7 @@ func TestPostgresAdoptionJournalImmutableSourcesStagesAndRestart(t *testing.T) {
 	if _, err := store.AdmitCredentialOperation(ctx, intent); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), &stages[3]); err != nil {
+	if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "success", time.Now(), &stages[4]); err != nil {
 		t.Fatal(err)
 	}
 	rows, err = store.Query(ctx, Filter{Namespace: intent.Admission.Namespace, ResourceKind: "credential-adoption", Limit: 10}, nil)
@@ -123,12 +125,16 @@ func TestPostgresAdoptionJournalFailureCannotRaceLateCreateAdmission(t *testing.
 		}
 		var workers sync.WaitGroup
 		var effectErr, finishErr error
-		effect := CredentialAdoptionEffect{Stage: "candidate"}
+		stages := fixtureAdoptionEffects(uuid.NewString(), uuid.NewString())
+		if _, err := store.RecordCredentialAdoptionEffect(ctx, intent.Admission.Namespace, intent.Admission.OperationID, stages[0]); err != nil {
+			t.Fatal(err)
+		}
+		effect := stages[1]
 		workers.Go(func() {
 			_, effectErr = store.RecordCredentialAdoptionEffect(ctx, intent.Admission.Namespace, intent.Admission.OperationID, effect)
 		})
 		workers.Go(func() {
-			_, finishErr = store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "failure", time.Now(), nil)
+			_, finishErr = store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "failure", time.Now(), &stages[0])
 		})
 		workers.Wait()
 		if (effectErr == nil) == (finishErr == nil) {
@@ -145,8 +151,34 @@ func TestPostgresAdoptionJournalFailureCannotRaceLateCreateAdmission(t *testing.
 		if err != nil {
 			t.Fatal(err)
 		}
-		if observed.Completion != nil && observed.AdoptionEffect != nil {
+		if observed.Completion != nil && observed.AdoptionEffect.Stage != "reserved" {
 			t.Fatal("late create admitted after terminal failure")
 		}
+	}
+}
+
+func TestPostgresAdoptionLaunchIsDurableBeforeReservationAndFailureFencesLateWorker(t *testing.T) {
+	store, db := postgresFixture(t)
+	ctx := context.Background()
+	intent := fixtureAdoptionIntent()
+	first, err := store.AdmitCredentialOperation(ctx, intent)
+	if err != nil || !first.NewlyAdmitted || first.Intent.MaintenanceUID != "" || first.AdoptionEffect != nil {
+		t.Fatal("launch required an invented reservation", err)
+	}
+	restarted, _ := NewPostgresStore(db)
+	pending, err := restarted.GetCredentialOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID)
+	if err != nil || pending.Intent.Adoption.DeploymentUID != intent.Adoption.DeploymentUID || pending.Intent.Adoption.ControlPlaneImage != intent.Adoption.ControlPlaneImage || pending.Intent.ExpectedVersion != intent.ExpectedVersion || pending.NewlyAdmitted {
+		t.Fatal("unknown launch lost its original inputs", err)
+	}
+	if _, err := store.FinishCredentialAdoptionOperation(ctx, intent.Admission.Namespace, intent.Admission.OperationID, "failure", time.Now(), nil); err != nil {
+		t.Fatal("pre-effect launch cancellation failed", err)
+	}
+	reserved := fixtureAdoptionEffects(uuid.NewString(), uuid.NewString())[0]
+	if _, err := restarted.RecordCredentialAdoptionEffect(ctx, intent.Admission.Namespace, intent.Admission.OperationID, reserved); !errors.Is(err, ErrConflict) {
+		t.Fatal("late native worker bypassed completed launch failure", err)
+	}
+	replay, err := store.AdmitCredentialOperation(ctx, intent)
+	if err != nil || replay.NewlyAdmitted || replay.Completion == nil || replay.Completion.Outcome != "failure" {
+		t.Fatal("launch replay regained write permission", err)
 	}
 }

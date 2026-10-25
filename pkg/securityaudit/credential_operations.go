@@ -266,7 +266,7 @@ func (s *PostgresStore) finishCredentialOperation(ctx context.Context, namespace
 	if kind == "credential-maintenance" && !reflect.DeepEqual(actualEffect, expectedEffect) {
 		return Event{}, ErrConflict
 	}
-	if kind == "credential-adoption" && (!reflect.DeepEqual(actualAdoption, expectedAdoption) || outcome == "failure" && actualAdoption != nil || outcome == "success" && (actualAdoption == nil || actualAdoption.Stage != "selected")) {
+	if kind == "credential-adoption" && (!reflect.DeepEqual(actualAdoption, expectedAdoption) || outcome == "failure" && actualAdoption != nil && actualAdoption.Stage != "reserved" || outcome == "success" && (actualAdoption == nil || actualAdoption.Stage != "selected")) {
 		return Event{}, ErrConflict
 	}
 	event := intent.Admission

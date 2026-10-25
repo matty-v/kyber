@@ -1,38 +1,43 @@
-# Durable admission and effect checkpoints for credential adoption
+# Durable launch and effect checkpoints for credential adoption
 
-Extend the existing credential operation journal with a distinct adoption kind;
-do not put maintenance identities in registry UID fields. Admission pins the
-original actor, operation UUID/time, completion event, maintenance UID/version,
-root source name and the complete sorted source name/UID/version graph. No key,
-key hash, serialized candidate or private signer belongs in this metadata.
-The audit resource name is the original operation UUID, which exists before a
-worker launches; maintenance UID is separate metadata known after reservation.
-The root document's pinned version also pins caller ordering/reference keys.
+The existing credential operation journal admits the complete adoption operation
+BEFORE creating its native Job. The immutable admission pins the original actor,
+operation/time, completion event, root source name, complete sorted source
+name/UID/version graph, deployment name/UID, published control-plane image and
+release name. ExpectedVersion is the root source version, not a future lease.
+RegistryUID and MaintenanceUID stay empty because neither object exists yet.
+No key, key hash, private signer or candidate is stored in this metadata.
 
-A first acknowledged admission owns the attempt. An identical retry reads the
-original immutable admission, never obtains a new effect permit. Old unresolved
-adoptions remain discoverable separately from key mutation and maintenance
-recovery work. Reuse the existing JSONB row and retention semantics.
+A first acknowledged admission owns initial Job creation. An identical replay
+returns the original operation and cannot create another initial job. Pending
+launches remain discoverable even if the response is lost or the Job has not
+started. Reuse the existing JSONB row and retention semantics; no new table.
 
-Effects advance through candidate-create admitted, registry UID observed,
-authority-selection admitted, and authority UID observed. Each transition is
-serialized with finalization under the existing database lock. Original UIDs
-cannot change; identical checkpoints are idempotent. Missing objects after an
-admitted create are not proof of failure: a delayed request could still commit.
-Only a checkpoint-free operation can finalize failure. Success requires the
-selected checkpoint and exact expected checkpoint comparison. Generic key or
-maintenance finalizers must not finalize adoption rows.
+After the worker holds maintenance, its first checkpoint records the actual
+maintenance UID and original reservation version. These remain unchanged across
+all later checkpoints and replacements. Then advance through candidate-create
+admitted, registry UID observed, authority-selection admitted and authority UID
+observed. Each transition is serialized with finalization under the database
+lock. UIDs cannot change, steps cannot be skipped and identical retries are
+idempotent. The native worker must retain the original reservation version when
+fencing a stopped writer, so a late original checkpoint matches the same intent.
 
-The journal proves metadata ordering, not Kubernetes outcomes. The native worker
-must verify ownership/freshness/maintenance, perform only acknowledged admitted
-effects, reconcile fixed-name creates and UID-pinned authority, and provide the
-observed checkpoint to finalization. No automatic retry, activation, UI endpoint
-or protocol-one claim is introduced by this storage contract alone.
+Before candidate creation is admitted, failure may finalize against the exact
+nil/reserved checkpoint. That terminal row fences any late worker from admitting
+credential effects, including a Job whose create response was lost. After a
+candidate create is admitted, absence cannot prove failure: a delayed Kubernetes
+create could still commit. Only successful reconciliation can finalize success,
+with the exact selected checkpoint. Generic key and maintenance finalizers must
+not consume adoption rows. Unknown operations do not expire based on age.
 
-The native API may durably append the original authorization event before Job
-creation, using that operation ID as its audit target. A worker can later admit
-the journal intent with the identical authorization event and the actual bound
-maintenance UID. The transactional append must reconcile that existing event,
-never replace it or invent a new actor/time. This does not make an absent Job a
-terminal failure or turn a launch response into proof that credential effects
-completed. The native API must expose uncertain launch outcomes explicitly.
+The native API must require current administrator access before admission and
+before returning protected outcomes. Replacement jobs require a separately
+recorded current-administrator recovery authorization and proven old-writer
+shutdown. Their payload is built from the original journal, not resubmitted
+source definitions or a new time. The journal establishes ordering, not Kubernetes
+outcomes: the worker still verifies ownership, frozen sources/replicas, exact
+maintenance and UID-pinned authority, and reconciles fixed-name creates.
+
+This storage contract does not activate authority, launch a worker or add an
+ownership control by itself. Runtime protocol stays zero until the complete
+native flow passes acceptance.
