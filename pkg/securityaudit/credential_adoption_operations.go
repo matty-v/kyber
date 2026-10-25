@@ -8,6 +8,8 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"regexp"
+	"strings"
 	"time"
 
 	validation "k8s.io/apimachinery/pkg/util/validation"
@@ -21,16 +23,23 @@ type CredentialAdoptionSource struct {
 	Version string `json:"version"`
 }
 type CredentialAdoptionAdmission struct {
-	RootSourceName string                     `json:"rootSourceName"`
-	Sources        []CredentialAdoptionSource `json:"sources"`
+	DeploymentName    string                     `json:"deploymentName"`
+	DeploymentUID     string                     `json:"deploymentUid"`
+	ReleaseName       string                     `json:"releaseName"`
+	ControlPlaneImage string                     `json:"controlPlaneImage"`
+	RootSourceName    string                     `json:"rootSourceName"`
+	Sources           []CredentialAdoptionSource `json:"sources"`
 }
 
 func (i CredentialIntent) validateAdoption() error {
 	e := i.Admission
-	if e.Action != "credential:adopt" || e.CredentialAuthority != "configuration" || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) || e.ResourceName != e.OperationID || !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || i.Adoption == nil {
+	if e.Action != "credential:adopt" || e.CredentialAuthority != "configuration" || i.RegistryUID != "" || i.MaintenanceUID != "" || e.ResourceName != e.OperationID || !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || i.Adoption == nil {
 		return ErrInvalid
 	}
 	a := i.Adoption
+	if len(validation.IsDNS1123Subdomain(a.DeploymentName)) != 0 || !validMaintenanceUID(a.DeploymentUID) || len(validation.IsDNS1123Subdomain(a.ReleaseName)) != 0 || !strings.HasPrefix(a.ControlPlaneImage, "ghcr.io/matty-v/kyber-control-plane:") || len(a.ControlPlaneImage) > 256 || !adoptionImageTag.MatchString(strings.TrimPrefix(a.ControlPlaneImage, "ghcr.io/matty-v/kyber-control-plane:")) {
+		return ErrInvalid
+	}
 	if len(validation.IsDNS1123Subdomain(a.RootSourceName)) != 0 || len(a.Sources) < 1 || len(a.Sources) > 1025 {
 		return ErrInvalid
 	}
@@ -45,6 +54,9 @@ func (i CredentialIntent) validateAdoption() error {
 		uids[source.UID] = true
 		if source.Name == a.RootSourceName {
 			root = true
+			if i.ExpectedVersion != source.Version {
+				return ErrInvalid
+			}
 		}
 	}
 	if !root {
@@ -53,18 +65,25 @@ func (i CredentialIntent) validateAdoption() error {
 	return nil
 }
 
+var adoptionImageTag = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
+
 // A checkpoint admits the next possible effect or records its observed UID.
 // An admitted create can remain pending forever; absence alone cannot fence a
 // delayed Kubernetes create and therefore cannot justify final failure.
 type CredentialAdoptionEffect struct {
-	Stage        string `json:"stage"` // candidate, registry, selection, selected
-	RegistryUID  string `json:"registryUid,omitempty"`
-	AuthorityUID string `json:"authorityUid,omitempty"`
+	MaintenanceUID   string `json:"maintenanceUid"`
+	AdmissionVersion string `json:"admissionVersion"`
+	Stage            string `json:"stage"` // reserved, candidate, registry, selection, selected
+	RegistryUID      string `json:"registryUid,omitempty"`
+	AuthorityUID     string `json:"authorityUid,omitempty"`
 }
 
 func (e CredentialAdoptionEffect) Validate() error {
+	if !validMaintenanceUID(e.MaintenanceUID) || !validActorID(e.AdmissionVersion) {
+		return ErrInvalid
+	}
 	switch e.Stage {
-	case "candidate":
+	case "reserved", "candidate":
 		if e.RegistryUID == "" && e.AuthorityUID == "" {
 			return nil
 		}
@@ -84,12 +103,17 @@ func validAdoptionTransition(previous *CredentialAdoptionEffect, next Credential
 		return false
 	}
 	if previous == nil {
-		return next.Stage == "candidate"
+		return next.Stage == "reserved"
+	}
+	if previous.MaintenanceUID != next.MaintenanceUID || previous.AdmissionVersion != next.AdmissionVersion {
+		return false
 	}
 	if *previous == next {
 		return true
 	}
 	switch previous.Stage {
+	case "reserved":
+		return next.Stage == "candidate"
 	case "candidate":
 		return next.Stage == "registry"
 	case "registry":

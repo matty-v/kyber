@@ -14,7 +14,9 @@ func fixtureAdoptionIntent() CredentialIntent {
 	i.Admission.ResourceKind = "credential-adoption"
 	i.Admission.CredentialAuthority = "configuration"
 	i.Admission.ResourceName = i.Admission.OperationID
-	i.Adoption = &CredentialAdoptionAdmission{RootSourceName: "root-source", Sources: []CredentialAdoptionSource{{Name: "reference-source", UID: uuid.NewString(), Version: "reference-version"}, {Name: "root-source", UID: uuid.NewString(), Version: "root-version"}}}
+	i.MaintenanceUID = ""
+	i.ExpectedVersion = "root-version"
+	i.Adoption = &CredentialAdoptionAdmission{DeploymentName: "kyber-test-control-plane", DeploymentUID: uuid.NewString(), ReleaseName: "kyber-test", ControlPlaneImage: "ghcr.io/matty-v/kyber-control-plane:1.9.0", RootSourceName: "root-source", Sources: []CredentialAdoptionSource{{Name: "reference-source", UID: uuid.NewString(), Version: "reference-version"}, {Name: "root-source", UID: uuid.NewString(), Version: "root-version"}}}
 	return i
 }
 func TestCredentialAdoptionIntentPinsCompleteMetadataWithoutRegistryIdentity(t *testing.T) {
@@ -33,11 +35,14 @@ func TestCredentialAdoptionIntentPinsCompleteMetadataWithoutRegistryIdentity(t *
 		"unordered graph": func(i *CredentialIntent) {
 			i.Adoption.Sources[0], i.Adoption.Sources[1] = i.Adoption.Sources[1], i.Adoption.Sources[0]
 		},
-		"registry claim":      func(i *CredentialIntent) { i.RegistryUID = uuid.NewString() },
-		"selected authority":  func(i *CredentialIntent) { i.Admission.CredentialAuthority = "registry" },
-		"other operation":     func(i *CredentialIntent) { i.Admission.ResourceName = uuid.NewString() },
-		"missing maintenance": func(i *CredentialIntent) { i.MaintenanceUID = "" },
-		"wrong action":        func(i *CredentialIntent) { i.Admission.Action = "credential:rotate" },
+		"registry claim":              func(i *CredentialIntent) { i.RegistryUID = uuid.NewString() },
+		"selected authority":          func(i *CredentialIntent) { i.Admission.CredentialAuthority = "registry" },
+		"other operation":             func(i *CredentialIntent) { i.Admission.ResourceName = uuid.NewString() },
+		"premature maintenance claim": func(i *CredentialIntent) { i.MaintenanceUID = uuid.NewString() },
+		"wrong source version":        func(i *CredentialIntent) { i.ExpectedVersion = "other-version" },
+		"missing deployment":          func(i *CredentialIntent) { i.Adoption.DeploymentUID = "" },
+		"untrusted image":             func(i *CredentialIntent) { i.Adoption.ControlPlaneImage = "other/image:1.0" },
+		"wrong action":                func(i *CredentialIntent) { i.Admission.Action = "credential:rotate" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			i := fixtureAdoptionIntent()
@@ -57,7 +62,7 @@ func TestCredentialAdoptionIntentPinsCompleteMetadataWithoutRegistryIdentity(t *
 
 func TestCredentialAdoptionCheckpointsAdvanceWithoutChangingObservedUIDs(t *testing.T) {
 	registry, authority := uuid.NewString(), uuid.NewString()
-	steps := []CredentialAdoptionEffect{{Stage: "candidate"}, {Stage: "registry", RegistryUID: registry}, {Stage: "selection", RegistryUID: registry}, {Stage: "selected", RegistryUID: registry, AuthorityUID: authority}}
+	steps := fixtureAdoptionEffects(registry, authority)
 	for i, step := range steps {
 		if step.Validate() != nil || !validAdoptionTransition(&step, step) {
 			t.Fatal("valid checkpoint/idempotent retry rejected")
@@ -78,14 +83,24 @@ func TestCredentialAdoptionCheckpointsAdvanceWithoutChangingObservedUIDs(t *test
 			}
 		}
 	}
-	changed := steps[2]
+	changedLease := steps[1]
+	changedLease.MaintenanceUID = uuid.NewString()
+	if validAdoptionTransition(&steps[0], changedLease) {
+		t.Fatal("reserved maintenance incarnation changed")
+	}
+	changedLease = steps[1]
+	changedLease.AdmissionVersion = "new-version"
+	if validAdoptionTransition(&steps[0], changedLease) {
+		t.Fatal("original reservation version rebased")
+	}
+	changed := steps[3]
 	changed.RegistryUID = uuid.NewString()
-	if validAdoptionTransition(&steps[1], changed) {
+	if validAdoptionTransition(&steps[2], changed) {
 		t.Fatal("observed registry replaced")
 	}
-	changed = steps[3]
+	changed = steps[4]
 	changed.AuthorityUID = uuid.NewString()
-	if validAdoptionTransition(&steps[3], changed) {
+	if validAdoptionTransition(&steps[4], changed) {
 		t.Fatal("observed authority replaced")
 	}
 	for _, effect := range []CredentialAdoptionEffect{{}, {Stage: "candidate", RegistryUID: registry}, {Stage: "registry"}, {Stage: "selection", RegistryUID: registry, AuthorityUID: authority}, {Stage: "selected", RegistryUID: registry}} {
@@ -97,7 +112,7 @@ func TestCredentialAdoptionCheckpointsAdvanceWithoutChangingObservedUIDs(t *test
 
 func TestCredentialAdoptionCheckpointCodecRejectsOtherPayloads(t *testing.T) {
 	intent := fixtureAdoptionIntent()
-	effect := CredentialAdoptionEffect{Stage: "candidate"}
+	effect := fixtureAdoptionEffects(uuid.NewString(), uuid.NewString())[0]
 	raw, _ := json.Marshal(effect)
 	maintenance, got, err := decodeCredentialEffects(intent, raw)
 	if err != nil || maintenance != nil || got == nil || *got != effect {
@@ -111,4 +126,14 @@ func TestCredentialAdoptionCheckpointCodecRejectsOtherPayloads(t *testing.T) {
 	if _, _, err := decodeCredentialEffects(fixtureCredentialIntent(), raw); !errors.Is(err, ErrUnavailable) {
 		t.Fatal("adoption effect accepted for a key mutation")
 	}
+}
+
+func fixtureAdoptionEffects(registry, authority string) []CredentialAdoptionEffect {
+	maintenance := uuid.NewString()
+	stages := []CredentialAdoptionEffect{{Stage: "reserved"}, {Stage: "candidate"}, {Stage: "registry", RegistryUID: registry}, {Stage: "selection", RegistryUID: registry}, {Stage: "selected", RegistryUID: registry, AuthorityUID: authority}}
+	for i := range stages {
+		stages[i].MaintenanceUID = maintenance
+		stages[i].AdmissionVersion = "original-maintenance-version"
+	}
+	return stages
 }

@@ -1104,9 +1104,11 @@ rebuilding a candidate alone never authorizes an effect or refreshes cookie
 compatibility. Existing principal/tenant/credential IDs remain unchanged.
 
 Credential adoption journal rows use their own credential-adoption kind and a
-sorted complete source name/UID/version graph, never a pretend registry UID.
-Effect checkpoints advance candidate -> registry -> selection -> selected with
-immutable observed UIDs. Once a create is admitted, absence cannot finalize
-failure; success requires the exact selected checkpoint. Generic key/maintenance
+sorted complete source graph and deployment/release metadata BEFORE native
+Job creation, never invented registry/maintenance UIDs. ExpectedVersion pins
+the root source. Effect checkpoints bind actual maintenance UID/original version
+then advance reserved -> candidate -> registry -> selection -> selected. Terminal
+failure can fence a late launch only before candidate admission; after that,
+absence cannot finalize failure. Success requires the exact selected checkpoint. Generic key/maintenance
 finalizers and pending scans cannot consume adoption rows. The journal remains
 staged until the native worker enforces ownership and external-effect evidence.
