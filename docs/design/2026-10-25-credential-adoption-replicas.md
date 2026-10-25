@@ -31,3 +31,9 @@ compatibility, stop old upgrade Jobs or serialize rotation. The complete worker
 must enforce those gates, durable admission, maintenance fencing and explicit
 administrator ownership confirmation before creating or selecting a registry.
 Runtime protocol stays zero until that complete flow passes acceptance.
+
+An investigator in another GKE cluster may lack a route to dev Pod IPs. The
+opt-in integration test can use an authenticated Kubernetes port-forward pinned
+to the exact single dev Pod UID; its destination guard still checks that Pod IP.
+This proves the real replica's material-to-access mapping, not the production
+transport's in-cluster reachability. There is no runtime Service/proxy fallback.

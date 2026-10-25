@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"net"
+	"net/http"
 	"os"
 	"reflect"
 	"sort"
@@ -107,6 +109,22 @@ func verifyGCPDevCredentialAdoptionSources(t *testing.T, verifyReplicas bool) {
 		pods := readReplicas()
 		replicaSet = identities(pods)
 		probe := newCredentialAdoptionReplicaProbe()
+		// The investigator may run in a different GKE Pod network. The
+		// authenticated test-only forward must pin one exact dev Pod; it is
+		// never a Service or a runtime probe transport fallback.
+		if forward := os.Getenv("KYBER_OPERATOR_CREDENTIAL_REPLICA_FORWARD"); forward != "" {
+			host, port, err := net.SplitHostPort(forward)
+			if err != nil || host != "127.0.0.1" || port == "" || len(pods) != 1 || os.Getenv("KYBER_OPERATOR_CREDENTIAL_REPLICA_POD_UID") != string(pods[0].UID) {
+				t.Fatal("exact owned dev Pod forward required")
+			}
+			expected := net.JoinHostPort(pods[0].Status.PodIP, "8080")
+			probe.http.Transport.(*http.Transport).DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+				if address != expected {
+					return nil, errCredentialAdoptionReplica
+				}
+				return (&net.Dialer{Timeout: 2 * time.Second}).DialContext(ctx, network, forward)
+			}
+		}
 		for _, pod := range pods {
 			if err := probe.verify(ctx, snapshot, pod, 8080); err != nil {
 				t.Fatal("loaded dev replica credentials unverified")
