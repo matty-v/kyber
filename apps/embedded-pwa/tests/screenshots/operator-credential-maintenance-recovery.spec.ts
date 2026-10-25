@@ -20,8 +20,11 @@ test('explicit maintenance recovery fits desktop and mobile', async ({ page }, i
     }
   }, usageCredential)
   await page.goto('/settings/access')
+  await page.locator('html[data-mocks="ready"]').waitFor()
   const block = page.getByText('An upgrade operation holds credential maintenance.', { exact: true }).locator('..')
-  await expect(block).toBeVisible()
+  // Initial fixture loading includes service-worker startup and the bounded
+  // maintenance request/poll cycle; action assertions keep normal deadlines.
+  await expect(block).toBeVisible({ timeout: 15_000 })
   await block.getByText('Check recovery', { exact: true }).click()
   await expect(block.getByText('Recover maintenance', { exact: true })).toBeVisible()
   await block.evaluate(el => el.scrollIntoView({ block: 'center' }))
