@@ -235,7 +235,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 			writeJSONError(w, http.StatusForbidden, "forbidden", "Current administrator access required")
 			return
 		}
-		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
+		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available."}}
 		_, _, supported := s.credentialManagementDependencies()
 		if resolved.registry.version != "" && resolved.registry.uid != "" {
 			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
@@ -245,7 +245,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		_, response.AdoptionAvailable = s.adoptionManager()
 		response.UsageAvailable = s.credentialUsageAvailable()
 		if response.UsageAvailable {
-			response.Warnings = []string{"Keys configured outside Kyber have not been checked for changes."}
+			response.Warnings = []string{}
 		}
 		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != "" && !resolved.registry.adoptionPending
 		writeJSON(w, http.StatusOK, response)
