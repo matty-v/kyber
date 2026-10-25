@@ -1069,3 +1069,16 @@ no database dependency. Restricted callers may GET only; it does not permit
 inventory or management. Missing identity/Pod UID is not invented. This supports
 adoption replica checks without adding an authentication method or activating
 protocol one. See `docs/design/2026-10-25-credential-adoption-preflight.md`.
+
+Protocol-one supervised Jobs start without TTL, and bound acquisition rejects
+expiring evidence. A fresh Job metadata CAS binds one execution before acquiring;
+the same Job cannot acquire twice, so cleanup cannot race its reuse. Private handles schedule seven-day Job cleanup only after
+confirmed release, with exact Job UID/version and no current reservation using
+that writer. Uncertain cleanup retains evidence without rewriting the operation
+outcome. Protocol-zero Job cleanup stays unchanged. See
+`docs/design/2026-10-25-credential-writer-retention.md`.
+
+The protocol-one credential-maintenance Role is namespace-scoped: Jobs
+get/list/watch/create/update and ReplicaSets get, with no Job delete grant.
+Protocol zero renders neither Role nor binding. The existing self-upgrade
+ClusterRole rule and dedicated upgrade account remain independently gated.

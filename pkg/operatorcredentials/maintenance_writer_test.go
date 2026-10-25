@@ -52,6 +52,9 @@ func stopWriterFixture(t *testing.T, c client.Client, pod *corev1.Pod, job *batc
 	if err := c.Status().Update(ctx, pod); err != nil {
 		t.Fatal(err)
 	}
+	if err := c.Get(ctx, client.ObjectKeyFromObject(job), job); err != nil {
+		t.Fatal(err)
+	}
 	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue}}
 	if err := c.Status().Update(ctx, job); err != nil {
 		t.Fatal(err)

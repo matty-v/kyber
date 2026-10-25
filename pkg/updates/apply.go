@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/matty-v/kyber/pkg/operatorcredentials"
+
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -297,9 +299,17 @@ func jobName(release, target string) string {
 	return name
 }
 
+// Persistent protocol-one reservations must retain original writer evidence.
+func upgradeJobRetention(protocol int) *int32 {
+	if protocol >= 1 {
+		return nil
+	}
+	ttl := upgradeJobTTL
+	return &ttl
+}
+
 func (a *Applier) buildJob(target, image string) *batchv1.Job {
 	backoff := int32(0) // never retry: a failed upgrade already rolled back.
-	ttl := upgradeJobTTL
 	return &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      jobName(a.ReleaseName, target),
@@ -317,7 +327,7 @@ func (a *Applier) buildJob(target, image string) *batchv1.Job {
 			// where it should be — and would race whoever is reading the log
 			// to find out what went wrong.
 			BackoffLimit:            &backoff,
-			TTLSecondsAfterFinished: &ttl,
+			TTLSecondsAfterFinished: upgradeJobRetention(operatorcredentials.RuntimeAuthorityProtocolVersion),
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{

@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +50,18 @@ func (r maintenanceRecoveryTransportReader) Get(ctx context.Context, key client.
 }
 func (r maintenanceRecoveryTransportReader) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	return r.lifecycle.List(ctx, list, opts...)
+}
+
+type maintenanceRecoveryTransportWriter struct {
+	client.Client
+	lifecycle client.Client
+}
+
+func (w maintenanceRecoveryTransportWriter) Update(ctx context.Context, obj client.Object, opts ...client.UpdateOption) error {
+	if _, ok := obj.(*batchv1.Job); ok {
+		return w.lifecycle.Update(ctx, obj, opts...)
+	}
+	return w.Client.Update(ctx, obj, opts...)
 }
 
 // This probe never uses the installation's real reservation name. It exercises
@@ -220,6 +233,7 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 		t.Fatal("recovery transport unavailable")
 	}
 	recoveryTransport.reader = maintenanceRecoveryTransportReader{real: direct, lifecycle: lifecycle}
+	recoveryTransport.writer = maintenanceRecoveryTransportWriter{Client: direct, lifecycle: lifecycle}
 	recoveryStore, err := newMaintenanceStore(recoveryTransport, name)
 	if err != nil {
 		t.Fatal("recovery store unavailable")
@@ -261,7 +275,7 @@ func TestGCPDevMaintenanceReservation(t *testing.T) {
 	if _, err := recoveryStore.ResumeRecovery(ctx, operationID, proof); !errors.Is(err, ErrConflict) {
 		t.Fatal("stale journal proof refreshed itself", err)
 	}
-	recoveryTransport.writer = direct
+	recoveryTransport.writer = maintenanceRecoveryTransportWriter{Client: direct, lifecycle: lifecycle}
 	status, err = recoveryStore.Inspect(ctx)
 	if err != nil || !status.Present {
 		t.Fatal("recovery race deleted reservation")
