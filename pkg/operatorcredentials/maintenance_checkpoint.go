@@ -106,5 +106,5 @@ func (r *MaintenanceReservation) RecordUpgradeEffects(ctx context.Context, check
 		}
 		return nil, ErrConflict
 	}
-	return &MaintenanceReservation{store: r.store, owner: r.owner, kind: r.kind, uid: r.uid, version: confirmed.ResourceVersion}, nil
+	return &MaintenanceReservation{store: r.store, owner: r.owner, kind: r.kind, uid: r.uid, version: confirmed.ResourceVersion, writer: r.writer}, nil
 }

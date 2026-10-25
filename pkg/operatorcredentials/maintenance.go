@@ -55,6 +55,7 @@ func newMaintenanceStore(direct *SecretStore, name string) (*MaintenanceStore, e
 // MaintenanceReservation is a private ownership capability, not an operator
 // credential. Do not serialize it into API responses or diagnostics.
 type MaintenanceReservation struct {
+	writer  *MaintenanceWriter
 	store   *MaintenanceStore
 	owner   string
 	kind    string
@@ -80,7 +81,12 @@ func (s *MaintenanceStore) Acquire(ctx context.Context, kind string) (*Maintenan
 }
 
 func (s *MaintenanceStore) acquire(ctx context.Context, kind string, writer *MaintenanceWriter) (*MaintenanceReservation, error) {
-	owner := uuid.NewString()
+	return s.acquireOwned(ctx, kind, writer, uuid.NewString())
+}
+func (s *MaintenanceStore) acquireOwned(ctx context.Context, kind string, writer *MaintenanceWriter, owner string) (*MaintenanceReservation, error) {
+	if !canonicalWriterUID(owner) {
+		return nil, ErrInvalid
+	}
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	immutable := true
@@ -113,7 +119,7 @@ func (s *MaintenanceStore) acquire(ctx context.Context, kind string, writer *Mai
 	}
 	// Matching ownership reconciles both AlreadyExists and uncertain creates.
 	// A non-conflict API error cannot confer ownership without this fresh read.
-	return &MaintenanceReservation{store: s, owner: owner, kind: kind, uid: current.UID, version: current.ResourceVersion}, nil
+	return &MaintenanceReservation{store: s, owner: owner, kind: kind, uid: current.UID, version: current.ResourceVersion, writer: writer}, nil
 }
 
 func (s *MaintenanceStore) validate(secret *corev1.Secret) error {
@@ -206,8 +212,8 @@ func (r *MaintenanceReservation) Release(ctx context.Context) error {
 	}
 	secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: r.store.key.Namespace, Name: r.store.key.Name}}
 	err := r.store.direct.writer.Delete(ctx, secret, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &r.uid, ResourceVersion: &r.version}})
-	if apierrors.IsNotFound(err) && ctx.Err() == nil {
-		return nil
+	if err == nil || apierrors.IsNotFound(err) && ctx.Err() == nil {
+		return r.released(ctx)
 	}
 	return authorityError(ctx, err)
 }
