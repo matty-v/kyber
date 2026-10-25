@@ -22,6 +22,8 @@ import (
 	"log/slog"
 	"net/http"
 
+	"github.com/matty-v/kyber/pkg/operatorcredentials"
+
 	corev1 "k8s.io/api/core/v1"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
@@ -46,6 +48,10 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !s.requireInstallationAdmin(w, r, "rotate-installation-key") {
+		return
+	}
+	if operatorcredentials.RuntimeAuthorityProtocolVersion >= 1 {
+		writeJSONError(w, http.StatusConflict, "credential_management_required", "Use API access in Settings to manage keys.")
 		return
 	}
 

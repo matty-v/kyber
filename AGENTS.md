@@ -1136,3 +1136,16 @@ final audit/outbox completion. A sealed registry prevents configuration fallback
 across a fresh process if its marker is missing; an unsealed candidate remains
 recoverable through the still-configured administrator. Normal mutations preserve
 this receipt. These are integration gates, not runtime activation by themselves.
+
+The native credential handoff entrypoint is cmd/kyber-credential-adopt in the
+control-plane image. The API durably admits the immutable source/deployment
+intent before creating one fixed-command Job. Job environment contains only
+operation/namespace/deployment/Pod identity metadata; the worker resolves its
+private database profile from the verified Deployment's ordered environment.
+It never migrates the audit schema. Recovery requires a separately audited,
+currently authorized administrator and a proven stopped writer. Completed
+selection is verified through the durable registry seal before final delivery.
+The dedicated worker ServiceAccount has namespace-only read/source access and
+fixed registry/maintenance mutations, never workload or Agent storage changes.
+All runtime wiring and Helm grants remain gated by the complete protocol
+constant, currently zero; neither an environment flag nor UI can activate it.

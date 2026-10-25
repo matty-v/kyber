@@ -110,3 +110,19 @@ func (s *AuthorityStore) SealSelection(ctx context.Context, markerUID, registryU
 	}
 	return s.Load(ctx)
 }
+
+// VerifyCompletedSelection verifies durable completion without reconstructing a
+// private reservation or allowing a new write. Missing receipts stay unavailable.
+func (s *AuthorityStore) VerifyCompletedSelection(ctx context.Context, expected AuthoritySelection) (Snapshot, error) {
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	selected, err := s.ReadSelection(ctx)
+	if err != nil || selected != expected {
+		return Snapshot{}, ErrUnavailable
+	}
+	secret, snapshot, err := s.registry.read(ctx)
+	if err != nil || snapshot.UID != expected.RegistryUID || secret.Annotations[selectedAuthorityAnnotation] != expected.UID {
+		return Snapshot{}, ErrUnavailable
+	}
+	return snapshot, nil
+}

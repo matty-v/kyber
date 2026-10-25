@@ -115,6 +115,12 @@ spec:
             # forbids self-upgrade).
             - name: KYBER_CONTROL_PLANE_DEPLOYMENT
               value: {{ include "kyber.fullname" . }}-control-plane
+            {{- if ge (int (index .Chart.Annotations "kyber.io/operator-credential-authority-protocol" | default "0")) 1 }}
+            - name: KYBER_OPERATOR_CREDENTIAL_ADOPTION_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: KYBER_OPERATOR_CREDENTIAL_ADOPTION_SERVICE_ACCOUNT
+              value: {{ include "kyber.fullname" . }}-credential-adoption
+            {{- end }}
             {{- if .Values.selfUpgrade.enabled }}
             # Self-upgrade. Every one of these must be present for the apply
             # path to switch on — the Applier treats a partial configuration as

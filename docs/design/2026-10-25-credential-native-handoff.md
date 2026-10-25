@@ -12,16 +12,20 @@ are retained. Show only concrete reconnect warnings and ownership consequences;
 never protocol, fencing or Kubernetes jargon in the confirmation dialog.
 
 Persist authorization before creating a non-retrying supervised Job. Use one
-operation UUID as audit target and deterministic Job identity. Job environment
-contains source object versions and operation metadata, never operator values,
-private candidates or database passwords. Unknown launch responses remain
+operation UUID as audit target and deterministic Job identity. The immutable
+journal stores source versions and deployment context before launch. Job
+environment carries operation/control-plane names and Downward-API identity,
+never operator values, private candidates or database passwords. Workers load
+the original inputs from that journal instead of resubmitted definitions. Unknown launch responses remain
 pending and are inspected explicitly, without issuing another operation.
 
 The worker loads database connection configuration privately from the supported
 control-plane profile and referenced Secret. It validates the original launch
 audit, its own Pod/Job identity and published image, reserves maintenance, and
 verifies source versions, supported replicas and old-executor quiescence.
-Only then admit the immutable adoption intent and exact original timestamps.
+The original immutable launch admission already exists. Record the actual
+reservation UID/original version before admitting any credential effects; keep
+that version stable across replacement writers and late original acknowledgements.
 
 ## Effects and completion
 
@@ -30,7 +34,8 @@ sources. Admit each effect checkpoint before its create. An existing candidate
 must match the original operation and candidate privately; never adopt an
 unrelated Secret. After selection, verify the UID-pinned CURRENT authority and
 original operation evidence rather than overwriting later legitimate state.
-Finish required audit, acknowledge the adoption outbox and release maintenance
+Seal the selected marker UID in registry metadata for restart-safe fail-closed
+behavior. Finish required audit, acknowledge the adoption outbox and release maintenance
 before declaring the workflow complete. Keep named-key mutation unavailable
 while the adoption outbox is still pending. Authentication must remain independent
 of database availability and must never fall back after authority selection.
@@ -62,3 +67,21 @@ empty GCP dev cluster, including restart/lost responses, source or replica chang
 authority outages, current bearer/cookie/stream access and stable task ownership.
 Capture desktop/mobile UI, clean disposable test data and update operator docs.
 Production credential activation remains a separate approved operation.
+
+## Integration checkpoint
+
+The API records the complete immutable intent before launching the supervised
+native worker. The worker rereads the original journal record and verified
+release/source graph, uses a private reservation, preserves original identity
+and cookie deadlines, seals the selected authority, and confirms audit delivery
+before releasing maintenance. A lost response remains an operation to inspect,
+never a reason to issue another key or repeat a launch automatically.
+
+Settings exposes an explicit ownership confirmation, read-only status checks,
+and a Continue setup action only after a fresh server observation establishes
+that recovery is eligible. Changed connections and access denials clear all
+protected setup state. UI capability metadata alone never authorizes a write.
+
+Activation remains protocol zero pending the complete reviewed backend, contract,
+UI, native dev-cluster, release/rollback and screenshot acceptance checks.
+Production installations are not adopted by this integration checkpoint.

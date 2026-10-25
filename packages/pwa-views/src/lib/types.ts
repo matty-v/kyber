@@ -1652,7 +1652,25 @@ export interface OperatorCredentialMaintenanceStatus {
   operation?: { kind: 'adoption' | 'upgrade'; executionId: string; startedAt: string }
 }
 
+export interface OperatorCredentialAdoptionPlan {
+  version: string
+  keyCount: number
+  reconnectCount: number
+}
+export interface OperatorCredentialAdoptionOperation {
+  operationId: string
+  status: 'pending' | 'failed' | 'finishing' | 'succeeded'
+  recoverable: boolean
+  observedAt: string
+}
+export interface OperatorCredentialAdoptionStart {
+  operationId: string
+  version: string
+  confirmOwnership: boolean
+}
+
 export interface OperatorCredentialInventory {
+  adoptionAvailable?: boolean
   maintenanceAvailable?: boolean
   currentCredentialId?: string
   version?: string

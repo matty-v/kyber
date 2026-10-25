@@ -1583,6 +1583,38 @@ func main() {
 			}
 		}
 	}
+	if operatorcredentials.RuntimeAuthorityProtocolVersion >= 1 {
+		authority, err := operatorcredentials.NewAuthorityStore(restCfg, publicAPI.Namespace, operatorcredentials.DefaultSecretName, operatorcredentials.DefaultAuthoritySecretName)
+		if err != nil {
+			setupLog.Error(nil, "Operator credential authority could not be initialized")
+			os.Exit(1)
+		}
+		// Current authentication reads Kubernetes directly and remains independent
+		// of the audit database. An outage must never restore configured keys.
+		publicAPI.OperatorCredentialAuthority = authority
+		adoption, err := internalapi.NewOperatorCredentialAdoptionCoordinator(restCfg, publicAPI.Namespace, publicAPI.APIKeySecretName, os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"), os.Getenv("KYBER_OPERATOR_CREDENTIAL_ADOPTION_RELEASE"), os.Getenv("KYBER_OPERATOR_CREDENTIAL_ADOPTION_SERVICE_ACCOUNT"), securityHistory)
+		if err != nil {
+			setupLog.Info("Operator credential setup unavailable; current authentication remains available")
+		} else {
+			publicAPI.OperatorCredentialAdoption = adoption
+		}
+		delivery := internalapi.NewOperatorCredentialDelivery(publicAPI)
+		if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return nil
+				case <-ticker.C:
+					_, _ = delivery.RunOnce(runCtx)
+				}
+			}
+		})); err != nil {
+			setupLog.Error(nil, "Registering operator credential completion worker failed")
+			os.Exit(1)
+		}
+	}
 	if writer, ok := securityHistory.(securityaudit.CredentialUsageWriter); ok {
 		collector, usageErr := securityaudit.NewCredentialUsageCollector(writer, publicAPI.Namespace, os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"))
 		if usageErr != nil {

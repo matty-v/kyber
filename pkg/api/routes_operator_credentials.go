@@ -41,6 +41,7 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
+	AdoptionAvailable      bool                     `json:"adoptionAvailable,omitempty"`
 	MaintenanceAvailable   bool                     `json:"maintenanceAvailable,omitempty"`
 	CurrentCredentialID    string                   `json:"currentCredentialId,omitempty"`
 	Version                string                   `json:"version,omitempty"`
@@ -240,15 +241,17 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 			w.Header().Set("ETag", response.Version)
 		}
 		response.MaintenanceAvailable = s.credentialMaintenanceAvailable()
+		_, response.AdoptionAvailable = s.adoptionManager()
 		response.UsageAvailable = s.credentialUsageAvailable()
 		if response.UsageAvailable {
 			response.Warnings = []string{"Keys configured outside Kyber have not been checked for changes."}
 		}
-		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != ""
+		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != "" && !resolved.registry.adoptionPending
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	response := operatorCredentialInventory{
+		AdoptionAvailable:   s.OperatorCredentialAdoption != nil && s.OperatorCredentialAdoption.Namespace() == s.Namespace,
 		CurrentCredentialID: callerFrom(r.Context()).CredentialID,
 		ObservedAt:          time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
 		MaintenanceAvailable: s.credentialMaintenanceAvailable(), UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},

@@ -94,3 +94,20 @@ func TestCredentialCompatibilityPrivateParseFailures(t *testing.T) {
 		t.Fatal("unrelated Secret affected selection", err)
 	}
 }
+
+func TestCredentialCompatibilityAcceptsOnlyIndependentlyAssertedMainSHA(t *testing.T) {
+	sha := strings.Repeat("a", 40)
+	manifest := strings.ReplaceAll(credentialCompatibleManifest, "v1.9.0", sha)
+	if _, err := credentialCompatibleDeployment(manifest, "kyber-system", "kyber-control-plane"); err != nil {
+		t.Fatal("publisher-pinned main image rejected")
+	}
+	mismatched := strings.Replace(manifest, "image: ghcr.io/matty-v/kyber-control-plane:"+sha, "image: ghcr.io/matty-v/kyber-control-plane:"+strings.Repeat("b", 40), 1)
+	if _, err := credentialCompatibleDeployment(mismatched, "kyber-system", "kyber-control-plane"); err == nil {
+		t.Fatal("image override inferred compatible")
+	}
+	for _, tag := range []string{strings.Repeat("A", 40), strings.Repeat("z", 40), "latest", sha + "-local"} {
+		if _, err := credentialCompatibleDeployment(strings.ReplaceAll(credentialCompatibleManifest, "v1.9.0", tag), "kyber-system", "kyber-control-plane"); err == nil {
+			t.Fatal("unpublished/ambiguous image accepted")
+		}
+	}
+}

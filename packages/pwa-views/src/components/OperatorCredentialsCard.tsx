@@ -7,6 +7,7 @@ import { Card } from './Card'
 import { SecurityHistoryCard } from './SecurityHistoryCard'
 import { OperatorKeyManagement } from './OperatorKeyManagement'
 import { OperatorKeyUsage } from './OperatorKeyUsage'
+import { OperatorCredentialAdoption } from './OperatorCredentialAdoption'
 import { OperatorCredentialMaintenance } from './OperatorCredentialMaintenance'
 
 export function OperatorCredentialsCard({ children }: { children?: ReactNode }) {
@@ -72,6 +73,7 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
     {data && <>
       <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Operator keys for this Kyber installation. Secret values are never shown.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
       {data.warnings.map((warning) => <p key={warning} role="alert" className="mt-3 text-sm text-warning">{warning}</p>)}
+      {data.adoptionAvailable && <OperatorCredentialAdoption api={api} allowStart={data.inventoryScope === 'current-control-plane'} onCompleted={() => setRefresh(n => n + 1)} />}
       <OperatorCredentialMaintenance api={api} enabled={!!data.maintenanceAvailable} revision={refresh} />
       <OperatorKeyManagement key={`${cluster.id}:${cluster.baseURL}:${data.currentCredentialId}`} api={api} inventory={data} bearerConnection={!!cluster.apiKey} onCompleted={() => setRefresh((n) => n + 1)}>{(renderActions) => <OperatorKeyUsage api={api} enabled={data.usageAvailable} revision={refresh}>{(renderUsage) => <>
       {data.credentials.length === 0 ? <p className="mt-4 text-sm text-text-muted">No accepted credentials were reported.</p> : <ul className="mt-4 space-y-3">

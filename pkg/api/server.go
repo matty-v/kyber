@@ -134,6 +134,9 @@ type Server struct {
 	// Reconciliation is wired only when the complete recovery path is ready.
 	OperatorCredentialMaintenanceReconciler OperatorCredentialMaintenanceReconciler
 
+	// Explicit adoption is wired only with the complete authority protocol.
+	OperatorCredentialAdoption operatorCredentialAdoptionManager
+
 	// APIKeySecretName is the name of the Kubernetes Secret holding the api-key
 	// the control-plane authenticates against. The rotate handler patches this
 	// Secret's `api-key` field. Defaults to "" (rotation disabled — the handler
@@ -867,6 +870,10 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
 	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
 	mux.HandleFunc("/api/v1/operator-credentials/current", s.handleCurrentOperatorCredential)
+	mux.HandleFunc("/api/v1/operator-credentials/adoption", s.handleOperatorCredentialAdoption)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions", s.handleOperatorCredentialAdoptionOperation)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/pending", s.handlePendingOperatorCredentialAdoptions)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/recover", s.handleRecoverOperatorCredentialAdoption)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance", s.handleOperatorCredentialMaintenance)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/readiness", s.handleMaintenanceRecoveryReadiness)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/recover", s.handleRecoverOperatorCredentialMaintenance)
