@@ -1089,3 +1089,10 @@ opaque resource version, reject any partial set, and recheck the full source
 graph. Format/JSON and errors must not expose values or parser diagnostics.
 This does not prove replica acceptance or activate authority. See
 `docs/design/2026-10-25-credential-adoption-sources.md`.
+
+Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
+labels derived from the original admission UUID and ordered source index. They
+are not authentication values or material hashes. Recovery must retain the
+original admission/time and independently verify unchanged source definitions;
+rebuilding a candidate alone never authorizes an effect or refreshes cookie
+compatibility. Existing principal/tenant/credential IDs remain unchanged.

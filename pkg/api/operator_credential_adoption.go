@@ -63,6 +63,10 @@ func (a *APIKeyAuthenticator) prepareCredentialAdoption(ctx context.Context, nam
 		entries[i] = entry
 	}
 	a.mu.RUnlock()
+	operationUUID, uuidErr := uuid.Parse(operation.ID)
+	if uuidErr != nil || operationUUID == uuid.Nil || operationUUID.String() != operation.ID {
+		return nil, errCredentialAdoptionCandidate
+	}
 	if !validOperatorHTTPKey(root) || operation.Action != "adopt" || operation.TargetCredentialID != "" || operation.Status != "pending" || operation.ActorPrincipalID != installationAdminPrincipalID || operation.ActorCredentialID != installationAdminCredentialID || operation.ActorGeneration != 1 || operation.Authority != "configuration" {
 		return nil, errCredentialAdoptionCandidate
 	}
@@ -107,16 +111,24 @@ func (a *APIKeyAuthenticator) prepareCredentialAdoption(ctx context.Context, nam
 			candidate.browserReconnects++
 		}
 		assigned := false
+		// These are identity labels, never credentials. Derive only absent
+		// fields from the original admitted operation and source position so
+		// recovery can reconstruct the identical candidate without storing
+		// material, material digests or another private candidate copy.
+		// The caller must separately verify the unchanged frozen source graph.
+		importedID := func(purpose string) string {
+			return purpose + "_imported_" + uuid.NewSHA1(operationUUID, []byte(fmt.Sprintf("kyber-credential-adoption/v1/%d/%s", i, purpose))).String()
+		}
 		if caller.PrincipalID == "" {
-			caller.PrincipalID = "principal_imported_" + uuid.NewString()
+			caller.PrincipalID = importedID("principal")
 			assigned = true
 		}
 		if caller.TenantID == "" {
-			caller.TenantID = "tenant_imported_" + uuid.NewString()
+			caller.TenantID = importedID("tenant")
 			assigned = true
 		}
 		if caller.CredentialID == "" {
-			caller.CredentialID = "credential_imported_" + uuid.NewString()
+			caller.CredentialID = importedID("credential")
 			assigned = true
 		}
 		if caller.CredentialGeneration == 0 {
