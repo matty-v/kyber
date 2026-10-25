@@ -1151,3 +1151,7 @@ All runtime wiring and Helm grants remain gated by the complete protocol
 constant and publisher chart assertion. Protocol one exposes explicit setup;
 installation configuration remains authoritative until the administrator confirms
 the handoff. An environment flag cannot override the compiled protocol.
+Recovery eligibility must check every known native launch for the operation,
+including a replacement Job that has not claimed its maintenance receipt yet.
+An already-stopped original does not justify another launch while a known
+replacement is pending/running. The receipt CAS still fences concurrent requests.

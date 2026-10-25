@@ -273,23 +273,38 @@ func (c *OperatorCredentialAdoptionCoordinator) Outcome(ctx context.Context, ope
 		}
 		job := &batchv1.Job{}
 		if c.reader.Get(ctx, client.ObjectKey{Namespace: c.namespace, Name: status.Writer.JobName}, job) == nil && string(job.UID) == status.Writer.JobUID && job.Labels[operatorcredentials.AdoptionOperationLabel] == operationID {
-			result.Recoverable = true
+			result.Recoverable, err = c.adoptionJobsStopped(ctx, operationID)
+			if err != nil {
+				return result, err
+			}
 		}
 	} else if state.AdoptionEffect == nil {
-		jobs := &batchv1.JobList{}
-		if err := c.reader.List(ctx, jobs, client.InNamespace(c.namespace), client.MatchingLabels{operatorcredentials.AdoptionOperationLabel: operationID, "app.kubernetes.io/component": "credential-adoption"}, client.Limit(257)); err != nil || jobs.Continue != "" || len(jobs.Items) > 256 {
-			return result, operatorcredentials.ErrUnavailable
-		}
-		result.Recoverable = true
-		for _, job := range jobs.Items {
-			stopped, err := operatorcredentials.SupervisedJobStopped(ctx, c.reader, job, "adopt-credentials")
-			if err != nil || !stopped {
-				result.Recoverable = false
-				break
-			}
+		result.Recoverable, err = c.adoptionJobsStopped(ctx, operationID)
+		if err != nil {
+			return result, err
 		}
 	}
 	return result, nil
+}
+
+// A replacement can exist before it claims the maintenance receipt. Do not
+// advertise another recovery while any known launch is still pending/running.
+// The receipt CAS remains the final protection against concurrent requests.
+func (c *OperatorCredentialAdoptionCoordinator) adoptionJobsStopped(ctx context.Context, operationID string) (bool, error) {
+	jobs := &batchv1.JobList{}
+	if err := c.reader.List(ctx, jobs, client.InNamespace(c.namespace), client.MatchingLabels{operatorcredentials.AdoptionOperationLabel: operationID, "app.kubernetes.io/component": "credential-adoption"}, client.Limit(257)); err != nil || jobs.Continue != "" || len(jobs.Items) > 256 {
+		return false, operatorcredentials.ErrUnavailable
+	}
+	for _, job := range jobs.Items {
+		stopped, err := operatorcredentials.SupervisedJobStopped(ctx, c.reader, job, "adopt-credentials")
+		if err != nil {
+			return false, operatorcredentials.ErrUnavailable
+		}
+		if !stopped {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 func (c *OperatorCredentialAdoptionCoordinator) Pending(ctx context.Context) ([]OperatorCredentialAdoptionOperation, error) {
 	states, err := c.journal.PendingCredentialAdoptionOperations(ctx, c.namespace, "", 25)

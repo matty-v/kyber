@@ -226,7 +226,7 @@ paths:
                 properties:
                   version: {type: string, description: Opaque reviewed registry version for If-Match; not key material.}
                   currentCredentialId: {type: string, description: Identifier of the key authenticating this request.}
-                  configurationRotationAvailable: {type: boolean, description: Whether the former installation-key rotation workflow is supported. False when managed authority is enabled, including while setup is unavailable.}
+                  configurationRotationAvailable: {type: boolean, description: "Whether the former installation-key rotation workflow is supported. False when managed authority is enabled, including while setup is unavailable."}
                   adoptionAvailable: {type: boolean, description: Explicit setup capability. Never enables setup automatically.}
                   managementAvailable: {type: boolean, description: "Whether the selected authority and required journal support management. This is capability metadata, not a database health guarantee."}
                   observedAt: {type: string, format: date-time}
