@@ -37,7 +37,9 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  intent JSONB NOT NULL, completion JSONB,
  PRIMARY KEY(namespace,operation_id)
  );
+ ALTER TABLE operator_credential_operations ADD COLUMN IF NOT EXISTS effect JSONB;
  CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,operation_id) WHERE completion IS NULL;
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending_kind ON operator_credential_operations(namespace,(intent->'admission'->>'resourceKind'),operation_id) WHERE completion IS NULL;
  CREATE TABLE IF NOT EXISTS operator_credential_usage_observers (
  namespace TEXT NOT NULL,observer_id UUID NOT NULL,started_at TIMESTAMPTZ NOT NULL,pod_uid TEXT NOT NULL,
  sequence BIGINT NOT NULL, payload JSONB,progress_at TIMESTAMPTZ,stopped BOOLEAN NOT NULL DEFAULT false,
@@ -157,6 +159,8 @@ func (f Filter) valid() bool {
 		return f.ResourceName == "" || resourceName.MatchString(f.ResourceName)
 	case "log-container":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
+	case "credential-maintenance":
+		return f.ResourceName == "" || validMaintenanceUID(f.ResourceName)
 	case "credential":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
 	default:

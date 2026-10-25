@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"time"
 
 	"github.com/google/uuid"
@@ -12,13 +13,15 @@ import (
 
 // CredentialIntent contains only recovery metadata, never a key, request body,
 // cookie, hash of key material or a serialized candidate. ExpectedVersion is an
-// opaque Kubernetes CAS version; RegistryUID pins the selected incarnation.
+// opaque Kubernetes CAS version. RegistryUID pins a key registry; MaintenanceUID
+// pins a maintenance object. The resource kind strictly selects one identity.
 // Admission and intent commit together before any credential effect is allowed.
 type CredentialIntent struct {
 	Admission         Event  `json:"admission"`
 	CompletionEventID string `json:"completionEventId"`
 	ExpectedVersion   string `json:"expectedVersion"`
 	RegistryUID       string `json:"registryUid"`
+	MaintenanceUID    string `json:"maintenanceUid,omitempty"`
 }
 
 var ErrOperationNotFound = errors.New("credential operation not found")
@@ -40,22 +43,36 @@ type CredentialOperation struct {
 	NewlyAdmitted bool
 	Intent        CredentialIntent
 	Completion    *Event
+	Effect        *CredentialMaintenanceEffect
 }
 
 func (i CredentialIntent) Validate() error {
 	e := i.Admission
-	if e.Validate() != nil || e.Phase != "authorization" || e.Outcome != "allow" || e.CredentialAuthority != "registry" || e.ResourceKind != "credential" {
+	if e.Validate() != nil || e.Phase != "authorization" || e.Outcome != "allow" || !validActorID(i.ExpectedVersion) {
 		return ErrInvalid
 	}
-	switch e.Action {
-	case "credential:create", "credential:update", "credential:rotate", "credential:revoke":
+	if _, err := uuid.Parse(i.CompletionEventID); err != nil || i.CompletionEventID == e.ID {
+		return ErrInvalid
+	}
+	switch e.ResourceKind {
+	case "credential":
+		if e.CredentialAuthority != "registry" || !validActorID(i.RegistryUID) || i.MaintenanceUID != "" {
+			return ErrInvalid
+		}
+		switch e.Action {
+		case "credential:create", "credential:update", "credential:rotate", "credential:revoke":
+			return nil
+		default:
+			return ErrInvalid
+		}
+	case "credential-maintenance":
+		if !validMaintenanceUID(e.ID) || !validMaintenanceUID(e.OperationID) || !validMaintenanceUID(i.CompletionEventID) || e.Action != "credential:recover-maintenance" || (e.CredentialAuthority != "registry" && e.CredentialAuthority != "configuration") || i.RegistryUID != "" || !validMaintenanceUID(i.MaintenanceUID) {
+			return ErrInvalid
+		}
+		return nil
 	default:
 		return ErrInvalid
 	}
-	if _, err := uuid.Parse(i.CompletionEventID); err != nil || i.CompletionEventID == e.ID || !validActorID(i.ExpectedVersion) || !validActorID(i.RegistryUID) {
-		return ErrInvalid
-	}
-	return nil
 }
 
 // AdmitCredentialOperation is immutable and idempotent for identical intent.
@@ -84,8 +101,8 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 	}
 	newlyAdmitted := false
 	var same bool
-	var completion []byte
-	err = tx.QueryRowContext(ctx, `SELECT intent=$3::jsonb,completion FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2`, intent.Admission.Namespace, intent.Admission.OperationID, payload).Scan(&same, &completion)
+	var completion, effect []byte
+	err = tx.QueryRowContext(ctx, `SELECT intent=$3::jsonb,completion,effect FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2`, intent.Admission.Namespace, intent.Admission.OperationID, payload).Scan(&same, &completion, &effect)
 	if errors.Is(err, sql.ErrNoRows) {
 		if _, err = appendEventInTransaction(ctx, tx, intent.Admission, eventPayload); err != nil {
 			return CredentialOperation{}, err
@@ -104,7 +121,11 @@ func (s *PostgresStore) AdmitCredentialOperation(ctx context.Context, intent Cre
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	result := CredentialOperation{Intent: intent, Completion: completionEvent, NewlyAdmitted: newlyAdmitted}
+	effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+	if err != nil {
+		return CredentialOperation{}, err
+	}
+	result := CredentialOperation{Intent: intent, Completion: completionEvent, NewlyAdmitted: newlyAdmitted, Effect: effectIntent}
 	if err = tx.Commit(); err != nil {
 		return CredentialOperation{}, databaseError(ctx, err)
 	}
@@ -120,8 +141,8 @@ func (s *PostgresStore) GetCredentialOperation(ctx context.Context, namespace, o
 	if _, err := uuid.Parse(operationID); err != nil {
 		return CredentialOperation{}, ErrInvalid
 	}
-	var raw, final []byte
-	err := s.db.QueryRowContext(ctx, `SELECT intent,completion FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2`, namespace, operationID).Scan(&raw, &final)
+	var raw, final, effect []byte
+	err := s.db.QueryRowContext(ctx, `SELECT intent,completion,effect FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2`, namespace, operationID).Scan(&raw, &final, &effect)
 	if errors.Is(err, sql.ErrNoRows) {
 		return CredentialOperation{}, ErrOperationNotFound
 	}
@@ -136,7 +157,11 @@ func (s *PostgresStore) GetCredentialOperation(ctx context.Context, namespace, o
 	if err != nil {
 		return CredentialOperation{}, err
 	}
-	return CredentialOperation{Intent: intent, Completion: completion}, nil
+	effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+	if err != nil {
+		return CredentialOperation{}, err
+	}
+	return CredentialOperation{Intent: intent, Completion: completion, Effect: effectIntent}, nil
 }
 
 // PendingCredentialOperations returns bounded recovery work. Pending intents
@@ -144,6 +169,13 @@ func (s *PostgresStore) GetCredentialOperation(ctx context.Context, namespace, o
 // the last returned operation ID to continue past unresolved earlier work.
 // This is a live scan, not a frozen inventory; restart it periodically.
 func (s *PostgresStore) PendingCredentialOperations(ctx context.Context, namespace, afterOperationID string, limit int) ([]CredentialOperation, error) {
+	return s.pendingCredentialOperations(ctx, namespace, afterOperationID, limit, "credential")
+}
+
+func (s *PostgresStore) pendingCredentialOperations(ctx context.Context, namespace, afterOperationID string, limit int, kind string) ([]CredentialOperation, error) {
+	if kind != "credential" && kind != "credential-maintenance" {
+		return nil, ErrInvalid
+	}
 	if !namespaceName.MatchString(namespace) || limit < 1 || limit > 200 {
 		return nil, ErrInvalid
 	}
@@ -152,22 +184,26 @@ func (s *PostgresStore) PendingCredentialOperations(ctx context.Context, namespa
 			return nil, ErrInvalid
 		}
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT intent FROM operator_credential_operations WHERE namespace=$1 AND completion IS NULL AND ($3='' OR operation_id > NULLIF($3,'')::uuid) ORDER BY operation_id LIMIT $2`, namespace, limit, afterOperationID)
+	rows, err := s.db.QueryContext(ctx, `SELECT intent,effect FROM operator_credential_operations WHERE namespace=$1 AND completion IS NULL AND intent->'admission'->>'resourceKind'=$4 AND ($3='' OR operation_id > NULLIF($3,'')::uuid) ORDER BY operation_id LIMIT $2`, namespace, limit, afterOperationID, kind)
 	if err != nil {
 		return nil, databaseError(ctx, err)
 	}
 	defer rows.Close()
 	result := []CredentialOperation{}
 	for rows.Next() {
-		var raw []byte
-		if err = rows.Scan(&raw); err != nil {
+		var raw, effect []byte
+		if err = rows.Scan(&raw, &effect); err != nil {
 			return nil, databaseError(ctx, err)
 		}
 		var intent CredentialIntent
-		if json.Unmarshal(raw, &intent) != nil || intent.Validate() != nil || intent.Admission.Namespace != namespace {
+		if json.Unmarshal(raw, &intent) != nil || intent.Validate() != nil || intent.Admission.Namespace != namespace || intent.Admission.ResourceKind != kind {
 			return nil, ErrUnavailable
 		}
-		result = append(result, CredentialOperation{Intent: intent})
+		effectIntent, err := decodeCredentialMaintenanceEffect(intent, effect)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, CredentialOperation{Intent: intent, Effect: effectIntent})
 	}
 	if err = rows.Err(); err != nil {
 		return nil, databaseError(ctx, err)
@@ -180,6 +216,10 @@ func (s *PostgresStore) PendingCredentialOperations(ctx context.Context, namespa
 // fenced or observed committed before failure/success can become final.
 // The caller, not this metadata journal, proves that outcome against authority.
 func (s *PostgresStore) FinishCredentialOperation(ctx context.Context, namespace, operationID, outcome string, observedAt time.Time) (Event, error) {
+	return s.finishCredentialOperation(ctx, namespace, operationID, outcome, observedAt, false, nil)
+}
+
+func (s *PostgresStore) finishCredentialOperation(ctx context.Context, namespace, operationID, outcome string, observedAt time.Time, maintenance bool, expectedEffect *CredentialMaintenanceEffect) (Event, error) {
 	if !namespaceName.MatchString(namespace) || (outcome != "success" && outcome != "failure") || observedAt.IsZero() {
 		return Event{}, ErrInvalid
 	}
@@ -194,8 +234,8 @@ func (s *PostgresStore) FinishCredentialOperation(ctx context.Context, namespace
 	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
 		return Event{}, databaseError(ctx, err)
 	}
-	var raw, final []byte
-	err = tx.QueryRowContext(ctx, `SELECT intent,completion FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2 FOR UPDATE`, namespace, operationID).Scan(&raw, &final)
+	var raw, final, effect []byte
+	err = tx.QueryRowContext(ctx, `SELECT intent,completion,effect FROM operator_credential_operations WHERE namespace=$1 AND operation_id=$2 FOR UPDATE`, namespace, operationID).Scan(&raw, &final, &effect)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Event{}, ErrConflict
 	}
@@ -205,6 +245,17 @@ func (s *PostgresStore) FinishCredentialOperation(ctx context.Context, namespace
 	var intent CredentialIntent
 	if json.Unmarshal(raw, &intent) != nil || intent.Validate() != nil || intent.Admission.Namespace != namespace || intent.Admission.OperationID != operationID {
 		return Event{}, ErrUnavailable
+	}
+
+	if maintenance != (intent.Admission.ResourceKind == "credential-maintenance") {
+		return Event{}, ErrInvalid
+	}
+	actualEffect, err := decodeCredentialMaintenanceEffect(intent, effect)
+	if err != nil {
+		return Event{}, err
+	}
+	if maintenance && !reflect.DeepEqual(actualEffect, expectedEffect) {
+		return Event{}, ErrConflict
 	}
 	event := intent.Admission
 	event.ID = intent.CompletionEventID
