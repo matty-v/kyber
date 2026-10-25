@@ -88,7 +88,7 @@ func TestCurrentOperatorCredentialAuthenticationPrecedenceAndMethods(t *testing.
 func TestCurrentOperatorCredentialReauthenticatesAfterEarlierSnapshot(t *testing.T) {
 	authority := &memoryOperatorAuthority{document: registryFixtureDocument(t)}
 	s := &Server{Namespace: "kyber-system", APIKey: "stale-config-fixture", OperatorCredentialAuthority: authority}
-	s.BuildHandler()
+	handler := s.BuildHandler()
 	request := httptest.NewRequest("GET", "/api/v1/operator-credentials/current", nil)
 	request.Header.Set("Authorization", "Bearer other-admin-fixture")
 	old, err := s.auth.Authenticate(request)
@@ -106,7 +106,7 @@ func TestCurrentOperatorCredentialReauthenticatesAfterEarlierSnapshot(t *testing
 	if value.AccessLevel != "restricted" || strings.Join(value.Scopes, ",") != "metrics:read" || value.Authority != "registry" {
 		t.Fatal("earlier grants reused", value)
 	}
-	for _, state := range []string{"revoked", "expired", "generation", "outage"} {
+	for _, state := range []string{"revoked", "expired", "generation", "outage", "missing-selected", "malformed-registry"} {
 		t.Run(state, func(t *testing.T) {
 			authority.edit(func(doc *operatorcredentials.Document) { *doc = registryFixtureDocument(t) })
 			current, err := s.auth.Authenticate(request)
@@ -129,6 +129,12 @@ func TestCurrentOperatorCredentialReauthenticatesAfterEarlierSnapshot(t *testing
 					doc.Credentials[1].Generation++
 				case "outage":
 					authority.err = operatorcredentials.ErrUnavailable
+				case "missing-selected":
+					authority.err = operatorcredentials.ErrUninitialized
+				case "malformed-registry":
+					// Revocation must erase material. A malformed authority stays unavailable
+					// rather than borrowing earlier grants or configured administrator access.
+					doc.Credentials[1].State = operatorcredentials.StateRevoked
 				}
 			})
 			cookieRequest := httptest.NewRequest("GET", "/api/v1/operator-credentials/current", nil)
@@ -137,11 +143,17 @@ func TestCurrentOperatorCredentialReauthenticatesAfterEarlierSnapshot(t *testing
 			response := httptest.NewRecorder()
 			s.handleCurrentOperatorCredential(response, cookieRequest)
 			want := 401
-			if state == "outage" {
+			if state == "outage" || state == "missing-selected" || state == "malformed-registry" {
 				want = 503
 			}
 			if response.Code != want || strings.Contains(response.Body.String(), `"principalId"`) || response.Header().Get("Cache-Control") != "no-store" {
 				t.Fatal("retired or unavailable metadata reused", response.Code)
+			}
+			if want == 503 {
+				stale := currentCredentialRequest(handler, "stale-config-fixture", "GET", "/api/v1/operator-credentials/current")
+				if stale.Code != 503 {
+					t.Fatal("selected authority failure accepted configured fallback", stale.Code)
+				}
 			}
 			authority.mu.Lock()
 			authority.err = nil
