@@ -1104,3 +1104,9 @@ are not authentication values or material hashes. Recovery must retain the
 original admission/time and independently verify unchanged source definitions;
 rebuilding a candidate alone never authorizes an effect or refreshes cookie
 compatibility. Existing principal/tenant/credential IDs remain unchanged.
+
+The private adoption replica probe compares every distinct source value against
+its own current-credential response and compares the accepted/shadowed inventory.
+Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
+and rechecks frozen sources, but does not discover all replicas, establish image
+ownership, quiesce old writers or authorize an adoption effect by itself.

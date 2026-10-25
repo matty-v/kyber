@@ -56,6 +56,10 @@ func (s *Server) handleCurrentOperatorCredential(w http.ResponseWriter, r *http.
 		writeOperatorAuthenticationUnavailable(w)
 		return
 	}
+	writeJSON(w, 200, currentOperatorCredentialView(*current, s.Namespace, s.OperatorCredentialPodUID, time.Now().UTC()))
+}
+
+func currentOperatorCredentialView(current Caller, namespace, podUID string, now time.Time) operatorCredentialCurrentView {
 	authority := current.CredentialAuthority
 	if authority == "" {
 		authority = "configuration"
@@ -72,9 +76,9 @@ func (s *Server) handleCurrentOperatorCredential(w http.ResponseWriter, r *http.
 		role = "administrator"
 		scopes = []string{}
 	}
-	response := operatorCredentialCurrentView{ObservedAt: time.Now().UTC().Format(time.RFC3339Nano), Namespace: s.Namespace, Name: current.Name, CredentialID: current.CredentialID, PrincipalID: current.PrincipalID, TenantID: current.TenantID, Kind: current.Kind, Issuer: current.Issuer, Subject: current.Subject, Generation: strconv.FormatUint(current.CredentialGeneration, 10), IdentityComplete: current.CredentialID != "" && current.PrincipalID != "" && current.TenantID != "" && current.CredentialGeneration > 0, Authority: authority, AccessLevel: role, Scopes: scopes, AgentResources: sortedResources(current.AgentResources), MachineResources: sortedResources(current.MachineResources)}
-	if id, err := uuid.Parse(s.OperatorCredentialPodUID); err == nil && id != uuid.Nil && id.String() == s.OperatorCredentialPodUID {
+	response := operatorCredentialCurrentView{ObservedAt: now.Format(time.RFC3339Nano), Namespace: namespace, Name: current.Name, CredentialID: current.CredentialID, PrincipalID: current.PrincipalID, TenantID: current.TenantID, Kind: current.Kind, Issuer: current.Issuer, Subject: current.Subject, Generation: strconv.FormatUint(current.CredentialGeneration, 10), IdentityComplete: current.CredentialID != "" && current.PrincipalID != "" && current.TenantID != "" && current.CredentialGeneration > 0, Authority: authority, AccessLevel: role, Scopes: scopes, AgentResources: sortedResources(current.AgentResources), MachineResources: sortedResources(current.MachineResources)}
+	if id, err := uuid.Parse(podUID); err == nil && id != uuid.Nil && id.String() == podUID {
 		response.ControlPlanePodUID = id.String()
 	}
-	writeJSON(w, 200, response)
+	return response
 }
