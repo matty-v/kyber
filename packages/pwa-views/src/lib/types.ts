@@ -1607,6 +1607,26 @@ export interface OperatorCredential {
   authenticatesAs?: string
 }
 
+export interface OperatorCredentialCurrent {
+  observedAt: string
+  controlPlanePodUid?: string
+  namespace: string
+  name: string
+  credentialId?: string
+  principalId?: string
+  tenantId?: string
+  kind?: string
+  issuer?: string
+  subject?: string
+  generation: string
+  identityComplete: boolean
+  authority: 'configuration' | 'registry'
+  accessLevel: 'administrator' | 'restricted'
+  scopes: string[]
+  agentResources: string[]
+  machineResources: string[]
+}
+
 export interface MaintenanceRecoveryReadiness {
   ready: boolean
   reason: string
