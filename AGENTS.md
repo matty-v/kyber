@@ -1075,3 +1075,10 @@ The protocol-one credential-maintenance Role is namespace-scoped: Jobs
 get/list/watch/create/update and ReplicaSets get, with no Job delete grant.
 Protocol zero renders neither Role nor binding. The existing self-upgrade
 ClusterRole rule and dedicated upgrade account remain independently gated.
+
+Adoption input collection is a staged private read: use the uncached bounded
+Secret client and startup parser/resolution rules, pin every namespace/name/UID/
+opaque resource version, reject any partial set, and recheck the full source
+graph. Format/JSON and errors must not expose values or parser diagnostics.
+This does not prove replica acceptance or activate authority. See
+`docs/design/2026-10-25-credential-adoption-sources.md`.
