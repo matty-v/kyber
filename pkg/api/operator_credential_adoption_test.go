@@ -188,3 +188,56 @@ func TestCredentialAdoptionRejectsAmbiguousIdentityAndUnavailableAuthority(t *te
 		t.Fatal("selected authority allowed re-adoption", err)
 	}
 }
+
+func TestCredentialAdoptionRecoveryReconstructsOriginalCandidate(t *testing.T) {
+	operation := adoptionFixtureOperation()
+	operation.At = time.Now().UTC().Truncate(time.Microsecond).Add(-time.Hour)
+	partial := ScopedCaller{Name: "Imported client", Key: "key-test", PrincipalID: "existing-principal", Scopes: []string{string(ScopeMetricsRead)}}
+	other := partial
+	other.Name, other.Key, other.PrincipalID = "Another client", "other-test", ""
+	prepare := func(op operatorcredentials.Operation) *credentialAdoptionCandidate {
+		t.Helper()
+		// A replacement process has a new authenticator; it retains the original
+		// admission and the exact ordered source definitions, not a candidate.
+		a := NewAPIKeyAuthenticator("root-test", partial, other)
+		candidate, err := a.prepareCredentialAdoption(context.Background(), "kyber-system", op)
+		if err != nil {
+			t.Fatal("candidate preparation failed")
+		}
+		return candidate
+	}
+	first, recovered := prepare(operation), prepare(operation)
+	if !reflect.DeepEqual(first, recovered) {
+		t.Fatal("recovery changed the original private candidate")
+	}
+	if !recovered.document.LegacyBrowserIssuedBefore().Equal(operation.At.Add(time.Minute)) || !recovered.document.LegacyBrowserExpiresBefore().Equal(operation.At.Add(time.Minute+browserSessionTTL)) {
+		t.Fatal("recovery extended browser compatibility")
+	}
+	credentials := recovered.document.Credentials
+	if credentials[1].PrincipalID != partial.PrincipalID || credentials[1].TenantID == credentials[2].TenantID || credentials[1].ID == credentials[2].ID || credentials[2].PrincipalID == partial.PrincipalID {
+		t.Fatal("imported identities merged or existing ownership changed")
+	}
+	if credentials[1].ID == credentials[1].TenantID || credentials[2].ID == credentials[2].PrincipalID {
+		t.Fatal("identity purposes were not separated")
+	}
+	otherOperation := operation
+	otherOperation.ID = uuid.NewString()
+	independent := prepare(otherOperation)
+	if independent.document.Credentials[1].ID == credentials[1].ID || independent.document.Credentials[1].TenantID == credentials[1].TenantID || independent.document.Credentials[2].PrincipalID == credentials[2].PrincipalID {
+		t.Fatal("independent adoption reused repaired identities")
+	}
+	if independent.document.Credentials[1].PrincipalID != partial.PrincipalID {
+		t.Fatal("independent adoption rewrote an existing identity")
+	}
+}
+
+func TestCredentialAdoptionRefusesNoncanonicalOperationIdentity(t *testing.T) {
+	a := NewAPIKeyAuthenticator("root-test")
+	for _, id := range []string{"", "invalid", uuid.Nil.String(), strings.ToUpper(uuid.NewSHA1(uuid.NameSpaceOID, []byte("test-operation")).String())} {
+		op := adoptionFixtureOperation()
+		op.ID = id
+		if _, err := a.prepareCredentialAdoption(context.Background(), "kyber-system", op); !errors.Is(err, errCredentialAdoptionCandidate) {
+			t.Fatal("invalid operation could assign identities")
+		}
+	}
+}
