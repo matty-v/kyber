@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.80.0
+
+- Add typed read-only access to the authenticated credential’s own current identity and grants for safe adoption preflight. No new UI flow or authentication method.
+
 ## 0.79.0
 
 - Add staged administrator maintenance readiness, outcome checks and explicit recovery controls. Reads never retry recovery, and uncertain writes retain their operation ID.

@@ -1471,6 +1471,7 @@ func main() {
 	}
 
 	publicAPI = &internalapi.Server{
+		OperatorCredentialPodUID:      os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"),
 		SecurityAudit:                 securityHistory,
 		K8sClient:                     mgr.GetClient(),
 		APIReader:                     mgr.GetAPIReader(),

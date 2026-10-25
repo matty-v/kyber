@@ -364,6 +364,19 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/current:
+    get:
+      operationId: getCurrentOperatorCredential
+      summary: Read only the authenticated credential's current identity and access
+      description: Any currently accepted credential may read its own metadata. Reauthenticates before output; no-store. Returns no key value, material fingerprint or other credential inventory. Unknown identity and missing process identity are not invented. No database dependency or authority activation.
+      responses:
+        '200':
+          description: Current accepted identity and grants
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialCurrent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credentials/maintenance:
     get:
       operationId: getOperatorCredentialMaintenance
@@ -2721,6 +2734,28 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialCurrent:
+      type: object
+      additionalProperties: false
+      required: [observedAt, namespace, name, generation, identityComplete, authority, accessLevel, scopes, agentResources, machineResources]
+      properties:
+        observedAt: {type: string, format: date-time}
+        controlPlanePodUid: {type: string, format: uuid}
+        namespace: {type: string}
+        name: {type: string}
+        credentialId: {type: string}
+        principalId: {type: string}
+        tenantId: {type: string}
+        kind: {type: string}
+        issuer: {type: string}
+        subject: {type: string}
+        generation: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        identityComplete: {type: boolean}
+        authority: {type: string, enum: [configuration, registry]}
+        accessLevel: {type: string, enum: [administrator, restricted]}
+        scopes: {type: array, items: {type: string}}
+        agentResources: {type: array, items: {type: string}}
+        machineResources: {type: array, items: {type: string}}
     MaintenanceRecoveryReadiness:
       type: object
       additionalProperties: false
