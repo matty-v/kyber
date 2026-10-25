@@ -122,7 +122,8 @@ type Server struct {
 	// configured authority must distinguish unadopted state from an outage.
 	// Set this before BuildHandler; adoption changes its durable marker, not
 	// this installation-wide resolver.
-	// The control-plane command does not enable adoption through this seam yet.
+	// The control-plane wires this for the complete protocol, independently of
+	// audit database health. Unselected state still uses installation configuration.
 	OperatorCredentialAuthority OperatorCredentialAuthority
 
 	// Read-only maintenance visibility; does not enable acquisition or recovery.

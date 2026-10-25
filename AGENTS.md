@@ -975,9 +975,9 @@ retain uncertain effects for recovery. Dry runs reserve nothing. Selected
 registry authority requires compatible effective target, initial rollback and
 live workloads; recheck the recorded revision before rollback. Published chart
 protocol/image metadata is independent of image-value overrides. The current
-runtime/chart advertise protocol zero until full activation support is ready.
-Protocol zero performs fail-closed authority reads but creates no persistent
-maintenance lock; keep existing retry behavior until the recovery UI ships.
+runtime/chart advertise protocol one with explicit adoption and recovery.
+Older protocol-zero releases perform fail-closed authority reads but create no
+persistent maintenance lock; never infer protocol support from schema alone.
 Read `docs/design/2026-10-24-credential-upgrade-compatibility.md` before changing
 these gates. The Go upgrade client maps Deployments and CRDs statically.
 
@@ -1110,8 +1110,8 @@ the root source. Effect checkpoints bind actual maintenance UID/original version
 then advance reserved -> candidate -> registry -> selection -> selected. Terminal
 failure can fence a late launch only before candidate admission; after that,
 absence cannot finalize failure. Success requires the exact selected checkpoint. Generic key/maintenance
-finalizers and pending scans cannot consume adoption rows. The journal remains
-staged until the native worker enforces ownership and external-effect evidence.
+finalizers and pending scans cannot consume adoption rows. The native worker
+enforces ownership and external-effect evidence before completing this journal.
 
 Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
 labels derived from the original admission UUID and ordered source index. They

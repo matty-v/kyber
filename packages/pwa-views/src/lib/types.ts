@@ -1671,6 +1671,7 @@ export interface OperatorCredentialAdoptionStart {
 
 export interface OperatorCredentialInventory {
   adoptionAvailable?: boolean
+  configurationRotationAvailable?: boolean
   maintenanceAvailable?: boolean
   currentCredentialId?: string
   version?: string

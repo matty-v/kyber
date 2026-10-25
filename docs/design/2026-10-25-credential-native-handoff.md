@@ -1,7 +1,8 @@
 # Native explicit credential handoff and recovery
 
-Implementation integration plan for MAT-134/MAT-97. Keep runtime protocol zero
-until the complete handoff, recovery, management and release gates pass dev.
+Implementation integration plan for MAT-134/MAT-97. Protocol one is proposed
+for the complete flow; merge requires handoff, recovery, management and release
+gates to pass dev. Upgrading never starts adoption automatically.
 
 ## Operator flow
 

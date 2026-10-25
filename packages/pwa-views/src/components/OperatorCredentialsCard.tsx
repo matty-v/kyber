@@ -112,5 +112,5 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
         <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Changes to keys apply across this installation.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
       </details>
     </>}
-  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && data.inventoryScope !== 'installation-registry' && children}</>
+  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && data.inventoryScope !== 'installation-registry' && data.configurationRotationAvailable !== false && children}</>
 }

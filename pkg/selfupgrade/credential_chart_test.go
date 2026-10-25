@@ -19,7 +19,7 @@ func TestCredentialCompatibilityUsesPublishedImageNotOverrides(t *testing.T) {
 		name, protocol string
 		custom, want   bool
 	}{
-		{"current runtime remains unavailable", "0", false, false},
+		{"protocol zero remains unavailable", "0", false, false},
 		{"compatible fixture", "1", false, true},
 		{"custom image cannot borrow claim", "1", true, false},
 	} {
@@ -37,8 +37,8 @@ func TestCredentialCompatibilityUsesPublishedImageNotOverrides(t *testing.T) {
 			if err := yaml.Unmarshal(raw, &chart); err != nil {
 				t.Fatal(err)
 			}
-			// Protocol one is only a disposable published-artifact fixture. The
-			// source chart and current runtime remain explicitly protocol zero.
+			// Test the publisher assertion independently of the current runtime
+			// and operator image overrides.
 			chart["annotations"] = map[string]string{credentialProtocolAnnotation: tc.protocol, credentialImageAnnotation: officialControlPlaneRepository + ":1.9.0"}
 			raw, err = yaml.Marshal(chart)
 			if err != nil {

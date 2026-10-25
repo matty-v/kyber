@@ -41,17 +41,18 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
-	AdoptionAvailable      bool                     `json:"adoptionAvailable,omitempty"`
-	MaintenanceAvailable   bool                     `json:"maintenanceAvailable,omitempty"`
-	CurrentCredentialID    string                   `json:"currentCredentialId,omitempty"`
-	Version                string                   `json:"version,omitempty"`
-	ManagementAvailable    bool                     `json:"managementAvailable,omitempty"`
-	ObservedAt             string                   `json:"observedAt"`
-	InventoryScope         string                   `json:"inventoryScope"`
-	ConfigurationAvailable bool                     `json:"configurationAvailable"`
-	UsageAvailable         bool                     `json:"usageAvailable"`
-	Credentials            []operatorCredentialView `json:"credentials"`
-	Warnings               []string                 `json:"warnings"`
+	ConfigurationRotationAvailable bool                     `json:"configurationRotationAvailable"`
+	AdoptionAvailable              bool                     `json:"adoptionAvailable,omitempty"`
+	MaintenanceAvailable           bool                     `json:"maintenanceAvailable,omitempty"`
+	CurrentCredentialID            string                   `json:"currentCredentialId,omitempty"`
+	Version                        string                   `json:"version,omitempty"`
+	ManagementAvailable            bool                     `json:"managementAvailable,omitempty"`
+	ObservedAt                     string                   `json:"observedAt"`
+	InventoryScope                 string                   `json:"inventoryScope"`
+	ConfigurationAvailable         bool                     `json:"configurationAvailable"`
+	UsageAvailable                 bool                     `json:"usageAvailable"`
+	Credentials                    []operatorCredentialView `json:"credentials"`
+	Warnings                       []string                 `json:"warnings"`
 }
 
 func credentialPermissions(scopes []string) []string {
@@ -251,9 +252,10 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	response := operatorCredentialInventory{
-		AdoptionAvailable:   s.OperatorCredentialAdoption != nil && s.OperatorCredentialAdoption.Namespace() == s.Namespace,
-		CurrentCredentialID: callerFrom(r.Context()).CredentialID,
-		ObservedAt:          time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
+		ConfigurationRotationAvailable: s.OperatorCredentialAuthority == nil,
+		AdoptionAvailable:              s.OperatorCredentialAdoption != nil && s.OperatorCredentialAdoption.Namespace() == s.Namespace,
+		CurrentCredentialID:            callerFrom(r.Context()).CredentialID,
+		ObservedAt:                     time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
 		MaintenanceAvailable: s.credentialMaintenanceAvailable(), UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},
 	}
 	reader := s.APIReader

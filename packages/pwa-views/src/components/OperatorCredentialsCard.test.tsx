@@ -123,3 +123,11 @@ describe('operator credential inventory', () => {
   })
 
 })
+
+
+it('hides the former rotation workflow even when managed setup is temporarily unavailable', async () => {
+  state.api.getOperatorCredentials.mockResolvedValue({ ...inventory, configurationRotationAvailable: false, adoptionAvailable: false })
+  render(<OperatorCredentialsCard><button>Administrator rotation</button></OperatorCredentialsCard>)
+  await screen.findByText('Installation administrator')
+  expect(screen.queryByRole('button', { name: 'Administrator rotation' })).not.toBeInTheDocument()
+})
