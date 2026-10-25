@@ -2,7 +2,7 @@
 
 ## 0.82.0
 
-- Add explicit existing-key setup, outcome checks and stopped-worker recovery controls. Changed connections clear protected setup state; uncertain writes are never retried automatically. Controls remain unavailable until the complete authority protocol is published.
+- Add explicit existing-key setup, outcome checks and stopped-worker recovery controls. Changed connections clear protected setup state; uncertain writes are never retried automatically. Controls require the complete authority protocol and never start setup automatically.
 
 ## 0.81.0
 

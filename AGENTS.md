@@ -1148,4 +1148,6 @@ selection is verified through the durable registry seal before final delivery.
 The dedicated worker ServiceAccount has namespace-only read/source access and
 fixed registry/maintenance mutations, never workload or Agent storage changes.
 All runtime wiring and Helm grants remain gated by the complete protocol
-constant, currently zero; neither an environment flag nor UI can activate it.
+constant and publisher chart assertion. Protocol one exposes explicit setup;
+installation configuration remains authoritative until the administrator confirms
+the handoff. An environment flag cannot override the compiled protocol.

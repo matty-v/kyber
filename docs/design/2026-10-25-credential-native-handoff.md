@@ -82,6 +82,7 @@ and a Continue setup action only after a fresh server observation establishes
 that recovery is eligible. Changed connections and access denials clear all
 protected setup state. UI capability metadata alone never authorizes a write.
 
-Activation remains protocol zero pending the complete reviewed backend, contract,
-UI, native dev-cluster, release/rollback and screenshot acceptance checks.
+Protocol one is proposed on the integration branch; merging requires the complete
+reviewed backend, contract, UI, native dev-cluster, release/rollback and screenshot
+acceptance checks. Deployment alone never confirms ownership or starts handoff.
 Production installations are not adopted by this integration checkpoint.
