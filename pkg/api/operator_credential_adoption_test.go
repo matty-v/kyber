@@ -213,20 +213,31 @@ func TestCredentialAdoptionRecoveryReconstructsOriginalCandidate(t *testing.T) {
 	if !recovered.document.LegacyBrowserIssuedBefore().Equal(operation.At.Add(time.Minute)) || !recovered.document.LegacyBrowserExpiresBefore().Equal(operation.At.Add(time.Minute+browserSessionTTL)) {
 		t.Fatal("recovery extended browser compatibility")
 	}
-	credentials := recovered.document.Credentials
-	if credentials[1].PrincipalID != partial.PrincipalID || credentials[1].TenantID == credentials[2].TenantID || credentials[1].ID == credentials[2].ID || credentials[2].PrincipalID == partial.PrincipalID {
+	find := func(candidate *credentialAdoptionCandidate, key string) operatorcredentials.Credential {
+		t.Helper()
+		for _, credential := range candidate.document.Credentials {
+			if string(credential.SecretMaterial()) == key {
+				return credential
+			}
+		}
+		t.Fatal("candidate omitted accepted material")
+		return operatorcredentials.Credential{}
+	}
+	repaired, another := find(recovered, partial.Key), find(recovered, other.Key)
+	if repaired.PrincipalID != partial.PrincipalID || repaired.TenantID == another.TenantID || repaired.ID == another.ID || another.PrincipalID == partial.PrincipalID {
 		t.Fatal("imported identities merged or existing ownership changed")
 	}
-	if credentials[1].ID == credentials[1].TenantID || credentials[2].ID == credentials[2].PrincipalID {
+	if repaired.ID == repaired.TenantID || another.ID == another.PrincipalID {
 		t.Fatal("identity purposes were not separated")
 	}
 	otherOperation := operation
 	otherOperation.ID = uuid.NewString()
 	independent := prepare(otherOperation)
-	if independent.document.Credentials[1].ID == credentials[1].ID || independent.document.Credentials[1].TenantID == credentials[1].TenantID || independent.document.Credentials[2].PrincipalID == credentials[2].PrincipalID {
+	independentPartial, independentOther := find(independent, partial.Key), find(independent, other.Key)
+	if independentPartial.ID == repaired.ID || independentPartial.TenantID == repaired.TenantID || independentOther.PrincipalID == another.PrincipalID {
 		t.Fatal("independent adoption reused repaired identities")
 	}
-	if independent.document.Credentials[1].PrincipalID != partial.PrincipalID {
+	if independentPartial.PrincipalID != partial.PrincipalID {
 		t.Fatal("independent adoption rewrote an existing identity")
 	}
 }
