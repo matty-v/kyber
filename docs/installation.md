@@ -132,8 +132,8 @@ POSTGRES_PASSWORD=$(openssl rand -hex 24)
 EOF
 ```
 
-**The API key** unlocks every `/api/v1/*` endpoint. Treat it like a root
-password. Store it in a password manager alongside the GCP project credentials.
+**The installation administrator key** grants full operator access. Treat it
+like a root password. Store it in a password manager alongside the GCP project credentials.
 Its full lifecycle — rotation, revocation, scopes — is in
 [`api-keys.md`](api-keys.md).
 
@@ -922,8 +922,11 @@ quota-capable StorageClass when a hard per-Agent limit is required.
 
 ### PWA loads but API calls return 401
 
-The API key in the browser doesn't match the one in the k8s secret. Open the PWA
-Settings page and paste the correct key.
+The presented key or session is no longer accepted. Open **Settings → API access**
+and sign in with a current key. After managed setup, the installation source
+Secret no longer determines accepted access; check the selected installation's
+credential inventory rather than overwriting its old source. See
+[operator credentials](operator/operator-credentials.md) for recovery.
 
 ### Telegram messages don't reach agents
 

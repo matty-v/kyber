@@ -13,7 +13,7 @@ agent, and how a restore works.
 - The internal signing key (`kyber-internal-signing-key`). It derives the key
   that encrypts stored archives and signs download links.
 - A caller with the `archives:admin` scope whose `agentResources` include the
-  agent. The legacy installation key has both.
+  agent. The installation administrator has both.
 
 ## Where archives live
 
