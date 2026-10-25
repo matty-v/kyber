@@ -1,5 +1,11 @@
 # Current operator credential resolution
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 This MAT-134/MAT-97 slice supplies a staged API integration seam. The
 control-plane command does not configure it, no adoption endpoint is exposed,
 and existing installations keep their current authentication behavior. Source

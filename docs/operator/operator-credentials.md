@@ -186,8 +186,9 @@ the user-secret API permissions. Host log access can expose activity from other
 Agents on that host. Operational logs can contain sensitive application output;
 a log grant is not a content-redaction boundary. Grant these only to trusted integrations. Decision logs
 contain actor, action, exact Agent/Machine and outcome, never values or log
-content. The required durable records below add a bounded first collection
-slice; complete security history remains MAT-97.
+content. The required durable records below cover sensitive access and management
+operations. Their coverage and retention limits remain explicit; they are not
+a complete record of every request or background action.
 
 ## Required records for sensitive access
 

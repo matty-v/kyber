@@ -1,5 +1,11 @@
 # Verify currently accepted access before adoption
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 This is the next bounded MAT-134/MAT-97 slice. It does not adopt keys, create
 Jobs, activate registry authority or introduce another authentication method.
 The existing authenticator remains the only source of accepted identity/access.

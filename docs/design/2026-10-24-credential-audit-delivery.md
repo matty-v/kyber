@@ -1,5 +1,11 @@
 # Deliver and compact credential recovery references
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Status: staged implementation for MAT-97 and MAT-134. No runtime worker or
 credential authority activation is enabled by this slice.
 

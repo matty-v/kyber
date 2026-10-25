@@ -1,5 +1,11 @@
 # Observe operator key use
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Status: implemented in draft PR #386 for the approved MAT-97/MAT-134 scope;
 full dev/browser acceptance and review are in progress. Key
 management and adoption remain separate from activity collection.

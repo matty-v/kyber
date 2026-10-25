@@ -1,5 +1,11 @@
 # Preserve supervised writer evidence
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Follow-up to the staged MAT-134 recovery flow. Protocol remains zero.
 
 A recoverable reservation must not outlive the Pod/Job evidence required to

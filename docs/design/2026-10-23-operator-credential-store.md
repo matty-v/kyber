@@ -1,5 +1,11 @@
 # Operator credential store foundation
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Status: implementing the persistence foundation for MAT-134. Authentication,
 adoption and management activation remain separate reviewed gates in the
 [unified credential design PR](https://github.com/matty-v/kyber/pull/356).
