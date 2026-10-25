@@ -1155,3 +1155,9 @@ Recovery eligibility must check every known native launch for the operation,
 including a replacement Job that has not claimed its maintenance receipt yet.
 An already-stopped original does not justify another launch while a known
 replacement is pending/running. The receipt CAS still fences concurrent requests.
+Two handoff proposals can be admitted before either Job acquires maintenance.
+If a different operation has already selected authority while this operation is
+still at reserved (no candidate admission), finish this operation as failure
+before releasing its reservation. Never leave an effect-free late launch holding
+maintenance over an already-managed installation. Candidate-or-later uncertainty
+still cannot be finalized as failure merely from missing evidence.

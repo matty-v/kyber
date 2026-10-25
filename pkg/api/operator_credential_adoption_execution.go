@@ -103,6 +103,14 @@ func (e *credentialAdoptionExecution) run(ctx context.Context) error {
 	}
 	selection, selectionErr := e.effects.Selection(ctx)
 	if selectionErr == nil {
+		// Two administrators can finish preflight before either launch acquires
+		// maintenance. If another operation already selected authority before
+		// this one admitted a candidate, durably reject this operation and
+		// release its reservation. It must not strand a successfully managed
+		// installation behind an unrelated, effect-free pending handoff.
+		if state.AdoptionEffect.Stage == "reserved" {
+			return e.rejectWithoutEffects(ctx, state)
+		}
 		if state.AdoptionEffect == nil || (state.AdoptionEffect.Stage != "selection" && state.AdoptionEffect.Stage != "selected") || state.AdoptionEffect.RegistryUID != selection.RegistryUID {
 			return errCredentialAdoptionPending
 		}

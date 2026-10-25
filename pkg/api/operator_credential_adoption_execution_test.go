@@ -310,3 +310,17 @@ func TestAdoptionExecutionRejectsChangedInputsOnlyBeforeAnyEffect(t *testing.T) 
 		t.Fatal("changed root graph accepted or lacked safe terminal outcome")
 	}
 }
+
+func TestAdoptionExecutionRejectsLateEffectFreeLaunchAfterAnotherSelection(t *testing.T) {
+	execution, journal, effects, _, preflights := adoptionExecutionFixture(t)
+	effects.selected = &operatorcredentials.AuthoritySelection{UID: uuid.NewString(), RegistryUID: uuid.NewString()}
+	if err := execution.run(context.Background()); !errors.Is(err, errCredentialAdoptionRejected) {
+		t.Fatal("late unrelated launch was not durably rejected", err)
+	}
+	if journal.state.Completion == nil || journal.state.Completion.Outcome != "failure" || !effects.released || effects.creates != 0 || effects.binds != 0 || effects.seals != 0 || effects.acks != 0 || *preflights != 0 {
+		t.Fatal("effect-free loser changed selected authority or retained maintenance")
+	}
+	if !reflect.DeepEqual(*journal.trace, []string{"admit", "checkpoint:reserved", "finish:failure", "release"}) {
+		t.Fatal("late launch did not fence its journal before release", *journal.trace)
+	}
+}
