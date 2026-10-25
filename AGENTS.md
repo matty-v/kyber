@@ -1097,3 +1097,10 @@ immutable observed UIDs. Once a create is admitted, absence cannot finalize
 failure; success requires the exact selected checkpoint. Generic key/maintenance
 finalizers and pending scans cannot consume adoption rows. The journal remains
 staged until the native worker enforces ownership and external-effect evidence.
+
+Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
+labels derived from the original admission UUID and ordered source index. They
+are not authentication values or material hashes. Recovery must retain the
+original admission/time and independently verify unchanged source definitions;
+rebuilding a candidate alone never authorizes an effect or refreshes cookie
+compatibility. Existing principal/tenant/credential IDs remain unchanged.
