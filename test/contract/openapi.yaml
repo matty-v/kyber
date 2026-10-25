@@ -230,6 +230,7 @@ paths:
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
                   configurationAvailable: {type: boolean}
+                  maintenanceAvailable: {type: boolean, description: Read-only maintenance status API capability.}
                   usageAvailable: {type: boolean, description: Activity API capability; collection health is reported by the usage response.}
                   warnings: {type: array, items: {type: string}}
                   credentials:
@@ -362,6 +363,21 @@ paths:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
         '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance:
+    get:
+      operationId: getOperatorCredentialMaintenance
+      summary: Inspect the credential maintenance block
+      description: Current administrator only, no-store. Reads the installation reservation directly. Only a verified missing reservation is idle. Inspection never acquires, releases or recovers maintenance; age does not prove an operation has stopped.
+      responses:
+        '200':
+          description: Current read-only maintenance observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialMaintenance'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/operator-credentials/usage:
     get:
@@ -2588,6 +2604,28 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialMaintenance:
+      type: object
+      oneOf:
+        - properties:
+            blocked: {enum: [false]}
+        - required: [version, operation]
+          properties:
+            blocked: {enum: [true]}
+      additionalProperties: false
+      required: [observedAt, blocked]
+      properties:
+        observedAt: {type: string, format: date-time}
+        blocked: {type: boolean}
+        version: {type: string, description: Opaque reviewed metadata version; not a release capability.}
+        operation:
+          type: object
+          additionalProperties: false
+          required: [kind, executionId, startedAt]
+          properties:
+            kind: {type: string, enum: [adoption, upgrade]}
+            executionId: {type: string, format: uuid}
+            startedAt: {type: string, format: date-time}
     OperatorCredentialUsage:
       type: object
       additionalProperties: false

@@ -1607,7 +1607,15 @@ export interface OperatorCredential {
   authenticatesAs?: string
 }
 
+export interface OperatorCredentialMaintenanceStatus {
+  observedAt: string
+  blocked: boolean
+  version?: string
+  operation?: { kind: 'adoption' | 'upgrade'; executionId: string; startedAt: string }
+}
+
 export interface OperatorCredentialInventory {
+  maintenanceAvailable?: boolean
   currentCredentialId?: string
   version?: string
   managementAvailable?: boolean

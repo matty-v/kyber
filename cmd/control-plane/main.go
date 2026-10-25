@@ -54,6 +54,7 @@ import (
 	"github.com/matty-v/kyber/pkg/logging"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
+	"github.com/matty-v/kyber/pkg/operatorcredentials"
 	"github.com/matty-v/kyber/pkg/podtoken"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
@@ -1563,6 +1564,12 @@ func main() {
 		}
 		publicAPI.ComputeSimulation = computeSimulation
 		setupLog.Info("development compute scenario control enabled")
+	}
+	maintenanceReader, maintenanceErr := operatorcredentials.NewMaintenanceStore(restCfg, publicAPI.Namespace)
+	if maintenanceErr != nil {
+		setupLog.Info("Operator credential maintenance visibility unavailable")
+	} else {
+		publicAPI.OperatorCredentialMaintenance = maintenanceReader
 	}
 	if writer, ok := securityHistory.(securityaudit.CredentialUsageWriter); ok {
 		collector, usageErr := securityaudit.NewCredentialUsageCollector(writer, publicAPI.Namespace, os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"))

@@ -41,6 +41,7 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
+	MaintenanceAvailable   bool                     `json:"maintenanceAvailable,omitempty"`
 	CurrentCredentialID    string                   `json:"currentCredentialId,omitempty"`
 	Version                string                   `json:"version,omitempty"`
 	ManagementAvailable    bool                     `json:"managementAvailable,omitempty"`
@@ -238,6 +239,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
 			w.Header().Set("ETag", response.Version)
 		}
+		response.MaintenanceAvailable = s.credentialMaintenanceAvailable()
 		response.UsageAvailable = s.credentialUsageAvailable()
 		if response.UsageAvailable {
 			response.Warnings = []string{"Keys configured outside Kyber have not been checked for changes."}
@@ -249,7 +251,7 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 	response := operatorCredentialInventory{
 		CurrentCredentialID: callerFrom(r.Context()).CredentialID,
 		ObservedAt:          time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
-		UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},
+		MaintenanceAvailable: s.credentialMaintenanceAvailable(), UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},
 	}
 	reader := s.APIReader
 	if reader == nil {

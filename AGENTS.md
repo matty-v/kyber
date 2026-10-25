@@ -1042,3 +1042,12 @@ Counters cross the API as decimal strings. With PostgreSQL configured, main
 starts a reporter for its installation.
 Authentication never waits for reporter writes. Admin activity reads recheck
 current access before output; the UI presents windowed counts and explicit gaps.
+
+Credential maintenance visibility is read-only: direct bounded inspection of
+validated installation reservation metadata, admin authorization rechecked after
+the read, namespace binding and no-store. Only confirmed NotFound means idle;
+age, malformed state and outages never permit takeover. The opaque inspected
+version is not a release capability. Keep metadata connection-local in the UI
+and clear it on denial/failure. Protocol-zero upgrades may reserve nothing, so
+idle is not an assertion that no upgrade runs. Read
+`docs/design/2026-10-24-credential-maintenance-visibility.md` before recovery work.
