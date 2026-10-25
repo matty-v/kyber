@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"math"
 	"net/http"
 	"net/http/httptest"
@@ -37,7 +38,7 @@ func readCurrentCredential(t *testing.T, w *httptest.ResponseRecorder) operatorC
 	return value
 }
 func TestCurrentOperatorCredentialRootAndRestrictedMetadata(t *testing.T) {
-	s := &Server{Namespace: "kyber-system", APIKey: "current-root-fixture", OperatorCredentialPodUID: "6125a706-7020-4e22-b6bd-1de5ebf6fb10", Callers: []ScopedCaller{{Key: "current-client-fixture", Name: "Integration", PrincipalID: "principal-client", TenantID: "tenant-client", CredentialID: "credential-client", CredentialGeneration: math.MaxUint64, Scopes: []string{"metrics:read", "tasks:read"}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/host"}}}}
+	s := &Server{Namespace: "kyber-system", APIKey: "current-root-fixture", OperatorCredentialPodUID: "11111111-1111-4111-8111-111111111111", Callers: []ScopedCaller{{Key: "current-client-fixture", Name: "Integration", PrincipalID: "principal-client", TenantID: "tenant-client", CredentialID: "credential-client", CredentialGeneration: math.MaxUint64, Scopes: []string{"metrics:read", "tasks:read"}, AgentResources: []string{"kyber-system/alpha"}, MachineResources: []string{"kyber-system/host"}}}}
 	handler := s.BuildHandler()
 	root := readCurrentCredential(t, currentCredentialRequest(handler, "current-root-fixture", "GET", "/api/v1/operator-credentials/current"))
 	if root.Name != "installation-admin" || root.CredentialID != installationAdminCredentialID || root.AccessLevel != "administrator" || root.Generation != "1" || !root.IdentityComplete || root.ControlPlanePodUID != s.OperatorCredentialPodUID || root.Authority != "configuration" || len(root.AgentResources) != 1 || root.AgentResources[0] != "*" {
@@ -45,7 +46,7 @@ func TestCurrentOperatorCredentialRootAndRestrictedMetadata(t *testing.T) {
 	}
 	response := currentCredentialRequest(handler, "current-client-fixture", "GET", "/api/v1/operator-credentials/current?credentialId="+installationAdminCredentialID)
 	client := readCurrentCredential(t, response)
-	if client.CredentialID != "credential-client" || client.PrincipalID != "principal-client" || client.TenantID != "tenant-client" || client.AccessLevel != "restricted" || client.Generation != "18446744073709551615" || !client.IdentityComplete || strings.Join(client.Scopes, ",") != "metrics:read,tasks:read" || strings.Join(client.AgentResources, ",") != "kyber-system/alpha" || strings.Join(client.MachineResources, ",") != "kyber-system/host" {
+	if client.CredentialID != "credential-client" || client.PrincipalID != "principal-client" || client.TenantID != "tenant-client" || client.AccessLevel != "restricted" || client.Generation != fmt.Sprintf("%d", uint64(math.MaxUint64)) || !client.IdentityComplete || strings.Join(client.Scopes, ",") != "metrics:read,tasks:read" || strings.Join(client.AgentResources, ",") != "kyber-system/alpha" || strings.Join(client.MachineResources, ",") != "kyber-system/host" {
 		t.Fatal("own access metadata changed", client)
 	}
 	for _, forbidden := range []string{"current-root-fixture", "current-client-fixture", installationAdminCredentialID, "keyFrom", "secretMaterial", "credentials"} {
