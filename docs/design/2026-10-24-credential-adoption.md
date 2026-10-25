@@ -16,9 +16,20 @@ redact private data, just like registry documents.
 Keep the installation credential's stable identity and key value. Preserve each
 accepted integration's existing principal, tenant, credential ID, generation,
 provenance and effective grants. Imported issuance time stays unknown. Generate
-only missing identities; a missing tenant receives a fresh ID rather than
+only missing identities; a missing tenant receives its own ID rather than
 borrowing another principal's installation tenant. Do not grant cross-principal
 task access through identity repair.
+
+Missing identity labels are derived with a versioned, purpose-separated UUID
+namespace from the original admitted operation UUID and the ordered source
+definition index. They are not secrets and do not depend on credential values
+or their hashes. Reconstructing the same admission and unchanged source graph
+therefore reconstructs the identical private candidate, including its original
+browser compatibility cutoffs. A distinct operation assigns independent missing
+identities. Existing identities are never rewritten. This does not authorize
+replay: the worker must independently verify the frozen source graph, immutable
+admission, current authority and original effect evidence before recovery.
+Never rebase a pending operation onto changed/reordered sources or a new time.
 
 Match actual authentication precedence: the last configured definition for a
 value wins, and the installation value takes precedence over all copies. Collapse
