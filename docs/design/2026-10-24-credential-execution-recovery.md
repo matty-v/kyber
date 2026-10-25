@@ -35,9 +35,10 @@ access, authority/release/registry reconciliation and UID/RV-protected release
 remain mandatory. Recording an execution identity does not implement those gates.
 Do not offer a general force-unlock or revive configuration authority.
 
-Before enabling protocol one, ensure evidence is retained while a reservation is
-unresolved. Existing upgrade Jobs have seven-day TTL; pending maintenance cannot
-rely indefinitely on objects that can disappear. Arbitrary privileged deletion
+Before enabling protocol one, require evidence retention while a reservation is
+unresolved. The follow-up in `2026-10-25-credential-writer-retention.md` removes
+the initial Job TTL for protocol one and rejects expiring bound evidence.
+Protocol-zero upgrade Jobs keep their seven-day TTL. Arbitrary privileged deletion
 or restoration is outside the supervised-operation guarantee and may require
 operator/cloud action. Keep that limitation explicit in the UI.
 

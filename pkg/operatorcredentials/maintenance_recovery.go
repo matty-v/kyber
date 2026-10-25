@@ -134,7 +134,7 @@ func (s *MaintenanceStore) PrepareRecovery(ctx context.Context, uid, version, op
 		}
 		return nil, ErrConflict
 	}
-	capability := &MaintenanceReservation{store: s, owner: string(confirmed.Data["owner"]), kind: MaintenanceUpgrade, uid: confirmed.UID, version: confirmed.ResourceVersion}
+	capability := &MaintenanceReservation{store: s, owner: string(confirmed.Data["owner"]), kind: MaintenanceUpgrade, uid: confirmed.UID, version: confirmed.ResourceVersion, writer: status.Writer}
 	return &MaintenanceRecoveryReservation{reservation: capability, operationID: operationID, nonce: record.Nonce}, nil
 }
 
@@ -175,7 +175,7 @@ func (s *MaintenanceStore) ResumeRecovery(ctx context.Context, operationID strin
 	if string(current.UID) != proof.ResourceUID || current.ResourceVersion != proof.ResourceVersion || record.OperationID != operationID || record.Nonce != proof.ProofID {
 		return nil, ErrConflict
 	}
-	capability := &MaintenanceReservation{store: s, owner: string(current.Data["owner"]), kind: MaintenanceUpgrade, uid: current.UID, version: current.ResourceVersion}
+	capability := &MaintenanceReservation{store: s, owner: string(current.Data["owner"]), kind: MaintenanceUpgrade, uid: current.UID, version: current.ResourceVersion, writer: status.Writer}
 	return &MaintenanceRecoveryReservation{reservation: capability, operationID: operationID, nonce: proof.ProofID}, nil
 }
 
@@ -204,8 +204,8 @@ func (r *MaintenanceRecoveryReservation) Release(ctx context.Context) error {
 		return ErrConflict
 	}
 	err = cap.store.direct.writer.Delete(ctx, current, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &cap.uid, ResourceVersion: &cap.version}})
-	if apierrors.IsNotFound(err) && ctx.Err() == nil {
-		return nil
+	if err == nil || apierrors.IsNotFound(err) && ctx.Err() == nil {
+		return cap.released(ctx)
 	}
 	return authorityError(ctx, err)
 }

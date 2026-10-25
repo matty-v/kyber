@@ -1062,3 +1062,16 @@ never fence or delete. Only explicit audited resolution retries the same intent.
 The new recovery API/UI remains disabled while the runtime protocol is zero;
 writer-evidence retention and complete adoption acceptance are activation gates.
 Read `docs/design/2026-10-24-credential-execution-recovery.md` before changing it.
+
+Protocol-one supervised Jobs start without TTL, and bound acquisition rejects
+expiring evidence. A fresh Job metadata CAS binds one execution before acquiring;
+the same Job cannot acquire twice, so cleanup cannot race its reuse. Private handles schedule seven-day Job cleanup only after
+confirmed release, with exact Job UID/version and no current reservation using
+that writer. Uncertain cleanup retains evidence without rewriting the operation
+outcome. Protocol-zero Job cleanup stays unchanged. See
+`docs/design/2026-10-25-credential-writer-retention.md`.
+
+The protocol-one credential-maintenance Role is namespace-scoped: Jobs
+get/list/watch/create/update and ReplicaSets get, with no Job delete grant.
+Protocol zero renders neither Role nor binding. The existing self-upgrade
+ClusterRole rule and dedicated upgrade account remain independently gated.
