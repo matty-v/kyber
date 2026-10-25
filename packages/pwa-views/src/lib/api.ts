@@ -4,6 +4,7 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialAdoptionPlan, OperatorCredentialAdoptionOperation, OperatorCredentialAdoptionStart,
   OperatorCredentialCurrent,
   OperatorCredentialMaintenanceStatus,
   MaintenanceRecoveryReadiness, MaintenanceRecoveryOperation, MaintenanceRecoveryPendingPage,
@@ -321,6 +322,21 @@ export function createApiClient(cluster: Cluster) {
 
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
+
+    prepareOperatorCredentialAdoption: (signal?: AbortSignal): Promise<OperatorCredentialAdoptionPlan> =>
+      request<OperatorCredentialAdoptionPlan>('GET', '/api/v1/operator-credentials/adoption', undefined, signal),
+
+    startOperatorCredentialAdoption: (input: OperatorCredentialAdoptionStart, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('POST', '/api/v1/operator-credentials/adoption', input, signal),
+
+    getOperatorCredentialAdoption: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('GET', `/api/v1/operator-credential-adoptions?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    getPendingOperatorCredentialAdoptions: (signal?: AbortSignal): Promise<{ items: OperatorCredentialAdoptionOperation[]; limit: number }> =>
+      request<{ items: OperatorCredentialAdoptionOperation[]; limit: number }>('GET', '/api/v1/operator-credential-adoptions/pending', undefined, signal),
+
+    recoverOperatorCredentialAdoption: (operationId: string, attemptId: string, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('POST', '/api/v1/operator-credential-adoptions/recover', { operationId, attemptId }, signal),
 
     getOperatorCredentialMaintenance: (signal?: AbortSignal): Promise<OperatorCredentialMaintenanceStatus> =>
       request<OperatorCredentialMaintenanceStatus>('GET', '/api/v1/operator-credentials/maintenance', undefined, signal),

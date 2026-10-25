@@ -55,12 +55,14 @@ func newMaintenanceStore(direct *SecretStore, name string) (*MaintenanceStore, e
 // MaintenanceReservation is a private ownership capability, not an operator
 // credential. Do not serialize it into API responses or diagnostics.
 type MaintenanceReservation struct {
-	writer  *MaintenanceWriter
-	store   *MaintenanceStore
-	owner   string
-	kind    string
-	uid     types.UID
-	version string
+	cleanupOwner   string
+	originalWriter *MaintenanceWriter
+	writer         *MaintenanceWriter
+	store          *MaintenanceStore
+	owner          string
+	kind           string
+	uid            types.UID
+	version        string
 }
 
 func (MaintenanceReservation) String() string               { return "maintenance reservation [redacted]" }
@@ -171,6 +173,14 @@ func (s *MaintenanceStore) validate(secret *corev1.Secret) error {
 			return ErrUnsupported
 		}
 	}
+	if raw, found := secret.Annotations[adoptionWriterAnnotation]; found {
+		if kind != MaintenanceAdoption {
+			return ErrUnsupported
+		}
+		if _, err := decodeAdoptionWriter(raw); err != nil {
+			return err
+		}
+	}
 	if _, err := time.Parse(time.RFC3339Nano, string(secret.Data["startedAt"])); err != nil {
 		return ErrUnsupported
 	}
@@ -221,15 +231,16 @@ func (r *MaintenanceReservation) Release(ctx context.Context) error {
 // MaintenanceStatus is a whitelisted, value-free observation. Inspecting it does
 // not confer the private reservation capability or permission to release it.
 type MaintenanceStatus struct {
-	RecoveryOperationID string
-	Upgrade             *UpgradeEffectsCheckpoint
-	Writer              *MaintenanceWriter
-	Present             bool
-	Kind                string
-	ExecutionID         string
-	StartedAt           time.Time
-	UID                 string
-	Version             string
+	AdoptionAdmissionVersion string
+	RecoveryOperationID      string
+	Upgrade                  *UpgradeEffectsCheckpoint
+	Writer                   *MaintenanceWriter
+	Present                  bool
+	Kind                     string
+	ExecutionID              string
+	StartedAt                time.Time
+	UID                      string
+	Version                  string
 }
 
 // Inspect uses an authoritative bounded read. Only a verified NotFound means
@@ -275,7 +286,22 @@ func (s *MaintenanceStore) Inspect(ctx context.Context) (MaintenanceStatus, erro
 		}
 		recoveryOperationID = record.OperationID
 	}
-	return MaintenanceStatus{RecoveryOperationID: recoveryOperationID, Upgrade: upgrade, Writer: writer, Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
+	executionID := string(current.Data["owner"])
+	admissionVersion := ""
+	if string(current.Data["kind"]) == MaintenanceAdoption {
+		admissionVersion = current.ResourceVersion
+	}
+	if raw, found := current.Annotations[adoptionWriterAnnotation]; found {
+		record, err := decodeAdoptionWriter(raw)
+		if err != nil {
+			return MaintenanceStatus{}, err
+		}
+		writer = &record.Writer
+		admissionVersion = record.AdmissionVersion
+		executionID = record.ExecutionID
+		recoveryOperationID = record.OperationID
+	}
+	return MaintenanceStatus{AdoptionAdmissionVersion: admissionVersion, RecoveryOperationID: recoveryOperationID, Upgrade: upgrade, Writer: writer, Present: true, Kind: string(current.Data["kind"]), ExecutionID: executionID, StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
 }
 
 func (s *MaintenanceStore) Namespace() string {

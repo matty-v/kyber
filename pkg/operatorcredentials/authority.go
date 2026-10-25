@@ -50,7 +50,7 @@ func (s *AuthorityStore) Load(ctx context.Context) (Snapshot, error) {
 	marker := &corev1.Secret{}
 	if err := s.registry.reader.Get(ctx, s.key, marker); err != nil {
 		if apierrors.IsNotFound(err) && !s.observed.Load() && ctx.Err() == nil {
-			return Snapshot{}, ErrUninitialized
+			return Snapshot{}, s.bootstrapState(ctx)
 		}
 		return Snapshot{}, authorityUnavailable(ctx, err)
 	}
@@ -61,6 +61,9 @@ func (s *AuthorityStore) Load(ctx context.Context) (Snapshot, error) {
 	secret, snapshot, err := s.registry.read(ctx)
 	if err != nil {
 		return Snapshot{}, authorityUnavailable(ctx, err)
+	}
+	if selected, present := secret.Annotations[selectedAuthorityAnnotation]; present && selected != string(marker.UID) {
+		return Snapshot{}, ErrUnavailable
 	}
 	if secret.UID == "" || string(secret.UID) != string(marker.Data["registryUID"]) {
 		return Snapshot{}, ErrUnavailable

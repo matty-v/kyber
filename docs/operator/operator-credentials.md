@@ -20,8 +20,9 @@ reloads it. A configured permission difference is shown separately from active
 access. This comparison does not establish whether a pending key-value change
 has loaded; externally replaced keys may require a restart. If the configuration
 source cannot be read, a warning explicitly limits the inventory to runtime
-access. Multi-replica consistency and UI-managed credential lifecycle are part
-of the subsequent registry work, not guaranteed by this per-control-plane view.
+access. Until explicit setup is completed, this remains a per-control-plane
+configuration view. Managed installations instead read one current installation
+authority and apply current grants to existing connections.
 
 If configured entries share the same key value, the inventory shows the
 identity and permissions authentication actually selects, including full
@@ -37,8 +38,38 @@ key was issued. Recent recorded sensitive access appears below the inventory.
 Managed installations offer named key creation, grant changes, individual
 rotation and revocation here. Save a newly prepared value before activating it;
 it cannot be retrieved later. Kyber protects the last non-expiring administrator.
-These controls are capability-gated while adoption is completed in MAT-134.
-Configuration-controlled installations retain their current rotation workflow.
+On compatible releases, select **Manage existing keys in Kyber** to review the
+setup. Confirm that future changes to these keys will be made here instead of
+through installation configuration. Deploying or upgrading Kyber never confirms
+this ownership change automatically. The former shared-key rotation endpoint is
+unavailable when the complete managed authority is enabled; use API access.
+
+Setup preserves existing key values, access and established principal, tenant
+and credential IDs. Missing identity labels receive stable operation-scoped IDs;
+creation times are not invented. The review reports callers that must sign in
+again. Compatible existing browser sessions retain their original deadlines.
+Duplicate key values continue to select their actual effective identity.
+
+**Check key setup** reads pending work. An unconfirmed response is not a failure
+and is never retried automatically: use **Check outcome** with its original
+operation. **Continue setup** appears only after the server confirms the earlier
+worker has stopped; missing process evidence and node-loss states do not permit
+a force unlock. An unavailable audit database leaves setup pending while current
+authentication continues. Named key changes wait until setup is confirmed.
+
+The native worker uses the current published control-plane image, verifies the
+Helm release, source Secret UID/versions and every ready replica, and records
+immutable admission before launch. It retains unresolved Job/Pod evidence and
+shares maintenance with supported upgrades. No Agent restart, disk replacement,
+or task ownership change is part of setup. If preflight cannot establish the
+supported release/source state, it refuses to begin.
+
+After setup, external configuration no longer grants operator access. Do not
+remove the authority marker or restore only its old configuration Secret: that
+is not a supported rollback. Current reads fail closed if the selected authority
+cannot be verified, including after a fresh control-plane process starts. Use a
+compatible published release for upgrades and rollback; unsupported manual cloud
+or Kubernetes changes require separate operator recovery.
 
 The supported system identity is `installation-admin`, displayed as
 **Installation administrator**. Existing administrator keys remain valid and

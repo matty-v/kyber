@@ -5,7 +5,7 @@ package operatorcredentials
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -264,7 +264,8 @@ func validate(d Document) error {
 	if len(d.Credentials) > MaxCredentials || len(d.Operations) > MaxOperations {
 		return ErrCapacity
 	}
-	ids, names, materials := map[string]bool{}, map[string]bool{}, map[[32]byte]bool{}
+	ids, names := map[string]bool{}, map[string]bool{}
+	materials := make([][]byte, 0, len(d.Credentials))
 	principals := map[string]string{}
 	generations := map[string]uint64{}
 	administrator := false
@@ -298,11 +299,7 @@ func validate(d Document) error {
 			if len(c.material) > 4096 || strings.TrimSpace(string(c.material)) == "" {
 				return ErrInvalid
 			}
-			binding := sha256.Sum256(c.material)
-			if materials[binding] {
-				return ErrInvalid
-			}
-			materials[binding] = true
+			materials = append(materials, c.material)
 		}
 		switch c.Source.Kind {
 		case "installation", "managed":
@@ -355,6 +352,15 @@ func validate(d Document) error {
 				}
 			}
 		default:
+			return ErrInvalid
+		}
+	}
+	// Sort only this private list, never the document or a presented bearer.
+	// Adjacent exact comparisons avoid password-like digests and a quadratic
+	// scan at the supported registry capacity. No derived fingerprint escapes.
+	sort.Slice(materials, func(i, j int) bool { return bytes.Compare(materials[i], materials[j]) < 0 })
+	for i := 1; i < len(materials); i++ {
+		if subtle.ConstantTimeCompare(materials[i-1], materials[i]) == 1 {
 			return ErrInvalid
 		}
 	}

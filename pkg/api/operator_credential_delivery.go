@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/matty-v/kyber/pkg/operatorcredentials"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 )
 
 // OperatorCredentialDelivery confirms already-committed effects in the required
@@ -72,9 +73,24 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 		reference := references[(start+n)%len(references)]
 		d.after = reference.ID
 		result.Inspected++
-		// Adoption has a different admission boundary and is intentionally retained
-		// until that executor provides its own durable completion contract.
-		if reference.Authority != "registry" || reference.Action == "adopt" {
+		if reference.Action == "adopt" {
+			confirmed, err := d.confirmAdoptionReference(workCtx, authority, journal, snapshot, reference)
+			if err != nil {
+				deliveryErr = operatorcredentials.ErrUnavailable
+				continue
+			}
+			if !confirmed {
+				continue
+			}
+			result.Confirmed++
+			if reference.Status == "delivered" {
+				prune[reference.ID] = true
+			} else {
+				mark[reference.ID] = true
+			}
+			continue
+		}
+		if reference.Authority != "registry" {
 			continue
 		}
 		lookupCtx, lookupCancel := context.WithTimeout(workCtx, securityAuditTimeout)
@@ -136,4 +152,30 @@ func (d *OperatorCredentialDelivery) RunOnce(ctx context.Context) (OperatorCrede
 	}
 	result.Marked, result.Pruned = len(mark), len(prune)
 	return result, deliveryErr
+}
+
+func (d *OperatorCredentialDelivery) confirmAdoptionReference(ctx context.Context, authority managedOperatorCredentialAuthority, journal securityaudit.CredentialJournal, snapshot operatorcredentials.Snapshot, reference operatorcredentials.Operation) (bool, error) {
+	verifier, verified := authority.(interface {
+		VerifyCompletedSelection(context.Context, operatorcredentials.AuthoritySelection) (operatorcredentials.Snapshot, error)
+	})
+	adoption, recorded := journal.(securityaudit.CredentialAdoptionJournal)
+	if !verified || !recorded {
+		return false, nil
+	}
+	operation, err := journal.GetCredentialOperation(ctx, d.server.Namespace, reference.ID)
+	if err != nil || operation.Intent.Validate() != nil || operation.Intent.Admission.ResourceKind != "credential-adoption" || !matchesAdoptionReference(reference, adoptionOperation(operation.Intent)) || operation.AdoptionEffect == nil || operation.AdoptionEffect.Stage != "selected" || operation.AdoptionEffect.RegistryUID != snapshot.UID {
+		return false, operatorcredentials.ErrUnavailable
+	}
+	proof := operatorcredentials.AuthoritySelection{UID: operation.AdoptionEffect.AuthorityUID, RegistryUID: snapshot.UID}
+	if _, err := verifier.VerifyCompletedSelection(ctx, proof); err != nil {
+		return false, operatorcredentials.ErrUnavailable
+	}
+	if operation.Completion == nil {
+		completion, err := adoption.FinishCredentialAdoptionOperation(ctx, d.server.Namespace, reference.ID, "success", time.Now(), operation.AdoptionEffect)
+		if err != nil {
+			return false, operatorcredentials.ErrUnavailable
+		}
+		operation.Completion = &completion
+	}
+	return operation.Completion.Outcome == "success" && operation.Completion.ID == reference.CompletionEventID, nil
 }

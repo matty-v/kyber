@@ -33,7 +33,11 @@ func (r *MaintenanceReservation) ScheduleWriterCleanup(ctx context.Context) erro
 	if err := r.store.direct.reader.Get(ctx, types.NamespacedName{Namespace: r.store.key.Namespace, Name: r.writer.JobName}, job); err != nil {
 		return authorityUnavailable(ctx, err)
 	}
-	if job.Annotations[maintenanceExecutionAnnotation] != r.owner || string(job.UID) != r.writer.JobUID || job.Namespace != r.store.key.Namespace || job.ResourceVersion == "" || job.DeletionTimestamp != nil || !singleRunJob(job) || !writerPodSpec(job.Spec.Template.Spec, r.writer.Container) {
+	cleanupOwner := r.owner
+	if r.cleanupOwner != "" {
+		cleanupOwner = r.cleanupOwner
+	}
+	if job.Annotations[maintenanceExecutionAnnotation] != cleanupOwner || string(job.UID) != r.writer.JobUID || job.Namespace != r.store.key.Namespace || job.ResourceVersion == "" || job.DeletionTimestamp != nil || !singleRunJob(job) || !writerPodSpec(job.Spec.Template.Spec, r.writer.Container) {
 		return ErrConflict
 	}
 	if job.Spec.TTLSecondsAfterFinished != nil {
@@ -62,6 +66,15 @@ func (r *MaintenanceReservation) ScheduleWriterCleanup(ctx context.Context) erro
 // Cleanup cannot change the authoritative release outcome. Unconfirmed cleanup
 // may retain extra evidence and emits a value-free operational diagnostic.
 func (r *MaintenanceReservation) released(ctx context.Context) error {
+	if r.originalWriter != nil {
+		original := *r
+		original.writer = r.originalWriter
+		original.cleanupOwner = r.owner
+		original.originalWriter = nil
+		if err := original.ScheduleWriterCleanup(ctx); err != nil {
+			slog.Warn("Credential maintenance released; original writer cleanup was not confirmed", "job", original.writer.JobName, "jobUID", original.writer.JobUID)
+		}
+	}
 	if err := r.ScheduleWriterCleanup(ctx); err != nil {
 		slog.Warn("Credential maintenance released; writer evidence cleanup was not confirmed", "job", r.writer.JobName, "jobUID", r.writer.JobUID)
 	}

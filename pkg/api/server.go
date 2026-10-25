@@ -122,7 +122,8 @@ type Server struct {
 	// configured authority must distinguish unadopted state from an outage.
 	// Set this before BuildHandler; adoption changes its durable marker, not
 	// this installation-wide resolver.
-	// The control-plane command does not enable adoption through this seam yet.
+	// The control-plane wires this for the complete protocol, independently of
+	// audit database health. Unselected state still uses installation configuration.
 	OperatorCredentialAuthority OperatorCredentialAuthority
 
 	// Read-only maintenance visibility; does not enable acquisition or recovery.
@@ -133,6 +134,9 @@ type Server struct {
 
 	// Reconciliation is wired only when the complete recovery path is ready.
 	OperatorCredentialMaintenanceReconciler OperatorCredentialMaintenanceReconciler
+
+	// Explicit adoption is wired only with the complete authority protocol.
+	OperatorCredentialAdoption operatorCredentialAdoptionManager
 
 	// APIKeySecretName is the name of the Kubernetes Secret holding the api-key
 	// the control-plane authenticates against. The rotate handler patches this
@@ -867,6 +871,10 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
 	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
 	mux.HandleFunc("/api/v1/operator-credentials/current", s.handleCurrentOperatorCredential)
+	mux.HandleFunc("/api/v1/operator-credentials/adoption", s.handleOperatorCredentialAdoption)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions", s.handleOperatorCredentialAdoptionOperation)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/pending", s.handlePendingOperatorCredentialAdoptions)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/recover", s.handleRecoverOperatorCredentialAdoption)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance", s.handleOperatorCredentialMaintenance)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/readiness", s.handleMaintenanceRecoveryReadiness)
 	mux.HandleFunc("/api/v1/operator-credentials/maintenance/recover", s.handleRecoverOperatorCredentialMaintenance)

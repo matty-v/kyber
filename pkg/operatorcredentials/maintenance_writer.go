@@ -95,36 +95,50 @@ func writerJobOwner(pod *corev1.Pod) *metav1.OwnerReference {
 // Caller-supplied names/UIDs locate its own downward-API identity; Job ownership
 // and execution shape are verified, never copied from request metadata.
 func (s *MaintenanceStore) AcquireForPod(ctx context.Context, kind, podName, podUID string) (*MaintenanceReservation, error) {
+	writer, ownerID, err := s.claimWriterForPod(ctx, kind, podName, podUID, "")
+	if err != nil {
+		return nil, err
+	}
+	return s.acquireOwned(ctx, kind, writer, ownerID)
+}
+
+func (s *MaintenanceStore) claimWriterForPod(ctx context.Context, kind, podName, podUID, adoptionOperationID string) (*MaintenanceWriter, string, error) {
+	if adoptionOperationID != "" && (kind != MaintenanceAdoption || !canonicalWriterUID(adoptionOperationID)) {
+		return nil, "", ErrInvalid
+	}
 	container := maintenanceWriterContainer(kind)
 	if s == nil || s.direct == nil || container == "" || len(validation.IsDNS1123Subdomain(podName)) != 0 || !canonicalWriterUID(podUID) {
-		return nil, ErrInvalid
+		return nil, "", ErrInvalid
 	}
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
 	pod := &corev1.Pod{}
 	if err := s.direct.reader.Get(ctx, types.NamespacedName{Namespace: s.key.Namespace, Name: podName}, pod); err != nil {
-		return nil, authorityUnavailable(ctx, err)
+		return nil, "", authorityUnavailable(ctx, err)
 	}
 	owner := writerJobOwner(pod)
 	if string(pod.UID) != podUID || pod.Namespace != s.key.Namespace || pod.Spec.NodeName == "" || pod.DeletionTimestamp != nil || owner == nil || !writerPodSpec(pod.Spec, container) || pod.Status.Phase == corev1.PodSucceeded || pod.Status.Phase == corev1.PodFailed {
-		return nil, ErrUnsupported
+		return nil, "", ErrUnsupported
 	}
 	job := &batchv1.Job{}
 	if err := s.direct.reader.Get(ctx, types.NamespacedName{Namespace: s.key.Namespace, Name: owner.Name}, job); err != nil {
-		return nil, authorityUnavailable(ctx, err)
+		return nil, "", authorityUnavailable(ctx, err)
 	}
 	if job.Spec.TTLSecondsAfterFinished != nil || job.UID != owner.UID || job.Namespace != s.key.Namespace || job.DeletionTimestamp != nil || job.Spec.Selector == nil || len(job.Spec.Selector.MatchExpressions) != 0 || job.Spec.Selector.MatchLabels["batch.kubernetes.io/controller-uid"] != string(job.UID) || pod.Labels["batch.kubernetes.io/controller-uid"] != string(job.UID) || !singleRunJob(job) || !writerPodSpec(job.Spec.Template.Spec, container) || job.Spec.Template.Spec.Containers[0].Image != pod.Spec.Containers[0].Image {
-		return nil, ErrUnsupported
+		return nil, "", ErrUnsupported
 	}
 	for _, condition := range job.Status.Conditions {
 		if condition.Status == corev1.ConditionTrue && (condition.Type == batchv1.JobComplete || condition.Type == batchv1.JobFailed) {
-			return nil, ErrUnsupported
+			return nil, "", ErrUnsupported
 		}
+	}
+	if adoptionOperationID != "" && job.Labels[AdoptionOperationLabel] != adoptionOperationID {
+		return nil, "", ErrUnsupported
 	}
 	// A supervised Job can acquire only once. This metadata CAS also fences
 	// a concurrent acquisition before any later handle may schedule Job cleanup.
 	if _, exists := job.Annotations[maintenanceExecutionAnnotation]; exists {
-		return nil, ErrConflict
+		return nil, "", ErrConflict
 	}
 	ownerID := uuid.NewString()
 	if job.Annotations == nil {
@@ -134,16 +148,16 @@ func (s *MaintenanceStore) AcquireForPod(ctx context.Context, kind, podName, pod
 	writeErr := s.direct.writer.Update(ctx, job)
 	confirmed := &batchv1.Job{}
 	if err := s.direct.reader.Get(ctx, types.NamespacedName{Namespace: job.Namespace, Name: job.Name}, confirmed); err != nil {
-		return nil, authorityUnavailable(ctx, err)
+		return nil, "", authorityUnavailable(ctx, err)
 	}
 	if confirmed.UID != job.UID || confirmed.Annotations[maintenanceExecutionAnnotation] != ownerID || confirmed.Spec.TTLSecondsAfterFinished != nil || confirmed.DeletionTimestamp != nil {
 		if writeErr != nil {
-			return nil, authorityError(ctx, writeErr)
+			return nil, "", authorityError(ctx, writeErr)
 		}
-		return nil, ErrConflict
+		return nil, "", ErrConflict
 	}
 	writer := MaintenanceWriter{PodName: pod.Name, PodUID: podUID, JobName: job.Name, JobUID: string(job.UID), Container: container}
-	return s.acquireOwned(ctx, kind, &writer, ownerID)
+	return &writer, ownerID, nil
 }
 
 const maintenanceExecutionAnnotation = "kyber.io/operator-credential-execution"

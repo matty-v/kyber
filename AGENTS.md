@@ -975,9 +975,9 @@ retain uncertain effects for recovery. Dry runs reserve nothing. Selected
 registry authority requires compatible effective target, initial rollback and
 live workloads; recheck the recorded revision before rollback. Published chart
 protocol/image metadata is independent of image-value overrides. The current
-runtime/chart advertise protocol zero until full activation support is ready.
-Protocol zero performs fail-closed authority reads but creates no persistent
-maintenance lock; keep existing retry behavior until the recovery UI ships.
+runtime/chart advertise protocol one with explicit adoption and recovery.
+Older protocol-zero releases perform fail-closed authority reads but create no
+persistent maintenance lock; never infer protocol support from schema alone.
 Read `docs/design/2026-10-24-credential-upgrade-compatibility.md` before changing
 these gates. The Go upgrade client maps Deployments and CRDs statically.
 
@@ -1110,5 +1110,58 @@ the root source. Effect checkpoints bind actual maintenance UID/original version
 then advance reserved -> candidate -> registry -> selection -> selected. Terminal
 failure can fence a late launch only before candidate admission; after that,
 absence cannot finalize failure. Success requires the exact selected checkpoint. Generic key/maintenance
-finalizers and pending scans cannot consume adoption rows. The journal remains
-staged until the native worker enforces ownership and external-effect evidence.
+finalizers and pending scans cannot consume adoption rows. The native worker
+enforces ownership and external-effect evidence before completing this journal.
+
+Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
+labels derived from the original admission UUID and ordered source index. They
+are not authentication values or material hashes. Recovery must retain the
+original admission/time and independently verify unchanged source definitions;
+rebuilding a candidate alone never authorizes an effect or refreshes cookie
+compatibility. Existing principal/tenant/credential IDs remain unchanged.
+
+The private adoption replica probe compares every distinct source value against
+its own current-credential response and compares the accepted/shadowed inventory.
+Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
+and rechecks frozen sources, but does not discover all replicas, establish image
+ownership, quiesce old writers or authorize an adoption effect by itself.
+
+Native adoption recovery uses an exact UID/resource-version annotation CAS only
+after the old single-execution Job/Pod is proven stopped. The active writer
+projection follows the replacement receipt, and the original admission version
+survives every replacement. Original handles fail after fencing; do not use age
+or missing objects as shutdown evidence. Maintenance Secret data stays immutable.
+Completed handoff must seal the selected marker UID in registry metadata before
+final audit/outbox completion. A sealed registry prevents configuration fallback
+across a fresh process if its marker is missing; an unsealed candidate remains
+recoverable through the still-configured administrator. Normal mutations preserve
+this receipt. These are integration gates, not runtime activation by themselves.
+
+The native credential handoff entrypoint is cmd/kyber-credential-adopt in the
+control-plane image. The API durably admits the immutable source/deployment
+intent before creating one fixed-command Job. Job environment contains only
+operation/namespace/deployment/Pod identity metadata; the worker resolves its
+private database profile from the verified Deployment's ordered environment.
+It never migrates the audit schema. Recovery requires a separately audited,
+currently authorized administrator and a proven stopped writer. Completed
+selection is verified through the durable registry seal before final delivery.
+The dedicated worker ServiceAccount has namespace-only read/source access and
+fixed registry/maintenance mutations, never workload or Agent storage changes.
+All runtime wiring and Helm grants remain gated by the complete protocol
+constant and publisher chart assertion. Protocol one exposes explicit setup;
+installation configuration remains authoritative until the administrator confirms
+the handoff. An environment flag cannot override the compiled protocol.
+Recovery eligibility must check every known native launch for the operation,
+including a replacement Job that has not claimed its maintenance receipt yet.
+An already-stopped original does not justify another launch while a known
+replacement is pending/running. The receipt CAS still fences concurrent requests.
+Two handoff proposals can be admitted before either Job acquires maintenance.
+If a different operation has already selected authority while this operation is
+still at reserved (no candidate admission), finish this operation as failure
+before releasing its reservation. Never leave an effect-free late launch holding
+maintenance over an already-managed installation. Candidate-or-later uncertainty
+still cannot be finalized as failure merely from missing evidence.
+Credential-material uniqueness validation sorts a private, bounded scratch list
+and compares adjacent values exactly. Never persist or expose material-derived
+fingerprints for this check. It is independent of presented-bearer matching,
+which retains constant-time authentication comparisons.

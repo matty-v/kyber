@@ -77,6 +77,10 @@ func (s *Server) handleOperatorCredentialOptions(w http.ResponseWriter, r *http.
 		}
 		return
 	}
+	if credentialAdoptionPending(snapshot.Document) {
+		writeJSONError(w, http.StatusConflict, "credential_setup_pending", "Key setup is still finishing. Check its status before changing keys.")
+		return
+	}
 	result := operatorCredentialOptions{Version: 1, Namespace: s.Namespace, Permissions: []operatorCredentialPermissionOption{}}
 	for _, permission := range managedPermissionLabels {
 		result.Permissions = append(result.Permissions, operatorCredentialPermissionOption{Scope: string(permission.scope), Label: permission.label, Target: managedPermissionTarget(permission.scope)})

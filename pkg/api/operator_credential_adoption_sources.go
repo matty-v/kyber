@@ -30,6 +30,7 @@ type credentialSourceVersion struct {
 	version string
 }
 type credentialAdoptionSources struct {
+	rootName  string
 	root      string
 	callers   []ScopedCaller
 	namespace string
@@ -130,7 +131,7 @@ func (r *credentialAdoptionSourceReader) Read(ctx context.Context) (*credentialA
 			return nil, errCredentialAdoptionSources
 		}
 	}
-	snapshot := &credentialAdoptionSources{root: material, callers: resolved, namespace: r.namespace, versions: tracked.versions, reader: r.reader}
+	snapshot := &credentialAdoptionSources{rootName: r.name, root: material, callers: resolved, namespace: r.namespace, versions: tracked.versions, reader: r.reader}
 	if err := snapshot.Verify(ctx); err != nil {
 		return nil, errCredentialAdoptionSources
 	}

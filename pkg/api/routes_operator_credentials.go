@@ -41,16 +41,18 @@ type operatorCredentialView struct {
 }
 
 type operatorCredentialInventory struct {
-	MaintenanceAvailable   bool                     `json:"maintenanceAvailable,omitempty"`
-	CurrentCredentialID    string                   `json:"currentCredentialId,omitempty"`
-	Version                string                   `json:"version,omitempty"`
-	ManagementAvailable    bool                     `json:"managementAvailable,omitempty"`
-	ObservedAt             string                   `json:"observedAt"`
-	InventoryScope         string                   `json:"inventoryScope"`
-	ConfigurationAvailable bool                     `json:"configurationAvailable"`
-	UsageAvailable         bool                     `json:"usageAvailable"`
-	Credentials            []operatorCredentialView `json:"credentials"`
-	Warnings               []string                 `json:"warnings"`
+	ConfigurationRotationAvailable bool                     `json:"configurationRotationAvailable"`
+	AdoptionAvailable              bool                     `json:"adoptionAvailable,omitempty"`
+	MaintenanceAvailable           bool                     `json:"maintenanceAvailable,omitempty"`
+	CurrentCredentialID            string                   `json:"currentCredentialId,omitempty"`
+	Version                        string                   `json:"version,omitempty"`
+	ManagementAvailable            bool                     `json:"managementAvailable,omitempty"`
+	ObservedAt                     string                   `json:"observedAt"`
+	InventoryScope                 string                   `json:"inventoryScope"`
+	ConfigurationAvailable         bool                     `json:"configurationAvailable"`
+	UsageAvailable                 bool                     `json:"usageAvailable"`
+	Credentials                    []operatorCredentialView `json:"credentials"`
+	Warnings                       []string                 `json:"warnings"`
 }
 
 func credentialPermissions(scopes []string) []string {
@@ -233,24 +235,27 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 			writeJSONError(w, http.StatusForbidden, "forbidden", "Current administrator access required")
 			return
 		}
-		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}}
+		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available."}}
 		_, _, supported := s.credentialManagementDependencies()
 		if resolved.registry.version != "" && resolved.registry.uid != "" {
 			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
 			w.Header().Set("ETag", response.Version)
 		}
 		response.MaintenanceAvailable = s.credentialMaintenanceAvailable()
+		_, response.AdoptionAvailable = s.adoptionManager()
 		response.UsageAvailable = s.credentialUsageAvailable()
 		if response.UsageAvailable {
-			response.Warnings = []string{"Keys configured outside Kyber have not been checked for changes."}
+			response.Warnings = []string{}
 		}
-		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != ""
+		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != "" && !resolved.registry.adoptionPending
 		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	response := operatorCredentialInventory{
-		CurrentCredentialID: callerFrom(r.Context()).CredentialID,
-		ObservedAt:          time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
+		ConfigurationRotationAvailable: s.OperatorCredentialAuthority == nil,
+		AdoptionAvailable:              s.OperatorCredentialAdoption != nil && s.OperatorCredentialAdoption.Namespace() == s.Namespace,
+		CurrentCredentialID:            callerFrom(r.Context()).CredentialID,
+		ObservedAt:                     time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
 		MaintenanceAvailable: s.credentialMaintenanceAvailable(), UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},
 	}
 	reader := s.APIReader

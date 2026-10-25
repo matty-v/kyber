@@ -23,6 +23,7 @@ type OperatorCredentialAuthority interface {
 var errOperatorAuthorityUnavailable = errors.New("operator authentication unavailable")
 
 type registryCredentials struct {
+	adoptionPending            bool
 	version                    string
 	uid                        string
 	entries                    []scopedKey
@@ -72,7 +73,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 	if err := document.Validate(); err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
-	registry := &registryCredentials{legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration(), compatibilityIssuedBefore: document.LegacyBrowserIssuedBefore(), compatibilityExpiresBefore: document.LegacyBrowserExpiresBefore()}
+	registry := &registryCredentials{adoptionPending: credentialAdoptionPending(document), legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration(), compatibilityIssuedBefore: document.LegacyBrowserIssuedBefore(), compatibilityExpiresBefore: document.LegacyBrowserExpiresBefore()}
 	for _, credential := range document.Credentials {
 		// Validate supported permissions even for inactive records; do not silently
 		// reinterpret an unsupported registry after a downgrade.
@@ -90,6 +91,9 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 			state = "expired"
 		}
 		view := operatorCredentialView{PrincipalID: credential.PrincipalID, TenantID: credential.TenantID, ActivityTrackable: true, ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
+		if view.Source == "installation" {
+			view.Source = "managed"
+		}
 		if credential.CreatedAt != nil {
 			view.CreatedAt = credential.CreatedAt.UTC().Format(time.RFC3339Nano)
 		}

@@ -48,6 +48,10 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInstallationAdmin(w, r, "rotate-installation-key") {
 		return
 	}
+	if s.OperatorCredentialAuthority != nil {
+		writeJSONError(w, http.StatusConflict, "credential_management_required", "Use API access in Settings to manage keys.")
+		return
+	}
 
 	if s.APIKeySecretName == "" {
 		writeJSONError(w, http.StatusServiceUnavailable, "rotation_unavailable",

@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.82.0
+
+- Add explicit existing-key setup, outcome checks and stopped-worker recovery controls. Changed connections clear protected setup state; uncertain writes are never retried automatically. Controls require the complete authority protocol and never start setup automatically.
+
 ## 0.81.0
 
 - Describe credential ownership handoff events plainly in administrator access history. This adds no adoption control or runtime activation.

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/matty-v/kyber/pkg/updates"
@@ -18,6 +19,8 @@ const (
 	officialControlPlaneRepository = "ghcr.io/matty-v/kyber-control-plane"
 	maxCompatibilityManifestBytes  = 16 * 1024 * 1024
 )
+
+var canonicalCredentialImageSHA = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 var errCredentialCompatibility = errors.New("operator credential compatibility could not be verified; use a supported Kyber release without a custom control-plane image")
 
@@ -79,7 +82,7 @@ func credentialCompatibleDeployment(manifest, namespace, name string) (*appsv1.D
 		}
 		tag := imageTag(releaseImage)
 		version, err := updates.ParseVersion(tag)
-		if err != nil || version.String() != strings.TrimPrefix(tag, "v") {
+		if !canonicalCredentialImageSHA.MatchString(tag) && (err != nil || version.String() != strings.TrimPrefix(tag, "v")) {
 			return nil, errCredentialCompatibility
 		}
 		// Supported charts use the official image entrypoint and only these two

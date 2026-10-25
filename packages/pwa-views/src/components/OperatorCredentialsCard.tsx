@@ -7,6 +7,7 @@ import { Card } from './Card'
 import { SecurityHistoryCard } from './SecurityHistoryCard'
 import { OperatorKeyManagement } from './OperatorKeyManagement'
 import { OperatorKeyUsage } from './OperatorKeyUsage'
+import { OperatorCredentialAdoption } from './OperatorCredentialAdoption'
 import { OperatorCredentialMaintenance } from './OperatorCredentialMaintenance'
 
 export function OperatorCredentialsCard({ children }: { children?: ReactNode }) {
@@ -70,8 +71,9 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
           : 'Could not load operator credentials. Try refreshing.'}
     </p>}
     {data && <>
-      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Operator keys for this Kyber installation. Secret values are never shown.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
+      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Manage keys here. Installation configuration no longer controls access.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
       {data.warnings.map((warning) => <p key={warning} role="alert" className="mt-3 text-sm text-warning">{warning}</p>)}
+      {data.adoptionAvailable && <OperatorCredentialAdoption api={api} allowStart={data.inventoryScope === 'current-control-plane'} onCompleted={() => setRefresh(n => n + 1)} />}
       <OperatorCredentialMaintenance api={api} enabled={!!data.maintenanceAvailable} revision={refresh} />
       <OperatorKeyManagement key={`${cluster.id}:${cluster.baseURL}:${data.currentCredentialId}`} api={api} inventory={data} bearerConnection={!!cluster.apiKey} onCompleted={() => setRefresh((n) => n + 1)}>{(renderActions) => <OperatorKeyUsage api={api} enabled={data.usageAvailable} revision={refresh}>{(renderUsage) => <>
       {data.credentials.length === 0 ? <p className="mt-4 text-sm text-text-muted">No accepted credentials were reported.</p> : <ul className="mt-4 space-y-3">
@@ -110,5 +112,5 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
         <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Changes to keys apply across this installation.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
       </details>
     </>}
-  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && data.inventoryScope !== 'installation-registry' && children}</>
+  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && data.inventoryScope !== 'installation-registry' && data.configurationRotationAvailable !== false && children}</>
 }

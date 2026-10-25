@@ -111,73 +111,7 @@ func (v *MaintenanceReleaseVerifier) Verify(ctx context.Context, status operator
 	if err != nil {
 		return ErrMaintenanceReleaseUnverified
 	}
-	live := &appsv1.Deployment{}
-	key := client.ObjectKey{Namespace: v.namespace, Name: checkpoint.ControlPlaneDeployment}
-	if err := v.reader.Get(ctx, key, live); err != nil {
-		return ErrMaintenanceReleaseUnverified
-	}
-	if selected {
-		live.APIVersion = "apps/v1"
-		live.Kind = "Deployment"
-		encoded, _ := json.Marshal(live)
-		if _, err := credentialCompatibleDeployment(string(encoded), v.namespace, live.Name); err != nil {
-			return ErrMaintenanceReleaseUnverified
-		}
-	}
-	desired := int32(1)
-	if live.Spec.Replicas != nil {
-		desired = *live.Spec.Replicas
-	}
-	if live.UID == "" || live.ResourceVersion == "" || live.DeletionTimestamp != nil || desired < 1 || desired > 128 || live.Status.ObservedGeneration != live.Generation || live.Status.Replicas != desired || live.Status.UpdatedReplicas != desired || live.Status.ReadyReplicas != desired || live.Status.AvailableReplicas != desired || live.Status.UnavailableReplicas != 0 || controlPlaneImage(live) == "" || controlPlaneImage(live) != controlPlaneImage(expected) || live.Spec.Selector == nil {
-		return ErrMaintenanceReleaseUnverified
-	}
-	selector, err := metav1.LabelSelectorAsSelector(live.Spec.Selector)
-	if err != nil {
-		return ErrMaintenanceReleaseUnverified
-	}
-	pods := &corev1.PodList{}
-	if err := v.reader.List(ctx, pods, client.InNamespace(v.namespace), client.MatchingLabelsSelector{Selector: selector}, client.Limit(257)); err != nil || pods.Continue != "" || len(pods.Items) != int(desired) {
-		return ErrMaintenanceReleaseUnverified
-	}
-	replicas := map[string]bool{}
-	for i := range pods.Items {
-		pod := &pods.Items[i]
-		owner := metav1.GetControllerOf(pod)
-		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || owner == nil || owner.APIVersion != "apps/v1" || owner.Kind != "ReplicaSet" || owner.UID == "" {
-			return ErrMaintenanceReleaseUnverified
-		}
-		ready := false
-		for _, condition := range pod.Status.Conditions {
-			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
-				ready = true
-			}
-		}
-		image := ""
-		for _, container := range pod.Spec.Containers {
-			if container.Name == "control-plane" {
-				if image != "" {
-					return ErrMaintenanceReleaseUnverified
-				}
-				image = container.Image
-			}
-		}
-		if !ready || image != controlPlaneImage(live) {
-			return ErrMaintenanceReleaseUnverified
-		}
-		if !replicas[string(owner.UID)] {
-			rs := &appsv1.ReplicaSet{}
-			if err := v.reader.Get(ctx, client.ObjectKey{Namespace: v.namespace, Name: owner.Name}, rs); err != nil {
-				return ErrMaintenanceReleaseUnverified
-			}
-			deploymentOwner := metav1.GetControllerOf(rs)
-			if rs.UID != owner.UID || deploymentOwner == nil || deploymentOwner.APIVersion != "apps/v1" || deploymentOwner.Kind != "Deployment" || deploymentOwner.UID != live.UID || deploymentOwner.Name != live.Name {
-				return ErrMaintenanceReleaseUnverified
-			}
-			replicas[string(owner.UID)] = true
-		}
-	}
-	after := &appsv1.Deployment{}
-	if err := v.reader.Get(ctx, key, after); err != nil || after.UID != live.UID || after.ResourceVersion != live.ResourceVersion {
+	if _, _, err := v.verifyDeployment(ctx, expected, selected); err != nil {
 		return ErrMaintenanceReleaseUnverified
 	}
 	final, err := v.releaseStatus(ctx, checkpoint.Release)
@@ -275,4 +209,79 @@ func (boundedMaintenanceHelm) Output(ctx context.Context, name string, args ...s
 		return "", ErrMaintenanceReleaseUnverified
 	}
 	return output.String(), nil
+}
+
+// verifyDeployment shares bounded live workload and owner checks between
+// upgrade recovery and adoption; it never changes the observed workload.
+func (v *MaintenanceReleaseVerifier) verifyDeployment(ctx context.Context, expected *appsv1.Deployment, requireCompatibility bool) (*appsv1.Deployment, []corev1.Pod, error) {
+	live := &appsv1.Deployment{}
+	key := client.ObjectKey{Namespace: v.namespace, Name: expected.Name}
+	if err := v.reader.Get(ctx, key, live); err != nil {
+		return nil, nil, ErrMaintenanceReleaseUnverified
+	}
+	if requireCompatibility {
+		live.APIVersion = "apps/v1"
+		live.Kind = "Deployment"
+		encoded, _ := json.Marshal(live)
+		if _, err := credentialCompatibleDeployment(string(encoded), v.namespace, live.Name); err != nil {
+			return nil, nil, ErrMaintenanceReleaseUnverified
+		}
+	}
+	desired := int32(1)
+	if live.Spec.Replicas != nil {
+		desired = *live.Spec.Replicas
+	}
+	if live.UID == "" || live.ResourceVersion == "" || live.DeletionTimestamp != nil || desired < 1 || desired > 128 || live.Status.ObservedGeneration != live.Generation || live.Status.Replicas != desired || live.Status.UpdatedReplicas != desired || live.Status.ReadyReplicas != desired || live.Status.AvailableReplicas != desired || live.Status.UnavailableReplicas != 0 || controlPlaneImage(live) == "" || controlPlaneImage(live) != controlPlaneImage(expected) || live.Spec.Selector == nil {
+		return nil, nil, ErrMaintenanceReleaseUnverified
+	}
+	selector, err := metav1.LabelSelectorAsSelector(live.Spec.Selector)
+	if err != nil || selector.Empty() {
+		return nil, nil, ErrMaintenanceReleaseUnverified
+	}
+	pods := &corev1.PodList{}
+	if err := v.reader.List(ctx, pods, client.InNamespace(v.namespace), client.MatchingLabelsSelector{Selector: selector}, client.Limit(257)); err != nil || pods.Continue != "" || len(pods.Items) != int(desired) {
+		return nil, nil, ErrMaintenanceReleaseUnverified
+	}
+	replicas := map[string]bool{}
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		owner := metav1.GetControllerOf(pod)
+		if pod.DeletionTimestamp != nil || pod.Status.Phase != corev1.PodRunning || owner == nil || owner.APIVersion != "apps/v1" || owner.Kind != "ReplicaSet" || owner.UID == "" {
+			return nil, nil, ErrMaintenanceReleaseUnverified
+		}
+		ready := false
+		for _, condition := range pod.Status.Conditions {
+			if condition.Type == corev1.PodReady && condition.Status == corev1.ConditionTrue {
+				ready = true
+			}
+		}
+		image := ""
+		for _, container := range pod.Spec.Containers {
+			if container.Name == "control-plane" {
+				if image != "" {
+					return nil, nil, ErrMaintenanceReleaseUnverified
+				}
+				image = container.Image
+			}
+		}
+		if !ready || image != controlPlaneImage(live) {
+			return nil, nil, ErrMaintenanceReleaseUnverified
+		}
+		if !replicas[string(owner.UID)] {
+			rs := &appsv1.ReplicaSet{}
+			if err := v.reader.Get(ctx, client.ObjectKey{Namespace: v.namespace, Name: owner.Name}, rs); err != nil {
+				return nil, nil, ErrMaintenanceReleaseUnverified
+			}
+			deploymentOwner := metav1.GetControllerOf(rs)
+			if rs.UID != owner.UID || deploymentOwner == nil || deploymentOwner.APIVersion != "apps/v1" || deploymentOwner.Kind != "Deployment" || deploymentOwner.UID != live.UID || deploymentOwner.Name != live.Name {
+				return nil, nil, ErrMaintenanceReleaseUnverified
+			}
+			replicas[string(owner.UID)] = true
+		}
+	}
+	after := &appsv1.Deployment{}
+	if err := v.reader.Get(ctx, key, after); err != nil || after.UID != live.UID || after.ResourceVersion != live.ResourceVersion {
+		return nil, nil, ErrMaintenanceReleaseUnverified
+	}
+	return live, pods.Items, nil
 }

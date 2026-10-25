@@ -127,6 +127,10 @@ func (s *Server) handleOperatorCredentialMutation(w http.ResponseWriter, r *http
 		writeCredentialManagementUnavailable(w)
 		return
 	}
+	if credentialAdoptionPending(snapshot.Document) {
+		writeJSONError(w, 409, "credential_setup_pending", "Key setup is still finishing. Check its status before changing keys.")
+		return
+	}
 	if r.Header.Get("If-Match") == "" {
 		writeJSONError(w, http.StatusPreconditionRequired, "credential_version_required", "Refresh the key list before making a change.")
 		return

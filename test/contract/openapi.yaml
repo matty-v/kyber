@@ -226,6 +226,8 @@ paths:
                 properties:
                   version: {type: string, description: Opaque reviewed registry version for If-Match; not key material.}
                   currentCredentialId: {type: string, description: Identifier of the key authenticating this request.}
+                  configurationRotationAvailable: {type: boolean, description: "Whether the former installation-key rotation workflow is supported. False when managed authority is enabled, including while setup is unavailable."}
+                  adoptionAvailable: {type: boolean, description: Explicit setup capability. Never enables setup automatically.}
                   managementAvailable: {type: boolean, description: "Whether the selected authority and required journal support management. This is capability metadata, not a database health guarantee."}
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
@@ -364,6 +366,97 @@ paths:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
         '404': {$ref: '#/components/responses/NotFound'}
         '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/adoption:
+    get:
+      operationId: prepareOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionPlan'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+    post:
+      operationId: startOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionStart'}
+      responses:
+        '202':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions:
+    get:
+      operationId: getOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      parameters:
+        - {in: query, name: operationId, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions/pending:
+    get:
+      operationId: getPendingOperatorCredentialAdoptions
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionPending'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions/recover:
+    post:
+      operationId: recoverOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionRecovery'}
+      responses:
+        '202':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
   /api/v1/operator-credentials/current:
     get:
       operationId: getCurrentOperatorCredential
@@ -2734,6 +2827,45 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialAdoptionPlan:
+      type: object
+      additionalProperties: false
+      required: [version, keyCount, reconnectCount]
+      properties:
+        version: {type: string}
+        keyCount: {type: integer, minimum: 0}
+        reconnectCount: {type: integer, minimum: 0}
+    OperatorCredentialAdoptionOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, status, recoverable, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, failed, finishing, succeeded]}
+        recoverable: {type: boolean}
+        observedAt: {type: string, format: date-time}
+    OperatorCredentialAdoptionStart:
+      type: object
+      additionalProperties: false
+      required: [operationId, version, confirmOwnership]
+      properties:
+        operationId: {type: string, format: uuid}
+        version: {type: string}
+        confirmOwnership: {type: boolean, enum: [true]}
+    OperatorCredentialAdoptionRecovery:
+      type: object
+      additionalProperties: false
+      required: [operationId, attemptId]
+      properties:
+        operationId: {type: string, format: uuid}
+        attemptId: {type: string, format: uuid}
+    OperatorCredentialAdoptionPending:
+      type: object
+      additionalProperties: false
+      required: [items, limit]
+      properties:
+        items: {type: array, maxItems: 25, items: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}}
+        limit: {type: integer, enum: [25]}
     OperatorCredentialCurrent:
       type: object
       additionalProperties: false

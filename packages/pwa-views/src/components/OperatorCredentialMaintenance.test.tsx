@@ -8,7 +8,7 @@ describe('credential maintenance visibility', () => {
  it('keeps an old operation blocked and exposes no release action', async () => {
   const api = client(async () => blocked)
   render(<OperatorCredentialMaintenance api={api} enabled />)
-  expect(await screen.findByText('An upgrade operation holds credential maintenance.')).toBeVisible()
+  expect(await screen.findByText('An upgrade is in progress.')).toBeVisible()
   expect(screen.getByText(/does not expire automatically/)).toBeVisible()
   expect(screen.queryByRole('button')).not.toBeInTheDocument()
  })
@@ -24,11 +24,11 @@ describe('credential maintenance visibility', () => {
  it('suppresses the previous connection while another request is pending', async () => {
   const api = client(async () => blocked)
   const view = render(<OperatorCredentialMaintenance api={api} enabled />)
-  await screen.findByText('An upgrade operation holds credential maintenance.')
+  await screen.findByText('An upgrade is in progress.')
   let finish!: (value: unknown) => void
   const second = client(() => new Promise(resolve => { finish = resolve }))
   view.rerender(<OperatorCredentialMaintenance api={second} enabled />)
-  expect(screen.queryByText('An upgrade operation holds credential maintenance.')).not.toBeInTheDocument()
+  expect(screen.queryByText('An upgrade is in progress.')).not.toBeInTheDocument()
   await act(async () => { finish({ observedAt: blocked.observedAt, blocked: false }) })
   expect(await screen.findByText('No credential maintenance block.')).toBeVisible()
  })
@@ -38,4 +38,13 @@ describe('credential maintenance visibility', () => {
   await waitFor(() => expect(api.getOperatorCredentialMaintenance).not.toHaveBeenCalled())
   expect(view.container).toBeEmptyDOMElement()
  })
+})
+
+
+it('keeps key-setup recovery separate from upgrade recovery', async () => {
+ const api = client(async () => ({ ...blocked, recoveryAvailable: true, operation: { ...blocked.operation, kind: 'adoption' } }))
+ render(<OperatorCredentialMaintenance api={api} enabled />)
+ expect(await screen.findByText('Key setup is in progress.')).toBeVisible()
+ expect(screen.queryByRole('button', {name: 'Check recovery'})).not.toBeInTheDocument()
+ expect(screen.queryByRole('button', {name: 'Recover maintenance'})).not.toBeInTheDocument()
 })
