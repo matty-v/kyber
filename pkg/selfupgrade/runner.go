@@ -260,6 +260,16 @@ func (r *Runner) runReserved(ctx context.Context, session *credentialUpgradeRun)
 		}
 	}
 
+	if !r.Cfg.DryRun && session.reservation != nil {
+		recorder, ok := session.reservation.(UpgradeCredentialEffectsRecorder)
+		if !ok {
+			return errors.New("operator credential upgrade checkpoint unavailable")
+		}
+		if err := recorder.RecordEffects(ctx, UpgradeCredentialEffects{Release: r.Cfg.Release, InitialRevision: current.Version, TargetVersion: r.Cfg.TargetVersion, ControlPlaneDeployment: r.Cfg.ControlPlaneDeployment, Selected: session.selected}); err != nil {
+			return fmt.Errorf("record operator credential upgrade checkpoint: %w", err)
+		}
+	}
+
 	// 5. CRDs, before the upgrade, fail-closed. Helm will not do this.
 	if err := r.applyCRDs(ctx, chartDir, session); err != nil {
 		return err

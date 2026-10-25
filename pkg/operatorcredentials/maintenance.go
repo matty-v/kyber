@@ -76,6 +76,10 @@ func (s *MaintenanceStore) Acquire(ctx context.Context, kind string) (*Maintenan
 	if s == nil || s.direct == nil || (kind != MaintenanceAdoption && kind != MaintenanceUpgrade) {
 		return nil, ErrInvalid
 	}
+	return s.acquire(ctx, kind, nil)
+}
+
+func (s *MaintenanceStore) acquire(ctx context.Context, kind string, writer *MaintenanceWriter) (*MaintenanceReservation, error) {
 	owner := uuid.NewString()
 	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
 	defer cancel()
@@ -87,6 +91,13 @@ func (s *MaintenanceStore) Acquire(ctx context.Context, kind string) (*Maintenan
 		"protocol": []byte("1"), "owner": []byte(owner), "kind": []byte(kind),
 		"startedAt": []byte(time.Now().UTC().Format(time.RFC3339Nano)),
 	}}
+	if writer != nil {
+		raw, err := encodeMaintenanceWriter(*writer)
+		if err != nil {
+			return nil, err
+		}
+		reservation.Data["writer"] = raw
+	}
 	createErr := s.direct.writer.Create(ctx, reservation)
 	// Read even after success: reconcile a lost acknowledgement, and use actual
 	// server-assigned identity rather than assuming a successful response body.
@@ -109,8 +120,13 @@ func (s *MaintenanceStore) validate(secret *corev1.Secret) error {
 	if secret.DeletionTimestamp != nil {
 		return ErrUnavailable
 	}
-	if secret.Namespace != s.key.Namespace || secret.Name != s.key.Name || secret.UID == "" || secret.ResourceVersion == "" || secret.Type != corev1.SecretTypeOpaque || secret.Immutable == nil || !*secret.Immutable || len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 || secret.Labels[maintenanceLabel] != "v1" || secret.Labels["app.kubernetes.io/managed-by"] != "kyber" || len(secret.Data) != 4 || string(secret.Data["protocol"]) != "1" {
+	if secret.Namespace != s.key.Namespace || secret.Name != s.key.Name || secret.UID == "" || secret.ResourceVersion == "" || secret.Type != corev1.SecretTypeOpaque || secret.Immutable == nil || !*secret.Immutable || len(secret.OwnerReferences) != 0 || len(secret.Finalizers) != 0 || secret.Labels[maintenanceLabel] != "v1" || secret.Labels["app.kubernetes.io/managed-by"] != "kyber" || (len(secret.Data) != 4 && len(secret.Data) != 5) || string(secret.Data["protocol"]) != "1" {
 		return ErrUnsupported
+	}
+	if len(secret.Data) == 5 {
+		if _, err := decodeMaintenanceWriter(secret.Data["writer"]); err != nil {
+			return ErrUnsupported
+		}
 	}
 	owner, err := uuid.Parse(string(secret.Data["owner"]))
 	if err != nil || owner == uuid.Nil || owner.String() != string(secret.Data["owner"]) {
@@ -119,6 +135,24 @@ func (s *MaintenanceStore) validate(secret *corev1.Secret) error {
 	kind := string(secret.Data["kind"])
 	if kind != MaintenanceAdoption && kind != MaintenanceUpgrade {
 		return ErrUnsupported
+	}
+	if raw, found := secret.Data["writer"]; found {
+		writer, err := decodeMaintenanceWriter(raw)
+		if err != nil || writer.Container != maintenanceWriterContainer(kind) {
+			return ErrUnsupported
+		}
+	}
+
+	if raw, found := secret.Annotations[upgradeEffectsAnnotation]; found {
+		if kind != MaintenanceUpgrade {
+			return ErrUnsupported
+		}
+		if _, err := decodeMaintenanceWriter(secret.Data["writer"]); err != nil {
+			return ErrUnsupported
+		}
+		if _, err := decodeUpgradeEffects(raw); err != nil {
+			return ErrUnsupported
+		}
 	}
 	if _, err := time.Parse(time.RFC3339Nano, string(secret.Data["startedAt"])); err != nil {
 		return ErrUnsupported
@@ -170,6 +204,8 @@ func (r *MaintenanceReservation) Release(ctx context.Context) error {
 // MaintenanceStatus is a whitelisted, value-free observation. Inspecting it does
 // not confer the private reservation capability or permission to release it.
 type MaintenanceStatus struct {
+	Upgrade     *UpgradeEffectsCheckpoint
+	Writer      *MaintenanceWriter
 	Present     bool
 	Kind        string
 	ExecutionID string
@@ -197,7 +233,23 @@ func (s *MaintenanceStore) Inspect(ctx context.Context) (MaintenanceStatus, erro
 		return MaintenanceStatus{}, err
 	}
 	started, _ := time.Parse(time.RFC3339Nano, string(current.Data["startedAt"]))
-	return MaintenanceStatus{Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
+	var writer *MaintenanceWriter
+	if raw, found := current.Data["writer"]; found {
+		parsed, err := decodeMaintenanceWriter(raw)
+		if err != nil {
+			return MaintenanceStatus{}, ErrUnsupported
+		}
+		writer = &parsed
+	}
+	var upgrade *UpgradeEffectsCheckpoint
+	if raw, found := current.Annotations[upgradeEffectsAnnotation]; found {
+		record, err := decodeUpgradeEffects(raw)
+		if err != nil {
+			return MaintenanceStatus{}, ErrUnsupported
+		}
+		upgrade = &record.Checkpoint
+	}
+	return MaintenanceStatus{Upgrade: upgrade, Writer: writer, Present: true, Kind: string(current.Data["kind"]), ExecutionID: string(current.Data["owner"]), StartedAt: started.UTC(), UID: string(current.UID), Version: current.ResourceVersion}, nil
 }
 
 func (s *MaintenanceStore) Namespace() string {

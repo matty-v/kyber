@@ -13,6 +13,8 @@ import (
 )
 
 type fakeCredentialCoordinator struct {
+	checkpointErr       error
+	checkpoints         []UpgradeCredentialEffects
 	selected            bool
 	readErr             error
 	reserveErr          error
@@ -41,6 +43,10 @@ func (c *fakeCredentialCoordinator) Selected(context.Context) (bool, error) {
 		return c.onRead(c.reads)
 	}
 	return c.selected, c.readErr
+}
+func (c *fakeCredentialCoordinator) RecordEffects(_ context.Context, effects UpgradeCredentialEffects) error {
+	c.checkpoints = append(c.checkpoints, effects)
+	return c.checkpointErr
 }
 func (c *fakeCredentialCoordinator) Check(context.Context) error   { c.checked++; return c.checkErr }
 func (c *fakeCredentialCoordinator) Release(context.Context) error { c.released++; return c.releaseErr }
@@ -90,6 +96,7 @@ func TestCredentialUpgradeRefusesBeforeEffects(t *testing.T) {
 		{"authority outage", &fakeCredentialCoordinator{readErr: errors.New("unavailable")}},
 		{"reservation held", &fakeCredentialCoordinator{reserveErr: errors.New("held")}},
 		{"reservation lost", &fakeCredentialCoordinator{checkErr: errors.New("lost")}},
+		{"checkpoint unavailable", &fakeCredentialCoordinator{checkpointErr: errors.New("unavailable")}},
 		{"incompatible target", &fakeCredentialCoordinator{selected: true}},
 		{"authority changed", &fakeCredentialCoordinator{onRead: func(n int) (bool, error) { return n > 1, nil }}},
 	} {
@@ -228,5 +235,28 @@ func TestCredentialUpgradeRechecksApprovedRollbackRevision(t *testing.T) {
 				t.Fatal("incorrect rollback behavior", err)
 			}
 		})
+	}
+}
+
+func TestCredentialUpgradeCheckpointPrecedesExternalEffects(t *testing.T) {
+	cmd := &fakeCommander{}
+	runner := newRunner(t, cmd, &fakeVerifier{})
+	guard := &fakeCredentialCoordinator{}
+	runner.CredentialCoordinator = guard
+	runner.ApplyCRDsFn = func(context.Context, []*unstructured.Unstructured) ([]string, error) {
+		if len(guard.checkpoints) != 1 {
+			t.Fatal("CRD effect began without one checkpoint")
+		}
+		checkpoint := guard.checkpoints[0]
+		if checkpoint.Release != runner.Cfg.Release || checkpoint.InitialRevision < 1 || checkpoint.TargetVersion != runner.Cfg.TargetVersion || checkpoint.ControlPlaneDeployment != runner.Cfg.ControlPlaneDeployment || checkpoint.Selected {
+			t.Fatal("incorrect effect checkpoint")
+		}
+		return []string{"fixture-crd"}, nil
+	}
+	if err := runner.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(guard.checkpoints) != 1 {
+		t.Fatal("effect checkpoint repeated")
 	}
 }

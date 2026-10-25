@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -78,7 +79,7 @@ func (s Snapshot) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state,
 func (Snapshot) MarshalJSON() ([]byte, error)     { return nil, ErrSensitive }
 
 // SecretStore uses a direct client for one installation, without an informer or
-// last-successful-document cache. Its public factory fixes Secret mapping so
+// last-successful-document cache. Its public factory explicitly maps Secrets and maintenance Pod/Job reads so
 // discovery cannot extend an otherwise bounded authority read.
 type SecretStore struct {
 	reader client.Reader
@@ -91,11 +92,13 @@ func NewSecretStore(config *rest.Config, namespace, name string) (*SecretStore, 
 		return nil, ErrUnavailable
 	}
 	scheme := runtime.NewScheme()
-	if corev1.AddToScheme(scheme) != nil {
+	if corev1.AddToScheme(scheme) != nil || batchv1.AddToScheme(scheme) != nil {
 		return nil, ErrUnavailable
 	}
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion})
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion, batchv1.SchemeGroupVersion})
 	mapper.Add(corev1.SchemeGroupVersion.WithKind("Secret"), meta.RESTScopeNamespace)
+	mapper.Add(corev1.SchemeGroupVersion.WithKind("Pod"), meta.RESTScopeNamespace)
+	mapper.Add(batchv1.SchemeGroupVersion.WithKind("Job"), meta.RESTScopeNamespace)
 	boundedConfig := rest.CopyConfig(config)
 	if boundedConfig.Timeout == 0 || boundedConfig.Timeout > requestTimeout {
 		boundedConfig.Timeout = requestTimeout
