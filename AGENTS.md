@@ -1089,3 +1089,9 @@ opaque resource version, reject any partial set, and recheck the full source
 graph. Format/JSON and errors must not expose values or parser diagnostics.
 This does not prove replica acceptance or activate authority. See
 `docs/design/2026-10-25-credential-adoption-sources.md`.
+
+The private adoption replica probe compares every distinct source value against
+its own current-credential response and compares the accepted/shadowed inventory.
+Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
+and rechecks frozen sources, but does not discover all replicas, establish image
+ownership, quiesce old writers or authorize an adoption effect by itself.
