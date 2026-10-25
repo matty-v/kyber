@@ -1,5 +1,11 @@
 # Identify maintenance writers before recovery
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Draft implementation slice for the approved MAT-134 recovery flow. Runtime
 protocol remains zero. Recovery endpoints and admin controls remain staged until the complete
 authority protocol is enabled. Recording a writer does not activate them.

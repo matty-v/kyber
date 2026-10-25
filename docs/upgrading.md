@@ -165,14 +165,15 @@ are stopped and the release/authority state is reconciled. Do not clear the bloc
 by deleting the credential registry or authority marker, and do not take over a
 reservation merely because it is old. See the [maintenance recovery contract](design/2026-10-24-credential-maintenance.md).
 
-The current runtime explicitly advertises protocol zero: registry adoption is
-still unavailable. It performs fail-closed authority checks without creating
-persistent maintenance locks, so ordinary retry behavior stays available while
-recovery UI is unfinished. The protocol-one reservation behavior above is staged,
-not enabled by this change. Supported supervised
-upgrade/rollback protection does not cover arbitrary privileged manual Helm or
-GitOps writes. Those deployment paths require a reviewed compatibility boundary
-before adoption can be offered.
+The current compatible runtime advertises credential protocol one, including
+explicit key adoption, maintenance reservations and supervised recovery. An
+upgrade alone never transfers credential ownership: an administrator reviews
+and confirms **Manage existing keys in Kyber** in Settings. Existing managed
+installations retain their selected authority across compatible upgrades.
+Supported supervised upgrade/rollback protection does not cover arbitrary
+privileged manual Helm or GitOps writes. Those paths must preserve authority
+state and use compatible releases; they must not bypass maintenance fencing.
+See the [current operator guide](operator/operator-credentials.md).
 
 ### How each component actually gets its new image
 
@@ -415,22 +416,19 @@ kubectl -n argocd patch application ${CLUSTER} --type merge \
   -p '{"operation":{"sync":{"revision":"HEAD"}}}'
 ```
 
-### Opting into caller-level lifecycle authorization (kyber#474)
+### Caller-level authorization on current releases
 
-This release adds scoped API keys for agent lifecycle verbs. **No action is
-required on upgrade** — it ships off by default (`api.authz.enforce: false`) and
-the existing full-scope `api-key` keeps driving every lifecycle action, so PWA and
-CLI clients are unchanged. To adopt it (a per-cluster, 🚦-gated operator step):
+Current releases always enforce supported operator permissions and exact
+resource targets. The historical observe-only rollout and `api.authz.enforce`
+switch cannot disable these boundaries. An under-scoped caller receives **403**;
+changing the old flag is not an authorization rollback.
 
-1. Add a `callers` JSON document to the `kyber-api-credentials` Secret (scoped
-   keys — operator-managed `kubectl patch`, **not** chart-rendered). Schema and
-   examples: [`api-keys.md`](api-keys.md).
-2. Leave enforcement off and watch the audit log for `would-deny` lines to confirm
-   no legitimate caller would be blocked.
-3. Set `api.authz.enforce: true` in the cluster's `values.yaml` and sync. From
-   then on an under-scoped caller gets **403** on the verbs it lacks scope for.
-
-Rollback is instant: set `api.authz.enforce: false` and sync.
+Before upgrading, review configured callers and their required actions/targets.
+After upgrading, an administrator can inspect effective access in **Settings →
+API access**. Configuration remains authoritative until explicit managed setup;
+after setup, edit grants and rotate/revoke keys through Settings. Existing
+administrator access is preserved. See [API keys](api-keys.md) for the current
+configuration, ownership and recovery rules.
 
 ## Letting a cluster upgrade itself
 
@@ -721,16 +719,18 @@ k3s upgrades are usually safe but occasionally change container runtime behavior
 
 ## Rotating secrets
 
-Rotating the API key requires both updating the k8s secret and updating any clients (PWA, external tooling) that use the old value:
+Use **Settings → API access** to rotate an individual managed operator key.
+Save the prepared replacement before activation and update each consuming
+client. Rotation affects the selected credential and its generation; browser
+sessions and protected streams lose retired access within ten seconds. Client
+Secrets referenced before adoption are not automatically synchronized.
 
-```bash
-NEW_API_KEY=$(openssl rand -hex 32)
-kubectl -n kyber-system patch secret kyber-api-credentials \
-  --type=merge \
-  -p "{\"stringData\":{\"api-key\":\"$NEW_API_KEY\"}}"
-kubectl -n kyber-system rollout restart deploy/${CLUSTER}-control-plane
-# Update the PWA Settings page in your browser
-```
+Before managed setup, configuration-owned keys still require a source Secret
+change and restart/reload of every control-plane replica. After setup, editing
+`kyber-api-credentials` no longer changes accepted operator access. Never delete
+the selected registry or authority marker to restore old keys. Keep a backup
+administrator credential and follow the [key recovery guide](api-keys.md#lost-access-and-compromise).
+Operator-key rotation does not rotate Agent OAuth or provider credentials.
 
 Rotate the OAuth credentials for individual Claude Code agents. As of 2026-04-14, the credential store is a `<agent-name>-oauth` k8s secret with `access_token` and `refresh_token` keys (written by the PKCE exchange at agent-create time). The refresh token auto-rotates on each pod boot via `start-claude.sh` — manual rotation is only needed if the refresh token is revoked or expired:
 

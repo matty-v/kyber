@@ -134,17 +134,21 @@ docs (§ 8) before touching a subsystem that has one.
 
 ### API authorization
 
-The REST surface sits behind a Bearer **API-key wall** (`pkg/api/auth.go`):
-`authMiddleware` authenticates every request against the shared key and returns
-401 on failure. On top of that authentication, agent **lifecycle** mutations
-(`start`/`stop`/`restart`/`force-needs-auth`, all funnelling through
-`setAgentDesiredPhase`) carry a **caller-level authorization** gate (kyber#474):
-a caller resolves to a scope set and each verb requires a scope (`lifecycle:write`
-for the fail-safe verbs, the strictly-higher `lifecycle:admin` for the impactful
-ones). The legacy single key is full-scope and enforcement is off by default, so
-this is backward-compatible. The full model — scope vocabulary, the
-`Authenticator`→`Caller`→`authorizePhase` flow, the permissive-vs-enforce flag —
-is in [`api-authorization.md`](api-authorization.md).
+Operator requests authenticate through API keys or browser sessions bound to
+those credentials (`pkg/api/auth.go`). Administrator keys have full operator
+access; restricted keys require supported actions and exact resource targets.
+The public route boundary and sensitive handlers always enforce permissions
+before backend access; the historical lifecycle observation flag cannot disable
+this boundary. Invalid credentials receive 401 and insufficient access receives
+403.
+
+Before explicit managed setup, installation configuration supplies accepted
+keys. After setup, the selected registry is the sole authority, with current
+checks for bearer requests, browser sessions and protected streams. Settings →
+API access provides inventory, management, observed usage and durable sensitive
+access history. See [API authorization](api-authorization.md) for the route policy
+and [operator credentials](../operator/operator-credentials.md) for ownership,
+revocation, recovery and reporting limits.
 
 ---
 

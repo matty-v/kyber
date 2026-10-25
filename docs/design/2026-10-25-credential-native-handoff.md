@@ -1,5 +1,11 @@
 # Native explicit credential handoff and recovery
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Implementation integration plan for MAT-134/MAT-97. Protocol one is proposed
 for the complete flow; merge requires handoff, recovery, management and release
 gates to pass dev. Upgrading never starts adoption automatically.

@@ -1,5 +1,11 @@
 # Managed operator key changes and recovery
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Status: management API/client implementation for MAT-97 and MAT-134. Runtime
 protocol remains zero and `cmd/control-plane` has not selected the registry.
 Production authority adoption is not part of this change. Complete adoption,

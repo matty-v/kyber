@@ -1,5 +1,11 @@
 # Freeze credential source versions for adoption
 
+> Historical implementation plan. The integrated operator-key feature shipped in
+> [PR #396](https://github.com/matty-v/kyber/pull/396). Staged or proposed status
+> statements below describe development at the time, not current availability.
+> See the [current operator guide](../operator/operator-credentials.md) for supported
+> setup, management, recovery and reporting limits.
+
 Staged MAT-134/MAT-97 source-reader slice. No activation, Job creation, HTTP
 endpoint or source/registry write. The future supervised worker must combine
 this private input with current per-replica identity/access observations.
