@@ -11,7 +11,7 @@ import (
 const maintenanceWriterCleanupTTL int32 = 7 * 24 * 60 * 60
 
 // ScheduleWriterCleanup is housekeeping for this private handle after a verified
-// release. Failure retains evidence; it must not invent a failed credential
+// release. Uncertainty may retain extra evidence; it must not invent a failed credential
 // operation or authorize deleting a reservation. No public cleanup endpoint.
 func (r *MaintenanceReservation) ScheduleWriterCleanup(ctx context.Context) error {
 	if r == nil || r.store == nil || r.uid == "" {
@@ -60,7 +60,7 @@ func (r *MaintenanceReservation) ScheduleWriterCleanup(ctx context.Context) erro
 }
 
 // Cleanup cannot change the authoritative release outcome. Unconfirmed cleanup
-// retains extra evidence and emits a value-free operational diagnostic.
+// may retain extra evidence and emits a value-free operational diagnostic.
 func (r *MaintenanceReservation) released(ctx context.Context) error {
 	if err := r.ScheduleWriterCleanup(ctx); err != nil {
 		slog.Warn("Credential maintenance released; writer evidence cleanup was not confirmed", "job", r.writer.JobName, "jobUID", r.writer.JobUID)

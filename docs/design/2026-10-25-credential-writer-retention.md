@@ -16,8 +16,9 @@ After a confirmed release, the private handle may schedule seven-day Job cleanup
 using the original Job UID and optimistic resource version. Never change a
 replacement Job or schedule cleanup while any current reservation still uses
 that writer. Missing, malformed or unavailable evidence remains retained.
-Cleanup is housekeeping: failure retains extra evidence and must not turn an
-already released maintenance operation into an invented credential failure.
+Cleanup is housekeeping: an unconfirmed write may already have set the valid
+cleanup TTL or may leave extra evidence retained. Neither outcome changes the
+already confirmed release or invents a credential failure.
 A lost release acknowledgement can leave evidence retained even after explicit
 outcome reconciliation; there is no unsafe age-based fallback or blanket prune.
 
