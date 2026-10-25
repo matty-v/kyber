@@ -280,14 +280,31 @@ func TestAuthorityLostBindResponseAndConcurrentBind(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
+	release := make(chan struct{})
+	defer func() { close(release); wg.Wait() }()
 	for _, contender := range []*AuthorityStore{a, b} {
 		wg.Add(1)
-		go func(s *AuthorityStore) { defer wg.Done(); results <- fixtureBind(ctx, s, snapshot.Version) }(contender)
+		go func(s *AuthorityStore) {
+			defer wg.Done()
+			reservation, err := s.ReserveAdoption(ctx)
+			if err == nil {
+				err = s.Bind(ctx, snapshot.Version, reservation)
+			}
+			results <- err
+			if reservation != nil {
+				// Hold the winning reservation until both observations finish.
+				// Its removal during the loser's reconciliation is legitimately
+				// unavailable, rather than the conflict this fixture asserts.
+				<-release
+				if err := reservation.Release(ctx); err != nil {
+					t.Error(err)
+				}
+			}
+		}(contender)
 	}
-	wg.Wait()
-	close(results)
 	wins, conflicts := 0, 0
-	for err := range results {
+	for range 2 {
+		err := <-results
 		if err == nil {
 			wins++
 		} else if errors.Is(err, ErrConflict) {
