@@ -131,6 +131,16 @@ export interface PublicCapabilitiesStatus {
   capabilities?: Array<{ id: string; availability: PublicCapabilityAvailability; reason?: string }>
 }
 
+export interface ReasoningEffortOptions {
+ state: 'supported' | 'unsupported' | 'unknown'
+ levels: string[]
+ source?: string
+ reason?: string
+ runtime: string
+ runtimeVersion: string
+ model: string
+}
+
 export interface Agent {
   runtimeContract?: RuntimeDescriptor
   runtimeCapabilities?: Record<string, RuntimeFeatureAvailability>
@@ -141,6 +151,9 @@ export interface Agent {
   // Optional while older Kyber control planes roll forward.
   authType?: AgentAuthType
   model: string
+  effort?: string
+  effortPending?: boolean
+  effortProblem?: string
   startupPrompt?: string
   // kyber#118: resume the previous harness session after an unexpected
   // session end (pod recreate, preemption, crash). Intentional session
@@ -484,6 +497,7 @@ export interface AgentListResponse {
 }
 
 export interface CreateAgentRequest {
+  effort?: string
   name: string
   machine: string
   runtime: string

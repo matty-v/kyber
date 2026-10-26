@@ -1,3 +1,4 @@
+import { AgentEffortSettings } from '../components/ReasoningEffort'
 import { agentAuth, agentContract, authorizationUrl, supportsModelSelection } from '../lib/runtime-contract'
 import { codexOpenRouterEvidence, isOpenRouterInference, validCodexOpenRouterModel } from '../lib/openrouter-inference'
 import { useEffect, useState } from 'react'
@@ -964,6 +965,7 @@ export function AgentDetail() {
               <p className="text-sm text-text-muted">Usage will appear when the running pod reports metrics.</p>
             )}
           </Card>
+          <AgentEffortSettings key={agent.id} agent={agent} />
           <details className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-3">
             <summary className="cursor-pointer text-sm font-medium text-text-secondary">Technical details</summary>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">

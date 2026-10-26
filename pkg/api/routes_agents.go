@@ -43,6 +43,7 @@ type CreateAgentRequest struct {
 	Machine             string                 `json:"machine"`
 	Runtime             string                 `json:"runtime"`
 	Model               string                 `json:"model"`
+	Effort              string                 `json:"effort,omitempty"`
 	StartupPrompt       string                 `json:"startupPrompt,omitempty"`
 	SessionResume       bool                   `json:"sessionResume,omitempty"`
 	RequestReplyEnabled bool                   `json:"requestReplyEnabled,omitempty"`
@@ -211,6 +212,9 @@ type AgentResponse struct {
 	Machine                  string                                 `json:"machine"`
 	Runtime                  string                                 `json:"runtime"`
 	AuthType                 kyberv1.AgentAuthType                  `json:"authType"`
+	EffortProblem            string                                 `json:"effortProblem,omitempty"`
+	EffortPending            bool                                   `json:"effortPending,omitempty"`
+	Effort                   string                                 `json:"effort,omitempty"`
 	Model                    string                                 `json:"model"`
 	StartupPrompt            string                                 `json:"startupPrompt,omitempty"`
 	SessionResume            bool                                   `json:"sessionResume,omitempty"`
@@ -484,6 +488,8 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		Runtime:                  a.Spec.Runtime,
 		AuthType:                 authType,
 		Model:                    a.Spec.Model,
+		Effort:                   a.Spec.Effort,
+		EffortPending:            a.Spec.Effort != a.Status.ObservedPodEffort,
 		StartupPrompt:            a.Spec.StartupPrompt,
 		SessionResume:            a.Spec.SessionResume,
 		RequestReplyEnabled:      a.Spec.RequestReplyEnabled,
@@ -579,6 +585,9 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	// the PWA showed a blank agent with no way to reach the cause. Surfacing
 	// them here is what makes the failure visible at all.
 	resp.RuntimeImageMissing = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing)
+	if condition := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionEffortUnsupported); condition != nil && condition.Status == metav1.ConditionTrue {
+		resp.EffortProblem = condition.Message
+	}
 	resp.ModelUnresolved = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved)
 	if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing); c != nil && c.Status == metav1.ConditionTrue {
 		resp.BlockedReason = c.Message
@@ -872,6 +881,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action == "effort-options" && r.Method == http.MethodGet {
+		s.getAgentEffortOptions(w, r, name)
+		return
+	}
 	// All other sub-actions require POST.
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -891,6 +904,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		// honors it only from recoverable phases and (for live-pod phases)
 		// deletes the pod. No new handler or auth surface.
 		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseNeedsAuth)
+	case "set-effort":
+		s.setAgentEffort(w, r, name)
 	case "set-model":
 		s.setAgentModel(w, r, name)
 	case "set-runtime-version":
@@ -1166,6 +1181,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !s.validateAgentEffort(w, r, &kyberv1.Agent{Spec: kyberv1.AgentSpec{Runtime: req.Runtime, Model: req.Model, Effort: req.Effort}}, req.Inference != nil) {
+		return
+	}
 	// kyber#674: registered is not the same as usable. A runtime whose image
 	// was never pinned on this install (image.<runtime>.tag empty, so the
 	// adapter's image env var is absent) would produce a pod with an empty
@@ -1327,6 +1345,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			Machine:             req.Machine,
 			Runtime:             req.Runtime,
 			Model:               req.Model,
+			Effort:              req.Effort,
 			StartupPrompt:       req.StartupPrompt,
 			SessionResume:       req.SessionResume,
 			RequestReplyEnabled: req.RequestReplyEnabled,
@@ -1510,6 +1529,13 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			return
 		}
 	}
+	var effortFields map[string]json.RawMessage
+	if json.Unmarshal(wire, &effortFields) == nil {
+		if _, present := effortFields["effort"]; present {
+			writeJSONErrorWithField(w, 400, "VALIDATION_ERROR", "use the set-effort action to change or clear effort", "effort")
+			return
+		}
+	}
 	if err := json.Unmarshal(wire, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
@@ -1648,6 +1674,19 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		}
 	}
 
+	if req.Model != nil || len(req.Inference) > 0 {
+		proposed := agent.DeepCopy()
+		if req.Model != nil {
+			proposed.Spec.Model = *req.Model
+		}
+		custom := agent.Spec.Inference != nil
+		if len(req.Inference) > 0 {
+			custom = strings.TrimSpace(string(req.Inference)) != "null"
+		}
+		if !s.validateAgentEffort(w, r, proposed, custom) {
+			return
+		}
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	_, priorCapabilityDigest, _ := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
 
@@ -2360,6 +2399,11 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		}
 	}
 
+	proposed := agent.DeepCopy()
+	proposed.Spec.Model = req.Model
+	if !s.validateAgentEffort(w, r, proposed, agent.Spec.Inference != nil) {
+		return
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.Model = req.Model
 	// An agent on a custom endpoint resolves its model from
@@ -2438,6 +2482,11 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	proposed := agent.DeepCopy()
+	proposed.Spec.RuntimeVersion = req.RuntimeVersion
+	if !s.validateAgentEffort(w, r, proposed, agent.Spec.Inference != nil) {
+		return
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.RuntimeVersion = req.RuntimeVersion
 	// Mirror setAgentModel: only roll the pod for actively-running phases.

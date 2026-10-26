@@ -2235,3 +2235,44 @@ func TestStartCodexWithoutIdentityRepoBootsInHome(t *testing.T) {
 		t.Errorf("boot did not load the real shared identity script:\n%s", out)
 	}
 }
+
+func TestStartCodexEffortOverrideAndResetPreserveUserConfig(t *testing.T) {
+	home := t.TempDir()
+	config := filepath.Join(t.TempDir(), "managed_config.toml")
+	if err := os.MkdirAll(filepath.Join(home, ".codex"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	userPath := filepath.Join(home, ".codex", "config.toml")
+	user := []byte("model_reasoning_effort = \"low\"\n")
+	if err := os.WriteFile(userPath, user, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, effort := range []string{"high", "max", ""} {
+		out, err := runBoot(t, home, "", stubBin(t), "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.146.0", "KYBER_REASONING_EFFORT="+effort, "KYBER_MANAGED_CODEX_CONFIG="+config)
+		if err != nil {
+			t.Fatalf("effort %q: %v\n%s", effort, err, out)
+		}
+		data, err := os.ReadFile(config)
+		if err != nil {
+			t.Fatal(err)
+		}
+		has := strings.Contains(string(data), "model_reasoning_effort =")
+		if has != (effort != "") {
+			t.Fatalf("managed override after %q: %s", effort, data)
+		}
+		if effort != "" && !strings.Contains(string(data), fmt.Sprintf("model_reasoning_effort = %q", effort)) {
+			t.Fatalf("wrong managed effort: %s", data)
+		}
+		original, err := os.ReadFile(userPath)
+		if err != nil || string(original) != string(user) {
+			t.Fatal("agent-owned configuration was modified")
+		}
+	}
+}
+
+func TestStartCodexEffortRejectsInstalledVersionMismatch(t *testing.T) {
+	out, err := runBoot(t, t.TempDir(), "", stubBin(t), "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.147.0", "KYBER_REASONING_EFFORT=high")
+	if err == nil || !strings.Contains(string(out), "qualified requested runtime version") {
+		t.Fatalf("unqualified version allowed: %v\n%s", err, out)
+	}
+}

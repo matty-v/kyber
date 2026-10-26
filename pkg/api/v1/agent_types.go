@@ -13,6 +13,9 @@ import (
 // AgentPhase represents the current lifecycle phase of an Agent.
 type AgentPhase string
 
+// AgentConditionEffortUnsupported reports a configured effort that cannot be launched safely.
+const AgentConditionEffortUnsupported = "EffortUnsupported"
+
 const (
 	// AgentPhaseCreating means the agent is being provisioned (PV, identity repo, pod).
 	AgentPhaseCreating AgentPhase = "Creating"
@@ -856,6 +859,12 @@ type AgentSpec struct {
 	// +optional
 	Model string `json:"model,omitempty"`
 
+	// Effort is a native reasoning-effort override. Empty preserves harness/user defaults.
+	// +optional
+	// +kubebuilder:validation:Pattern=`^$|^[a-z][a-z0-9_-]{0,31}$`
+	// +kubebuilder:validation:MaxLength=32
+	Effort string `json:"effort,omitempty"`
+
 	// RuntimeVersion is the requested Claude Code CLI version for this
 	// agent. Optional: when empty, the controller resolves the fleet
 	// default (kyber-fleet-defaults ConfigMap key `defaultRuntimeVersion`,
@@ -1160,6 +1169,15 @@ type AgentStatus struct {
 	// making the running pod appear stale.
 	// +optional
 	ObservedPodConfigHash string `json:"observedPodConfigHash,omitempty"`
+	// ObservedPodEffort is the Kyber override placed in the current pod config,
+	// not proof of provider-side reasoning or an agent-owned runtime override.
+	// +optional
+	ObservedPodEffort string `json:"observedPodEffort,omitempty"`
+	// EffortRuntimeImage is the immutable first-party image whose launch
+	// integration this Agent has reported. It is not model/provider evidence.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	EffortRuntimeImage string `json:"effortRuntimeImage,omitempty"`
 	// JobsProjectedGeneration is the latest Agent generation whose jobs
 	// revision was observed inside the running pod's ConfigMap mount.
 	// +optional

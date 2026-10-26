@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.0
+
+- Add reasoning-effort selection during creation and in Agent Details, with native compatibility choices, Default reset and pending application status on desktop/mobile. Requires compatible control-plane support; model selection remains separate.
+
 ## 0.82.0
 
 - Add explicit existing-key setup, outcome checks and stopped-worker recovery controls. Changed connections clear protected setup state; uncertain writes are never retried automatically. Controls require the complete authority protocol and never start setup automatically.

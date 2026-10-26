@@ -3374,3 +3374,13 @@ func TestStartClaude_NoIdentityRepo_BootsInHomeWithoutGitHubSetup(t *testing.T) 
 		t.Errorf("boot reached the identity-repo token path with no identity repo:\n%s", out)
 	}
 }
+
+func TestStartClaudeEffortReachesBootArguments(t *testing.T) {
+	stub := stubInstallEnvDir(t, filepath.Join(t.TempDir(), "npm.log"), 0, filepath.Join(t.TempDir(), "sudo.log"), "2.1.119")
+	out := bootPrepRun(t, "PATH="+stub+":"+testPATH(), "KYBER_REQUESTED_CC_VERSION=2.1.119", "KYBER_RUNTIME_DEFAULT_VERSION=2.1.119", "KYBER_REASONING_EFFORT=xhigh")
+	if !strings.Contains(out, "--effort xhigh") {
+		t.Fatalf("effort missing from launch arguments: %s", out)
+	}
+	// The launch/resume argument builder uses this same qualified base set;
+	// live acceptance separately verifies the native resumed-session outcome.
+}

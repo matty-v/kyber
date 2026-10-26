@@ -1,3 +1,4 @@
+import { CreateEffortSelect } from '../components/ReasoningEffort'
 import { legacyRuntimeContracts, wizardAuth, wizardApiKey } from '../lib/runtime-contract'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
@@ -131,8 +132,8 @@ export function CreateAgent() {
     setState((prev) => key === 'runtime' ? { ...prev, runtime: value as string,
       authType: runtimeOptions.find(d => d.id === value)?.authModes[0]?.id ?? 'oauth',
       oauthCode: '', pkceVerifier: '', pkceState: '', anthropicApiKey: '', openaiApiKey: '', runtimeApiKey: '',
-      inferenceEnabled: false, inferenceBaseURL: '', inferenceModel: '', inferenceApiKey: '',
-    } : ({ ...prev, [key]: value }))
+      inferenceEnabled: false, inferenceBaseURL: '', inferenceModel: '', inferenceApiKey: '', effort: '',
+    } : ({ ...prev, [key]: value, ...(['model', 'inferenceEnabled', 'inferenceBaseURL', 'inferenceModel'].includes(key) ? { effort: '' } : {}) }))
     if (key === 'identityRepoMode') identityModeChosen.current = true
     setFieldError(null)
     setDirty(true)
@@ -297,6 +298,8 @@ export function CreateAgent() {
         name: toKebabCase(state.name),
         machine: state.machine,
         runtime: state.runtime,
+        ...(state.model ? { model: state.model } : {}),
+        ...(state.effort ? { effort: state.effort } : {}),
         startupPrompt: state.startupPrompt || undefined,
         inference: state.inferenceEnabled ? {
           baseURL: state.inferenceBaseURL.trim(),
@@ -407,7 +410,7 @@ export function CreateAgent() {
               />
             )}
             {activeStep === 3 && <IdentitySection state={state} set={set} />}
-            {activeStep === 4 && <AuthSection state={state} set={set} />}
+            {activeStep === 4 && <div className="space-y-5"><AuthSection state={state} set={set} /><CreateEffortSelect runtime={state.runtime} model={state.inferenceEnabled ? state.inferenceModel : state.model} customEndpoint={state.inferenceEnabled} value={state.effort ?? ''} onChange={value => set('effort', value)} /></div>}
             {activeStep === 5 && <ReviewSection state={state} onEdit={(stepId) => jumpTo(stepId)} />}
             {activeStep === 5 && state.archiveSource?.label && (
               <p className="mt-3 text-sm text-text-secondary" data-testid="review-archive">

@@ -10,6 +10,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/usagestore"
 )
@@ -268,6 +269,9 @@ func AgentPodLabels(agent *kyberv1.Agent, adapter pkgruntimes.Adapter) map[strin
 // The returned PodSpec is ready to embed in a Pod object — the caller sets ObjectMeta
 // (name, namespace, labels, ownerReferences).
 func BuildPodSpec(agent *kyberv1.Agent, adapter pkgruntimes.Adapter, nodeName string) (corev1.PodSpec, error) {
+	if err := reasoningeffort.Validate(agent.Spec.Runtime, agent.Spec.RuntimeVersion, agent.Spec.Model, agent.Spec.Inference != nil, agent.Spec.Effort); err != nil {
+		return corev1.PodSpec{}, fmt.Errorf("validating agent effort: %w", err)
+	}
 	gracePeriod := int64(adapter.GracefulShutdownSeconds())
 
 	// --- Volumes ---

@@ -23,6 +23,7 @@ export interface WizardState {
   name: string
   machine: string
   runtime: string
+  effort?: string
   model: string
   cpu: string
   memory: string
@@ -120,6 +121,7 @@ export function initialWizardState(_models: ModelInfo[]): WizardState {
     machine: '',
     runtime: 'claude-code',
     model: '',
+    effort: '',
     cpu: '1',
     memory: '2Gi',
     disk: '50Gi',

@@ -3,6 +3,8 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -53,6 +55,40 @@ func TestRuntimeCapabilitiesRejectsStaleAndUndeclaredEvidence(t *testing.T) {
 			}
 			if (got.Status.Runtime.Capabilities != nil) != (tc.code == 204) {
 				t.Fatal("unexpected observation mutation")
+			}
+		})
+	}
+}
+
+func TestRuntimeEffortImageProofRequiresCurrentOwnedPod(t *testing.T) {
+	for _, owned := range []bool{false, true} {
+		t.Run(fmt.Sprint(owned), func(t *testing.T) {
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			_ = kyberv1.AddToScheme(scheme)
+			agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "fixture", Namespace: "test", UID: types.UID("agent-current"), Generation: 3}}
+			agent.Spec.Runtime = "codex"
+			agent.Status.PodName = "agent-fixture"
+			image := "ghcr.io/matty-v/kyber-codex:1111111111111111111111111111111111111111"
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "agent-fixture", Namespace: "test", UID: types.UID("pod-current")}, Spec: corev1.PodSpec{Containers: []corev1.Container{{Name: "agent", Image: image}}}}
+			if owned {
+				pod.OwnerReferences = []metav1.OwnerReference{{Kind: "Agent", Name: agent.Name, UID: agent.UID}}
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(agent).WithObjects(agent, pod).Build()
+			server := &InternalServer{k8sClient: c, usageAgentReader: c, namespace: "test"}
+			body := map[string]any{"runtime": "codex", "contractVersion": "1.0", "installedVersion": "0.146.0", "podUID": "pod-current", "agentGeneration": 3, "features": map[string]bool{"reasoning-effort": true}}
+			data, _ := json.Marshal(body)
+			req := httptest.NewRequest(http.MethodPost, "/runtime-capabilities", bytes.NewReader(data))
+			rr := httptest.NewRecorder()
+			server.handleRuntimeCapabilities(rr, req, "fixture")
+			if rr.Code != 204 {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if err := c.Get(req.Context(), types.NamespacedName{Namespace: "test", Name: "fixture"}, agent); err != nil {
+				t.Fatal(err)
+			}
+			if (agent.Status.EffortRuntimeImage == image) != owned {
+				t.Fatalf("owned=%v image proof=%q", owned, agent.Status.EffortRuntimeImage)
 			}
 		})
 	}
