@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 )
@@ -39,5 +40,41 @@ func TestNextCatalogDelayRetriesFailuresSoonAndBacksOff(t *testing.T) {
 	wait, retry = nextCatalogDelay(nil, retry)
 	if wait != catalogRefresh || retry != catalogRetryMin {
 		t.Fatalf("success: wait=%s next=%s, want hourly refresh and a reset retry", wait, retry)
+	}
+}
+
+func TestCatalogPreservesNativeEffortAndUnknown(t *testing.T) {
+	var input struct {
+		Data []appServerModel `json:"data"`
+	}
+	err := json.Unmarshal([]byte(`{"data":[
+ {"model":"known","supportedReasoningEfforts":[{"reasoningEffort":"high","description":"native"},{"reasoningEffort":"ultra"}]},
+ {"model":"unknown"},
+ {"model":"no-levels","supportedReasoningEfforts":[]},
+ {"model":"invalid","supportedReasoningEfforts":[{"reasoningEffort":"high"},{"reasoningEffort":"high"}]}
+ ]}`), &input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	models := catalogModels(input.Data)
+	attachEffortVersion(models, "0.164.0")
+	if len(models) != 4 {
+		t.Fatalf("models=%+v", models)
+	}
+	e := models[0].ReasoningEffort
+	if e == nil || e.HarnessVersion != "0.164.0" || len(e.Levels) != 2 || e.Levels[1] != "ultra" {
+		t.Fatalf("native evidence lost: %+v", e)
+	}
+	if models[1].ReasoningEffort != nil || models[3].ReasoningEffort != nil {
+		t.Fatal("invented evidence for unknown/invalid catalog")
+	}
+	if models[2].ReasoningEffort == nil || models[2].ReasoningEffort.Levels == nil || len(models[2].ReasoningEffort.Levels) != 0 {
+		t.Fatal("explicit empty catalog lost")
+	}
+	attachEffortVersion(models, "unknown\nversion")
+	for _, m := range models {
+		if m.ReasoningEffort != nil {
+			t.Fatal("invalid client version retained evidence")
+		}
 	}
 }

@@ -67,6 +67,9 @@ type Model struct {
 	// when it is the floor default. The PWA renders an unknown window as an
 	// estimate rather than a confident over-100% gauge.
 	ContextWindowKnown bool `json:"contextWindowKnown"`
+	// ReasoningEffort preserves native catalog evidence. It is not a runtime
+	// capability grant: consumers must bind it to current Agent/version/route.
+	ReasoningEffort *ReasoningEffortEvidence `json:"reasoningEffort,omitempty"`
 }
 
 // DefaultContextWindowFloor is the safe floor PR-A applies to every model.
