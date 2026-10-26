@@ -260,6 +260,13 @@ npm-backed harness snapshot. Claude catalog entries require Anthropic's
 authoritative context window; Codex `model/list` lacks that field, so Codex
 picker entries remain explicitly unknown and the active rollout's
 `token_count.context_window` is authoritative. Never add a guessed fallback.
+Codex catalog reporting also preserves bounded native reasoning-effort options
+with the executable version. Omitted effort metadata means unknown; an explicit
+empty option list means none were advertised. This is catalog evidence only,
+not permission to configure effort: a consumer must first verify the current
+Agent, runtime version, model and inference route. Custom inference routes
+still suppress the native OpenAI catalog. No effort setting/UI is enabled by
+this metadata foundation.
 
 Discord-enabled agents register the sidecar's loopback Streamable HTTP MCP
 endpoint (`kyber-discord`, port 14007) in both runtimes. Its `reply` tool is the

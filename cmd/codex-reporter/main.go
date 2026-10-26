@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"io"
 	"log"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -190,6 +192,18 @@ func reportCatalog(client *http.Client) error {
 	if err != nil {
 		return fmt.Errorf("discovery: %w", err)
 	}
+	// A catalog without a verified executable version remains useful for model
+	// discovery, but must not advertise effort evidence for an unknown client.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	version, versionErr := exec.CommandContext(ctx, "codex", "--version").Output()
+	if versionErr == nil {
+		attachEffortVersion(models, strings.TrimSpace(strings.TrimPrefix(string(version), "codex-cli ")))
+	} else {
+		for i := range models {
+			models[i].ReasoningEffort = nil
+		}
+	}
 	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models})
 	if err != nil {
 		return err
@@ -201,17 +215,21 @@ func reportCatalog(client *http.Client) error {
 }
 
 type catalogModel struct {
-	ID                 string `json:"id"`
-	DisplayName        string `json:"displayName"`
-	ContextWindow      int64  `json:"contextWindow"`
-	ContextWindowKnown bool   `json:"contextWindowKnown"`
+	ID                 string                                 `json:"id"`
+	DisplayName        string                                 `json:"displayName"`
+	ContextWindow      int64                                  `json:"contextWindow"`
+	ContextWindowKnown bool                                   `json:"contextWindowKnown"`
+	ReasoningEffort    *runtimedetect.ReasoningEffortEvidence `json:"reasoningEffort,omitempty"`
 }
 
 type appServerModel struct {
-	ID          string `json:"id"`
-	Model       string `json:"model"`
-	DisplayName string `json:"displayName"`
-	Hidden      bool   `json:"hidden"`
+	ID                        string `json:"id"`
+	Model                     string `json:"model"`
+	DisplayName               string `json:"displayName"`
+	Hidden                    bool   `json:"hidden"`
+	SupportedReasoningEfforts *[]struct {
+		ReasoningEffort string `json:"reasoningEffort"`
+	} `json:"supportedReasoningEfforts"`
 }
 
 func catalogModels(items []appServerModel) []catalogModel {
@@ -227,7 +245,17 @@ func catalogModels(items []appServerModel) []catalogModel {
 		// app-server's model/list schema does not publish context-window
 		// metadata. Keep it explicitly unknown; the rollout token_count event
 		// is the authoritative source for the model actually in use.
-		models = append(models, catalogModel{ID: id, DisplayName: item.DisplayName})
+		model := catalogModel{ID: id, DisplayName: item.DisplayName}
+		if item.SupportedReasoningEfforts != nil {
+			levels := make([]string, 0, len(*item.SupportedReasoningEfforts))
+			for _, option := range *item.SupportedReasoningEfforts {
+				levels = append(levels, option.ReasoningEffort)
+			}
+			if runtimedetect.ValidateEffortLevels(levels) == nil {
+				model.ReasoningEffort = &runtimedetect.ReasoningEffortEvidence{Source: "codex-model-list", Levels: levels}
+			}
+		}
+		models = append(models, model)
 	}
 	return models
 }
@@ -332,4 +360,18 @@ func latest(root string) string {
 		return nil
 	})
 	return best
+}
+
+// attachEffortVersion accepts only bounded executable versions. No installed
+// default or current web documentation can stand in for the actual client.
+func attachEffortVersion(models []catalogModel, version string) {
+	for i := range models {
+		if models[i].ReasoningEffort == nil {
+			continue
+		}
+		models[i].ReasoningEffort.HarnessVersion = version
+		if models[i].ReasoningEffort.Validate("codex") != nil {
+			models[i].ReasoningEffort = nil
+		}
+	}
 }
