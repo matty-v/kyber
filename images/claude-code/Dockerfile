@@ -105,3 +105,6 @@ COPY --from=tokenreporter-builder /build/kyber-skills /usr/local/bin/kyber-skill
 ENV KYBER_START_CMD="/usr/local/bin/start-claude.sh"
 
 COPY --chmod=0755 images/claude-code/probe-capabilities.py /usr/local/bin/kyber-probe-capabilities
+
+# Native CLI support alone does not prove Kyber launch/resume integration.
+RUN printf '1\n' > /usr/local/share/kyber-reasoning-effort-protocol

@@ -260,6 +260,7 @@ export function useUpdateFleetDefaults() {
     mutationFn: (body: FleetDefaults & { force?: boolean }) => api.putFleetDefaults(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'fleetDefaults'] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'effort-options'] })
     },
     meta: {
       successMessage: () => 'Fleet defaults saved',
@@ -604,6 +605,7 @@ export function useSetAgentRuntimeVersion() {
       api.setAgentRuntimeVersion(name, runtimeVersion),
     onSuccess: (_data, { name }) => {
       void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'agents', name] })
+      void queryClient.invalidateQueries({ queryKey: ['cluster', cluster.id, 'effort-options'] })
     },
     meta: {
       successMessage: (_d: unknown, v: unknown) => {

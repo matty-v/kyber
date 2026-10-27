@@ -909,6 +909,22 @@ if [ -n "${CLAUDE_MODEL:-}" ]; then
     CLAUDE_ARGS="$CLAUDE_ARGS --model $CLAUDE_MODEL"
 fi
 
+# A Kyber override wins native per-session and user configuration. It is never
+# persisted in the agent-owned settings; an empty value leaves those untouched.
+if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
+    if [[ ! "$KYBER_REASONING_EFFORT" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+        echo "[kyber] Invalid reasoning effort configuration; clear the effort setting" >&2
+        exit 43
+    fi
+    _effort_client_version="$(claude --version 2>/dev/null | awk '{print $1; exit}' || true)"
+    if [ -z "${KYBER_REQUESTED_CC_VERSION:-}" ] || [ "$_effort_client_version" != "$KYBER_REQUESTED_CC_VERSION" ]; then
+        echo "[kyber] Reasoning effort requires the qualified requested runtime version; clear effort or fix the runtime version" >&2
+        exit 43
+    fi
+    export CLAUDE_CODE_EFFORT_LEVEL="$KYBER_REASONING_EFFORT"
+    CLAUDE_ARGS="$CLAUDE_ARGS --effort $KYBER_REASONING_EFFORT"
+fi
+
 # A configured startup prompt is the initial user turn for every new harness
 # session. Quote it as one shell argument because the tmux command is a command
 # string; never interpolate its raw contents into generated shell source.
@@ -1379,7 +1395,7 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
         RELAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"
         echo "[kyber] relaunch: resuming previous session (kyber#118)"
     fi
-    sudo HOME=/home/kyber --preserve-env=TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
+    sudo HOME=/home/kyber --preserve-env=CLAUDE_CODE_EFFORT_LEVEL,KYBER_REASONING_EFFORT,TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
 
     if [ -n "${KYBER_A2A_MCP_URL:-}" ]; then
         (

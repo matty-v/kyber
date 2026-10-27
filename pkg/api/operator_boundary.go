@@ -64,7 +64,7 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 						}
 						if r.Method == http.MethodPost {
 							switch operation {
-							case "start", "stop", "restart", "force-needs-auth", "set-model", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime", "switch-runtime":
+							case "start", "stop", "restart", "force-needs-auth", "set-model", "set-effort", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime", "switch-runtime":
 								if kind == "agents" {
 									mutation = "lifecycle:write"
 								}
@@ -180,11 +180,14 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	if action == "requests" || strings.HasPrefix(action, "requests/") {
 		return true // request action scopes are checked by the handler
 	}
+	if r.Method == http.MethodGet && action == "effort-options" {
+		return caller.Scopes.Has(ScopeLifecycleWrite)
+	}
 	if r.Method != http.MethodPost {
 		return false
 	}
 	switch action {
-	case "start", "stop", "restart", "set-model", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime":
+	case "start", "stop", "restart", "set-model", "set-effort", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime":
 		return caller.Scopes.Has(ScopeLifecycleWrite)
 	case "force-needs-auth":
 		return caller.Scopes.Has(ScopeLifecycleAdmin)

@@ -78,6 +78,10 @@ before lookup and WebSocket upgrade, independent of the rollout flag. Agent life
 lifecycle grant and an exact allowed Agent resource; confirmed Agent deletion
 requires `lifecycle:admin`. Generic Agent PATCH only delegates a sole
 `publicCapabilities` update to `capabilities:write`, returning 204.
+Reasoning-effort lookup and `set-effort` delegate only to exact-Agent
+`lifecycle:write` callers; creation-time lookup remains administrator-only.
+Effort mutation requires durable audit admission and cannot be performed through
+generic PATCH. See [reasoning effort](../operator/reasoning-effort.md).
 
 `metrics:read` grants only the explicitly listed fleet metric reads in that
 boundary. Task, request, capability, archive and usage routers retain their

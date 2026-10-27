@@ -15,6 +15,7 @@ import type {
   OperatorCredentialOperation,
   SecurityEventFilters,
   SecurityEventPage,
+  ReasoningEffortOptions,
   AgentAuthType,
   Agent,
   AgentInboundBinding,
@@ -523,6 +524,13 @@ export function createApiClient(cluster: Cluster) {
       const link = await request<ArchiveDownloadLink>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/download-link`)
       return { ...link, url: `${baseURL}${link.url}` }
     },
+
+    getCreateEffortOptions: (runtime: string, model: string, customEndpoint: boolean): Promise<ReasoningEffortOptions> =>
+      request<ReasoningEffortOptions>('GET', `/api/v1/effort-options?${new URLSearchParams({ runtime, model, customEndpoint: String(customEndpoint) })}`),
+    getAgentEffortOptions: (name: string): Promise<ReasoningEffortOptions> =>
+      request<ReasoningEffortOptions>('GET', `/api/v1/agents/${encodeURIComponent(name)}/effort-options`),
+    setAgentEffort: (name: string, effort: string): Promise<Agent> =>
+      request<Agent>('POST', `/api/v1/agents/${encodeURIComponent(name)}/set-effort`, { effort }),
 
     setAgentModel: (name: string, model: string): Promise<Agent> => {
       const req: SetModelRequest = { model }

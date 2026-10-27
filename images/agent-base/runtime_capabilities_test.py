@@ -23,11 +23,18 @@ class NativeCapabilityContract(unittest.TestCase):
                            KYBER_CRON_POSTRUN_CMD=str(root / 'stop'),
                            KYBER_TASK_RECEIPT_CMD=str(root / 'receipt'),
                            KYBER_CRON_POSTRUN_SENTINEL=str(sentinel),
-                           KYBER_REQUEST_MCP_URL='http://127.0.0.1:8091/mcp')
+                           KYBER_REQUEST_MCP_URL='http://127.0.0.1:8091/mcp',
+                           KYBER_EFFORT_PROTOCOL_FILE=str(root / 'effort-protocol'))
                 def probe():
                     script = Path(__file__).resolve().parent.parent / runtime / 'probe-capabilities.py'
                     return json.loads(subprocess.check_output(['python3', str(script)], env=env, timeout=5))
-                self.assertEqual(probe(), {'job-turn-hooks': False, 'task-receipts': False, 'task-tools': False})
+                self.assertEqual(probe(), {'reasoning-effort': False, 'job-turn-hooks': False, 'task-receipts': False, 'task-tools': False})
+                protocol = root / 'effort-protocol'
+                protocol.write_text('1\n')
+                self.assertTrue(probe()['reasoning-effort'])
+                protocol.write_text('2\n')
+                self.assertFalse(probe()['reasoning-effort'])
+                protocol.unlink()
                 hooks = {'UserPromptSubmit': [{'hooks': [
                     {'type': 'command', 'command': str(root / 'start')},
                     {'type': 'command', 'command': str(root / 'receipt') + ' ' + runtime}]}],
@@ -52,7 +59,7 @@ class NativeCapabilityContract(unittest.TestCase):
                 else:
                     config = root / '.claude.json'
                     config.write_text(json.dumps({'mcpServers': {'kyber-request-reply': {'type': 'http', 'url': env['KYBER_REQUEST_MCP_URL']}}}))
-                self.assertEqual(probe(), {'job-turn-hooks': True, 'task-receipts': True, 'task-tools': True})
+                self.assertEqual(probe(), {'reasoning-effort': False, 'job-turn-hooks': True, 'task-receipts': True, 'task-tools': True})
                 hooks['UserPromptSubmit'][0]['hooks'][1]['command'] = str(root / 'receipt') + ' wrong-runtime'
                 write_hooks()
                 self.assertFalse(probe()['task-receipts'], 'receipt must identify the installed runtime')

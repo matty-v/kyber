@@ -689,6 +689,7 @@ func main() {
 
 	_, durableTaskStoreReady := agentTaskStore.(taskstore.DispatchStore)
 	agentReconciler := &agentcontroller.AgentReconciler{
+		BuildSHA:                      BuildSHA,
 		Client:                        mgr.GetClient(),
 		Scheme:                        mgr.GetScheme(),
 		Recorder:                      mgr.GetEventRecorderFor("agent-controller"),

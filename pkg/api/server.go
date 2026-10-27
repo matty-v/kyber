@@ -898,6 +898,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// /settings/anthropic-key is the operator-facing write endpoint that
 	// stores the API key in the kyber-anthropic-key Secret.
 	mux.HandleFunc("/api/v1/available", s.handleAvailable)
+	mux.HandleFunc("/api/v1/effort-options", s.getCreateEffortOptions)
 	mux.HandleFunc("/api/v1/settings/anthropic-key", s.handleAnthropicKeySetting)
 }
 

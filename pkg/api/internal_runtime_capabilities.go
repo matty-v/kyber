@@ -7,6 +7,7 @@ import (
 	"time"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	"github.com/matty-v/kyber/pkg/runtimes"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -48,8 +49,12 @@ func (s *InternalServer) handleRuntimeCapabilities(w http.ResponseWriter, r *htt
 			return
 		}
 	}
+	reader := s.usageAgentReader
+	if reader == nil {
+		reader = s.k8sClient
+	}
 	agent := &kyberv1.Agent{}
-	if s.k8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: name}, agent) != nil {
+	if reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: name}, agent) != nil {
 		http.Error(w, "agent unavailable", 404)
 		return
 	}
@@ -58,13 +63,27 @@ func (s *InternalServer) handleRuntimeCapabilities(w http.ResponseWriter, r *htt
 		return
 	}
 	pod := &corev1.Pod{}
-	if agent.Status.PodName == "" || s.k8sClient.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agent.Status.PodName}, pod) != nil || string(pod.UID) != body.PodUID {
+	if agent.Status.PodName == "" || reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agent.Status.PodName}, pod) != nil || string(pod.UID) != body.PodUID {
 		http.Error(w, "stale pod report", 409)
 		return
 	}
 	before := agent.DeepCopy()
+	owned := false
+	for _, owner := range pod.OwnerReferences {
+		if owner.Kind == "Agent" && owner.Name == agent.Name && owner.UID != "" && owner.UID == agent.UID {
+			owned = true
+		}
+	}
+	if body.Features[string(runtimes.ReasoningEffort)] && pod.DeletionTimestamp == nil && owned {
+		for _, container := range pod.Spec.Containers {
+			if container.Name == "agent" && reasoningeffort.ImmutableNativeImage(body.Runtime, container.Image) {
+				agent.Status.EffortRuntimeImage = container.Image
+			}
+		}
+	}
+
 	agent.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{ContractVersion: body.ContractVersion, InstalledVersion: body.InstalledVersion, PodUID: body.PodUID, AgentGeneration: body.AgentGeneration, ObservedAt: metav1.NewTime(time.Now()), Features: body.Features}
-	if s.k8sClient.Status().Patch(r.Context(), agent, client.MergeFrom(before)) != nil {
+	if s.k8sClient.Status().Patch(r.Context(), agent, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})) != nil {
 		http.Error(w, "capability update unavailable", 503)
 		return
 	}

@@ -179,6 +179,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	current.Spec.Runtime = req.Runtime
 	current.Spec.Secrets.AuthType = authType
 	current.Spec.Model = ""
+	current.Spec.Effort = ""
 	current.Spec.RuntimeVersion = ""
 	current.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
 	beginManagementMutation(r)

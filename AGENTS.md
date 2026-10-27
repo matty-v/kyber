@@ -267,6 +267,19 @@ not permission to configure effort: a consumer must first verify the current
 Agent, runtime version, model and inference route. Custom inference routes
 still suppress the native OpenAI catalog. No effort setting/UI is enabled by
 this metadata foundation.
+Reasoning effort configuration is separate from that catalog evidence.
+`pkg/reasoningeffort` owns exact version/model/native-route qualification;
+unknown tuples permit clearing but never a new nonempty override. `set-effort`
+is exact-Agent lifecycle-write and required-audit protected. Effort participates
+in PodConfigHash; ObservedPodEffort records the pod's configured override, not
+provider execution. New effort writes also require verified runtime-image wiring:
+a matching first-party source image, or this Agent's observed protocol for that
+exact immutable image. Native CLI version alone is insufficient; upgrading only
+the control plane must not advertise a silently ignored setting. Both launchers
+pass the override through resume/relaunch
+and preserve user-owned config. Failed-agent effort edits mark their passive
+config generation so they cannot reset an exhausted retry budget; explicit
+lifecycle verbs clear that marker. See `docs/operator/reasoning-effort.md`.
 
 Discord-enabled agents register the sidecar's loopback Streamable HTTP MCP
 endpoint (`kyber-discord`, port 14007) in both runtimes. Its `reply` tool is the
@@ -1172,3 +1185,6 @@ Credential-material uniqueness validation sorts a private, bounded scratch list
 and compares adjacent values exactly. Never persist or expose material-derived
 fingerprints for this check. It is independent of presented-bearer matching,
 which retains constant-time authentication comparisons.
+
+Runtime bootstrap tests must use temporary installer stubs and managed config
+paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing.md.

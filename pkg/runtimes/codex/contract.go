@@ -19,7 +19,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			{ID: kyberv1.AgentAuthTypeOAuth, Name: "ChatGPT subscription", Flow: "device-code", InputField: "codexAuthJson", SecretSuffix: "codex-auth", ReauthorizePath: "codex-device-auth", Channels: []string{"telegram", "discord", "slack"}},
 			{ID: kyberv1.AgentAuthTypeAPIKey, Name: "OpenAI API key", Flow: "api-key", InputField: "openaiApiKey", SecretSuffix: "openai", Channels: []string{"slack"}},
 		},
-		Features: []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.UsageReporting, runtimes.RuntimeRepairFeature, runtimes.CustomInferenceEndpoint},
+		Features: []runtimes.Feature{runtimes.SessionRestart, runtimes.SessionResume, runtimes.Compaction, runtimes.JobTurnHooks, runtimes.TaskReceipts, runtimes.TaskTools, runtimes.ModelCatalog, runtimes.ReasoningEffort, runtimes.UsageReporting, runtimes.RuntimeRepairFeature, runtimes.CustomInferenceEndpoint},
 		// MAT-115: one-off dev observations are evidence, not route-wide
 		// qualification. OpenRouter's selected upstream was not observable.
 		RouteModelEvidence: []runtimes.RouteModelEvidence{
