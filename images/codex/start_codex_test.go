@@ -191,11 +191,16 @@ func TestStartCodexBrokenHarnessReportsBeforeAuthentication(t *testing.T) {
 func runBoot(t *testing.T, home, authJSON, path string, extraEnv ...string) ([]byte, error) {
 	t.Helper()
 	persistRoot := t.TempDir()
+	installer := filepath.Join(persistRoot, "test-installer")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("/bin/bash", scriptPath(t))
 	env := []string{
 		"HOME=" + home,
 		"CODEX_HOME=" + filepath.Join(home, ".codex"),
 		"KYBER_PERSIST_ROOT=" + persistRoot,
+		"KYBER_HARNESS_INSTALLER=" + installer,
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
@@ -1498,12 +1503,17 @@ func TestStartCodex_CronHooks_StopHookDeliversAFreshConversationCommand(t *testi
 func runBootUmask(t *testing.T, home, authJSON, path, umask string, extraEnv ...string) ([]byte, error) {
 	t.Helper()
 	persistRoot := t.TempDir()
+	installer := filepath.Join(persistRoot, "test-installer")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	cmd := exec.Command("/bin/bash", "-c",
 		"umask "+umask+"; exec /bin/bash "+scriptPath(t))
 	env := []string{
 		"HOME=" + home,
 		"CODEX_HOME=" + filepath.Join(home, ".codex"),
 		"KYBER_PERSIST_ROOT=" + persistRoot,
+		"KYBER_HARNESS_INSTALLER=" + installer,
 		"PATH=" + path,
 		"SKIP_CODEX_LAUNCH=1",
 		"AGENT_NAME=unit-test",
@@ -2271,7 +2281,11 @@ func TestStartCodexEffortOverrideAndResetPreserveUserConfig(t *testing.T) {
 }
 
 func TestStartCodexEffortRejectsInstalledVersionMismatch(t *testing.T) {
-	out, err := runBoot(t, t.TempDir(), "", stubBin(t), "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.147.0", "KYBER_REASONING_EFFORT=high")
+	installer := filepath.Join(t.TempDir(), "refuse-install")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runBoot(t, t.TempDir(), "", stubBin(t), "KYBER_HARNESS_INSTALLER="+installer, "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.147.0", "KYBER_REASONING_EFFORT=high")
 	if err == nil || !strings.Contains(string(out), "qualified requested runtime version") {
 		t.Fatalf("unqualified version allowed: %v\n%s", err, out)
 	}

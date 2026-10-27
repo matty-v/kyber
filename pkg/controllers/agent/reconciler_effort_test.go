@@ -48,3 +48,31 @@ func TestEffortDirectSpecFailureIsVisibleAndClearable(t *testing.T) {
 		t.Fatal("reset left stale effort error")
 	}
 }
+
+func TestEffortEditDoesNotRestartExhaustedFailedAgent(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	if err := kyberv1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	a := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "failed-effort", Namespace: "test", Generation: 2, Annotations: map[string]string{kyberv1.AnnotationPassiveConfigGeneration: "2"}}, Spec: kyberv1.AgentSpec{DesiredPhase: kyberv1.AgentPhaseRunning, Effort: "high"}, Status: kyberv1.AgentStatus{Phase: kyberv1.AgentPhaseFailed, ObservedGeneration: 1, RestartCount: maxRestartRetries}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(a).WithObjects(a).Build()
+	r := &AgentReconciler{Client: c}
+	event, err := r.classifyEvent(ctx, a, nil)
+	if err != nil || event != EventRetryLimitReached {
+		t.Fatalf("passive edit event=%s err=%v", event, err)
+	}
+	if a.Status.ObservedGeneration != 1 || a.Status.RestartCount != maxRestartRetries {
+		t.Fatal("passive edit changed retry state")
+	}
+	// A subsequent independent repair advances generation and retains the existing
+	// recovery path instead of being suppressed forever by the effort marker.
+	a.Generation = 3
+	if err := c.Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	event, err = r.classifyEvent(ctx, a, nil)
+	if err != nil || event != EventDesiredRunning {
+		t.Fatalf("repair event=%s err=%v", event, err)
+	}
+}

@@ -5,9 +5,11 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
@@ -23,6 +25,9 @@ func effortTestAgent(t *testing.T, s *Server, phase kyberv1.AgentPhase, effort s
 	agent.Spec.RuntimeVersion = "2.1.119"
 	agent.Spec.Effort = effort
 	agent.Spec.DesiredPhase = phase
+	if phase == kyberv1.AgentPhaseStarting || phase == kyberv1.AgentPhaseFailed {
+		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
+	}
 	if err := s.K8sClient.Update(context.Background(), &agent); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +48,7 @@ func TestEffortLifecycleAndReset(t *testing.T) {
 	for _, phase := range []kyberv1.AgentPhase{kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting, kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseFailed, kyberv1.AgentPhaseNeedsAuth} {
 		t.Run(string(phase), func(t *testing.T) {
 			s := newSetModelServer(t, nil)
-			effortTestAgent(t, s, phase, "")
+			before := effortTestAgent(t, s, phase, "")
 			rr := effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", `{"effort":"high"}`)
 			if rr.Code != 200 {
 				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
@@ -52,7 +57,10 @@ func TestEffortLifecycleAndReset(t *testing.T) {
 			if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Namespace: fdNS, Name: "wedge"}, &got); err != nil {
 				t.Fatal(err)
 			}
-			want := phase
+			if phase == kyberv1.AgentPhaseFailed && got.Annotations[kyberv1.AnnotationPassiveConfigGeneration] != strconv.FormatInt(before.Generation+1, 10) {
+				t.Fatal("failed effort edit did not identify its passive generation")
+			}
+			want := before.Spec.DesiredPhase
 			if phase == kyberv1.AgentPhaseRunning || phase == kyberv1.AgentPhaseStarting {
 				want = kyberv1.AgentPhaseRestarting
 			}
@@ -193,5 +201,66 @@ func TestEffortRejectsOldImageAndStillPermitsReset(t *testing.T) {
 	rr = effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", `{"effort":""}`)
 	if rr.Code != 200 {
 		t.Fatalf("reset blocked by image mismatch: %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestEffortPreservesQueuedStopAndReauthorization(t *testing.T) {
+	for _, intent := range []kyberv1.AgentPhase{kyberv1.AgentPhaseStopped, kyberv1.AgentPhaseNeedsAuth} {
+		t.Run(string(intent), func(t *testing.T) {
+			s := newSetModelServer(t, nil)
+			a := effortTestAgent(t, s, kyberv1.AgentPhaseRunning, "")
+			a.Spec.DesiredPhase = intent
+			if err := s.K8sClient.Update(context.Background(), a); err != nil {
+				t.Fatal(err)
+			}
+			rr := effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", `{"effort":"high"}`)
+			if rr.Code != 200 {
+				t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
+			}
+			if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Namespace: fdNS, Name: "wedge"}, a); err != nil {
+				t.Fatal(err)
+			}
+			if a.Spec.DesiredPhase != intent || a.Spec.Effort != "high" {
+				t.Fatalf("queued intent overwritten: desired=%q effort=%q", a.Spec.DesiredPhase, a.Spec.Effort)
+			}
+		})
+	}
+}
+
+func TestEffortNoopDoesNotRequireFreshCompatibility(t *testing.T) {
+	s := newSetModelServer(t, nil)
+	a := effortTestAgent(t, s, kyberv1.AgentPhaseRunning, "high")
+	s.RuntimeImages = nil
+	s.FleetDefaultsConfigMapName = "unavailable"
+	rr := effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", `{"effort":"high"}`)
+	if rr.Code != 200 {
+		t.Fatalf("unchanged request rejected: %d %s", rr.Code, rr.Body.String())
+	}
+	var current kyberv1.Agent
+	if err := s.K8sClient.Get(context.Background(), types.NamespacedName{Namespace: fdNS, Name: "wedge"}, &current); err != nil {
+		t.Fatal(err)
+	}
+	if current.ResourceVersion != a.ResourceVersion || current.Spec.DesiredPhase != kyberv1.AgentPhaseRunning {
+		t.Fatal("unchanged request wrote or restarted Agent")
+	}
+}
+
+func TestEffortProblemOnlyDescribesCurrentNondefaultConfig(t *testing.T) {
+	for _, tc := range []struct {
+		name, effort string
+		observed     int64
+		want         bool
+	}{
+		{"current", "high", 2, true}, {"old-generation", "high", 1, false}, {"cleared", "", 2, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &kyberv1.Agent{}
+			a.Generation = 2
+			a.Spec.Effort = tc.effort
+			a.Status.Conditions = []metav1.Condition{{Type: kyberv1.AgentConditionEffortUnsupported, Status: metav1.ConditionTrue, ObservedGeneration: tc.observed, Message: "unsupported"}}
+			if got := agentToResponse(a).EffortProblem != ""; got != tc.want {
+				t.Fatalf("problem present=%v want=%v", got, tc.want)
+			}
+		})
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strconv"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
@@ -139,18 +140,34 @@ func (s *Server) setAgentEffort(w http.ResponseWriter, r *http.Request, name str
 		writeJSONError(w, 404, "not_found", "agent unavailable")
 		return
 	}
+	if agent.DeletionTimestamp != nil {
+		writeJSONError(w, 409, "conflict", "agent is being deleted")
+		return
+	}
+	if agent.Spec.Effort == *req.Effort {
+		completeManagementMutation(r, "lifecycle:write")
+		writeJSON(w, 200, agentToResponse(&agent))
+		return
+	}
 	proposed := agent.DeepCopy()
 	proposed.Spec.Effort = *req.Effort
 	if !s.validateAgentEffort(w, r, proposed, proposed.Spec.Inference != nil) {
 		return
 	}
-	if agent.Spec.Effort == *req.Effort {
-		writeJSON(w, 200, agentToResponse(&agent))
-		return
-	}
 	patch := client.MergeFromWithOptions(agent.DeepCopy(), client.MergeFromWithOptimisticLock{})
 	agent.Spec.Effort = *req.Effort
-	if !archiveHeld(&agent) {
+	if agent.Status.Phase == kyberv1.AgentPhaseFailed {
+		if agent.Annotations == nil {
+			agent.Annotations = map[string]string{}
+		}
+		// This optimistic patch changes spec exactly once. A later independent
+		// spec edit advances past this marker and retains normal repair behavior.
+		agent.Annotations[kyberv1.AnnotationPassiveConfigGeneration] = strconv.FormatInt(agent.Generation+1, 10)
+	}
+	// An observed Running phase can still have a Stop/NeedsAuth intent queued.
+	// A configuration edit must not revive the Agent or override that request.
+	runnableIntent := agent.Spec.DesiredPhase == "" || agent.Spec.DesiredPhase == kyberv1.AgentPhaseRunning || agent.Spec.DesiredPhase == kyberv1.AgentPhaseRestarting
+	if !archiveHeld(&agent) && runnableIntent {
 		switch agent.Status.Phase {
 		case kyberv1.AgentPhaseRunning, kyberv1.AgentPhaseStarting, kyberv1.AgentPhaseRestarting:
 			agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting

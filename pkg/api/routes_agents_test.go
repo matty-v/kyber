@@ -1657,6 +1657,7 @@ func TestAgents_Start_ClearsRestartCountOnFailed(t *testing.T) {
 	agent := sampleAgentCRD("dave")
 	agent.Status.Phase = kyberv1.AgentPhaseFailed
 	agent.Status.RestartCount = 3
+	agent.Annotations = map[string]string{kyberv1.AnnotationPassiveConfigGeneration: "2"}
 	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning // already Running: no spec change to make
 
 	h, c := buildStatusAwareAgentHandler(t, agent)
@@ -1671,6 +1672,9 @@ func TestAgents_Start_ClearsRestartCountOnFailed(t *testing.T) {
 	if err := c.Get(context.Background(),
 		types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
 		t.Fatalf("get agent: %v", err)
+	}
+	if got.Annotations[kyberv1.AnnotationPassiveConfigGeneration] != "" {
+		t.Fatal("explicit Start retained passive config marker")
 	}
 	if got.Status.RestartCount != 0 {
 		t.Errorf("Start left restartCount=%d — the agent has no budget left and will ignore the operator",

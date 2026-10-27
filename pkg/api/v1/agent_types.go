@@ -186,6 +186,10 @@ const AnnotationArchiveHold = "kyber.io/archive-hold"
 // prior intent) or the operator's (leave it).
 const AnnotationArchivePaused = "kyber.io/archive-paused"
 
+// AnnotationPassiveConfigGeneration identifies a config-only edit that must not
+// grant a Failed Agent a fresh restart budget. Explicit lifecycle verbs clear it.
+const AnnotationPassiveConfigGeneration = "kyber.io/passive-config-generation"
+
 // AgentResources specifies compute resource requests for an agent pod.
 type AgentResources struct {
 	// CPU is the CPU request and limit (e.g., "1", "500m").

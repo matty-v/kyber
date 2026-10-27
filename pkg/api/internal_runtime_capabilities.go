@@ -83,7 +83,7 @@ func (s *InternalServer) handleRuntimeCapabilities(w http.ResponseWriter, r *htt
 	}
 
 	agent.Status.Runtime.Capabilities = &kyberv1.RuntimeCapabilitiesObservation{ContractVersion: body.ContractVersion, InstalledVersion: body.InstalledVersion, PodUID: body.PodUID, AgentGeneration: body.AgentGeneration, ObservedAt: metav1.NewTime(time.Now()), Features: body.Features}
-	if s.k8sClient.Status().Patch(r.Context(), agent, client.MergeFrom(before)) != nil {
+	if s.k8sClient.Status().Patch(r.Context(), agent, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})) != nil {
 		http.Error(w, "capability update unavailable", 503)
 		return
 	}

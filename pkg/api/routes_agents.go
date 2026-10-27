@@ -585,7 +585,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	// the PWA showed a blank agent with no way to reach the cause. Surfacing
 	// them here is what makes the failure visible at all.
 	resp.RuntimeImageMissing = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing)
-	if condition := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionEffortUnsupported); condition != nil && condition.Status == metav1.ConditionTrue {
+	if condition := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionEffortUnsupported); condition != nil && condition.Status == metav1.ConditionTrue && a.Spec.Effort != "" && condition.ObservedGeneration == a.Generation {
 		resp.EffortProblem = condition.Message
 	}
 	resp.ModelUnresolved = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved)
@@ -2327,6 +2327,7 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 	// An operator's lifecycle verb during a disk export is their intent; the
 	// export must not overwrite it when it releases the agent.
 	delete(agent.Annotations, kyberv1.AnnotationArchivePaused)
+	delete(agent.Annotations, kyberv1.AnnotationPassiveConfigGeneration)
 	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent desired phase", "name", name, "phase", phase, "error", err)

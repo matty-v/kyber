@@ -2644,6 +2644,9 @@ func (r *AgentReconciler) stampInferenceCredentialVersion(ctx context.Context, a
 // no event: the reconcile requeues, the agent stays Failed, and the retry cap
 // still governs. Same shape as recoveryInputChanged (kyber#684).
 func (r *AgentReconciler) restartRequestChanged(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	if agent.Annotations[kyberv1.AnnotationPassiveConfigGeneration] == strconv.FormatInt(agent.Generation, 10) {
+		return false, nil
+	}
 	if !agent.SpecChangedSinceLastPod() {
 		return false, nil
 	}

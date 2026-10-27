@@ -277,7 +277,9 @@ a matching first-party source image, or this Agent's observed protocol for that
 exact immutable image. Native CLI version alone is insufficient; upgrading only
 the control plane must not advertise a silently ignored setting. Both launchers
 pass the override through resume/relaunch
-and preserve user-owned config. See `docs/operator/reasoning-effort.md`.
+and preserve user-owned config. Failed-agent effort edits mark their passive
+config generation so they cannot reset an exhausted retry budget; explicit
+lifecycle verbs clear that marker. See `docs/operator/reasoning-effort.md`.
 
 Discord-enabled agents register the sidecar's loopback Streamable HTTP MCP
 endpoint (`kyber-discord`, port 14007) in both runtimes. Its `reply` tool is the
@@ -1183,3 +1185,6 @@ Credential-material uniqueness validation sorts a private, bounded scratch list
 and compares adjacent values exactly. Never persist or expose material-derived
 fingerprints for this check. It is independent of presented-bearer matching,
 which retains constant-time authentication comparisons.
+
+Runtime bootstrap tests must use temporary installer stubs and managed config
+paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing.md.

@@ -279,3 +279,11 @@ A missing transcript declaration must suppress the destructive pruner rather
 than pass empty paths to shell defaults. Authentication exit codes belong to
 the integration identified by the pod runtime label; registering another
 harness must never change how an existing harness's crash is classified.
+
+### Hermetic runtime bootstrap tests
+
+Bootstrap test helpers must redirect the harness installer and managed config
+paths into temporary directories. A mocked npm on PATH is insufficient: sudo
+can restore the real PATH and run the machine's installer. Default to a failing
+temporary installer; tests of successful installs must supply their own stub.
+Never let a bootstrap test install or replace tools on the host running it.
