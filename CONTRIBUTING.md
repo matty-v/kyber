@@ -136,7 +136,17 @@ Maintainer publish checklist:
    confirm `publish-pwa-views.yml` builds, tests, and publishes it.
 3. For a failed automatic run, inspect its failure and use the auto-publish
    workflow's manual dispatch on main to recover. Do not blindly recreate tags.
-4. Update the dependency in external hosts that pin the package.
+4. Update `matty-v/holocron`'s pinned dependency and lockfile through a reviewed
+   PR, along with any other affected external hosts. A cluster upgrade does not
+   update Holocron's separately built frontend.
+5. Follow the host repository's authorized release/deployment workflow, then
+   verify the deployed Holocron UI against the target cluster in a browser.
+   Check desktop and mobile when responsive behavior changes. Preserve the
+   published package version, host PR/deployment and verification evidence in
+   the task closeout. An embedded-UI test alone is insufficient.
+6. If publication, deployment approval or access is pending, report the
+   Holocron rollout as pending with its next action. Do not call the shared UI
+   work fully delivered. These checks do not bypass release approvals.
 
 The release workflow also chains publication when needed. Both paths require
 configured GitHub App credentials and skip versions that would move the registry

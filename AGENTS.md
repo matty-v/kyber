@@ -896,6 +896,18 @@ administrator compatibility reader. See `docs/operator/operator-credentials.md`.
    both auto-publish and tag-publish runs before using the recovery dispatch.
    See `CONTRIBUTING.md` and the publish-boundary architecture document.
 3. Verify in a browser (`make pwa-dev` or devenv), not just type-check.
+4. **Shared UI delivery includes Holocron (`matty-v/holocron`).** A cluster
+   upgrade updates its embedded UI; it does not update Holocron's independently
+   built frontend. Before calling a shared UI feature/fix delivered, verify the
+   package publication, update Holocron's pinned dependency and lockfile through
+   a reviewed PR, and follow its authorized release/deployment workflow. Check
+   the deployed Holocron UI against the target cluster in a browser (desktop and
+   mobile for responsive changes), not only the embedded UI or source package.
+   Record package version, host PR/deployment and verification evidence in the
+   task closeout. If publication, deployment approval or access blocks this,
+   explicitly report Holocron delivery as pending with the next action; never
+   describe an embedded-only rollout as complete. This rule does not grant
+   deployment permission or bypass either repository's release approvals.
 
 ### F. Add a new runtime type
 Read `docs/architecture/agent-harness-contract.md` and its conformance guide first.
