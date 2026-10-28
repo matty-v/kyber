@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -23,7 +24,7 @@ func buildDiskHandler(t *testing.T, objs ...runtime.Object) (http.Handler, clien
 	t.Helper()
 	all := append([]runtime.Object{defaultMachine()}, objs...)
 	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithRuntimeObjects(all...).WithStatusSubresource(&kyberv1.Agent{}).Build()
-	s := &api.Server{K8sClient: fakeClient, APIKey: testAPIKey, Namespace: "kyber-system", ValidRuntimes: map[string]bool{"claude-code": true}}
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: fakeClient, APIKey: testAPIKey, Namespace: "kyber-system", ValidRuntimes: map[string]bool{"claude-code": true}}
 	return s.BuildHandler(), fakeClient
 }
 

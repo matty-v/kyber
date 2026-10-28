@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/matty-v/kyber/internal/testutil"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
+	"github.com/matty-v/kyber/pkg/archivejob"
 	"github.com/matty-v/kyber/pkg/operatorcredentials"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -74,6 +76,44 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		return metadata
 	}
 	rootBefore := readMetadata("kyber-api-credentials")
+	// Convert the current configured values in memory only. This verifies the
+	// source snapshot, not activation or agreement across deployed replicas.
+	var source corev1.Secret
+	if err := direct.Get(ctx, client.ObjectKey{Namespace: namespace, Name: "kyber-api-credentials"}, &source); err != nil || source.UID != rootBefore.UID || source.ResourceVersion != rootBefore.ResourceVersion {
+		t.Fatal("configured credential snapshot unavailable or changed")
+	}
+	configured, err := ParseScopedCallers(string(source.Data["callers"]))
+	if err != nil {
+		t.Fatal("configured caller snapshot invalid")
+	}
+	resolvedCallers, rejected := ResolveScopedCallers(ctx, direct, namespace, configured)
+	if len(rejected) != 0 {
+		t.Fatal("configured caller dependencies unavailable")
+	}
+	rootValue := string(source.Data["api-key"])
+	configuredAuth := NewAPIKeyAuthenticator(rootValue, resolvedCallers...)
+	candidate, err := configuredAuth.prepareCredentialAdoption(ctx, namespace, adoptionFixtureOperation())
+	if err != nil {
+		t.Fatal("current configured snapshot could not be converted")
+	}
+	converted, err := compileRegistryCredentials(candidate.document, time.Now())
+	if err != nil {
+		t.Fatal("converted configured snapshot did not compile")
+	}
+	values := []string{rootValue}
+	for _, caller := range resolvedCallers {
+		values = append(values, caller.Key)
+	}
+	for _, value := range values {
+		before, beforeErr := configuredAuth.authenticateConfigured(adoptionBearer(value))
+		after, afterErr := converted.authenticate(adoptionBearer(value))
+		if beforeErr != nil || afterErr != nil || before == nil || after == nil {
+			t.Fatal("configured value lost during conversion")
+		}
+		if !reflect.DeepEqual(before.Scopes, after.Scopes) || !reflect.DeepEqual(before.AgentResources, after.AgentResources) || !reflect.DeepEqual(before.MachineResources, after.MachineResources) || before.PrincipalID != "" && before.PrincipalID != after.PrincipalID || before.TenantID != "" && before.TenantID != after.TenantID || before.CredentialID != "" && before.CredentialID != after.CredentialID || before.CredentialGeneration != 0 && before.CredentialGeneration != after.CredentialGeneration {
+			t.Fatal("configured identity or grants changed during conversion")
+		}
+	}
 	name := "operator-auth-probe-" + uuid.NewString()
 	markerName := name + "-authority"
 	owned := map[string]types.UID{}
@@ -119,6 +159,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	operation := func(action, target string) operatorcredentials.Operation {
 		return operatorcredentials.Operation{ID: uuid.NewString(), AdmissionEventID: uuid.NewString(), CompletionEventID: uuid.NewString(), RequestID: uuid.NewString(), Action: action, ActorPrincipalID: "other-principal", ActorCredentialID: "other-admin", ActorGeneration: 1, Authority: "registry", TargetCredentialID: target, At: time.Now().UTC(), Status: "pending"}
 	}
+	document.Credentials[2].Scopes = append(document.Credentials[2].Scopes, string(ScopeArchivesAdmin))
 	document.Operations = []operatorcredentials.Operation{operation("adopt", "")}
 	created, err := store.Create(ctx, document)
 	if err != nil {
@@ -126,7 +167,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	}
 	owned[name] = readMetadata(name).UID
 	server := func(source OperatorCredentialAuthority) *Server {
-		return &Server{Namespace: namespace, APIKey: "original-installation-fixture", OperatorCredentialAuthority: source, Callers: []ScopedCaller{{Name: "configuration-only", Key: "configuration-only-fixture"}}}
+		return &Server{Namespace: namespace, APIKey: "original-installation-fixture", OperatorCredentialAuthority: source, Archives: &ArchiveService{SigningKey: []byte("private-archive-probe-fixture")}, Callers: []ScopedCaller{{Name: "configuration-only", Key: "configuration-only-fixture"}}}
 	}
 	a, b := server(authority), server(authority2)
 	handlers := []http.Handler{a.BuildHandler(), b.BuildHandler()}
@@ -147,7 +188,16 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := authority.Bind(ctx, created.Version); err != nil {
+	reservation, err := authority.ReserveAdoption(ctx)
+	if err != nil {
+		t.Fatal("probe maintenance reservation failed")
+	}
+	t.Cleanup(func() {
+		if err := reservation.Release(context.Background()); err != nil {
+			t.Error("probe reservation cleanup failed")
+		}
+	})
+	if err := authority.Bind(ctx, created.Version, reservation); err != nil {
 		t.Fatal("probe authority binding failed")
 	}
 	owned[markerName] = readMetadata(markerName).UID
@@ -159,6 +209,19 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	}
 	scoped := mustRegistryCaller(t, a.auth, registryBearer("client-key-fixture"))
 	cookie := mustRegistryCookie(t, a.auth, *scoped)
+	archiveRequest := registryCookie(cookie)
+	archiveRequest = archiveRequest.WithContext(context.WithValue(ctx, callerCtxKey{}, scoped))
+	archiveToken, err := a.signCurrentArchiveDownload(archiveRequest, &archivejob.Job{ID: "archive-probe-job", Agent: "alpha"}, time.Now().Add(time.Minute))
+	if err != nil {
+		t.Fatal("probe archive capability issuance failed")
+	}
+	archiveClaims, ok := a.parseCurrentArchiveDownload(archiveToken)
+	if !ok {
+		t.Fatal("probe archive capability parse failed")
+	}
+	if _, err := b.resolveArchiveDownload(ctx, archiveClaims); err != nil {
+		t.Fatal("independent replica rejected archive capability")
+	}
 	binding, err := browserSessionKeyBinding("original-installation-fixture", "client-key-fixture")
 	if err != nil {
 		t.Fatal(err)
@@ -176,6 +239,9 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal("probe individual rotation failed")
 	}
+	if _, err := b.resolveArchiveDownload(ctx, archiveClaims); err != nil {
+		t.Fatal("unrelated rotation invalidated archive capability")
+	}
 	forgedRoot := *installationAdminCaller()
 	forgedRoot.CredentialGeneration = 2
 	forgedCookie, err := signBrowserSession("original-installation-fixture", forgedRoot, "", time.Now(), browserSessionTTL)
@@ -186,7 +252,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		check(handler, registryCookie(oldRoot), 401)
 		check(handler, registryCookie(forgedCookie), 401)
 		check(handler, registryBearer("original-installation-fixture"), 401)
-		check(handler, registryCookie(oldClient), 200)
+		check(handler, registryCookie(oldClient), 401)
 		check(handler, registryCookie(cookie), 200)
 	}
 	// A newly constructed server/authority simulates a fresh replica, retaining
@@ -230,6 +296,9 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 	if err != nil {
 		t.Fatal("probe grant edit failed")
 	}
+	if _, err := b.resolveArchiveDownload(ctx, archiveClaims); err == nil {
+		t.Fatal("archive capability retained removed permission")
+	}
 	select {
 	case <-liveStopped:
 	case <-time.After(10 * time.Second):
@@ -268,6 +337,9 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		check(handler, registryBearer("original-installation-fixture"), 503)
 		check(handler, registryCookie(cookie), 503)
 	}
+	if _, err := b.resolveArchiveDownload(ctx, archiveClaims); !errors.Is(err, errOperatorAuthorityUnavailable) {
+		t.Fatal("archive authority outage misreported")
+	}
 	if _, err := freshSource.Load(ctx); !errors.Is(err, operatorcredentials.ErrUnavailable) {
 		t.Fatal("missing authority became bootstrap")
 	}
@@ -279,7 +351,7 @@ func TestGCPDevRegistryRequestResolution(t *testing.T) {
 		t.Fatal("dev Agent postflight failed")
 	}
 	// A bounded safe diagnostic, with no handler bodies, keys, cookies or seed.
-	t.Log(strings.Join([]string{"Real dev authority reads: adoption, V1/V2 compatibility, independent replica resolution, isolated rotation, current grants, bounded live-stream cancellation, revocation and 503 outage passed.", "Live credential metadata unchanged; zero Agents; owned probe cleanup verified."}, " "))
+	t.Log(strings.Join([]string{"Real dev authority reads: adoption, V1/V2 compatibility, independent replica resolution, isolated rotation, current grants, bounded live-stream cancellation, archive capability resolution/narrowing, revocation and 503 outage passed.", "Live credential metadata unchanged; zero Agents; owned probe cleanup verified."}, " "))
 }
 
 func registryFixtureCredential(t *testing.T, document *operatorcredentials.Document, id string) *operatorcredentials.Credential {

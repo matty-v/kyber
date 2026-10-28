@@ -72,6 +72,9 @@ its manifest. Download it as a ZIP from the card, or mint a link with
 `POST /api/v1/agents/{name}/exports/{id}/download-link`; links expire after
 ten minutes and completed archives after the installation's retention window
 (72 hours by default).
+A link also depends on its issuing key's current archive permission and access to
+that Agent. Revoking or rotating that key, or removing its access, stops both new
+and active downloads. Downloads already received remain the recipient's responsibility.
 
 The archive's `kyber-export/manifest.json` records the source agent and
 runtime, the source volume, a non-secret copy of the agent's settings, every

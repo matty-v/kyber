@@ -277,3 +277,16 @@ func assertNoJobs(t *testing.T, a *Applier) {
 		t.Errorf("a refusal still created %d job(s)", len(jobs.Items))
 	}
 }
+
+func TestUpgradeJobRetentionFollowsAuthorityProtocol(t *testing.T) {
+	for _, protocol := range []int{0, 1, 2} {
+		ttl := upgradeJobRetention(protocol)
+		if protocol == 0 {
+			if ttl == nil || *ttl != upgradeJobTTL {
+				t.Fatal("protocol zero cleanup changed")
+			}
+		} else if ttl != nil {
+			t.Fatal("persistent maintenance evidence can expire")
+		}
+	}
+}

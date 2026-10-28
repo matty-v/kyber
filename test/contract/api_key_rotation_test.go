@@ -3,6 +3,7 @@
 package contract
 
 import (
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"testing"
 
@@ -20,7 +21,7 @@ func TestContract_InstallationKeyRotation(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			secret := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "api-key", Namespace: contractNS}, Data: map[string][]byte{"api-key": []byte(contractAPIKey)}}
-			s := &api.Server{
+			s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 				APIKey: contractAPIKey, APIKeySecretName: secret.Name, Namespace: contractNS,
 				K8sClient: fake.NewClientBuilder().WithScheme(newContractScheme(t)).WithObjects(secret).Build(),
 				Callers:   []api.ScopedCaller{{Name: "integration", Key: "restricted-contract-key", Scopes: []string{"lifecycle:admin"}}},

@@ -23,6 +23,17 @@ Version pinning is deliberate. Codex's startup self-update check is disabled bec
 
 Both runtimes integrate through Kyber’s versioned harness contract; the conformance guide records verified behavior and remaining exceptions. Kyber reports observed support for receipt-backed task dispatch, fresh sessions, cancellation, and scheduled-job controls. A supported runtime name alone does not prove a feature is available: missing or stale observations make dependent capabilities unavailable until the integration is healthy again.
 
+## Reasoning effort
+
+Claude Code and Codex have an optional reasoning-effort setting in Create Agent
+and Agent Details, on desktop and mobile. Choose a supported native level or
+Default, which removes Kyber's override. A change restarts an active Agent and
+preserves its disk. Choices depend on the exact harness version, model and
+inference route; unknown combinations and other runtimes offer Default only.
+This setting does not control reasoning summaries or response verbosity.
+See [Reasoning effort](../../operator/reasoning-effort.md) for compatibility,
+reset and lifecycle details.
+
 ## Learn more
 
 - [Agent runtimes](../../runtimes.md): the Codex credential model and runtime behavior in detail.

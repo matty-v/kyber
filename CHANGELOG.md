@@ -5,6 +5,10 @@
 > tags, and changelog live in a private archive repository. This changelog
 > covers the open-source line only.
 
+## Unreleased
+
+- Stage supervised credential-maintenance evidence retention and namespace-scoped recovery permissions. The authority protocol remains zero; activation is still unavailable.
+
 ## v1.6.0 — 2026-09-10
 
 [Release notes and upgrade guidance](docs/releases/v1.6.0.md).

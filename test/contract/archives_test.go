@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -38,7 +39,7 @@ func TestContract_AgentExports(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &api.Server{K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
 		Client: c, Namespace: contractNS, Store: store, Jobs: archivejob.NewMemoryStore(),
 		SigningKey: []byte("k"), ToolImage: "kyber/control-plane:test",
 	}}
@@ -90,7 +91,7 @@ func TestContract_AgentImports(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	srv := &api.Server{K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
 		Client: c, Namespace: contractNS, Store: store, Jobs: jobs, SigningKey: []byte("k"), ToolImage: "kyber/control-plane:test",
 	}}
 	h := srv.BuildHandler()
@@ -141,7 +142,7 @@ func TestContract_ArchiveUploadInParts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &api.Server{K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
+	srv := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: contractAPIKey, Namespace: contractNS, Archives: &api.ArchiveService{
 		Client: c, Namespace: contractNS, Store: store, Jobs: archivejob.NewMemoryStore(),
 		SigningKey: []byte("k"), ToolImage: "kyber/control-plane:test",
 	}}

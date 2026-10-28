@@ -72,3 +72,16 @@ func TestPodConfigHashHotFields(t *testing.T) {
 		t.Fatal("runtime change did not change pod fingerprint")
 	}
 }
+
+func TestPodConfigHashIncludesReasoningEffort(t *testing.T) {
+	a := &Agent{}
+	baseline := a.PodConfigHash()
+	a.Spec.Effort = "high"
+	if a.PodConfigHash() == baseline {
+		t.Fatal("effort change did not require a new pod")
+	}
+	a.Spec.Effort = ""
+	if a.PodConfigHash() != baseline {
+		t.Fatal("clearing effort changed unrelated configuration")
+	}
+}

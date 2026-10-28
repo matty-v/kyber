@@ -6,17 +6,32 @@ Kyber scales from one box to several clusters, and everything the console does i
 
 Each Kyber install is its own cluster with its own [console](fleet-console.md). For operators running more than one, Holocron is a multi-cluster hub: it mounts the same console once per cluster, so you move between installs without juggling URLs or separate logins. Every screen shows a cluster identifier with the cluster's name and version, so you always know which cluster and which build you are about to act on.
 
-Clusters follow a simple naming convention: the logical name is the Helm release name, in the `kyber-<env>` pattern, such as `kyber-laptop` or `kyber-gcp`. Pick a name that describes the environment's role, not its hardware, and keep it stable. The values file plus the release name is the complete definition of a Kyber install, so standing up a new environment is a values file and an install away. See the [quickstart](../getting-started/quickstart.md) for the first one.
+Clusters follow a simple naming convention: the logical name is the Helm release name, in the `kyber-<env>` pattern, such as `kyber-laptop` or `kyber-gcp`. Pick a name that describes the environment's role, not its hardware, and keep it stable. The values file and release name define the configured services. Durable Agent data and managed credentials are installation state and need their own protected backup; copying a values file does not restore them. See the [quickstart](../getting-started/quickstart.md) for the first one.
 
 ## The API and its keys
 
-All operator-facing requests go through the control plane's REST API under `/api/v1/*`, authorized by the Kyber API key: a single 256-bit credential generated at install time. The console itself is a client of this API, exchanging the key once for a session cookie rather than keeping it in browser storage.
+Operator-facing requests use the control plane's REST API under `/api/v1/*`.
+An installation administrator starts with a strong key and can inspect access in
+**Settings → API access**. On a compatible release, explicit setup retains
+existing keys and moves their future management into Kyber; upgrading alone does
+not transfer ownership.
 
-The key can be rotated programmatically with no downtime: one authenticated call swaps the key, and the old one stops working on the next request. A manual rotation path exists for compromise recovery.
+Administrators can create named keys, choose enforced actions and exact targets,
+edit grants, rotate an individual key and revoke it. Existing values cannot be
+revealed later. Kyber protects the last non-expiring administrator and applies
+managed access changes to bearer requests, browser sessions and protected live
+connections within ten seconds. The console exchanges a key for an HttpOnly
+session cookie rather than storing the raw value in readable browser storage.
 
-For agent lifecycle actions, you can also issue scoped keys. A `lifecycle:write` key can start, stop, and restart agents; the more impactful force-re-auth verb needs `lifecycle:admin`, which includes everything `write` grants. Enforcement is opt-in per cluster: under-scoped callers are audit-logged but not blocked until you turn it on, so you can define scoped callers, watch the audit log, and then enable enforcement.
+Restricted access is always enforced. Lifecycle, terminals, secrets/logs, tasks,
+capabilities and usage have separate permissions; a narrow key cannot gain full
+access through the historical lifecycle observe-only switch. Durable tasks also
+check tenant/principal ownership and the allowed Agent resource.
 
-Durable tasks and public capability discovery have their own mandatory scopes and tenant/principal ownership checks. Those checks remain enforced independently of the optional lifecycle enforcement switch. Callers also need permission for the exact agent resource.
+The UI shows effective access, management source, observed usage and recent
+sensitive activity with explicit coverage limits. Shared key use identifies the
+credential, not an individual human. Unknown outcomes remain pending until
+verified; status reads do not replay a key change.
 
 Agents authenticate to the platform separately, with per-pod credentials that only let an agent act on itself; no agent can drive another agent through the API.
 

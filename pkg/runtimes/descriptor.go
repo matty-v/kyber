@@ -28,6 +28,7 @@ const (
 	TaskReceipts         Feature = "task-receipts"
 	TaskTools            Feature = "task-tools"
 	ModelCatalog         Feature = "model-catalog"
+	ReasoningEffort      Feature = "reasoning-effort"
 	UsageReporting       Feature = "usage-reporting"
 	RuntimeRepairFeature Feature = "runtime-repair"
 	// CustomInferenceEndpoint declares that the runtime honours

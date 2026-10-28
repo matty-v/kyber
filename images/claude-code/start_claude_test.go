@@ -1670,12 +1670,17 @@ func stubNPMDir(t *testing.T, scriptBody string) string {
 func bootPrepRun(t *testing.T, extraEnv ...string) string {
 	t.Helper()
 	tmp := t.TempDir()
+	installer := filepath.Join(tmp, "test-installer")
+	if err := os.WriteFile(installer, []byte("#!/bin/sh\nexit 1\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
 	// ANTHROPIC_API_KEY+no CLAUDE_ACCESS_TOKEN short-circuits the upstream
 	// OAuth refresh block (which would otherwise FATAL on missing
 	// KYBER_REFRESH_TOKEN_URL). We're not exercising auth here — just the
 	// new boot-prep block — so the cheapest skip is the api-key path.
 	env := []string{
 		"HOME=" + tmp,
+		"KYBER_HARNESS_INSTALLER=" + installer,
 		"PATH=" + testPATH(),
 		"KYBER_BOOTPREP_DRY_RUN=1",
 		"ANTHROPIC_API_KEY=test-key",
@@ -3373,4 +3378,14 @@ func TestStartClaude_NoIdentityRepo_BootsInHomeWithoutGitHubSetup(t *testing.T) 
 	if strings.Contains(string(out), "identity-repo-token") {
 		t.Errorf("boot reached the identity-repo token path with no identity repo:\n%s", out)
 	}
+}
+
+func TestStartClaudeEffortReachesBootArguments(t *testing.T) {
+	stub := stubInstallEnvDir(t, filepath.Join(t.TempDir(), "npm.log"), 0, filepath.Join(t.TempDir(), "sudo.log"), "2.1.119")
+	out := bootPrepRun(t, "PATH="+stub+":"+testPATH(), "KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"), "KYBER_REQUESTED_CC_VERSION=2.1.119", "KYBER_RUNTIME_DEFAULT_VERSION=2.1.119", "KYBER_REASONING_EFFORT=xhigh")
+	if !strings.Contains(out, "--effort xhigh") {
+		t.Fatalf("effort missing from launch arguments: %s", out)
+	}
+	// The launch/resume argument builder uses this same qualified base set;
+	// live acceptance separately verifies the native resumed-session outcome.
 }

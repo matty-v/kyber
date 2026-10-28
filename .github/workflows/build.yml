@@ -1001,6 +1001,8 @@ jobs:
           for c in controlPlane nodeAgent agentBase claudeCode codex hermes statusSidecar discordSidecar telegramSidecar slackSidecar; do
             yq -i ".image.${c}.tag = \"${VERSION}\"" deploy/helm/kyber/values.yaml
           done
+          CREDENTIAL_RELEASE_IMAGE="$(yq -r '.image.controlPlane.repository + ":" + .image.controlPlane.tag' deploy/helm/kyber/values.yaml)" \
+            yq -i '.annotations."kyber.io/operator-credential-release-image" = strenv(CREDENTIAL_RELEASE_IMAGE)' deploy/helm/kyber/Chart.yaml
           echo "Chart:"; yq '{"version": .version, "appVersion": .appVersion}' deploy/helm/kyber/Chart.yaml
           echo "Images:"; yq '.image | to_entries | map({"component": .key, "tag": .value.tag})' deploy/helm/kyber/values.yaml
 

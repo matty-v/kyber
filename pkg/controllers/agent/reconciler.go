@@ -28,6 +28,7 @@ import (
 	"github.com/matty-v/kyber/pkg/fleetdefaults"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/podtoken"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	pkgruntimes "github.com/matty-v/kyber/pkg/runtimes"
 	"github.com/matty-v/kyber/pkg/skillscan"
 	"github.com/matty-v/kyber/pkg/skillstore"
@@ -116,6 +117,8 @@ func (g *KubernetesMachineGetter) Get(ctx context.Context, name, namespace strin
 // +kubebuilder:rbac:groups="",resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups="",resources=events,verbs=create;patch
 type AgentReconciler struct {
+	// BuildSHA identifies matching first-party runtime images containing the effort integration.
+	BuildSHA string
 	client.Client
 	Scheme   *runtime.Scheme
 	Recorder record.EventRecorder
@@ -2641,6 +2644,9 @@ func (r *AgentReconciler) stampInferenceCredentialVersion(ctx context.Context, a
 // no event: the reconcile requeues, the agent stays Failed, and the retry cap
 // still governs. Same shape as recoveryInputChanged (kyber#684).
 func (r *AgentReconciler) restartRequestChanged(ctx context.Context, agent *kyberv1.Agent) (bool, error) {
+	if agent.Annotations[kyberv1.AnnotationPassiveConfigGeneration] == strconv.FormatInt(agent.Generation, 10) {
+		return false, nil
+	}
 	if !agent.SpecChangedSinceLastPod() {
 		return false, nil
 	}
@@ -2664,12 +2670,14 @@ func (r *AgentReconciler) stampObservedGeneration(ctx context.Context, agent *ky
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.ObservedGeneration = agent.Generation
 	agent.Status.ObservedPodConfigHash = hash
+	agent.Status.ObservedPodEffort = agent.Spec.Effort
 	return r.Status().Patch(ctx, agent, patch)
 }
 
 func (r *AgentReconciler) stampObservedPodConfigHash(ctx context.Context, agent *kyberv1.Agent) error {
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Status.ObservedPodConfigHash = agent.PodConfigHash()
+	agent.Status.ObservedPodEffort = agent.Spec.Effort
 	if agent.Status.JobsProjectedGeneration == 0 {
 		agent.Status.JobsProjectedGeneration = agent.Generation
 	}
@@ -3003,6 +3011,33 @@ func (r *AgentReconciler) resolveAgentForPod(ctx context.Context, agent *kyberv1
 	}
 	if resolved.Spec.RuntimeVersion == "" {
 		resolved.Spec.RuntimeVersion = version
+	}
+
+	beforeEffort := agent.DeepCopy()
+	effortErr := reasoningeffort.Validate(resolved.Spec.Runtime, resolved.Spec.RuntimeVersion, resolved.Spec.Model, resolved.Spec.Inference != nil, resolved.Spec.Effort)
+	if effortErr == nil && resolved.Spec.Effort != "" {
+		adapter, err := r.resolveAdapter(resolved)
+		if err != nil {
+			return nil, err
+		}
+		if !reasoningeffort.ImageSupported(resolved.Spec.Runtime, adapter.Image(), r.BuildSHA, agent.Status.EffortRuntimeImage) {
+			effortErr = fmt.Errorf("runtime image effort integration is unverified; update runtime images or clear effort")
+		}
+	}
+
+	changed := false
+	if effortErr != nil {
+		changed = meta.SetStatusCondition(&agent.Status.Conditions, metav1.Condition{Type: kyberv1.AgentConditionEffortUnsupported, Status: metav1.ConditionTrue, Reason: "UnsupportedCombination", Message: effortErr.Error(), ObservedGeneration: agent.Generation})
+	} else {
+		changed = meta.RemoveStatusCondition(&agent.Status.Conditions, kyberv1.AgentConditionEffortUnsupported)
+	}
+	if changed {
+		if err := r.Status().Patch(ctx, agent, client.MergeFrom(beforeEffort)); err != nil {
+			return nil, fmt.Errorf("updating effort compatibility: %w", err)
+		}
+	}
+	if effortErr != nil {
+		return nil, fmt.Errorf("validating effort configuration: %w", effortErr)
 	}
 
 	// Empty now means runtime-selected default. Clear a condition left by an

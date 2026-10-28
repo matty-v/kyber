@@ -201,6 +201,9 @@ func (s *Server) increaseAgentDisk(w http.ResponseWriter, r *http.Request, name 
 	if !s.requireScope(w, r, name, "increase-disk", ScopeLifecycleWrite) {
 		return
 	}
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var req increaseDiskRequest
 	decoder := json.NewDecoder(r.Body)
@@ -249,10 +252,12 @@ func (s *Server) increaseAgentDisk(w http.ResponseWriter, r *http.Request, name 
 	}
 	previous := p.agent.DeepCopy()
 	p.agent.Spec.Resources.Disk = resource.MustParse(fmt.Sprintf("%dGi", req.SizeGiB))
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), p.agent, client.MergeFromWithOptions(previous, client.MergeFromWithOptimisticLock{})); err != nil {
 		writeJSONError(w, http.StatusConflict, "DISK_EXPANSION_CONFLICT", "Agent changed; retry disk increase")
 		return
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	now := metav1.Now()
 	op := &kyberv1.AgentDiskExpansionStatus{RequestedAt: &now, TargetGiB: req.SizeGiB, PVCUID: p.pvc.UID, PVUID: p.pv.UID, Stage: "Requested"}
 	current := &kyberv1.Agent{}

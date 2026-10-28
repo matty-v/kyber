@@ -4,8 +4,18 @@
 
 import type {
   OperatorCredentialInventory,
+  OperatorCredentialAdoptionPlan, OperatorCredentialAdoptionOperation, OperatorCredentialAdoptionStart,
+  OperatorCredentialCurrent,
+  OperatorCredentialMaintenanceStatus,
+  MaintenanceRecoveryReadiness, MaintenanceRecoveryOperation, MaintenanceRecoveryPendingPage,
+  OperatorCredentialUsage,
+  OperatorCredentialOptions,
+  OperatorCredentialPendingPage,
+  OperatorCredentialMutationRequest,
+  OperatorCredentialOperation,
   SecurityEventFilters,
   SecurityEventPage,
+  ReasoningEffortOptions,
   AgentAuthType,
   Agent,
   AgentInboundBinding,
@@ -183,6 +193,7 @@ export function createApiClient(cluster: Cluster) {
     path: string,
     body?: unknown,
     signal?: AbortSignal,
+    ifMatch?: string,
   ): Promise<T> {
     const url = `${baseURL}${path}`
     const headers: Record<string, string> = {
@@ -191,6 +202,7 @@ export function createApiClient(cluster: Cluster) {
     if (cluster.apiKey) {
       headers['Authorization'] = `Bearer ${cluster.apiKey}`
     }
+    if (ifMatch !== undefined) headers['If-Match'] = ifMatch
     const res = await fetch(url, {
       method,
       headers,
@@ -275,8 +287,8 @@ export function createApiClient(cluster: Cluster) {
   return {
     // ---- Agents ----
 
-    listAgents: async (): Promise<Agent[]> => {
-      const res = await request<AgentListResponse>('GET', '/api/v1/agents')
+    listAgents: async (signal?: AbortSignal): Promise<Agent[]> => {
+      const res = await request<AgentListResponse>('GET', '/api/v1/agents', undefined, signal)
       return res.items
     },
 
@@ -306,8 +318,62 @@ export function createApiClient(cluster: Cluster) {
     rotateApiKey: (): Promise<{ apiKey: string }> =>
       request<{ apiKey: string }>('POST', '/api/v1/rotate-api-key'),
 
+    getCurrentOperatorCredential: (signal?: AbortSignal): Promise<OperatorCredentialCurrent> =>
+      request<OperatorCredentialCurrent>('GET', '/api/v1/operator-credentials/current', undefined, signal),
+
     getOperatorCredentials: (signal?: AbortSignal): Promise<OperatorCredentialInventory> =>
       request<OperatorCredentialInventory>('GET', '/api/v1/operator-credentials', undefined, signal),
+
+    prepareOperatorCredentialAdoption: (signal?: AbortSignal): Promise<OperatorCredentialAdoptionPlan> =>
+      request<OperatorCredentialAdoptionPlan>('GET', '/api/v1/operator-credentials/adoption', undefined, signal),
+
+    startOperatorCredentialAdoption: (input: OperatorCredentialAdoptionStart, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('POST', '/api/v1/operator-credentials/adoption', input, signal),
+
+    getOperatorCredentialAdoption: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('GET', `/api/v1/operator-credential-adoptions?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    getPendingOperatorCredentialAdoptions: (signal?: AbortSignal): Promise<{ items: OperatorCredentialAdoptionOperation[]; limit: number }> =>
+      request<{ items: OperatorCredentialAdoptionOperation[]; limit: number }>('GET', '/api/v1/operator-credential-adoptions/pending', undefined, signal),
+
+    recoverOperatorCredentialAdoption: (operationId: string, attemptId: string, signal?: AbortSignal): Promise<OperatorCredentialAdoptionOperation> =>
+      request<OperatorCredentialAdoptionOperation>('POST', '/api/v1/operator-credential-adoptions/recover', { operationId, attemptId }, signal),
+
+    getOperatorCredentialMaintenance: (signal?: AbortSignal): Promise<OperatorCredentialMaintenanceStatus> =>
+      request<OperatorCredentialMaintenanceStatus>('GET', '/api/v1/operator-credentials/maintenance', undefined, signal),
+
+    checkMaintenanceRecovery: (signal?: AbortSignal): Promise<MaintenanceRecoveryReadiness> =>
+      request<MaintenanceRecoveryReadiness>('GET', '/api/v1/operator-credentials/maintenance/readiness', undefined, signal),
+
+    recoverCredentialMaintenance: (operationId: string, version: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('POST', '/api/v1/operator-credentials/maintenance/recover', { operationId }, signal, version),
+
+    getMaintenanceRecoveryOperation: (operationId: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('GET', `/api/v1/operator-credentials/maintenance/operations?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    getPendingMaintenanceRecoveryOperations: (after?: string, signal?: AbortSignal): Promise<MaintenanceRecoveryPendingPage> =>
+      request<MaintenanceRecoveryPendingPage>('GET', `/api/v1/operator-credentials/maintenance/operations/pending${after ? `?${new URLSearchParams({ after })}` : ''}`, undefined, signal),
+
+    resolveMaintenanceRecovery: (operationId: string, signal?: AbortSignal): Promise<MaintenanceRecoveryOperation> =>
+      request<MaintenanceRecoveryOperation>('POST', '/api/v1/operator-credentials/maintenance/operations/resolve', { operationId }, signal),
+
+    getOperatorCredentialUsage: (signal?: AbortSignal): Promise<OperatorCredentialUsage> =>
+      request<OperatorCredentialUsage>('GET', '/api/v1/operator-credentials/usage', undefined, signal),
+
+    getOperatorCredentialOptions: (signal?: AbortSignal): Promise<OperatorCredentialOptions> =>
+      request<OperatorCredentialOptions>('GET', '/api/v1/operator-credentials/options', undefined, signal),
+
+    getPendingOperatorCredentialOperations: (after?: string, signal?: AbortSignal): Promise<OperatorCredentialPendingPage> =>
+      request<OperatorCredentialPendingPage>('GET', `/api/v1/operator-credential-operations/pending${after ? `?${new URLSearchParams({ after })}` : ''}`, undefined, signal),
+
+    mutateOperatorCredential: (body: OperatorCredentialMutationRequest, version: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('POST', '/api/v1/operator-credentials/mutations', body, signal, version),
+
+    getOperatorCredentialOperation: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('GET', `/api/v1/operator-credential-operations?${new URLSearchParams({ operationId })}`, undefined, signal),
+
+    reconcileOperatorCredentialOperation: (operationId: string, signal?: AbortSignal): Promise<OperatorCredentialOperation> =>
+      request<OperatorCredentialOperation>('POST', '/api/v1/operator-credential-operations/reconcile', { operationId }, signal),
 
     getSecurityEvents: (filters: SecurityEventFilters = {}, signal?: AbortSignal): Promise<SecurityEventPage> => {
       const query = new URLSearchParams()
@@ -458,6 +524,13 @@ export function createApiClient(cluster: Cluster) {
       const link = await request<ArchiveDownloadLink>('POST', `/api/v1/agents/${encodeURIComponent(name)}/exports/${encodeURIComponent(id)}/download-link`)
       return { ...link, url: `${baseURL}${link.url}` }
     },
+
+    getCreateEffortOptions: (runtime: string, model: string, customEndpoint: boolean): Promise<ReasoningEffortOptions> =>
+      request<ReasoningEffortOptions>('GET', `/api/v1/effort-options?${new URLSearchParams({ runtime, model, customEndpoint: String(customEndpoint) })}`),
+    getAgentEffortOptions: (name: string): Promise<ReasoningEffortOptions> =>
+      request<ReasoningEffortOptions>('GET', `/api/v1/agents/${encodeURIComponent(name)}/effort-options`),
+    setAgentEffort: (name: string, effort: string): Promise<Agent> =>
+      request<Agent>('POST', `/api/v1/agents/${encodeURIComponent(name)}/set-effort`, { effort }),
 
     setAgentModel: (name: string, model: string): Promise<Agent> => {
       const req: SetModelRequest = { model }
@@ -770,8 +843,8 @@ export function createApiClient(cluster: Cluster) {
 
     // ---- Machines ----
 
-    listMachines: async (): Promise<Machine[]> => {
-      const res = await request<MachineListResponse>('GET', '/api/v1/machines')
+    listMachines: async (signal?: AbortSignal): Promise<Machine[]> => {
+      const res = await request<MachineListResponse>('GET', '/api/v1/machines', undefined, signal)
       return res.items
     },
 

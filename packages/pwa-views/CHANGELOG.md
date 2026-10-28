@@ -1,5 +1,41 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.0
+
+- Add reasoning-effort selection during creation and in Agent Details, with native compatibility choices, Default reset and pending application status on desktop/mobile. Requires compatible control-plane support; model selection remains separate.
+
+## 0.82.0
+
+- Add explicit existing-key setup, outcome checks and stopped-worker recovery controls. Changed connections clear protected setup state; uncertain writes are never retried automatically. Controls require the complete authority protocol and never start setup automatically.
+
+## 0.81.0
+
+- Describe credential ownership handoff events plainly in administrator access history. This adds no adoption control or runtime activation.
+
+## 0.80.0
+
+- Add typed read-only access to the authenticated credential’s own current identity and grants for safe adoption preflight. No new UI flow or authentication method.
+
+## 0.79.0
+
+- Add staged administrator maintenance readiness, outcome checks and explicit recovery controls. Reads never retry recovery, and uncertain writes retain their operation ID.
+
+## 0.74.0
+
+- Name lifecycle and archive audit actions plainly and distinguish completed requests from their background operations.
+
+## 0.73.0
+
+- Show current registry credential states and hide inactive credentials' former permissions.
+
+## 0.72.0
+
+- Show administrator access history in Settings with private connection-bound state and pagination.
+
+## 0.71.0
+
+- Add typed administrator security history API access and preserve large sequence/generation values as strings.
+
 ## 0.70.0
 
 - Show sensitive-data permissions and Machine log targets without implying Agent access.

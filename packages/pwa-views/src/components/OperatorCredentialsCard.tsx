@@ -5,6 +5,10 @@ import type { OperatorCredentialInventory } from '../lib/types'
 import { Button } from './Button'
 import { Card } from './Card'
 import { SecurityHistoryCard } from './SecurityHistoryCard'
+import { OperatorKeyManagement } from './OperatorKeyManagement'
+import { OperatorKeyUsage } from './OperatorKeyUsage'
+import { OperatorCredentialAdoption } from './OperatorCredentialAdoption'
+import { OperatorCredentialMaintenance } from './OperatorCredentialMaintenance'
 
 export function OperatorCredentialsCard({ children }: { children?: ReactNode }) {
   const cluster = useCluster()
@@ -67,15 +71,18 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
           : 'Could not load operator credentials. Try refreshing.'}
     </p>}
     {data && <>
-      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Operator keys for this Kyber installation. Secret values are never shown.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
+      <p className="mt-3 text-sm text-text-muted">{data.inventoryScope === 'installation-registry' ? 'Manage keys here. Installation configuration no longer controls access.' : 'Keys active on this Kyber server, plus additional configured keys. Secret values are never shown.'}</p>
       {data.warnings.map((warning) => <p key={warning} role="alert" className="mt-3 text-sm text-warning">{warning}</p>)}
+      {data.adoptionAvailable && <OperatorCredentialAdoption api={api} allowStart={data.inventoryScope === 'current-control-plane'} onCompleted={() => setRefresh(n => n + 1)} />}
+      <OperatorCredentialMaintenance api={api} enabled={!!data.maintenanceAvailable} revision={refresh} />
+      <OperatorKeyManagement key={`${cluster.id}:${cluster.baseURL}:${data.currentCredentialId}`} api={api} inventory={data} bearerConnection={!!cluster.apiKey} onCompleted={() => setRefresh((n) => n + 1)}>{(renderActions) => <OperatorKeyUsage api={api} enabled={data.usageAvailable} revision={refresh}>{(renderUsage) => <>
       {data.credentials.length === 0 ? <p className="mt-4 text-sm text-text-muted">No accepted credentials were reported.</p> : <ul className="mt-4 space-y-3">
         {data.credentials.map((credential, index) => <li key={`${credential.source}:${credential.id}:${index}`} className="min-w-0 rounded-lg border border-border-subtle p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="break-words text-sm font-medium text-text-primary">{credential.displayName || 'Unnamed credential'}</h3>
             <span className="text-xs text-text-muted">{credential.state === 'accepted' ? 'Active' : credential.state === 'shared-key' ? 'Shared key' : credential.state === 'revoked' ? 'Revoked' : credential.state === 'expired' ? 'Expired' : 'Configured, not active'}</span>
           </div>
-          <p className="mt-1 text-xs text-text-muted">{credential.accessLevel === 'administrator' ? 'Administrator' : 'Restricted integration'} · {credential.source === 'installation' ? 'Provided by the installation' : credential.source === 'managed' ? 'Managed in Kyber' : 'Managed outside Kyber'}</p>
+          <p className="mt-1 text-xs text-text-muted">{credential.accessLevel === 'administrator' ? 'Administrator' : 'Restricted integration'} · {credential.source === 'installation' ? data.inventoryScope === 'installation-registry' ? 'Managed in Kyber' : 'Provided by the installation' : credential.source === 'managed' ? 'Managed in Kyber' : 'Managed outside Kyber'}</p>
           {credential.authenticatesAs && <p className="mt-2 break-words text-sm text-warning">This key authenticates as {credential.authenticatesAs}. It does not have separate access.</p>}
           {credential.state === 'accepted' || credential.state === 'shared-key' ? <>
             {credential.permissions.length > 0 ? <ul className="mt-3 space-y-1 text-sm text-text-primary">
@@ -87,18 +94,23 @@ export function OperatorCredentialsCard({ children }: { children?: ReactNode }) 
             {data.configurationAvailable && !credential.configured && <p className="mt-2 text-sm text-warning">Still active, but no longer present in configuration.</p>}
           </> : <p className="mt-3 text-sm text-text-muted">{credential.state === 'revoked' ? 'This credential has been revoked and cannot authenticate.' : credential.state === 'expired' ? 'This credential has expired and cannot authenticate.' : 'This credential is configured but is not accepted by the current control plane. Configuration may need correction or a restart.'}</p>}
           {credential.configurationDiffers && <p className="mt-2 text-sm text-warning">Configured permissions differ from active access. Active access is shown above.</p>}
-          <p className="mt-3 text-xs text-text-muted">Creation time unknown · Last use unavailable</p>
+          <p className="mt-3 text-xs text-text-muted">{credential.createdAt ? `Created ${new Date(credential.createdAt).toLocaleString()}` : 'Creation time unknown'}</p>
+          {renderUsage(credential)}
+          {credential.expiresAt && <p className="mt-1 text-xs text-text-muted">Expires {new Date(credential.expiresAt).toLocaleString()}</p>}
+          {credential.id === data.currentCredentialId && (data.inventoryScope === 'installation-registry' || credential.source === 'installation') && <p className="mt-1 text-xs text-text-muted">You’re using this key</p>}
           {credential.scopes.length > 0 && <details className="mt-2 text-xs text-text-muted">
             <summary className="cursor-pointer">{credential.state === 'revoked' || credential.state === 'expired' ? 'Previous permission identifiers' : 'Permission identifiers'}</summary>
             <p className="mt-1 break-words">{credential.scopes.join(', ')}</p>
           </details>}
+          {renderActions(credential)}
         </li>)}
       </ul>}
-      <p className="mt-4 text-xs text-text-muted">Inventory checked {new Date(data.observedAt).toLocaleString()}. Complete usage totals are not available.</p>
+      </>}</OperatorKeyUsage>}</OperatorKeyManagement>
+      <p className="mt-4 text-xs text-text-muted">Inventory checked {new Date(data.observedAt).toLocaleString()}.{!data.usageAvailable && ' Complete usage totals are not available.'}</p>
       <details className="mt-2 text-xs text-text-muted">
         <summary className="cursor-pointer">About this inventory</summary>
         <p className="mt-2">Keys shared by several people or tools cannot identify individual users. {data.inventoryScope === 'installation-registry' ? 'Changes to keys apply across this installation.' : 'Changes made outside Kyber may require a control-plane restart. Pending key replacements are not compared here.'}</p>
       </details>
     </>}
-  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && children}</>
+  </Card>{data && <SecurityHistoryCard credentials={data.credentials} />}{data && data.inventoryScope !== 'installation-registry' && data.configurationRotationAvailable !== false && children}</>
 }

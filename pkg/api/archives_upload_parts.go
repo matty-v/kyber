@@ -134,8 +134,10 @@ func (s *Server) startPartUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	caller := callerFrom(r.Context())
+	beginManagementMutation(r)
 	j, err := a.StartUpload(r.Context(), caller.Name)
 	if errors.Is(err, archivejob.ErrConcurrency) {
+		markSensitiveOutcome(r, "failure")
 		w.Header().Set("Retry-After", "60")
 		writeJSONError(w, http.StatusTooManyRequests, "archive_capacity", "the installation is already running its maximum number of archive jobs")
 		return
@@ -155,6 +157,7 @@ func (s *Server) startPartUpload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start the upload")
 		return
 	}
+	completeManagementMutation(r, "archives:upload")
 	writeJSON(w, http.StatusCreated, viewArchiveJob(cur))
 }
 
@@ -212,6 +215,7 @@ func (s *Server) receivePart(w http.ResponseWriter, r *http.Request, id, number 
 		}
 		pw.CloseWithError(err)
 	}()
+	beginManagementMutation(r)
 	_, err = a.Store.Put(ctx, partKey, pr)
 	pr.CloseWithError(err)
 	bg := context.WithoutCancel(ctx)
@@ -244,6 +248,7 @@ func (s *Server) receivePart(w http.ResponseWriter, r *http.Request, id, number 
 		writeJSONError(w, http.StatusConflict, "upload_changed", "the upload was canceled or finished while the part was received")
 		return
 	}
+	completeManagementMutation(r, "archives:upload")
 	writeJSON(w, http.StatusOK, viewArchiveJob(cur))
 }
 
@@ -270,6 +275,7 @@ func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request, id strin
 	// part, cannot race it. The worker joins the parts: on a large archive
 	// that outlasts any proxy's request timeout, and a dropped connection
 	// must not abandon it.
+	beginManagementMutation(r)
 	claimed, ok, err := a.updateUpload(r.Context(), id, func(c *archivejob.Job) error {
 		c.UploadClaimed = true
 		c.Step, c.Message = archivejob.StepAssembling, "Assembling the archive"
@@ -279,6 +285,7 @@ func (s *Server) completeUpload(w http.ResponseWriter, r *http.Request, id strin
 		writeJSONError(w, http.StatusConflict, "upload_changed", "the upload is no longer receiving parts")
 		return
 	}
+	completeManagementMutation(r, "archives:upload")
 	writeJSON(w, http.StatusAccepted, viewArchiveJob(claimed))
 }
 

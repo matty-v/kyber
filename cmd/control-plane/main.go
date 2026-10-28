@@ -54,6 +54,7 @@ import (
 	"github.com/matty-v/kyber/pkg/logging"
 	"github.com/matty-v/kyber/pkg/metrics"
 	"github.com/matty-v/kyber/pkg/metricsstore"
+	"github.com/matty-v/kyber/pkg/operatorcredentials"
 	"github.com/matty-v/kyber/pkg/podtoken"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
@@ -62,6 +63,7 @@ import (
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	_ "github.com/matty-v/kyber/pkg/runtimes/hermes"
 	"github.com/matty-v/kyber/pkg/securityaudit"
+	"github.com/matty-v/kyber/pkg/selfupgrade"
 	"github.com/matty-v/kyber/pkg/skillstore"
 	"github.com/matty-v/kyber/pkg/statechangestore"
 	"github.com/matty-v/kyber/pkg/taskdispatch"
@@ -687,6 +689,7 @@ func main() {
 
 	_, durableTaskStoreReady := agentTaskStore.(taskstore.DispatchStore)
 	agentReconciler := &agentcontroller.AgentReconciler{
+		BuildSHA:                      BuildSHA,
 		Client:                        mgr.GetClient(),
 		Scheme:                        mgr.GetScheme(),
 		Recorder:                      mgr.GetEventRecorderFor("agent-controller"),
@@ -1469,6 +1472,7 @@ func main() {
 	}
 
 	publicAPI = &internalapi.Server{
+		OperatorCredentialPodUID:      os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"),
 		SecurityAudit:                 securityHistory,
 		K8sClient:                     mgr.GetClient(),
 		APIReader:                     mgr.GetAPIReader(),
@@ -1563,6 +1567,66 @@ func main() {
 		}
 		publicAPI.ComputeSimulation = computeSimulation
 		setupLog.Info("development compute scenario control enabled")
+	}
+	maintenanceReader, maintenanceErr := operatorcredentials.NewMaintenanceStore(restCfg, publicAPI.Namespace)
+	if maintenanceErr != nil {
+		setupLog.Info("Operator credential maintenance visibility unavailable")
+	} else {
+		publicAPI.OperatorCredentialMaintenance = maintenanceReader
+		// Recovery is part of the complete authority protocol. Keep it staged
+		// until adoption, release compatibility and durable audit are enabled.
+		if operatorcredentials.RuntimeAuthorityProtocolVersion >= 1 {
+			verifier, err := selfupgrade.NewMaintenanceReleaseVerifier(restCfg, publicAPI.Namespace)
+			if err != nil {
+				setupLog.Info("Operator credential maintenance recovery unavailable")
+			} else {
+				publicAPI.OperatorCredentialMaintenanceReconciler = verifier
+			}
+		}
+	}
+	if operatorcredentials.RuntimeAuthorityProtocolVersion >= 1 {
+		authority, err := operatorcredentials.NewAuthorityStore(restCfg, publicAPI.Namespace, operatorcredentials.DefaultSecretName, operatorcredentials.DefaultAuthoritySecretName)
+		if err != nil {
+			setupLog.Error(nil, "Operator credential authority could not be initialized")
+			os.Exit(1)
+		}
+		// Current authentication reads Kubernetes directly and remains independent
+		// of the audit database. An outage must never restore configured keys.
+		publicAPI.OperatorCredentialAuthority = authority
+		adoption, err := internalapi.NewOperatorCredentialAdoptionCoordinator(restCfg, publicAPI.Namespace, publicAPI.APIKeySecretName, os.Getenv("KYBER_CONTROL_PLANE_DEPLOYMENT"), os.Getenv("KYBER_OPERATOR_CREDENTIAL_ADOPTION_RELEASE"), os.Getenv("KYBER_OPERATOR_CREDENTIAL_ADOPTION_SERVICE_ACCOUNT"), securityHistory)
+		if err != nil {
+			setupLog.Info("Operator credential setup unavailable; current authentication remains available")
+		} else {
+			publicAPI.OperatorCredentialAdoption = adoption
+		}
+		delivery := internalapi.NewOperatorCredentialDelivery(publicAPI)
+		if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-runCtx.Done():
+					return nil
+				case <-ticker.C:
+					_, _ = delivery.RunOnce(runCtx)
+				}
+			}
+		})); err != nil {
+			setupLog.Error(nil, "Registering operator credential completion worker failed")
+			os.Exit(1)
+		}
+	}
+	if writer, ok := securityHistory.(securityaudit.CredentialUsageWriter); ok {
+		collector, usageErr := securityaudit.NewCredentialUsageCollector(writer, publicAPI.Namespace, os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"))
+		if usageErr != nil {
+			setupLog.Info("Operator key activity collection unavailable; authentication remains available")
+		} else {
+			publicAPI.OperatorCredentialUsage = collector
+			if err := mgr.Add(manager.RunnableFunc(func(runCtx context.Context) error { collector.Run(runCtx); return nil })); err != nil {
+				setupLog.Error(err, "registering operator key activity collector")
+				os.Exit(1)
+			}
+		}
 	}
 	if strings.TrimSpace(publicAPI.APIKey) == "" {
 		setupLog.Info("installation administrator key not configured — administrator access is unavailable")

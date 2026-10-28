@@ -224,10 +224,16 @@ paths:
                 additionalProperties: false
                 required: [observedAt, inventoryScope, configurationAvailable, usageAvailable, credentials, warnings]
                 properties:
+                  version: {type: string, description: Opaque reviewed registry version for If-Match; not key material.}
+                  currentCredentialId: {type: string, description: Identifier of the key authenticating this request.}
+                  configurationRotationAvailable: {type: boolean, description: "Whether the former installation-key rotation workflow is supported. False when managed authority is enabled, including while setup is unavailable."}
+                  adoptionAvailable: {type: boolean, description: Explicit setup capability. Never enables setup automatically.}
+                  managementAvailable: {type: boolean, description: "Whether the selected authority and required journal support management. This is capability metadata, not a database health guarantee."}
                   observedAt: {type: string, format: date-time}
                   inventoryScope: {type: string, enum: [current-control-plane, installation-registry]}
                   configurationAvailable: {type: boolean}
-                  usageAvailable: {type: boolean, enum: [false]}
+                  maintenanceAvailable: {type: boolean, description: Read-only maintenance status API capability.}
+                  usageAvailable: {type: boolean, description: Activity API capability; collection health is reported by the usage response.}
                   warnings: {type: array, items: {type: string}}
                   credentials:
                     type: array
@@ -236,6 +242,12 @@ paths:
                       additionalProperties: false
                       required: [id, name, displayName, accessLevel, state, source, scopes, agentResources, permissions, configured]
                       properties:
+                        principalId: {type: string}
+                        tenantId: {type: string}
+                        activityTrackable: {type: boolean}
+                        activityUnavailableReason: {type: string, enum: [identity-incomplete, identity-shared, shared-key]}
+                        createdAt: {type: string, format: date-time, description: Present only when actual issuance time is known.}
+                        expiresAt: {type: string, format: date-time}
                         id: {type: string}
                         name: {type: string}
                         displayName: {type: string}
@@ -259,6 +271,440 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/ErrorResponse'}
+  /api/v1/operator-credentials/mutations:
+    post:
+      operationId: mutateOperatorCredential
+      summary: Create, edit, rotate or revoke a Kyber-managed key
+      description: Current administrator only. Requires selected registry authority, required durable admission and the exact version from the reviewed inventory. New material is client-prepared and saved before activation; no existing key is returned. Never automatically retry a POST after a lost response; inspect its operation ID. Pending is not a successful or failed key change. Runtime activation remains separately gated.
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: {type: string}
+          description: Exact opaque version returned by the key inventory, including quotes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialMutation'}
+      responses:
+        '200':
+          description: Definitive original operation outcome, with no credential material
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '202':
+          description: Admitted change requires reconciliation; outcome is not confirmed
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid, ambiguous or unsupported key change
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '409':
+          description: Reviewed version changed, or operation already recorded; inspect its original outcome
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - {$ref: '#/components/schemas/ErrorResponse'}
+                  - {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '428':
+          description: Reviewed inventory version required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '503':
+          description: Authority or required admission unavailable; an unconfirmed admission must be checked before retrying
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+  /api/v1/operator-credential-operations/reconcile:
+    post:
+      operationId: reconcileOperatorCredentialOperation
+      summary: Resolve an interrupted key change
+      description: Current administrator only, with required audit admission. Reads the original intent and current selected authority. It can fence the original compare-and-swap so a late write cannot follow a final failure. It never issues or returns key material. Unknown authority or completion stays pending.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Definitive original operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '202':
+          description: Original outcome still unconfirmed; no new key issued
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid operation identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/adoption:
+    get:
+      operationId: prepareOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionPlan'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+    post:
+      operationId: startOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionStart'}
+      responses:
+        '202':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions:
+    get:
+      operationId: getOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      parameters:
+        - {in: query, name: operationId, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions/pending:
+    get:
+      operationId: getPendingOperatorCredentialAdoptions
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      responses:
+        '200':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionPending'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credential-adoptions/recover:
+    post:
+      operationId: recoverOperatorCredentialAdoption
+      summary: Explicitly manage existing keys in Kyber
+      description: Current administrator only, no-store. Requires the complete authority protocol. Unknown writes remain pending; outcome reads never launch a worker. No credential values are returned.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionRecovery'}
+      responses:
+        '202':
+          description: Verified setup observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}
+        '400': {description: Invalid setup request}
+        '401': {description: Authentication required}
+        '403': {description: Current administrator required}
+        '409': {description: Setup changed}
+        '503': {description: Setup could not be verified}
+  /api/v1/operator-credentials/current:
+    get:
+      operationId: getCurrentOperatorCredential
+      summary: Read only the authenticated credential's current identity and access
+      description: Any currently accepted credential may read its own metadata. Reauthenticates before output; no-store. Returns no key value, material fingerprint or other credential inventory. Unknown identity and missing process identity are not invented. No database dependency or authority activation.
+      responses:
+        '200':
+          description: Current accepted identity and grants
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialCurrent'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance:
+    get:
+      operationId: getOperatorCredentialMaintenance
+      summary: Inspect the credential maintenance block
+      description: Current administrator only, no-store. Reads the installation reservation directly. Only a verified missing reservation is idle. Inspection never acquires, releases or recovers maintenance; age does not prove an operation has stopped.
+      responses:
+        '200':
+          description: Current read-only maintenance observation
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialMaintenance'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/readiness:
+    get:
+      operationId: checkMaintenanceRecovery
+      summary: Check whether stopped upgrade maintenance can be recovered
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryReadiness'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/recover:
+    post:
+      operationId: recoverCredentialMaintenance
+      summary: Explicitly recover verified stopped maintenance
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: header, name: If-Match, required: true, schema: {type: string}, description: Exact opaque version returned by the recovery readiness check.}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '202':
+          description: Outcome remains pending; no automatic retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '400': {description: Invalid operation ID or payload}
+        '409': {description: Maintenance changed or recovery is not verified}
+        '428': {description: Reviewed metadata version required for initial recovery}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations:
+    get:
+      operationId: getMaintenanceRecoveryOperation
+      summary: Read a recovery outcome without retrying effects
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: query, name: operationId, required: true, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations/pending:
+    get:
+      operationId: getPendingMaintenanceRecoveryOperations
+      summary: List unresolved maintenance recoveries
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      parameters:
+        - {in: query, name: after, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryPendingPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/maintenance/operations/resolve:
+    post:
+      operationId: resolveMaintenanceRecovery
+      summary: Explicitly resolve an interrupted recovery
+      description: Current administrator only, no-store. Available only with the complete authority protocol and durable journal. Inspection and outcome reads never mutate maintenance. No age-based or force unlock. Unconfirmed writes remain pending until explicit resolution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [operationId]
+              properties:
+                operationId: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Verified observation or final operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '202':
+          description: Outcome remains pending; no automatic retry
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}
+        '400': {description: Invalid operation ID or payload}
+        '409': {description: Maintenance changed or recovery is not verified}
+        '428': {description: Reviewed metadata version required for initial recovery}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403': {description: Current administrator access required}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/usage:
+    get:
+      operationId: getOperatorCredentialUsage
+      summary: Read observed operator key activity and coverage
+      description: Administrator only, no-store. Reports observed HTTP authentications and denied requests separately from completed actions. Partial coverage, pending acknowledgements and losses remain explicit. Stable imported identities retain their pre-adoption observations. No credential material or raw request content is collected.
+      responses:
+        '200':
+          description: Observed activity with collection limitations
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialUsage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credentials/options:
+    get:
+      operationId: getOperatorCredentialOptions
+      summary: Read supported key permission choices
+      description: Current registry administrator only. No key material. Version 1 uses exact namespace/name resource targets.
+      responses:
+        '200':
+          description: Supported permission choices
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [version, namespace, permissions]
+                properties:
+                  version: {type: integer, enum: [1]}
+                  namespace: {type: string}
+                  permissions:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [scope, label, target]
+                      properties:
+                        scope: {type: string}
+                        label: {type: string}
+                        target: {type: string, enum: [none, agent, machine]}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credential-operations/pending:
+    get:
+      operationId: getPendingOperatorCredentialOperations
+      summary: Read pending key changes
+      description: Current registry administrator only. Bounded live namespace-scoped scan, no mutation or automatic fencing. Restart from the first page periodically to find newly admitted operations.
+      parameters:
+        - {in: query, name: after, schema: {type: string, format: uuid}}
+      responses:
+        '200':
+          description: At most 25 pending key changes
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    maxItems: 25
+                    items: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+                  next: {type: string, format: uuid}
+        '400':
+          description: Invalid continuation
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
+  /api/v1/operator-credential-operations:
+    get:
+      operationId: getOperatorCredentialOperation
+      summary: Inspect the recorded outcome of a key change
+      description: Current administrator only, no-store. Returns safe outcome metadata and never performs a new key write. Not found means unobserved, not proof of failure. Unknown writes stay pending until separately reconciled.
+      parameters:
+        - in: query
+          name: operationId
+          required: true
+          schema: {type: string, format: uuid}
+      responses:
+        '200':
+          description: Original recorded operation outcome
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/OperatorCredentialOperation'}
+        '400':
+          description: Invalid operation identity
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '403':
+          description: Current administrator access required
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/ErrorResponse'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/ServiceUnavailable'}
   /api/v1/security-events:
     get:
       operationId: listSecurityEvents
@@ -271,7 +717,7 @@ paths:
         - {in: query, name: principalId, schema: {type: string, maxLength: 512}}
         - {in: query, name: credentialId, schema: {type: string, maxLength: 512}}
         - {in: query, name: action, schema: {type: string}}
-        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, log-container]}}
+        - {in: query, name: resourceKind, schema: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, credential-adoption, log-container]}}
         - {in: query, name: resourceName, schema: {type: string, maxLength: 512}}
         - {in: query, name: limit, schema: {type: integer, minimum: 1, maximum: 200, default: 50}}
         - {in: query, name: cursor, schema: {type: string, maxLength: 1024}}
@@ -2381,6 +2827,218 @@ components:
             additionalProperties: true
 
   schemas:
+    OperatorCredentialAdoptionPlan:
+      type: object
+      additionalProperties: false
+      required: [version, keyCount, reconnectCount]
+      properties:
+        version: {type: string}
+        keyCount: {type: integer, minimum: 0}
+        reconnectCount: {type: integer, minimum: 0}
+    OperatorCredentialAdoptionOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, status, recoverable, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, failed, finishing, succeeded]}
+        recoverable: {type: boolean}
+        observedAt: {type: string, format: date-time}
+    OperatorCredentialAdoptionStart:
+      type: object
+      additionalProperties: false
+      required: [operationId, version, confirmOwnership]
+      properties:
+        operationId: {type: string, format: uuid}
+        version: {type: string}
+        confirmOwnership: {type: boolean, enum: [true]}
+    OperatorCredentialAdoptionRecovery:
+      type: object
+      additionalProperties: false
+      required: [operationId, attemptId]
+      properties:
+        operationId: {type: string, format: uuid}
+        attemptId: {type: string, format: uuid}
+    OperatorCredentialAdoptionPending:
+      type: object
+      additionalProperties: false
+      required: [items, limit]
+      properties:
+        items: {type: array, maxItems: 25, items: {$ref: '#/components/schemas/OperatorCredentialAdoptionOperation'}}
+        limit: {type: integer, enum: [25]}
+    OperatorCredentialCurrent:
+      type: object
+      additionalProperties: false
+      required: [observedAt, namespace, name, generation, identityComplete, authority, accessLevel, scopes, agentResources, machineResources]
+      properties:
+        observedAt: {type: string, format: date-time}
+        controlPlanePodUid: {type: string, format: uuid}
+        namespace: {type: string}
+        name: {type: string}
+        credentialId: {type: string}
+        principalId: {type: string}
+        tenantId: {type: string}
+        kind: {type: string}
+        issuer: {type: string}
+        subject: {type: string}
+        generation: {type: string, pattern: '^(0|[1-9][0-9]*)$'}
+        identityComplete: {type: boolean}
+        authority: {type: string, enum: [configuration, registry]}
+        accessLevel: {type: string, enum: [administrator, restricted]}
+        scopes: {type: array, items: {type: string}}
+        agentResources: {type: array, items: {type: string}}
+        machineResources: {type: array, items: {type: string}}
+    MaintenanceRecoveryReadiness:
+      type: object
+      additionalProperties: false
+      required: [ready, reason]
+      properties:
+        ready: {type: boolean}
+        reason: {type: string, enum: [ready, idle, writer-unverified, writer-running, release-unverified, metadata-changed, recovery-pending, recovery-unverified]}
+        version: {type: string}
+        operationId: {type: string, format: uuid}
+    MaintenanceRecoveryOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, status, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        status: {type: string, enum: [pending, success, failure]}
+        observedAt: {type: string, format: date-time}
+    MaintenanceRecoveryPendingPage:
+      type: object
+      additionalProperties: false
+      required: [items]
+      properties:
+        items: {type: array, maxItems: 25, items: {$ref: '#/components/schemas/MaintenanceRecoveryOperation'}}
+        next: {type: string, format: uuid}
+    OperatorCredentialMaintenance:
+      type: object
+      oneOf:
+        - properties:
+            blocked: {enum: [false]}
+        - required: [version, operation]
+          properties:
+            blocked: {enum: [true]}
+      additionalProperties: false
+      required: [observedAt, blocked]
+      properties:
+        recoveryAvailable: {type: boolean}
+        recoveryOperationId: {type: string, format: uuid}
+        writer:
+          type: object
+          additionalProperties: false
+          required: [podName, jobName]
+          properties:
+            podName: {type: string}
+            jobName: {type: string}
+        observedAt: {type: string, format: date-time}
+        blocked: {type: boolean}
+        version: {type: string, description: Opaque reviewed metadata version; not a release capability.}
+        operation:
+          type: object
+          additionalProperties: false
+          required: [kind, executionId, startedAt]
+          properties:
+            kind: {type: string, enum: [adoption, upgrade]}
+            executionId: {type: string, format: uuid}
+            startedAt: {type: string, format: date-time}
+    OperatorCredentialUsage:
+      type: object
+      additionalProperties: false
+      required: [version, observedAt, partial, truncated, entryPoints, identities, coverage, items]
+      properties:
+        version: {type: integer, enum: [1]}
+        observedAt: {type: string, format: date-time}
+        partial: {type: boolean, enum: [true]}
+        truncated: {type: boolean}
+        entryPoints: {type: array, items: {type: string, enum: [operator-api, browser-sign-in, archive-download]}}
+        identities:
+          type: array
+          maxItems: 128
+          items: {$ref: '#/components/schemas/OperatorCredentialUsageIdentity'}
+        coverage:
+          type: object
+          additionalProperties: false
+          required: [currentObserverReported, currentObserverFresh, freshObservers, staleObservers, dropped, unrecognized, unattributed, unavailable]
+          properties:
+            since: {type: string, format: date-time}
+            latestProgress: {type: string, format: date-time}
+            currentObserverReported: {type: boolean}
+            currentObserverFresh: {type: boolean}
+            freshObservers: {type: integer, minimum: 0}
+            staleObservers: {type: integer, minimum: 0}
+            dropped: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unrecognized: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unattributed: {$ref: '#/components/schemas/OperatorUsageCount'}
+            unavailable: {$ref: '#/components/schemas/OperatorUsageCount'}
+        local:
+          type: object
+          additionalProperties: false
+          required: [pendingObservations, lossReportsAwaitingConfirmation, closed]
+          properties:
+            pendingObservations: {type: integer, minimum: 0}
+            lossReportsAwaitingConfirmation: {$ref: '#/components/schemas/OperatorUsageCount'}
+            closed: {type: boolean}
+        items:
+          type: array
+          maxItems: 768
+          items:
+            allOf:
+              - {$ref: '#/components/schemas/OperatorCredentialUsageIdentity'}
+              - type: object
+                required: [transport, authenticated, denied, generation, actions]
+                properties:
+                  transport: {type: string, enum: [bearer, browser-session, archive-capability]}
+                  authenticated: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  denied: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  generation: {$ref: '#/components/schemas/OperatorUsageCount'}
+                  lastAcceptedAt: {type: string, format: date-time}
+                  actions:
+                    type: object
+                    additionalProperties: {$ref: '#/components/schemas/OperatorUsageCount'}
+    OperatorCredentialUsageIdentity:
+      type: object
+      required: [credentialId, principalId, tenantId, authority]
+      properties:
+        credentialId: {type: string}
+        principalId: {type: string}
+        tenantId: {type: string}
+        authority: {type: string, enum: [configuration, registry]}
+    OperatorUsageCount:
+      type: string
+      pattern: '^(0|[1-9][0-9]{0,39})$'
+    OperatorCredentialPolicy:
+      type: object
+      additionalProperties: false
+      required: [name, role]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 256}
+        role: {type: string, enum: [administrator, restricted]}
+        scopes: {type: array, maxItems: 64, uniqueItems: true, items: {type: string}}
+        agentResources: {type: array, maxItems: 256, uniqueItems: true, items: {type: string}}
+        machineResources: {type: array, maxItems: 256, uniqueItems: true, items: {type: string}}
+        expiresAt: {type: string, format: date-time, nullable: true}
+    OperatorCredentialMutation:
+      type: object
+      additionalProperties: false
+      required: [operationId, action]
+      properties:
+        operationId: {type: string, format: uuid}
+        action: {type: string, enum: [create, update, rotate, revoke]}
+        credentialId: {type: string}
+        policy: {$ref: '#/components/schemas/OperatorCredentialPolicy'}
+        key: {type: string, writeOnly: true, description: "Client-prepared 32-byte base64url value, saved before activation. Required for create/rotate and forbidden for update/revoke."}
+    OperatorCredentialOperation:
+      type: object
+      additionalProperties: false
+      required: [operationId, action, credentialId, status, observedAt]
+      properties:
+        operationId: {type: string, format: uuid}
+        action: {type: string, enum: ['credential:create', 'credential:update', 'credential:rotate', 'credential:revoke']}
+        credentialId: {type: string}
+        status: {type: string, enum: [pending, success, failure]}
+        observedAt: {type: string, format: date-time}
     AgentResourceOptions:
       type: object
       required: [machine, provider, currentCPU, currentMemory, availableCPU, availableMemory, minimumCPU, minimumMemory, cpuStep, memoryStep, cpu, memory]
@@ -4103,7 +4761,7 @@ components:
         requestId: {type: string}
         method: {type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS, OTHER]}
         action: {type: string}
-        resourceKind: {type: string, enum: [installation, agent, machine, credential, log-container]}
+        resourceKind: {type: string, enum: [installation, agent, machine, credential, credential-maintenance, credential-adoption, log-container]}
         resourceName: {type: string}
         phase: {type: string, enum: [authentication, authorization, completion]}
         outcome: {type: string, enum: [allow, deny, success, failure, unknown]}

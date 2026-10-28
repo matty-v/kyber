@@ -43,6 +43,7 @@ type CreateAgentRequest struct {
 	Machine             string                 `json:"machine"`
 	Runtime             string                 `json:"runtime"`
 	Model               string                 `json:"model"`
+	Effort              string                 `json:"effort,omitempty"`
 	StartupPrompt       string                 `json:"startupPrompt,omitempty"`
 	SessionResume       bool                   `json:"sessionResume,omitempty"`
 	RequestReplyEnabled bool                   `json:"requestReplyEnabled,omitempty"`
@@ -211,6 +212,9 @@ type AgentResponse struct {
 	Machine                  string                                 `json:"machine"`
 	Runtime                  string                                 `json:"runtime"`
 	AuthType                 kyberv1.AgentAuthType                  `json:"authType"`
+	EffortProblem            string                                 `json:"effortProblem,omitempty"`
+	EffortPending            bool                                   `json:"effortPending,omitempty"`
+	Effort                   string                                 `json:"effort,omitempty"`
 	Model                    string                                 `json:"model"`
 	StartupPrompt            string                                 `json:"startupPrompt,omitempty"`
 	SessionResume            bool                                   `json:"sessionResume,omitempty"`
@@ -484,6 +488,8 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		Runtime:                  a.Spec.Runtime,
 		AuthType:                 authType,
 		Model:                    a.Spec.Model,
+		Effort:                   a.Spec.Effort,
+		EffortPending:            a.Spec.Effort != a.Status.ObservedPodEffort,
 		StartupPrompt:            a.Spec.StartupPrompt,
 		SessionResume:            a.Spec.SessionResume,
 		RequestReplyEnabled:      a.Spec.RequestReplyEnabled,
@@ -579,6 +585,9 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	// the PWA showed a blank agent with no way to reach the cause. Surfacing
 	// them here is what makes the failure visible at all.
 	resp.RuntimeImageMissing = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing)
+	if condition := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionEffortUnsupported); condition != nil && condition.Status == metav1.ConditionTrue && a.Spec.Effort != "" && condition.ObservedGeneration == a.Generation {
+		resp.EffortProblem = condition.Message
+	}
 	resp.ModelUnresolved = meta.IsStatusConditionTrue(a.Status.Conditions, kyberv1.AgentConditionModelUnresolved)
 	if c := meta.FindStatusCondition(a.Status.Conditions, kyberv1.AgentConditionRuntimeImageMissing); c != nil && c.Status == metav1.ConditionTrue {
 		resp.BlockedReason = c.Message
@@ -872,6 +881,10 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if action == "effort-options" && r.Method == http.MethodGet {
+		s.getAgentEffortOptions(w, r, name)
+		return
+	}
 	// All other sub-actions require POST.
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
@@ -891,6 +904,8 @@ func (s *Server) handleAgents(w http.ResponseWriter, r *http.Request) {
 		// honors it only from recoverable phases and (for live-pod phases)
 		// deletes the pod. No new handler or auth surface.
 		s.setAgentDesiredPhase(w, r, name, kyberv1.AgentPhaseNeedsAuth)
+	case "set-effort":
+		s.setAgentEffort(w, r, name)
 	case "set-model":
 		s.setAgentModel(w, r, name)
 	case "set-runtime-version":
@@ -1166,6 +1181,9 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if !s.validateAgentEffort(w, r, &kyberv1.Agent{Spec: kyberv1.AgentSpec{Runtime: req.Runtime, Model: req.Model, Effort: req.Effort}}, req.Inference != nil) {
+		return
+	}
 	// kyber#674: registered is not the same as usable. A runtime whose image
 	// was never pinned on this install (image.<runtime>.tag empty, so the
 	// adapter's image env var is absent) would produce a pod with an empty
@@ -1327,6 +1345,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 			Machine:             req.Machine,
 			Runtime:             req.Runtime,
 			Model:               req.Model,
+			Effort:              req.Effort,
 			StartupPrompt:       req.StartupPrompt,
 			SessionResume:       req.SessionResume,
 			RequestReplyEnabled: req.RequestReplyEnabled,
@@ -1365,6 +1384,10 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 	// Create k8s Secrets BEFORE the Agent CRD so that a failure (e.g. invalid
 	// OAuth code) leaves no orphan agent. If secrets fail, any partially-created
 	// secrets are rolled back so retries get a clean slate.
+	if !s.requireAgentCreateAudit(w, r, req.Name) {
+		return
+	}
+	beginManagementMutation(r)
 	createdSecrets, err := s.createAgentSecrets(r.Context(), req)
 	if err != nil {
 		var conflict *secretConflictError
@@ -1410,6 +1433,7 @@ func (s *Server) createAgent(w http.ResponseWriter, r *http.Request) {
 		hold.uid = agent.UID
 		hold.secrets = createdSecrets
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusCreated, agentToResponse(agent))
 }
 
@@ -1505,6 +1529,13 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			return
 		}
 	}
+	var effortFields map[string]json.RawMessage
+	if json.Unmarshal(wire, &effortFields) == nil {
+		if _, present := effortFields["effort"]; present {
+			writeJSONErrorWithField(w, 400, "VALIDATION_ERROR", "use the set-effort action to change or clear effort", "effort")
+			return
+		}
+	}
 	if err := json.Unmarshal(wire, &req); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "bad_request", "invalid JSON body")
 		return
@@ -1517,6 +1548,9 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
+	if patchIncludesLifecycleFields(req) && !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -1640,6 +1674,19 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		}
 	}
 
+	if req.Model != nil || len(req.Inference) > 0 {
+		proposed := agent.DeepCopy()
+		if req.Model != nil {
+			proposed.Spec.Model = *req.Model
+		}
+		custom := agent.Spec.Inference != nil
+		if len(req.Inference) > 0 {
+			custom = strings.TrimSpace(string(req.Inference)) != "null"
+		}
+		if !s.validateAgentEffort(w, r, proposed, custom) {
+			return
+		}
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	_, priorCapabilityDigest, _ := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
 
@@ -1684,6 +1731,7 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 			// that does not exist yet. Upsert, not create: changing the key on
 			// an agent that already has one is the rotation path.
 			if inference.managed() {
+				beginManagementMutation(r)
 				if err := s.upsertInferenceSecret(r.Context(), name, inference.APIKey); err != nil {
 					slog.Error("failed to write inference credential", "agent", name, "error", err)
 					writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to store the inference credential")
@@ -1779,17 +1827,20 @@ func (s *Server) patchAgent(w http.ResponseWriter, r *http.Request, name string)
 		agent.Spec.Jobs = jobs
 	}
 	if resourceChanged && agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
+		beginManagementMutation(r)
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to rearm agent recovery")
 			return
 		}
 	}
 
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 		return
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	if len(req.PublicCapabilities) > 0 {
 		_, nextCapabilityDigest, validationErr := capabilities.NormalizeAndValidate(agent.Spec.PublicCapabilities)
 		caller := callerFrom(r.Context())
@@ -2115,6 +2166,9 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:delete", "agent", name, ScopeLifecycleAdmin, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -2126,9 +2180,11 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to get agent")
 		return
 	}
+	beginManagementMutation(r)
 	if err := s.K8sClient.Delete(r.Context(), agent); err != nil {
 		if k8serrors.IsNotFound(err) {
 			// NotFound is benign here — concurrent delete; treat as success.
+			completeManagementMutation(r, "lifecycle:delete")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -2143,6 +2199,7 @@ func (s *Server) deleteAgent(w http.ResponseWriter, r *http.Request, name string
 			slog.Warn("removing the deleted agent's legacy avatar failed", "agent", name, "error", err)
 		}
 	}
+	completeManagementMutation(r, "lifecycle:delete")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -2211,6 +2268,9 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, requiredScopeForPhase(phase), false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -2231,6 +2291,7 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 	}
 
 	if phase == kyberv1.AgentPhaseRunning {
+		beginManagementMutation(r)
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
@@ -2253,6 +2314,7 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		agent.Status.RestartCount > 0 {
 		statusPatch := client.MergeFrom(agent.DeepCopy())
 		agent.Status.RestartCount = 0
+		beginManagementMutation(r)
 		if err := s.K8sClient.Status().Patch(r.Context(), agent, statusPatch); err != nil {
 			slog.Error("failed to clear restart count", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
@@ -2265,6 +2327,8 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 	// An operator's lifecycle verb during a disk export is their intent; the
 	// export must not overwrite it when it releases the agent.
 	delete(agent.Annotations, kyberv1.AnnotationArchivePaused)
+	delete(agent.Annotations, kyberv1.AnnotationPassiveConfigGeneration)
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent desired phase", "name", name, "phase", phase, "error", err)
 		// A schema rejection is a bug in this server (a lifecycle verb writing a
@@ -2282,6 +2346,7 @@ func (s *Server) setAgentDesiredPhase(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, agentToResponse(agent))
 }
 
@@ -2302,6 +2367,9 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -2332,6 +2400,11 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 		}
 	}
 
+	proposed := agent.DeepCopy()
+	proposed.Spec.Model = req.Model
+	if !s.validateAgentEffort(w, r, proposed, agent.Spec.Inference != nil) {
+		return
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.Model = req.Model
 	// An agent on a custom endpoint resolves its model from
@@ -2351,12 +2424,14 @@ func (s *Server) setAgentModel(w http.ResponseWriter, r *http.Request, name stri
 	case agent.Status.Phase == kyberv1.AgentPhaseFailed:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	}
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent model", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 		return
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, agentToResponse(agent))
 }
 
@@ -2393,6 +2468,9 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -2405,6 +2483,11 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 
+	proposed := agent.DeepCopy()
+	proposed.Spec.RuntimeVersion = req.RuntimeVersion
+	if !s.validateAgentEffort(w, r, proposed, agent.Spec.Inference != nil) {
+		return
+	}
 	patch := client.MergeFrom(agent.DeepCopy())
 	agent.Spec.RuntimeVersion = req.RuntimeVersion
 	// Mirror setAgentModel: only roll the pod for actively-running phases.
@@ -2419,11 +2502,13 @@ func (s *Server) setAgentRuntimeVersion(w http.ResponseWriter, r *http.Request, 
 	case agent.Status.Phase == kyberv1.AgentPhaseFailed:
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning
 	}
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent runtimeVersion", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
 		return
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, agentToResponse(agent))
 }
 
@@ -2445,6 +2530,9 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -2506,6 +2594,7 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 		agent.Spec.Resources.Memory = q
 	}
 	if oldCPU.Cmp(agent.Spec.Resources.CPU) == 0 && oldMemory.Cmp(agent.Spec.Resources.Memory) == 0 {
+		completeManagementMutation(r, "lifecycle:write")
 		writeJSON(w, http.StatusOK, agentToResponse(agent))
 		return
 	}
@@ -2578,6 +2667,7 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 	// DiskExhausted remains behind its disk recovery gate: changing CPU or
 	// memory cannot make a full filesystem safe to start.
 	if agent.Status.Phase == kyberv1.AgentPhaseMemoryExhausted {
+		beginManagementMutation(r)
 		if err := s.rearmRecoveryGate(r.Context(), agent); err != nil {
 			slog.Error("failed to clear recovery input", "name", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")
@@ -2585,6 +2675,7 @@ func (s *Server) setAgentResources(w http.ResponseWriter, r *http.Request, name 
 		}
 	}
 
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), agent, patch); err != nil {
 		slog.Error("failed to patch agent resources", "name", name, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update agent")

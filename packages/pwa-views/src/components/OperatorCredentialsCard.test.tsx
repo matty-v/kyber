@@ -37,7 +37,7 @@ describe('operator credential inventory', () => {
     render(<OperatorCredentialsCard />)
     expect(await screen.findByText('Revoked integration')).toBeInTheDocument()
     expect(screen.getByText('Revoked')).toBeInTheDocument()
-    expect(screen.getByText('Operator keys for this Kyber installation. Secret values are never shown.')).toBeInTheDocument()
+    expect(screen.getByText('Manage keys here. Installation configuration no longer controls access.')).toBeInTheDocument()
     expect(screen.getByText('Expired')).toBeInTheDocument()
     expect(screen.getByText(/revoked and cannot authenticate/)).toBeInTheDocument()
     expect(screen.getByText(/expired and cannot authenticate/)).toBeInTheDocument()
@@ -122,4 +122,12 @@ describe('operator credential inventory', () => {
     expect(screen.queryByText('Agent-specific permissions have no allowed target.')).not.toBeInTheDocument()
   })
 
+})
+
+
+it('hides the former rotation workflow even when managed setup is temporarily unavailable', async () => {
+  state.api.getOperatorCredentials.mockResolvedValue({ ...inventory, configurationRotationAvailable: false, adoptionAvailable: false })
+  render(<OperatorCredentialsCard><button>Administrator rotation</button></OperatorCredentialsCard>)
+  await screen.findByText('Installation administrator')
+  expect(screen.queryByRole('button', { name: 'Administrator rotation' })).not.toBeInTheDocument()
 })

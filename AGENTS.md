@@ -260,6 +260,26 @@ npm-backed harness snapshot. Claude catalog entries require Anthropic's
 authoritative context window; Codex `model/list` lacks that field, so Codex
 picker entries remain explicitly unknown and the active rollout's
 `token_count.context_window` is authoritative. Never add a guessed fallback.
+Codex catalog reporting also preserves bounded native reasoning-effort options
+with the executable version. Omitted effort metadata means unknown; an explicit
+empty option list means none were advertised. This is catalog evidence only,
+not permission to configure effort: a consumer must first verify the current
+Agent, runtime version, model and inference route. Custom inference routes
+still suppress the native OpenAI catalog. No effort setting/UI is enabled by
+this metadata foundation.
+Reasoning effort configuration is separate from that catalog evidence.
+`pkg/reasoningeffort` owns exact version/model/native-route qualification;
+unknown tuples permit clearing but never a new nonempty override. `set-effort`
+is exact-Agent lifecycle-write and required-audit protected. Effort participates
+in PodConfigHash; ObservedPodEffort records the pod's configured override, not
+provider execution. New effort writes also require verified runtime-image wiring:
+a matching first-party source image, or this Agent's observed protocol for that
+exact immutable image. Native CLI version alone is insufficient; upgrading only
+the control plane must not advertise a silently ignored setting. Both launchers
+pass the override through resume/relaunch
+and preserve user-owned config. Failed-agent effort edits mark their passive
+config generation so they cannot reset an exhausted retry budget; explicit
+lifecycle verbs clear that marker. See `docs/operator/reasoning-effort.md`.
 
 Discord-enabled agents register the sidecar's loopback Streamable HTTP MCP
 endpoint (`kyber-discord`, port 14007) in both runtimes. Its `reply` tool is the
@@ -922,6 +942,12 @@ second accepted bearer key. Read
 `docs/design/2026-10-23-current-operator-credential-resolution.md` before enabling
 or changing this seam. Do not activate it before ownership, audited management,
 stream revocation and upgrade/rollback compatibility gates are complete.
+`AuthorityStore.Bind` additionally requires a live adoption reservation from
+`ReserveAdoption`, held before preflight and through uncertain-write recovery.
+The immutable maintenance Secret has no automatic expiry; never release it from
+an unconditional defer or steal it based on age. Upgrade integration and
+compatibility enforcement remain activation gates. Read
+`docs/design/2026-10-24-credential-maintenance.md` before using the reservation.
 
 Protected requests install `liveOperatorRequests` inside authentication via the
 sensitive-audit wrapper. It rechecks identity/current route policy every three
@@ -933,8 +959,232 @@ watcher enforces revocation. Read
 `docs/design/2026-10-24-operator-stream-access.md` before changing cancellation,
 write deadlines, WebSocket close behavior or completion outcome handling.
 
-The required `test` job also runs the focused live-operator access tests with
-Go's race detector when authentication, stream authorization, credential-store
-code, Go module inputs or the workflow change. The change detector keeps this
+Public archive download capabilities use signed V2 claims bound to one job,
+Agent/namespace, credential identity and a private-keyed material proof. Resolve
+the current authority at admission and during the transfer; never use the link
+as a general API key. URL expiry limits admission, not healthy transfer duration.
+Configuration resolution keeps ordinary bearer duplicate-key precedence. Old V1
+or pre-adoption links require regeneration; retained archives are unchanged. Read
+`docs/design/2026-10-24-current-archive-download-access.md` before changing this path.
+
+Management mutations use `requireManagementAudit`/explicit current permission
+predicates before effects, `beginManagementMutation` before remote writes and
+`completeManagementMutation` only after confirmation. Imports reuse their private,
+same-actor/same-target import admission during nested Agent creation. Public
+archive downloads collect outcomes inside their narrow capability guard. A
+verified old link may supply denial attribution only, never caller permissions.
+Read `docs/design/2026-10-24-required-management-audit.md` before changing these
+boundaries. Handler deadline changes pass through the live writer's serialized
+setters; never let a later timeout undo an access-cancellation deadline.
+
+Credential adoption candidate conversion is private and inert. Keep actual
+root/final duplicate-material precedence, stable identities/grants and unknown
+issuance times. Never borrow another principal's tenant while filling missing
+identity. The V1 compatibility signer has immutable issuance/expiry cutoffs and
+bounded lifetime; retiring the installation signer ends scoped V1 trust while
+V2 stays per-key. Unknown credential writes are fenced at their original opaque
+resource version, then resolved through current authority/outbox; never replay
+issuance. Read `docs/design/2026-10-24-credential-adoption.md` before connecting
+adoption or mutation endpoints. Admission, root/source mutation coordination,
+replica checks, reconciliation and recovery UI remain activation gates.
+
+Supervised upgrades require `UpgradeCredentialCoordinator`. Once runtime protocol
+one is enabled, reserve before any
+release/authority decision, retain through writes/verification/rollback, and
+retain uncertain effects for recovery. Dry runs reserve nothing. Selected
+registry authority requires compatible effective target, initial rollback and
+live workloads; recheck the recorded revision before rollback. Published chart
+protocol/image metadata is independent of image-value overrides. The current
+runtime/chart advertise protocol one with explicit adoption and recovery.
+Older protocol-zero releases perform fail-closed authority reads but create no
+persistent maintenance lock; never infer protocol support from schema alone.
+Read `docs/design/2026-10-24-credential-upgrade-compatibility.md` before changing
+these gates. The Go upgrade client maps Deployments and CRDs statically.
+
+Self-upgrade dry-run rendering must use captured output, never a streamed Helm
+render. Hide Secret objects and discard all render stdout and diagnostics:
+ConfigMaps, environment values and chart notes may also contain credentials.
+Keep safe cancellation causes without echoing Helm's rendered/error text.
+
+The required `test` job also runs credential-store/upgrade tests and focused
+live-operator access tests with Go's race detector when authentication, stream
+authorization, upgrade/credential-store code, authority artifact declarations,
+Go module inputs or publishing/test workflows change. The change detector keeps this
 on the security-sensitive surface and forces Go setup for that path. Ordinary
 local API tests do not substitute for the race check on concurrent guard changes.
+
+Credential mutation recovery uses `pkg/securityaudit.CredentialIntent` for registry
+writes: admission and the original registry UID/opaque CAS version commit in one
+Postgres transaction before effects. This is private metadata, never candidate
+or key storage. Unknown writes stay pending until authority/outbox/fencing proves
+the outcome; completion ID/outcome/timestamp are immutable on replay. Pending
+work survives ordinary event retention. Recovery scans page by operation ID and
+restart periodically; they are not a frozen snapshot. The journal alone does not
+authorize callers, perform credential writes or activate authority.
+
+Staged managed-key mutation candidates preserve principal/tenant/provenance and
+separate material generation from permission revision. Client input cannot assign
+those identities or source ownership. Registry writes pin both the selected
+Secret UID and original resource version; missing authority is unavailable.
+The staged management endpoints expose explicit changes, original operation
+lookup and audited recovery. Inventory versions are opaque If-Match values bound to the selected registry UID
+and resource version; management forms must remain bound to their connection.
+Pending is unconfirmed, never a successful/failed key change; GET never fences.
+Explicit recovery pins UID/version and outbox identity, fences late CAS writes
+before final failure, and never issues/re-reveals material. `credential:recover`
+audits the current administrator separately from the original key change.
+The typed client never automatically retries mutation POSTs. Issuance time is
+reported only when known. Runtime protocol remains zero and cmd/control-plane
+registry activation, adoption/recovery UI and final acceptance remain outstanding.
+
+Operator key management forms use server-provided permission target choices from
+`/api/v1/operator-credentials/options`. Prepared key values stay in component
+memory, never React Query variables/cache or browser storage. Forms retain the
+reviewed inventory version through polling. GET operation status/pending scans
+never fence writes; only explicit POST reconciliation can do that. Cookie self
+rotation refreshes the same principal/tenant session; bearer hosts update their
+connection separately. Runtime authority activation remains staged.
+
+Credential audit delivery uses `api.OperatorCredentialDelivery.RunOnce` as a
+staged bounded helper. It confirms the immutable journal/outbox proof, marks a
+reference delivered only after durable success, then rechecks before pruning on
+a later pass. It never reissues/fences keys or changes access, and never retries
+a stale CAS candidate. Its rotating cursor prevents missing journal records from
+starving unrelated work. Runtime scheduling is not enabled by the helper alone.
+
+Operator key activity uses separate `securityaudit` usage aggregates and observer
+batch cursors. Accepted request metadata never includes credential material,
+content, raw paths or IP addresses. Collection is non-blocking; bounded queue
+loss, pending acknowledgement and partial coverage must stay visible. Aggregate
+counters and cursor advance commit together, with exact replay checks; cursor
+rows cannot be deleted and recreated without risking duplicate old batches.
+Counters cross the API as decimal strings. With PostgreSQL configured, main
+starts a reporter for its installation.
+Authentication never waits for reporter writes. Admin activity reads recheck
+current access before output; the UI presents windowed counts and explicit gaps.
+
+Credential maintenance visibility is read-only: direct bounded inspection of
+validated installation reservation metadata, admin authorization rechecked after
+the read, namespace binding and no-store. Only confirmed NotFound means idle;
+age, malformed state and outages never permit takeover. The opaque inspected
+version is not a release capability. Keep metadata connection-local in the UI
+and clear it on denial/failure. Protocol-zero upgrades may reserve nothing, so
+idle is not an assertion that no upgrade runs. Read
+`docs/design/2026-10-24-credential-maintenance-visibility.md` before recovery work.
+
+
+Staged maintenance recovery binds supervised non-retrying Pod/Job UIDs and
+requires known termination, release/authority reconciliation, current admin
+access and durable journal admission before metadata fencing. The journal stores
+an immutable UID/resource-version/proof-ID delete intent before release. A
+pending recovery cannot be displaced; GET readiness/outcome/pending requests
+never fence or delete. Only explicit audited resolution retries the same intent.
+The new recovery API/UI remains disabled while the runtime protocol is zero;
+writer-evidence retention and complete adoption acceptance are activation gates.
+Read `docs/design/2026-10-24-credential-execution-recovery.md` before changing it.
+
+The authenticated `GET /api/v1/operator-credentials/current` exposes only the
+presented credential's freshly resolved identity and grants, with no-store and
+no database dependency. Restricted callers may GET only; it does not permit
+inventory or management. Missing identity/Pod UID is not invented. This supports
+adoption replica checks without adding an authentication method or activating
+protocol one. See `docs/design/2026-10-25-credential-adoption-preflight.md`.
+
+Protocol-one supervised Jobs start without TTL, and bound acquisition rejects
+expiring evidence. A fresh Job metadata CAS binds one execution before acquiring;
+the same Job cannot acquire twice, so cleanup cannot race its reuse. Private handles schedule seven-day Job cleanup only after
+confirmed release, with exact Job UID/version and no current reservation using
+that writer. Uncertain cleanup retains evidence without rewriting the operation
+outcome. Protocol-zero Job cleanup stays unchanged. See
+`docs/design/2026-10-25-credential-writer-retention.md`.
+
+The protocol-one credential-maintenance Role is namespace-scoped: Jobs
+get/list/watch/create/update and ReplicaSets get, with no Job delete grant.
+Protocol zero renders neither Role nor binding. The existing self-upgrade
+ClusterRole rule and dedicated upgrade account remain independently gated.
+
+Adoption input collection is a staged private read: use the uncached bounded
+Secret client and startup parser/resolution rules, pin every namespace/name/UID/
+opaque resource version, reject any partial set, and recheck the full source
+graph. Format/JSON and errors must not expose values or parser diagnostics.
+This does not prove replica acceptance or activate authority. See
+`docs/design/2026-10-25-credential-adoption-sources.md`.
+
+The private adoption replica probe compares every distinct source value against
+its own current-credential response and compares the accepted/shadowed inventory.
+Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
+and rechecks frozen sources, but does not discover all replicas, establish image
+ownership, quiesce old writers or authorize an adoption effect by itself.
+
+Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
+labels derived from the original admission UUID and ordered source index. They
+are not authentication values or material hashes. Recovery must retain the
+original admission/time and independently verify unchanged source definitions;
+rebuilding a candidate alone never authorizes an effect or refreshes cookie
+compatibility. Existing principal/tenant/credential IDs remain unchanged.
+
+Credential adoption journal rows use their own credential-adoption kind and a
+sorted complete source graph and deployment/release metadata BEFORE native
+Job creation, never invented registry/maintenance UIDs. ExpectedVersion pins
+the root source. Effect checkpoints bind actual maintenance UID/original version
+then advance reserved -> candidate -> registry -> selection -> selected. Terminal
+failure can fence a late launch only before candidate admission; after that,
+absence cannot finalize failure. Success requires the exact selected checkpoint. Generic key/maintenance
+finalizers and pending scans cannot consume adoption rows. The native worker
+enforces ownership and external-effect evidence before completing this journal.
+
+Adoption candidate repair IDs are operation-scoped, purpose-separated UUID
+labels derived from the original admission UUID and ordered source index. They
+are not authentication values or material hashes. Recovery must retain the
+original admission/time and independently verify unchanged source definitions;
+rebuilding a candidate alone never authorizes an effect or refreshes cookie
+compatibility. Existing principal/tenant/credential IDs remain unchanged.
+
+The private adoption replica probe compares every distinct source value against
+its own current-credential response and compares the accepted/shadowed inventory.
+Use verified Pod IP/UID inputs, never a Service. It disables proxies/redirects
+and rechecks frozen sources, but does not discover all replicas, establish image
+ownership, quiesce old writers or authorize an adoption effect by itself.
+
+Native adoption recovery uses an exact UID/resource-version annotation CAS only
+after the old single-execution Job/Pod is proven stopped. The active writer
+projection follows the replacement receipt, and the original admission version
+survives every replacement. Original handles fail after fencing; do not use age
+or missing objects as shutdown evidence. Maintenance Secret data stays immutable.
+Completed handoff must seal the selected marker UID in registry metadata before
+final audit/outbox completion. A sealed registry prevents configuration fallback
+across a fresh process if its marker is missing; an unsealed candidate remains
+recoverable through the still-configured administrator. Normal mutations preserve
+this receipt. These are integration gates, not runtime activation by themselves.
+
+The native credential handoff entrypoint is cmd/kyber-credential-adopt in the
+control-plane image. The API durably admits the immutable source/deployment
+intent before creating one fixed-command Job. Job environment contains only
+operation/namespace/deployment/Pod identity metadata; the worker resolves its
+private database profile from the verified Deployment's ordered environment.
+It never migrates the audit schema. Recovery requires a separately audited,
+currently authorized administrator and a proven stopped writer. Completed
+selection is verified through the durable registry seal before final delivery.
+The dedicated worker ServiceAccount has namespace-only read/source access and
+fixed registry/maintenance mutations, never workload or Agent storage changes.
+All runtime wiring and Helm grants remain gated by the complete protocol
+constant and publisher chart assertion. Protocol one exposes explicit setup;
+installation configuration remains authoritative until the administrator confirms
+the handoff. An environment flag cannot override the compiled protocol.
+Recovery eligibility must check every known native launch for the operation,
+including a replacement Job that has not claimed its maintenance receipt yet.
+An already-stopped original does not justify another launch while a known
+replacement is pending/running. The receipt CAS still fences concurrent requests.
+Two handoff proposals can be admitted before either Job acquires maintenance.
+If a different operation has already selected authority while this operation is
+still at reserved (no candidate admission), finish this operation as failure
+before releasing its reservation. Never leave an effect-free late launch holding
+maintenance over an already-managed installation. Candidate-or-later uncertainty
+still cannot be finalized as failure merely from missing evidence.
+Credential-material uniqueness validation sorts a private, bounded scratch list
+and compares adjacent values exactly. Never persist or expose material-derived
+fingerprints for this check. It is independent of presented-bearer matching,
+which retains constant-time authentication comparisons.
+
+Runtime bootstrap tests must use temporary installer stubs and managed config
+paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing.md.

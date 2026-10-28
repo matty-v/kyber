@@ -60,8 +60,8 @@ var actions = map[string]bool{
 	"secrets:list": true, "secrets:read": true, "secrets:write": true,
 	"logs:read": true, "transcripts:read": true, "machines:logs:read": true,
 	"credential:create": true, "credential:update": true, "credential:rotate": true,
-	"credential:revoke": true, "lifecycle:write": true, "lifecycle:delete": true,
-	"archives:export": true, "archives:import": true, "audit:read": true,
+	"credential:revoke": true, "credential:adopt": true, "credential:recover": true, "credential:recover-maintenance": true, "lifecycle:write": true, "lifecycle:delete": true,
+	"archives:read": true, "archives:export": true, "archives:import": true, "archives:download": true, "archives:link": true, "archives:upload": true, "archives:cancel": true, "archives:delete": true, "audit:read": true,
 	"operator:unclassified": true,
 }
 
@@ -122,6 +122,10 @@ func (e Event) Validate() error {
 		}
 	case "log-container":
 		if !validActorID(e.ResourceName) || !namespaceName.MatchString(e.Container) || (e.LogComponent != "" && !validActorID(e.LogComponent)) || (e.LogWorkload != "" && !validActorID(e.LogWorkload)) {
+			return ErrInvalid
+		}
+	case "credential-maintenance", "credential-adoption":
+		if !validMaintenanceUID(e.ResourceName) {
 			return ErrInvalid
 		}
 	case "credential":

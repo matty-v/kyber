@@ -32,6 +32,19 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 		if r.Method == http.MethodGet && (r.URL.Path == "/api/v1/logging/logs" || r.URL.Path == "/api/v1/logging/export") {
 			auditAction = string(ScopeLogsRead)
 		}
+
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v1/rotate-api-key" {
+			auditAction, auditKind, auditName = "credential:rotate", "credential", installationAdminCredentialID
+		}
+		if r.URL.Path == "/api/v1/agent-imports" && r.Method == http.MethodPost {
+			auditAction = "archives:import"
+		}
+		if r.URL.Path == "/api/v1/archives" && r.Method == http.MethodGet {
+			auditAction = "archives:read"
+		}
+		if r.URL.Path == "/api/v1/archive-uploads" && r.Method == http.MethodPost {
+			auditAction = "archives:upload"
+		}
 		// Classify only known operations and validated names. Never log query
 		// strings, command arguments or unknown path content.
 		for _, kind := range []string{"agents", "machines"} {
@@ -42,6 +55,31 @@ func (s *Server) operatorBoundary(next http.Handler) http.Handler {
 					scope, known := agentSensitiveScope(r, operation)
 					if kind == "machines" {
 						scope, known = machineSensitiveScope(r, operation)
+					}
+
+					if !known {
+						mutation := ""
+						if r.Method == http.MethodDelete && operation == "" {
+							mutation = "lifecycle:delete"
+						}
+						if r.Method == http.MethodPost {
+							switch operation {
+							case "start", "stop", "restart", "force-needs-auth", "set-model", "set-effort", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime", "switch-runtime":
+								if kind == "agents" {
+									mutation = "lifecycle:write"
+								}
+							case "retry-cost-optimized", "restart-agents":
+								if kind == "machines" {
+									mutation = "lifecycle:write"
+								}
+							}
+							if kind == "machines" && (operation == "start" || operation == "stop" || operation == "restart") {
+								mutation = "lifecycle:write"
+							}
+						}
+						if mutation != "" {
+							scope, known = Scope(mutation), true
+						}
 					}
 					if known {
 						action, resource = string(scope), s.Namespace+"/"+target
@@ -68,6 +106,9 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	// into a different operation. Decoding has already happened in URL.Path.
 	if path.Clean(p) != strings.TrimSuffix(p, "/") {
 		return false
+	}
+	if p == "/api/v1/operator-credentials/current" {
+		return r.Method == http.MethodGet // own current metadata only; no inventory or management
 	}
 	if p == "/api/v1/version" {
 		return r.Method == http.MethodGet
@@ -139,11 +180,14 @@ func (s *Server) restrictedOperatorRoute(r *http.Request, caller *Caller) bool {
 	if action == "requests" || strings.HasPrefix(action, "requests/") {
 		return true // request action scopes are checked by the handler
 	}
+	if r.Method == http.MethodGet && action == "effort-options" {
+		return caller.Scopes.Has(ScopeLifecycleWrite)
+	}
 	if r.Method != http.MethodPost {
 		return false
 	}
 	switch action {
-	case "start", "stop", "restart", "set-model", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime":
+	case "start", "stop", "restart", "set-model", "set-effort", "set-runtime-version", "set-resources", "increase-disk", "restart-session", "compact-session", "repair-runtime":
 		return caller.Scopes.Has(ScopeLifecycleWrite)
 	case "force-needs-auth":
 		return caller.Scopes.Has(ScopeLifecycleAdmin)

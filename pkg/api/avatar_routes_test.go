@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"image"
 	"image/color"
 	"image/png"
@@ -55,7 +56,7 @@ func newAvatarHarness(t *testing.T, legacyKey string) *avatarHarness {
 	}
 	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, defaultMachine()).Build()
 	legacy := taskobject.NewMemoryStore()
-	s := &api.Server{K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system", TaskObjectStore: legacy}
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system", TaskObjectStore: legacy}
 	return &avatarHarness{t: t, h: s.BuildHandler(), c: c, legacy: legacy}
 }
 
@@ -97,7 +98,7 @@ func TestAvatarRoundTripWithoutObjectStore(t *testing.T) {
 	agent := sampleAgentCRD("alice")
 	agent.UID = "alice-uid"
 	c := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).WithObjects(agent, defaultMachine()).Build()
-	a := &avatarHarness{t: t, c: c, h: (&api.Server{K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system"}).BuildHandler()}
+	a := &avatarHarness{t: t, c: c, h: (&api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system"}).BuildHandler()}
 
 	rr := a.do(http.MethodPut, "/api/v1/agents/alice/profile/avatar", "image/png", testPNG(t, color.RGBA{200, 10, 10, 255}, 600, 300))
 	if rr.Code != http.StatusOK {

@@ -903,7 +903,7 @@ cloudflared:
   enabled: false
   image:
     repository: cloudflare/cloudflared
-    tag: "2024.10.0"
+    tag: "2026.10.3"  # >= 2026.10.2: drops the compromised eMudhra intermediates (Cloudflare advisory, 2026-10-20)
     pullPolicy: IfNotPresent
   # replicaCount: Cloudflare recommends 2 for HA. Single-node clusters
   # typically keep this at 1 since both replicas land on the same node.

@@ -3,6 +3,7 @@ package api_test
 import (
 	"bytes"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -28,7 +29,7 @@ const testAPIKey = "test-key-xyz"
 func buildMachineHandler(t *testing.T, scheme *runtime.Scheme, objs ...runtime.Object) http.Handler {
 	t.Helper()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:        fakeClient,
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",
@@ -100,7 +101,7 @@ func TestMachinesCreateExternalGKECapacity(t *testing.T) {
 }
 
 func TestMachinesCreateUnknownGKEProfileListsOnlyProviderProfiles(t *testing.T) {
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(),
 		APIKey:    testAPIKey, Namespace: "kyber-system", ComputeProvider: "gke",
 		CapacityProvider: adapters.NewFakeComputeAdapter(),
@@ -122,7 +123,7 @@ func TestMachinesCreateUnknownGKEProfileListsOnlyProviderProfiles(t *testing.T) 
 }
 
 func TestMachinesCreateManagedEKS(t *testing.T) {
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(),
 		APIKey:    testAPIKey, Namespace: "kyber-system", ComputeProvider: "eks",
 		CapacityProvider: adapters.NewFakeComputeAdapter(),
@@ -408,7 +409,7 @@ func TestDeleteMachine_WithAgents_Returns422(t *testing.T) {
 func buildScopedMachineHandler(t *testing.T, scheme *runtime.Scheme, objs ...runtime.Object) http.Handler {
 	t.Helper()
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(objs...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:        fakeClient,
 		APIKey:           testAPIKey,
 		AuthzEnforce:     true,
@@ -591,7 +592,7 @@ func TestCreateMachine_NewProviderKinds(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
-			s := &api.Server{
+			s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 				K8sClient:       fakeClient,
 				APIKey:          testAPIKey,
 				Namespace:       "kyber-system",
@@ -609,7 +610,7 @@ func TestCreateMachine_NewProviderKinds(t *testing.T) {
 
 func TestCreateMachineRejectsProviderMismatchedToInstall(t *testing.T) {
 	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:       fakeClient,
 		APIKey:          testAPIKey,
 		Namespace:       "kyber-system",
@@ -731,7 +732,7 @@ func TestCreateMachine_GCE_CustomCatalog(t *testing.T) {
 		t.Fatalf("ParseVMTypeCatalog: %v", err)
 	}
 	fakeClient := fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:        fakeClient,
 		APIKey:           testAPIKey,
 		Namespace:        "kyber-system",

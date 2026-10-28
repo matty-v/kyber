@@ -48,6 +48,10 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	if !s.requireInstallationAdmin(w, r, "rotate-installation-key") {
 		return
 	}
+	if s.OperatorCredentialAuthority != nil {
+		writeJSONError(w, http.StatusConflict, "credential_management_required", "Use API access in Settings to manage keys.")
+		return
+	}
 
 	if s.APIKeySecretName == "" {
 		writeJSONError(w, http.StatusServiceUnavailable, "rotation_unavailable",
@@ -86,6 +90,9 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if !s.requireManagementAudit(w, r, "credential:rotate", "credential", installationAdminCredentialID, "", false) {
+		return
+	}
 	newKey, err := generateAPIKey()
 	if err != nil {
 		slog.ErrorContext(r.Context(), "rotate-api-key: generate failed", "err", err)
@@ -96,7 +103,7 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 
 	// Persist to the Secret first. If this fails, we leave the in-memory key
 	// alone — the rotation is rolled back to the pre-rotation state implicitly.
-	if err := s.patchAPIKeySecret(r.Context(), newKey); err != nil {
+	if err := s.patchAPIKeySecret(r.Context(), newKey, func() { beginManagementMutation(r) }); err != nil {
 		slog.ErrorContext(r.Context(), "rotate-api-key: secret patch failed",
 			"secret", s.APIKeySecretName, "err", err)
 		if k8serrors.IsNotFound(err) {
@@ -115,6 +122,7 @@ func (s *Server) handleRotateAPIKey(w http.ResponseWriter, r *http.Request) {
 	// value.
 	s.auth.SetKey(newKey)
 	s.APIKey = newKey
+	completeManagementMutation(r, "credential:rotate")
 
 	// Rotation revokes every browser session along with the old legacy key:
 	// session cookies are signed with a key derived from the API key, so
@@ -163,7 +171,7 @@ func generateAPIKey() (string, error) {
 // patchAPIKeySecret merge-patches the api-key field on the configured
 // Secret. The other fields on the Secret (webhook-secret, k3s-join-token,
 // etc.) are left untouched.
-func (s *Server) patchAPIKeySecret(ctx context.Context, newKey string) error {
+func (s *Server) patchAPIKeySecret(ctx context.Context, newKey string, beforeWrite func()) error {
 	secret := &corev1.Secret{}
 	key := types.NamespacedName{Name: s.APIKeySecretName, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(ctx, key, secret); err != nil {
@@ -174,5 +182,6 @@ func (s *Server) patchAPIKeySecret(ctx context.Context, newKey string) error {
 		secret.Data = make(map[string][]byte)
 	}
 	secret.Data[apiKeySecretField] = []byte(newKey)
+	beforeWrite()
 	return s.K8sClient.Patch(ctx, secret, patch)
 }

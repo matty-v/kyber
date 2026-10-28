@@ -57,6 +57,7 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
     { label: 'Runtime', value: state.runtime, editStep: 2 },
     ...(canSelectModel ? [{ label: 'Model', value: state.inferenceEnabled ? (state.inferenceModel || state.model || 'Endpoint default') : (state.model || 'Fleet default') }] : []),
     ...(state.runtime === 'hermes' || state.runtime === 'codex' ? [{ label: 'Model source', value: state.inferenceEnabled ? (state.runtime === 'codex' && isOpenRouterInference(state.inferenceBaseURL) ? 'OpenRouter (direct)' : 'Custom endpoint') : state.runtime === 'hermes' ? 'OpenRouter (direct)' : 'Codex built-in provider' }] : []),
+    { label: 'Reasoning effort', value: state.effort || 'Default (no override)', editStep: 4 },
     { label: 'Harness version', value: 'Fleet default' },
     { label: 'Resources', value: `${state.cpu} CPU / ${state.memory} / ${state.disk}` },
     { label: 'Identity', value: fmtIdentity(state), editStep: 3 },
@@ -76,8 +77,9 @@ export function ReviewSection({ state, onEdit }: ReviewSectionProps) {
               {onEdit && editStep ? (
                 <button
                   type="button"
+                  aria-label={`Edit ${label}`}
                   onClick={() => onEdit(editStep)}
-                  className="text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring rounded"
+                  className="min-h-11 px-2 text-xs text-accent hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring rounded"
                 >
                   Edit
                 </button>

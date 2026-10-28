@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/subtle"
 	"encoding/json"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 	"net/http"
 	"sort"
 	"strconv"
@@ -15,31 +16,43 @@ import (
 // These DTOs deliberately have no key, key fragment, digest, cookie, or Secret
 // data fields. Inventory describes accepted authority, never credential values.
 type operatorCredentialView struct {
-	ID                   string   `json:"id"`
-	Name                 string   `json:"name"`
-	DisplayName          string   `json:"displayName"`
-	AccessLevel          string   `json:"accessLevel"`
-	State                string   `json:"state"`
-	Source               string   `json:"source"`
-	Scopes               []string `json:"scopes"`
-	AgentResources       []string `json:"agentResources"`
-	MachineResources     []string `json:"machineResources,omitempty"`
-	Permissions          []string `json:"permissions"`
-	Configured           bool     `json:"configured"`
-	ConfiguredScopes     []string `json:"configuredScopes,omitempty"`
-	ConfiguredResources  []string `json:"configuredResources,omitempty"`
-	ConfiguredMachines   []string `json:"configuredMachines,omitempty"`
-	ConfigurationDiffers bool     `json:"configurationDiffers,omitempty"`
-	AuthenticatesAs      string   `json:"authenticatesAs,omitempty"`
+	ActivityUnavailableReason string   `json:"activityUnavailableReason,omitempty"`
+	PrincipalID               string   `json:"principalId,omitempty"`
+	TenantID                  string   `json:"tenantId,omitempty"`
+	ActivityTrackable         bool     `json:"activityTrackable"`
+	CreatedAt                 string   `json:"createdAt,omitempty"`
+	ExpiresAt                 string   `json:"expiresAt,omitempty"`
+	ID                        string   `json:"id"`
+	Name                      string   `json:"name"`
+	DisplayName               string   `json:"displayName"`
+	AccessLevel               string   `json:"accessLevel"`
+	State                     string   `json:"state"`
+	Source                    string   `json:"source"`
+	Scopes                    []string `json:"scopes"`
+	AgentResources            []string `json:"agentResources"`
+	MachineResources          []string `json:"machineResources,omitempty"`
+	Permissions               []string `json:"permissions"`
+	Configured                bool     `json:"configured"`
+	ConfiguredScopes          []string `json:"configuredScopes,omitempty"`
+	ConfiguredResources       []string `json:"configuredResources,omitempty"`
+	ConfiguredMachines        []string `json:"configuredMachines,omitempty"`
+	ConfigurationDiffers      bool     `json:"configurationDiffers,omitempty"`
+	AuthenticatesAs           string   `json:"authenticatesAs,omitempty"`
 }
 
 type operatorCredentialInventory struct {
-	ObservedAt             string                   `json:"observedAt"`
-	InventoryScope         string                   `json:"inventoryScope"`
-	ConfigurationAvailable bool                     `json:"configurationAvailable"`
-	UsageAvailable         bool                     `json:"usageAvailable"`
-	Credentials            []operatorCredentialView `json:"credentials"`
-	Warnings               []string                 `json:"warnings"`
+	ConfigurationRotationAvailable bool                     `json:"configurationRotationAvailable"`
+	AdoptionAvailable              bool                     `json:"adoptionAvailable,omitempty"`
+	MaintenanceAvailable           bool                     `json:"maintenanceAvailable,omitempty"`
+	CurrentCredentialID            string                   `json:"currentCredentialId,omitempty"`
+	Version                        string                   `json:"version,omitempty"`
+	ManagementAvailable            bool                     `json:"managementAvailable,omitempty"`
+	ObservedAt                     string                   `json:"observedAt"`
+	InventoryScope                 string                   `json:"inventoryScope"`
+	ConfigurationAvailable         bool                     `json:"configurationAvailable"`
+	UsageAvailable                 bool                     `json:"usageAvailable"`
+	Credentials                    []operatorCredentialView `json:"credentials"`
+	Warnings                       []string                 `json:"warnings"`
 }
 
 func credentialPermissions(scopes []string) []string {
@@ -130,7 +143,7 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 	views := make([]operatorCredentialView, 0, len(a.callers)+1)
 	if a.key != "" {
 		views = append(views, operatorCredentialView{
-			ID: installationAdminCredentialID, Name: "installation-admin", DisplayName: "Installation administrator",
+			PrincipalID: installationAdminPrincipalID, TenantID: installationTenantID, ActivityTrackable: true, ID: installationAdminCredentialID, Name: "installation-admin", DisplayName: "Installation administrator",
 			AccessLevel: "administrator", State: "accepted", Source: "installation",
 			Scopes: []string{}, AgentResources: []string{"*"}, MachineResources: []string{"*"}, Permissions: []string{"Full access to this Kyber installation"},
 		})
@@ -162,7 +175,7 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 			id = "configured-" + strconv.Itoa(i+1)
 		}
 		view := operatorCredentialView{
-			ID: id, Name: declared.Name, DisplayName: declared.Name, AccessLevel: "restricted", State: state, Source: "configuration",
+			PrincipalID: declared.PrincipalID, TenantID: declared.TenantID, ActivityTrackable: state == "accepted" && declared.CredentialGeneration > 0 && (securityaudit.CredentialUsageIdentity{CredentialID: declared.CredentialID, PrincipalID: declared.PrincipalID, TenantID: declared.TenantID, Authority: "configuration"}).Validate() == nil, ID: id, Name: declared.Name, DisplayName: declared.Name, AccessLevel: "restricted", State: state, Source: "configuration",
 			Scopes: scopes, AgentResources: sortedResources(c.AgentResources), MachineResources: sortedResources(c.MachineResources), Permissions: credentialPermissions(scopes),
 			AuthenticatesAs: authenticatesAs,
 		}
@@ -176,6 +189,27 @@ func (a *APIKeyAuthenticator) credentialInventory() []operatorCredentialView {
 			view.Scopes, view.AgentResources, view.MachineResources, view.Permissions = []string{}, []string{}, []string{}, []string{}
 		}
 		views = append(views, view)
+	}
+	counts := map[string]int{}
+	for _, view := range views {
+		if view.ActivityTrackable {
+			counts[view.ID+"\x00"+view.PrincipalID+"\x00"+view.TenantID]++
+		}
+	}
+	for i := range views {
+		view := &views[i]
+		if view.State == "shared-key" {
+			view.ActivityUnavailableReason = "shared-key"
+			continue
+		}
+		if !view.ActivityTrackable {
+			view.ActivityUnavailableReason = "identity-incomplete"
+			continue
+		}
+		if counts[view.ID+"\x00"+view.PrincipalID+"\x00"+view.TenantID] > 1 {
+			view.ActivityTrackable = false
+			view.ActivityUnavailableReason = "identity-shared"
+		}
 	}
 	return views
 }
@@ -195,12 +229,34 @@ func (s *Server) handleOperatorCredentials(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if resolved.registry != nil {
-		writeJSON(w, http.StatusOK, operatorCredentialInventory{ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available. Keys configured outside Kyber have not been checked for changes."}})
+		actor := callerFrom(r.Context())
+		entry, ok := resolved.registry.byID[actor.CredentialID]
+		if !ok || !entry.caller.Scopes.full || !sameCredentialIdentity(*actor, entry.caller) {
+			writeJSONError(w, http.StatusForbidden, "forbidden", "Current administrator access required")
+			return
+		}
+		response := operatorCredentialInventory{CurrentCredentialID: callerFrom(r.Context()).CredentialID, ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "installation-registry", Credentials: resolved.registry.inventory, Warnings: []string{"Usage totals are not available."}}
+		_, _, supported := s.credentialManagementDependencies()
+		if resolved.registry.version != "" && resolved.registry.uid != "" {
+			response.Version = credentialRegistryETag(resolved.registry.uid, resolved.registry.version)
+			w.Header().Set("ETag", response.Version)
+		}
+		response.MaintenanceAvailable = s.credentialMaintenanceAvailable()
+		_, response.AdoptionAvailable = s.adoptionManager()
+		response.UsageAvailable = s.credentialUsageAvailable()
+		if response.UsageAvailable {
+			response.Warnings = []string{}
+		}
+		response.ManagementAvailable = supported && resolved.registry.uid != "" && response.Version != "" && !resolved.registry.adoptionPending
+		writeJSON(w, http.StatusOK, response)
 		return
 	}
 	response := operatorCredentialInventory{
-		ObservedAt: time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
-		Credentials: s.auth.credentialInventory(), Warnings: []string{},
+		ConfigurationRotationAvailable: s.OperatorCredentialAuthority == nil,
+		AdoptionAvailable:              s.OperatorCredentialAdoption != nil && s.OperatorCredentialAdoption.Namespace() == s.Namespace,
+		CurrentCredentialID:            callerFrom(r.Context()).CredentialID,
+		ObservedAt:                     time.Now().UTC().Format(time.RFC3339), InventoryScope: "current-control-plane",
+		MaintenanceAvailable: s.credentialMaintenanceAvailable(), UsageAvailable: s.credentialUsageAvailable(), Credentials: s.auth.credentialInventory(), Warnings: []string{},
 	}
 	reader := s.APIReader
 	if reader == nil {
