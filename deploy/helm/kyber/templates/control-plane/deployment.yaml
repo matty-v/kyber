@@ -14,6 +14,11 @@ spec:
       app.kubernetes.io/component: control-plane
   template:
     metadata:
+      annotations:
+        kyber.io/operator-credential-authority-protocol: {{ index .Chart.Annotations "kyber.io/operator-credential-authority-protocol" | default "0" | quote }}
+        {{- with index .Chart.Annotations "kyber.io/operator-credential-release-image" }}
+        kyber.io/operator-credential-release-image: {{ . | quote }}
+        {{- end }}
       labels:
         {{- include "kyber.selectorLabels" . | nindent 8 }}
         {{- include "kyber.podLabels" . | nindent 8 }}
@@ -46,6 +51,10 @@ spec:
             - --metrics-bind-address=:{{ .Values.api.service.metricsPort }}
             - --leader-elect={{ .Values.controlPlane.leaderElection.enabled }}
           env:
+            - name: KYBER_OPERATOR_USAGE_POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
             - name: KYBER_LOG_LEVEL
               value: {{ include "kyber.loggingLevel" (dict "root" . "component" "control-plane") | quote }}
             - name: KYBER_LOG_POD
@@ -106,6 +115,12 @@ spec:
             # forbids self-upgrade).
             - name: KYBER_CONTROL_PLANE_DEPLOYMENT
               value: {{ include "kyber.fullname" . }}-control-plane
+            {{- if ge (int (index .Chart.Annotations "kyber.io/operator-credential-authority-protocol" | default "0")) 1 }}
+            - name: KYBER_OPERATOR_CREDENTIAL_ADOPTION_RELEASE
+              value: {{ .Release.Name | quote }}
+            - name: KYBER_OPERATOR_CREDENTIAL_ADOPTION_SERVICE_ACCOUNT
+              value: {{ include "kyber.fullname" . }}-credential-adoption
+            {{- end }}
             {{- if .Values.selfUpgrade.enabled }}
             # Self-upgrade. Every one of these must be present for the apply
             # path to switch on — the Applier treats a partial configuration as

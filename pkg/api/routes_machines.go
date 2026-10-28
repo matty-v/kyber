@@ -328,6 +328,9 @@ func (s *Server) retryCostOptimized(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "machine", name, "", false) {
+		return
+	}
 	machine := &kyberv1.Machine{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, machine); err != nil {
@@ -364,6 +367,7 @@ func (s *Server) retryCostOptimized(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 	if machine.Spec.CostOptimizedRetryRequest == req.RequestID {
+		completeManagementMutation(r, "lifecycle:write")
 		writeJSON(w, http.StatusOK, machineToResponse(machine))
 		return
 	}
@@ -374,10 +378,12 @@ func (s *Server) retryCostOptimized(w http.ResponseWriter, r *http.Request, name
 
 	patch := client.MergeFrom(machine.DeepCopy())
 	machine.Spec.CostOptimizedRetryRequest = req.RequestID
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), machine, patch); err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to request cost-optimized retry")
 		return
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusAccepted, machineToResponse(machine))
 }
 
@@ -679,6 +685,10 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		Spec: spec,
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "machine", req.Name, "", false) {
+		return
+	}
+	beginManagementMutation(r)
 	if err := s.K8sClient.Create(r.Context(), machine); err != nil {
 		if k8serrors.IsAlreadyExists(err) {
 			writeJSONError(w, http.StatusConflict, "conflict", "machine '"+req.Name+"' already exists")
@@ -689,6 +699,7 @@ func (s *Server) createMachine(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusCreated, machineToResponse(machine))
 }
 
@@ -764,6 +775,9 @@ func (s *Server) deleteMachine(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:delete", "machine", name, "", false) {
+		return
+	}
 	machine := &kyberv1.Machine{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, machine); err != nil {
@@ -795,9 +809,11 @@ func (s *Server) deleteMachine(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
+	beginManagementMutation(r)
 	if err := s.K8sClient.Delete(r.Context(), machine); err != nil {
 		if k8serrors.IsNotFound(err) {
 			// NotFound is benign here — concurrent delete; treat as success.
+			completeManagementMutation(r, "lifecycle:delete")
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
@@ -805,10 +821,14 @@ func (s *Server) deleteMachine(w http.ResponseWriter, r *http.Request, name stri
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to delete machine")
 		return
 	}
+	completeManagementMutation(r, "lifecycle:delete")
 	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) setMachineDesiredPhase(w http.ResponseWriter, r *http.Request, name string, phase kyberv1.MachinePhase) {
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "machine", name, "", false) {
+		return
+	}
 	machine := &kyberv1.Machine{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, machine); err != nil {
@@ -823,12 +843,14 @@ func (s *Server) setMachineDesiredPhase(w http.ResponseWriter, r *http.Request, 
 
 	patch := client.MergeFrom(machine.DeepCopy())
 	machine.Spec.DesiredPhase = phase
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), machine, patch); err != nil {
 		slog.Error("failed to patch machine desired phase", "name", name, "phase", phase, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to update machine")
 		return
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, machineToResponse(machine))
 }
 
@@ -869,6 +891,9 @@ var restartAgentsEligiblePhases = map[kyberv1.AgentPhase]bool{
 func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, name string) {
 	ctx := r.Context()
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "machine", name, "", false) {
+		return
+	}
 	machine := &kyberv1.Machine{}
 	machineKey := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(ctx, machineKey, machine); err != nil {
@@ -913,6 +938,7 @@ func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, na
 		}
 		patch := client.MergeFrom(agent.DeepCopy())
 		agent.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
+		beginManagementMutation(r)
 		if err := s.K8sClient.Patch(ctx, agent, patch); err != nil {
 			slog.Error("failed to patch agent desiredPhase for machine restart",
 				"machine", name, "agent", agent.Name, "error", err)
@@ -938,6 +964,7 @@ func (s *Server) restartMachineAgents(w http.ResponseWriter, r *http.Request, na
 			resp.Count, strings.Join(resp.Restarted, ", "), skippedSummary)
 	}
 
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusOK, resp)
 }
 

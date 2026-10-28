@@ -275,6 +275,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 	}
 	caller := callerFrom(r.Context())
 	if caller == nil || !caller.AgentResources.Has(s.Namespace+"/"+name) {
+		s.auditOperatorDenial(w, r, "archives:import", "agent", name)
 		writeJSONError(w, http.StatusNotFound, "not_found", "agent not found")
 		return
 	}
@@ -291,6 +292,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 	// an upload is not tied to an agent and needs an installation-wide grant.
 	if src.Kind == archivejob.KindUpload && !caller.AgentResources.all ||
 		src.Kind == archivejob.KindExport && !caller.AgentResources.Has(s.Namespace+"/"+src.Agent) {
+		s.auditOperatorDenial(w, r, "archives:import", "agent", name)
 		writeJSONErrorWithField(w, http.StatusNotFound, "invalid_source", "source not found", "source")
 		return
 	}
@@ -367,12 +369,21 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 		KeepCredentialFiles: req.KeepCredentialFiles, KeepCrontabs: req.KeepCrontabs,
 		Cutover: cutoverChecklist(src, req, plan),
 	}
+	sourceKind, sourceAgent := src.Kind, src.Agent
+	if !s.requireManagementAuditWithCheck(w, r, "archives:import", "agent", name, func(c *Caller) bool {
+		return c != nil && c.Scopes.Has(ScopeArchivesAdmin) && c.AgentResources.Has(s.Namespace+"/"+name) && (sourceKind == archivejob.KindUpload && c.AgentResources.all || sourceKind == archivejob.KindExport && c.AgentResources.Has(s.Namespace+"/"+sourceAgent))
+	}) {
+		return
+	}
+	beginManagementMutation(r)
 	if err := a.Jobs.Create(r.Context(), j, a.limits().MaxConcurrentJobs); err != nil {
 		switch {
 		case errors.Is(err, archivejob.ErrConcurrency):
+			markSensitiveOutcome(r, "failure")
 			w.Header().Set("Retry-After", "60")
 			writeJSONError(w, http.StatusTooManyRequests, "archive_capacity", "the installation is already running its maximum number of archive jobs")
 		case errors.Is(err, archivejob.ErrActiveJob):
+			markSensitiveOutcome(r, "failure")
 			writeJSONError(w, http.StatusConflict, "import_in_progress", "an import into this name is already running")
 		default:
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to queue the restore")
@@ -444,6 +455,7 @@ func (s *Server) startImport(w http.ResponseWriter, r *http.Request) {
 	}
 	var created AgentResponse
 	_ = json.Unmarshal([]byte(rec.body.String()), &created)
+	completeManagementMutation(r, "archives:import")
 	writeJSON(w, http.StatusAccepted, map[string]any{"import": viewArchiveJob(j), "agent": created})
 }
 
@@ -780,6 +792,9 @@ func (s *Server) handleArchiveUploads(w http.ResponseWriter, r *http.Request) {
 	a := s.Archives
 	rest := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/api/v1/archive-uploads"), "/")
 	id, action, _ := strings.Cut(rest, "/")
+	if (r.Method == http.MethodPost || r.Method == http.MethodPut) && !s.requireManagementAudit(w, r, "archives:upload", "installation", "", ScopeArchivesAdmin, true) {
+		return
+	}
 	switch {
 	case id == "" && r.Method == http.MethodPost && strings.HasPrefix(r.Header.Get("Content-Type"), "application/json"):
 		s.startPartUpload(w, r)
@@ -813,8 +828,10 @@ func (s *Server) handleArchiveUploads(w http.ResponseWriter, r *http.Request) {
 func (s *Server) receiveUpload(w http.ResponseWriter, r *http.Request) {
 	a := s.Archives
 	caller := callerFrom(r.Context())
+	beginManagementMutation(r)
 	j, err := a.StartUpload(r.Context(), caller.Name)
 	if errors.Is(err, archivejob.ErrConcurrency) {
+		markSensitiveOutcome(r, "failure")
 		w.Header().Set("Retry-After", "60")
 		writeJSONError(w, http.StatusTooManyRequests, "archive_capacity", "the installation is already running its maximum number of archive jobs")
 		return
@@ -858,6 +875,7 @@ func (s *Server) receiveUpload(w http.ResponseWriter, r *http.Request) {
 		cur.Step, cur.Message = archivejob.StepVerifying, "Verifying the archive"
 		err = a.Jobs.Update(bg, cur)
 		if err == nil {
+			completeManagementMutation(r, "archives:upload")
 			writeJSON(w, http.StatusAccepted, viewArchiveJob(cur))
 			return
 		}
@@ -920,6 +938,13 @@ func (s *Server) handleAgentImports(w http.ResponseWriter, r *http.Request) {
 	j, err := a.Jobs.Get(r.Context(), id)
 	caller := callerFrom(r.Context())
 	if err != nil || j.Kind != archivejob.KindImport || caller == nil || !caller.AgentResources.Has(s.Namespace+"/"+j.Agent) {
+		if err == nil && j.Kind == archivejob.KindImport && isValidName(j.Agent) && (caller == nil || !caller.AgentResources.Has(s.Namespace+"/"+j.Agent)) {
+			auditAction := "archives:read"
+			if action == "cancel" && r.Method == http.MethodPost {
+				auditAction = "archives:cancel"
+			}
+			s.auditOperatorDenial(w, r, auditAction, "agent", j.Agent)
+		}
 		writeJSONError(w, http.StatusNotFound, "not_found", "import not found")
 		return
 	}
@@ -931,10 +956,15 @@ func (s *Server) handleAgentImports(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusConflict, "import_finished", "the restore has already finished")
 			return
 		}
+		if !s.requireManagementAudit(w, r, "archives:cancel", "agent", j.Agent, ScopeArchivesAdmin, false) {
+			return
+		}
+		beginManagementMutation(r)
 		if err := a.RequestCancel(r.Context(), j); err != nil {
 			writeJSONError(w, http.StatusConflict, "import_changed", "the import changed; retry")
 			return
 		}
+		completeManagementMutation(r, "archives:cancel")
 		writeJSON(w, http.StatusAccepted, viewArchiveJob(j))
 	default:
 		writeJSONError(w, http.StatusNotFound, "not_found", "unknown import action")
@@ -996,6 +1026,14 @@ func (s *Server) requireInstallationArchiveAccess(w http.ResponseWriter, r *http
 		return false
 	}
 	if c := callerFrom(r.Context()); c == nil || !c.AgentResources.all {
+		action := "archives:upload"
+		if r.Method == http.MethodGet {
+			action = "archives:read"
+		}
+		if r.Method == http.MethodDelete {
+			action = "archives:delete"
+		}
+		s.auditOperatorDenial(w, r, action, "installation", "")
 		writeJSONError(w, http.StatusForbidden, "forbidden", "uploading an archive needs an installation-wide agent grant")
 		return false
 	}

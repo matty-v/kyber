@@ -29,7 +29,12 @@ import (
 	"syscall"
 	"time"
 
+	appsv1 "k8s.io/api/apps/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -96,6 +101,7 @@ func run(cfg selfupgrade.Config, deployment, healthURL string, logger *slog.Logg
 	if deployment == "" {
 		return fmt.Errorf("control-plane deployment name is required: without it there is nothing to verify against, and an unverified upgrade is not one we report as successful")
 	}
+	cfg.ControlPlaneDeployment = deployment
 	if err := os.MkdirAll(cfg.WorkDir, 0o700); err != nil {
 		return fmt.Errorf("create work directory %s: %w", cfg.WorkDir, err)
 	}
@@ -110,9 +116,13 @@ func run(cfg selfupgrade.Config, deployment, healthURL string, logger *slog.Logg
 	if err != nil {
 		return fmt.Errorf("load Kubernetes config: %w", err)
 	}
-	k8s, err := client.New(restCfg, client.Options{Scheme: clientgoscheme.Scheme})
+	k8s, err := newUpgradeClient(restCfg)
 	if err != nil {
 		return fmt.Errorf("build Kubernetes client: %w", err)
+	}
+	credentialCoordinator, err := selfupgrade.NewUpgradeCredentialCoordinator(restCfg, cfg.Namespace, selfupgrade.UpgradeCredentialExecution{PodName: os.Getenv("KYBER_UPGRADE_POD_NAME"), PodUID: os.Getenv("KYBER_UPGRADE_POD_UID")})
+	if err != nil {
+		return fmt.Errorf("build operator credential upgrade coordinator: %w", err)
 	}
 
 	runner := &selfupgrade.Runner{
@@ -126,9 +136,23 @@ func run(cfg selfupgrade.Config, deployment, healthURL string, logger *slog.Logg
 			HealthURL:  healthURL,
 			Log:        logger,
 		},
-		Log: logger,
+		Log:                   logger,
+		CredentialCoordinator: credentialCoordinator,
 	}
 	return runner.Run(ctx)
+}
+
+// The Go supervisor only reads Deployments and applies CRDs. Fixed mappings
+// keep context-bounded guard reads from waiting on contextless discovery.
+func newUpgradeClient(config *rest.Config) (client.Client, error) {
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{appsv1.SchemeGroupVersion, apiextensionsv1.SchemeGroupVersion})
+	mapper.Add(appsv1.SchemeGroupVersion.WithKind("Deployment"), meta.RESTScopeNamespace)
+	mapper.Add(apiextensionsv1.SchemeGroupVersion.WithKind("CustomResourceDefinition"), meta.RESTScopeRoot)
+	bounded := rest.CopyConfig(config)
+	if bounded.Timeout == 0 || bounded.Timeout > 30*time.Second {
+		bounded.Timeout = 30 * time.Second
+	}
+	return client.New(bounded, client.Options{Scheme: clientgoscheme.Scheme, Mapper: mapper})
 }
 
 func env(key, fallback string) string {

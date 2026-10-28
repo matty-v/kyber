@@ -72,11 +72,10 @@ it opens a confirmation dialog first. Confirm to proceed. On success the page
 shows a "Forced {name} into re-authorization" toast and the agent moves to
 `NeedsAuth`.
 
-> **Authorization note.** Require re-auth carries the same operator privilege as
-> Stop / Restart — anyone with the platform API key can invoke it.
-> Its blast radius is a denial-of-availability for the targeted agent until a
-> human re-authorizes it, the same as Stop. It adds no new privilege
-> tier.
+> **Authorization note.** Require re-auth needs a credential authorized for
+> that action and target Agent. It stops the current session until a human
+> authorizes the runtime again; a start/stop grant is not a blanket grant to
+> every credential-changing action.
 
 ---
 
@@ -145,12 +144,10 @@ offline remediation: stop the agent, inspect or clear the PVC, then start it.
 5. **Bring it back.** PWA (Agents) → **Start** (`desiredPhase=Running`). The
    agent rebuilds its pod and converges `Stopped → Starting → Running`.
 
-> **Authorization note.** Stop carries the same operator privilege as
-> Restart / Require re-auth — anyone with the platform API key can
-> invoke it. Broadening which phases honor Stop (kyber#468) does **not** widen
-> who can call it, and Stop is **fail-safe**: a forged or stale
-> `desiredPhase=Stopped` can only *halt* an agent (recoverable by starting it),
-> never keep one running or run stale state.
+> **Authorization note.** Stop requires an administrator or the supported
+> lifecycle permission on the exact target Agent. Broadening which phases honor
+> Stop (kyber#468) does not widen that permission. A stopped desired state halts
+> the Agent until an authorized start; it cannot keep a stale runtime running.
 
 ## See also
 

@@ -61,8 +61,8 @@ here is committed anywhere.
 ```bash
 kubectl create namespace kyber-system --dry-run=client -o yaml | kubectl apply -f -
 
-# Keep the API key. It unlocks every /api/v1/* endpoint, so treat it as a root
-# password and put it in your password manager now.
+# Keep the installation administrator key in your password manager.
+# It grants full operator access.
 export KYBER_API_KEY=$(openssl rand -hex 32)
 
 kubectl -n kyber-system create secret generic kyber-internal-signing-key \

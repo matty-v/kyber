@@ -102,7 +102,7 @@ func (m *MemoryCache) PutAgentModels(_ context.Context, agent, runtime string, m
 	if m.agentModels == nil {
 		m.agentModels = make(map[string][]Model)
 	}
-	m.agentModels[agentCatalogKey(agent, runtime)] = append([]Model(nil), models...)
+	m.agentModels[agentCatalogKey(agent, runtime)] = cloneModels(models)
 	return nil
 }
 
@@ -113,7 +113,7 @@ func (m *MemoryCache) GetAgentModels(_ context.Context, agent, runtime string) (
 	if runtime == "" || len(models) == 0 {
 		return nil, ErrCacheEmpty
 	}
-	return append([]Model(nil), models...), nil
+	return cloneModels(models), nil
 }
 
 // redisKey is where the snapshot lives in Redis. Single key — multi-replica

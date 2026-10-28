@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -120,7 +121,7 @@ func buildAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler, clie
 	scheme := mustNewScheme(t)
 	all := append([]runtime.Object{defaultMachine()}, objs...)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
@@ -144,13 +145,13 @@ func buildScopedAgentHandler(t *testing.T, objs ...runtime.Object) (http.Handler
 	scheme := mustNewScheme(t)
 	all := append([]runtime.Object{defaultMachine()}, objs...)
 	fakeClient := fake.NewClientBuilder().WithScheme(scheme).WithRuntimeObjects(all...).Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:    fakeClient,
 		APIKey:       testAPIKey,
 		AuthzEnforce: true,
 		Callers: []api.ScopedCaller{
-			{Name: "write-caller", Key: writeScopedKey, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:write"}},
-			{Name: "admin-caller", Key: adminScopedKey, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:admin"}},
+			{Name: "write-caller", Key: writeScopedKey, PrincipalID: "write-test-principal", CredentialID: "write-test-credential", CredentialGeneration: 1, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:write"}},
+			{Name: "admin-caller", Key: adminScopedKey, PrincipalID: "admin-test-principal", CredentialID: "admin-test-credential", CredentialGeneration: 1, AgentResources: []string{"kyber-system/dave"}, Scopes: []string{"lifecycle:admin"}},
 		},
 		Namespace:     "kyber-system",
 		ValidRuntimes: map[string]bool{"claude-code": true},
@@ -735,7 +736,7 @@ func TestAgents_Create_IdentityRepoPassthrough(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(defaultMachine()).
 		Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:         fakeClient,
 		APIKey:            testAPIKey,
 		Namespace:         "kyber-system",
@@ -788,7 +789,7 @@ func TestAgents_Create_IdentityRepoOmittedDefaultsEmpty(t *testing.T) {
 		WithScheme(scheme).
 		WithRuntimeObjects(defaultMachine()).
 		Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
@@ -1553,7 +1554,7 @@ func buildStatusAwareAgentHandler(t *testing.T, objs ...runtime.Object) (http.Ha
 		WithStatusSubresource(&kyberv1.Agent{}).
 		WithRuntimeObjects(all...).
 		Build()
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        testAPIKey,
 		Namespace:     "kyber-system",
@@ -1656,6 +1657,7 @@ func TestAgents_Start_ClearsRestartCountOnFailed(t *testing.T) {
 	agent := sampleAgentCRD("dave")
 	agent.Status.Phase = kyberv1.AgentPhaseFailed
 	agent.Status.RestartCount = 3
+	agent.Annotations = map[string]string{kyberv1.AnnotationPassiveConfigGeneration: "2"}
 	agent.Spec.DesiredPhase = kyberv1.AgentPhaseRunning // already Running: no spec change to make
 
 	h, c := buildStatusAwareAgentHandler(t, agent)
@@ -1670,6 +1672,9 @@ func TestAgents_Start_ClearsRestartCountOnFailed(t *testing.T) {
 	if err := c.Get(context.Background(),
 		types.NamespacedName{Name: "dave", Namespace: "kyber-system"}, &got); err != nil {
 		t.Fatalf("get agent: %v", err)
+	}
+	if got.Annotations[kyberv1.AnnotationPassiveConfigGeneration] != "" {
+		t.Fatal("explicit Start retained passive config marker")
 	}
 	if got.Status.RestartCount != 0 {
 		t.Errorf("Start left restartCount=%d — the agent has no budget left and will ignore the operator",
@@ -2271,7 +2276,7 @@ func TestCreateAgent_InsufficientResources(t *testing.T) {
 		WithRuntimeObjects(machine, node, existingAgent).
 		Build()
 
-	s := &api.Server{
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient:     fakeClient,
 		APIKey:        "test-key",
 		Namespace:     "kyber-system",

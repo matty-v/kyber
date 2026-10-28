@@ -146,8 +146,8 @@ describe('ReviewSection — onEdit', () => {
 
   it('renders one Edit link per editable group when onEdit is provided', () => {
     render(<ReviewSection state={initialWizardState([])} onEdit={vi.fn()} />)
-    // Name (step 1), Runtime (step 2), Identity (step 3), Auth (step 4) → 4 Edit buttons
-    expect(screen.getAllByRole('button', { name: /edit/i })).toHaveLength(4)
+    // Name (step 1), Runtime (step 2), Identity (step 3), Auth and effort (step 4) → 5 Edit buttons
+    expect(screen.getAllByRole('button', { name: /edit/i })).toHaveLength(5)
   })
 
   it('clicking the Name row\'s Edit calls onEdit(1)', async () => {
@@ -163,8 +163,7 @@ describe('ReviewSection — onEdit', () => {
     const user = userEvent.setup()
     const onEdit = vi.fn()
     render(<ReviewSection state={initialWizardState([])} onEdit={onEdit} />)
-    const editButtons = screen.getAllByRole('button', { name: /edit/i })
-    await user.click(editButtons[3]) // fourth edit = Auth (step 4)
+    await user.click(screen.getByRole('button', { name: 'Edit Auth' }))
     expect(onEdit).toHaveBeenCalledWith(4)
   })
 })

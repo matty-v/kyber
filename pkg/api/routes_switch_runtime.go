@@ -57,6 +57,9 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	}
 
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
 		if k8serrors.IsNotFound(err) {
@@ -139,6 +142,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 		if runner == nil {
 			runner = &kubernetesRuntimeRepairRunner{server: s}
 		}
+		beginManagementMutation(r)
 		_, err := runner.Run(r.Context(), agent, plan)
 		if errors.Is(err, ErrRuntimePreparationDeferred) {
 			// Leaving a harness that ships no Node (Hermes) removes npm from the
@@ -175,8 +179,10 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 	current.Spec.Runtime = req.Runtime
 	current.Spec.Secrets.AuthType = authType
 	current.Spec.Model = ""
+	current.Spec.Effort = ""
 	current.Spec.RuntimeVersion = ""
 	current.Spec.DesiredPhase = kyberv1.AgentPhaseNeedsAuth
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})); err != nil {
 		if k8serrors.IsConflict(err) {
 			writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during runtime preparation; retry")
@@ -197,6 +203,7 @@ func (s *Server) handleSwitchRuntime(w http.ResponseWriter, r *http.Request, nam
 			}
 		}
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"agent": name, "runtime": req.Runtime, "authType": authType,
 		"message":               "runtime switch requested; agent is moving to NeedsAuth on the same volume",

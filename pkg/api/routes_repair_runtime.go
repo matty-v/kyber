@@ -60,6 +60,9 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	if !s.requireManagementAudit(w, r, "lifecycle:write", "agent", name, ScopeLifecycleWrite, false) {
+		return
+	}
 	agent := &kyberv1.Agent{}
 	key := types.NamespacedName{Name: name, Namespace: s.Namespace}
 	if err := s.K8sClient.Get(r.Context(), key, agent); err != nil {
@@ -98,6 +101,7 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 	if runner == nil {
 		runner = &kubernetesRuntimeRepairRunner{server: s}
 	}
+	beginManagementMutation(r)
 	output, err := runner.Run(r.Context(), agent, plan)
 	if err != nil {
 		if errors.Is(err, ErrRuntimeRepairInProgress) {
@@ -138,6 +142,7 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 	before := current.DeepCopy()
 	current.Spec.DesiredPhase = kyberv1.AgentPhaseRestarting
 	patch := client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})
+	beginManagementMutation(r)
 	if err := s.K8sClient.Patch(r.Context(), current, patch); err != nil {
 		if k8serrors.IsConflict(err) {
 			writeJSONError(w, http.StatusConflict, "agent_changed", "agent changed during repair; retry the repair action")
@@ -152,6 +157,7 @@ func (s *Server) handleRepairRuntime(w http.ResponseWriter, r *http.Request, nam
 		s.Recorder.Eventf(current, corev1.EventTypeNormal, "RuntimeRepaired",
 			"runtime=%s repaired through maintenance pod; restart requested", current.Spec.Runtime)
 	}
+	completeManagementMutation(r, "lifecycle:write")
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"agent":   name,
 		"runtime": current.Spec.Runtime,

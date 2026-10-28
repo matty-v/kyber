@@ -18,18 +18,25 @@ func (s *Server) handleBrowserSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Header.Get("Authorization") == "" || s.auth == nil {
+		observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", "Bearer API key required")
 		return
 	}
 	caller, err := s.auth.Authenticate(r)
 	if err != nil {
 		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unavailable")
 			writeOperatorAuthenticationUnavailable(w)
 			return
 		}
+		observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized", err.Error())
 		return
 	}
+	observer := s.credentialUsageObserver()
+	unique := observer == nil || s.auth.credentialUsageIdentityUnique(caller)
+	observeAcceptedCredentialUsage(observer, caller, "bearer", "browser:sign-in", unique)
+	w = observeCredentialUsageResponse(w, observer, caller, "bearer", unique)
 	token, err := s.auth.createBrowserSession(r.Context(), *caller)
 	if err != nil {
 		if errors.Is(err, errOperatorAuthorityUnavailable) {

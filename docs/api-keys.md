@@ -1,348 +1,185 @@
 # Kyber Platform API Keys
 
-Administrators can inspect active and configured operator credentials in
-**Settings → API access**. See [operator credential inventory](operator/operator-credentials.md)
-for its coverage, identity continuity, and current management/history limits.
+Use **Settings → API access** to inspect operator keys, their effective access,
+management ownership, observed use and recent sensitive activity. On a compatible
+release, **Manage existing keys in Kyber** explicitly transfers ownership of
+existing keys into the managed registry. Upgrading alone does not perform setup.
+See the [operator credential guide](operator/operator-credentials.md) for setup,
+recovery, permissions and reporting coverage.
 
-The Kyber operator API accepts an **installation administrator key** and optional named **restricted integration keys**. The administrator key grants all operator access: creating Agents, changing configuration, opening terminals, and managing credentials. Restricted keys grant only explicitly supported operations and resources.
+An **Administrator** key grants full operator access. A **Restricted** key grants
+only supported actions on its allowed resources. These boundaries are always
+enforced; naming a key “metrics” or leaving scopes empty does not grant access.
+A shared key identifies its credential, not the individual person using it.
 
-This doc is the operator reference for managing it: where it lives, how to rotate, how to handle compromise, and what it does (and doesn't) protect.
+Provider API keys, Agent user secrets, channel tokens and per-pod credentials are
+separate surfaces. Changing an operator key does not automatically rotate them.
 
-> Adjacent credentials Kyber agents use — Anthropic OAuth tokens, GitHub App installation tokens, per-agent Telegram bot tokens, operator-uploaded user secrets — rotate independently and are **not affected** by anything in this doc. See [`docs/agents-identity-repos.md`](agents-identity-repos.md) for those.
+## Ownership and storage
 
-## TL;DR
+Before setup, installation configuration supplies the administrator key and
+optional `callers`. By default these are in the `kyber-api-credentials` Secret;
+`api.existingSecret` can select a different source. The control plane resolves
+configuration and caller references at startup. Editing a source requires a
+reload/restart and verification of every replica.
 
-- **Generate**: `openssl rand -hex 32` at install time, stored in the `kyber-api-credentials` Kubernetes Secret under key `api-key`.
-- **Rotate (in-PWA, no downtime)**: `POST /api/v1/rotate-api-key` requires installation administrator access, swaps the key in-memory, and updates the Secret. Old key 401s on the next request. Restricted keys cannot rotate it, including keys granted `lifecycle:admin`; that grant only covers Agent lifecycle. This restriction is enforced regardless of `api.authz.enforce`.
-- **Rotate (manual, e.g. compromise)**: `kubectl edit secret kyber-api-credentials` + restart the control-plane pod.
-- **Browser session**: the embedded PWA exchanges the pasted key for an opaque,
-  HttpOnly, same-site session cookie; it does not retain the key in readable storage.
-- **Attribution**: a shared administrator key cannot identify individual people or tools. Separate named integration keys provide caller identities; a durable access-history view is not available yet.
+After explicit setup, the selected registry is the sole operator-key authority.
+Existing accepted values, complete identities and grants are retained; missing
+identity labels receive stable operation-scoped IDs. Source Secrets remain
+intact, but editing them no longer changes accepted operator access. Referenced
+client Secrets are not automatically synchronized when a managed key rotates:
+save the replacement value and update the consuming client as part of rotation.
 
-## Where the key lives
+The installation-owned `kyber-operator-credentials` registry and
+`kyber-operator-credential-authority` marker are separate from Helm's configured
+source Secret. Do not delete or recreate them to return to configuration mode.
+The current authority is read directly without a last-good authentication cache;
+a read outage returns unavailable instead of restoring retired configuration keys.
 
-### In the cluster
+## Create, edit, rotate and revoke
 
-The control-plane reads the key from the Kubernetes Secret `kyber-api-credentials` (default name; configurable via the chart's `api.existingSecret` value). The Secret has one data key:
+For a managed installation, use Settings to:
 
-| Data key | Value |
-|---|---|
-| `api-key` | The 64-character hex string (32 bytes of entropy) |
+1. Create a named Administrator or Restricted key and choose supported grants
+   and exact Agent/Machine targets. The server validates the policy.
+2. Save the prepared secret value before activation. Existing values cannot be
+   revealed later; losing a response does not make the value retrievable.
+3. Edit grants or rotate an individual key. Rotation affects that credential's
+   material and generation, not an unrelated administrator key.
+4. Revoke a key with the affected credential identified. Revoked material is
+   removed while identity/history metadata remains available.
 
-The control-plane pod's spec mounts the Secret value into the `KYBER_API_KEY` env var via `secretKeyRef`, and the process reads it at startup. After startup, runtime mutation is driven by the `APIKeyAuthenticator` (`pkg/api/auth.go`) — that's how `/api/v1/rotate-api-key` swaps the key without a pod restart.
+Kyber protects the last active administrator that has no expiry. Keep a separate
+backup administrator credential in a password manager. Named credentials and
+optional expiry do not introduce human accounts, SSO or a per-browser session
+inventory.
 
-### In the PWA
+Management clients use the inventory version in `If-Match` and a canonical
+UUID operation ID at `POST /api/v1/operator-credentials/mutations`. New material
+must be canonical unpadded base64url representing 32 random bytes; the UI prepares
+it securely. Imported installation values keep their original encoding.
 
-The embedded PWA exchanges the pasted key once at
-`POST /api/v1/browser-session`, then uses an HttpOnly session cookie. The raw
-key is not retained in browser-readable storage.
+A version conflict requires a fresh inventory review. An uncertain write requires
+checking the **original operation**, not submitting a replacement key or repeating
+a POST blindly. The operation and pending-operation APIs distinguish confirmed
+success, failure and pending effects. Required audit storage must acknowledge
+admission before a mutation starts.
 
-The cookie is a **signed token, not a server-side session record** — it carries
-the caller and an expiry, signed with a key derived from the live API key
-(`pkg/api/browser_session_token.go`). Two consequences worth knowing as an
-operator:
+The former `POST /api/v1/rotate-api-key` workflow is disabled when managed authority
+is enabled, including before setup. Use API access rather than editing the
+installation Secret as a substitute for a managed rotation. Older releases may
+still offer their former configuration rotation endpoint.
 
-- Sessions **survive a control-plane restart**. Upgrades and pod recycles no
-  longer sign browsers out.
-- Sessions last 30 days and **renew on use**: any request made with more than
-  half the lifetime spent gets a fresh cookie, so a PWA opened at least monthly
-  never asks for the key again.
+## Browser sessions and live access
 
-### Signing a browser out
+The embedded console exchanges a pasted key at `POST /api/v1/browser-session`
+for an HttpOnly same-site cookie. It does not retain the raw key in readable
+browser storage. Sessions are signed tokens, not individually tracked server-side
+browser records. They last up to 30 days and renew on use while current access
+permits renewal.
 
-There are two levers, from broadest to narrowest:
+Managed sessions bind the current credential identity and generation. Revoking,
+rotating or narrowing a managed key affects bearer requests, browser sessions and
+already-open protected streams within the documented propagation bound of ten
+seconds. Current grants apply even when the cookie has not expired. There is no
+way to revoke one of two browsers sharing the same credential independently.
 
-- **Rotate the installation administrator key.** Sessions signed with the old
-  key fail on their next request to an instance accepting the replacement.
-  The initiating browser receives a replacement cookie. Verify all replicas
-  accept the new configuration; already-open streams are not closed by this
-  current mechanism.
-- **Change or remove a configured integration** in `callers`, then reload the
-  control planes. Editing the Secret alone does not update their startup
-  snapshots. After reload, changed grants/key values and removed entries are
-  enforced on subsequent requests. Verify the inventory on each instance.
-  Bounded automatic revocation across replicas and streams remains MAT-96.
+Compatible existing sessions survive setup within their original recorded
+cutoff/expiry window. Setup does not extend their original lifetime; the review
+reports callers that need to sign in again. Compatible state survives control-
+plane replacement. Old browser-readable key storage is consumed once and removed.
 
-There is no per-browser revocation: two browsers signed in as the same caller
-cannot be told apart, so signing one out signs both out.
+## Bootstrap configuration
 
-A control plane with no `KYBER_API_KEY` set cannot sign cookies at all;
-`POST /api/v1/browser-session` returns `503 session_unavailable` there.
-
-Legacy `localStorage['kyber_api_key']` values are consumed once and removed.
-
-### What the key grants
-
-Single-tenant install — **everything**:
-
-- Create / edit / delete agents and machines
-- Restart pods, stop and start agents, set-resources
-- Read agent activity (heartbeat, last-activity)
-- Manage user secrets, inbound bindings, scheduled jobs
-- Rotate the API key itself
-- Read fleet summary, telemetry, and OS-level pod logs
-
-The installation administrator key grants **everything** (full scope). For agent **lifecycle**
-verbs specifically, you can now issue narrower keys — see below.
-
-### Caller scopes and principal identity
-
-The public operator API has an always-enforced restricted-access boundary.
-Unclassified operations require installation administrator access, including
-credential rotation and generic fleet/configuration reads. Terminals,
-user secrets, operational logs and transcripts use separate explicit grants
-and exact allowed resources; see [the credential permission guide](operator/operator-credentials.md). The existing task, request, archive, capability, and usage handlers
-retain their stricter action and resource checks. Agent lifecycle operations
-also require the exact `namespace/name` in `agentResources`. A narrow key cannot
-inherit access through the historical observe-only lifecycle setting.
-
-`metrics:read` grants read-only fleet operational metrics under
-`/api/v1/metrics/`; it does not grant Agent configuration, logs, transcripts,
-terminals, or secrets. Existing monitoring credentials with empty scopes must
-be explicitly granted this permission before upgrading; a name such as
-`lando-metrics` does not grant access by itself. No existing credential is
-automatically broadened. Credential-changing Agent actions and runtime
-switching remain administrator-only until an explicit restricted policy exists.
-`lifecycle:admin` retains confirmed deletion on explicitly allowed Agents.
-A `capabilities:write` caller may PATCH only the isolated `publicCapabilities`
-field on an allowed Agent; success returns 204 with no private Agent details.
-Mixed or unrelated configuration changes require installation administrator
-access, even if the caller also has lifecycle grants.
-
-You can issue **scoped API keys** that are limited to certain agent lifecycle
-actions, instead of handing out the full-scope key. Scoped keys live in an
-optional `callers` JSON document on the same `kyber-api-credentials` Secret:
-
-```json
-[ {"name":"agent-automation","key":"<32-byte hex>","agentResources":["kyber-system/dave"],"scopes":["lifecycle:write"]},
-  {"name":"agent-ops","key":"<32-byte hex>","agentResources":["kyber-system/dave"],"scopes":["lifecycle:admin"]} ]
-```
-
-- `lifecycle:write` — `start` / `stop` / `restart` (and OAuth re-auth resume).
-- `lifecycle:admin` — the impactful verb `force-needs-auth`, **and**
-  everything `write` grants (scopes nest: `admin` ⊃ `write`). So a `write`-only
-  key cannot force-needs-auth an agent.
-
-Durable-task callers additionally declare stable security identity and an
-exact agent allowlist. Mutable names are display-only:
-
-```json
-[ {"name":"a2a-gateway","principalId":"principal_a2a_gateway","tenantId":"tenant_acme","credentialId":"credential_a2a_gateway","credentialGeneration":1,"agentResources":["kyber-system/researcher"],"keyFrom":{"secret":"a2a-gateway-key","key":"api-key"},"scopes":["tasks:create","tasks:read","tasks:list","tasks:continue","tasks:cancel","task-results:read","task-events:read"]} ]
-```
-
-Task scopes are independent: `tasks:create`, `tasks:read`, `tasks:list`,
-`tasks:continue`, `tasks:cancel`, `task-results:read`, and `task-events:read`
-grant only the named action. Task routes always enforce scope, tenant, stable
-principal ownership, and allowed-agent checks. During migration,
-`requests:write` maps to create/continue/cancel and `requests:read` maps to
-read/list/results/events. New callers should use the narrow scopes.
-
-Capability-discovery callers use `capabilities:read`; operator tooling that
-publishes or unpublishes a declaration uses `capabilities:write`. Both use the same stable
-principal, tenant, credential-generation, and exact `agentResources`
-envelope. The scope permits only the privacy-safe projection at
-`GET /api/v1/agents/{name}/capabilities`; it never exposes private evidence,
-skill reports, prompts, runtime metadata, or operator configuration. The
-installation administrator key remains full-scope for compatibility.
-
-The installation `api-key` keeps its administrator access. The historical
-`api.authz.enforce` setting controls the lifecycle helper's observe-only logs;
-it cannot disable the public operator boundary or the strict task/archive/usage
-checks. Operators upgrading restricted integrations must review their grants;
-unclassified public routes now return **403**, even when that setting is false.
-See
-[`architecture/api-authorization.md`](architecture/api-authorization.md) for the
-full model and [Out of scope](#out-of-scope) for the broader "RBAC" follow-up.
-
-### Sourcing a caller's key from a Secret (`keyFrom`, kyber#557)
-
-Instead of an inline `key`, a callers entry may reference a Secret data key:
-
-```json
-[ {"name":"some-caller","keyFrom":{"secret":"some-caller-api-key","key":"api-key"},"scopes":["lifecycle:write"]} ]
-```
-
-The control plane resolves the reference **once, at process start**, and the
-caller then authenticates exactly as if the key were inline (same scopes, same
-Bearer presentation). Use this when a consumer also mounts its own key Secret:
-the value then lives in **exactly one place** — the referenced Secret — instead
-of being duplicated into the shared `callers` doc, where rotation strands the
-consumer's copy and any reader of the doc sees every caller's key.
-
-Rules:
-
-- **Exactly one of `key` / `keyFrom`** per entry. Both, or neither, is a parse
-  error and — per the existing fail-closed contract — rejects **all** scoped
-  callers for that boot (the installation administrator key still works).
-- **Same namespace only.** The reference resolves in the control plane's own
-  namespace. There is no `namespace` field, deliberately: the restriction is
-  the application-level boundary that keeps the callers doc from designating
-  Secrets elsewhere in the cluster.
-- **An unresolvable reference rejects only that caller** (missing Secret,
-  missing data key, or empty value) with a setup log naming the reference.
-  Other callers and the legacy key are unaffected. The startup line
-  `loaded scoped API callers` reports `count` (accepted) and `rejected`.
-- The resolved value is trimmed of surrounding whitespace (a `stringData`
-  value with a trailing newline matches what a file-mounting consumer reads).
-
-**Rotation procedure (restart-to-rotate, stated plainly):** update the
-referenced Secret's value, then **restart the control plane** — resolution
-happens only at process start; there is no hot reload. The old key stops
-authenticating at that restart, the new value starts. Consumers mounting the
-same Secret pick the new value up via the kubelet refresh (~60s) with no
-action of their own.
-
-**Rollback ordering (read before downgrading the control plane):** a control
-plane older than the `keyFrom` feature fails to parse **any** entry that has
-no inline `key` — and a callers-doc parse failure rejects **every** scoped
-caller, not just the `keyFrom` one (legacy key unaffected). So, to roll the
-control plane back below the `keyFrom` version floor:
-
-1. **First** convert every `keyFrom` entry in the callers doc back to inline
-   `key` form (copy the value out of the referenced Secret).
-2. **Then** roll back the control-plane image and restart.
-
-Rolling back first takes all scoped callers dark until the doc is reverted.
-
-## Generation (install time)
-
-The install path is documented in [`docs/installation.md` § 1](installation.md#1-generate-secrets) and [`docs/installation-wsl2.md`](installation-wsl2.md). The relevant command:
+At installation, generate a strong administrator key:
 
 ```bash
 KYBER_API_KEY=$(openssl rand -hex 32)
 ```
 
-Why those flags:
-- `rand` — pulls from the OS CSPRNG (kernel `/dev/urandom` on Linux).
-- `-hex` — encode as ASCII hex so the key fits cleanly in a Kubernetes Secret value and is easy to copy/paste.
-- `32` — 32 bytes = 256 bits of entropy. The hex encoding doubles the printed length to 64 characters. 256 bits is well past the bar for a bearer token; lower values are tempting but offer no operational benefit.
+Store it securely and provide it through the installation's Secret workflow.
+Never commit values or paste them into shared logs, issue bodies or shell history.
+See [installation](installation.md) and [WSL2 installation](installation-wsl2.md).
 
-Then create the Secret:
-
-```bash
-kubectl -n kyber-system create secret generic kyber-api-credentials \
-  --from-literal=api-key="$KYBER_API_KEY"
-```
-
-> Never commit the key to git. The install scripts write it to `prod-secrets.env`, which is gitignored. If you need to share the key with a teammate, use an out-of-band channel (1Password, Bitwarden, signal). Don't paste into Slack / email / chat backups.
-
-## Rotation
-
-### Programmatic rotation (no downtime)
-
-From any authenticated client (PWA, `curl`):
-
-```bash
-curl -X POST -H "Authorization: Bearer $KYBER_API_KEY" \
-  https://<your-kyber-host>/api/v1/rotate-api-key
-```
-
-Response (the new key is returned **once** in plaintext — this is the only opportunity to copy it):
+Before managed setup, callers can be configured with stable identity and targets:
 
 ```json
-{
-  "apiKey": "<new 64-char hex string>"
-}
+[{
+  "name": "agent-automation",
+  "principalId": "principal_agent_automation",
+  "tenantId": "tenant_automation",
+  "credentialId": "credential_agent_automation",
+  "credentialGeneration": 1,
+  "agentResources": ["kyber-system/researcher"],
+  "keyFrom": {"secret": "agent-automation-key", "key": "api-key"},
+  "scopes": ["lifecycle:write"]
+}]
 ```
 
-What happens server-side, in order:
+Use exactly one of inline `key` and `keyFrom`. References resolve in the control
+plane's namespace only, are loaded at startup, and trim surrounding whitespace.
+Malformed caller documents reject scoped configuration; an unresolved reference
+rejects the affected caller. Managed setup refuses incomplete source resolution
+rather than silently dropping an accepted credential.
 
-1. Generate 32 bytes of CSPRNG entropy, hex-encode.
-2. Patch the `kyber-api-credentials` Secret to set `data.api-key` to the new value (base64-encoded by k8s).
-3. Mutate the running `APIKeyAuthenticator`'s in-memory key atomically.
-4. Return the new plaintext key in the response body.
+Scope and resource checks remain mandatory. Lifecycle, terminal, secret/log,
+task, capability and usage permissions are distinct; Agent and Machine terminal
+targets use separate lists. Empty permissions grant no protected operator action,
+although accepted keys can read basic version and their own current access
+metadata. The old `api.authz.enforce` setting cannot disable these boundaries.
+See the [permission guide](operator/operator-credentials.md).
 
-After the response lands, **the old key 401s on the next request**. The PWA's caching means an operator's other browser tabs will hit a 401 and prompt for the new key on next request.
+## Lost access and compromise
 
-The pod is **not** restarted. The Secret update is purely the persistence layer — the next pod restart will read the new key from the Secret via the existing `KYBER_API_KEY` env var, so the rotation survives pod recycle.
+If a browser is still signed in as an administrator, create and save a replacement
+administrator key before retiring compromised access. If all known keys and
+sessions are lost, recovery requires the installation owner's privileged
+Kubernetes access to the **selected** credential store; there is no public API
+that reveals existing key values or bypasses authentication. Handle recovered
+material privately, then rotate it and store a backup through Settings.
 
-### Manual rotation (compromise / install repair)
+Before managed setup, the installation owner can repair the configured source
+Secret and restart all control planes. After setup, changing that source cannot
+restore administrator access. Never delete authority/registry Secrets or restore
+only old configuration to bypass managed state. Use a consistent protected backup
+and a compatible release for installation recovery.
 
-When the programmatic path is unavailable (e.g. you've lost the current key, or you need to verify the key in the Secret matches what the running pod has):
+For suspected compromise:
 
-```bash
-# 1. Generate a new key
-NEW_KEY=$(openssl rand -hex 32)
+- Revoke the affected integration or rotate the affected key promptly. Preserve
+  an administrator recovery route while replacing an administrator credential.
+- Review **Recent access** for attributable decisions/outcomes and **Observed key
+  activity** for partial usage coverage. HTTP logs do not replace durable audit.
+- Assess other credentials the compromised actor could read through its allowed
+  terminals, user-secret or administration access. Rotate those separately where
+  exposure is possible; operator-key rotation does not rotate provider/channel
+  credentials automatically.
 
-# 2. Patch the Secret directly
-kubectl -n kyber-system patch secret kyber-api-credentials \
-  --type=merge -p "{\"data\":{\"api-key\":\"$(echo -n "$NEW_KEY" | base64 -w0)\"}}"
+Full administrator access is a powerful trust boundary. It does not protect
+against cluster/node compromise, an already-compromised privileged client, or
+keys committed to an external repository. Scoped keys reduce access; they do not
+identify individual humans sharing one value.
 
-# 3. Restart the control-plane pod so the env-var-derived key updates
-kubectl -n kyber-system rollout restart deployment kyber-laptop-control-plane
-# (substitute your release name; check `helm list -n kyber-system` if unsure)
-```
+## Audit, usage and upgrade limits
 
-After step 3 the control-plane pod restarts and reads the new key from the Secret on startup. **All in-flight authenticated sessions get 401s** until clients update to the new key.
+Sensitive operations require a durable authorization record before content or
+external effects. Required-store failure blocks those operations; ordinary
+current authentication, sign-in and administrator inventory do not depend on
+that database. Completion may remain unconfirmed after an effect, which is a
+reason to inspect its operation, not replay it automatically.
 
-> Manual rotation has a brief window of unavailability (the pod restart). Programmatic rotation does not. Use programmatic when possible.
+History reports credential/principal, action, exact resource, request/operation
+IDs, decision/outcome and time. It excludes key values, cookies, request bodies,
+terminal arguments and transcript text. Usage has explicit windows, freshness,
+coverage and gaps; no recorded use does not mean never used. Neither view invents
+a human identity or promises a complete per-browser session list.
 
-## Revocation (compromise)
+Supported upgrades and rollback verify compatible effective releases. Once
+managed authority is selected, a pre-protocol image or custom image override is
+not a supported way to downgrade. Restoring old configuration must not resurrect
+a revoked credential. See [upgrading](upgrading.md) and the
+[operator guide](operator/operator-credentials.md#credential-maintenance).
 
-If you suspect the key has leaked:
-
-1. **Rotate immediately** — programmatic if you still have the key, manual otherwise. The compromised key is dead the moment step 2 of either path completes.
-2. **Audit recent access**:
-
-```bash
-# Recent API requests (look for unexpected source IPs, unusual paths,
-# burst patterns)
-kubectl -n kyber-system logs deployment/kyber-laptop-control-plane --since=24h \
-  | grep -E "INFO http request"
-```
-
-The control-plane logs every API request with method, path, status, and request ID — but does **not** log the source IP today (single-tenant assumption). If you need richer audit, enable cloudflared or your ingress's request log.
-
-3. **Rotate adjacent credentials if the same threat actor could have reached them**:
-   - **Inbound binding secrets** — the per-binding HMAC secrets for signed inbound webhooks rotate through the binding rotate endpoint (each agent's Webhooks tab, or the API); rotate any binding whose secret lived in the same compromised environment.
-   - **GitHub App private key** (separate Secret, see [`docs/agents-identity-repos.md`](agents-identity-repos.md)) — only if the actor could reach the cluster, not just the API key.
-   - **Anthropic OAuth tokens, agent Telegram bot tokens, user-uploaded secrets** — separately scoped per agent, not affected by a platform-API-key compromise.
-
-## Scope + threat model
-
-### Single tenant
-
-The Kyber control-plane assumes one operator (or one trusted team) per install. The API key is a **shared secret** between operator and control-plane. There is no per-user, per-role, or per-action scoping.
-
-### Trust boundary
-
-The API key is the only thing standing between someone with network access to the control-plane and full control of the platform. Network access today comes from:
-
-- The cluster's pod network (anything on the cluster can reach the control-plane Service via cluster-internal DNS — but the protected port is gated by Bearer auth)
-- Whatever ingress you've put in front (Cloudflare tunnel, ingress-nginx, plain LoadBalancer)
-
-The key does NOT defend against:
-
-- Compromise of the cluster itself (root on a node = root on every Secret)
-- Compromise of the GitHub repo where install scripts wrote the key (if you committed the key — don't do that)
-- Compromise of the operator's browser (PWA cache)
-
-### What's NOT in the audit log
-
-- Source IP of API requests (single-tenant assumption; add ingress logs if needed)
-- Per-key identity (only one key, no need)
-- Mutation diffs (status patches in particular are noisy; mutation logs are at INFO level but not structured for forensics)
-
-## Out of scope
-
-These are deliberate "not yet" choices, not bugs:
-
-- **Per-user API keys / RBAC** — would require an identity layer (OAuth, OIDC, magic links). Tracked as a future epic if/when multi-tenancy lands.
-- **Key expiration / auto-rotation policies** — programmatic rotation exists; automated policy is a separate concern.
-- **Integration with external secret managers** (Vault, SOPS, sealed-secrets) — current install path uses a plain Kubernetes Secret. Operators who want sealed-secrets can substitute their own Secret name via the chart's `api.existingSecret` value.
-- **Per-PR preview environment key delivery** — original [#124](https://github.com/matty-v/kyber/issues/124) bundled this; the per-PR preview system was retired ([kyber#168](https://github.com/matty-v/kyber/issues/168) + kyber-deploy#16) so there's no delivery story to document.
-
-## Related
-
-- [`docs/installation.md`](installation.md) — the install path that generates the initial key
-- [`docs/installation-wsl2.md`](installation-wsl2.md) — WSL2 standalone install path
-- [`docs/agents-identity-repos.md`](agents-identity-repos.md) — separate auth surface for agents (the agent's identity repo is managed exclusively by the Kyber Platform GitHub App — reads and writes, no PAT fallback; the generic PAT user-secret is used only for the agent's other repos)
-- `pkg/api/auth.go` — the authenticator
-- `pkg/api/routes_rotate_api_key.go` — the programmatic rotation endpoint
-
-Sensitive terminal, user-secret and log/transcript operations require a durable
-security record before backend access. If PostgreSQL/security history is
-unavailable they return 503 without starting; sign-in and administrator
-credential inventory remain available. See
-[operator credential records](operator/operator-credentials.md#required-records-for-sensitive-access)
-for coverage and incomplete-completion semantics.
+Automatic rotation policies, human SSO and external secret-manager synchronization
+remain separate capabilities. Runtime/provider credentials remain documented in
+[Agent identity repositories](agents-identity-repos.md).

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/matty-v/kyber/internal/testutil"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -96,6 +97,17 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 	if err != nil {
 		t.Fatal(err)
 	}
+	for i := range callers {
+		if callers[i].PrincipalID == "" {
+			callers[i].PrincipalID = "archive-test-" + callers[i].Name
+		}
+		if callers[i].CredentialID == "" {
+			callers[i].CredentialID = "archive-key-" + callers[i].Name
+		}
+		if callers[i].CredentialGeneration == 0 {
+			callers[i].CredentialGeneration = 1
+		}
+	}
 	h := &exportHarness{t: t, c: c, store: store, now: time.Date(2026, 9, 22, 12, 0, 0, 0, time.UTC)}
 	h.svc = &api.ArchiveService{
 		Client: c, Namespace: "kyber-system", Store: store, Jobs: archivejob.NewMemoryStore(),
@@ -104,7 +116,7 @@ func newExportHarness(t *testing.T, callers ...api.ScopedCaller) *exportHarness 
 		Limits:      api.ArchiveLimits{MaxArchiveBytes: 10 << 20},
 		Now:         func() time.Time { return h.now },
 	}
-	h.server = &api.Server{K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system", Archives: h.svc, Callers: callers}
+	h.server = &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: c, APIKey: testAPIKey, Namespace: "kyber-system", Archives: h.svc, Callers: callers}
 	h.internal = api.NewInternalServer(briefstore.NewMemoryStore(), api.WithArchiveService(h.svc)).Handler()
 	return h
 }
@@ -597,7 +609,7 @@ func TestExportRejectsTransientPhase(t *testing.T) {
 }
 
 func TestExportUnavailableWithoutService(t *testing.T) {
-	s := &api.Server{K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(), APIKey: testAPIKey, Namespace: "kyber-system"}
+	s := &api.Server{SecurityAudit: testutil.NewSecurityAudit(), K8sClient: fake.NewClientBuilder().WithScheme(mustNewScheme(t)).Build(), APIKey: testAPIKey, Namespace: "kyber-system"}
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/agents/x/exports", nil)
 	req.Header.Set("Authorization", "Bearer "+testAPIKey)
 	rr := httptest.NewRecorder()

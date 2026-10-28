@@ -294,7 +294,9 @@ func (a *ClaudeCodeAdapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 			Value: runtimes.DiscordMCPURL(),
 		})
 	}
-	if agent.Spec.Secrets.SlackEnabled { vars = append(vars, corev1.EnvVar{Name:"KYBER_SLACK_MCP_URL",Value:runtimes.SlackMCPURL()}) }
+	if agent.Spec.Secrets.SlackEnabled {
+		vars = append(vars, corev1.EnvVar{Name: "KYBER_SLACK_MCP_URL", Value: runtimes.SlackMCPURL()})
+	}
 
 	// kyber#132 Phase 1 — Discord webhook for outbound notifications.
 	// Same SecretKeyRef shape as Telegram; the key is "webhook-url" (not
@@ -314,6 +316,9 @@ func (a *ClaudeCodeAdapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 		})
 	}
 
+	if agent.Spec.Effort != "" {
+		vars = append(vars, corev1.EnvVar{Name: "KYBER_REASONING_EFFORT", Value: agent.Spec.Effort})
+	}
 	return vars
 }
 

@@ -1,10 +1,7 @@
 package api
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/base64"
-	"encoding/binary"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -16,8 +13,10 @@ import (
 
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 
+	"github.com/google/uuid"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/archivejob"
+	"github.com/matty-v/kyber/pkg/securityaudit"
 )
 
 // archiveJobView is the public projection of a job. Keys, token hashes and
@@ -95,7 +94,21 @@ func summaryView(s *archivejob.Summary) *archivejob.Summary {
 
 // handleAgentExports serves /api/v1/agents/{name}/exports[/{id}[/cancel|/download-link]].
 func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name, rest string) {
-	if !s.requireArchiveAccess(w, r, name) {
+	id, action, _ := strings.Cut(rest, "/")
+	auditAction := "operator:unclassified"
+	switch {
+	case id == "" && action == "" && r.Method == http.MethodPost:
+		auditAction = "archives:export"
+	case action == "" && r.Method == http.MethodGet:
+		auditAction = "archives:read"
+	case id != "" && action == "" && r.Method == http.MethodDelete:
+		auditAction = "archives:delete"
+	case id != "" && action == "cancel" && r.Method == http.MethodPost:
+		auditAction = "archives:cancel"
+	case id != "" && action == "download-link" && r.Method == http.MethodPost:
+		auditAction = "archives:link"
+	}
+	if !s.requireArchiveAccess(w, r, name, auditAction) {
 		return
 	}
 	a := s.Archives
@@ -103,28 +116,36 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 		writeJSONError(w, http.StatusServiceUnavailable, "archives_unavailable", reason)
 		return
 	}
-	id, action, _ := strings.Cut(rest, "/")
 	switch {
 	case id == "" && r.Method == http.MethodPost:
+		if !s.requireManagementAudit(w, r, "archives:export", "agent", name, ScopeArchivesAdmin, false) {
+			return
+		}
 		caller := "unknown"
 		if c := callerFrom(r.Context()); c != nil {
 			caller = c.Name
 		}
+		beginManagementMutation(r)
 		j, err := a.StartExport(r.Context(), name, caller)
 		switch {
 		case k8serrors.IsNotFound(err):
+			markSensitiveOutcome(r, "failure")
 			writeJSONError(w, http.StatusNotFound, "not_found", "agent not found")
 		case errors.Is(err, errArchivePhase), errors.Is(err, errArchiveHeld):
+			markSensitiveOutcome(r, "failure")
 			writeJSONError(w, http.StatusConflict, "invalid_phase", err.Error())
 		case errors.Is(err, archivejob.ErrActiveJob):
+			markSensitiveOutcome(r, "failure")
 			writeJSONError(w, http.StatusConflict, "export_in_progress", "this agent already has an export in progress")
 		case errors.Is(err, archivejob.ErrConcurrency):
+			markSensitiveOutcome(r, "failure")
 			w.Header().Set("Retry-After", "60")
 			writeJSONError(w, http.StatusTooManyRequests, "archive_capacity", "the installation is already running its maximum number of archive jobs")
 		case err != nil:
 			slog.Error("starting disk export failed", "agent", name, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to start the export")
 		default:
+			completeManagementMutation(r, "archives:export")
 			writeJSON(w, http.StatusAccepted, viewArchiveJob(j))
 		}
 	case id == "" && r.Method == http.MethodGet:
@@ -154,19 +175,36 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 				writeJSONError(w, http.StatusConflict, "export_finished", "the export has already finished")
 				return
 			}
+			if !s.requireManagementAudit(w, r, "archives:cancel", "agent", name, ScopeArchivesAdmin, false) {
+				return
+			}
+			beginManagementMutation(r)
 			if err := a.RequestCancel(r.Context(), j); err != nil {
 				writeJSONError(w, http.StatusConflict, "export_changed", "the export changed; retry")
 				return
 			}
+			completeManagementMutation(r, "archives:cancel")
 			writeJSON(w, http.StatusAccepted, viewArchiveJob(j))
 		case action == "download-link" && r.Method == http.MethodPost:
 			if j.State != archivejob.StateCompleted {
 				writeJSONError(w, http.StatusConflict, "not_downloadable", "only a completed export can be downloaded")
 				return
 			}
+			if !s.requireManagementAudit(w, r, "archives:link", "agent", name, ScopeArchivesAdmin, false) {
+				return
+			}
 			exp := a.now().Add(a.limits().LinkTTL)
+			token, err := s.signCurrentArchiveDownload(r, j, exp)
+			if err != nil {
+				if errors.Is(err, errOperatorAuthorityUnavailable) {
+					writeOperatorAuthenticationUnavailable(w)
+				} else {
+					writeJSONError(w, http.StatusForbidden, "download_access_changed", "archive access changed; request a new download link")
+				}
+				return
+			}
 			writeJSON(w, http.StatusOK, map[string]any{
-				"url":       "/api/v1/archive-downloads/" + a.signDownload(j, exp),
+				"url":       "/api/v1/archive-downloads/" + token,
 				"expiresAt": exp,
 				"filename":  archiveFilename(j),
 			})
@@ -177,15 +215,16 @@ func (s *Server) handleAgentExports(w http.ResponseWriter, r *http.Request, name
 }
 
 // requireArchiveAccess requires archives:admin and that the caller's agent
-// resources include this agent ("*" for installation-wide callers such as
-// the legacy key). A disk archive can hold credentials, so a scoped key
+// resources include this agent ("*" for installation administrators). A disk archive can hold credentials, so a scoped key
 // never reaches an agent it was not explicitly granted.
-func (s *Server) requireArchiveAccess(w http.ResponseWriter, r *http.Request, name string) bool {
+func (s *Server) requireArchiveAccess(w http.ResponseWriter, r *http.Request, name, action string) bool {
 	if !s.requireScope(w, r, name, "disk-archive", ScopeArchivesAdmin) {
+		s.auditOperatorDenial(w, r, action, "agent", name)
 		return false
 	}
 	caller := callerFrom(r.Context())
 	if caller == nil || !caller.AgentResources.Has(s.Namespace+"/"+name) {
+		s.auditOperatorDenial(w, r, action, "agent", name)
 		writeJSONError(w, http.StatusNotFound, "not_found", "agent not found")
 		return false
 	}
@@ -197,54 +236,15 @@ func archiveFilename(j *archivejob.Job) string {
 	return fmt.Sprintf("%s-disk-%s.zip", j.Agent, ts)
 }
 
-// Download tokens are job ID, expiry and an HMAC over both under a key
-// derived from the signing key. They are bearer credentials for one job's
-// bytes for a few minutes, which is what lets a browser download a large
-// archive with a plain navigation instead of buffering it in memory.
-func (a *ArchiveService) downloadMAC(id string, exp time.Time) []byte {
-	m := hmac.New(sha256.New, a.SigningKey)
-	m.Write([]byte("kyber archive download v1\x00"))
-	m.Write([]byte(id))
-	var b [8]byte
-	binary.BigEndian.PutUint64(b[:], uint64(exp.Unix()))
-	m.Write(b[:])
-	return m.Sum(nil)
-}
-
-func (a *ArchiveService) signDownload(j *archivejob.Job, exp time.Time) string {
-	payload := j.ID + "." + strconv.FormatInt(exp.Unix(), 10)
-	return base64.RawURLEncoding.EncodeToString([]byte(payload)) + "." +
-		base64.RawURLEncoding.EncodeToString(a.downloadMAC(j.ID, exp))
-}
-
-func (a *ArchiveService) parseDownload(token string) (string, bool) {
-	p, sig, ok := strings.Cut(token, ".")
-	if !ok {
-		return "", false
-	}
-	raw, err1 := base64.RawURLEncoding.DecodeString(p)
-	mac, err2 := base64.RawURLEncoding.DecodeString(sig)
-	if err1 != nil || err2 != nil {
-		return "", false
-	}
-	id, expRaw, ok := strings.Cut(string(raw), ".")
-	unix, err := strconv.ParseInt(expRaw, 10, 64)
-	if !ok || err != nil {
-		return "", false
-	}
-	exp := time.Unix(unix, 0)
-	if !hmac.Equal(mac, a.downloadMAC(id, exp)) || !a.now().Before(exp) {
-		return "", false
-	}
-	return id, true
-}
-
 // archiveDownloadPrefix is outside the authenticated API: the path token is
 // the credential. loggingMiddleware redacts it.
 const archiveDownloadPrefix = "/api/v1/archive-downloads/"
 
 // handleArchiveDownload streams a completed export as a plain ZIP.
 func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Referrer-Policy", "no-referrer")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		writeJSONError(w, http.StatusMethodNotAllowed, "method_not_allowed", "method not allowed")
 		return
@@ -254,13 +254,45 @@ func (s *Server) handleArchiveDownload(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusServiceUnavailable, "archives_unavailable", "disk archives are unavailable")
 		return
 	}
-	id, ok := a.parseDownload(strings.TrimPrefix(r.URL.Path, archiveDownloadPrefix))
+	claims, ok := s.parseCurrentArchiveDownload(strings.TrimPrefix(r.URL.Path, archiveDownloadPrefix))
 	if !ok {
+		observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
+		s.auditOperatorDenial(w, r, "archives:download", "installation", "")
 		writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is invalid or has expired")
 		return
 	}
-	j, err := a.Jobs.Get(r.Context(), id)
-	if err != nil || j.Kind != archivejob.KindExport || j.State != archivejob.StateCompleted {
+	caller, err := s.resolveArchiveDownload(r.Context(), claims)
+	if err != nil {
+		if errors.Is(err, errOperatorAuthorityUnavailable) {
+			observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unavailable")
+			writeOperatorAuthenticationUnavailable(w)
+		} else {
+			observeUnidentifiedCredentialUsage(s.credentialUsageObserver(), "unrecognized")
+			s.auditArchiveCapabilityDenial(w, r, claims)
+			writeJSONError(w, http.StatusForbidden, "link_invalid", "this download link is no longer authorized; request a new link")
+		}
+		return
+	}
+	observer := s.credentialUsageObserver()
+	unique := observer == nil || s.auth.credentialUsageIdentityUnique(caller)
+	observeAcceptedCredentialUsage(observer, caller, "archive-capability", "archives:download", unique)
+	w = observeCredentialUsageResponse(w, observer, caller, "archive-capability", unique)
+	r = r.WithContext(context.WithValue(r.Context(), callerCtxKey{}, caller))
+	handler := s.liveOperatorRequestsWithAccess(s.auditOperatorOutcomes(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s.streamArchiveDownload(w, r, claims)
+	})), func(r *http.Request) (*Caller, error) { return s.resolveArchiveDownload(r.Context(), claims) }, func(_ *http.Request, c *Caller) bool {
+		return c.Scopes.Has(ScopeArchivesAdmin) && c.AgentResources.Has(claims.Namespace+"/"+claims.Agent)
+	})
+	handler.ServeHTTP(w, r)
+}
+
+func (s *Server) streamArchiveDownload(w http.ResponseWriter, r *http.Request, claims archiveDownloadClaims) {
+	if !s.requireManagementAudit(w, r, "archives:download", "agent", claims.Agent, ScopeArchivesAdmin, false) {
+		return
+	}
+	a := s.Archives
+	j, err := a.Jobs.Get(r.Context(), claims.Job)
+	if err != nil || j.Kind != archivejob.KindExport || j.State != archivejob.StateCompleted || j.Agent != claims.Agent {
 		writeJSONError(w, http.StatusNotFound, "not_found", "this export is no longer available")
 		return
 	}
@@ -310,4 +342,28 @@ func redactArchiveDownloadPath(p string) string {
 		return archiveDownloadPrefix + "[redacted]"
 	}
 	return p
+}
+
+// Attribution is from a verified installation signature, not an authenticated
+// current role. It is used only for a denial record and never enters caller
+// context or grants API access. Unknown/invalid links stay unattributed.
+func (s *Server) auditArchiveCapabilityDenial(w http.ResponseWriter, r *http.Request, claims archiveDownloadClaims) {
+	if s.SecurityAudit == nil {
+		return
+	}
+	e := securityaudit.Event{ID: uuid.NewString(), OperationID: uuid.NewString(), ObservedAt: time.Now().UTC(), Namespace: s.Namespace, RequestID: w.Header().Get(RequestIDHeader), Action: "archives:download", ResourceKind: "agent", ResourceName: claims.Agent, Phase: "authorization", Outcome: "deny", Method: auditMethod(r.Method), CredentialAuthority: "configuration", PrincipalID: claims.Principal, CredentialID: claims.Credential, Generation: claims.Generation}
+	if e.RequestID == "" {
+		e.RequestID = uuid.NewString()
+	}
+	if claims.Authority == "registry" {
+		e.CredentialAuthority = "registry"
+	}
+	if e.Validate() != nil {
+		e.PrincipalID, e.CredentialID, e.Generation = "", "", 0
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), securityAuditTimeout)
+	defer cancel()
+	if _, err := s.SecurityAudit.Append(ctx, e); err != nil {
+		slog.Error("security audit archive denial unavailable", "operation_id", e.OperationID, "action", e.Action)
+	}
 }

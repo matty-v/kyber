@@ -57,6 +57,9 @@ type Server struct {
 	// Nil fails closed on sensitive operations; ordinary authentication remains available.
 	SecurityAudit securityaudit.Store
 
+	// OperatorCredentialUsage accepts bounded metadata without database work on requests.
+	OperatorCredentialUsage securityaudit.CredentialUsageObserver
+
 	// K8sClient is used for all CRD reads and writes.
 	K8sClient client.Client
 	// APIReader, when set, reads straight from the API server, bypassing
@@ -119,8 +122,21 @@ type Server struct {
 	// configured authority must distinguish unadopted state from an outage.
 	// Set this before BuildHandler; adoption changes its durable marker, not
 	// this installation-wide resolver.
-	// The control-plane command does not enable adoption through this seam yet.
+	// The control-plane wires this for the complete protocol, independently of
+	// audit database health. Unselected state still uses installation configuration.
 	OperatorCredentialAuthority OperatorCredentialAuthority
+
+	// Read-only maintenance visibility; does not enable acquisition or recovery.
+	// OperatorCredentialPodUID is non-secret Downward-API metadata for replica
+	// verification. Empty/invalid values are omitted, never invented.
+	OperatorCredentialPodUID      string
+	OperatorCredentialMaintenance OperatorCredentialMaintenanceReader
+
+	// Reconciliation is wired only when the complete recovery path is ready.
+	OperatorCredentialMaintenanceReconciler OperatorCredentialMaintenanceReconciler
+
+	// Explicit adoption is wired only with the complete authority protocol.
+	OperatorCredentialAdoption operatorCredentialAdoptionManager
 
 	// APIKeySecretName is the name of the Kubernetes Secret holding the api-key
 	// the control-plane authenticates against. The rotate handler patches this
@@ -645,7 +661,7 @@ func (s *Server) buildTopHandler() http.Handler {
 		s.auth.namespace = s.Namespace
 	}
 	s.registerProtectedRoutes(protectedMux)
-	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)))
+	protected := authMiddleware(s.auth, s.auditSensitiveRequests(s.operatorBoundary(protectedMux)), s.credentialUsageObserver())
 
 	// Webhook routes: bypass API key auth, use their own secret-header validation.
 	webhookMux := http.NewServeMux()
@@ -849,6 +865,23 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// and the old key returns 401. See #143.
 	mux.HandleFunc("/api/v1/rotate-api-key", s.handleRotateAPIKey)
 	mux.HandleFunc("/api/v1/operator-credentials", s.handleOperatorCredentials)
+	mux.HandleFunc("/api/v1/operator-credentials/mutations", s.handleOperatorCredentialMutation)
+	mux.HandleFunc("/api/v1/operator-credential-operations", s.handleOperatorCredentialOperation)
+	mux.HandleFunc("/api/v1/operator-credential-operations/reconcile", s.handleReconcileOperatorCredentialOperation)
+	mux.HandleFunc("/api/v1/operator-credentials/options", s.handleOperatorCredentialOptions)
+	mux.HandleFunc("/api/v1/operator-credentials/usage", s.handleOperatorCredentialUsage)
+	mux.HandleFunc("/api/v1/operator-credentials/current", s.handleCurrentOperatorCredential)
+	mux.HandleFunc("/api/v1/operator-credentials/adoption", s.handleOperatorCredentialAdoption)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions", s.handleOperatorCredentialAdoptionOperation)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/pending", s.handlePendingOperatorCredentialAdoptions)
+	mux.HandleFunc("/api/v1/operator-credential-adoptions/recover", s.handleRecoverOperatorCredentialAdoption)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance", s.handleOperatorCredentialMaintenance)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance/readiness", s.handleMaintenanceRecoveryReadiness)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance/recover", s.handleRecoverOperatorCredentialMaintenance)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance/operations", s.handleMaintenanceRecoveryOperation)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance/operations/pending", s.handlePendingMaintenanceRecoveryOperations)
+	mux.HandleFunc("/api/v1/operator-credentials/maintenance/operations/resolve", s.handleResolveMaintenanceRecovery)
+	mux.HandleFunc("/api/v1/operator-credential-operations/pending", s.handlePendingOperatorCredentialOperations)
 	mux.HandleFunc("/api/v1/security-events", s.handleSecurityEvents)
 
 	// GitHub repo list + collision check (#134).
@@ -865,6 +898,7 @@ func (s *Server) registerProtectedRoutes(mux *http.ServeMux) {
 	// /settings/anthropic-key is the operator-facing write endpoint that
 	// stores the API key in the kyber-anthropic-key Secret.
 	mux.HandleFunc("/api/v1/available", s.handleAvailable)
+	mux.HandleFunc("/api/v1/effort-options", s.getCreateEffortOptions)
 	mux.HandleFunc("/api/v1/settings/anthropic-key", s.handleAnthropicKeySetting)
 }
 

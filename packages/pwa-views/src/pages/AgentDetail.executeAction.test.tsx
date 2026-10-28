@@ -1,4 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+
+// Effort behavior is tested in ReasoningEffort.test.tsx; page tests keep their
+// existing isolated hooks and do not establish an authenticated cluster.
+vi.mock('../components/ReasoningEffort', () => ({ AgentEffortSettings: () => null, CreateEffortSelect: () => null }))
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'

@@ -42,10 +42,20 @@ func (a *ArchiveService) DeleteArchive(ctx context.Context, j *archivejob.Job) e
 
 // deleteArchive answers DELETE on an export or upload.
 func (s *Server) deleteArchive(w http.ResponseWriter, r *http.Request, j *archivejob.Job) {
+	kind, name, wide := "agent", j.Agent, false
+	if j.Kind == archivejob.KindUpload {
+		kind, name, wide = "installation", "", true
+	}
+	if !s.requireManagementAudit(w, r, "archives:delete", kind, name, ScopeArchivesAdmin, wide) {
+		return
+	}
+	beginManagementMutation(r)
 	switch err := s.Archives.DeleteArchive(r.Context(), j); {
 	case errors.Is(err, errArchiveRunning):
+		markSensitiveOutcome(r, "failure")
 		writeJSONError(w, http.StatusConflict, "archive_running", err.Error())
 	case errors.Is(err, errArchiveInUse):
+		markSensitiveOutcome(r, "failure")
 		writeJSONError(w, http.StatusConflict, "archive_in_use", err.Error())
 	case errors.Is(err, archivejob.ErrConflict):
 		writeJSONError(w, http.StatusConflict, "archive_changed", "the archive changed; retry")
@@ -53,6 +63,7 @@ func (s *Server) deleteArchive(w http.ResponseWriter, r *http.Request, j *archiv
 		slog.Error("deleting disk archive failed", "job", j.ID, "error", err)
 		writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to delete the archive")
 	default:
+		completeManagementMutation(r, "archives:delete")
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

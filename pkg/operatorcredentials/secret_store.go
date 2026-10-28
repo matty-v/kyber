@@ -7,6 +7,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/google/uuid"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -20,15 +22,55 @@ import (
 )
 
 const (
-	DefaultSecretName = "kyber-operator-credentials"
-	dataKey           = "registry.json"
-	ownerLabel        = "kyber.io/operator-credential-registry"
-	requestTimeout    = 2 * time.Second
+	DefaultSecretName    = "kyber-operator-credentials"
+	dataKey              = "registry.json"
+	ownerLabel           = "kyber.io/operator-credential-registry"
+	requestTimeout       = 2 * time.Second
+	writeFenceAnnotation = "kyber.io/operator-credential-write-fence"
 )
 
 type Snapshot struct {
+	UID      string
 	Version  string
 	Document Document
+}
+
+// Fence advances only metadata at an expected resource version. Recovery uses
+// this after an uncertain credential update: either that update already won,
+// or this fence prevents its older compare-and-swap from committing later.
+// Never replay key issuance to resolve an unknown response. Load the current
+// authority and operation outbox after conflicts or lost fence acknowledgements.
+// This is not operator authorization; the admitted mutation owns that check.
+func (s *SecretStore) Fence(ctx context.Context, version string) (Snapshot, error) {
+	if version == "" {
+		return Snapshot{}, ErrConflict
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
+	secret, previous, err := s.read(ctx)
+	if err != nil {
+		if errors.Is(err, ErrUninitialized) {
+			return Snapshot{}, ErrUnavailable
+		}
+		return Snapshot{}, err
+	}
+	if previous.Version != version {
+		return Snapshot{}, ErrConflict
+	}
+	if secret.UID == "" {
+		return Snapshot{}, ErrUnavailable
+	}
+	if secret.Annotations == nil {
+		secret.Annotations = map[string]string{}
+	}
+	secret.Annotations[writeFenceAnnotation] = uuid.NewString()
+	if err := s.writer.Update(ctx, secret); err != nil {
+		return Snapshot{}, authorityError(ctx, err)
+	}
+	if secret.ResourceVersion == "" || secret.ResourceVersion == version {
+		return Snapshot{}, ErrUnavailable
+	}
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: previous.Document.Clone()}, nil
 }
 
 func (Snapshot) String() string                   { return "operator credential snapshot [redacted]" }
@@ -37,7 +79,7 @@ func (s Snapshot) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state,
 func (Snapshot) MarshalJSON() ([]byte, error)     { return nil, ErrSensitive }
 
 // SecretStore uses a direct client for one installation, without an informer or
-// last-successful-document cache. Its public factory fixes Secret mapping so
+// last-successful-document cache. Its public factory explicitly maps Secrets and maintenance Pod/Job reads so
 // discovery cannot extend an otherwise bounded authority read.
 type SecretStore struct {
 	reader client.Reader
@@ -50,11 +92,13 @@ func NewSecretStore(config *rest.Config, namespace, name string) (*SecretStore, 
 		return nil, ErrUnavailable
 	}
 	scheme := runtime.NewScheme()
-	if corev1.AddToScheme(scheme) != nil {
+	if corev1.AddToScheme(scheme) != nil || batchv1.AddToScheme(scheme) != nil {
 		return nil, ErrUnavailable
 	}
-	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion})
+	mapper := meta.NewDefaultRESTMapper([]schema.GroupVersion{corev1.SchemeGroupVersion, batchv1.SchemeGroupVersion})
 	mapper.Add(corev1.SchemeGroupVersion.WithKind("Secret"), meta.RESTScopeNamespace)
+	mapper.Add(corev1.SchemeGroupVersion.WithKind("Pod"), meta.RESTScopeNamespace)
+	mapper.Add(batchv1.SchemeGroupVersion.WithKind("Job"), meta.RESTScopeNamespace)
 	boundedConfig := rest.CopyConfig(config)
 	if boundedConfig.Timeout == 0 || boundedConfig.Timeout > requestTimeout {
 		boundedConfig.Timeout = requestTimeout
@@ -96,7 +140,7 @@ func (s *SecretStore) read(ctx context.Context) (*corev1.Secret, Snapshot, error
 	if d.Namespace != s.key.Namespace {
 		return nil, Snapshot{}, ErrInvalid
 	}
-	return secret, Snapshot{Version: secret.ResourceVersion, Document: d}, nil
+	return secret, Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: d}, nil
 }
 
 func (s *SecretStore) Load(ctx context.Context) (Snapshot, error) {
@@ -123,7 +167,7 @@ func (s *SecretStore) Create(ctx context.Context, d Document) (Snapshot, error) 
 	if err = s.writer.Create(ctx, secret); err != nil {
 		return Snapshot{}, authorityError(ctx, err)
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: d}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: d}, nil
 }
 
 func (s *SecretStore) Replace(ctx context.Context, version string, next Document) (Snapshot, error) {
@@ -158,7 +202,7 @@ func (s *SecretStore) Replace(ctx context.Context, version string, next Document
 	if err = s.writer.Update(ctx, secret); err != nil {
 		return Snapshot{}, authorityError(ctx, err)
 	}
-	return Snapshot{Version: secret.ResourceVersion, Document: next}, nil
+	return Snapshot{UID: string(secret.UID), Version: secret.ResourceVersion, Document: next}, nil
 }
 
 func authorityError(ctx context.Context, err error) error {

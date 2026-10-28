@@ -171,6 +171,12 @@ spec:
                 - Restarting
                 - NeedsAuth
                 type: string
+              effort:
+                description: Effort is a native reasoning-effort override. Empty preserves
+                  harness/user defaults.
+                maxLength: 32
+                pattern: ^$|^[a-z][a-z0-9_-]{0,31}$
+                type: string
               identity:
                 description: Identity holds configuration for agent identity scaffolding
                   on first boot.
@@ -1049,6 +1055,12 @@ spec:
                 - stage
                 - targetGiB
                 type: object
+              effortRuntimeImage:
+                description: |-
+                  EffortRuntimeImage is the immutable first-party image whose launch
+                  integration this Agent has reported. It is not model/provider evidence.
+                maxLength: 512
+                type: string
               goal:
                 description: |-
                   Goal is the latest one-line description of the work accepted by this
@@ -1264,6 +1276,11 @@ spec:
                   ObservedPodConfigHash is the restart-relevant Agent spec last built into
                   a pod. It lets hot-applied edits advance metadata.generation without
                   making the running pod appear stale.
+                type: string
+              observedPodEffort:
+                description: |-
+                  ObservedPodEffort is the Kyber override placed in the current pod config,
+                  not proof of provider-side reasoning or an agent-owned runtime override.
                 type: string
               phase:
                 description: Phase is the current lifecycle phase of the agent.

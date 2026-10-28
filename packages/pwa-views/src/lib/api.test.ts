@@ -465,3 +465,73 @@ describe('agent avatar', () => {
     expect(init).toMatchObject({ method: 'DELETE' })
   })
 })
+
+describe('managed operator credential changes', () => {
+  beforeEach(() => localStorage.clear())
+
+  it('sends the reviewed version once and keeps prepared material out of storage', async () => {
+    mockFetch({ operationId: 'operation-fixture', action: 'credential:create', credentialId: 'credential-fixture', status: 'pending', observedAt: '2026-10-24T12:00:00Z' }, 202)
+    const api = createApiClient(mockCluster)
+    const result = await api.mutateOperatorCredential({
+      operationId: 'operation-fixture', action: 'create', key: 'prepared-key-fixture',
+      policy: { name: 'Build integration', role: 'restricted', scopes: ['tasks:read'], agentResources: [], machineResources: [] },
+    }, '"reviewed-version"')
+    expect(result.status).toBe('pending')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('http://localhost:8080/api/v1/operator-credentials/mutations')
+    expect(options?.headers).toMatchObject({ 'If-Match': '"reviewed-version"', Authorization: 'Bearer test-key' })
+    expect(JSON.parse(String(options?.body)).key).toBe('prepared-key-fixture')
+    for (let i = 0; i < localStorage.length; i++) {
+      const name = localStorage.key(i) ?? ''
+      expect(name).not.toContain('prepared-key-fixture')
+      expect(localStorage.getItem(name) ?? '').not.toContain('prepared-key-fixture')
+    }
+  })
+
+  it('does not resubmit a change when admission is unconfirmed', async () => {
+    mockFetch({ error: { code: 'credential_admission_unconfirmed', message: 'Check this operation before retrying.' } }, 503)
+    const api = createApiClient(mockCluster)
+    await expect(api.mutateOperatorCredential({ operationId: 'operation-fixture', action: 'revoke', credentialId: 'credential-fixture' }, '"reviewed-version"'))
+      .rejects.toMatchObject({ status: 503, code: 'credential_admission_unconfirmed' })
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('checks the existing operation without sending key material again', async () => {
+    mockFetch({ operationId: 'operation-fixture', action: 'credential:rotate', credentialId: 'credential-fixture', status: 'success', observedAt: '2026-10-24T12:00:00Z' })
+    const api = createApiClient(mockCluster)
+    await api.getOperatorCredentialOperation('operation-fixture')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('http://localhost:8080/api/v1/operator-credential-operations?operationId=operation-fixture')
+    expect(options?.method).toBe('GET')
+    expect(options?.body).toBeUndefined()
+  })
+})
+
+describe('interrupted credential change recovery', () => {
+  it('sends an explicit recovery request with only the operation identity', async () => {
+    mockFetch({ operationId: 'operation-fixture', action: 'credential:create', credentialId: 'credential-fixture', status: 'failure', observedAt: '2026-10-24T12:00:00Z' })
+    const result = await createApiClient(mockCluster).reconcileOperatorCredentialOperation('operation-fixture')
+    expect(result.status).toBe('failure')
+    expect(fetch).toHaveBeenCalledTimes(1)
+    const [url, options] = vi.mocked(fetch).mock.calls[0]
+    expect(url).toBe('http://localhost:8080/api/v1/operator-credential-operations/reconcile')
+    expect(options?.method).toBe('POST')
+    expect(JSON.parse(String(options?.body))).toEqual({ operationId: 'operation-fixture' })
+  })
+})
+
+describe('key management choices and pending changes', () => {
+  it('reads choices without key material and encodes pending continuations', async () => {
+    mockFetch({ version: 1, namespace: 'kyber-system', permissions: [] })
+    const api = createApiClient(mockCluster)
+    await api.getOperatorCredentialOptions()
+    expect(vi.mocked(fetch).mock.calls[0][0]).toBe('http://localhost:8080/api/v1/operator-credentials/options')
+    mockFetch({ items: [], next: 'next-fixture' })
+    await api.getPendingOperatorCredentialOperations('cursor /?')
+    const [url, options] = vi.mocked(fetch).mock.calls.at(-1)!
+    expect(url).toBe('http://localhost:8080/api/v1/operator-credential-operations/pending?after=cursor+%2F%3F')
+    expect(options?.method).toBe('GET'); expect(options?.body).toBeUndefined()
+  })
+})

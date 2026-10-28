@@ -23,12 +23,17 @@ type OperatorCredentialAuthority interface {
 var errOperatorAuthorityUnavailable = errors.New("operator authentication unavailable")
 
 type registryCredentials struct {
-	entries                 []scopedKey
-	byID                    map[string]scopedKey
-	compatibilityKey        []byte
-	compatibilityGeneration uint64
-	legacyGenerations       map[string]uint64
-	inventory               []operatorCredentialView
+	adoptionPending            bool
+	version                    string
+	uid                        string
+	entries                    []scopedKey
+	byID                       map[string]scopedKey
+	compatibilityKey           []byte
+	compatibilityGeneration    uint64
+	compatibilityIssuedBefore  time.Time
+	compatibilityExpiresBefore time.Time
+	legacyGenerations          map[string]uint64
+	inventory                  []operatorCredentialView
 }
 
 func (registryCredentials) String() string { return "operator credential resolution [redacted]" }
@@ -60,6 +65,7 @@ func (a *APIKeyAuthenticator) resolve(ctx context.Context) (*APIKeyAuthenticator
 	if err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
+	registry.version, registry.uid = snapshot.Version, snapshot.UID
 	return &APIKeyAuthenticator{registry: registry}, nil
 }
 
@@ -67,7 +73,7 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 	if err := document.Validate(); err != nil {
 		return nil, errOperatorAuthorityUnavailable
 	}
-	registry := &registryCredentials{legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration()}
+	registry := &registryCredentials{adoptionPending: credentialAdoptionPending(document), legacyGenerations: map[string]uint64{}, byID: map[string]scopedKey{}, compatibilityKey: document.LegacyBrowserSigningKey(), compatibilityGeneration: document.LegacyBrowserSigningGeneration(), compatibilityIssuedBefore: document.LegacyBrowserIssuedBefore(), compatibilityExpiresBefore: document.LegacyBrowserExpiresBefore()}
 	for _, credential := range document.Credentials {
 		// Validate supported permissions even for inactive records; do not silently
 		// reinterpret an unsupported registry after a downgrade.
@@ -84,7 +90,16 @@ func compileRegistryCredentials(document operatorcredentials.Document, now time.
 		} else if credential.ExpiresAt != nil && !now.Before(*credential.ExpiresAt) {
 			state = "expired"
 		}
-		view := operatorCredentialView{ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
+		view := operatorCredentialView{PrincipalID: credential.PrincipalID, TenantID: credential.TenantID, ActivityTrackable: true, ID: credential.ID, Name: credential.Name, DisplayName: credential.Name, AccessLevel: credential.Role, State: state, Source: credential.Source.Kind, Scopes: append([]string{}, credential.Scopes...), AgentResources: append([]string{}, credential.AgentResources...), MachineResources: append([]string{}, credential.MachineResources...), Permissions: credentialPermissions(credential.Scopes)}
+		if view.Source == "installation" {
+			view.Source = "managed"
+		}
+		if credential.CreatedAt != nil {
+			view.CreatedAt = credential.CreatedAt.UTC().Format(time.RFC3339Nano)
+		}
+		if credential.ExpiresAt != nil {
+			view.ExpiresAt = credential.ExpiresAt.UTC().Format(time.RFC3339Nano)
+		}
 		if credential.Role == operatorcredentials.RoleAdministrator {
 			view.AgentResources, view.MachineResources = []string{"*"}, []string{"*"}
 			view.Permissions = []string{"Full access to this Kyber installation"}

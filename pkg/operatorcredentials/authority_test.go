@@ -8,6 +8,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -36,12 +37,28 @@ func fixtureAuthority(t *testing.T) (*AuthorityStore, client.Client, Snapshot) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	registry.writer = maintenanceClient{Client: direct}
 	return authority, direct, snapshot
+}
+
+// Keep uncertain bind reservations: tests reconcile those writes explicitly.
+func fixtureBind(ctx context.Context, authority *AuthorityStore, version string) error {
+	reservation, err := authority.ReserveAdoption(ctx)
+	if err != nil {
+		return err
+	}
+	err = authority.Bind(ctx, version, reservation)
+	if err == nil || errors.Is(err, ErrConflict) {
+		if releaseErr := reservation.Release(context.Background()); releaseErr != nil {
+			return errors.Join(err, releaseErr)
+		}
+	}
+	return err
 }
 
 func bindFixture(t *testing.T, authority *AuthorityStore, direct client.Client, version string) {
 	t.Helper()
-	if err := authority.Bind(context.Background(), version); err != nil {
+	if err := fixtureBind(context.Background(), authority, version); err != nil {
 		t.Fatal(err)
 	}
 	// The fake API does not assign UIDs, unlike the real API server.
@@ -61,7 +78,7 @@ func TestAuthorityBindingAndFreshReads(t *testing.T) {
 	if _, err := a.Load(ctx); !errors.Is(err, ErrUninitialized) {
 		t.Fatal("missing adoption marker did not identify bootstrap", err)
 	}
-	if err := a.Bind(ctx, "stale"); !errors.Is(err, ErrConflict) {
+	if err := fixtureBind(ctx, a, "stale"); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	bindFixture(t, a, direct, original.Version)
@@ -69,7 +86,7 @@ func TestAuthorityBindingAndFreshReads(t *testing.T) {
 	if err != nil || loaded.Version != original.Version {
 		t.Fatal("bound registry not loaded", err)
 	}
-	if err := a.Bind(ctx, loaded.Version); !errors.Is(err, ErrConflict) {
+	if err := fixtureBind(ctx, a, loaded.Version); !errors.Is(err, ErrConflict) {
 		t.Fatal("existing marker overwritten", err)
 	}
 	next := loaded.Document.Clone()
@@ -90,6 +107,52 @@ func TestAuthorityBindingAndFreshReads(t *testing.T) {
 	}
 	if loaded, err = b.Load(ctx); err != nil || loaded.Version != updated.Version {
 		t.Fatal("new replica lost authoritative selection", err)
+	}
+}
+
+func TestAuthorityBindRequiresItsLiveAdoptionReservation(t *testing.T) {
+	ctx := context.Background()
+	a, direct, snapshot := fixtureAuthority(t)
+	if err := a.Bind(ctx, snapshot.Version, nil); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unreserved adoption accepted", err)
+	}
+	other, err := newMaintenanceStore(a.registry, "other-maintenance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrong, err := other.Acquire(ctx, MaintenanceAdoption)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Bind(ctx, snapshot.Version, wrong); !errors.Is(err, ErrInvalid) {
+		t.Fatal("unrelated maintenance accepted", err)
+	}
+	maintenance, err := newMaintenanceStore(a.registry, a.registry.key.Name+"-maintenance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgrading, err := maintenance.Acquire(ctx, MaintenanceUpgrade)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Bind(ctx, snapshot.Version, upgrading); !errors.Is(err, ErrInvalid) {
+		t.Fatal("upgrade reservation authorized adoption", err)
+	}
+	if err := upgrading.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	reserved, err := a.ReserveAdoption(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := reserved.Release(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Bind(ctx, snapshot.Version, reserved); !errors.Is(err, ErrUnavailable) {
+		t.Fatal("released reservation authorized adoption", err)
+	}
+	if err := direct.Get(ctx, a.key, &corev1.Secret{}); !apierrors.IsNotFound(err) {
+		t.Fatal("failed reservation checks created a marker")
 	}
 }
 
@@ -135,7 +198,7 @@ func TestAuthorityNeverFallsBackAfterAdoption(t *testing.T) {
 				t.Fatal("adopted authority allowed bootstrap fallback", err)
 			}
 			if mode == "missing marker" {
-				if err := a.Bind(ctx, snapshot.Version); !errors.Is(err, ErrConflict) {
+				if err := fixtureBind(ctx, a, snapshot.Version); !errors.Is(err, ErrConflict) {
 					t.Fatal("observed authority silently rebound after marker deletion", err)
 				}
 			}
@@ -194,8 +257,8 @@ func (w uncertainAuthorityWriter) Create(ctx context.Context, object client.Obje
 func TestAuthorityLostBindResponseAndConcurrentBind(t *testing.T) {
 	ctx := context.Background()
 	a, direct, snapshot := fixtureAuthority(t)
-	a.registry.writer = uncertainAuthorityWriter{direct}
-	if err := a.Bind(ctx, snapshot.Version); err != ErrUnavailable {
+	a.registry.writer = uncertainAuthorityWriter{maintenanceClient{Client: direct}}
+	if err := fixtureBind(ctx, a, snapshot.Version); err != ErrUnavailable {
 		t.Fatal("uncertain response not redacted", err)
 	}
 	marker := &corev1.Secret{}
@@ -217,14 +280,31 @@ func TestAuthorityLostBindResponseAndConcurrentBind(t *testing.T) {
 	}
 	var wg sync.WaitGroup
 	results := make(chan error, 2)
+	release := make(chan struct{})
+	defer func() { close(release); wg.Wait() }()
 	for _, contender := range []*AuthorityStore{a, b} {
 		wg.Add(1)
-		go func(s *AuthorityStore) { defer wg.Done(); results <- s.Bind(ctx, snapshot.Version) }(contender)
+		go func(s *AuthorityStore) {
+			defer wg.Done()
+			reservation, err := s.ReserveAdoption(ctx)
+			if err == nil {
+				err = s.Bind(ctx, snapshot.Version, reservation)
+			}
+			results <- err
+			if reservation != nil {
+				// Hold the winning reservation until both observations finish.
+				// Its removal during the loser's reconciliation is legitimately
+				// unavailable, rather than the conflict this fixture asserts.
+				<-release
+				if err := reservation.Release(ctx); err != nil {
+					t.Error(err)
+				}
+			}
+		}(contender)
 	}
-	wg.Wait()
-	close(results)
 	wins, conflicts := 0, 0
-	for err := range results {
+	for range 2 {
+		err := <-results
 		if err == nil {
 			wins++
 		} else if errors.Is(err, ErrConflict) {

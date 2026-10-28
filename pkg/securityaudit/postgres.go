@@ -30,7 +30,27 @@ func (s *PostgresStore) Migrate(ctx context.Context) error {
  );
  CREATE INDEX IF NOT EXISTS operator_security_events_namespace_sequence ON operator_security_events(namespace,sequence DESC);
  CREATE INDEX IF NOT EXISTS operator_security_events_retention ON operator_security_events(stored_at,sequence);
- CREATE INDEX IF NOT EXISTS operator_security_events_credential ON operator_security_events(namespace,credential_id,sequence DESC);`)
+ CREATE INDEX IF NOT EXISTS operator_security_events_credential ON operator_security_events(namespace,credential_id,sequence DESC);
+ CREATE TABLE IF NOT EXISTS operator_credential_operations (
+ namespace TEXT NOT NULL, operation_id UUID NOT NULL,
+ admitted_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
+ intent JSONB NOT NULL, completion JSONB,
+ PRIMARY KEY(namespace,operation_id)
+ );
+ ALTER TABLE operator_credential_operations ADD COLUMN IF NOT EXISTS effect JSONB;
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending ON operator_credential_operations(namespace,operation_id) WHERE completion IS NULL;
+ CREATE INDEX IF NOT EXISTS operator_credential_operations_pending_kind ON operator_credential_operations(namespace,(intent->'admission'->>'resourceKind'),operation_id) WHERE completion IS NULL;
+ CREATE TABLE IF NOT EXISTS operator_credential_usage_observers (
+ namespace TEXT NOT NULL,observer_id UUID NOT NULL,started_at TIMESTAMPTZ NOT NULL,pod_uid TEXT NOT NULL,
+ sequence BIGINT NOT NULL, payload JSONB,progress_at TIMESTAMPTZ,stopped BOOLEAN NOT NULL DEFAULT false,
+ dropped NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(dropped>=0),unrecognized NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unrecognized>=0),unavailable NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unavailable>=0),unattributed NUMERIC(40,0) NOT NULL DEFAULT 0 CHECK(unattributed>=0),
+ PRIMARY KEY(namespace,observer_id)
+ );
+ CREATE TABLE IF NOT EXISTS operator_credential_usage_totals (
+ namespace TEXT NOT NULL,credential_id TEXT NOT NULL,principal_id TEXT NOT NULL,tenant_id TEXT NOT NULL,authority TEXT NOT NULL CHECK(authority IN ('configuration','registry')),transport TEXT NOT NULL CHECK(transport IN ('bearer','browser-session','archive-capability')),
+ authenticated NUMERIC(40,0) NOT NULL CHECK(authenticated>=0),denied NUMERIC(40,0) NOT NULL CHECK(denied>=0),last_accepted_at TIMESTAMPTZ,generation NUMERIC(20,0) NOT NULL CHECK(generation>=0),actions JSONB NOT NULL,
+ PRIMARY KEY(namespace,credential_id,principal_id,tenant_id,authority,transport)
+ );`)
 	return databaseError(ctx, err)
 }
 
@@ -54,7 +74,22 @@ func (s *PostgresStore) Append(ctx context.Context, e Event) (Record, error) {
 	if _, err = tx.ExecContext(ctx, commitLock); err != nil {
 		return Record{}, databaseError(ctx, err)
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO operator_security_events(id,operation_id,namespace,observed_at,principal_id,credential_id,action,resource_kind,resource_name,document)
+	got, err := appendEventInTransaction(ctx, tx, e, payload)
+	if err != nil {
+		return Record{}, err
+	}
+	if err = tx.Commit(); err != nil {
+		return Record{}, databaseError(ctx, err)
+	}
+	got.Event = e
+	got.StoredAt = got.StoredAt.UTC()
+	return got, nil
+}
+
+// The caller holds commitLock until commit, preserving history ordering across
+// ordinary appends and atomic credential admission.
+func appendEventInTransaction(ctx context.Context, tx *sql.Tx, e Event, payload []byte) (Record, error) {
+	_, err := tx.ExecContext(ctx, `INSERT INTO operator_security_events(id,operation_id,namespace,observed_at,principal_id,credential_id,action,resource_kind,resource_name,document)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO NOTHING`, e.ID, e.OperationID, e.Namespace, e.ObservedAt, e.PrincipalID, e.CredentialID, e.Action, e.ResourceKind, e.ResourceName, payload)
 	if err != nil {
 		return Record{}, databaseError(ctx, err)
@@ -67,9 +102,6 @@ func (s *PostgresStore) Append(ctx context.Context, e Event) (Record, error) {
 	}
 	if !same {
 		return Record{}, ErrConflict
-	}
-	if err = tx.Commit(); err != nil {
-		return Record{}, databaseError(ctx, err)
 	}
 	got.Event = e
 	got.StoredAt = got.StoredAt.UTC()
@@ -127,6 +159,8 @@ func (f Filter) valid() bool {
 		return f.ResourceName == "" || resourceName.MatchString(f.ResourceName)
 	case "log-container":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
+	case "credential-maintenance", "credential-adoption":
+		return f.ResourceName == "" || validMaintenanceUID(f.ResourceName)
 	case "credential":
 		return f.ResourceName == "" || validActorID(f.ResourceName)
 	default:

@@ -5,7 +5,7 @@ package operatorcredentials
 
 import (
 	"bytes"
-	"crypto/sha256"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -127,6 +127,8 @@ type Document struct {
 	Operations                     []Operation
 	legacyBrowserSigningKey        []byte
 	legacyBrowserSigningGeneration uint64
+	legacyBrowserIssuedBefore      time.Time
+	legacyBrowserExpiresBefore     time.Time
 }
 
 // Clone gives mutation builders an independent, normalized candidate. Loaded
@@ -135,14 +137,19 @@ func (d Document) Clone() Document { return normalized(d) }
 
 // WithLegacyBrowserSigningKey preserves only the derived V1 cookie signing
 // key during adoption, never a second accepted bearer key. It cannot change
-// after insertion. The private storage codec is its only serialization path.
-func (d Document) WithLegacyBrowserSigningKey(key []byte, generation uint64) Document {
+// after insertion, including its fixed issuance/expiry horizon. The private
+// storage codec is its only serialization path.
+func (d Document) WithLegacyBrowserSigningKey(key []byte, generation uint64, issuedBefore, expiresBefore time.Time) Document {
 	d.legacyBrowserSigningKey = bytes.Clone(key)
 	d.legacyBrowserSigningGeneration = generation
+	d.legacyBrowserIssuedBefore = issuedBefore
+	d.legacyBrowserExpiresBefore = expiresBefore
 	return d
 }
 func (d Document) LegacyBrowserSigningKey() []byte        { return bytes.Clone(d.legacyBrowserSigningKey) }
 func (d Document) LegacyBrowserSigningGeneration() uint64 { return d.legacyBrowserSigningGeneration }
+func (d Document) LegacyBrowserIssuedBefore() time.Time   { return d.legacyBrowserIssuedBefore }
+func (d Document) LegacyBrowserExpiresBefore() time.Time  { return d.legacyBrowserExpiresBefore }
 
 // Validate checks the complete bounded storage shape without exposing its
 // private encoding. Permission compilation must still reject unsupported grants.
@@ -206,6 +213,8 @@ func distinct(values []string) bool {
 
 // normalized returns an independent candidate without mutating caller arrays.
 func normalized(d Document) Document {
+	d.legacyBrowserIssuedBefore = d.legacyBrowserIssuedBefore.UTC().Truncate(time.Microsecond)
+	d.legacyBrowserExpiresBefore = d.legacyBrowserExpiresBefore.UTC().Truncate(time.Microsecond)
 	d.legacyBrowserSigningKey = bytes.Clone(d.legacyBrowserSigningKey)
 	d.Credentials = append([]Credential{}, d.Credentials...)
 	for i, c := range d.Credentials {
@@ -240,10 +249,10 @@ func normalized(d Document) Document {
 
 func validate(d Document) error {
 	if len(d.legacyBrowserSigningKey) == 0 {
-		if d.legacyBrowserSigningGeneration != 0 {
+		if d.legacyBrowserSigningGeneration != 0 || !d.legacyBrowserIssuedBefore.IsZero() || !d.legacyBrowserExpiresBefore.IsZero() {
 			return ErrInvalid
 		}
-	} else if len(d.legacyBrowserSigningKey) != 32 || d.legacyBrowserSigningGeneration == 0 {
+	} else if len(d.legacyBrowserSigningKey) != 32 || d.legacyBrowserSigningGeneration == 0 || !validTime(d.legacyBrowserIssuedBefore) || !validTime(d.legacyBrowserExpiresBefore) || !d.legacyBrowserExpiresBefore.After(d.legacyBrowserIssuedBefore) {
 		return ErrInvalid
 	}
 	if d.SchemaVersion != SchemaVersion {
@@ -255,7 +264,8 @@ func validate(d Document) error {
 	if len(d.Credentials) > MaxCredentials || len(d.Operations) > MaxOperations {
 		return ErrCapacity
 	}
-	ids, names, materials := map[string]bool{}, map[string]bool{}, map[[32]byte]bool{}
+	ids, names := map[string]bool{}, map[string]bool{}
+	materials := make([][]byte, 0, len(d.Credentials))
 	principals := map[string]string{}
 	generations := map[string]uint64{}
 	administrator := false
@@ -289,11 +299,7 @@ func validate(d Document) error {
 			if len(c.material) > 4096 || strings.TrimSpace(string(c.material)) == "" {
 				return ErrInvalid
 			}
-			binding := sha256.Sum256(c.material)
-			if materials[binding] {
-				return ErrInvalid
-			}
-			materials[binding] = true
+			materials = append(materials, c.material)
 		}
 		switch c.Source.Kind {
 		case "installation", "managed":
@@ -346,6 +352,15 @@ func validate(d Document) error {
 				}
 			}
 		default:
+			return ErrInvalid
+		}
+	}
+	// Sort only this private list, never the document or a presented bearer.
+	// Adjacent exact comparisons avoid password-like digests and a quadratic
+	// scan at the supported registry capacity. No derived fingerprint escapes.
+	sort.Slice(materials, func(i, j int) bool { return bytes.Compare(materials[i], materials[j]) < 0 })
+	for i := 1; i < len(materials); i++ {
+		if subtle.ConstantTimeCompare(materials[i-1], materials[i]) == 1 {
 			return ErrInvalid
 		}
 	}

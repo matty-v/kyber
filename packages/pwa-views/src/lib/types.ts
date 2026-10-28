@@ -131,6 +131,16 @@ export interface PublicCapabilitiesStatus {
   capabilities?: Array<{ id: string; availability: PublicCapabilityAvailability; reason?: string }>
 }
 
+export interface ReasoningEffortOptions {
+ state: 'supported' | 'unsupported' | 'unknown'
+ levels: string[]
+ source?: string
+ reason?: string
+ runtime: string
+ runtimeVersion: string
+ model: string
+}
+
 export interface Agent {
   runtimeContract?: RuntimeDescriptor
   runtimeCapabilities?: Record<string, RuntimeFeatureAvailability>
@@ -141,6 +151,9 @@ export interface Agent {
   // Optional while older Kyber control planes roll forward.
   authType?: AgentAuthType
   model: string
+  effort?: string
+  effortPending?: boolean
+  effortProblem?: string
   startupPrompt?: string
   // kyber#118: resume the previous harness session after an unexpected
   // session end (pod recreate, preemption, crash). Intentional session
@@ -484,6 +497,7 @@ export interface AgentListResponse {
 }
 
 export interface CreateAgentRequest {
+  effort?: string
   name: string
   machine: string
   runtime: string
@@ -1582,6 +1596,13 @@ export interface RuntimeFeatureAvailability {
   reason: string
 }
 export interface OperatorCredential {
+  principalId?: string
+  tenantId?: string
+  activityTrackable?: boolean
+  activityUnavailableReason?: 'identity-incomplete' | 'identity-shared' | 'shared-key'
+
+  createdAt?: string
+  expiresAt?: string
   id: string
   name: string
   displayName: string
@@ -1600,13 +1621,153 @@ export interface OperatorCredential {
   authenticatesAs?: string
 }
 
+export interface OperatorCredentialCurrent {
+  observedAt: string
+  controlPlanePodUid?: string
+  namespace: string
+  name: string
+  credentialId?: string
+  principalId?: string
+  tenantId?: string
+  kind?: string
+  issuer?: string
+  subject?: string
+  generation: string
+  identityComplete: boolean
+  authority: 'configuration' | 'registry'
+  accessLevel: 'administrator' | 'restricted'
+  scopes: string[]
+  agentResources: string[]
+  machineResources: string[]
+}
+
+export interface MaintenanceRecoveryReadiness {
+  ready: boolean
+  reason: string
+  version?: string
+  operationId?: string
+}
+export interface MaintenanceRecoveryOperation {
+  operationId: string
+  status: 'pending' | 'success' | 'failure'
+  observedAt: string
+}
+export interface MaintenanceRecoveryPendingPage {
+  items: MaintenanceRecoveryOperation[]
+  next?: string
+}
+export interface OperatorCredentialMaintenanceStatus {
+  recoveryAvailable?: boolean
+  recoveryOperationId?: string
+  writer?: { podName: string; jobName: string }
+  observedAt: string
+  blocked: boolean
+  version?: string
+  operation?: { kind: 'adoption' | 'upgrade'; executionId: string; startedAt: string }
+}
+
+export interface OperatorCredentialAdoptionPlan {
+  version: string
+  keyCount: number
+  reconnectCount: number
+}
+export interface OperatorCredentialAdoptionOperation {
+  operationId: string
+  status: 'pending' | 'failed' | 'finishing' | 'succeeded'
+  recoverable: boolean
+  observedAt: string
+}
+export interface OperatorCredentialAdoptionStart {
+  operationId: string
+  version: string
+  confirmOwnership: boolean
+}
+
 export interface OperatorCredentialInventory {
+  adoptionAvailable?: boolean
+  configurationRotationAvailable?: boolean
+  maintenanceAvailable?: boolean
+  currentCredentialId?: string
+  version?: string
+  managementAvailable?: boolean
   observedAt: string
   inventoryScope: 'current-control-plane' | 'installation-registry'
   configurationAvailable: boolean
   usageAvailable: boolean
   credentials: OperatorCredential[]
   warnings: string[]
+}
+
+export interface OperatorCredentialUsageIdentity {
+  credentialId: string
+  principalId: string
+  tenantId: string
+  authority: 'configuration' | 'registry'
+}
+export interface OperatorCredentialUsage {
+  version: 1
+  observedAt: string
+  partial: true
+  truncated: boolean
+  entryPoints: Array<'operator-api' | 'browser-sign-in' | 'archive-download'>
+  identities: OperatorCredentialUsageIdentity[]
+  coverage: {
+    since?: string
+    latestProgress?: string
+    currentObserverReported: boolean
+    currentObserverFresh: boolean
+    freshObservers: number
+    staleObservers: number
+    dropped: string
+    unrecognized: string
+    unattributed: string
+    unavailable: string
+  }
+  local?: { pendingObservations: number; lossReportsAwaitingConfirmation: string; closed: boolean }
+  items: Array<OperatorCredentialUsageIdentity & {
+    transport: 'bearer' | 'browser-session' | 'archive-capability'
+    authenticated: string
+    denied: string
+    generation: string
+    lastAcceptedAt?: string
+    actions: Record<string, string>
+  }>
+}
+
+export interface OperatorCredentialOptions {
+  version: number
+  namespace: string
+  permissions: { scope: string; label: string; target: 'none' | 'agent' | 'machine' }[]
+}
+
+export interface OperatorCredentialPendingPage {
+  items: OperatorCredentialOperation[]
+  next?: string
+}
+
+export interface OperatorCredentialPolicy {
+  name: string
+  role: 'administrator' | 'restricted'
+  scopes: string[]
+  agentResources: string[]
+  machineResources: string[]
+  expiresAt?: string | null
+}
+
+// Key material belongs only in the calling form's ephemeral memory. Mutations
+// are never automatically retried; resolve the operation after a lost response.
+export type OperatorCredentialMutationRequest =
+  | { operationId: string; action: 'create'; policy: OperatorCredentialPolicy; key: string }
+  | { operationId: string; action: 'update'; credentialId: string; policy: OperatorCredentialPolicy }
+  | { operationId: string; action: 'rotate'; credentialId: string; key: string }
+  | { operationId: string; action: 'revoke'; credentialId: string }
+
+export interface OperatorCredentialOperation {
+  operationId: string
+  action: 'credential:create' | 'credential:update' | 'credential:rotate' | 'credential:revoke'
+  credentialId: string
+  status: 'pending' | 'success' | 'failure'
+  observedAt: string
 }
 
 export interface SecurityEvent {
@@ -1623,7 +1784,7 @@ export interface SecurityEvent {
   requestId: string
   method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS' | 'OTHER'
   action: string
-  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'log-container'
+  resourceKind: 'installation' | 'agent' | 'machine' | 'credential' | 'credential-maintenance' | 'credential-adoption' | 'log-container'
   resourceName: string
   phase: 'authentication' | 'authorization' | 'completion'
   outcome: 'allow' | 'deny' | 'success' | 'failure' | 'unknown'

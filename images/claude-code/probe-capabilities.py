@@ -25,8 +25,15 @@ def has(event, command, arguments=()):
             if args == [command, *arguments]: return True
     return False
 
+def effort_integration():
+    try:
+        with open(os.environ.get('KYBER_EFFORT_PROTOCOL_FILE', '/usr/local/share/kyber-reasoning-effort-protocol'), 'rb') as stream:
+            return stream.read(3) == b'1\n'
+    except OSError:
+        return False
+
 start=os.environ.get('KYBER_CRON_TURNSTART_CMD','/usr/local/bin/kyber-cron-turn-start')
 stop=os.environ.get('KYBER_CRON_POSTRUN_CMD','/usr/local/bin/kyber-cron-postrun')
 receipt=os.environ.get('KYBER_TASK_RECEIPT_CMD','/usr/local/bin/kyber-task-receipt')
 server=load(home/'.claude.json').get('mcpServers',{}).get('kyber-request-reply',{})
-print(json.dumps({'job-turn-hooks':has('UserPromptSubmit',start) and has('Stop',stop) and pathlib.Path(os.environ.get('KYBER_CRON_POSTRUN_SENTINEL','/persist/var/run/kyber-cron-postrun-enabled')).exists(), 'task-receipts':has('UserPromptSubmit',receipt, ('claude-code',)), 'task-tools':bool(os.environ.get('KYBER_REQUEST_MCP_URL')) and server.get('url')==os.environ.get('KYBER_REQUEST_MCP_URL')}))
+print(json.dumps({'reasoning-effort':effort_integration(), 'job-turn-hooks':has('UserPromptSubmit',start) and has('Stop',stop) and pathlib.Path(os.environ.get('KYBER_CRON_POSTRUN_SENTINEL','/persist/var/run/kyber-cron-postrun-enabled')).exists(), 'task-receipts':has('UserPromptSubmit',receipt, ('claude-code',)), 'task-tools':bool(os.environ.get('KYBER_REQUEST_MCP_URL')) and server.get('url')==os.environ.get('KYBER_REQUEST_MCP_URL')}))

@@ -570,6 +570,19 @@ env_key = \"OPENAI_API_KEY\"
     unset _provider
 fi
 
+if [ -n "${KYBER_REASONING_EFFORT:-}" ] && [[ ! "$KYBER_REASONING_EFFORT" =~ ^[a-z][a-z0-9_-]{0,31}$ ]]; then
+    echo "[kyber] Invalid reasoning effort configuration; clear the effort setting" >&2
+    exit 43
+fi
+
+if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
+    _effort_client_version="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
+    if [ -z "${KYBER_REQUESTED_CODEX_VERSION:-}" ] || [ "$_effort_client_version" != "$KYBER_REQUESTED_CODEX_VERSION" ]; then
+        echo "[kyber] Reasoning effort requires the qualified requested runtime version; clear effort or fix the runtime version" >&2
+        exit 43
+    fi
+fi
+
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF
 # Managed by Kyber. Rewritten on every agent boot — do not edit.
 # Agent-owned Codex settings belong in ~/.codex/config.toml, which Kyber
@@ -585,6 +598,10 @@ then
         printf 'model = "%s"\n' "$CODEX_MODEL" | \
             { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || \
             echo "[kyber] WARNING: could not record the model in $KYBER_MANAGED_CODEX_CONFIG" >&2
+    fi
+    if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
+        printf 'model_reasoning_effort = "%s"\n' "$KYBER_REASONING_EFFORT" | \
+            { kyber_append_managed_config "$KYBER_MANAGED_CODEX_CONFIG"; } || exit 43
     fi
     if [ -n "$KYBER_CODEX_PROVIDER_TOML" ]; then
         printf '%s' "$KYBER_CODEX_PROVIDER_TOML" | \
@@ -862,6 +879,9 @@ fi
 CODEX_ARGS=(--ask-for-approval never --sandbox danger-full-access)
 if [ -n "${CODEX_MODEL:-}" ]; then
     CODEX_ARGS=(--model "$CODEX_MODEL" "${CODEX_ARGS[@]}")
+fi
+if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
+    CODEX_ARGS+=(-c "model_reasoning_effort=\"$KYBER_REASONING_EFFORT\"")
 fi
 if [ -n "${KYBER_STARTUP_PROMPT:-}" ]; then
     CODEX_ARGS+=(-- "$KYBER_STARTUP_PROMPT")

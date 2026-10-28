@@ -106,7 +106,8 @@ yet, and pulling an unverified binary to supervise the upgrade would be backward
 
 ### What the Job does
 
-Seven steps. Steps 1–4 all happen **before the cluster is touched**, so a bad
+Once the complete credential protocol is enabled, the Job first reserves
+installation credential maintenance, then runs the steps below. Steps 1–4 all happen **before release/CRD changes**, so a bad
 version, an unreachable registry, or a disqualifying values file fails against a
 still-healthy cluster.
 
@@ -121,13 +122,23 @@ still-healthy cluster.
    `image.*.tag` or `image.*.digest`, the Job **stops**. See
    [Why pinned images are refused](#why-pinned-images-are-refused).
 4. **Pull the target chart** from `selfUpgrade.chartRef` at the exact version.
-5. **Apply the chart's CRDs.** Fail-closed, and **Helm will not do this** — Helm
+5. **Check credential authority compatibility.** If registry authority is selected,
+   verify the effective target, the starting rollback revision and live control
+   plane before any release/CRD changes. Image overrides cannot borrow the
+   published release's compatibility declaration. An unknown/unavailable
+   authority or unsupported image refuses safely.
+6. **Apply the chart's CRDs.** Fail-closed, and **Helm will not do this** — Helm
    installs `crds/` once and never touches them again, so without this step a
    schema change would never reach the cluster.
-6. **`helm upgrade --wait`.** Helm's `--atomic` is deliberately unused: it would
+7. **`helm upgrade --wait`.** Helm's `--atomic` is deliberately unused: it would
    create a second rollback path with different logging and timeouts. There is one
    rollback path, and it is always Kyber's.
-7. **Verify against the running cluster** — not against Helm's opinion of it.
+8. **Verify against the running cluster** — not against Helm's opinion of it.
+
+Dry-run validation does not publish rendered manifests or render diagnostics
+into the Job log: those can include credential values in Secrets, ConfigMaps,
+environment variables or chart notes. The log reports validation success or a
+safe failure instead. Captured release values remain in the Job's private file.
 
 **Verification checks three separate things, because each has been true on these
 clusters while another was false:**
@@ -139,10 +150,30 @@ clusters while another was false:**
   templates but left the old images running.
 - `/healthz` answers 200 — the new binary is *serving*, not merely scheduled.
 
-**Any failure after the release is written rolls back** to the revision that was
-live when the Job started. The Job never retries (`backoffLimit: 0`): a failed
-upgrade has already rolled back, so a second attempt would start from a cluster
-that is already where it should be.
+**An upgrade or health-verification failure attempts rollback** to the revision
+that was live when the Job started. Ownership, current authority and the approved
+rollback revision are checked again before that write. A changed or incompatible
+revision is refused. The Job never retries (`backoffLimit: 0`).
+
+Read-only/preflight refusals attempt to release only the Job's own reservation;
+an unavailable ownership read leaves the block in place. A verified successful
+upgrade releases it before reporting completion. If an external write may be
+incomplete, maintenance remains blocked for recovery even after a rollback
+attempt; process exit alone does not prove that every API write has settled.
+Another upgrade or credential adoption must not proceed until the old writers
+are stopped and the release/authority state is reconciled. Do not clear the block
+by deleting the credential registry or authority marker, and do not take over a
+reservation merely because it is old. See the [maintenance recovery contract](design/2026-10-24-credential-maintenance.md).
+
+The current compatible runtime advertises credential protocol one, including
+explicit key adoption, maintenance reservations and supervised recovery. An
+upgrade alone never transfers credential ownership: an administrator reviews
+and confirms **Manage existing keys in Kyber** in Settings. Existing managed
+installations retain their selected authority across compatible upgrades.
+Supported supervised upgrade/rollback protection does not cover arbitrary
+privileged manual Helm or GitOps writes. Those paths must preserve authority
+state and use compatible releases; they must not bypass maintenance fencing.
+See the [current operator guide](operator/operator-credentials.md).
 
 ### How each component actually gets its new image
 
@@ -385,22 +416,19 @@ kubectl -n argocd patch application ${CLUSTER} --type merge \
   -p '{"operation":{"sync":{"revision":"HEAD"}}}'
 ```
 
-### Opting into caller-level lifecycle authorization (kyber#474)
+### Caller-level authorization on current releases
 
-This release adds scoped API keys for agent lifecycle verbs. **No action is
-required on upgrade** — it ships off by default (`api.authz.enforce: false`) and
-the existing full-scope `api-key` keeps driving every lifecycle action, so PWA and
-CLI clients are unchanged. To adopt it (a per-cluster, 🚦-gated operator step):
+Current releases always enforce supported operator permissions and exact
+resource targets. The historical observe-only rollout and `api.authz.enforce`
+switch cannot disable these boundaries. An under-scoped caller receives **403**;
+changing the old flag is not an authorization rollback.
 
-1. Add a `callers` JSON document to the `kyber-api-credentials` Secret (scoped
-   keys — operator-managed `kubectl patch`, **not** chart-rendered). Schema and
-   examples: [`api-keys.md`](api-keys.md).
-2. Leave enforcement off and watch the audit log for `would-deny` lines to confirm
-   no legitimate caller would be blocked.
-3. Set `api.authz.enforce: true` in the cluster's `values.yaml` and sync. From
-   then on an under-scoped caller gets **403** on the verbs it lacks scope for.
-
-Rollback is instant: set `api.authz.enforce: false` and sync.
+Before upgrading, review configured callers and their required actions/targets.
+After upgrading, an administrator can inspect effective access in **Settings →
+API access**. Configuration remains authoritative until explicit managed setup;
+after setup, edit grants and rotate/revoke keys through Settings. Existing
+administrator access is preserved. See [API keys](api-keys.md) for the current
+configuration, ownership and recovery rules.
 
 ## Letting a cluster upgrade itself
 
@@ -691,16 +719,18 @@ k3s upgrades are usually safe but occasionally change container runtime behavior
 
 ## Rotating secrets
 
-Rotating the API key requires both updating the k8s secret and updating any clients (PWA, external tooling) that use the old value:
+Use **Settings → API access** to rotate an individual managed operator key.
+Save the prepared replacement before activation and update each consuming
+client. Rotation affects the selected credential and its generation; browser
+sessions and protected streams lose retired access within ten seconds. Client
+Secrets referenced before adoption are not automatically synchronized.
 
-```bash
-NEW_API_KEY=$(openssl rand -hex 32)
-kubectl -n kyber-system patch secret kyber-api-credentials \
-  --type=merge \
-  -p "{\"stringData\":{\"api-key\":\"$NEW_API_KEY\"}}"
-kubectl -n kyber-system rollout restart deploy/${CLUSTER}-control-plane
-# Update the PWA Settings page in your browser
-```
+Before managed setup, configuration-owned keys still require a source Secret
+change and restart/reload of every control-plane replica. After setup, editing
+`kyber-api-credentials` no longer changes accepted operator access. Never delete
+the selected registry or authority marker to restore old keys. Keep a backup
+administrator credential and follow the [key recovery guide](api-keys.md#lost-access-and-compromise).
+Operator-key rotation does not rotate Agent OAuth or provider credentials.
 
 Rotate the OAuth credentials for individual Claude Code agents. As of 2026-04-14, the credential store is a `<agent-name>-oauth` k8s secret with `access_token` and `refresh_token` keys (written by the PKCE exchange at agent-create time). The refresh token auto-rotates on each pod boot via `start-claude.sh` — manual rotation is only needed if the refresh token is revoked or expired:
 

@@ -1,7 +1,7 @@
-# Inspect operator credentials
+# Manage operator credentials
 
 As an installation administrator, open **Settings → API access → Operator
-credentials**. The read-only inventory shows the installation administrator
+credentials**. The inventory shows the installation administrator
 and integration credentials currently accepted by the responding control
 plane, plus additional entries in its configuration when that source can be
 read. It never returns existing key values or fragments.
@@ -9,7 +9,8 @@ read. It never returns existing key values or fragments.
 Each entry shows its access level, accepted permissions and allowed Agents.
 Fleet metrics access is installation-wide, not restricted by an Agent list.
 Empty integration permissions grant no additional operator operations; every
-valid credential can still read basic API version information. Reserved task
+valid credential can still read basic API version information and its own
+current identity/access metadata. Reserved task
 administration permissions currently grant no additional access.
 
 `Active` describes accepted runtime access. `Configured, not active` does not
@@ -19,8 +20,9 @@ reloads it. A configured permission difference is shown separately from active
 access. This comparison does not establish whether a pending key-value change
 has loaded; externally replaced keys may require a restart. If the configuration
 source cannot be read, a warning explicitly limits the inventory to runtime
-access. Multi-replica consistency and UI-managed credential lifecycle are part
-of the subsequent registry work, not guaranteed by this per-control-plane view.
+access. Until explicit setup is completed, this remains a per-control-plane
+configuration view. Managed installations instead read one current installation
+authority and apply current grants to existing connections.
 
 If configured entries share the same key value, the inventory shows the
 identity and permissions authentication actually selects, including full
@@ -29,10 +31,45 @@ Separate names do not create separate access for identical key values.
 Duplicate caller names cannot start browser sessions; existing sessions with
 ambiguous identities are rejected. Give integrations unique names and keys.
 
-Creation times and usage history are not collected by this first inventory
-release. The UI reports them as unknown/unavailable rather than implying a
-credential was never used. The remaining creation/rotation/revocation and usage
-work is tracked in MAT-134; the authorization/registry model is MAT-96.
+Creation time is shown only when actual issuance was recorded. Imported keys
+show **Creation time unknown**. Secret creation time does not establish when a
+key was issued. Recent recorded sensitive access appears below the inventory.
+
+Managed installations offer named key creation, grant changes, individual
+rotation and revocation here. Save a newly prepared value before activating it;
+it cannot be retrieved later. Kyber protects the last non-expiring administrator.
+On compatible releases, select **Manage existing keys in Kyber** to review the
+setup. Confirm that future changes to these keys will be made here instead of
+through installation configuration. Deploying or upgrading Kyber never confirms
+this ownership change automatically. The former shared-key rotation endpoint is
+unavailable when the complete managed authority is enabled; use API access.
+
+Setup preserves existing key values, access and established principal, tenant
+and credential IDs. Missing identity labels receive stable operation-scoped IDs;
+creation times are not invented. The review reports callers that must sign in
+again. Compatible existing browser sessions retain their original deadlines.
+Duplicate key values continue to select their actual effective identity.
+
+**Check key setup** reads pending work. An unconfirmed response is not a failure
+and is never retried automatically: use **Check outcome** with its original
+operation. **Continue setup** appears only after the server confirms the earlier
+worker has stopped; missing process evidence and node-loss states do not permit
+a force unlock. An unavailable audit database leaves setup pending while current
+authentication continues. Named key changes wait until setup is confirmed.
+
+The native worker uses the current published control-plane image, verifies the
+Helm release, source Secret UID/versions and every ready replica, and records
+immutable admission before launch. It retains unresolved Job/Pod evidence and
+shares maintenance with supported upgrades. No Agent restart, disk replacement,
+or task ownership change is part of setup. If preflight cannot establish the
+supported release/source state, it refuses to begin.
+
+After setup, external configuration no longer grants operator access. Do not
+remove the authority marker or restore only its old configuration Secret: that
+is not a supported rollback. Current reads fail closed if the selected authority
+cannot be verified, including after a fresh control-plane process starts. Use a
+compatible published release for upgrades and rollback; unsupported manual cloud
+or Kubernetes changes require separate operator recovery.
 
 The supported system identity is `installation-admin`, displayed as
 **Installation administrator**. Existing administrator keys remain valid and
@@ -49,6 +86,40 @@ reads. The UI clears loaded inventory when a refresh is denied; it does not
 put this metadata in the shared query cache. Key rotation controls appear only
 after administrator inventory access is verified. Older installations show an
 explicit unsupported state until upgraded.
+
+
+## Observed key activity
+
+With activity reporting available, each identifiable key shows **Last observed
+use**, authenticated requests, HTTP denials after authentication, request types
+and authentication methods. The stated collection window and update time apply
+to those observations. Counts remain exact for large values.
+
+A successful authentication means Kyber accepted that credential. It does not
+mean an action completed; use **Recent access** for sensitive-action decisions
+and outcomes. API-key requests, browser sign-ins/sessions and authorized archive
+links are included. Long-lived connections count their initial HTTP request,
+not terminal commands or each streamed message. UI polling also uses its key.
+
+Coverage is partial. Reporting delay, observations awaiting confirmation,
+recorded loss and missing attribution are shown explicitly. Unavailable reporting
+does not become a successful zero. **No accepted use recorded in this window**
+is narrower than a claim that a key has never been used.
+
+Keys without a complete stable identity, or distinct values sharing one identity,
+cannot receive separate per-key attribution. Those accepted requests remain
+unattributed; permission checks are unchanged. Shared key values identify their
+actual selected credential, not individual people. Separate named credentials
+provide clearer attribution. Stable credential/principal/tenant identities retain
+observed history through managed adoption and material rotation.
+
+Activity metadata is durable in Kyber's PostgreSQL store. A bounded asynchronous
+collector keeps database writes outside authentication, reports overflow, and
+retries acknowledgement-lost batches without double-counting. It stores no key
+values, cookies, request content, raw paths or IP addresses. Reporter replay
+cursors and aggregate counts are retained across control-plane replacement;
+collection gaps remain explicit. Activity collection requires PostgreSQL, while
+ordinary authentication continues during reporting failure.
 
 
 ## Terminal permissions
@@ -74,9 +145,9 @@ with those identity fields and a `keyFrom` reference. The inventory shows this
 as host terminal access and lists the Machines separately from Agents.
 
 Changes to externally configured credentials still require reload/restart as
-described above. Bounded revocation of active streams and durable security
-audit records remain part of MAT-96/MAT-97; current decision events are sanitized
-control-plane logs, not a durable audit trail.
+described above. Current-key checks also protect active streams; managed authority
+updates are rechecked within the documented ten-second bound. Required durable
+records for sensitive access are described below.
 
 Terminal completion reports exit before closing the client connection. Client
 disconnect cancels the exec context and closes an upstream connection waiting
@@ -115,8 +186,9 @@ the user-secret API permissions. Host log access can expose activity from other
 Agents on that host. Operational logs can contain sensitive application output;
 a log grant is not a content-redaction boundary. Grant these only to trusted integrations. Decision logs
 contain actor, action, exact Agent/Machine and outcome, never values or log
-content. The required durable records below add a bounded first collection
-slice; complete security history remains MAT-97.
+content. The required durable records below cover sensitive access and management
+operations. Their coverage and retention limits remain explicit; they are not
+a complete record of every request or background action.
 
 ## Required records for sensitive access
 
@@ -124,7 +196,11 @@ The operator terminal, `/agents/{name}/secrets` and Agent/Machine log or
 transcript endpoints, including fleet log viewer/export aliases, require a durable authorization record before any backend
 lookup, content read or terminal upgrade. The control plane uses its existing
 PostgreSQL connection. Without that store, or when a required write fails,
-these operations return `503 security_audit_unavailable` and do not start.
+these operations return `503 security_audit_unavailable` and do not start. The
+same admission rule covers Agent/Machine lifecycle and deletion requests, model/
+runtime/resource/disk changes, session maintenance, disk export/import/upload/
+delete/cancel operations, download-link issuance and public archive downloads.
+Installation-key rotation also requires a record before changing the Secret.
 Sign-in, version information and the administrator credential inventory remain
 available; an invalid permission still returns 403 without reading the backend.
 
@@ -134,7 +210,9 @@ credential values, user-secret names/values, request bodies, terminal arguments,
 log text or transcripts. Denied unclassified routes record an installation-level
 decision without copying unknown paths. Older configured callers without stable
 IDs can have unknown attribution on denial; Kyber does not invent a person or
-credential identity for them.
+credential identity for them. Keys missing identification needed for an allowed
+management action receive `403 credential_identity_required`; the operation does
+not start and an administrator must update their configuration.
 
 An allowed authorization and a completed operation are different records.
 Failed lookups/validation are failed operations, not successful sensitive reads.
@@ -144,16 +222,22 @@ attempt to write completion history. A completion write can fail after content
 or an external effect has already been delivered; its earlier admission remains
 without a confirmed outcome. Treat that as incomplete history, not a rollback
 or a reason to replay a mutation automatically. Failed/interrupted requests
-can have partial effects or data delivery. A confirmed user-secret mutation
+can have partial effects or data delivery. A confirmed mutation
 remains successful even when its response is lost; an unconfirmed delivery is
 unknown rather than falsely reported as completed or rolled back.
 
-This collection covers the sensitive operations above and restricted-route
-denials. Durable lifecycle/archive/credential mutation records, authentication
-usage summaries and administrator history/query UI remain
-MAT-97/MAT-134 work. The read-only inventory still does not claim general last
-use or complete usage coverage. Bounded credential revocation is separate from
-this audit collection and is not provided by an authorization record alone.
+This collection covers the operations above and restricted-route denials.
+A successful asynchronous request records accepted intent, not completion of the
+background Agent/controller/archive job. A verified but revoked download link
+can identify its issuing credential for a denial; that reference never grants
+access. Invalid/unverifiable links remain unattributed, and an unavailable
+authority is not recorded as a permission denial.
+
+The administrator can query recent history in Settings. Key changes and setup
+recovery have durable operation outcomes reconciled against the selected registry;
+unknown effects remain pending instead of being replayed automatically. Observed
+usage is a separate, partial collection described above. An audit record alone
+does not revoke access: current credential authority enforces revocation.
 
 Retention runs in bounded batches each minute. By default it retains up to
 30 days and 1,000,000 records per installation; either age or capacity can
@@ -161,14 +245,14 @@ shorten the window. Helm settings `api.securityAudit.retentionDays` (1–365)
 and `api.securityAudit.maxRecords` (1,000–100,000,000) control these limits.
 Invalid settings fail startup. The row cap is periodic, so a burst can exceed
 it temporarily between sweeps. Size PostgreSQL for the selected policy and
-its other data. Subsequent history/usage views must show actual retained
-coverage, not promise a full time window when the capacity limit has trimmed it.
+its other data. History and usage views show their actual retained coverage;
+the capacity limit can shorten the available window.
 
-Current records label credential authority as `configuration`: IDs/generation
-are those reported by the responding authenticator, not an independent
-issuance or rotation ledger. In particular, the current shared installation
-key does not track material generations. The canonical registry must own and
-validate those versions before the later UI can claim per-key version history.
+Records identify their credential authority as `configuration` before setup and
+`registry` after the explicit handoff. Configuration-owned IDs/generations describe
+loaded settings rather than an independent issuance ledger. Managed credentials
+have durable identities and generations; individual rotation changes the target's
+generation. Historical records retain their original authority and attribution.
 
 Fleet logging remains administrator-only. Its initial installation-level
 admission covers target discovery; a second decision records the backend-matched
@@ -176,3 +260,34 @@ pod UID, container, component and workload before content reads/exports. Both
 share one operation ID and completion; consumers must count operations rather
 than treating each decision as a separate read. Unknown query selectors are not
 copied into events. Fleet log responses also use no-store.
+
+## Credential maintenance
+
+When supported, Settings shows whether an adoption or upgrade operation has
+left a credential maintenance block. Expand **Operation details** for its type,
+execution ID, start time and check time. The block has no automatic expiry.
+
+Unavailable status does not mean idle. No block means only that the reservation
+was absent when checked; it does not list every running upgrade. Older runtimes
+can run upgrades without reserving this boundary. This view cannot release a
+block just because it is old. For an interrupted upgrade, **Check recovery**
+verifies the stopped writer and current release before **Recover maintenance**
+becomes available. Pending recoveries offer **Check outcome** and an explicit
+**Resolve recovery**; status reads never replay an operation. Interrupted key
+setup uses **Check key setup → Continue setup** instead. Both paths require
+current administrator access and confirmed process/release evidence. Do not
+delete credential authority or registry Secrets to restore access.
+
+
+## Current credential metadata
+
+An authenticated client can read `GET /api/v1/operator-credentials/current` to
+check its own currently accepted identity, role, grants and exact targets. The
+response includes the serving control-plane Pod UID when available and reports
+unknown identity explicitly. Generation is a decimal string. Reads recheck
+current authentication and return no-store metadata without a database dependency.
+
+This supports verifying each key on each replica before explicit ownership
+transfer. Setup requires the complete compatible release and administrator
+confirmation; this metadata read neither activates management nor adds another
+way to authenticate.

@@ -120,3 +120,37 @@ func TestInternalRuntimeCatalogRejectsAnotherRegisteredRuntime(t *testing.T) {
 		t.Fatalf("status=%d body=%s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestInternalRuntimeCatalogValidatesEffortEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		name, evidence string
+		want           int
+	}{
+		{"native", `{"source":"codex-model-list","harnessVersion":"0.164.0","levels":["high","ultra"]}`, 204},
+		{"explicit empty", `{"source":"codex-model-list","harnessVersion":"0.164.0","levels":[]}`, 204},
+		{"missing levels", `{"source":"codex-model-list","harnessVersion":"0.164.0"}`, 400},
+		{"wrong source", `{"source":"guess","harnessVersion":"0.164.0","levels":["high"]}`, 400},
+		{"duplicate", `{"source":"codex-model-list","harnessVersion":"0.164.0","levels":["high","high"]}`, 400},
+		{"invalid version", `{"source":"codex-model-list","harnessVersion":"unknown","levels":["high"]}`, 400},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cache := runtimedetect.NewMemoryCache()
+			srv := catalogTestServer(t)
+			srv.SetRuntimeDetectCache(cache)
+			rr := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/internal/agents/codex-spike/runtime-catalog", bytes.NewBufferString(`{"runtime":"codex","models":[{"id":"gpt-example","reasoningEffort":`+tc.evidence+`}]}`))
+			srv.Handler().ServeHTTP(rr, req)
+			if rr.Code != tc.want {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, tc.want, rr.Body.String())
+			}
+			models, err := cache.GetAgentModels(context.Background(), "codex-spike", "codex")
+			if tc.want == 204 {
+				if err != nil || len(models) != 1 || models[0].ReasoningEffort == nil {
+					t.Fatalf("metadata not retained: %+v %v", models, err)
+				}
+			} else if err == nil {
+				t.Fatal("invalid evidence persisted")
+			}
+		})
+	}
+}

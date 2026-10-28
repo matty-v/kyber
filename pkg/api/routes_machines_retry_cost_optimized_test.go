@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"context"
+	"github.com/matty-v/kyber/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -49,7 +50,7 @@ func retryHandler(t *testing.T, machine *kyberv1.Machine, mode adapters.Reliable
 		t.Fatalf("add Kyber scheme: %v", err)
 	}
 	k8sClient := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(&kyberv1.Machine{}).WithObjects(machine).Build()
-	server := &Server{
+	server := &Server{SecurityAudit: testutil.NewSecurityAudit(),
 		K8sClient: k8sClient,
 		APIKey:    "test-key",
 		Namespace: "kyber-system",

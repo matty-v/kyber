@@ -495,6 +495,10 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 			http.Error(w, "missing authoritative context window", http.StatusBadRequest)
 			return
 		}
+		if err := model.ReasoningEffort.Validate(body.Runtime); err != nil {
+			http.Error(w, "invalid reasoning effort evidence", http.StatusBadRequest)
+			return
+		}
 		models = append(models, model)
 	}
 	if s.k8sClient == nil {
