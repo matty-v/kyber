@@ -4,7 +4,8 @@ Reasoning effort controls the model's native thinking level. It does not set
 response verbosity, reasoning-summary detail or a token budget.
 
 In **Create Agent**, choose Reasoning effort alongside authentication. In an
-Agent's Overview, use **Change effort** to update it. The shared controls work
+Agent's **Configuration → General → Runtime**, use **Change effort** alongside
+the model and harness settings to update it. The shared controls work
 on desktop and mobile. **Default (no override)** removes Kyber's setting and
 leaves the harness's own configuration and defaults in control. Kyber does not
 rewrite the Agent's user settings.
