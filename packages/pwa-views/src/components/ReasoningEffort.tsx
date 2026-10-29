@@ -38,7 +38,7 @@ export function AgentEffortSettings({ agent }: { agent: Agent }) {
   const mutation = useSetAgentEffort()
   useEffect(() => { setEditing(false); setValue(agent.effort ?? '') }, [cluster.id, cluster.baseURL, cluster.apiKey, agent.id])
   const valid = value === '' || (!query.isError && query.data?.state === 'supported' && query.data.levels.includes(value))
-  return <section aria-label="Reasoning effort" className="rounded-lg border border-border-subtle bg-surface-raised p-4 space-y-3">
+  return <section aria-label="Reasoning effort" className="mt-4 border-t border-border-subtle pt-4 space-y-3">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="text-sm font-medium text-text-primary">Reasoning effort</h2>
         <p className="text-sm text-text-secondary">{agent.effort || 'Default (no override)'}{agent.effortPending ? (['Stopped', 'Failed', 'NeedsAuth'].includes(agent.phase) ? ' · Applies on next start' : ' · Pending restart') : ''}</p></div>

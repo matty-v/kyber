@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.1
+
+- Move existing-agent reasoning effort into Configuration → General → Runtime alongside model and harness settings on desktop and mobile.
+
 ## 0.83.0
 
 - Add reasoning-effort selection during creation and in Agent Details, with native compatibility choices, Default reset and pending application status on desktop/mobile. Requires compatible control-plane support; model selection remains separate.

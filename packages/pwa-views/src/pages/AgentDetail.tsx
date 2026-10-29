@@ -965,7 +965,6 @@ export function AgentDetail() {
               <p className="text-sm text-text-muted">Usage will appear when the running pod reports metrics.</p>
             )}
           </Card>
-          <AgentEffortSettings key={agent.id} agent={agent} />
           <details className="rounded-lg border border-border-subtle bg-surface-raised px-4 py-3">
             <summary className="cursor-pointer text-sm font-medium text-text-secondary">Technical details</summary>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -1086,6 +1085,7 @@ export function AgentDetail() {
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">CPU</dt><dd className="text-text-primary">{agent.resources.cpu}</dd></div>
                       <div className="flex justify-between gap-3"><dt className="text-text-muted">Memory</dt><dd className="text-text-primary">{agent.resources.memory}</dd></div>
                     </dl>
+                    <AgentEffortSettings key={agent.id} agent={agent} />
                     {directOpenRouter && <p role="alert" className="mt-3 text-xs text-warning">{codexOpenRouterEvidence(agentContract(agent), agent.inference?.model || agent.currentModel || agent.model)}</p>}
                     {agent.runtime === 'hermes' && !agent.inference && agentAuth(agent)?.inputField === 'openrouterApiKey' && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Uses this agent’s OpenRouter API key. OpenRouter bills model requests separately from Claude and ChatGPT subscriptions; Kyber’s cost figures are estimates, not the provider invoice. The upstream model provider may vary by route and is not reported here. Manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
                     {directOpenRouter && <p className="mt-3 border-t border-border-subtle pt-3 text-xs text-text-muted">Codex uses this agent’s OpenRouter endpoint credential. OpenRouter bills API requests separately from ChatGPT subscriptions and may route them to an upstream provider Kyber does not identify. Any Kyber cost shown is an estimate, not the OpenRouter invoice; check OpenRouter activity for actual charges and manage spend and privacy in <a href="https://openrouter.ai/docs/guides/features/guardrails/overview" target="_blank" rel="noopener noreferrer" className="text-accent hover:underline">OpenRouter ↗</a>.</p>}
