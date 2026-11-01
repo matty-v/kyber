@@ -1234,3 +1234,6 @@ which retains constant-time authentication comparisons.
 
 Runtime bootstrap tests must use temporary installer stubs and managed config
 paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing.md.
+Native-probe Go tests must read their Python source and test inputs before spawning
+them so Go tracks those dependencies. Use `-count=1` when directly verifying changed
+external scripts; child-process file reads alone do not invalidate Go’s test cache.
