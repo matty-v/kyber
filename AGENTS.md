@@ -20,6 +20,27 @@ repository and controller. Never let both mechanisms own the same release.
 
 ---
 
+## Mandatory coverage for shared harness changes
+
+Before changing shared Agent behavior, enumerate **every registered harness** in
+`pkg/runtimes` and its descriptors. Today that includes Claude Code, Codex and
+Hermes; never assume the harness that reproduced a bug is the full scope.
+
+Create and maintain a per-harness coverage matrix in the PR: native support and
+version/model/provider evidence; affected adapter, API/controller, launch/resume,
+capability, image and UI paths; tests/results and remaining actions. An unexamined
+harness, missing authentication or absent Kyber wiring is **not** evidence that a
+native feature is unsupported. If native support exists, include it or explicitly
+agree narrower scope with the operator before calling the shared feature complete.
+
+Review the final matrix before merge. Exercise defaults/reset, `latest`, relevant
+provider/model differences, application/restarts, data preservation and shared UI
+delivery as applicable. Add registry-enumerating regression coverage where shared
+code branches by harness, including future runtimes. See
+[`docs/contributing/harness-coverage.md`](docs/contributing/harness-coverage.md).
+
+---
+
 ## 1. Architecture — the 5 core abstractions
 
 ### 1.1 CRDs are the source of truth
