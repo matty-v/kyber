@@ -287,3 +287,16 @@ paths into temporary directories. A mocked npm on PATH is insufficient: sudo
 can restore the real PATH and run the machine's installer. Default to a failing
 temporary installer; tests of successful installs must supply their own stub.
 Never let a bootstrap test install or replace tools on the host running it.
+
+### Codex effort and moving runtime versions
+
+`latest` is a selector, not the version returned by `codex --version`. Verify the
+resolved install and native model's advertised choices before booting with effort;
+never make a frozen model/version table the sole authority for current Codex.
+Picker metadata is not configuration evidence: require fresh Agent UID, current
+owned pod UID, native version and route binding. Test stale/name-reused/replaced
+pods, unknown and explicitly empty choices, failed installs and Default recovery.
+Standalone release images use source-version tags; compare their commit suffix
+with the running control-plane build instead of silently excluding that delivery
+path. A control-plane-only update must not enable a guard missing from its runtime
+image. Run shell bootstrap tests with `-count=1` after changing external scripts.

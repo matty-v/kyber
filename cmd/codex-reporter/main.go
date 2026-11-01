@@ -204,7 +204,7 @@ func reportCatalog(client *http.Client) error {
 			models[i].ReasoningEffort = nil
 		}
 	}
-	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models})
+	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models, "podUID": os.Getenv("KYBER_POD_UID")})
 	if err != nil {
 		return err
 	}

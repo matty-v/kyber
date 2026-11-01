@@ -5,6 +5,7 @@ package reasoningeffort
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 )
 
@@ -71,4 +72,20 @@ func Validate(runtime, version, model string, customEndpoint bool, effort string
 		return fmt.Errorf("reasoning effort is not supported for this runtime version, model and route; choose a supported level or clear effort first")
 	}
 	return nil
+}
+
+var nativeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var nativeEffortPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// ValidateLaunch leaves Codex model/version qualification to the native model
+// catalog check in the current source image at every boot. API admission still
+// requires bound current-pod evidence. Other adapters retain exact qualification.
+func ValidateLaunch(runtime, version, model string, custom bool, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	if runtime == "codex" && !custom && model != "" && (version == "latest" || nativeVersionPattern.MatchString(version)) && nativeEffortPattern.MatchString(effort) {
+		return nil
+	}
+	return Validate(runtime, version, model, custom, effort)
 }

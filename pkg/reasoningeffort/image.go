@@ -1,6 +1,9 @@
 package reasoningeffort
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 var imageSHA = regexp.MustCompile(`^[a-f0-9]{40}$`)
 var imageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
@@ -36,9 +39,24 @@ func ImmutableNativeImage(runtime, image string) bool {
 // source or reuses this Agent's previously observed integration for the exact
 // immutable image. It never infers launch wiring from the native CLI version.
 func ImageSupported(runtime, image, buildSHA, observedImage string) bool {
-	repo := nativeImageRepository(runtime)
-	if repo != "" && imageSHA.MatchString(buildSHA) && image == repo+":"+buildSHA {
+	if SourceImageSupported(runtime, image, buildSHA) {
 		return true
 	}
 	return ImmutableNativeImage(runtime, image) && observedImage == image
+}
+
+// SourceImageSupported accepts the current first-party source image, including
+// the source-version tags emitted by Kyber's standalone release publisher.
+// It intentionally does not reuse older images' protocol-one observations for
+// the newer native-at-boot validation contract.
+func SourceImageSupported(runtime, image, buildSHA string) bool {
+	repo := nativeImageRepository(runtime)
+	if repo == "" || !imageSHA.MatchString(buildSHA) {
+		return false
+	}
+	if image == repo+":"+buildSHA {
+		return true
+	}
+	match := regexp.MustCompile(`^` + regexp.QuoteMeta(repo) + `:[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g([a-f0-9]{7,40})$`).FindStringSubmatch(image)
+	return len(match) == 2 && strings.HasPrefix(buildSHA, match[1])
 }

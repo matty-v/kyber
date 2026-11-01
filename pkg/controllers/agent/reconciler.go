@@ -3014,13 +3014,15 @@ func (r *AgentReconciler) resolveAgentForPod(ctx context.Context, agent *kyberv1
 	}
 
 	beforeEffort := agent.DeepCopy()
-	effortErr := reasoningeffort.Validate(resolved.Spec.Runtime, resolved.Spec.RuntimeVersion, resolved.Spec.Model, resolved.Spec.Inference != nil, resolved.Spec.Effort)
+	effortErr := reasoningeffort.ValidateLaunch(resolved.Spec.Runtime, resolved.Spec.RuntimeVersion, resolved.Spec.Model, resolved.Spec.Inference != nil, resolved.Spec.Effort)
 	if effortErr == nil && resolved.Spec.Effort != "" {
 		adapter, err := r.resolveAdapter(resolved)
 		if err != nil {
 			return nil, err
 		}
-		if !reasoningeffort.ImageSupported(resolved.Spec.Runtime, adapter.Image(), r.BuildSHA, agent.Status.EffortRuntimeImage) {
+		if resolved.Spec.Runtime == "codex" && reasoningeffort.Validate(resolved.Spec.Runtime, resolved.Spec.RuntimeVersion, resolved.Spec.Model, resolved.Spec.Inference != nil, resolved.Spec.Effort) != nil && !reasoningeffort.SourceImageSupported(resolved.Spec.Runtime, adapter.Image(), r.BuildSHA) {
+			effortErr = fmt.Errorf("update the Codex runtime image to enable native effort validation")
+		} else if !reasoningeffort.ImageSupported(resolved.Spec.Runtime, adapter.Image(), r.BuildSHA, agent.Status.EffortRuntimeImage) {
 			effortErr = fmt.Errorf("runtime image effort integration is unverified; update runtime images or clear effort")
 		}
 	}

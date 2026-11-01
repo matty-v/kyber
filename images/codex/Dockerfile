@@ -45,4 +45,5 @@ ENV KYBER_START_CMD="/usr/local/bin/start-codex.sh"
 COPY --chmod=0755 images/codex/probe-capabilities.py /usr/local/bin/kyber-probe-capabilities
 
 # Native CLI support alone does not prove Kyber launch/resume integration.
-RUN printf '1\n' > /usr/local/share/kyber-reasoning-effort-protocol
+COPY --chmod=0755 images/codex/check-effort.py /usr/local/bin/kyber-codex-effort
+RUN printf '2\n' > /usr/local/share/kyber-reasoning-effort-protocol

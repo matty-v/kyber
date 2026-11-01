@@ -10,22 +10,30 @@ on desktop and mobile. **Default (no override)** removes Kyber's setting and
 leaves the harness's own configuration and defaults in control. Kyber does not
 rewrite the Agent's user settings.
 
-Only native choices supported by the selected model, inference route and exact
-harness version are offered. The Kyber runtime image must also contain the launch integration. A matching
-first-party source build qualifies creation; existing Agents can retain their
-observed integration for the exact immutable image across control-plane updates.
-A control-plane-only upgrade does not establish runtime-image support. Other
-image combinations remain at Default until verified; updating the runtime images
-is part of enabling this feature. For an older pinned image without a known
-creation-time match, create with Default first; its current integration report
-can qualify effort changes for that Agent. Mutable/custom image tags remain
-unverified.
+For an existing Codex Agent, choices come from its authenticated native model
+catalog, bound to that Agent and current pod and the installed executable version.
+Evidence expires after two hours and is not shared across agents. `latest` is a
+version selection, not an executable version: Kyber shows the actual version in
+its effort-options response and checks the selected level against that model.
+Explicitly empty native choices offer Default only. Missing, expired, replaced-pod
+or mismatched-version evidence cannot authorize a new override. Custom inference
+routes remain at Default.
 
-Different harnesses/models can have different
-levels; Kyber does not translate or clamp them. Unknown combinations offer
-Default only. This is native-client compatibility, not proof of provider
-entitlement or a guarantee of reasoning quality. Custom inference routes and
-other harnesses remain at Default until their effort behavior is qualified.
+Update both the control plane and Codex runtime images for this behavior. The
+runtime must match the current first-party source build, including the standalone
+release's source-version tag. A control-plane-only upgrade does not add the native
+boot check to an older image. After the updated pod reports its model catalog,
+refresh Configuration → General → Runtime. No manual version pin is required.
+The launcher resolves `latest`, refuses a failed install/fallback, and rechecks
+native model/effort support before every boot. It fails explicitly rather than
+silently dropping or clamping an unsupported setting. User-owned configuration
+remains intact; Default is always available for recovery.
+
+Claude Code retains its exact version/model compatibility policy. Creation before
+an Agent has authenticated model evidence uses the bounded legacy policy; create
+with Default and then select effort after the current runtime reports its models.
+This is native-client compatibility, not proof of provider entitlement or a
+guarantee of reasoning quality.
 
 A real change restarts an active Agent using its existing disk and normal
 session path. A no-op does not restart it. Stopped, Failed or NeedsAuth Agents
@@ -58,6 +66,6 @@ an existing override. Configuration APIs do not reveal provider credentials.
 The compatibility policy is deliberately bounded in
 [`pkg/reasoningeffort`](../../pkg/reasoningeffort/policy.go). Model catalogs can
 carry native effort evidence, but unbound or stale catalog records must not
-expand this policy. A new harness version must be qualified before it gains
-non-default choices. See [API authorization](../architecture/api-authorization.md)
+expand this policy. Codex native choices must be reported by the current pod and checked again by
+the launcher; other adapters require exact qualification. See [API authorization](../architecture/api-authorization.md)
 for operator permissions.

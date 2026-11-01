@@ -32,3 +32,19 @@ func TestEffortImageIntegrationCannotBeInferredFromCLIVersion(t *testing.T) {
 		t.Fatal("unqualified runtime inherited native integration")
 	}
 }
+
+func TestSourceVersionImageTags(t *testing.T) {
+	sha := "abcdef0123456789abcdef0123456789abcdef01"
+	for _, tc := range []struct {
+		tag  string
+		want bool
+	}{
+		{"1.8.0-90-gabcdef0", true}, {"1.8.0-90-gabcdef01", true},
+		{"1.8.0-90-g1234567", false}, {"1.8.0-90-gabcdef", false},
+		{"latest", false}, {"1.8.0-90-gabcdef0-dirty", false},
+	} {
+		if got := SourceImageSupported("codex", "ghcr.io/matty-v/kyber-codex:"+tc.tag, sha); got != tc.want {
+			t.Fatalf("tag %s: %v", tc.tag, got)
+		}
+	}
+}

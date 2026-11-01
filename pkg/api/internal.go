@@ -468,6 +468,7 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 	}
 	var body struct {
 		Runtime string                `json:"runtime"`
+		PodUID  string                `json:"podUID,omitempty"`
 		Models  []runtimedetect.Model `json:"models"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
@@ -522,6 +523,44 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 	} else {
 		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
 		return
+	}
+
+	// Old reporters retain picker behavior, but cannot authorize effort settings.
+	if body.Runtime == "codex" && body.PodUID != "" {
+		reader := s.usageAgentReader
+		if reader == nil {
+			reader = s.k8sClient
+		}
+		current := &kyberv1.Agent{}
+		pod := &corev1.Pod{}
+		if reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agentName}, current) != nil || current.UID != agent.UID || current.Spec.Runtime != body.Runtime || current.Spec.Inference != nil ||
+			reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: current.Status.PodName}, pod) != nil || string(pod.UID) != body.PodUID || pod.DeletionTimestamp != nil {
+			http.Error(w, "stale effort catalog", 409)
+			return
+		}
+		owned := false
+		for _, o := range pod.OwnerReferences {
+			if o.Kind == "Agent" && o.UID == current.UID && o.Controller != nil && *o.Controller {
+				owned = true
+			}
+		}
+		version := current.Status.Runtime.InstalledVersion
+		if !owned || current.Status.Runtime.Runtime != body.Runtime || version == "" {
+			http.Error(w, "unbound effort catalog", 409)
+			return
+		}
+		for _, m := range models {
+			if m.ReasoningEffort != nil && m.ReasoningEffort.HarnessVersion != version {
+				http.Error(w, "stale effort version", 409)
+				return
+			}
+		}
+		if cache, ok := s.runtimeDetectCache.(runtimedetect.EffortCatalogCache); ok {
+			if err := cache.PutEffortCatalog(r.Context(), agentName, runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: time.Now(), Models: models}); err != nil {
+				http.Error(w, "effort catalog unavailable", 503)
+				return
+			}
+		}
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -265,16 +265,24 @@ with the executable version. Omitted effort metadata means unknown; an explicit
 empty option list means none were advertised. This is catalog evidence only,
 not permission to configure effort: a consumer must first verify the current
 Agent, runtime version, model and inference route. Custom inference routes
-still suppress the native OpenAI catalog. No effort setting/UI is enabled by
-this metadata foundation.
+still suppress the native OpenAI catalog. The picker catalog alone cannot enable
+effort settings. Codex effort admission
+uses the separate current-pod, Agent-UID-bound effort catalog with a two-hour
+expiry; never consume the unbound picker cache for configuration.
 Reasoning effort configuration is separate from that catalog evidence.
-`pkg/reasoningeffort` owns exact version/model/native-route qualification;
-unknown tuples permit clearing but never a new nonempty override. `set-effort`
+`pkg/reasoningeffort` retains legacy exact qualification and bounded launch
+validation. Current-source Codex images recheck native model/effort support at
+every boot, including resolved `latest`; API admission requires fresh current-pod
+evidence. Other adapters retain exact qualification. Unknown support always
+permits clearing but never a new nonempty API override. `set-effort`
 is exact-Agent lifecycle-write and required-audit protected. Effort participates
 in PodConfigHash; ObservedPodEffort records the pod's configured override, not
 provider execution. New effort writes also require verified runtime-image wiring:
 a matching first-party source image, or this Agent's observed protocol for that
-exact immutable image. Native CLI version alone is insufficient; upgrading only
+exact immutable image for the legacy protocol. Native Codex validation requires
+the current source image, including source-version release tags whose commit
+suffix matches BuildSHA; do not infer the new guard from an old protocol report.
+Native CLI version alone is insufficient; upgrading only
 the control plane must not advertise a silently ignored setting. Both launchers
 pass the override through resume/relaunch
 and preserve user-owned config. Failed-agent effort edits mark their passive
