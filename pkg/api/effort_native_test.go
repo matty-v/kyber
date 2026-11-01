@@ -132,6 +132,12 @@ func TestNativeCatalogRequiresCurrentOwnedPodAndVersion(t *testing.T) {
 			if rr.Code != want {
 				t.Fatalf("status=%d expected=%d body=%s", rr.Code, want, rr.Body.String())
 			}
+			if mode != "valid" {
+				if _, err := cache.GetAgentModels(context.Background(), a.Name, "codex"); err == nil {
+					t.Fatal("rejected report changed picker catalog")
+				}
+			}
+
 		})
 	}
 }

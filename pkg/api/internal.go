@@ -515,16 +515,8 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		http.Error(w, "runtime does not match agent", http.StatusBadRequest)
 		return
 	}
-	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-		if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
-			return
-		}
-	} else {
-		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
-		return
-	}
 
+	var effortCatalog *runtimedetect.EffortCatalog
 	// Old reporters retain picker behavior, but cannot authorize effort settings.
 	if body.Runtime == "codex" && body.PodUID != "" {
 		reader := s.usageAgentReader
@@ -555,13 +547,27 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 				return
 			}
 		}
+		effortCatalog = &runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: time.Now(), Models: models}
+	}
+	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
+		if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+			return
+		}
+	} else {
+		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
+		return
+	}
+
+	if effortCatalog != nil {
 		if cache, ok := s.runtimeDetectCache.(runtimedetect.EffortCatalogCache); ok {
-			if err := cache.PutEffortCatalog(r.Context(), agentName, runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: time.Now(), Models: models}); err != nil {
+			if err := cache.PutEffortCatalog(r.Context(), agentName, *effortCatalog); err != nil {
 				http.Error(w, "effort catalog unavailable", 503)
 				return
 			}
 		}
 	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
