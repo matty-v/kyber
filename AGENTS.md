@@ -280,8 +280,10 @@ in PodConfigHash; ObservedPodEffort records the pod's configured override, not
 provider execution. New effort writes also require verified runtime-image wiring:
 a matching first-party source image, or this Agent's observed protocol for that
 exact immutable image for the legacy protocol. Native Codex validation requires
-the current source image, including source-version release tags whose commit
-suffix matches BuildSHA; do not infer the new guard from an old protocol report.
+the current source image (including source-version release tags whose commit
+suffix matches BuildSHA), or `status.effortNativeRuntimeImage` recorded from the
+current owned pod's protocol-two report for that exact immutable first-party
+image. Do not infer the new guard from a protocol-one report.
 Native CLI version alone is insufficient; upgrading only
 the control plane must not advertise a silently ignored setting. Both launchers
 pass the override through resume/relaunch

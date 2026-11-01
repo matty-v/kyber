@@ -17,7 +17,7 @@ func (s *Server) agentEffortOptions(ctx context.Context, a *kyberv1.Agent, model
 		return fallback, version
 	}
 	// A new control plane cannot promise native validation in an older image.
-	if !reasoningeffort.SourceImageSupported("codex", s.RuntimeImages["codex"], s.BuildSHA) {
+	if !reasoningeffort.NativeImageSupported("codex", s.RuntimeImages["codex"], s.BuildSHA, a.Status.EffortNativeRuntimeImage) {
 		if fallback.State != "supported" {
 			fallback.Reason = "Update the Codex runtime image to enable effort for current models."
 		}

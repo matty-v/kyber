@@ -48,3 +48,24 @@ func TestSourceVersionImageTags(t *testing.T) {
 		}
 	}
 }
+
+func TestNativeValidationRequiresProtocolTwoOrMatchingCurrentSource(t *testing.T) {
+	build := strings.Repeat("1", 40)
+	old := strings.Repeat("2", 40)
+	for _, image := range []string{"ghcr.io/matty-v/kyber-codex:" + old, "ghcr.io/matty-v/kyber-codex@sha256:" + strings.Repeat("a", 64), "ghcr.io/matty-v/kyber-codex:1.8.0-90-g2222222"} {
+		if NativeImageSupported("codex", image, build, "") {
+			t.Fatal("old image inferred native validation")
+		}
+		if !NativeImageSupported("codex", image, build, image) {
+			t.Fatal("exact native validation observation lost across control-plane update")
+		}
+		if NativeImageSupported("codex", image, build, image+"different") {
+			t.Fatal("wrong image observation accepted")
+		}
+	}
+	for _, image := range []string{"ghcr.io/matty-v/kyber-codex:latest", "example.com/codex:" + old} {
+		if NativeImageSupported("codex", image, build, image) {
+			t.Fatal("mutable/fork observation qualified native validation")
+		}
+	}
+}

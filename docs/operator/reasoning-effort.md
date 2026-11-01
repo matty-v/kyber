@@ -20,8 +20,10 @@ or mismatched-version evidence cannot authorize a new override. Custom inference
 routes remain at Default.
 
 Update both the control plane and Codex runtime images for this behavior. The
-runtime must match the current first-party source build, including the standalone
-release's source-version tag. A control-plane-only upgrade does not add the native
+runtime must match the current first-party source build (including the standalone
+release's source-version tag), or have reported native validation protocol two for
+that exact immutable first-party image. This explicit observation also supports
+pinned digests and survives a later control-plane-only update. A control-plane-only upgrade does not add the native
 boot check to an older image. After the updated pod reports its model catalog,
 refresh Configuration → General → Runtime. No manual version pin is required.
 The launcher resolves `latest`, refuses a failed install/fallback, and rechecks

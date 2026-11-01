@@ -32,6 +32,7 @@ import (
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/modelprobe"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/runtimes"
@@ -467,9 +468,10 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		Runtime string                `json:"runtime"`
-		PodUID  string                `json:"podUID,omitempty"`
-		Models  []runtimedetect.Model `json:"models"`
+		Runtime              string                `json:"runtime"`
+		PodUID               string                `json:"podUID,omitempty"`
+		NativeEffortProtocol int                   `json:"nativeEffortProtocol,omitempty"`
+		Models               []runtimedetect.Model `json:"models"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
 	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || len(body.Models) == 0 || len(body.Models) > 100 {
@@ -545,6 +547,22 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 			if m.ReasoningEffort != nil && m.ReasoningEffort.HarnessVersion != version {
 				http.Error(w, "stale effort version", 409)
 				return
+			}
+		}
+
+		if body.NativeEffortProtocol == 2 {
+			for _, container := range pod.Spec.Containers {
+				if container.Name == "agent" && reasoningeffort.ImmutableNativeImage("codex", container.Image) {
+					if current.Status.EffortNativeRuntimeImage != container.Image || current.Status.EffortRuntimeImage != container.Image {
+						before := current.DeepCopy()
+						current.Status.EffortNativeRuntimeImage = container.Image
+						current.Status.EffortRuntimeImage = container.Image
+						if s.k8sClient.Status().Patch(r.Context(), current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})) != nil {
+							http.Error(w, "effort image observation unavailable", 503)
+							return
+						}
+					}
+				}
 			}
 		}
 		effortCatalog = &runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: time.Now(), Models: models}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
@@ -12,6 +13,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -138,6 +140,45 @@ func TestNativeCatalogRequiresCurrentOwnedPodAndVersion(t *testing.T) {
 				}
 			}
 
+		})
+	}
+}
+
+func TestNativeImageProofSurvivesControlPlaneUpdateAndSupportsDigests(t *testing.T) {
+	for _, protocol := range []int{0, 1, 2} {
+		t.Run(fmt.Sprint(protocol), func(t *testing.T) {
+			s, a, cache, c := nativeEffortFixture(t)
+			ctx := context.Background()
+			image := "ghcr.io/matty-v/kyber-codex@sha256:" + strings.Repeat("b", 64)
+			s.RuntimeImages["codex"] = image
+			var pod corev1.Pod
+			key := types.NamespacedName{Namespace: fdNS, Name: a.Status.PodName}
+			if err := s.K8sClient.Get(ctx, key, &pod); err != nil {
+				t.Fatal(err)
+			}
+			pod.Spec.Containers[0].Image = image
+			if err := s.K8sClient.Update(ctx, &pod); err != nil {
+				t.Fatal(err)
+			}
+			server := NewInternalServer(briefstore.NewMemoryStore(), WithKubeClient(s.K8sClient, fdNS))
+			server.SetRuntimeDetectCache(cache)
+			body, _ := json.Marshal(map[string]any{"runtime": "codex", "podUID": c.PodUID, "nativeEffortProtocol": protocol, "models": c.Models})
+			rr := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/internal/agents/wedge/runtime-catalog", bytes.NewReader(body)))
+			if rr.Code != 204 {
+				t.Fatalf("report=%d %s", rr.Code, rr.Body.String())
+			}
+			if err := s.K8sClient.Get(ctx, types.NamespacedName{Namespace: fdNS, Name: a.Name}, a); err != nil {
+				t.Fatal(err)
+			}
+			s.BuildSHA = strings.Repeat("3", 40) // A subsequent control-plane-only upgrade.
+			options, _ := s.agentEffortOptions(ctx, a, a.Spec.Model, a.Spec.RuntimeVersion, false)
+			if (options.State == "supported") != (protocol == 2) {
+				t.Fatalf("protocol=%d options=%+v", protocol, options)
+			}
+			if protocol == 2 && a.Status.EffortNativeRuntimeImage != image {
+				t.Fatal("native image proof missing")
+			}
 		})
 	}
 }

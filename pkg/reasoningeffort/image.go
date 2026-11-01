@@ -7,6 +7,7 @@ import (
 
 var imageSHA = regexp.MustCompile(`^[a-f0-9]{40}$`)
 var imageDigest = regexp.MustCompile(`^[a-f0-9]{64}$`)
+var sourceVersionTag = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g([a-f0-9]{7,40})$`)
 
 func nativeImageRepository(runtime string) string {
 	switch runtime {
@@ -31,6 +32,9 @@ func ImmutableNativeImage(runtime, image string) bool {
 	}
 	if len(image) == len(repo)+8+64 && image[:len(repo)+8] == repo+"@sha256:" {
 		return imageDigest.MatchString(image[len(repo)+8:])
+	}
+	if tag, ok := strings.CutPrefix(image, repo+":"); ok {
+		return sourceVersionTag.MatchString(tag)
 	}
 	return false
 }
@@ -57,6 +61,16 @@ func SourceImageSupported(runtime, image, buildSHA string) bool {
 	if image == repo+":"+buildSHA {
 		return true
 	}
-	match := regexp.MustCompile(`^` + regexp.QuoteMeta(repo) + `:[0-9]+\.[0-9]+\.[0-9]+-[0-9]+-g([a-f0-9]{7,40})$`).FindStringSubmatch(image)
+	tag, ok := strings.CutPrefix(image, repo+":")
+	if !ok {
+		return false
+	}
+	match := sourceVersionTag.FindStringSubmatch(tag)
 	return len(match) == 2 && strings.HasPrefix(buildSHA, match[1])
+}
+
+// NativeImageSupported additionally accepts a previous protocol-two observation
+// for this exact immutable image; protocol-one observations cannot qualify it.
+func NativeImageSupported(runtime, image, buildSHA, observedNativeImage string) bool {
+	return SourceImageSupported(runtime, image, buildSHA) || (runtime == "codex" && ImmutableNativeImage(runtime, image) && image == observedNativeImage)
 }

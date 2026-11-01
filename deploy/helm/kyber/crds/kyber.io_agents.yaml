@@ -1055,6 +1055,12 @@ spec:
                 - stage
                 - targetGiB
                 type: object
+              effortNativeRuntimeImage:
+                description: |-
+                  EffortNativeRuntimeImage records native model/effort validation protocol two
+                  in this exact immutable first-party image. It survives pod observation reset.
+                maxLength: 512
+                type: string
               effortRuntimeImage:
                 description: |-
                   EffortRuntimeImage is the immutable first-party image whose launch
