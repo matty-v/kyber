@@ -93,6 +93,7 @@ func TestStartHermesWritesSafeFreshAndResumeLaunches(t *testing.T) {
 	}
 	writeExecutable(t, filepath.Join(bin, "hermes"), "#!/usr/bin/env bash\necho 'Hermes 0.21.0'\n")
 	writeExecutable(t, filepath.Join(bin, "configure"), "#!/usr/bin/env bash\nexit 0\n")
+	writeExecutable(t, filepath.Join(bin, "curl"), "#!/usr/bin/env bash\nexit 0\n")
 	identity := filepath.Join(root, "identity.sh")
 	if err := os.WriteFile(identity, []byte("REPO_DIR=\"\"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -122,7 +123,7 @@ func TestStartHermesWritesSafeFreshAndResumeLaunches(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(launch)
-	for _, want := range []string{"--reasoning high", "--fresh", "--continue", "anthropic/claude-sonnet-4.6", `/tmp/hermes-start-test-injection`} {
+	for _, want := range []string{`--reasoning\ high`, "--fresh", "--continue", "anthropic/claude-sonnet-4.6", `/tmp/hermes-start-test-injection`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("launch script missing %q:\n%s", want, body)
 		}

@@ -42,7 +42,7 @@ def normalize_models(models, version):
                 raise ValueError("invalid native identity")
             # The launch script opts in to the context variant. Context does not
             # change the native effort dial; this suffix is Claude's own syntax.
-            identities = (identity, identity + "[1m]") if not identity.endswith("[1m]") else (identity,)
+            identities = (identity, identity + "[1m]") if not identity.endswith("[1m]") else (identity, identity[:-4])
             for value in identities:
                 evidence = {"id": value, "reasoningEffort": {"source": "claude-sdk-initialize", "harnessVersion": version, "levels": list(levels)}}
                 if value in result and result[value] != evidence:

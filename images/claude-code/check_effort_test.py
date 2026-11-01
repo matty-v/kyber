@@ -23,6 +23,7 @@ class NativeClaudeEffortTests(unittest.TestCase):
         model = {'value': 'opus[1m]', 'supportsEffort': True, 'supportedEffortLevels': ['high']}
         old = probe.normalize_models([model], '2.1.119')
         self.assertIn('claude-opus-4-7', {r['id'] for r in old})
+        self.assertIn('opus', {r['id'] for r in old})
         new = probe.normalize_models([model], '2.1.120')
         self.assertNotIn('claude-opus-4-7', {r['id'] for r in new})
         self.assertEqual(probe.normalize_models([{'value': 'opus', 'supportsEffort': True}], '2.1.316'), [])
