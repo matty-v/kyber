@@ -8,6 +8,7 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -178,6 +179,112 @@ func TestNativeImageProofSurvivesControlPlaneUpdateAndSupportsDigests(t *testing
 			}
 			if protocol == 2 && a.Status.EffortNativeRuntimeImage != image {
 				t.Fatal("native image proof missing")
+			}
+		})
+	}
+}
+
+// A new registered harness must make an explicit native-effort decision here.
+func TestNativeEffortCoverageForEveryRegisteredHarness(t *testing.T) {
+	cases := map[string]struct{ version, model, source string }{
+		"codex":       {"0.166.0", "gpt-6.1-terra", "codex-model-list"},
+		"claude-code": {"2.1.316", "claude-opus-5-5", "claude-sdk-initialize"},
+		"hermes":      {"0.21.0", "openai/gpt-5.5", "hermes-native-catalog"},
+	}
+	for _, descriptor := range runtimes.Descriptors() {
+		tc, exists := cases[descriptor.ID]
+		if !exists {
+			t.Fatalf("registered harness %s needs explicit effort coverage", descriptor.ID)
+		}
+		t.Run(descriptor.ID, func(t *testing.T) {
+			s, a, cache, c := nativeEffortFixture(t)
+			ctx := context.Background()
+			a.Spec.Runtime, a.Spec.Model = descriptor.ID, tc.model
+			if descriptor.ID == "hermes" {
+				a.Spec.RuntimeVersion = ""
+			}
+			if err := s.K8sClient.Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			a.Status.Runtime.Runtime, a.Status.Runtime.InstalledVersion = descriptor.ID, tc.version
+			if err := s.K8sClient.Status().Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			s.RuntimeImages[descriptor.ID] = "ghcr.io/matty-v/kyber-" + descriptor.ID + ":" + s.BuildSHA
+			var pod corev1.Pod
+			if err := s.K8sClient.Get(ctx, types.NamespacedName{Namespace: fdNS, Name: a.Status.PodName}, &pod); err != nil {
+				t.Fatal(err)
+			}
+			pod.Spec.Containers[0].Image = s.RuntimeImages[descriptor.ID]
+			if err := s.K8sClient.Update(ctx, &pod); err != nil {
+				t.Fatal(err)
+			}
+			c.Runtime, c.Version = descriptor.ID, tc.version
+			c.Models = []runtimedetect.Model{{ID: tc.model, ReasoningEffort: &runtimedetect.ReasoningEffortEvidence{Source: tc.source, HarnessVersion: tc.version, Levels: []string{"low", "high"}}}}
+			if err := cache.PutEffortCatalog(ctx, a.Name, c); err != nil {
+				t.Fatal(err)
+			}
+			got := effortTestRequest(s, http.MethodGet, "/api/v1/agents/wedge/effort-options", "")
+			var options effortOptionsResponse
+			if err := json.Unmarshal(got.Body.Bytes(), &options); err != nil {
+				t.Fatal(err)
+			}
+			if got.Code != 200 || options.State != "supported" || len(options.Levels) != 2 {
+				t.Fatalf("native options: %d %s", got.Code, got.Body.String())
+			}
+			for _, level := range []string{"high", ""} {
+				body, _ := json.Marshal(map[string]string{"effort": level})
+				got = effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", string(body))
+				if got.Code != 200 {
+					t.Fatalf("set/reset %q: %d %s", level, got.Code, got.Body.String())
+				}
+			}
+		})
+	}
+}
+
+func TestSeparateEffortCatalogDoesNotReplacePickerOrRefreshOldEvidence(t *testing.T) {
+	for _, mode := range []string{"valid", "expired", "future", "missing-pod", "wrong-source"} {
+		t.Run(mode, func(t *testing.T) {
+			s, a, cache, c := nativeEffortFixture(t)
+			server := NewInternalServer(briefstore.NewMemoryStore(), WithKubeClient(s.K8sClient, fdNS))
+			server.SetRuntimeDetectCache(cache)
+			picker := []runtimedetect.Model{{ID: "picker-model"}}
+			if err := cache.PutAgentModels(context.Background(), a.Name, "codex", picker); err != nil {
+				t.Fatal(err)
+			}
+			observed := time.Now().Add(-time.Minute)
+			if mode == "expired" {
+				observed = time.Now().Add(-3 * time.Hour)
+			}
+			if mode == "future" {
+				observed = time.Now().Add(time.Hour)
+			}
+			if mode == "missing-pod" {
+				c.PodUID = ""
+			}
+			if mode == "wrong-source" {
+				c.Models[0].ReasoningEffort.Source = "claude-sdk-initialize"
+			}
+			body, _ := json.Marshal(map[string]any{"runtime": "codex", "podUID": c.PodUID, "nativeEffortProtocol": 2, "effortModels": c.Models, "observedAt": observed})
+			rr := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/internal/agents/"+a.Name+"/runtime-catalog", bytes.NewReader(body)))
+			want := 400
+			if mode == "valid" {
+				want = 204
+			}
+			if rr.Code != want {
+				t.Fatalf("status=%d want=%d body=%s", rr.Code, want, rr.Body.String())
+			}
+			models, err := cache.GetAgentModels(context.Background(), a.Name, "codex")
+			if err != nil || len(models) != 1 || models[0].ID != "picker-model" {
+				t.Fatal("native evidence changed picker")
+			}
+			if mode == "valid" {
+				got, err := cache.GetEffortCatalog(context.Background(), a.Name)
+				if err != nil || !got.ObservedAt.Equal(observed) {
+					t.Fatal("source observation time was refreshed")
+				}
 			}
 		})
 	}

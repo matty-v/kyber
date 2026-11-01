@@ -10,8 +10,8 @@ on desktop and mobile. **Default (no override)** removes Kyber's setting and
 leaves the harness's own configuration and defaults in control. Kyber does not
 rewrite the Agent's user settings.
 
-For an existing Codex Agent, choices come from its authenticated native model
-catalog, bound to that Agent and current pod and the installed executable version.
+For existing Claude Code, Codex and Hermes Agents, choices come from native model
+metadata, bound to that Agent and current pod and the installed executable version.
 Evidence expires after two hours and is not shared across agents. `latest` is a
 version selection, not an executable version: Kyber shows the actual version in
 its effort-options response and checks the selected level against that model.
@@ -19,7 +19,7 @@ Explicitly empty native choices offer Default only. Missing, expired, replaced-p
 or mismatched-version evidence cannot authorize a new override. Custom inference
 routes remain at Default.
 
-Update both the control plane and Codex runtime images for this behavior. The
+Update both the control plane and the relevant runtime images for this behavior. The
 runtime must match the current first-party source build (including the standalone
 release's source-version tag), or have reported native validation protocol two for
 that exact immutable first-party image. This explicit observation also supports
@@ -31,7 +31,13 @@ native model/effort support before every boot. It fails explicitly rather than
 silently dropping or clamping an unsupported setting. User-owned configuration
 remains intact; Default is always available for recovery.
 
-Claude Code retains its exact version/model compatibility policy. Creation before
+Claude Code uses SDK initialization metadata without an inference request. Codex
+uses its native model list. Hermes uses its installed parser and OpenRouter
+model capabilities, offering only values that will not be silently clamped.
+Hermes custom inference routes remain unqualified. Its version comes from the
+installed image rather than a per-Agent version installer.
+
+Creation before
 an Agent has authenticated model evidence uses the bounded legacy policy; create
 with Default and then select effort after the current runtime reports its models.
 This is native-client compatibility, not proof of provider entitlement or a
@@ -68,6 +74,6 @@ an existing override. Configuration APIs do not reveal provider credentials.
 The compatibility policy is deliberately bounded in
 [`pkg/reasoningeffort`](../../pkg/reasoningeffort/policy.go). Model catalogs can
 carry native effort evidence, but unbound or stale catalog records must not
-expand this policy. Codex native choices must be reported by the current pod and checked again by
-the launcher; other adapters require exact qualification. See [API authorization](../architecture/api-authorization.md)
+expand this policy. Native choices must be reported by the current pod and checked again by
+the launcher for every harness. See [API authorization](../architecture/api-authorization.md)
 for operator permissions.

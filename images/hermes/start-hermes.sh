@@ -87,7 +87,24 @@ if command -v hermes-reporter >/dev/null 2>&1; then
     echo "[kyber] Hermes model/context reporter launched (pid=$!)"
 fi
 
+if [ -x /usr/local/bin/kyber-runtime-capabilities ]; then
+    nohup /usr/local/bin/kyber-runtime-capabilities hermes "$HERMES_VERSION" /usr/local/bin/kyber-probe-capabilities >/dev/null 2>&1 &
+fi
+
 HERMES_ARGS=(--cli --yolo --accept-hooks chat --provider "$HERMES_PROVIDER")
+if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
+    _effort_probe=/usr/local/bin/kyber-hermes-effort
+    if [ "${SKIP_HERMES_LAUNCH:-}" = "1" ] && [ -n "${KYBER_TEST_EFFORT_PROBE:-}" ]; then
+        _effort_probe="$KYBER_TEST_EFFORT_PROBE"
+    fi
+    if ! "$_effort_probe" "${HERMES_INFERENCE_MODEL:-}" "$KYBER_REASONING_EFFORT"; then
+        exit 43
+    fi
+    HERMES_ARGS+=(--reasoning "$KYBER_REASONING_EFFORT")
+fi
+if command -v kyber-runtime-effort >/dev/null 2>&1; then
+    nohup kyber-runtime-effort hermes /usr/local/bin/kyber-hermes-effort >/dev/null 2>&1 &
+fi
 if [ -n "${HERMES_INFERENCE_MODEL:-}" ]; then
     HERMES_ARGS+=(--model "$HERMES_INFERENCE_MODEL")
 fi

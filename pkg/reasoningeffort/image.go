@@ -13,6 +13,8 @@ func nativeImageRepository(runtime string) string {
 	switch runtime {
 	case "claude-code":
 		return "ghcr.io/matty-v/kyber-claude-code"
+	case "hermes":
+		return "ghcr.io/matty-v/kyber-hermes"
 	case "codex":
 		return "ghcr.io/matty-v/kyber-codex"
 	default:
@@ -72,5 +74,5 @@ func SourceImageSupported(runtime, image, buildSHA string) bool {
 // NativeImageSupported additionally accepts a previous protocol-two observation
 // for this exact immutable image; protocol-one observations cannot qualify it.
 func NativeImageSupported(runtime, image, buildSHA, observedNativeImage string) bool {
-	return SourceImageSupported(runtime, image, buildSHA) || (runtime == "codex" && ImmutableNativeImage(runtime, image) && image == observedNativeImage)
+	return SourceImageSupported(runtime, image, buildSHA) || (ImmutableNativeImage(runtime, image) && image == observedNativeImage)
 }

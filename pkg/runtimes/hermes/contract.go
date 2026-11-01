@@ -37,6 +37,7 @@ func (*runtime) Descriptor() runtimes.Descriptor {
 			runtimes.SessionResume,
 			runtimes.Compaction,
 			runtimes.ModelCatalog,
+			runtimes.ReasoningEffort,
 			runtimes.UsageReporting,
 			runtimes.CustomInferenceEndpoint,
 		},

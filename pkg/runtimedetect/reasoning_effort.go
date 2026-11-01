@@ -39,7 +39,8 @@ func (e *ReasoningEffortEvidence) Validate(runtime string) error {
 	if e == nil {
 		return nil
 	}
-	if runtime != "codex" || e.Source != "codex-model-list" {
+	sources := map[string]string{"codex": "codex-model-list", "claude-code": "claude-sdk-initialize", "hermes": "hermes-native-catalog"}
+	if sources[runtime] == "" || e.Source != sources[runtime] {
 		return fmt.Errorf("unsupported reasoning effort evidence source")
 	}
 	if !effortVersionPattern.MatchString(e.HarnessVersion) {

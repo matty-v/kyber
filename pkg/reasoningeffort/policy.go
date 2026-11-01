@@ -23,7 +23,7 @@ type Options struct {
 // external inference routes remain unknown until separately qualified.
 func Lookup(runtime, version, model string, customEndpoint bool) Options {
 	result := Options{State: "unknown", Levels: []string{}, Reason: "Effort support has not been verified for this combination."}
-	if runtime != "codex" && runtime != "claude-code" {
+	if runtime != "codex" && runtime != "claude-code" && runtime != "hermes" {
 		result.State = "unsupported"
 		result.Reason = "This runtime does not support Kyber effort settings."
 		return result
@@ -84,7 +84,7 @@ func ValidateLaunch(runtime, version, model string, custom bool, effort string) 
 	if effort == "" {
 		return nil
 	}
-	if runtime == "codex" && !custom && model != "" && (version == "latest" || nativeVersionPattern.MatchString(version)) && nativeEffortPattern.MatchString(effort) {
+	if (runtime == "codex" || runtime == "claude-code" || runtime == "hermes") && !custom && model != "" && (version == "latest" || nativeVersionPattern.MatchString(version) || (runtime == "hermes" && version == "")) && nativeEffortPattern.MatchString(effort) {
 		return nil
 	}
 	return Validate(runtime, version, model, custom, effort)

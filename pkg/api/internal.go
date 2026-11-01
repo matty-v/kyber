@@ -468,13 +468,15 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		Runtime              string                `json:"runtime"`
-		PodUID               string                `json:"podUID,omitempty"`
-		NativeEffortProtocol int                   `json:"nativeEffortProtocol,omitempty"`
-		Models               []runtimedetect.Model `json:"models"`
+		Runtime              string                 `json:"runtime"`
+		PodUID               string                 `json:"podUID,omitempty"`
+		NativeEffortProtocol int                    `json:"nativeEffortProtocol,omitempty"`
+		Models               []runtimedetect.Model  `json:"models"`
+		EffortModels         *[]runtimedetect.Model `json:"effortModels,omitempty"`
+		ObservedAt           time.Time              `json:"observedAt,omitempty"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
-	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || len(body.Models) == 0 || len(body.Models) > 100 {
+	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || (len(body.Models) == 0 && body.EffortModels == nil) || len(body.Models) > 100 {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
@@ -518,9 +520,27 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	effortModels := models
+	observedAt := time.Now()
+	if body.EffortModels != nil {
+		effortModels = *body.EffortModels
+		if len(effortModels) > 100 || body.PodUID == "" || body.NativeEffortProtocol != 2 || body.ObservedAt.IsZero() || body.ObservedAt.After(time.Now()) || time.Since(body.ObservedAt) > runtimedetect.EffortCatalogMaxAge {
+			http.Error(w, "invalid native effort catalog", 400)
+			return
+		}
+		observedAt = body.ObservedAt
+		seen := map[string]bool{}
+		for _, m := range effortModels {
+			if m.ID == "" || len(m.ID) > 128 || seen[m.ID] || m.ReasoningEffort == nil || m.ReasoningEffort.Validate(body.Runtime) != nil {
+				http.Error(w, "invalid native effort model", 400)
+				return
+			}
+			seen[m.ID] = true
+		}
+	}
 	var effortCatalog *runtimedetect.EffortCatalog
 	// Old reporters retain picker behavior, but cannot authorize effort settings.
-	if body.Runtime == "codex" && body.PodUID != "" {
+	if body.PodUID != "" && (body.Runtime == "codex" || body.EffortModels != nil) {
 		reader := s.usageAgentReader
 		if reader == nil {
 			reader = s.k8sClient
@@ -543,7 +563,7 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 			http.Error(w, "unbound effort catalog", 409)
 			return
 		}
-		for _, m := range models {
+		for _, m := range effortModels {
 			if m.ReasoningEffort != nil && m.ReasoningEffort.HarnessVersion != version {
 				http.Error(w, "stale effort version", 409)
 				return
@@ -552,7 +572,7 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 
 		if body.NativeEffortProtocol == 2 {
 			for _, container := range pod.Spec.Containers {
-				if container.Name == "agent" && reasoningeffort.ImmutableNativeImage("codex", container.Image) {
+				if container.Name == "agent" && reasoningeffort.ImmutableNativeImage(body.Runtime, container.Image) {
 					if current.Status.EffortNativeRuntimeImage != container.Image || current.Status.EffortRuntimeImage != container.Image {
 						before := current.DeepCopy()
 						current.Status.EffortNativeRuntimeImage = container.Image
@@ -565,18 +585,20 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 				}
 			}
 		}
-		effortCatalog = &runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: time.Now(), Models: models}
+		effortCatalog = &runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: observedAt, Models: effortModels}
 	}
-	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-		if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+	if len(models) > 0 {
+		if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
+			if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+				return
+			}
+		} else {
+			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
 			return
 		}
-	} else {
-		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
-		return
-	}
 
+	}
 	if effortCatalog != nil {
 		if cache, ok := s.runtimeDetectCache.(runtimedetect.EffortCatalogCache); ok {
 			if err := cache.PutEffortCatalog(r.Context(), agentName, *effortCatalog); err != nil {

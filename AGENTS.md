@@ -287,14 +287,17 @@ empty option list means none were advertised. This is catalog evidence only,
 not permission to configure effort: a consumer must first verify the current
 Agent, runtime version, model and inference route. Custom inference routes
 still suppress the native OpenAI catalog. The picker catalog alone cannot enable
-effort settings. Codex effort admission
+effort settings. Effort admission across Claude Code, Codex and Hermes
 uses the separate current-pod, Agent-UID-bound effort catalog with a two-hour
 expiry; never consume the unbound picker cache for configuration.
 Reasoning effort configuration is separate from that catalog evidence.
 `pkg/reasoningeffort` retains legacy exact qualification and bounded launch
-validation. Current-source Codex images recheck native model/effort support at
+validation. Current-source runtime images recheck native model/effort support at
 every boot, including resolved `latest`; API admission requires fresh current-pod
-evidence. Other adapters retain exact qualification. Unknown support always
+evidence. Claude Code uses SDK initialization without inference; Hermes uses its
+installed parser and OpenRouter capabilities. Their separate `effortModels`
+reports never replace context-bearing picker entries and preserve the source
+observation time on retries. Unknown support always
 permits clearing but never a new nonempty API override. `set-effort`
 is exact-Agent lifecycle-write and required-audit protected. Effort participates
 in PodConfigHash; ObservedPodEffort records the pod's configured override, not

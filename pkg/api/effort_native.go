@@ -7,19 +7,22 @@ import (
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
+	"github.com/matty-v/kyber/pkg/runtimes"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
 
 func (s *Server) agentEffortOptions(ctx context.Context, a *kyberv1.Agent, model, version string, custom bool) (reasoningeffort.Options, string) {
 	fallback := reasoningeffort.Lookup(a.Spec.Runtime, version, model, custom)
-	if a.Spec.Runtime != "codex" || custom || a.UID == "" {
+	runtime := a.Spec.Runtime
+	descriptor, registered := runtimes.Describe(runtime)
+	if !registered || !descriptor.Supports(runtimes.ReasoningEffort) || custom || a.UID == "" {
 		return fallback, version
 	}
 	// A new control plane cannot promise native validation in an older image.
-	if !reasoningeffort.NativeImageSupported("codex", s.RuntimeImages["codex"], s.BuildSHA, a.Status.EffortNativeRuntimeImage) {
+	if !reasoningeffort.NativeImageSupported(runtime, s.RuntimeImages[runtime], s.BuildSHA, a.Status.EffortNativeRuntimeImage) {
 		if fallback.State != "supported" {
-			fallback.Reason = "Update the Codex runtime image to enable effort for current models."
+			fallback.Reason = "Update the runtime image to enable effort for current models."
 		}
 		return fallback, version
 	}
@@ -29,14 +32,14 @@ func (s *Server) agentEffortOptions(ctx context.Context, a *kyberv1.Agent, model
 		return unknown, version
 	}
 	c, err := cache.GetEffortCatalog(ctx, a.Name)
-	if err != nil || c.AgentUID != string(a.UID) || c.Runtime != "codex" || c.Version == "" || c.Version != a.Status.Runtime.InstalledVersion || a.Status.Runtime.Runtime != "codex" || c.ObservedAt.IsZero() || c.ObservedAt.After(time.Now()) || time.Since(c.ObservedAt) > runtimedetect.EffortCatalogMaxAge {
+	if err != nil || c.AgentUID != string(a.UID) || c.Runtime != runtime || c.Version == "" || c.Version != a.Status.Runtime.InstalledVersion || a.Status.Runtime.Runtime != runtime || c.ObservedAt.IsZero() || c.ObservedAt.After(time.Now()) || time.Since(c.ObservedAt) > runtimedetect.EffortCatalogMaxAge {
 		return unknown, version
 	}
 	if version == "latest" {
 		if a.Status.Runtime.RequestedVersion != "latest" || a.Status.Runtime.RequestedSatisfied == nil || !*a.Status.Runtime.RequestedSatisfied {
 			return unknown, version
 		}
-	} else if version != c.Version {
+	} else if version != c.Version && !(runtime == "hermes" && version == "") {
 		return unknown, version
 	}
 	pod := &corev1.Pod{}
@@ -54,7 +57,7 @@ func (s *Server) agentEffortOptions(ctx context.Context, a *kyberv1.Agent, model
 	}
 	imageMatches := false
 	for _, container := range pod.Spec.Containers {
-		if container.Name == "agent" && container.Image == s.RuntimeImages["codex"] {
+		if container.Name == "agent" && container.Image == s.RuntimeImages[runtime] {
 			imageMatches = true
 		}
 	}
@@ -66,10 +69,10 @@ func (s *Server) agentEffortOptions(ctx context.Context, a *kyberv1.Agent, model
 			continue
 		}
 		e := m.ReasoningEffort
-		if e == nil || e.Validate("codex") != nil || e.HarnessVersion != c.Version {
+		if e == nil || e.Validate(runtime) != nil || e.HarnessVersion != c.Version {
 			return unknown, c.Version
 		}
-		return reasoningeffort.Options{State: "supported", Levels: append([]string{}, e.Levels...), Source: "codex-model-list/" + c.Version}, c.Version
+		return reasoningeffort.Options{State: "supported", Levels: append([]string{}, e.Levels...), Source: e.Source + "/" + c.Version}, c.Version
 	}
 	return unknown, c.Version
 }
