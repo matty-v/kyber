@@ -18,9 +18,9 @@ type Options struct {
 	Reason string   `json:"reason,omitempty"`
 }
 
-// Lookup uses exact client versions. Evidence comes from initialize/model-list
-// responses collected without inference on 2026-10-26. New versions, aliases and
-// external inference routes remain unknown until separately qualified.
+// Lookup bounds creation choices before current-pod native evidence exists.
+// These exact-version snapshots were collected without inference on 2026-10-26;
+// existing-agent admission separately consumes fresh native metadata.
 func Lookup(runtime, version, model string, customEndpoint bool) Options {
 	result := Options{State: "unknown", Levels: []string{}, Reason: "Effort support has not been verified for this combination."}
 	if runtime != "codex" && runtime != "claude-code" && runtime != "hermes" {
@@ -77,9 +77,9 @@ func Validate(runtime, version, model string, customEndpoint bool, effort string
 var nativeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 var nativeEffortPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
-// ValidateLaunch leaves Codex model/version qualification to the native model
-// catalog check in the current source image at every boot. API admission still
-// requires bound current-pod evidence. Other adapters retain exact qualification.
+// ValidateLaunch leaves model/version qualification to each integrated native
+// boot guard: Claude Code, Codex and Hermes. The controller additionally requires
+// verified image wiring, and API admission requires bound current-pod evidence.
 func ValidateLaunch(runtime, version, model string, custom bool, effort string) error {
 	if effort == "" {
 		return nil

@@ -12,7 +12,7 @@ paths, verification commands, or a documented gotcha must update `AGENTS.md` in
 the same change. Review concrete claims against current code and CI before
 editing them.
 
-Kyber runs long-lived Claude Code and Codex agents as Kubernetes pods with
+Kyber runs long-lived Claude Code, Codex and Hermes agents as Kubernetes pods with
 whole-disk persistence, declared via CRDs and reconciled by a Go control plane.
 Installed from a versioned Helm chart. Standalone installations update through
 Kyber’s supervised Helm workflow; GitOps installations use their own deployment

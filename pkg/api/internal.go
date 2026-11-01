@@ -455,9 +455,9 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// handleRuntimeCatalog accepts the picker-visible model catalog discovered by
-// an authenticated runtime. Codex obtains this through app-server model/list,
-// so the result reflects the agent owner's ChatGPT subscription.
+// handleRuntimeCatalog accepts picker models and separately bound native effort
+// evidence. Context-free effort reports never replace picker metadata. Codex
+// picker entries come from the authenticated app-server model/list.
 func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Request, agentName string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
