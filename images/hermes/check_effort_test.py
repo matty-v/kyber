@@ -15,6 +15,7 @@ class HermesEffortTests(unittest.TestCase):
     def test_version_is_the_harness_release_not_date_or_dependency_version(self):
         banner = 'Hermes Agent v0.21.0 (2026.8.31)\nPython: 3.13.16\nOpenAI SDK: 2.24.0\n'
         self.assertEqual(probe.parse_version(banner), '0.21.0')
+        self.assertEqual(probe.parse_version('Hermes Agent v0.22.0-beta.1+build.5 (2026.8.31)'), '0.22.0-beta.1+build.5')
         with self.assertRaises(ValueError):
             probe.parse_version('Python: 3.13.16')
 

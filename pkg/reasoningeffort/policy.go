@@ -74,7 +74,7 @@ func Validate(runtime, version, model string, customEndpoint bool, effort string
 	return nil
 }
 
-var nativeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+var nativeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
 var nativeEffortPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
 
 // ValidateLaunch leaves model/version qualification to each integrated native
@@ -84,7 +84,9 @@ func ValidateLaunch(runtime, version, model string, custom bool, effort string) 
 	if effort == "" {
 		return nil
 	}
-	if (runtime == "codex" || runtime == "claude-code" || runtime == "hermes") && !custom && model != "" && (version == "latest" || nativeVersionPattern.MatchString(version) || (runtime == "hermes" && version == "")) && nativeEffortPattern.MatchString(effort) {
+	nativeRuntime := runtime == "codex" || runtime == "claude-code" || runtime == "hermes"
+	nativeVersion := version == "latest" || (len(version) <= 64 && nativeVersionPattern.MatchString(version)) || (runtime == "hermes" && version == "")
+	if nativeRuntime && !custom && model != "" && nativeVersion && nativeEffortPattern.MatchString(effort) {
 		return nil
 	}
 	return Validate(runtime, version, model, custom, effort)

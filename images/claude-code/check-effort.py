@@ -10,7 +10,7 @@ import sys
 import time
 
 LEVEL = re.compile(r"[a-z][a-z0-9_-]{0,31}\Z")
-VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+\Z")
+VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?\Z")
 # Older SDKs omitted resolvedModel. Keep only the identities qualified for the
 # baked-in client; effort levels always come from that client's initialize reply.
 LEGACY_IDENTITIES = {
@@ -54,7 +54,7 @@ def normalize_models(models, version):
 def catalog(timeout=20):
     version_run = subprocess.run(["claude", "--version"], capture_output=True, timeout=5, check=True)
     version = version_run.stdout.decode().split()[0]
-    if not VERSION.fullmatch(version):
+    if len(version) > 64 or not VERSION.fullmatch(version):
         raise ValueError("invalid native version")
     env = {**os.environ, "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1", "DISABLE_AUTOUPDATER": "1"}
     command = ["claude", "--print", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",

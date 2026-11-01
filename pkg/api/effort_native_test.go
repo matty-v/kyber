@@ -7,6 +7,7 @@ import (
 	"fmt"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 	"github.com/matty-v/kyber/pkg/briefstore"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/runtimes"
 	corev1 "k8s.io/api/core/v1"
@@ -335,5 +336,33 @@ func TestNativeEffortTransportAcrossHarnessesWithoutPickerContext(t *testing.T) 
 				t.Fatal("context-free native metadata leaked into picker")
 			}
 		})
+	}
+}
+
+func TestNativePrereleaseAdmissionRemainsLaunchable(t *testing.T) {
+	s, a, cache, c := nativeEffortFixture(t)
+	ctx := context.Background()
+	version := "0.167.0-alpha.1"
+	a.Spec.RuntimeVersion = version
+	if err := s.K8sClient.Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	a.Status.Runtime.InstalledVersion, a.Status.Runtime.RequestedVersion = version, version
+	if err := s.K8sClient.Status().Update(ctx, a); err != nil {
+		t.Fatal(err)
+	}
+	c.Version, c.Models[0].ReasoningEffort.HarnessVersion = version, version
+	if err := cache.PutEffortCatalog(ctx, a.Name, c); err != nil {
+		t.Fatal(err)
+	}
+	rr := effortTestRequest(s, http.MethodPost, "/api/v1/agents/wedge/set-effort", `{"effort":"high"}`)
+	if rr.Code != 200 {
+		t.Fatalf("native prerelease rejected: %d %s", rr.Code, rr.Body.String())
+	}
+	if err := s.K8sClient.Get(ctx, types.NamespacedName{Namespace: fdNS, Name: a.Name}, a); err != nil {
+		t.Fatal(err)
+	}
+	if err := reasoningeffort.ValidateLaunch(a.Spec.Runtime, a.Spec.RuntimeVersion, a.Spec.Model, false, a.Spec.Effort); err != nil {
+		t.Fatalf("API admitted an unlaunchable native tuple: %v", err)
 	}
 }

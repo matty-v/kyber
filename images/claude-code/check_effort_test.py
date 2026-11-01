@@ -12,6 +12,12 @@ spec.loader.exec_module(probe)
 
 
 class NativeClaudeEffortTests(unittest.TestCase):
+    def test_native_release_versions_are_bounded_and_include_prereleases(self):
+        for version in ['2.1.316', '2.2.0-beta.1', '2.2.0-beta.1+build.5']:
+            self.assertIsNotNone(probe.VERSION.fullmatch(version))
+        for version in ['latest', '2.2.0-', '2.2.0;id', '2.2.0 beta']:
+            self.assertIsNone(probe.VERSION.fullmatch(version))
+
     def test_resolved_model_and_alias_share_native_levels(self):
         rows = probe.normalize_models([{'value': 'opus', 'resolvedModel': 'claude-opus-5-5', 'supportsEffort': True,
                                        'supportedEffortLevels': ['low', 'xhigh', 'max'], 'account': 'must-not-leave'}], '2.1.316')

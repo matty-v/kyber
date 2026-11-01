@@ -29,8 +29,8 @@ def effective_levels(caps, ladder, parse, clamp):
 
 
 def parse_version(output):
-    match = re.search(r'^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)', output, re.MULTILINE)
-    if not match:
+    match = re.search(r'^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?(?:\+[0-9A-Za-z]+(?:[.-][0-9A-Za-z]+)*)?)(?:\s|$)', output, re.MULTILINE)
+    if not match or len(match.group(1)) > 64:
         raise ValueError('missing Hermes release version')
     return match.group(1)
 
