@@ -289,3 +289,51 @@ func TestSeparateEffortCatalogDoesNotReplacePickerOrRefreshOldEvidence(t *testin
 		})
 	}
 }
+
+func TestNativeEffortTransportAcrossHarnessesWithoutPickerContext(t *testing.T) {
+	for runtime, source := range map[string]string{"codex": "codex-model-list", "claude-code": "claude-sdk-initialize", "hermes": "hermes-native-catalog"} {
+		t.Run(runtime, func(t *testing.T) {
+			s, a, cache, c := nativeEffortFixture(t)
+			ctx := context.Background()
+			a.Spec.Runtime = runtime
+			if err := s.K8sClient.Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			a.Status.Runtime.Runtime = runtime
+			if err := s.K8sClient.Status().Update(ctx, a); err != nil {
+				t.Fatal(err)
+			}
+			var pod corev1.Pod
+			if err := s.K8sClient.Get(ctx, types.NamespacedName{Namespace: fdNS, Name: a.Status.PodName}, &pod); err != nil {
+				t.Fatal(err)
+			}
+			image := "ghcr.io/matty-v/kyber-" + runtime + ":" + strings.Repeat("b", 40)
+			pod.Spec.Containers[0].Image = image
+			if err := s.K8sClient.Update(ctx, &pod); err != nil {
+				t.Fatal(err)
+			}
+			c.Models[0].ReasoningEffort.Source = source
+			server := NewInternalServer(briefstore.NewMemoryStore(), WithKubeClient(s.K8sClient, fdNS))
+			server.SetRuntimeDetectCache(cache)
+			body, _ := json.Marshal(map[string]any{"runtime": runtime, "podUID": c.PodUID, "nativeEffortProtocol": 2, "effortModels": c.Models, "observedAt": time.Now().Add(-time.Second)})
+			rr := httptest.NewRecorder()
+			server.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/internal/agents/"+a.Name+"/runtime-catalog", bytes.NewReader(body)))
+			if rr.Code != 204 {
+				t.Fatalf("native transport: %d %s", rr.Code, rr.Body.String())
+			}
+			got, err := cache.GetEffortCatalog(ctx, a.Name)
+			if err != nil || got.Runtime != runtime || len(got.Models) != 1 {
+				t.Fatal("missing bound native evidence")
+			}
+			if err := s.K8sClient.Get(ctx, types.NamespacedName{Namespace: fdNS, Name: a.Name}, a); err != nil {
+				t.Fatal(err)
+			}
+			if a.Status.EffortNativeRuntimeImage != image {
+				t.Fatal("native image proof was not retained")
+			}
+			if _, err := cache.GetAgentModels(ctx, a.Name, runtime); err == nil {
+				t.Fatal("context-free native metadata leaked into picker")
+			}
+		})
+	}
+}

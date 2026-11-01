@@ -28,6 +28,13 @@ def effective_levels(caps, ladder, parse, clamp):
     return levels
 
 
+def parse_version(output):
+    match = re.search(r'^Hermes Agent v([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)', output, re.MULTILINE)
+    if not match:
+        raise ValueError('missing Hermes release version')
+    return match.group(1)
+
+
 def catalog():
     if os.environ.get('HERMES_PROVIDER') != 'openrouter' or os.environ.get('KYBER_INFERENCE_BASE_URL'):
         raise ValueError('route not qualified')
@@ -38,10 +45,7 @@ def catalog():
     if not model or len(model) > 128:
         raise ValueError('missing model')
     result = subprocess.run(['hermes', '--version'], capture_output=True, timeout=5, check=True)
-    match = re.search(r'\b[0-9]+\.[0-9]+\.[0-9]+\b', result.stdout.decode())
-    if not match:
-        raise ValueError('missing version')
-    version = match.group()
+    version = parse_version(result.stdout.decode())
     caps = openrouter_model_reasoning_capabilities(model, allow_fetch=True, timeout=6)
     if caps is None:
         raise ValueError('model metadata unavailable')

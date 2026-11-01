@@ -12,6 +12,12 @@ def parse(value):
 
 
 class HermesEffortTests(unittest.TestCase):
+    def test_version_is_the_harness_release_not_date_or_dependency_version(self):
+        banner = 'Hermes Agent v0.21.0 (2026.8.31)\nPython: 3.13.16\nOpenAI SDK: 2.24.0\n'
+        self.assertEqual(probe.parse_version(banner), '0.21.0')
+        with self.assertRaises(ValueError):
+            probe.parse_version('Python: 3.13.16')
+
     def test_provider_clamped_levels_are_not_advertised(self):
         caps = {'supports_reasoning': True, 'supported_efforts': ['low', 'high'], 'mandatory': False}
         clamp = lambda level, supported: level if level in supported else 'high'
