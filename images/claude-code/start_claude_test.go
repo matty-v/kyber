@@ -3382,7 +3382,7 @@ func TestStartClaude_NoIdentityRepo_BootsInHomeWithoutGitHubSetup(t *testing.T) 
 
 func TestStartClaudeEffortReachesBootArguments(t *testing.T) {
 	stub := stubInstallEnvDir(t, filepath.Join(t.TempDir(), "npm.log"), 0, filepath.Join(t.TempDir(), "sudo.log"), "2.1.119")
-	out := bootPrepRun(t, "PATH="+stub+":"+testPATH(), "KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"), "KYBER_REQUESTED_CC_VERSION=2.1.119", "KYBER_RUNTIME_DEFAULT_VERSION=2.1.119", "KYBER_REASONING_EFFORT=xhigh")
+	out := bootPrepRun(t, "PATH="+stub+":"+testPATH(), "KYBER_HARNESS_INSTALLER="+filepath.Join(stub, "kyber-harness-install"), "KYBER_REQUESTED_CC_VERSION=2.1.119", "KYBER_RUNTIME_DEFAULT_VERSION=2.1.119", "KYBER_REASONING_EFFORT=xhigh", "KYBER_TEST_EFFORT_PROBE=/bin/true")
 	if !strings.Contains(out, "--effort xhigh") {
 		t.Fatalf("effort missing from launch arguments: %s", out)
 	}

@@ -12,7 +12,7 @@ paths, verification commands, or a documented gotcha must update `AGENTS.md` in
 the same change. Review concrete claims against current code and CI before
 editing them.
 
-Kyber runs long-lived Claude Code and Codex agents as Kubernetes pods with
+Kyber runs long-lived Claude Code, Codex and Hermes agents as Kubernetes pods with
 whole-disk persistence, declared via CRDs and reconciled by a Go control plane.
 Installed from a versioned Helm chart. Standalone installations update through
 Kyber’s supervised Helm workflow; GitOps installations use their own deployment
@@ -286,16 +286,29 @@ with the executable version. Omitted effort metadata means unknown; an explicit
 empty option list means none were advertised. This is catalog evidence only,
 not permission to configure effort: a consumer must first verify the current
 Agent, runtime version, model and inference route. Custom inference routes
-still suppress the native OpenAI catalog. No effort setting/UI is enabled by
-this metadata foundation.
+still suppress the native OpenAI catalog. The picker catalog alone cannot enable
+effort settings. Effort admission across Claude Code, Codex and Hermes
+uses the separate current-pod, Agent-UID-bound effort catalog with a two-hour
+expiry; never consume the unbound picker cache for configuration.
 Reasoning effort configuration is separate from that catalog evidence.
-`pkg/reasoningeffort` owns exact version/model/native-route qualification;
-unknown tuples permit clearing but never a new nonempty override. `set-effort`
+`pkg/reasoningeffort` retains legacy exact qualification and bounded launch
+validation. Current-source runtime images recheck native model/effort support at
+every boot, including resolved `latest`; API admission requires fresh current-pod
+evidence. Claude Code uses SDK initialization without inference; Hermes uses its
+installed parser and OpenRouter capabilities. Their separate `effortModels`
+reports never replace context-bearing picker entries and preserve the source
+observation time on retries. Unknown support always
+permits clearing but never a new nonempty API override. `set-effort`
 is exact-Agent lifecycle-write and required-audit protected. Effort participates
 in PodConfigHash; ObservedPodEffort records the pod's configured override, not
 provider execution. New effort writes also require verified runtime-image wiring:
 a matching first-party source image, or this Agent's observed protocol for that
-exact immutable image. Native CLI version alone is insufficient; upgrading only
+exact immutable image for the legacy protocol. Native Codex validation requires
+the current source image (including source-version release tags whose commit
+suffix matches BuildSHA), or `status.effortNativeRuntimeImage` recorded from the
+current owned pod's protocol-two report for that exact immutable first-party
+image. Do not infer the new guard from a protocol-one report.
+Native CLI version alone is insufficient; upgrading only
 the control plane must not advertise a silently ignored setting. Both launchers
 pass the override through resume/relaunch
 and preserve user-owned config. Failed-agent effort edits mark their passive
@@ -1221,3 +1234,6 @@ which retains constant-time authentication comparisons.
 
 Runtime bootstrap tests must use temporary installer stubs and managed config
 paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing.md.
+Native-probe Go tests must read their Python source and test inputs before spawning
+them so Go tracks those dependencies. Use `-count=1` when directly verifying changed
+external scripts; child-process file reads alone do not invalidate Go’s test cache.

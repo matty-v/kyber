@@ -32,6 +32,7 @@ import (
 	"github.com/matty-v/kyber/pkg/githubapp"
 	"github.com/matty-v/kyber/pkg/metricsstore"
 	"github.com/matty-v/kyber/pkg/modelprobe"
+	"github.com/matty-v/kyber/pkg/reasoningeffort"
 	"github.com/matty-v/kyber/pkg/requeststore"
 	"github.com/matty-v/kyber/pkg/runtimedetect"
 	"github.com/matty-v/kyber/pkg/runtimes"
@@ -454,9 +455,9 @@ func (s *InternalServer) handleAgentRoutes(w http.ResponseWriter, r *http.Reques
 	}
 }
 
-// handleRuntimeCatalog accepts the picker-visible model catalog discovered by
-// an authenticated runtime. Codex obtains this through app-server model/list,
-// so the result reflects the agent owner's ChatGPT subscription.
+// handleRuntimeCatalog accepts picker models and separately bound native effort
+// evidence. Context-free effort reports never replace picker metadata. Codex
+// picker entries come from the authenticated app-server model/list.
 func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Request, agentName string) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -467,11 +468,15 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var body struct {
-		Runtime string                `json:"runtime"`
-		Models  []runtimedetect.Model `json:"models"`
+		Runtime              string                 `json:"runtime"`
+		PodUID               string                 `json:"podUID,omitempty"`
+		NativeEffortProtocol int                    `json:"nativeEffortProtocol,omitempty"`
+		Models               []runtimedetect.Model  `json:"models"`
+		EffortModels         *[]runtimedetect.Model `json:"effortModels,omitempty"`
+		ObservedAt           time.Time              `json:"observedAt,omitempty"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 128<<10))
-	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || len(body.Models) == 0 || len(body.Models) > 100 {
+	if err := dec.Decode(&body); err != nil || !runtimeCatalogSupported(body.Runtime) || (len(body.Models) == 0 && body.EffortModels == nil) || len(body.Models) > 100 {
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
@@ -514,15 +519,95 @@ func (s *InternalServer) handleRuntimeCatalog(w http.ResponseWriter, r *http.Req
 		http.Error(w, "runtime does not match agent", http.StatusBadRequest)
 		return
 	}
-	if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
-		if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
-			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+
+	effortModels := models
+	observedAt := time.Now()
+	if body.EffortModels != nil {
+		effortModels = *body.EffortModels
+		if len(effortModels) > 100 || body.PodUID == "" || body.NativeEffortProtocol != 2 || body.ObservedAt.IsZero() || body.ObservedAt.After(time.Now()) || time.Since(body.ObservedAt) > runtimedetect.EffortCatalogMaxAge {
+			http.Error(w, "invalid native effort catalog", 400)
 			return
 		}
-	} else {
-		writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
-		return
+		observedAt = body.ObservedAt
+		seen := map[string]bool{}
+		for _, m := range effortModels {
+			if m.ID == "" || len(m.ID) > 128 || seen[m.ID] || m.ReasoningEffort == nil || m.ReasoningEffort.Validate(body.Runtime) != nil {
+				http.Error(w, "invalid native effort model", 400)
+				return
+			}
+			seen[m.ID] = true
+		}
 	}
+	var effortCatalog *runtimedetect.EffortCatalog
+	// Old reporters retain picker behavior, but cannot authorize effort settings.
+	if body.PodUID != "" && (body.Runtime == "codex" || body.EffortModels != nil) {
+		reader := s.usageAgentReader
+		if reader == nil {
+			reader = s.k8sClient
+		}
+		current := &kyberv1.Agent{}
+		pod := &corev1.Pod{}
+		if reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: agentName}, current) != nil || current.UID != agent.UID || current.Spec.Runtime != body.Runtime || current.Spec.Inference != nil ||
+			reader.Get(r.Context(), types.NamespacedName{Namespace: s.namespace, Name: current.Status.PodName}, pod) != nil || string(pod.UID) != body.PodUID || pod.DeletionTimestamp != nil {
+			http.Error(w, "stale effort catalog", 409)
+			return
+		}
+		owned := false
+		for _, o := range pod.OwnerReferences {
+			if o.Kind == "Agent" && o.UID == current.UID && o.Controller != nil && *o.Controller {
+				owned = true
+			}
+		}
+		version := current.Status.Runtime.InstalledVersion
+		if !owned || current.Status.Runtime.Runtime != body.Runtime || version == "" {
+			http.Error(w, "unbound effort catalog", 409)
+			return
+		}
+		for _, m := range effortModels {
+			if m.ReasoningEffort != nil && m.ReasoningEffort.HarnessVersion != version {
+				http.Error(w, "stale effort version", 409)
+				return
+			}
+		}
+
+		if body.NativeEffortProtocol == 2 {
+			for _, container := range pod.Spec.Containers {
+				if container.Name == "agent" && reasoningeffort.ImmutableNativeImage(body.Runtime, container.Image) {
+					if current.Status.EffortNativeRuntimeImage != container.Image || current.Status.EffortRuntimeImage != container.Image {
+						before := current.DeepCopy()
+						current.Status.EffortNativeRuntimeImage = container.Image
+						current.Status.EffortRuntimeImage = container.Image
+						if s.k8sClient.Status().Patch(r.Context(), current, client.MergeFromWithOptions(before, client.MergeFromWithOptimisticLock{})) != nil {
+							http.Error(w, "effort image observation unavailable", 503)
+							return
+						}
+					}
+				}
+			}
+		}
+		effortCatalog = &runtimedetect.EffortCatalog{AgentUID: string(current.UID), PodUID: body.PodUID, Runtime: body.Runtime, Version: version, ObservedAt: observedAt, Models: effortModels}
+	}
+	if len(models) > 0 {
+		if catalogs, ok := s.runtimeDetectCache.(runtimedetect.AgentCatalogCache); ok {
+			if err := catalogs.PutAgentModels(r.Context(), agentName, body.Runtime, models); err != nil {
+				writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage is unavailable")
+				return
+			}
+		} else {
+			writeJSONError(w, http.StatusServiceUnavailable, "catalog_unavailable", "runtime catalog storage does not support agent catalogs")
+			return
+		}
+
+	}
+	if effortCatalog != nil {
+		if cache, ok := s.runtimeDetectCache.(runtimedetect.EffortCatalogCache); ok {
+			if err := cache.PutEffortCatalog(r.Context(), agentName, *effortCatalog); err != nil {
+				http.Error(w, "effort catalog unavailable", 503)
+				return
+			}
+		}
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

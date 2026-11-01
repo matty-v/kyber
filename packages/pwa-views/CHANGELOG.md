@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.2
+
+- Refresh existing-agent effort choices as runtime model information arrives, so the Runtime dialog recovers after startup without a page reload.
+
 ## 0.83.1
 
 - Move existing-agent reasoning effort into Configuration → General → Runtime alongside model and harness settings on desktop and mobile.

@@ -204,7 +204,11 @@ func reportCatalog(client *http.Client) error {
 			models[i].ReasoningEffort = nil
 		}
 	}
-	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models})
+	protocol := 0
+	if marker, err := os.ReadFile("/usr/local/share/kyber-reasoning-effort-protocol"); err == nil && string(marker) == "2\n" {
+		protocol = 2
+	}
+	body, err := json.Marshal(map[string]any{"runtime": "codex", "models": models, "podUID": os.Getenv("KYBER_POD_UID"), "nativeEffortProtocol": protocol})
 	if err != nil {
 		return err
 	}

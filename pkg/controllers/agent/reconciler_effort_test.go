@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"github.com/matty-v/kyber/pkg/runtimes"
+	"github.com/matty-v/kyber/pkg/runtimes/codex"
+	"strings"
 	"testing"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -74,5 +77,44 @@ func TestEffortEditDoesNotRestartExhaustedFailedAgent(t *testing.T) {
 	event, err = r.classifyEvent(ctx, a, nil)
 	if err != nil || event != EventDesiredRunning {
 		t.Fatalf("repair event=%s err=%v", event, err)
+	}
+}
+
+func TestNativeCodexLatestEffortRequiresQualifiedImage(t *testing.T) {
+	ctx := context.Background()
+	sha := strings.Repeat("1", 40)
+	for _, tc := range []struct {
+		name                          string
+		current, legacy, native, want bool
+	}{
+		{name: "current", current: true, want: true},
+		{name: "old unknown"}, {name: "old protocol one", legacy: true},
+		{name: "old native protocol", legacy: true, native: true, want: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			image := "ghcr.io/matty-v/kyber-codex:" + sha
+			if !tc.current {
+				image = "ghcr.io/matty-v/kyber-codex:" + strings.Repeat("2", 40)
+			}
+			t.Setenv(codex.RuntimeImageEnv, image)
+			scheme := runtime.NewScheme()
+			_ = kyberv1.AddToScheme(scheme)
+			a := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "native-effort", Namespace: "test"}, Spec: kyberv1.AgentSpec{Runtime: "codex", RuntimeVersion: "latest", Model: "gpt-6.1-terra", Effort: "ultra"}}
+			if tc.legacy {
+				a.Status.EffortRuntimeImage = image
+			}
+			if tc.native {
+				a.Status.EffortNativeRuntimeImage = image
+			}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(a).WithObjects(a).Build()
+			r := &AgentReconciler{Client: c, BuildSHA: sha, AdapterRegistry: map[string]runtimes.Adapter{"codex": codex.NewAdapter()}}
+			got, err := r.resolveAgentForPod(ctx, a)
+			if (err == nil) != tc.want {
+				t.Fatalf("allowed=%v err=%v", tc.want, err)
+			}
+			if tc.want && (got.Spec.RuntimeVersion != "latest" || got.Spec.Effort != "ultra") {
+				t.Fatalf("selection changed: %+v", got.Spec)
+			}
+		})
 	}
 }

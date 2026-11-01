@@ -88,3 +88,7 @@ COPY --chmod=0644 docs/agent-manual.md /opt/kyber/KYBER.md
 COPY images/shared/skills/telegram-messaging /opt/kyber/skills/telegram-messaging
 COPY images/shared/skills/discord-messaging /opt/kyber/skills/discord-messaging
 COPY images/shared/skills/a2a-client /opt/kyber/skills/a2a-client
+
+COPY --chmod=0755 images/hermes/check-effort.py /usr/local/bin/kyber-hermes-effort
+RUN printf '2\n' > /usr/local/share/kyber-reasoning-effort-protocol
+COPY --chmod=0755 images/hermes/probe-capabilities.py /usr/local/bin/kyber-probe-capabilities

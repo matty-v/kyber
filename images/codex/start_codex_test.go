@@ -2258,7 +2258,7 @@ func TestStartCodexEffortOverrideAndResetPreserveUserConfig(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, effort := range []string{"high", "max", ""} {
-		out, err := runBoot(t, home, "", stubBin(t), "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.146.0", "KYBER_REASONING_EFFORT="+effort, "KYBER_MANAGED_CODEX_CONFIG="+config)
+		out, err := runBoot(t, home, "", stubBin(t), "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.146.0", "KYBER_REASONING_EFFORT="+effort, "KYBER_MANAGED_CODEX_CONFIG="+config, "CODEX_MODEL=gpt-5.6-sol", "KYBER_CODEX_EFFORT_PROBE="+effortProbe(t, 0))
 		if err != nil {
 			t.Fatalf("effort %q: %v\n%s", effort, err, out)
 		}
@@ -2288,5 +2288,24 @@ func TestStartCodexEffortRejectsInstalledVersionMismatch(t *testing.T) {
 	out, err := runBoot(t, t.TempDir(), "", stubBin(t), "KYBER_HARNESS_INSTALLER="+installer, "OPENAI_API_KEY=fixture-no-network", "KYBER_REQUESTED_CODEX_VERSION=0.147.0", "KYBER_REASONING_EFFORT=high")
 	if err == nil || !strings.Contains(string(out), "qualified requested runtime version") {
 		t.Fatalf("unqualified version allowed: %v\n%s", err, out)
+	}
+}
+
+func effortProbe(t *testing.T, status int) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "effort-probe")
+	if err := os.WriteFile(p, []byte(fmt.Sprintf("#!/bin/sh\nexit %d\n", status)), 0755); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func TestStartCodexLatestEffortChecksNativeSupport(t *testing.T) {
+	for _, probeStatus := range []int{0, 43} {
+		path, sudoLog, npmLog := stubVersionInstallBin(t, "0.146.0")
+		out, err := runBoot(t, t.TempDir(), "", path, "OPENAI_API_KEY=fixture-no-network", "VERSION_FILE="+filepath.Join(strings.Split(path, ":")[0], "codex.version"), "SUDO_LOG="+sudoLog, "NPM_LOG="+npmLog, "INSTALLER_LOG="+npmLog, "KYBER_HARNESS_INSTALLER="+filepath.Join(strings.Split(path, ":")[0], "kyber-harness-install"), "KYBER_REQUESTED_CODEX_VERSION=latest", "KYBER_REASONING_EFFORT=high", "CODEX_MODEL=gpt-6.1-terra", "KYBER_CODEX_EFFORT_PROBE="+effortProbe(t, probeStatus), "KYBER_MANAGED_CODEX_CONFIG="+filepath.Join(t.TempDir(), "managed.toml"))
+		if (err == nil) != (probeStatus == 0) {
+			t.Fatalf("probe=%d err=%v output=%s", probeStatus, err, out)
+		}
 	}
 }

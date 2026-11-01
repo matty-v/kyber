@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
@@ -69,8 +70,9 @@ func (s *Server) validateAgentEffort(w http.ResponseWriter, r *http.Request, age
 		writeJSONErrorWithField(w, 400, "VALIDATION_ERROR", "runtime image effort integration is unverified; update runtime images or clear effort", "effort")
 		return false
 	}
-	if err = reasoningeffort.Validate(agent.Spec.Runtime, version, model, custom, agent.Spec.Effort); err != nil {
-		writeJSONErrorWithField(w, 400, "VALIDATION_ERROR", err.Error(), "effort")
+	options, _ := s.agentEffortOptions(r.Context(), agent, model, version, custom)
+	if options.State != "supported" || !slices.Contains(options.Levels, agent.Spec.Effort) {
+		writeJSONErrorWithField(w, 400, "VALIDATION_ERROR", "reasoning effort is unavailable for this model and runtime; refresh its model information or reset to Default", "effort")
 		return false
 	}
 	return true
@@ -82,7 +84,7 @@ func (s *Server) writeEffortOptions(w http.ResponseWriter, r *http.Request, agen
 		writeJSONError(w, 503, "effort_support_unavailable", "effort compatibility is unavailable")
 		return
 	}
-	options := reasoningeffort.Lookup(agent.Spec.Runtime, version, model, custom)
+	options, version := s.agentEffortOptions(r.Context(), agent, model, version, custom)
 	if options.State == "supported" && !reasoningeffort.ImageSupported(agent.Spec.Runtime, s.RuntimeImages[agent.Spec.Runtime], s.BuildSHA, agent.Status.EffortRuntimeImage) {
 		options = reasoningeffort.Options{State: "unknown", Levels: []string{}, Reason: "Update the runtime image to enable effort."}
 	}

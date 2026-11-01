@@ -835,6 +835,7 @@ fi
 # boot. PR-E surfaces the mismatch via the runtime report so operators
 # see it in the PWA without grepping pod logs.
 KYBER_CC_INSTALL_OUTCOME="not-requested"
+KYBER_CC_RESOLVED_VERSION="${KYBER_RUNTIME_DEFAULT_VERSION:-}"
 if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
     if ! printf '%s' "${KYBER_REQUESTED_CC_VERSION}" | grep -Eq '^[0-9A-Za-z.\-]+$'; then
         echo "[kyber] WARNING: KYBER_REQUESTED_CC_VERSION='${KYBER_REQUESTED_CC_VERSION}' rejected by charset guard (^[0-9A-Za-z.-]+\$); continuing on baked-in version ${KYBER_RUNTIME_DEFAULT_VERSION:-unset}"
@@ -869,6 +870,7 @@ if [ -n "${KYBER_REQUESTED_CC_VERSION:-}" ]; then
                 KYBER_CC_INSTALL_OUTCOME="failed"
             fi
         fi
+        KYBER_CC_RESOLVED_VERSION="$_resolved"
         unset _npm _installed _resolved _installer
     fi
 fi
@@ -917,12 +919,23 @@ if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
         exit 43
     fi
     _effort_client_version="$(claude --version 2>/dev/null | awk '{print $1; exit}' || true)"
-    if [ -z "${KYBER_REQUESTED_CC_VERSION:-}" ] || [ "$_effort_client_version" != "$KYBER_REQUESTED_CC_VERSION" ]; then
+    if [[ "${KYBER_CC_INSTALL_OUTCOME}" = failed || "${KYBER_CC_INSTALL_OUTCOME}" = rejected-* ]] || [ -z "${KYBER_CC_RESOLVED_VERSION:-}" ] || [ "$_effort_client_version" != "$KYBER_CC_RESOLVED_VERSION" ]; then
         echo "[kyber] Reasoning effort requires the qualified requested runtime version; clear effort or fix the runtime version" >&2
+        exit 43
+    fi
+    _effort_probe=/usr/local/bin/kyber-claude-effort
+    if [ "${KYBER_BOOTPREP_DRY_RUN:-}" = "1" ] && [ -n "${KYBER_TEST_EFFORT_PROBE:-}" ]; then
+        _effort_probe="$KYBER_TEST_EFFORT_PROBE"
+    fi
+    if ! "$_effort_probe" "${CLAUDE_MODEL:-}" "$KYBER_REASONING_EFFORT"; then
         exit 43
     fi
     export CLAUDE_CODE_EFFORT_LEVEL="$KYBER_REASONING_EFFORT"
     CLAUDE_ARGS="$CLAUDE_ARGS --effort $KYBER_REASONING_EFFORT"
+fi
+
+if command -v kyber-runtime-effort >/dev/null 2>&1; then
+    nohup kyber-runtime-effort claude-code /usr/local/bin/kyber-claude-effort >/dev/null 2>&1 &
 fi
 
 # A configured startup prompt is the initial user turn for every new harness

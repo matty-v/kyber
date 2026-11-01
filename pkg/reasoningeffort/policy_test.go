@@ -30,3 +30,18 @@ func TestExactTupleAndClearing(t *testing.T) {
 		t.Fatal("shared mutable policy")
 	}
 }
+
+func TestNativeLaunchAllowsQualifiedPrereleasesWithoutArbitrarySelectors(t *testing.T) {
+	for _, runtime := range []string{"codex", "claude-code", "hermes"} {
+		for _, version := range []string{"0.166.0", "0.167.0-alpha.1", "latest"} {
+			if err := ValidateLaunch(runtime, version, "native-model", false, "high"); err != nil {
+				t.Fatalf("%s %s: %v", runtime, version, err)
+			}
+		}
+		for _, version := range []string{"nightly", "0.167.0-", "0.167.0;id", "0.167.0-alpha "} {
+			if err := ValidateLaunch(runtime, version, "native-model", false, "high"); err == nil {
+				t.Fatalf("%s accepted unqualified selector %q", runtime, version)
+			}
+		}
+	}
+}

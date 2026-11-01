@@ -71,6 +71,9 @@ func (a *Adapter) EnvVars(agent *kyberv1.Agent) []corev1.EnvVar {
 		{Name: "HERMES_ACCEPT_HOOKS", Value: "1"},
 		{Name: "HERMES_DISABLE_LAZY_INSTALLS", Value: "1"},
 	}
+	if agent.Spec.Effort != "" {
+		vars = append(vars, corev1.EnvVar{Name: "KYBER_REASONING_EFFORT", Value: agent.Spec.Effort})
+	}
 	// Exactly one credential is referenced. Naming the OpenRouter Secret on an
 	// agent that does not use it would block the pod from starting, because a
 	// SecretKeyRef to a missing Secret is fatal to pod creation.

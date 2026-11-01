@@ -45,9 +45,10 @@ var ErrCacheEmpty = errors.New("runtimedetect: cache empty")
 // Redis cache — a per-replica memory cache would make /available answer
 // differently on each replica and flicker the PWA picker.
 type MemoryCache struct {
-	mu          sync.RWMutex
-	snap        *Snapshot
-	agentModels map[string][]Model
+	mu             sync.RWMutex
+	snap           *Snapshot
+	agentModels    map[string][]Model
+	effortCatalogs map[string]EffortCatalog
 }
 
 // NewMemoryCache returns an empty MemoryCache.

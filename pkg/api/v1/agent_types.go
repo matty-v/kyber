@@ -1182,6 +1182,12 @@ type AgentStatus struct {
 	// +optional
 	// +kubebuilder:validation:MaxLength=512
 	EffortRuntimeImage string `json:"effortRuntimeImage,omitempty"`
+	// EffortNativeRuntimeImage records native model/effort validation protocol two
+	// in this exact immutable first-party image. It survives pod observation reset.
+	// +optional
+	// +kubebuilder:validation:MaxLength=512
+	EffortNativeRuntimeImage string `json:"effortNativeRuntimeImage,omitempty"`
+
 	// JobsProjectedGeneration is the latest Agent generation whose jobs
 	// revision was observed inside the running pod's ConfigMap mount.
 	// +optional

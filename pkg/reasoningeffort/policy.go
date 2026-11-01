@@ -5,6 +5,7 @@ package reasoningeffort
 
 import (
 	"fmt"
+	"regexp"
 	"slices"
 )
 
@@ -17,12 +18,12 @@ type Options struct {
 	Reason string   `json:"reason,omitempty"`
 }
 
-// Lookup uses exact client versions. Evidence comes from initialize/model-list
-// responses collected without inference on 2026-10-26. New versions, aliases and
-// external inference routes remain unknown until separately qualified.
+// Lookup bounds creation choices before current-pod native evidence exists.
+// These exact-version snapshots were collected without inference on 2026-10-26;
+// existing-agent admission separately consumes fresh native metadata.
 func Lookup(runtime, version, model string, customEndpoint bool) Options {
 	result := Options{State: "unknown", Levels: []string{}, Reason: "Effort support has not been verified for this combination."}
-	if runtime != "codex" && runtime != "claude-code" {
+	if runtime != "codex" && runtime != "claude-code" && runtime != "hermes" {
 		result.State = "unsupported"
 		result.Reason = "This runtime does not support Kyber effort settings."
 		return result
@@ -71,4 +72,22 @@ func Validate(runtime, version, model string, customEndpoint bool, effort string
 		return fmt.Errorf("reasoning effort is not supported for this runtime version, model and route; choose a supported level or clear effort first")
 	}
 	return nil
+}
+
+var nativeVersionPattern = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$`)
+var nativeEffortPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,31}$`)
+
+// ValidateLaunch leaves model/version qualification to each integrated native
+// boot guard: Claude Code, Codex and Hermes. The controller additionally requires
+// verified image wiring, and API admission requires bound current-pod evidence.
+func ValidateLaunch(runtime, version, model string, custom bool, effort string) error {
+	if effort == "" {
+		return nil
+	}
+	nativeRuntime := runtime == "codex" || runtime == "claude-code" || runtime == "hermes"
+	nativeVersion := version == "latest" || (len(version) <= 64 && nativeVersionPattern.MatchString(version)) || (runtime == "hermes" && version == "")
+	if nativeRuntime && !custom && model != "" && nativeVersion && nativeEffortPattern.MatchString(effort) {
+		return nil
+	}
+	return Validate(runtime, version, model, custom, effort)
 }

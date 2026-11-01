@@ -33,6 +33,8 @@ class NativeCapabilityContract(unittest.TestCase):
                 protocol.write_text('1\n')
                 self.assertTrue(probe()['reasoning-effort'])
                 protocol.write_text('2\n')
+                self.assertTrue(probe()['reasoning-effort'])
+                protocol.write_text('3\n')
                 self.assertFalse(probe()['reasoning-effort'])
                 protocol.unlink()
                 hooks = {'UserPromptSubmit': [{'hooks': [

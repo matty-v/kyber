@@ -12,6 +12,7 @@ chmod 0700 "$CODEX_HOME"
 # Installation failure is non-fatal: keep the baked-in CLI, report its actual
 # version below, and let RuntimeVersionMismatch tell the operator what happened.
 KYBER_CODEX_REQUESTED_SATISFIED=""
+KYBER_CODEX_RESOLVED_VERSION=""
 if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
     if [ "${#KYBER_REQUESTED_CODEX_VERSION}" -le 64 ] && [[ "$KYBER_REQUESTED_CODEX_VERSION" =~ ^[0-9A-Za-z.-]+$ ]]; then
         CURRENT_CODEX_VERSION="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
@@ -39,6 +40,7 @@ if [ -n "${KYBER_REQUESTED_CODEX_VERSION:-}" ]; then
                 KYBER_CODEX_REQUESTED_SATISFIED="true"
             fi
         fi
+        KYBER_CODEX_RESOLVED_VERSION="$_resolved"
         unset _npm _resolved _installer
     else
         echo "[kyber] WARNING: requested Codex harness version is invalid; using baked-in version"
@@ -577,10 +579,19 @@ fi
 
 if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
     _effort_client_version="$(codex --version 2>/dev/null | awk '{print $NF; exit}' || true)"
-    if [ -z "${KYBER_REQUESTED_CODEX_VERSION:-}" ] || [ "$_effort_client_version" != "$KYBER_REQUESTED_CODEX_VERSION" ]; then
+    if [ "${KYBER_CODEX_REQUESTED_SATISFIED:-}" = "false" ] || [ -z "$_effort_client_version" ] || [ "$_effort_client_version" != "${KYBER_CODEX_RESOLVED_VERSION:-}" ]; then
         echo "[kyber] Reasoning effort requires the qualified requested runtime version; clear effort or fix the runtime version" >&2
         exit 43
     fi
+    _effort_probe=/usr/local/bin/kyber-codex-effort
+    if [ "${SKIP_CODEX_LAUNCH:-}" = "1" ] && [ -n "${KYBER_CODEX_EFFORT_PROBE:-}" ]; then
+        _effort_probe="$KYBER_CODEX_EFFORT_PROBE"
+    fi
+    if [ -n "${KYBER_INFERENCE_BASE_URL:-}" ] || ! "$_effort_probe" "${CODEX_MODEL:-}" "$KYBER_REASONING_EFFORT"; then
+        echo "[kyber] Native model effort is unavailable; reset effort to Default or choose a supported model and level" >&2
+        exit 43
+    fi
+    unset _effort_probe
 fi
 
 if kyber_write_managed_config "$KYBER_MANAGED_CODEX_CONFIG" <<EOF

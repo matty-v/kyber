@@ -1,0 +1,50 @@
+#!/usr/bin/env python3
+"""Publish bounded native effort evidence, independently of the model picker."""
+import datetime
+import json
+import os
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+def main():
+    runtime, helper = sys.argv[1:]
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    cached = None
+    collected = 0
+    while True:
+        if time.monotonic() - collected >= 300 or cached is None:
+            try:
+                result = subprocess.run([helper, '--catalog'], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, timeout=30, check=True)
+                if len(result.stdout) > 100000:
+                    raise ValueError('native evidence too large')
+                data = json.loads(result.stdout)
+                if not isinstance(data['models'], list) or len(data['models']) > 100:
+                    raise ValueError('invalid models')
+                cached = {'runtime': runtime, 'podUID': os.environ.get('KYBER_POD_UID', ''),
+                          'nativeEffortProtocol': 2, 'effortModels': data['models'],
+                          'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+                collected = time.monotonic()
+            except Exception:
+                # Explicitly withdraw choices instead of retaining an older
+                # successful observation after the native probe stops working.
+                cached = {'runtime': runtime, 'podUID': os.environ.get('KYBER_POD_UID', ''),
+                          'nativeEffortProtocol': 2, 'effortModels': [],
+                          'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
+        if cached is not None:
+            try:
+                request = urllib.request.Request('http://127.0.0.1:8091/runtime-catalog',
+                                                 data=json.dumps(cached).encode(),
+                                                 headers={'Content-Type': 'application/json'})
+                with opener.open(request, timeout=5) as response:
+                    response.read(1024)
+            except Exception:
+                pass  # Retry without rewriting the original observation time.
+        time.sleep(30)
+
+
+if __name__ == '__main__':
+    main()

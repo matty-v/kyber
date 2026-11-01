@@ -87,3 +87,6 @@ ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Agent controller overrides CMD with args: [/usr/local/bin/start-claude.sh] on
 # every claude-code pod — this placeholder is used only for bare-container dev/test.
 CMD ["/bin/bash"]
+
+# Native effort metadata is separate from the model/context picker.
+COPY --chmod=0755 scripts/kyber-runtime-effort /usr/local/bin/kyber-runtime-effort

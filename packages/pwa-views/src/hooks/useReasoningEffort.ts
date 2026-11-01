@@ -11,6 +11,8 @@ export function useEffortOptions(input: { agent?: string; runtime?: string; mode
     queryFn: () => input.agent ? api.getAgentEffortOptions(input.agent) : api.getCreateEffortOptions(input.runtime ?? '', input.model ?? '', input.customEndpoint ?? false),
     enabled: Boolean(input.agent || input.runtime),
     staleTime: 0,
+    // The runtime may publish its catalog after this view first mounts.
+    refetchInterval: input.agent ? 10_000 : false,
     retry: false,
   })
 }

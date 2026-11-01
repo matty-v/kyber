@@ -32,3 +32,40 @@ func TestEffortImageIntegrationCannotBeInferredFromCLIVersion(t *testing.T) {
 		t.Fatal("unqualified runtime inherited native integration")
 	}
 }
+
+func TestSourceVersionImageTags(t *testing.T) {
+	sha := "abcdef0123456789abcdef0123456789abcdef01"
+	for _, tc := range []struct {
+		tag  string
+		want bool
+	}{
+		{"1.8.0-90-gabcdef0", true}, {"1.8.0-90-gabcdef01", true},
+		{"1.8.0-90-g1234567", false}, {"1.8.0-90-gabcdef", false},
+		{"latest", false}, {"1.8.0-90-gabcdef0-dirty", false},
+	} {
+		if got := SourceImageSupported("codex", "ghcr.io/matty-v/kyber-codex:"+tc.tag, sha); got != tc.want {
+			t.Fatalf("tag %s: %v", tc.tag, got)
+		}
+	}
+}
+
+func TestNativeValidationRequiresProtocolTwoOrMatchingCurrentSource(t *testing.T) {
+	build := strings.Repeat("1", 40)
+	old := strings.Repeat("2", 40)
+	for _, image := range []string{"ghcr.io/matty-v/kyber-codex:" + old, "ghcr.io/matty-v/kyber-codex@sha256:" + strings.Repeat("a", 64), "ghcr.io/matty-v/kyber-codex:1.8.0-90-g2222222"} {
+		if NativeImageSupported("codex", image, build, "") {
+			t.Fatal("old image inferred native validation")
+		}
+		if !NativeImageSupported("codex", image, build, image) {
+			t.Fatal("exact native validation observation lost across control-plane update")
+		}
+		if NativeImageSupported("codex", image, build, image+"different") {
+			t.Fatal("wrong image observation accepted")
+		}
+	}
+	for _, image := range []string{"ghcr.io/matty-v/kyber-codex:latest", "example.com/codex:" + old} {
+		if NativeImageSupported("codex", image, build, image) {
+			t.Fatal("mutable/fork observation qualified native validation")
+		}
+	}
+}

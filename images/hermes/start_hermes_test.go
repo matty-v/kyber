@@ -93,6 +93,7 @@ func TestStartHermesWritesSafeFreshAndResumeLaunches(t *testing.T) {
 	}
 	writeExecutable(t, filepath.Join(bin, "hermes"), "#!/usr/bin/env bash\necho 'Hermes 0.21.0'\n")
 	writeExecutable(t, filepath.Join(bin, "configure"), "#!/usr/bin/env bash\nexit 0\n")
+	writeExecutable(t, filepath.Join(bin, "curl"), "#!/usr/bin/env bash\nexit 0\n")
 	identity := filepath.Join(root, "identity.sh")
 	if err := os.WriteFile(identity, []byte("REPO_DIR=\"\"\n"), 0o600); err != nil {
 		t.Fatal(err)
@@ -108,6 +109,8 @@ func TestStartHermesWritesSafeFreshAndResumeLaunches(t *testing.T) {
 		"HERMES_INFERENCE_MODEL=anthropic/claude-sonnet-4.6",
 		"KYBER_STARTUP_PROMPT="+prompt,
 		"KYBER_SESSION_RESUME=true",
+		"KYBER_REASONING_EFFORT=high",
+		"KYBER_TEST_EFFORT_PROBE=/bin/true",
 		"KYBER_HERMES_CONFIGURATOR="+filepath.Join(bin, "configure"),
 		"KYBER_IDENTITY_REPO_SCRIPT="+identity,
 		"SKIP_HERMES_LAUNCH=1",
@@ -120,10 +123,23 @@ func TestStartHermesWritesSafeFreshAndResumeLaunches(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := string(launch)
-	for _, want := range []string{"--fresh", "--continue", "anthropic/claude-sonnet-4.6", `/tmp/hermes-start-test-injection`} {
+	for _, want := range []string{`--reasoning\ high`, "--fresh", "--continue", "anthropic/claude-sonnet-4.6", `/tmp/hermes-start-test-injection`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("launch script missing %q:\n%s", want, body)
 		}
+	}
+	// Default removes the run-only override from both fresh and resumed commands.
+	cmd = exec.Command("bash", scriptPath(t, "start-hermes.sh"))
+	cmd.Env = append(os.Environ(), "PATH="+bin+":"+os.Getenv("PATH"), "HOME="+home,
+		"KYBER_PERSIST_ROOT="+persist, "OPENROUTER_API_KEY=test-only", "KYBER_REASONING_EFFORT=",
+		"KYBER_HERMES_CONFIGURATOR="+filepath.Join(bin, "configure"), "KYBER_IDENTITY_REPO_SCRIPT="+identity,
+		"SKIP_HERMES_LAUNCH=1")
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("reset Hermes: %v\n%s", err, output)
+	}
+	reset, err := os.ReadFile(filepath.Join(persist, "last-hermes-launch.sh"))
+	if err != nil || strings.Contains(string(reset), "--reasoning") {
+		t.Fatal("Default retained effort override")
 	}
 	if _, err := os.Stat("/tmp/hermes-start-test-injection"); !os.IsNotExist(err) {
 		t.Fatal("startup prompt executed as shell code")

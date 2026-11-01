@@ -30,7 +30,7 @@ def has(event, command, arguments=()):
 def effort_integration():
     try:
         with open(os.environ.get('KYBER_EFFORT_PROTOCOL_FILE', '/usr/local/share/kyber-reasoning-effort-protocol'), 'rb') as stream:
-            return stream.read(3) == b'1\n'
+            return stream.read(3) in {b'1\n', b'2\n'}
     except OSError:
         return False
 
