@@ -653,6 +653,11 @@ Go:
 - API handler files: `pkg/api/routes_<group>.go` + `routes_<group>_test.go`.
 
 TypeScript/PWA (npm workspaces monorepo, root package `kyber-monorepo`):
+- Workbox has a scoped exact glob 14.0.4 override for patched minimatch 11.
+  This crosses Workbox's declared glob ^11 range;
+  `node --test build-support/workbox-glob-compat.test.mjs` verifies its
+  real manifest filtering/revisions/empty-match warnings in CI. Reassess
+  the override when Workbox adopts a patched glob dependency.
 - `build-support/rollup-defaults-clone/` — private build-only adapter replacing
   deepmerge for its sole consumer, `@rollup/plugin-node-resolve@16.0.3`. That version calls
   the merger solely to clone `{}` plus trusted defaults, then freezes them;

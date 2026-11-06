@@ -260,9 +260,9 @@ jobs:
         if: needs.changes.outputs.pwa == 'true'
         run: npm ci
 
-      - name: Verify Rollup defaults clone compatibility
+      - name: Verify PWA build dependency compatibility
         if: needs.changes.outputs.pwa == 'true'
-        run: node --test build-support/rollup-defaults-clone/test.mjs
+        run: node --test build-support/rollup-defaults-clone/test.mjs build-support/workbox-glob-compat.test.mjs
 
       - name: Build pwa-views library
         if: needs.changes.outputs.pwa == 'true'
