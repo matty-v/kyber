@@ -19,6 +19,8 @@ WORKDIR /build
 COPY package.json package-lock.json ./
 COPY packages/pwa-views/package.json ./packages/pwa-views/package.json
 COPY apps/embedded-pwa/package.json ./apps/embedded-pwa/package.json
+# Local build-only resolver replacement must exist before npm installs it.
+COPY build-support/rollup-defaults-clone ./build-support/rollup-defaults-clone
 
 RUN npm ci
 

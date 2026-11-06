@@ -653,6 +653,17 @@ Go:
 - API handler files: `pkg/api/routes_<group>.go` + `routes_<group>_test.go`.
 
 TypeScript/PWA (npm workspaces monorepo, root package `kyber-monorepo`):
+- `build-support/rollup-defaults-clone/` — private build-only adapter replacing
+  deepmerge for its sole consumer, `@rollup/plugin-node-resolve@16.0.3`. That version calls
+  the merger solely to clone `{}` plus trusted defaults, then freezes them;
+  user options use object spread. The adapter uses `structuredClone` and
+  rejects other merge signatures. A root local-file dev alias and `$deepmerge`
+  override install it under the old import name; the test pins the sole
+  consumer/version and fails if another appears. This is not a general deepmerge API.
+  `node --test build-support/rollup-defaults-clone/test.mjs` verifies real resolver
+  behavior in CI. Reassess/remove the override on any resolver upgrade.
+  Docker must copy this local package before `npm ci`; no published library
+  version bump is needed for this private build helper.
 - `packages/pwa-views/` — shared React view library, PUBLISHED to GitHub
   Packages as `@matty-v/kyber-pwa-views`; consumed by `apps/embedded-pwa`
   (workspace link) AND the external Holocron host (published version only).

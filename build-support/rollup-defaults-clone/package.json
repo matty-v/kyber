@@ -1,0 +1,9 @@
+{
+  "name": "@kyber/rollup-defaults-clone",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Clone-only replacement for node-resolve 16.0.3's defaults snapshot",
+  "main": "index.cjs",
+  "engines": { "node": ">=26 <27" },
+  "scripts": { "test": "node --test test.mjs" }
+}
