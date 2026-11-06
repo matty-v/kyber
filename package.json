@@ -14,7 +14,10 @@
     "esbuild": "^0.28.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "deepmerge": "$deepmerge"
+    "deepmerge": "$deepmerge",
+    "workbox-build": {
+      "glob": "14.0.4"
+    }
   },
   "devDependencies": {
     "deepmerge": "file:build-support/rollup-defaults-clone"
