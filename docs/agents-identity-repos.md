@@ -14,7 +14,21 @@ Both GitHub-backed modes need the Kyber Platform GitHub App **and** `identityRep
 
 ### 1. Create new from template (default when the GitHub App is configured)
 
-Kyber scaffolds a new private repo under the configured owner (`matty-v` by default, overridable via `KYBER_IDENTITY_REPO_OWNER` on the control plane) from the template `matty-v/kyber-agent-template`. The template is runtime-neutral: `AGENTS.md` is the canonical identity/startup contract read directly by Codex, `CLAUDE.md` is Claude Code's compatibility entrypoint to that same contract, and shared memory/state/skills/scripts work in either runtime. Claude-only project hooks live in `.claude/settings.json`; Codex safely ignores them.
+Kyber scaffolds a new private repo under `identityRepo.defaultOwner` (`KYBER_IDENTITY_REPO_OWNER` on the control plane). There is no default destination owner: each installation must configure its own GitHub username or organization. The source is configured separately with `identityRepo.defaultTemplate` (`KYBER_IDENTITY_REPO_TEMPLATE`), defaulting to the upstream `matty-v/kyber-agent-template`.
+
+`GET /api/v1/config` reports the effective source as `identity.defaultTemplate`; the wizard uses it for both preview and submission. Invalid configured source slugs fail chart rendering or control-plane startup. Older control planes retain the wizard's upstream fallback. Direct API callers may still explicitly select another valid `identityRepo.template` source; this installation setting is a default, not an allowlist.
+
+For example, an installation may set:
+
+```yaml
+identityRepo:
+  defaultOwner: "destination-org"
+  defaultTemplate: "source-org/custom-agent-template"
+```
+
+The generated `<agent-name>-agent` repo belongs to `destination-org`, independently of the source template's owner. The standard template's sync instructions use the agent's actual `origin` and `KYBER_IDENTITY_REPO`; they do not assume a particular owner.
+
+The template is runtime-neutral: `AGENTS.md` is the canonical identity/startup contract read directly by Codex, `CLAUDE.md` is Claude Code's compatibility entrypoint to that same contract, and shared memory/state/skills/scripts work in either runtime. Claude-only project hooks live in `.claude/settings.json`; Codex safely ignores them.
 
 Template substitutions applied at scaffold time:
 
@@ -25,7 +39,7 @@ Template substitutions applied at scaffold time:
 
 The new repo is named `<agent-name>-agent` and is private by default.
 
-**No GitHub setup needed.** Kyber mints an installation token via the platform GitHub App (see [GitHub App setup](#github-app-setup)) and calls `POST /repos/{template}/generate` on your behalf.
+**No per-agent PAT needed.** Kyber mints an installation token via the platform GitHub App (see [GitHub App setup](#github-app-setup)) and calls `POST /repos/{template}/generate` on your behalf.
 
 ### 2. Link existing repo
 

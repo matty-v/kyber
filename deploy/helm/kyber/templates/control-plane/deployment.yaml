@@ -1,3 +1,11 @@
+{{- $identityTemplate := .Values.identityRepo.defaultTemplate -}}
+{{- if and (not (kindIs "invalid" $identityTemplate)) (not (kindIs "string" $identityTemplate)) -}}
+{{- fail "identityRepo.defaultTemplate must be an owner/name GitHub repository slug (string)" -}}
+{{- end -}}
+{{- $identityTemplate = $identityTemplate | default "matty-v/kyber-agent-template" -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" $identityTemplate) -}}
+{{- fail "identityRepo.defaultTemplate must be an owner/name GitHub repository slug" -}}
+{{- end -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -694,6 +702,8 @@ spec:
             - name: KYBER_IDENTITY_REPO_OWNER
               value: {{ .Values.identityRepo.defaultOwner | quote }}
             {{- end }}
+            - name: KYBER_IDENTITY_REPO_TEMPLATE
+              value: {{ $identityTemplate | quote }}
             # Fleet defaults ConfigMap name — read by the reconciler to
             # resolve agent.Spec.Model when it's empty, and by the API
             # handler at /api/v1/fleet-defaults so the PWA can GET/PUT

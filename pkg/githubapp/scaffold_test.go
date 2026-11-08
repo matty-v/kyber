@@ -381,8 +381,8 @@ func scaffold(t *testing.T, s *scaffoldServer, params githubapp.ScaffoldParams) 
 	return newScaffoldClient(t, srv).CreateFromTemplate(
 		context.Background(),
 		"ghs_faketoken",
-		"matty-v", "kyber-agent-template",
-		"matty-v", "newbot-agent",
+		s.templateOwner, s.templateRepo,
+		s.newOwner, s.newRepo,
 		params,
 	)
 }
@@ -556,5 +556,22 @@ func TestCreateFromTemplate_BinaryFileSkipped(t *testing.T) {
 	}
 	if got, _ := s.fileAtHead("CLAUDE.md"); got != "# newbot\n" {
 		t.Errorf("CLAUDE.md = %q", got)
+	}
+}
+
+func TestCreateFromTemplateDifferentSourceAndDestinationOwners(t *testing.T) {
+	content := "# {{ .AgentName }}\nUse $KYBER_IDENTITY_REPO and git remote get-url origin.\n"
+	s := newScaffoldServer(fakeFile{path: "AGENTS.md", content: content})
+	s.templateOwner, s.templateRepo = "source-org", "custom-template"
+	s.newOwner, s.newRepo = "destination-org", "pilot-identity"
+	fullName, err := scaffold(t, s, githubapp.ScaffoldParams{AgentName: "pilot"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fullName != "destination-org/pilot-identity" || !s.generateCalled {
+		t.Fatalf("generated = %q, called=%v", fullName, s.generateCalled)
+	}
+	if got, _ := s.fileAtHead("AGENTS.md"); got != "# pilot\nUse $KYBER_IDENTITY_REPO and git remote get-url origin.\n" {
+		t.Fatalf("rendered instructions = %q", got)
 	}
 }

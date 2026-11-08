@@ -31,7 +31,7 @@ import { ReviewSection } from '../components/wizard/ReviewSection'
 import { WizardSteps } from '../components/wizard/WizardSteps'
 import { WIZARD_STEPS, earliestInvalidStep } from '../components/wizard/validation'
 import {
-  DEFAULT_IDENTITY_TEMPLATE,
+  identityRepoTemplate,
   IDENTITY_REPO_SLUG_RE,
   defaultIdentityRepoMode,
   identityRepoCapability,
@@ -234,10 +234,10 @@ export function CreateAgent() {
         return
       }
       if (state.identityRepoMode === 'template') {
-        identityRepo = { template: DEFAULT_IDENTITY_TEMPLATE }
+        identityRepo = { template: identityRepoTemplate(config) }
       } else if (state.identityRepoMode === 'existing') {
         if (!IDENTITY_REPO_SLUG_RE.test(state.identityRepoExisting)) {
-          setFieldError('Identity repo must be in owner/repo format (e.g. matty-v/my-agent)')
+          setFieldError('Identity repo must be in owner/repo format (e.g. your-org/my-agent)')
           return
         }
         identityRepo = { repo: state.identityRepoExisting }

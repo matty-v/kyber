@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.4
+
+- Preview and submit the installation-configured identity template independently of the destination owner; retain the upstream fallback for older control planes and use owner-neutral examples.
+
 ## 0.83.3
 
 - Exclude separately provisioned agent PVCs from machine disk capacity and creation fit checks while preserving individual agent disk usage reporting.

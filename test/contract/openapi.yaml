@@ -3697,7 +3697,7 @@ components:
         Which identity-repository modes POST /api/v1/agents accepts on this
         installation. Both managed modes require the Kyber GitHub App and a
         configured repo owner; "none" is always supported.
-      required: [managedReposAvailable, supportedModes, repoOwner]
+      required: [managedReposAvailable, supportedModes, repoOwner, defaultTemplate]
       properties:
         managedReposAvailable:
           type: boolean
@@ -3708,6 +3708,9 @@ components:
             enum: [template, existing, none]
         repoOwner:
           type: string
+        defaultTemplate:
+          type: string
+          description: Installation-selected source template, independent of the destination repo owner.
         unavailableReason:
           type: string
           description: Operator-safe reason the managed modes are unavailable. Omitted when available.

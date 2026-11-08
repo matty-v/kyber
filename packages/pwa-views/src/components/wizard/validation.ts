@@ -68,7 +68,7 @@ export function isIdentityValid(state: WizardState): StepValidation {
     return OK
   }
   if (!IDENTITY_REPO_SLUG_RE.test(state.identityRepoExisting)) {
-    return { ok: false, reason: 'Enter an existing repo as owner/repo (e.g. matty-v/dave-agent).' }
+    return { ok: false, reason: 'Enter an existing repo as owner/repo (e.g. your-org/my-agent).' }
   }
   return OK
 }

@@ -81,7 +81,7 @@ describe('isIdentityValid', () => {
       isIdentityValid({ ...base, identityRepoMode: 'existing', identityRepoExisting: '' }),
     ).toEqual({
       ok: false,
-      reason: 'Enter an existing repo as owner/repo (e.g. matty-v/dave-agent).',
+      reason: 'Enter an existing repo as owner/repo (e.g. your-org/my-agent).',
     })
   })
   it('not ok with reason for existing mode with malformed slug', () => {
@@ -89,7 +89,7 @@ describe('isIdentityValid', () => {
       isIdentityValid({ ...base, identityRepoMode: 'existing', identityRepoExisting: '-foo/bar' }),
     ).toEqual({
       ok: false,
-      reason: 'Enter an existing repo as owner/repo (e.g. matty-v/dave-agent).',
+      reason: 'Enter an existing repo as owner/repo (e.g. your-org/my-agent).',
     })
   })
   it('ok for existing mode with valid slug', () => {
