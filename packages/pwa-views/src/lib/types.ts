@@ -986,6 +986,8 @@ export type ComputeConfig = {
     managedReposAvailable?: boolean
     supportedModes?: IdentityRepoMode[]
     repoOwner: string
+    // Optional for older control planes; new ones report the effective source.
+    defaultTemplate?: string
     unavailableReason?: string
   }
   // Agent disk export / create-from-export (MAT-87/MAT-88). Mirrors

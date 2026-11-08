@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Make the new-agent identity template source configurable with `identityRepo.defaultTemplate`, independently of its destination owner, and remove owner-specific wizard examples.
+
 - Stop charging separately provisioned GCE PD/AWS EBS agent volumes against machine local disk capacity. Machine views and agent creation now omit that unrelated constraint; individual agent disk usage, limits and expansion are preserved.
 
 - Stage supervised credential-maintenance evidence retention and namespace-scoped recovery permissions. The authority protocol remains zero; activation is still unavailable.

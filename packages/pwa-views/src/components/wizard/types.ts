@@ -3,7 +3,7 @@ import type { AgentImportApply, ArchiveSummary, IdentityRepoMode, ModelInfo } fr
 
 /**
  * IdentityRepoMode: which of the three identity-repo flows the operator picked.
- * 'template' = create a new repo from `matty-v/kyber-agent-template`,
+ * 'template' = create a new repo from the installation's configured template,
  * 'existing' = link an already-created repo by `owner/repo`,
  * 'none'     = no identity repo; the agent keeps its state on its own disk.
  * Defined next to the config type because the server reports the same modes.

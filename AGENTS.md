@@ -134,6 +134,14 @@ shrinking is unsupported; a blocked, unfulfilled PVC request may be reduced
 only while the new target exceeds already allocated capacity. See
 `docs/operator/agent-disk-expansion.md`.
 
+New-agent template sources use `identityRepo.defaultTemplate` →
+`KYBER_IDENTITY_REPO_TEMPLATE` → `GET /api/v1/config`'s
+`identity.defaultTemplate`. The wizard previews and submits this source separately
+from `identityRepo.defaultOwner` (the destination account). The upstream
+`matty-v/kyber-agent-template` remains the default and the compatibility fallback
+for older control planes. Explicit API `identityRepo.template` choices remain
+supported. Invalid configured source slugs fail chart rendering and startup.
+
 Machine agent-disk budgets are storage-aware (`pkg/agentstorage`). The configured
 `KYBER_AGENT_STORAGE_CLASS`, or the newest cluster-default StorageClass when unset,
 identifies supported separately provisioned GCE PD/AWS EBS volumes. Their PVC sizes

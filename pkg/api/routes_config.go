@@ -69,8 +69,10 @@ type ConfigIdentity struct {
 	// accept: some of "template", "existing", and always "none".
 	SupportedModes []string `json:"supportedModes"`
 	// RepoOwner is the GitHub user/org under which auto-created identity
-	// repos are placed (e.g. "matty-v"). Empty string when not configured.
+	// repos are placed. Empty string when not configured.
 	RepoOwner string `json:"repoOwner"`
+	// DefaultTemplate is the installation-selected source for new identity repos.
+	DefaultTemplate string `json:"defaultTemplate"`
 	// UnavailableReason is an operator-safe explanation of why the managed
 	// modes are unavailable. Empty when they are available.
 	UnavailableReason string `json:"unavailableReason,omitempty"`

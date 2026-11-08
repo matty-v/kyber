@@ -1010,6 +1010,9 @@ identityRepo:
   # set it per-install (e.g. in your environment values), do not assume a
   # global default. Example: "your-org"
   defaultOwner: ""
+  # Source template for the Create Agent wizard. Independent of defaultOwner;
+  # forks can select their own template without rebuilding the UI.
+  defaultTemplate: "matty-v/kyber-agent-template"
 
 # Agent runtime settings — how scheduled jobs and the in-pod harness behave,
 # plus pinned per-runtime versions of the harness installed inside agent

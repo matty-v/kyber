@@ -413,9 +413,13 @@ type Server struct {
 	GithubAppClient *githubapp.Client
 
 	// IdentityRepoOwner is the GitHub user/org under which auto-created
-	// identity repos are placed (e.g. "matty-v"). Surfaced to the PWA via
+	// identity repos are placed. Surfaced to the PWA via
 	// GET /api/v1/config so the wizard knows what owner to prefix.
 	IdentityRepoOwner string
+
+	// IdentityRepoTemplate is the default source for new identity repositories.
+	// Empty retains DefaultIdentityRepoTemplate for older installations.
+	IdentityRepoTemplate string
 
 	// githubReposCache caches the /installation/repositories result for a
 	// short TTL — the dropdown re-opens repeatedly during a wizard session

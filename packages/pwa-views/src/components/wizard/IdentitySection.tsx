@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useComputeConfig, useGitHubRepoExists, useGitHubRepos } from '../../hooks/useAPI'
 import {
-  DEFAULT_IDENTITY_TEMPLATE,
+  identityRepoTemplate,
   IDENTITY_REPO_SLUG_RE,
   identityRepoCapability,
 } from './identity-utils'
@@ -112,7 +112,7 @@ export function IdentitySection({ state, set }: IdentitySectionProps) {
       )}
 
       {state.identityRepoMode === 'template' && (
-        <TemplateModeBadge state={state} repoOwner={repoOwner} set={set} />
+        <TemplateModeBadge state={state} repoOwner={repoOwner} template={identityRepoTemplate(config.data)} set={set} />
       )}
 
       {showDropdown && (
@@ -141,10 +141,11 @@ export function IdentitySection({ state, set }: IdentitySectionProps) {
 interface TemplateModeBadgeProps {
   state: WizardState
   repoOwner: string
+  template: string
   set: WizardSetter
 }
 
-function TemplateModeBadge({ state, repoOwner, set }: TemplateModeBadgeProps) {
+function TemplateModeBadge({ state, repoOwner, template, set }: TemplateModeBadgeProps) {
   // The full target repo name the controller would create.
   const targetName = state.name ? `${state.name}-agent` : ''
   const targetFullName =
@@ -166,7 +167,7 @@ function TemplateModeBadge({ state, repoOwner, set }: TemplateModeBadgeProps) {
       <p className="text-xs text-text-muted">
         Will create{' '}
         <code>{targetFullName || `${repoOwner || '<owner>'}/<agent-name>-agent`}</code>{' '}
-        from <code>{DEFAULT_IDENTITY_TEMPLATE}</code>.
+        from <code>{template}</code>.
       </p>
       <CollisionBadge
         owner={repoOwner}

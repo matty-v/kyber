@@ -159,9 +159,9 @@ beforeEach(() => {
 })
 
 describe('CreateAgent — submit happy path (api-key)', () => {
-  it('walks through all 5 steps, submits, and navigates to /agents', async () => {
+  it.each([undefined, 'source-org/custom-template'])('walks through all 5 steps with template=%s, submits, and navigates to /agents', async (template) => {
     const user = userEvent.setup()
-    const { mutateAsync } = setupHooks()
+    const { mutateAsync } = setupHooks({ configData: { ...config, identity: { ...config.identity, repoOwner: 'destination-org', defaultTemplate: template } } })
     renderAt()
 
     // Step 1 — Basics
@@ -195,7 +195,7 @@ describe('CreateAgent — submit happy path (api-key)', () => {
         runtime: 'claude-code',
         resources: { cpu: '1', memory: '2Gi', disk: '50Gi' },
         identity: { soulDescription: undefined },
-        identityRepo: { template: 'matty-v/kyber-agent-template' },
+        identityRepo: { template: template ?? 'matty-v/kyber-agent-template' },
         secrets: expect.objectContaining({
           authType: 'api-key',
           telegramEnabled: false,

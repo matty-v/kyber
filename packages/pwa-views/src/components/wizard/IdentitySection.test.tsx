@@ -30,7 +30,7 @@ function renderWithQuery(ui: React.ReactElement) {
 
 // `as unknown as ReturnType<...>` per pwa/CLAUDE.md — React Query types are
 // too wide to construct from a partial.
-function configResult(repoOwner = 'matty-v') {
+function configResult(repoOwner = 'matty-v', defaultTemplate?: string) {
   return {
     data: {
       compute: { provider: 'mock' },
@@ -39,6 +39,7 @@ function configResult(repoOwner = 'matty-v') {
         managedReposAvailable: true,
         supportedModes: ['template', 'existing', 'none'],
         repoOwner,
+        defaultTemplate,
       },
     },
     isSuccess: true,
@@ -77,6 +78,16 @@ beforeEach(() => {
 })
 
 describe('IdentitySection', () => {
+  it('previews the configured source and destination separately', () => {
+    vi.mocked(useAPIModule.useComputeConfig).mockReturnValue(configResult('destination-org', 'source-org/custom-template'))
+    renderWithQuery(<IdentitySection
+      state={{ ...initialWizardState([]), name: 'pilot', identityRepoMode: 'template' }} set={vi.fn()}
+    />)
+    expect(screen.getByText('destination-org/pilot-agent')).toBeInTheDocument()
+    expect(screen.getByText('source-org/custom-template')).toBeInTheDocument()
+    expect(screen.queryByText('matty-v/kyber-agent-template')).not.toBeInTheDocument()
+  })
+
   it('shows the existing-repo input only when mode === "existing"', async () => {
     const user = userEvent.setup()
     const set = vi.fn()

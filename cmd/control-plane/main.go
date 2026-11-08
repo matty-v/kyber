@@ -525,6 +525,11 @@ func main() {
 	// identity repos are placed. Required when identityRepo.template is used.
 	// Defaults to empty (auto-create disabled for agents that don't set template).
 	identityRepoOwner := os.Getenv("KYBER_IDENTITY_REPO_OWNER")
+	identityRepoTemplate, err := internalapi.ResolveIdentityRepoTemplate(os.Getenv("KYBER_IDENTITY_REPO_TEMPLATE"))
+	if err != nil {
+		setupLog.Error(err, "invalid identity repository template")
+		os.Exit(1)
+	}
 	// Status sidecar image (kyber#248). Read from Helm-provided env var; the
 	// reconciler injects this container into every agent pod. Empty string
 	// disables the sidecar — useful for tests / dev installs that don't
@@ -1540,6 +1545,7 @@ func main() {
 		Snapshots:                  &runtimedetect.SnapshotResolver{Cache: runtimeDetectCache, TTL: 30 * time.Second, Timeout: 2 * time.Second},
 		GithubAppClient:            githubAppClient,
 		IdentityRepoOwner:          identityRepoOwner,
+		IdentityRepoTemplate:       identityRepoTemplate,
 		MetricsStore:               metricsStore,
 		NodeStore:                  nodeStore,
 		StateChangeAccumulator:     stateChangeAccum,

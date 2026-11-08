@@ -256,3 +256,64 @@ func TestAgents_Create_RepoLessAgentHasEmptyIdentityRepo(t *testing.T) {
 		t.Errorf("spec.identityRepo = %+v, want empty", got.Spec.IdentityRepo)
 	}
 }
+
+func TestResolveIdentityRepoTemplate(t *testing.T) {
+	for _, tc := range []struct {
+		input, want string
+		invalid     bool
+	}{
+		{"", api.DefaultIdentityRepoTemplate, false},
+		{"source-org/agent-template", "source-org/agent-template", false},
+		{"SourceOrg/Agent.Template", "SourceOrg/Agent.Template", false},
+		{"not-a-slug", "", true},
+		{"source/repo/extra", "", true},
+		{"https://github.com/source/repo", "", true},
+		{" source/repo", "", true},
+	} {
+		got, err := api.ResolveIdentityRepoTemplate(tc.input)
+		if (err != nil) != tc.invalid || got != tc.want {
+			t.Errorf("ResolveIdentityRepoTemplate(%q) = %q, %v; want %q, invalid=%v", tc.input, got, err, tc.want, tc.invalid)
+		}
+	}
+}
+
+func TestConfigIdentityTemplateIsIndependentOfDestinationOwner(t *testing.T) {
+	for _, source := range []string{"", "source-org/agent-template"} {
+		t.Run(source, func(t *testing.T) {
+			s, _ := newIdentityTestServer(t, identityInstall{owner: "destination-org", app: true})
+			s.IdentityRepoTemplate = source
+			rr := httptest.NewRecorder()
+			s.BuildHandler().ServeHTTP(rr, authedRequest(t, http.MethodGet, "/api/v1/config", nil))
+			if rr.Code != http.StatusOK {
+				t.Fatalf("config: %d %s", rr.Code, rr.Body.String())
+			}
+			var got api.ConfigResponse
+			if err := json.Unmarshal(rr.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			want := source
+			if want == "" {
+				want = api.DefaultIdentityRepoTemplate
+			}
+			if got.Identity.DefaultTemplate != want || got.Identity.RepoOwner != "destination-org" || !got.Identity.ManagedReposAvailable {
+				t.Fatalf("identity config = %+v", got.Identity)
+			}
+		})
+	}
+}
+
+func TestIdentityTemplateDefaultPreservesExplicitAPIChoice(t *testing.T) {
+	s, c := newIdentityTestServer(t, identityInstall{owner: "destination-org", app: true})
+	s.IdentityRepoTemplate = "source-org/default-template"
+	rr := createAgentWithIdentityRepo(t, s, map[string]interface{}{"template": "another-org/explicit-template"})
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("explicit template create: %d %s", rr.Code, rr.Body.String())
+	}
+	var stored kyberv1.Agent
+	if err := c.Get(context.Background(), types.NamespacedName{Namespace: s.Namespace, Name: "ivy"}, &stored); err != nil {
+		t.Fatal(err)
+	}
+	if stored.Spec.IdentityRepo.Template != "another-org/explicit-template" {
+		t.Fatalf("explicit choice was replaced: %+v", stored.Spec.IdentityRepo)
+	}
+}

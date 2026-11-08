@@ -17,6 +17,21 @@ const (
 	IdentityRepoModeExisting = "existing"
 )
 
+// DefaultIdentityRepoTemplate is Kyber's upstream source, independent of the
+// installation's destination owner. Older installations retain this default.
+const DefaultIdentityRepoTemplate = "matty-v/kyber-agent-template"
+
+// ResolveIdentityRepoTemplate validates installation configuration before startup.
+func ResolveIdentityRepoTemplate(value string) (string, error) {
+	if value == "" {
+		return DefaultIdentityRepoTemplate, nil
+	}
+	if !validIdentityRepoSlug(value) {
+		return "", errors.New("identityRepo.defaultTemplate must be an owner/name GitHub repository slug")
+	}
+	return value, nil
+}
+
 // identityRepoCapability reports which identity-repo modes this control plane
 // can actually serve. It is the single source for both GET /api/v1/config and
 // create-time validation, so what the wizard offers and what the API accepts
@@ -27,9 +42,14 @@ const (
 // the identity repo to live in that same account (see handleIdentityRepoToken).
 func (s *Server) identityRepoCapability() ConfigIdentity {
 	c := ConfigIdentity{
-		SupportedModes: []string{IdentityRepoModeNone},
-		RepoOwner:      s.IdentityRepoOwner,
+		SupportedModes:  []string{IdentityRepoModeNone},
+		RepoOwner:       s.IdentityRepoOwner,
+		DefaultTemplate: s.IdentityRepoTemplate,
 	}
+	if c.DefaultTemplate == "" {
+		c.DefaultTemplate = DefaultIdentityRepoTemplate
+	}
+
 	switch {
 	case s.GithubAppClient == nil:
 		c.UnavailableReason = "The Kyber GitHub App is not configured on this control plane " +
