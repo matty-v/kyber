@@ -1,8 +1,11 @@
 package machine
 
 import (
+	"context"
+
 	"k8s.io/apimachinery/pkg/api/resource"
 
+	"github.com/matty-v/kyber/pkg/agentstorage"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
@@ -62,4 +65,18 @@ func ComputeAvailable(assignable kyberv1.MachineCapacity, agents []kyberv1.Agent
 		disk = zero.DeepCopy()
 	}
 	return kyberv1.MachineCapacity{CPU: cpu, Memory: mem, EphemeralStorage: disk}
+}
+
+// assignableForAgentStorage keeps the physical node observation intact while
+// excluding separately provisioned PVCs from the agent disk budget.
+func (r *MachineReconciler) assignableForAgentStorage(ctx context.Context, observed kyberv1.MachineCapacity) (kyberv1.MachineCapacity, error) {
+	assignable := ComputeAssignable(observed, r.PlatformReservation)
+	externalDisks, err := agentstorage.ExternalDisks(ctx, r.Client, r.AgentStorageClass)
+	if err != nil {
+		return kyberv1.MachineCapacity{}, err
+	}
+	if externalDisks {
+		assignable.EphemeralStorage = resource.Quantity{}
+	}
+	return assignable, nil
 }

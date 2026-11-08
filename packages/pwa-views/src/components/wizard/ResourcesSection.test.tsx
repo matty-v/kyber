@@ -15,6 +15,21 @@ const models: AvailableModel[] = [
 const initialState = () => initialWizardState(models.map((m) => ({ id: m.id, contextWindow: m.contextWindow })))
 
 describe('ResourcesSection', () => {
+  it.each([
+    { storage: 'external' as const, band: 'green' },
+    { storage: undefined, band: 'red' },
+  ])('uses a $band disk band for storage=$storage with insufficient local headroom', ({ storage, band }) => {
+    const machine: Machine = {
+      id: 'coders', phase: 'Ready', agentDiskStorage: storage,
+      spec: { provider: 'gke' }, status: {}, createdAt: '2026-11-08T00:00:00Z',
+    }
+    const { container } = render(<ResourcesSection
+      state={{ ...initialState(), disk: '500Gi' }} set={vi.fn()}
+      selectedMachine={machine} machineAvailable={{ cpu: 4, memoryGi: 8, diskGi: 10 }}
+    />)
+    expect(container.querySelector('[data-resource="disk"]')).toHaveAttribute('data-band', band)
+  })
+
   it('does not offer per-agent model overrides', () => {
     render(
       <ResourcesSection

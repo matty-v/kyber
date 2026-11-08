@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Stop charging separately provisioned GCE PD/AWS EBS agent volumes against machine local disk capacity. Machine views and agent creation now omit that unrelated constraint; individual agent disk usage, limits and expansion are preserved.
+
 - Stage supervised credential-maintenance evidence retention and namespace-scoped recovery permissions. The authority protocol remains zero; activation is still unavailable.
 
 ## v1.6.0 — 2026-09-10

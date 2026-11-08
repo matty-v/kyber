@@ -1013,6 +1013,7 @@ func main() {
 	)
 	machineReconciler.AlertSink = alertSink
 	machineReconciler.PlatformReservation = platformReservation
+	machineReconciler.AgentStorageClass = agentStorageClass
 	if err := machineReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to setup machine controller")
 		os.Exit(1)
@@ -1472,6 +1473,7 @@ func main() {
 	}
 
 	publicAPI = &internalapi.Server{
+		AgentStorageClass:             agentStorageClass,
 		OperatorCredentialPodUID:      os.Getenv("KYBER_OPERATOR_USAGE_POD_UID"),
 		SecurityAudit:                 securityHistory,
 		K8sClient:                     mgr.GetClient(),

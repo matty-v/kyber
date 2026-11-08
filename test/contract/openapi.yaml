@@ -3920,6 +3920,10 @@ components:
       type: object
       required: [id, phase, spec, createdAt]
       properties:
+        agentDiskStorage:
+          type: string
+          enum: [external]
+          description: Agent PVCs use separate cloud disks and do not consume machine disk capacity. Omitted for local or unknown storage.
         id:
           type: string
           example: worker-1

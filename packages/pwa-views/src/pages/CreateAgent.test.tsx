@@ -714,3 +714,26 @@ describe('CreateAgent — identity repo capability (MAT-53)', () => {
     expect(screen.getByTestId('identity-capability-loading')).toBeInTheDocument()
   }, 15_000)
 })
+
+describe('external PVC fit checks', () => {
+  it('allows advancing with a PVC larger than the machine local disk budget', async () => {
+    const user = userEvent.setup()
+    setupHooks()
+    vi.mocked(useAPIModule.useMachines).mockReturnValue({ data: [{
+      ...machines[0], agentDiskStorage: 'external',
+      status: {
+        assignableCapacity: { cpu: '8', memory: '16Gi', ephemeralStorage: '150Gi' },
+        availableCapacity: { cpu: '4', memory: '8Gi', ephemeralStorage: '10Gi' },
+      },
+    }] } as unknown as UseQueryResult<Machine[], Error>)
+    renderAt()
+    await user.type(screen.getByLabelText(/name/i), 'new-agent')
+    await user.selectOptions(screen.getByLabelText(/machine/i), 'razer')
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByLabelText(/runtime/i)).toBeInTheDocument())
+    expect(screen.getByTestId('capacity-verdict')).toHaveTextContent('Agent disk is provisioned separately.')
+    expect(screen.getByRole('button', { name: /next/i })).toBeEnabled()
+    await user.click(screen.getByRole('button', { name: /next/i }))
+    await waitFor(() => expect(screen.getByLabelText(/identity repo/i)).toBeInTheDocument())
+  })
+})

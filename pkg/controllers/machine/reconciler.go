@@ -104,6 +104,9 @@ type MachineReconciler struct {
 	// from KYBER_PLATFORM_RESERVATION_{CPU,MEMORY} env vars in cmd/control-plane/main.go;
 	// chart values default to 1 CPU / 1Gi.
 	PlatformReservation kyberv1.MachineCapacity
+
+	// AgentStorageClass matches the class used by new agent PVCs; empty uses the cluster default.
+	AgentStorageClass string
 }
 
 // NewMachineReconciler constructs a MachineReconciler and reads k3s credentials from
@@ -1253,7 +1256,10 @@ func (r *MachineReconciler) updateNodeInfo(ctx context.Context, machine *kyberv1
 	machine.Status.ObservedCapacity = &observed
 
 	// Assignable: observed minus platform reservation.
-	assignable := ComputeAssignable(observed, r.PlatformReservation)
+	assignable, err := r.assignableForAgentStorage(ctx, observed)
+	if err != nil {
+		return err
+	}
 	machine.Status.AssignableCapacity = &assignable
 
 	// Available: assignable minus sum of agents' requests on this machine.
@@ -1612,7 +1618,10 @@ func (r *MachineReconciler) reconcileStatic(ctx context.Context, m *kyberv1.Mach
 		Memory:           node.Status.Allocatable[corev1.ResourceMemory],
 		EphemeralStorage: node.Status.Allocatable[corev1.ResourceEphemeralStorage],
 	}
-	assignable := ComputeAssignable(observed, r.PlatformReservation)
+	assignable, err := r.assignableForAgentStorage(ctx, observed)
+	if err != nil {
+		return ctrl.Result{}, err
+	}
 
 	var agentList kyberv1.AgentList
 	var available *kyberv1.MachineCapacity

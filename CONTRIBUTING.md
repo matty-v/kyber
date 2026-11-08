@@ -64,7 +64,8 @@ Heavier suites (CI runs these in `integration.yml` / `e2e.yml`):
 
 ```bash
 go test -tags integration -timeout 15m ./test/integration/... ./test/contract/...
-    # needs docker (postgres/redis services) — see test/integration/docker-compose.yml
+    # needs docker (postgres/redis services) and KUBEBUILDER_ASSETS (envtest), as above
+    # see test/integration/docker-compose.yml
 go test -tags e2e -timeout 25m ./test/e2e/... -cluster-name kyber-e2e   # needs k3d + docker
 ```
 

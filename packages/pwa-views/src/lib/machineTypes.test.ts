@@ -165,3 +165,17 @@ describe('availableFromMachine', () => {
     expect(availableFromMachine(m, [])).toBeNull()
   })
 })
+
+describe('external PVC capacity', () => {
+  const m: Machine = {
+    id: 'coders', phase: 'Ready', agentDiskStorage: 'external',
+    spec: { provider: 'gke', capacity: { cpu: '8', memory: '32Gi', ephemeralStorage: '150Gi' } },
+    status: { availableCapacity: { cpu: '4', memory: '16Gi', ephemeralStorage: '10Gi' } },
+    createdAt: '2026-11-08T00:00:00Z',
+  }
+  it('ignores stale local disk capacity from every fallback tier', () => {
+    expect(availableFromMachine(m, [])).toEqual({ cpu: 4, memoryGi: 16, diskGi: 0 })
+    expect(machineCapacity(m)?.diskGi).toBeUndefined()
+    expect(availableFromMachine({ ...m, status: {} }, [])).toEqual({ cpu: 8, memoryGi: 32, diskGi: 0 })
+  })
+})

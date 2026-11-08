@@ -21,6 +21,13 @@ const noDisk: Machine = {
 } as unknown as Machine
 
 describe('MachineCapacityCard', () => {
+  it('omits external PVC capacity even when old node disk budgets remain', () => {
+    render(<MachineCapacityCard machine={{ ...fullyPopulated, agentDiskStorage: 'external' }} />)
+    expect(screen.queryByText('Disk')).not.toBeInTheDocument()
+    expect(screen.getByText('CPU')).toBeInTheDocument()
+    expect(screen.getByText('Memory')).toBeInTheDocument()
+  })
+
   it('renders three resource rows (CPU, Memory, Disk) when fully populated', () => {
     render(<MachineCapacityCard machine={fullyPopulated} />)
     expect(screen.getByText('CPU')).toBeInTheDocument()

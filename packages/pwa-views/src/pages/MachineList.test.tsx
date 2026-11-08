@@ -100,6 +100,18 @@ describe('MachineAvailableCell', () => {
     expect(screen.queryByText(/Disk/i)).not.toBeInTheDocument()
   })
 
+  it('omits external PVCs from the machine disk row with stale status', () => {
+    render(<MachineAvailableCell machine={machine({
+      agentDiskStorage: 'external',
+      status: { phase: 'Running',
+        assignableCapacity: { cpu: '12', memory: '24Gi', ephemeralStorage: '150Gi' },
+        availableCapacity: { cpu: '10', memory: '20Gi', ephemeralStorage: '0' },
+      },
+    })} />)
+    expect(screen.queryByText(/Disk/i)).not.toBeInTheDocument()
+    expect(screen.getByText(/10\.00 \/ 12\.00 free/i)).toBeInTheDocument()
+  })
+
   it('renders Disk row when ephemeralStorage is populated on assignable + available', () => {
     render(
       <MachineAvailableCell

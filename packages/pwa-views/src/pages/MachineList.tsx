@@ -252,7 +252,7 @@ export function MachineList() {
                   // Disk: omit the row entirely on machines that haven't
                   // surfaced ephemeralStorage yet (pre-#129 PR-C / no node
                   // yet) so the layout doesn't show an empty bar.
-                  const hasDisk = !!asn.ephemeralStorage && !!avl.ephemeralStorage
+                  const hasDisk = m.agentDiskStorage !== 'external' && !!asn.ephemeralStorage && !!avl.ephemeralStorage
                   const diskTotal = hasDisk ? parseMemoryGi(asn.ephemeralStorage!) : 0
                   const diskUsed  = hasDisk ? diskTotal - parseMemoryGi(avl.ephemeralStorage!) : 0
                   return (
@@ -440,7 +440,7 @@ export function MachineAvailableCell({ machine }: { machine: Machine }) {
   const cpuFree = parseCpu(avl.cpu ?? '0')
   const memTotal = parseMemoryGi(asn.memory ?? '0')
   const memFree = parseMemoryGi(avl.memory ?? '0')
-  const hasDisk = !!asn.ephemeralStorage && !!avl.ephemeralStorage
+  const hasDisk = machine.agentDiskStorage !== 'external' && !!asn.ephemeralStorage && !!avl.ephemeralStorage
   const diskTotal = hasDisk ? parseMemoryGi(asn.ephemeralStorage!) : 0
   const diskFree = hasDisk ? parseMemoryGi(avl.ephemeralStorage!) : 0
   return (
