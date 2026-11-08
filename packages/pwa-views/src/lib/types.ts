@@ -752,6 +752,8 @@ export interface MachineStatus {
 }
 
 export interface Machine {
+  /** PVC capacity is independent of the machine when backed by external cloud disks. */
+  agentDiskStorage?: 'external'
   id: string
   phase: MachinePhase
   spec: MachineSpec

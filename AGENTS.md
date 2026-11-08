@@ -134,6 +134,16 @@ shrinking is unsupported; a blocked, unfulfilled PVC request may be reduced
 only while the new target exceeds already allocated capacity. See
 `docs/operator/agent-disk-expansion.md`.
 
+Machine agent-disk budgets are storage-aware (`pkg/agentstorage`). The configured
+`KYBER_AGENT_STORAGE_CLASS`, or the newest cluster-default StorageClass when unset,
+identifies supported separately provisioned GCE PD/AWS EBS volumes. Their PVC sizes
+are excluded from assignable/available machine disk capacity; observed node storage
+remains physical local capacity. Local or unknown provisioners retain disk budgeting.
+Machine GET/list responses mark external storage with optional `agentDiskStorage:
+external` and suppress local disk budgets even while old controller status is cached.
+The creation wizard and machine views use that marker; individual Agent disk usage,
+limits, reserve detection and expansion remain independent and unchanged.
+
 ### 1.2 Pure state machine + thin reconciler (the agent lifecycle)
 - `pkg/controllers/agent/state_machine.go` — pure function
   `(phase, event) → (action, nextPhase)`. Zero k8s imports. Unit-testable.

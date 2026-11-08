@@ -182,7 +182,7 @@ export function CreateAgent() {
     ? true
     : newCpu <= machineAvailable.cpu &&
       newMem <= machineAvailable.memoryGi &&
-      (machineAvailable.diskGi <= 0 || newDisk <= machineAvailable.diskGi)
+      (selectedMachine.agentDiskStorage === 'external' || machineAvailable.diskGi <= 0 || newDisk <= machineAvailable.diskGi)
 
   const currentStepValidation = WIZARD_STEPS[activeStep - 1].isValid(state)
   const currentStepValid = currentStepValidation.ok

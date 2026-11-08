@@ -36,6 +36,7 @@ import (
 	_ "github.com/matty-v/kyber/pkg/runtimes/codex"
 	coordinationv1 "k8s.io/api/coordination/v1"
 	corev1 "k8s.io/api/core/v1"
+	storagev1 "k8s.io/api/storage/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -85,6 +86,9 @@ func newContractScheme(t *testing.T) *runtime.Scheme {
 	}
 	if err := corev1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme corev1: %v", err)
+	}
+	if err := storagev1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme storagev1: %v", err)
 	}
 	if err := coordinationv1.AddToScheme(s); err != nil {
 		t.Fatalf("AddToScheme coordinationv1: %v", err)
@@ -279,6 +283,17 @@ func TestContract_ListMachines(t *testing.T) {
 	rr := validateContract(t, h, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("want 200, got %d: %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestContract_ExternalMachineStorage(t *testing.T) {
+	class := &storagev1.StorageClass{ObjectMeta: metav1.ObjectMeta{Name: "cloud", Annotations: map[string]string{"storageclass.kubernetes.io/is-default-class": "true"}}, Provisioner: "pd.csi.storage.gke.io"}
+	h := newContractServer(t, sampleMachineObj("worker-1"), class)
+	for _, path := range []string{"/api/v1/machines", "/api/v1/machines/worker-1"} {
+		rr := validateContract(t, h, authedReq(t, http.MethodGet, path, nil))
+		if rr.Code != http.StatusOK || !bytes.Contains(rr.Body.Bytes(), []byte(`"agentDiskStorage":"external"`)) {
+			t.Fatalf("external machine response: %d %s", rr.Code, rr.Body.String())
+		}
 	}
 }
 

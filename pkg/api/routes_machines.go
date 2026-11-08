@@ -19,6 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/matty-v/kyber/pkg/adapters"
+	"github.com/matty-v/kyber/pkg/agentstorage"
 	kyberv1 "github.com/matty-v/kyber/pkg/api/v1"
 )
 
@@ -71,11 +72,13 @@ type CreateMachineCapacity struct {
 
 // MachineResponse is the JSON representation of a Machine returned by the API.
 type MachineResponse struct {
-	ID        string                `json:"id"`
-	Phase     kyberv1.MachinePhase  `json:"phase"`
-	Spec      machineSpecResponse   `json:"spec"`
-	Status    machineStatusResponse `json:"status,omitempty"`
-	CreatedAt string                `json:"createdAt"`
+	ID string `json:"id"`
+	// AgentDiskStorage is external when PVC capacity is independent of node disk.
+	AgentDiskStorage string                `json:"agentDiskStorage,omitempty"`
+	Phase            kyberv1.MachinePhase  `json:"phase"`
+	Spec             machineSpecResponse   `json:"spec"`
+	Status           machineStatusResponse `json:"status,omitempty"`
+	CreatedAt        string                `json:"createdAt"`
 }
 
 type machineSpecResponse struct {
@@ -714,6 +717,20 @@ func providerMatchesInstall(requested, configured string) bool {
 // enrichMachineResponse adds live available resource data to a MachineResponse.
 // If the node isn't ready or the query fails, the fields are left empty.
 func (s *Server) enrichMachineResponse(ctx context.Context, resp *MachineResponse, nodeName string) {
+	external, err := agentstorage.ExternalDisks(ctx, s.K8sClient, s.AgentStorageClass)
+	if err != nil {
+		slog.Warn("could not resolve agent storage capacity", "error", err)
+	} else if external {
+		resp.AgentDiskStorage = "external"
+		// Suppress both old controller reservations and spec fallback budgets during
+		// rolling upgrades. ObservedCapacity still describes the physical node.
+		for _, capacity := range []*machineCapacityResponse{resp.Spec.Capacity, resp.Status.AssignableCapacity, resp.Status.AvailableCapacity} {
+			if capacity != nil {
+				capacity.EphemeralStorage = ""
+			}
+		}
+	}
+
 	if nodeName == "" {
 		return
 	}

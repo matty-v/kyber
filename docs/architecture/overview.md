@@ -74,6 +74,23 @@ from the Go types with `make generate` — never hand-edit the generated CRDs.
 
 ---
 
+### Agent volume capacity and machine disk capacity
+
+Agent PVC allocations on supported GCE Persistent Disk and AWS EBS StorageClasses
+are independent of the worker's local ephemeral storage. The machine controller
+resolves `KYBER_AGENT_STORAGE_CLASS` (or the newest default StorageClass) and omits
+the agent disk budget from assignable/available capacity for those backends. Raw
+observed node ephemeral storage remains available for node diagnostics. Local and
+unknown storage provisioners retain the existing machine disk reservation model.
+
+The machine GET/list API identifies separate disks with `agentDiskStorage: external`
+and strips obsolete assignable/available/spec disk budgets from its response. This
+also makes rolling upgrades safe when the controller has not refreshed status yet.
+The wizard checks CPU and memory and provisions the requested agent disk separately.
+This does not change per-agent disk usage measurements, enforced or soft limits,
+reserve detection, PVC deletion, or expansion/quota checks.
+
+
 ## 4. Control-plane module map
 
 The control plane is a modular monolith: one binary, internally decomposed

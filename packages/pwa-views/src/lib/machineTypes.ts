@@ -79,7 +79,7 @@ export function machineCapacity(m: Machine): MachineCapacity | null {
     return {
       cpu: parseCpu(m.spec.capacity.cpu),
       memoryGi: parseMemoryGi(m.spec.capacity.memory),
-      diskGi: m.spec.capacity.ephemeralStorage
+      diskGi: m.agentDiskStorage !== 'external' && m.spec.capacity.ephemeralStorage
         ? parseMemoryGi(m.spec.capacity.ephemeralStorage)
         : undefined,
     }
@@ -114,7 +114,7 @@ export function availableFromMachine(m: Machine, agents: Agent[]): MachineAvaila
     return {
       cpu: parseCpu(avail.cpu),
       memoryGi: parseMemoryGi(avail.memory),
-      diskGi: avail.ephemeralStorage ? parseMemoryGi(avail.ephemeralStorage) : 0,
+      diskGi: m.agentDiskStorage !== 'external' && avail.ephemeralStorage ? parseMemoryGi(avail.ephemeralStorage) : 0,
     }
   }
   // Tier 2: legacy availableCPU/availableMemory strings (server-side enrichMachineResponse,

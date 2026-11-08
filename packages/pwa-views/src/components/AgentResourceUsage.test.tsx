@@ -19,6 +19,14 @@ const usage = {
 }
 
 describe('AgentResourceUsage', () => {
+  it('preserves used-of-allocated reporting for separately provisioned PVCs', () => {
+    render(<AgentResourceUsage usage={{ ...usage, diskUsageMethod: 'statfs', diskLimitEnforced: true }} />)
+    expect(screen.getByText('18.0 GiB of 20.0 GiB')).toBeInTheDocument()
+    expect(screen.getByTestId('resource-disk')).toBeInTheDocument()
+    expect(screen.queryByTestId('resource-shared backing disk')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('disk-soft-reservation-note')).not.toBeInTheDocument()
+  })
+
   it('shows used-of-allocated values and danger at the disk reserve', () => {
     render(<AgentResourceUsage usage={usage} />)
     expect(screen.getByText('0.75 of 2.00 cores')).toBeInTheDocument()

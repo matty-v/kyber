@@ -54,7 +54,7 @@ export function MachineCapacityCard({ machine }: MachineCapacityCardProps) {
   // Disk: omit on machines where ephemeralStorage isn't populated on both
   // assignable + available (pre-#129 PR-C clusters or older controllers).
   // Mirrors the gating in MachineList's MachineAvailableCell.
-  const hasDisk = !!asn.ephemeralStorage && !!avl?.ephemeralStorage
+  const hasDisk = machine.agentDiskStorage !== 'external' && !!asn.ephemeralStorage && !!avl?.ephemeralStorage
   const diskTotal = hasDisk ? parseMemoryGi(asn.ephemeralStorage!) : 0
   const diskFree = hasDisk ? parseMemoryGi(avl!.ephemeralStorage!) : 0
   const diskUsed = hasDisk ? Math.max(0, diskTotal - diskFree) : 0

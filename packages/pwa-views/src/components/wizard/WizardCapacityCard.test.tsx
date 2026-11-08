@@ -16,6 +16,25 @@ function machineWith(asn?: { cpu: string; memory: string; ephemeralStorage?: str
 }
 
 describe('WizardCapacityCard', () => {
+  it.each([0, 10])('ignores external PVC size with %s GiB of stale local headroom', (diskGi) => {
+    render(<WizardCapacityCard
+      selectedMachine={{ ...machineWith({ cpu: '4', memory: '8Gi', ephemeralStorage: '150Gi' }), agentDiskStorage: 'external' }}
+      machineAvailable={{ cpu: 3, memoryGi: 6, diskGi }} newCpu={1} newMemoryGi={2} newDiskGi={500}
+    />)
+    expect(screen.getByTestId('capacity-verdict')).toHaveTextContent('Fits on razer. Agent disk is provisioned separately.')
+    expect(screen.queryByTestId('proposed-bar-disk')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('proposed-disk-unknown')).not.toBeInTheDocument()
+    expect(screen.getByTestId('wizard-capacity-card')).not.toHaveAttribute('data-exceeds')
+  })
+
+  it('still rejects insufficient CPU when storage is external', () => {
+    render(<WizardCapacityCard
+      selectedMachine={{ ...machineWith({ cpu: '4', memory: '8Gi' }), agentDiskStorage: 'external' }}
+      machineAvailable={{ cpu: 0, memoryGi: 6, diskGi: 0 }} newCpu={1} newMemoryGi={2} newDiskGi={500}
+    />)
+    expect(screen.getByTestId('capacity-verdict')).toHaveTextContent("won't fit — reduce CPU")
+  })
+
   it('renders "capacity unknown" when selectedMachine is null (stale id picked)', () => {
     render(
       <WizardCapacityCard
