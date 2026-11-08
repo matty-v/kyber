@@ -38,7 +38,8 @@ export function ResourcesSection({
   // Disk band only highlights when the machine actually published an
   // ephemeral-storage budget (>0). Pre-PR-C / pending machines surface 0
   // and we don't want to show every disk size as red against a 0 budget.
-  const diskBand = bandFor(newDisk, selectedMachine?.agentDiskStorage === 'external' ? undefined : machineAvailable?.diskGi && machineAvailable.diskGi > 0 ? machineAvailable.diskGi : undefined)
+  const diskAvailable = selectedMachine?.agentDiskStorage === 'external' ? undefined : machineAvailable?.diskGi
+  const diskBand = bandFor(newDisk, diskAvailable && diskAvailable > 0 ? diskAvailable : undefined)
   return (
     <section className="space-y-5">
       {/* Capacity card — appears once a machine is picked. Replaces the

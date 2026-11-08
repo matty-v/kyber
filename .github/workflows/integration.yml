@@ -81,6 +81,12 @@ jobs:
       - name: Download modules
         run: go mod download
 
+      - name: Install envtest binaries
+        run: |
+          go install sigs.k8s.io/controller-runtime/tools/setup-envtest@release-0.19
+          KUBEBUILDER_ASSETS=$(setup-envtest use 1.31.0 -p path)
+          echo "KUBEBUILDER_ASSETS=${KUBEBUILDER_ASSETS}" >> "$GITHUB_ENV"
+
       - name: Install harness conformance tools
         run: sudo apt-get update && sudo apt-get install -y tmux jq
 
