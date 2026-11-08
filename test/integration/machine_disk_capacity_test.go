@@ -82,7 +82,7 @@ func TestMachineDiskCapacityStorageBackend(t *testing.T) {
 			if err := c.Status().Update(ctx, machine); err != nil {
 				t.Fatal(err)
 			}
-			agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "han", Namespace: ns}, Spec: kyberv1.AgentSpec{Machine: "worker-" + backend.name, Runtime: "codex", Resources: kyberv1.AgentResources{
+			agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "han", Namespace: ns}, Spec: kyberv1.AgentSpec{Machine: "worker-" + backend.name, Runtime: "codex", Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeAPIKey}, Resources: kyberv1.AgentResources{
 				CPU: resource.MustParse("1"), Memory: resource.MustParse("4Gi"), Disk: resource.MustParse("100Gi")}}}
 			if err := c.Create(ctx, agent); err != nil {
 				t.Fatal(err)
