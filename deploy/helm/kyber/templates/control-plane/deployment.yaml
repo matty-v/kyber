@@ -1,4 +1,8 @@
-{{- $identityTemplate := .Values.identityRepo.defaultTemplate | default "matty-v/kyber-agent-template" -}}
+{{- $identityTemplate := .Values.identityRepo.defaultTemplate -}}
+{{- if and (not (kindIs "invalid" $identityTemplate)) (not (kindIs "string" $identityTemplate)) -}}
+{{- fail "identityRepo.defaultTemplate must be an owner/name GitHub repository slug (string)" -}}
+{{- end -}}
+{{- $identityTemplate = $identityTemplate | default "matty-v/kyber-agent-template" -}}
 {{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,99}/[A-Za-z0-9][A-Za-z0-9._-]{0,99}$" $identityTemplate) -}}
 {{- fail "identityRepo.defaultTemplate must be an owner/name GitHub repository slug" -}}
 {{- end -}}

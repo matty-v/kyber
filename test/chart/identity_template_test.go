@@ -1,7 +1,9 @@
 package chart
 
 import (
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -11,6 +13,7 @@ func TestIdentityTemplateConfiguration(t *testing.T) {
 		{"default", "", "matty-v/kyber-agent-template"},
 		{"custom", "source-org/custom-template", "source-org/custom-template"},
 		{"empty", "", "matty-v/kyber-agent-template"},
+		{"unset", "null", "matty-v/kyber-agent-template"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			settings := []string{"identityRepo.defaultOwner=destination-org"}
@@ -25,13 +28,21 @@ func TestIdentityTemplateConfiguration(t *testing.T) {
 	}
 }
 
-func TestIdentityTemplateRejectsInvalidSlug(t *testing.T) {
+func TestIdentityTemplateRejectsInvalidConfiguration(t *testing.T) {
 	if _, err := exec.LookPath("helm"); err != nil {
 		t.Skip("helm unavailable")
 	}
-	args := append(helmTemplateArgs(t), "--set", "identityRepo.defaultTemplate=https://github.com/source/repo")
-	output, err := exec.Command("helm", args...).CombinedOutput()
-	if err == nil || !strings.Contains(string(output), "identityRepo.defaultTemplate must be an owner/name") {
-		t.Fatalf("invalid template render: %v, %s", err, output)
+	for _, value := range []string{`"https://github.com/source/repo"`, "false", "0", "[]", "{}"} {
+		t.Run(value, func(t *testing.T) {
+			values := filepath.Join(t.TempDir(), "values.yaml")
+			if err := os.WriteFile(values, []byte("identityRepo:\n  defaultTemplate: "+value+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			args := append(helmTemplateArgs(t), "-f", values)
+			output, err := exec.Command("helm", args...).CombinedOutput()
+			if err == nil || !strings.Contains(string(output), "identityRepo.defaultTemplate must be an owner/name") {
+				t.Fatalf("invalid template render: %v, %s", err, output)
+			}
+		})
 	}
 }
