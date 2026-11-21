@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.6
+
+- Remove migration handoff checklists from Agent General and hide completed restore cards; retain active restore progress and failed-restore errors.
+
 ## 0.83.5
 
 - Collapse long migration checklist text and excluded login file inventories into bounded, scrollable details, including previously restored agents and narrow screens.
