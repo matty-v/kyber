@@ -1,5 +1,6 @@
 import { Card } from './Card'
 import { Button } from './Button'
+import { ExpandableText } from './ExpandableText'
 import { useAgentImports, useCancelAgentImport } from '../hooks/useAPI'
 import { formatArchiveBytes } from './DiskExportCard'
 import type { ArchivesCapability } from '../lib/types'
@@ -14,7 +15,7 @@ export function RestoreStatusCard({ agentName, capability }: { agentName: string
   if (!job) return null
   const running = job.state === 'queued' || job.state === 'running'
   return (
-    <Card>
+    <Card className="min-w-0 [overflow-wrap:anywhere]">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-text-primary">Restored from a disk archive</h2>
@@ -40,7 +41,7 @@ export function RestoreStatusCard({ agentName, capability }: { agentName: string
         <div className="mt-3" data-testid="restore-cutover">
           <h3 className="mb-1 text-xs font-medium text-text-primary">Before this agent takes over</h3>
           <ul className="list-disc space-y-1 pl-5 text-xs text-text-secondary">
-            {job.cutover!.map((item) => <li key={item}>{item}</li>)}
+            {job.cutover!.map((item, index) => <li key={index}><ExpandableText text={item} /></li>)}
           </ul>
         </div>
       )}

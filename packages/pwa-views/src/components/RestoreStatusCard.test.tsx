@@ -44,4 +44,26 @@ describe('RestoreStatusCard', () => {
     expect(screen.queryByRole('button', { name: 'Cancel restore' })).toBeNull()
     expect(screen.getByTestId('restore-state')).toHaveTextContent('NeedsAuth')
   })
+
+  it('bounds persisted long checklists without dropping details or short action items', async () => {
+    const paths = Array.from({ length: 500 }, (_, i) => `agentroot/home/kyber/.claude/sessions/${i}.${'a'.repeat(80)}.json`)
+    const text = `Harness login files are never restored (${paths.join(', ')}). Authorize the new agent with its own credential.`
+    imports.data = [{ ...running, state: 'completed', cutover: [...running.cutover!, text] }]
+    render(<RestoreStatusCard agentName="leia" capability={{ available: true }} />)
+    const summary = screen.getByText(/Show full text/).closest('summary')!
+    const disclosure = summary.parentElement!
+    expect(disclosure).not.toHaveAttribute('open')
+    expect(summary.textContent!.length).toBeLessThan(270)
+    expect(summary).not.toHaveTextContent(paths[499])
+    expect(screen.getByText(running.cutover![0])).toBeVisible()
+    const full = screen.getByText(text)
+    expect(full).not.toBeVisible()
+    await userEvent.click(summary)
+    expect(disclosure).toHaveAttribute('open')
+    expect(full).toBeVisible()
+    expect(full).toHaveTextContent(paths[499])
+    expect(full).toHaveClass('max-h-48', 'overflow-y-auto', '[overflow-wrap:anywhere]')
+    await userEvent.click(summary)
+    expect(full).not.toBeVisible()
+  })
 })

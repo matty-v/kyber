@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.83.5
+
+- Collapse long migration checklist text and excluded login file inventories into bounded, scrollable details, including previously restored agents and narrow screens.
+
 ## 0.83.4
 
 - Preview and submit the installation-configured identity template independently of the destination owner; retain the upstream fallback for older control planes and use owner-neutral examples.

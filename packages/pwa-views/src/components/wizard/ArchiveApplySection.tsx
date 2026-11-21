@@ -105,9 +105,15 @@ export function ArchiveApplySection({ summary, state, set }: { summary: ArchiveS
         </div>
       )}
       {login.length > 0 && (
-        <p data-testid="archive-apply-login">
-          Harness login files are never restored ({login.join(', ')}). The new agent signs in with its own credential.
-        </p>
+        <div className="min-w-0 [overflow-wrap:anywhere]" data-testid="archive-apply-login">
+          <p>{login.length} harness login file{login.length === 1 ? '' : 's'} will not be restored. The new agent signs in with its own credential.</p>
+          <details className="mt-1">
+            <summary className="cursor-pointer">Show excluded login files</summary>
+            <ul aria-label="Excluded login files" className="mt-2 max-h-48 overflow-y-auto space-y-1" tabIndex={0}>
+              {login.map((path, index) => <li key={index}>{path}</li>)}
+            </ul>
+          </details>
+        </div>
       )}
     </div>
   )
