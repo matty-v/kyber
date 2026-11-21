@@ -122,10 +122,10 @@ values are copied inside the cluster; otherwise (an upload, or the agent is
 gone) each key is listed for you to re-enter. A2A peers whose
 credential Secret does not exist on the new installation are left off. Each of
 these can be left out instead from the wizard's **From the archive** section.
-Kyber lists everything you still have to do on the new agent's page as a
-cutover checklist: jobs to resume, bindings to enable (once the sender uses the
-new URL and secret), chat channels, secrets to re-enter, crontabs the agent
-installed itself, and a shared identity repo.
+The new agent's General page shows restore progress while an import runs and
+errors if it fails. Completed, canceled and expired imports leave no status
+panel. Migration handoff notes remain in the import API record but are not
+rendered as a checklist on General.
 
 The harness login (for example `~/.claude/.credentials.json` or
 `~/.codex/auth.json`) is never restored, so the new agent always signs in with

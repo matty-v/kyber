@@ -120,7 +120,9 @@ re-scans the tree and compares it to the manifest, and only then removes the
 hold. The new agent authorizes like any new agent, through the create
 request's credentials or afterwards. Kubernetes Secrets, channel bindings and operator
 tokens are never copied. Scheduled jobs and channel bindings from the source
-config are shown as a cutover checklist and are not activated. A failed or
+config are recorded in the import API checklist and are not activated. General
+shows only active restore progress or failures; completed migrations leave no
+status panel or handoff checklist. A failed or
 canceled restore deletes the new Agent and PVC; the source is never touched.
 
 Every file that looks like a credential (harness logins, SSH keys, Git, cloud

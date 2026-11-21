@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Remove migration checklists and completed restore cards from Agent General; keep restore progress, cancellation and failure feedback.
+
 - Keep migration checklists readable by collapsing long entries and excluded login file inventories into scrollable details, including existing imports.
 
 - Make the new-agent identity template source configurable with `identityRepo.defaultTemplate`, independently of its destination owner, and remove owner-specific wizard examples.

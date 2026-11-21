@@ -121,6 +121,11 @@ clear it. Create-from-archive (`POST /api/v1/agent-imports`, uploads at
 hold set from the request context, pre-creates the PVC, and releases the hold
 only after the restore pod has re-scanned the volume against the manifest. See `docs/design/2026-09-22-agent-disk-export-import.md`.
 
+Agent General shows archive restore status only for queued/running imports or
+failures. Completed/canceled/expired imports leave no card, and the stored
+`cutover` checklist is not rendered there. Import API records and credential
+exclusions remain independent of this UI visibility rule.
+
 Agent disk increases use `POST /api/v1/agents/{name}/increase-disk` after
 `GET /api/v1/agents/{name}/disk-options` checks the bound PVC, PV, CSI driver,
 StorageClass, and quota. Generic Agent PATCH must reject disk changes. The

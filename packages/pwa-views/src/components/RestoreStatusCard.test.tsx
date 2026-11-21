@@ -28,42 +28,30 @@ describe('RestoreStatusCard', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
-  it('shows progress, the cutover checklist, and cancels', async () => {
-    imports.data = [running]
+  it.each(['queued', 'running'] as const)('shows %s progress and cancels without rendering migration instructions', async (state) => {
+    imports.data = [{ ...running, state }]
     render(<RestoreStatusCard agentName="leia" capability={{ available: true }} />)
     expect(screen.getByTestId('restore-state')).toHaveTextContent('Restoring the disk')
-    expect(screen.getByTestId('restore-cutover')).toHaveTextContent('Telegram was enabled on han')
+    expect(screen.queryByTestId('restore-cutover')).toBeNull()
+    expect(screen.queryByText(running.cutover![0])).toBeNull()
     expect(screen.getByText(/source agent is never touched/)).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Cancel restore' }))
     expect(cancelImport.mutate).toHaveBeenCalledWith('imp1')
   })
 
-  it('does not offer cancel once the disk is restored', () => {
-    imports.data = [{ ...running, state: 'completed', restored: true, cancelable: false, message: 'Restored; agent is NeedsAuth' }]
-    render(<RestoreStatusCard agentName="leia" capability={{ available: true }} />)
-    expect(screen.queryByRole('button', { name: 'Cancel restore' })).toBeNull()
-    expect(screen.getByTestId('restore-state')).toHaveTextContent('NeedsAuth')
+  it.each(['completed', 'canceled', 'expired'] as const)('hides the restore card after %s', (state) => {
+    imports.data = [{ ...running, state, restored: true, cancelable: false, message: 'Restored; agent is NeedsAuth' }]
+    const { container } = render(<RestoreStatusCard agentName="leia" capability={{ available: true }} />)
+    expect(container).toBeEmptyDOMElement()
   })
 
-  it('bounds persisted long checklists without dropping details or short action items', async () => {
-    const paths = Array.from({ length: 500 }, (_, i) => `agentroot/home/kyber/.claude/sessions/${i}.${'a'.repeat(80)}.json`)
-    const text = `Harness login files are never restored (${paths.join(', ')}). Authorize the new agent with its own credential.`
-    imports.data = [{ ...running, state: 'completed', cutover: [...running.cutover!, text] }]
+  it('retains failed-restore errors without showing stored checklist text', () => {
+    const text = `Harness login files are never restored (${'session.json, '.repeat(500)}). Authorize the new agent.`
+    imports.data = [{ ...running, state: 'failed', cancelable: false, message: 'Restore failed', error: 'Disk verification failed', cutover: [text] }]
     render(<RestoreStatusCard agentName="leia" capability={{ available: true }} />)
-    const summary = screen.getByText(/Show full text/).closest('summary')!
-    const disclosure = summary.parentElement!
-    expect(disclosure).not.toHaveAttribute('open')
-    expect(summary.textContent!.length).toBeLessThan(270)
-    expect(summary).not.toHaveTextContent(paths[499])
-    expect(screen.getByText(running.cutover![0])).toBeVisible()
-    const full = screen.getByText(text)
-    expect(full).not.toBeVisible()
-    await userEvent.click(summary)
-    expect(disclosure).toHaveAttribute('open')
-    expect(full).toBeVisible()
-    expect(full).toHaveTextContent(paths[499])
-    expect(full).toHaveClass('max-h-48', 'overflow-y-auto', '[overflow-wrap:anywhere]')
-    await userEvent.click(summary)
-    expect(full).not.toBeVisible()
+    expect(screen.getByTestId('restore-state')).toHaveTextContent('Restore failed')
+    expect(screen.getByText('Disk verification failed')).toBeVisible()
+    expect(screen.queryByText(text)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel restore' })).toBeNull()
   })
 })
