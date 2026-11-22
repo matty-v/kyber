@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.84.0
+
+- Introduce Agent activity groups with independent collapse preferences, explicit unavailable telemetry and a leased current-work projection.
+
 ## 0.83.6
 
 - Remove migration handoff checklists from Agent General and hide completed restore cards; retain active restore progress and failed-restore errors.

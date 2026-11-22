@@ -1,7 +1,8 @@
 // React Query wrappers for all Kyber API calls.
 
 import { useMemo } from 'react'
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, replaceEqualDeep } from '@tanstack/react-query'
+import { recordActivityReceipt } from '../lib/activity'
 import { createApiClient } from '../lib/api'
 import { useCluster } from '../lib/cluster-context'
 import { parseTranscript } from '../lib/transcript'
@@ -46,6 +47,7 @@ export function useAgents() {
   return useQuery({
     queryKey: ['cluster', cluster.id, 'agents'],
     queryFn: () => api.listAgents(),
+    structuralSharing: (oldData, newData) => recordActivityReceipt(replaceEqualDeep(oldData, newData) as import('../lib/types').Agent[]),
     refetchInterval: 30000,
   })
 }
@@ -56,6 +58,7 @@ export function useAgent(name: string) {
   return useQuery({
     queryKey: ['cluster', cluster.id, 'agents', name],
     queryFn: () => api.getAgent(name),
+    structuralSharing: (oldData, newData) => recordActivityReceipt([replaceEqualDeep(oldData, newData) as import('../lib/types').Agent])[0],
     enabled: Boolean(name),
     refetchInterval: 15000,
   })

@@ -4143,6 +4143,8 @@ components:
     AgentActivityStatus:
       type: object
       properties:
+        work:
+          $ref: '#/components/schemas/AgentWorkView'
         lastHeartbeatAt:
           type: string
           format: date-time
@@ -4154,6 +4156,23 @@ components:
           format: date-time
         resources:
           $ref: '#/components/schemas/AgentResourceUsage'
+
+    AgentWorkView:
+      type: object
+      required: [state, serverTime, foregroundCount, backgroundCount]
+      properties:
+        state:
+          type: string
+          enum: [working, background, waiting, unavailable, excluded]
+        serverTime: {type: string, format: date-time}
+        observedAt: {type: string, format: date-time}
+        expiresAt: {type: string, format: date-time}
+        lastWorkedAt: {type: string, format: date-time}
+        stateSince: {type: string, format: date-time}
+        reason: {type: string}
+        foregroundCount: {type: integer, minimum: 0, maximum: 1024}
+        backgroundCount: {type: integer, minimum: 0, maximum: 1024}
+        needsInput: {type: boolean}
 
     AgentGoalStatus:
       type: object
@@ -4240,6 +4259,8 @@ components:
           type: string
           example: dave
         phase:
+          $ref: '#/components/schemas/AgentPhase'
+        desiredPhase:
           $ref: '#/components/schemas/AgentPhase'
         identityRepo:
           type: object

@@ -139,6 +139,12 @@ shrinking is unsupported; a blocked, unfulfilled PVC request may be reduced
 only while the new target exceeds already allocated capacity. See
 `docs/operator/agent-disk-expansion.md`.
 
+Agent activity qualification and the in-progress leased-work contract are in
+`docs/design/2026-11-22-agent-activity.md`. Legacy transcript state and sidecar
+contact are not proof of current work. Do not activate or ship the new dashboard
+as a complete reporting fix until native inventory producers and trusted
+admission have been qualified for every registered harness.
+
 New-agent template sources use `identityRepo.defaultTemplate` →
 `KYBER_IDENTITY_REPO_TEMPLATE` → `GET /api/v1/config`'s
 `identity.defaultTemplate`. The wizard previews and submits this source separately

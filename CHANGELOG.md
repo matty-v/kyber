@@ -7,6 +7,8 @@
 
 ## Unreleased
 
+- Add the Agent activity current-work contract and independently collapsible dashboard groups, with lifecycle and observation freshness taking precedence over cached legacy state.
+
 - Remove migration checklists and completed restore cards from Agent General; keep restore progress, cancellation and failure feedback.
 
 - Keep migration checklists readable by collapsing long entries and excluded login file inventories into scrollable details, including existing imports.

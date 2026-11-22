@@ -204,6 +204,7 @@ var (
 
 // AgentResponse is the JSON representation of an Agent returned by the API.
 type AgentResponse struct {
+	DesiredPhase        kyberv1.AgentPhase                               `json:"desiredPhase,omitempty"`
 	RuntimeContract     *pkgruntimes.Descriptor                          `json:"runtimeContract,omitempty"`
 	RuntimeCapabilities map[pkgruntimes.Feature]pkgruntimes.Availability `json:"runtimeCapabilities,omitempty"`
 
@@ -321,7 +322,23 @@ type agentProfileResponse struct {
 // agentActivityStatusResponse mirrors AgentStatus.Activity on the wire.
 // All timestamps RFC3339 strings, consistent with the other status sub-
 // responses.
+// Work is the protocol-one projection. Omitted until a qualified native
+// inventory is available; legacy state is never a current-work lease.
+type agentWorkViewResponse struct {
+	State           string `json:"state"`
+	Reason          string `json:"reason,omitempty"`
+	ServerTime      string `json:"serverTime"`
+	ObservedAt      string `json:"observedAt,omitempty"`
+	ExpiresAt       string `json:"expiresAt,omitempty"`
+	LastWorkedAt    string `json:"lastWorkedAt,omitempty"`
+	StateSince      string `json:"stateSince,omitempty"`
+	ForegroundCount int    `json:"foregroundCount"`
+	BackgroundCount int    `json:"backgroundCount"`
+	NeedsInput      bool   `json:"needsInput,omitempty"`
+}
+
 type agentActivityStatusResponse struct {
+	Work            *agentWorkViewResponse      `json:"work,omitempty"`
 	LastHeartbeatAt string                      `json:"lastHeartbeatAt,omitempty"`
 	State           string                      `json:"state,omitempty"`
 	LastActivityAt  string                      `json:"lastActivityAt,omitempty"`
@@ -482,6 +499,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 		authType = kyberv1.AgentAuthTypeOAuth
 	}
 	resp := AgentResponse{
+		DesiredPhase:             a.Spec.DesiredPhase,
 		ID:                       a.Name,
 		Phase:                    a.Status.Phase,
 		Machine:                  a.Spec.Machine,

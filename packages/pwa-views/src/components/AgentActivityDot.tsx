@@ -1,48 +1,19 @@
+import { projectWork, workLabels, workReasons } from '../lib/activity'
+import { useActivityClock } from '../hooks/useActivityClock'
 import type { Agent } from '../lib/types'
 
 export interface AgentActivityDotProps {
   agent: Agent
 }
 
-/**
- * AgentActivityDot — small inline dot rendered next to a StatusBadge
- * to convey whether the agent is mid-turn (`working`) vs waiting for
- * input (`idle`). Renders nothing when the runtime hasn't reported a
- * state yet — visible-by-absence beats faking a stale state.
- *
- * Spec: kyber#249 (closes kyber#174). Source: in-pod
- * kyber-token-reporter pushes activity events to
- * /internal/agents/{name}/status-event; control plane patches
- * Agent.status.activity.{state, lastActivityAt}; this component renders
- * the result.
- *
- * Tooltip on hover surfaces the verbatim state + relative-time
- * lastActivityAt for operators who want the precise reading.
- */
+// All activity surfaces share the lifecycle/freshness projection. Legacy
+// state is diagnostic history and cannot keep a working dot alive.
 export function AgentActivityDot({ agent }: AgentActivityDotProps) {
-  const a = agent.activity
-  if (!a || !a.state || a.state === 'unknown') {
-    return null
-  }
-  const working = a.state === 'working'
-  const colorClass = working ? 'bg-success' : 'bg-text-disabled'
-  const pulseClass = working ? 'motion-safe:animate-pulse' : ''
-  const title = working
-    ? 'Working'
-    : a.lastActivityAt
-      ? `Idle ${formatRelativeTime(a.lastActivityAt)}`
-      : 'Idle'
-
-  return (
-    <span
-      role="status"
-      aria-label={working ? 'Agent is working' : 'Agent is idle'}
-      data-testid="agent-activity-dot"
-      data-state={a.state}
-      title={title}
-      className={`inline-block h-2 w-2 rounded-full ${colorClass} ${pulseClass}`}
-    />
-  )
+  const now = useActivityClock()
+  const work = projectWork(agent, now)
+  if (work.state === 'excluded') return null
+  const color = work.state === 'working' ? 'bg-success' : work.state === 'background' ? 'bg-info' : work.state === 'waiting' ? 'bg-text-disabled' : 'bg-warn'
+  return <span role="status" aria-label={workLabels[work.state]} data-testid="agent-activity-dot" data-state={work.state} title={work.state === 'unavailable' ? workReasons[work.reason ?? ''] ?? 'Activity unavailable' : workLabels[work.state]} className={`inline-block h-2 w-2 rounded-full ${color}`} />
 }
 
 /**

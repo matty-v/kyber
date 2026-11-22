@@ -1,3 +1,4 @@
+import { recordActivityReceipt } from './activity'
 // Typed fetch wrapper for the Kyber API. Cluster-bound: every method comes
 // from createApiClient(cluster) and uses the cluster's baseURL + apiKey.
 // No globals — multiple clusters can coexist in one React tree.
@@ -289,11 +290,11 @@ export function createApiClient(cluster: Cluster) {
 
     listAgents: async (signal?: AbortSignal): Promise<Agent[]> => {
       const res = await request<AgentListResponse>('GET', '/api/v1/agents', undefined, signal)
-      return res.items
+      return recordActivityReceipt(res.items)
     },
 
     getAgent: (name: string): Promise<Agent> =>
-      request<Agent>('GET', `/api/v1/agents/${name}`),
+      request<Agent>('GET', `/api/v1/agents/${name}`).then(agent => recordActivityReceipt([agent])[0]),
 
     createAgent: (req: CreateAgentRequest): Promise<Agent> =>
       request<Agent>('POST', '/api/v1/agents', req),

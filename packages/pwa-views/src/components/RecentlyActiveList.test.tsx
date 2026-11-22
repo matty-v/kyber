@@ -1,56 +1,62 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { render, screen, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import type { Agent } from '../lib/types'
+import type { Agent, AgentWorkView } from '../lib/types'
+import { ClusterContext } from '../lib/cluster-context'
+import { recordActivityReceipt } from '../lib/activity'
 import { RecentlyActiveList } from './RecentlyActiveList'
+function agent(id: string, work: Partial<AgentWorkView> = {}): Agent {
+ const now=Date.now()
+ return recordActivityReceipt([{ id, phase:'Running', activity:{work:{state:'working',serverTime:new Date(now).toISOString(),observedAt:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),foregroundCount:1,backgroundCount:0,...work}} } as Agent])[0]
+}
+const view=(agents:Agent[],id='one')=><MemoryRouter><ClusterContext.Provider value={{id,name:id,baseURL:'https://example.invalid/',apiKey:'',version:'',capabilities:[]}}><RecentlyActiveList agents={agents}/></ClusterContext.Provider></MemoryRouter>
+beforeEach(()=>localStorage.clear())
+describe('Agent activity groups',()=>{
+ it('shows four independent headers, counts, real work and no stopped agents',()=>{
+  render(view([agent('mando'),agent('sol',{state:'background',foregroundCount:0,backgroundCount:2}),{...agent('stopped'),phase:'Stopped'}, {id:'legacy',phase:'Running'} as Agent]))
+  expect(screen.getByRole('heading',{name:'Agent activity'})).toBeInTheDocument()
+  expect(screen.getAllByRole('button')).toHaveLength(4)
+  expect(screen.getByText('2 shells running')).toBeVisible()
+  expect(screen.queryByText('stopped')).toBeNull()
+  expect(screen.getByText('Legacy reporting')).toBeVisible()
+ })
+ it('remembers collapse across count changes, zero counts and remount',async()=>{
+  const user=userEvent.setup();const a=agent('mando');const r=render(view([a]))
+  await user.click(screen.getByRole('button',{name:/Working now/}))
+  expect(screen.getByText('mando')).not.toBeVisible()
+  r.rerender(view([]));expect(screen.getByRole('button',{name:/Working now 0/})).toHaveAttribute('aria-expanded','false')
+  r.rerender(view([a]));expect(screen.getByText('mando')).not.toBeVisible()
+  r.unmount();render(view([a]));expect(screen.getByRole('button',{name:/Working now/})).toHaveAttribute('aria-expanded','false')
+ })
+ it('keeps cluster preferences independent and waiting collapsed initially',async()=>{
+  const user=userEvent.setup();const r=render(view([agent('a')]))
+  expect(screen.getByRole('button',{name:/Waiting/})).toHaveAttribute('aria-expanded','false')
+  await user.click(screen.getByRole('button',{name:/Working now/}))
+  r.rerender(view([agent('b')],'two'));expect(screen.getByRole('button',{name:/Working now/})).toHaveAttribute('aria-expanded','true')
+  r.rerender(view([agent('a')],'one'));expect(screen.getByRole('button',{name:/Working now/})).toHaveAttribute('aria-expanded','false')
+ })
+ it('supports interaction when browser storage is unavailable',async()=>{
+  const get=vi.spyOn(Storage.prototype,'getItem').mockImplementation(()=>{throw Error('denied')})
+  const set=vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw Error('denied')})
+  try {const user=userEvent.setup();render(view([agent('mando')]));await user.click(screen.getByRole('button',{name:/Working now/}));expect(screen.getByRole('button',{name:/Working now/})).toHaveAttribute('aria-expanded','false')}finally{get.mockRestore();set.mockRestore()}
+ })
+ it('ages a cached working lease even when no refetch succeeds',()=>{
+  vi.useFakeTimers({toFake:['Date','performance','setInterval','clearInterval']})
+  try{render(view([agent('mando')]));expect(screen.getByText('Working')).toBeVisible();act(()=>vi.advanceTimersByTime(65000));expect(screen.queryByText('Working')).toBeNull();expect(screen.getByText('No recent activity signal')).toBeVisible()}finally{vi.useRealTimers()}
+ })
+ it('moves focus to the destination header without opening a collapsed group',()=>{
+  const r=render(view([agent('mando')]))
+  screen.getByRole('link',{name:/mando/}).focus()
+  r.rerender(view([agent('mando',{state:'waiting',foregroundCount:0})]))
+  const waiting=screen.getByRole('button',{name:/Waiting/})
+  expect(waiting).toHaveAttribute('aria-expanded','false')
+  expect(waiting).toHaveFocus()
+ })
+ it('shows a verified pending reply alongside other work',()=>{
+  render(view([agent('mando',{needsInput:true,backgroundCount:1})]))
+  expect(screen.getByText('Needs your reply')).toBeVisible()
+  expect(screen.getByText(/Working · \+1 background jobs/)).toBeVisible()
+ })
 
-const NOW = Date.parse('2026-07-06T12:00:00Z')
-const a = (id: string, over: Partial<Agent> = {}): Agent => ({
-  id, phase: 'Running', machine: 'm', runtime: 'claude-code', model: 'claude-sonnet-4-6',
-  resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
-  status: {} as Agent['status'], createdAt: '2026-07-06T10:00:00Z', ...over,
-})
-
-const render1 = (agents: Agent[]) =>
-  render(<MemoryRouter><RecentlyActiveList agents={agents} now={NOW} /></MemoryRouter>)
-
-describe('RecentlyActiveList', () => {
-  it('links each row to the agent detail page', () => {
-    render1([a('carol', {
-      activity: { lastActivityAt: new Date(NOW - 30_000).toISOString(), state: 'working' },
-      goal: { summary: 'Review MAT-62', source: 'agent', acceptedAt: '2026-09-16T12:00:00Z', updatedAt: '2026-09-16T12:00:01Z' },
-    })])
-    const row = screen.getByRole('link', { name: /carol/ })
-    expect(row).toHaveAttribute('href', '/agents/carol')
-    expect(row).toHaveClass('min-w-0', 'max-w-full', 'overflow-hidden')
-    expect(row.closest('.kyber-card')).toHaveClass('min-w-0', 'max-w-full')
-    const activityLabels = screen.getAllByText('30s ago · working')
-    expect(activityLabels).toHaveLength(2)
-    expect(activityLabels[0]).toHaveClass('sm:hidden')
-    expect(activityLabels[1]).toHaveClass('hidden', 'sm:block')
-    expect(screen.getByText('Review MAT-62')).toBeInTheDocument()
-  })
-  it('shows an attention badge for a NeedsAuth agent', () => {
-    render1([a('alice', { phase: 'NeedsAuth', activity: { lastActivityAt: new Date(NOW - 60_000).toISOString() } })])
-    expect(screen.getByText('NeedsAuth')).toBeInTheDocument()
-  })
-  it('empty state when nobody has activity', () => {
-    render1([a('quiet')])
-    expect(screen.getByText('No activity yet')).toBeInTheDocument()
-  })
-  it('shows each agent\'s avatar with its activity dot', () => {
-    render1([
-      a('pic', {
-        activity: { lastActivityAt: new Date(NOW - 10_000).toISOString(), state: 'working' },
-        profile: { avatarUrl: '/api/v1/agents/pic/profile/avatar?v=abc' },
-      }),
-      a('plain', { activity: { lastActivityAt: new Date(NOW - 20_000).toISOString(), state: 'idle' } }),
-    ])
-    const img = screen.getByTestId('agent-avatar-image')
-    expect(img).toHaveAttribute('src', '/api/v1/agents/pic/profile/avatar?v=abc')
-    expect(screen.getByTestId('agent-avatar-initials')).toHaveAccessibleName('plain avatar')
-    const dots = screen.getAllByTestId('activity-dot')
-    expect(dots[0]).toHaveClass('bg-success')
-    expect(dots[1]).toHaveClass('bg-warn')
-  })
 })
