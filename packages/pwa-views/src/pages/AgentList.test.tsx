@@ -1,3 +1,4 @@
+import { recordActivityReceipt } from '../lib/activity'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
@@ -5,7 +6,7 @@ import type { Agent } from '../lib/types'
 import { mockIdleAgent, mockNoActivityAgent } from '../mocks/fixtures'
 
 // AgentList.test.tsx — kyber#417. The Agent list surfaces the same
-// "Idle <relative-time>" / "Working" activity text that the detail view
+// normalized current-work activity text that the detail view
 // shows, by mounting AgentActivityBadge on both render paths. The page
 // renders BOTH the mobile card tree (md:hidden) and the desktop table tree
 // (hidden md:block) into the DOM under jsdom (CSS visibility isn't applied).
@@ -70,15 +71,17 @@ describe('AgentList activity badge (kyber#417)', () => {
   })
 
   it('keeps activity in the mobile card and discloses it in desktop details', () => {
-    renderList([mockIdleAgent])
+    const now = Date.now()
+    const waiting = recordActivityReceipt([{ ...mockIdleAgent, activity: { work: { state: 'waiting', serverTime: new Date(now).toISOString(), expiresAt: new Date(now + 60000).toISOString(), lastWorkedAt: new Date(now - 3600000).toISOString(), foregroundCount: 0, backgroundCount: 0 } } }])[0]
+    renderList([waiting])
     // The compact desktop row omits secondary activity, while the unchanged
     // mobile card still shows it.
     let badges = screen.getAllByTestId('agent-activity-badge')
     expect(badges).toHaveLength(1)
     for (const badge of badges) {
-      expect(badge).toHaveAttribute('data-state', 'idle')
+      expect(badge).toHaveAttribute('data-state', 'waiting')
       expect(badge).toHaveClass('whitespace-nowrap')
-      expect(badge.textContent).toMatch(/^Idle 1h ago$/)
+      expect(badge.textContent).toBe('Waiting')
       expect(badge.querySelector('[aria-hidden="true"]')).toBeNull()
     }
 
@@ -88,14 +91,13 @@ describe('AgentList activity badge (kyber#417)', () => {
     expect(screen.getByText('Activity & health')).toBeInTheDocument()
   })
 
-  it('renders no activity badge for an agent with no reported activity', () => {
+  it('renders unavailable instead of inventing idle when activity is missing', () => {
     const { container } = renderList([mockNoActivityAgent])
-    expect(screen.queryAllByTestId('agent-activity-badge')).toHaveLength(0)
+    expect(screen.getByTestId('agent-activity-badge')).toHaveAttribute('data-state', 'unavailable')
+    expect(screen.getByText('Activity unavailable')).toBeInTheDocument()
     // The list view has no standalone activity dots.
     expect(screen.queryAllByTestId('agent-activity-dot')).toHaveLength(0)
-    // And no empty spacer div is emitted in the badge's place — a no-activity
-    // card must keep its exact prior layout, not gain a stray mt-1 gap that
-    // nudges the model·machine line down (kyber#417 backward-compat AC).
+    // The new explicit unavailable badge has content; no empty spacer remains.
     const emptySpacers = Array.from(container.querySelectorAll('div.mt-1')).filter(
       (d) => d.children.length === 0 && !d.textContent,
     )

@@ -1,3 +1,4 @@
+import { activityEligible } from '../lib/activity'
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { usePrefixedPath } from '../lib/route-prefix'
@@ -266,13 +267,8 @@ export function AgentList() {
                         <SchedulingFailureBadge agent={a} />
                         <AgentDiskPressureBadge usage={a.activity?.resources} />
                       </div>
-                      {/* Activity badge on its own line — keeps the truncating
-                          id + badges in the header row from overflowing on
-                          narrow viewports (kyber#417). Gate the line on the same
-                          visible-by-absence condition the badge itself uses, so a
-                          no-activity card keeps its exact prior layout (no empty
-                          spacer div nudging the model·machine line down). */}
-                      {a.activity?.state && a.activity.state !== 'unknown' && (
+                      {/* Missing/legacy telemetry is explicit for eligible running agents. */}
+                      {activityEligible(a) && (
                         <div className="mt-1">
                           <AgentActivityBadge agent={a} showDot={false} />
                         </div>

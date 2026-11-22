@@ -17,7 +17,7 @@ describe('Agent activity groups',()=>{
   render(view([agent('mando'),agent('sol',{state:'background',foregroundCount:0,backgroundCount:2}),{...agent('stopped'),phase:'Stopped'}, {id:'legacy',phase:'Running'} as Agent]))
   expect(screen.getByRole('heading',{name:'Agent activity'})).toBeInTheDocument()
   expect(screen.getAllByRole('button')).toHaveLength(4)
-  expect(screen.getByText('2 shells running')).toBeVisible()
+  expect(screen.getByText('2 background jobs running')).toBeVisible()
   expect(screen.queryByText('stopped')).toBeNull()
   expect(screen.getByText('Legacy reporting')).toBeVisible()
  })
