@@ -11,7 +11,7 @@ describe('AgentActivityDot', () => {
   render(<AgentActivityDot agent={{phase:'Running',activity:{state:'working'}} as Agent}/>);expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('data-state','unavailable')
  })
  it('shows a fresh current inventory as working', () => {
-  const now=Date.now();const a=recordActivityReceipt([{phase:'Running',activity:{work:{state:'working',serverTime:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),foregroundCount:1,backgroundCount:0}}} as Agent])[0]
+  const now=Date.now();const a=recordActivityReceipt([{phase:'Running',activity:{work:{state:'working',serverTime:new Date(now).toISOString(),observedAt:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),foregroundCount:1,backgroundCount:0}}} as Agent])[0]
   render(<AgentActivityDot agent={a}/>);expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('data-state','working')
  })
 })

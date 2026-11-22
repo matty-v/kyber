@@ -72,7 +72,7 @@ describe('AgentList activity badge (kyber#417)', () => {
 
   it('keeps activity in the mobile card and discloses it in desktop details', () => {
     const now = Date.now()
-    const waiting = recordActivityReceipt([{ ...mockIdleAgent, activity: { work: { state: 'waiting', serverTime: new Date(now).toISOString(), expiresAt: new Date(now + 60000).toISOString(), lastWorkedAt: new Date(now - 3600000).toISOString(), foregroundCount: 0, backgroundCount: 0 } } }])[0]
+    const waiting = recordActivityReceipt([{ ...mockIdleAgent, activity: { work: { state: 'waiting', serverTime: new Date(now).toISOString(), observedAt: new Date(now).toISOString(), expiresAt: new Date(now + 60000).toISOString(), lastWorkedAt: new Date(now - 3600000).toISOString(), foregroundCount: 0, backgroundCount: 0 } } }])[0]
     renderList([waiting])
     // The compact desktop row omits secondary activity, while the unchanged
     // mobile card still shows it.

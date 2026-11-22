@@ -13,12 +13,15 @@ vi.mock('../hooks/usePageVisible', () => ({ usePageVisible: () => true }))
 import { AgentTerminalPeek, TerminalPeek } from './TerminalPeek'
 
 const NOW = Date.parse('2026-07-06T12:00:00Z')
-const a = (id: string, secsAgo?: number): Agent => recordActivityReceipt([{
+const a = (id: string, secsAgo?: number): Agent => {
+  const now = Date.now()
+  return recordActivityReceipt([{
   id, phase: 'Running', machine: 'm', runtime: 'claude-code', model: 'claude-sonnet-4-6',
   resources: { cpu: '1', memory: '1Gi', disk: '10Gi' },
   status: { podName: `agent-${id}` } as Agent['status'], createdAt: '2026-07-06T10:00:00Z',
-  activity: secsAgo === undefined ? undefined : { lastHeartbeatAt: new Date().toISOString(), work: {state:'working',serverTime:new Date().toISOString(),expiresAt:new Date(Date.now()+60000).toISOString(),stateSince:new Date(NOW-secsAgo*1000).toISOString(),foregroundCount:1,backgroundCount:0} },
+  activity: secsAgo === undefined ? undefined : { lastHeartbeatAt: new Date().toISOString(), work: {state:'working',serverTime:new Date(now).toISOString(),observedAt:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),stateSince:new Date(NOW-secsAgo*1000).toISOString(),foregroundCount:1,backgroundCount:0} },
 } as Agent])[0]
+}
 
 describe('TerminalPeek', () => {
   it('defaults the attach to the most-recently-active agent in live mode', () => {

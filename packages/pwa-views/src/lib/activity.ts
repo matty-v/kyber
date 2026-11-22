@@ -29,6 +29,8 @@ export function projectWork(agent: Agent, monotonicNow = performance.now()): Wor
   if (!Number.isFinite(serverTime) || monotonicNow < received) return unavailable('observation_invalid')
   if (work.state === 'unavailable' || work.state === 'excluded') return { ...unavailable(work.reason ?? 'reporter_stale'), state: work.state }
   if (!ACTIVITY_GROUPS.includes(work.state) || !Number.isFinite(expires) || serverTime + monotonicNow - received >= expires) return unavailable('reporter_stale')
+  const observed = Date.parse(work.observedAt ?? '')
+  if (!Number.isFinite(observed) || observed > serverTime || expires <= observed || expires - observed > 60000) return unavailable('observation_invalid')
   if (![work.foregroundCount, work.backgroundCount].every(n => Number.isInteger(n) && n >= 0 && n <= 1024)) return unavailable('observation_invalid')
   if ((work.state === 'working' && work.foregroundCount === 0) || (work.state === 'background' && (work.foregroundCount !== 0 || work.backgroundCount === 0)) || (work.state === 'waiting' && (work.foregroundCount !== 0 || work.backgroundCount !== 0))) return unavailable('observation_invalid')
   return { state: work.state, reason: work.reason, foregroundCount: work.foregroundCount, backgroundCount: work.backgroundCount, needsInput: work.needsInput === true, lastWorkedAt: work.lastWorkedAt, observedAt: work.observedAt, stateSince: work.stateSince }

@@ -26,6 +26,9 @@ describe('current-work projection', () => {
     const a = agent('a'); a.activity!.work = { ...a.activity!.work! }
     expect(projectWork(a, 100).reason).toBe('observation_unanchored')
     expect(projectWork(agent('invalid', { backgroundCount: -1 }), 100).state).toBe('unavailable')
+    expect(projectWork(agent('missing time', { observedAt: undefined }), 100).state).toBe('unavailable')
+    expect(projectWork(agent('future time', { observedAt: new Date(server + 1).toISOString() }), 100).state).toBe('unavailable')
+    expect(projectWork(agent('overlong lease', { expiresAt: new Date(server + 60001).toISOString() }), 100).state).toBe('unavailable')
     expect(projectWork(agent('inconsistent', { state: 'background', backgroundCount: 2 }), 100).state).toBe('unavailable')
   })
   it('assigns each agent once and sorts independently of lease renewals', () => {
