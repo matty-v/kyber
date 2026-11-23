@@ -14,6 +14,19 @@ import (
 	"github.com/matty-v/kyber/pkg/activity"
 )
 
+// nativeActivityRPCError keeps machine-readable RPC failure identity private.
+// Only the qualified pre-first-message response proves an empty turn history;
+// an unsupported method or another invalid-request error remains incomplete.
+type nativeActivityRPCError struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
+	method  string
+}
+
+func (e *nativeActivityRPCError) Error() string {
+	return fmt.Sprintf("native activity method unavailable: %s", e.method)
+}
+
 // CodexWorkInventory reads the native daemon over WebSocket/Unix. It never
 // resumes/subscribes/steers a thread or starts a model request. Thread status
 // and the native background terminal inventory remain available after silence
@@ -53,7 +66,12 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 				continue
 			}
 			if len(response.Error) > 0 && string(response.Error) != "null" {
-				return fmt.Errorf("native activity method unavailable: %s", method)
+				var failure nativeActivityRPCError
+				if json.Unmarshal(response.Error, &failure) != nil {
+					return errors.New("native activity error invalid")
+				}
+				failure.method = method
+				return &failure
 			}
 			if dst != nil && json.Unmarshal(response.Result, dst) != nil {
 				return errors.New("native activity response invalid")
@@ -145,7 +163,18 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 			} `json:"data"`
 		}
 		if err := call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "itemsView": "notLoaded"}, &history); err != nil {
-			return activity.Snapshot{}, err
+			var failure *nativeActivityRPCError
+			if thread.Thread.Status.Type != "idle" || !errors.As(err, &failure) || failure.Code != -32600 ||
+				failure.Message != fmt.Sprintf("thread %s is not materialized yet; thread/turns/list is unavailable before first user message", threadID) {
+				return activity.Snapshot{}, err
+			}
+			// This exact native response explicitly says there has never been
+			// a user turn. Still require the current background inventory and
+			// stable loaded-thread set below; do not infer idle from an error.
+			history.Data = make([]struct {
+				CompletedAt *int64 `json:"completedAt"`
+				StartedAt   *int64 `json:"startedAt"`
+			}, 0)
 		}
 		if history.Data == nil || len(history.Data) > 1 {
 			return activity.Snapshot{}, errors.New("native turn timing incomplete")

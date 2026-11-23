@@ -22,6 +22,8 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 		flags                  []string
 		jobs                   int
 		fail                   bool
+		historyFailure         string
+		emptyHistory           bool
 		foreground, background int32
 		input                  bool
 	}{
@@ -30,6 +32,11 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 		{name: "fast turn completed between polls", state: "idle"},
 		{name: "approval", state: "active", flags: []string{"waitingOnApproval"}, input: true},
 		{name: "unsupported job API", state: "idle", fail: true},
+		{name: "unmaterialized idle thread", state: "idle", historyFailure: "unmaterialized", emptyHistory: true},
+		{name: "active unmaterialized is incomplete", state: "active", historyFailure: "unmaterialized", fail: true},
+		{name: "unsupported history is incomplete", state: "idle", historyFailure: "unsupported", fail: true},
+		{name: "another thread history is incomplete", state: "idle", historyFailure: "wrong-thread", fail: true},
+		{name: "unrelated invalid history request is incomplete", state: "idle", historyFailure: "other", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			socket := filepath.Join(t.TempDir(), "native.sock")
@@ -64,6 +71,21 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 					case "thread/read":
 						result = map[string]any{"thread": map[string]any{"status": map[string]any{"type": tc.state, "activeFlags": tc.flags}}}
 					case "thread/turns/list":
+						if tc.historyFailure != "" {
+							code, message := -32600, "different invalid request"
+							if tc.historyFailure == "unmaterialized" {
+								message = "thread main is not materialized yet; thread/turns/list is unavailable before first user message"
+							}
+							if tc.historyFailure == "wrong-thread" {
+								message = "thread other is not materialized yet; thread/turns/list is unavailable before first user message"
+							}
+							if tc.historyFailure == "unsupported" {
+								code = -32601
+								message = "unsupported"
+							}
+							_ = c.WriteJSON(map[string]any{"id": req.ID, "error": map[string]any{"code": code, "message": message}})
+							continue
+						}
 						result = map[string]any{"data": []map[string]any{{"completedAt": completedAt.Unix()}}}
 					case "thread/backgroundTerminals/list":
 						if tc.fail {
@@ -95,6 +117,9 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if tc.emptyHistory {
+				completedAt = time.Time{}
 			}
 			if !got.Complete || got.Foreground != tc.foreground || got.Background != tc.background || got.NeedsInput != tc.input || !got.LastWorkedAt.Equal(completedAt) {
 				t.Fatalf("snapshot=%+v", got)
