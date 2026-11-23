@@ -36,6 +36,9 @@ function publish($) {
         // Acquisition time, not helper/HTTP delivery time, owns the lease.
         const observedAt = new Date(await $.clock.now()).toISOString()
         const agents = await $.agent.list()
+        for (const a of agents) {
+          if (['completed', 'failed', 'killed'].includes(a.status)) backgrounds.delete(a.id)
+        }
         const current = agents.map(a => ({ id: a.id, kind: a.kind, status: a.status,
           background: backgrounds.get(a.id) }))
         const unknownOwnership = current.some(a => ['running', 'pending'].includes(a.status)
@@ -73,7 +76,8 @@ export function register(on) {
     const result = await next(e)
     if (result.agentId) {
       if (backgrounds.size >= 1024) eventGap = true
-      else backgrounds.set(result.agentId, e.background === true)
+      else if (typeof e.background === 'boolean') backgrounds.set(result.agentId, e.background)
+      else eventGap = true
       void publish($)
     }
     return result

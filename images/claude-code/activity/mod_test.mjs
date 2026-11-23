@@ -116,3 +116,20 @@ test('native spawn distinguishes synchronous and background agents, unknown cove
   assert.deepEqual(h.latest().agents.map(a => a.background), [false, true])
   assert.equal(JSON.stringify(h.sent).includes('PRIVATE'), false)
 })
+
+test('completed native scheduling records do not exhaust a long-lived session', async () => {
+  const h = await harness()
+  for (let i = 0; i < 1030; i++) {
+    const id = `child-${i}`
+    h.setAgents([{ id, status: 'running' }])
+    await h.fire('agent.spawn', { background: true }, { agentId: id })
+    h.setAgents([{ id, status: 'completed' }])
+    await h.tick()
+  }
+  h.setAgents([{ id: 'current', status: 'running' }])
+  await h.fire('agent.spawn', { background: false }, { agentId: 'current' })
+  await h.tick()
+  assert.equal(h.latest().complete, true)
+  assert.equal(h.latest().eventGap, false)
+  assert.equal(h.latest().agents[0].background, false)
+})
