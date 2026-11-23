@@ -1304,3 +1304,5 @@ Dashboard responsive layout: keep the mobile widget grid explicitly single-colum
 around Cards. Descendant text truncation alone cannot constrain a grid item
 with an intrinsic minimum width. Validate populated activity rows with long
 request text/URLs in a real browser, not just empty or short-label fixtures.
+Request-text disclosures must sit outside agent navigation links, wrap long
+words/URLs when expanded, and participate in row focus recovery on group moves.

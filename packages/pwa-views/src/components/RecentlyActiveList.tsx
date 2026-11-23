@@ -3,7 +3,6 @@ import { Link } from 'react-router-dom'
 import { ChevronDown, ChevronRight } from 'lucide-react'
 import type { Agent } from '../lib/types'
 import { Card } from './Card'
-import { AgentGoalLine } from './AgentGoalLine'
 import { AgentAvatar } from './AgentAvatar'
 import { usePrefixedPath } from '../lib/route-prefix'
 import { ClusterContext } from '../lib/cluster-context'
@@ -45,18 +44,24 @@ function Group({ group, agents, limit, storageKey, now }: { group: ActivityGroup
           const primary = work.state === 'background' ? `${work.backgroundCount} background ${work.backgroundCount === 1 ? 'job' : 'jobs'} running` : work.state === 'working' ? 'Working' : work.needsInput ? 'Needs your reply' : work.state === 'waiting' ? 'Ready for a request' : workReasons[work.reason ?? ''] ?? 'Activity unavailable'
           const at = work.state === 'unavailable' ? agent.activity?.lastHeartbeatAt : work.state === 'waiting' ? work.lastWorkedAt : work.observedAt
           const timeLabel = work.state === 'unavailable' ? 'Last contact' : work.state === 'waiting' ? 'Last worked' : work.state === 'background' ? 'Job checked' : 'Work observed'
-          return <li key={agent.id} className="min-w-0 border-t border-border-subtle first:border-0">
+          return <li key={agent.id} data-activity-row={agent.id} data-activity-row-group={group} className="min-w-0 border-t border-border-subtle first:border-0">
             <Link data-activity-agent={agent.id} data-activity-group={group} to={prefixed(`/agents/${agent.id}`)} className="flex min-w-0 items-start gap-2 rounded py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring">
               <AgentAvatar name={agent.id} alias={agent.profile?.alias} avatarUrl={agent.profile?.avatarUrl} size="sm" />
               <div className="min-w-0 flex-1">
                 <span className="block truncate text-sm font-medium text-text-primary">{agent.profile?.alias || agent.id}</span>
                 <span className={`block text-xs ${colors[group]}`}>{primary}{work.state === 'working' && work.backgroundCount > 0 ? ` · +${work.backgroundCount} background jobs` : ''}</span>
                 {work.needsInput && work.state !== 'waiting' && <span className="block text-xs text-warn">Needs your reply</span>}
-                {agent.goal?.summary && <div className="block"><span className="text-[10px] text-text-muted">Latest request</span><AgentGoalLine goal={agent.goal} /></div>}
                 <span className="mt-1 block text-[10px] text-text-muted">{at ? `${timeLabel} ${formatAgo(at, now ?? activityServerNow(agent))}` : group === 'unavailable' ? 'Last contact not recorded' : 'No work time recorded'}</span>
               </div>
               <ChevronRight className="mt-1 h-3.5 w-3.5 shrink-0 text-text-disabled" />
             </Link>
+            {agent.goal?.summary && <details data-request className="group ml-10 min-w-0 pb-3">
+              <summary className="min-h-11 cursor-pointer rounded text-xs text-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent-ring">
+                Read full request
+                <span data-testid="agent-goal" title={agent.goal.summary} className={`mt-1 block truncate group-open:hidden ${agent.goal.source === 'platform' ? 'text-text-muted' : 'text-text-secondary'}`}>{agent.goal.summary}</span>
+              </summary>
+              <p data-testid="full-request" className="mt-1 whitespace-pre-wrap text-xs text-text-secondary [overflow-wrap:anywhere]">{agent.goal.summary}</p>
+            </details>}
           </li>
         })}
       </ul>
@@ -84,8 +89,8 @@ export function RecentlyActiveList({ agents, limit = DEFAULT_LIST_LIMIT, now }: 
     else root.current?.querySelector<HTMLButtonElement>(`[data-group-button="${group}"]`)?.focus()
   }, [groups])
   return <div className="min-w-0 max-w-full" ref={root} onFocusCapture={event => {
-    const row = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-activity-agent]')
-    focused.current = row ? { id: row.dataset.activityAgent!, group: row.dataset.activityGroup as ActivityGroup } : null
+    const row = (event.target as HTMLElement).closest<HTMLElement>('[data-activity-row]')
+    focused.current = row ? { id: row.dataset.activityRow!, group: row.dataset.activityRowGroup as ActivityGroup } : null
   }} onBlurCapture={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) focused.current = null }}><Card className="min-w-0 max-w-full">
     <div className="mb-2 flex items-center justify-between gap-2"><h2 className="text-sm font-semibold text-text-primary">Agent activity</h2><Link to={prefixed('/agents')} className="text-xs text-accent">View all agents</Link></div>
     {ACTIVITY_GROUPS.map(group => <Group key={`${clusterKey}:${group}`} group={group} agents={groups[group]} limit={Number.isFinite(limit) ? Math.max(1, Math.trunc(limit)) : DEFAULT_LIST_LIMIT} storageKey={storageKey} now={now} />)}

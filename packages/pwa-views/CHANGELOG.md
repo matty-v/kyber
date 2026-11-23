@@ -2,7 +2,7 @@
 
 ## 0.84.1
 
-- Keep populated dashboard activity cards inside mobile viewports when requests contain long text or URLs.
+- Keep populated dashboard activity cards inside mobile viewports and let operators expand the complete request text without navigating away.
 
 ## 0.84.0
 
