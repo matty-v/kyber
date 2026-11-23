@@ -76,6 +76,7 @@ ENV KYBER_START_CMD=/usr/local/bin/start-hermes.sh
 
 COPY --chmod=0755 images/hermes/start-hermes.sh /usr/local/bin/start-hermes.sh
 COPY --chmod=0755 images/hermes/configure-hermes.py /usr/local/bin/kyber-configure-hermes
+COPY images/hermes/activity-plugin /opt/kyber/hermes-activity
 # Opens a goal revision at the start of each user turn. Hermes-specific because
 # its hooks cannot inject prompt context the way Claude Code's UserPromptSubmit
 # does, so this one only opens the revision.

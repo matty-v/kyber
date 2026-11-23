@@ -294,6 +294,7 @@ func NewInternalServer(store briefstore.BriefStore, opts ...InternalServerOption
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/internal/agents/", s.handleAgentRoutes)
+	mux.HandleFunc("/internal/activity-observers/", s.handleActivityObserver)
 	mux.HandleFunc("/internal/machines/", s.handleMachineRoutes)
 	mux.HandleFunc("/internal/nodes/", s.handleNodeRoutes)
 	mux.HandleFunc("/internal/archive-jobs/", s.handleArchiveJobRoutes)

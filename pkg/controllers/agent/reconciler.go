@@ -2169,6 +2169,9 @@ func (r *AgentReconciler) ensureUserSecrets(ctx context.Context, agent *kyberv1.
 // token it is left untouched; if the signing key rotated (the stored token no
 // longer matches), the value is updated in place.
 func (r *AgentReconciler) ensurePodTokenSecret(ctx context.Context, agent *kyberv1.Agent) error {
+	if err := r.ensureActivityObserverSecret(ctx, agent); err != nil {
+		return err
+	}
 	if len(r.PodTokenKey) == 0 {
 		return nil
 	}
@@ -4601,6 +4604,9 @@ func (r *AgentReconciler) convergeSidecarImage(ctx context.Context, agent *kyber
 // won't trigger a diff against an already-empty agent.Status.PodIP — we
 // only mirror the value, not write zero-values unconditionally.
 func podDerivedStatusDiffers(agent *kyberv1.Agent, pod *corev1.Pod) bool {
+	if agent.Status.Activity != nil && agent.Status.Activity.Work != nil && agent.Status.Activity.Work.Epoch != "" && !workObservationMatchesPod(agent.Status.Activity.Work, pod) {
+		return true
+	}
 	if observation := agent.Status.Runtime.Capabilities; observation != nil && observation.PodUID != string(pod.UID) {
 		return true
 	}
@@ -4639,6 +4645,11 @@ func podDerivedStatusDiffers(agent *kyberv1.Agent, pod *corev1.Pod) bool {
 // reference for that check, so the swap is a small improvement, not a
 // regression.
 func applyPodDerivedStatus(agent *kyberv1.Agent, pod *corev1.Pod) {
+	if agent.Status.Activity != nil && agent.Status.Activity.Work != nil && agent.Status.Activity.Work.Epoch != "" && !workObservationMatchesPod(agent.Status.Activity.Work, pod) {
+		agent.Status.Activity.Work.Epoch = ""
+		agent.Status.Activity.Work.Sequence = 0
+		agent.Status.Activity.Work.Complete = false
+	}
 	agent.Status.PodName = pod.Name
 	if observation := agent.Status.Runtime.Capabilities; observation != nil && observation.PodUID != string(pod.UID) {
 		agent.Status.Runtime.Capabilities = nil

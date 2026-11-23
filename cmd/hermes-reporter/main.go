@@ -50,6 +50,7 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	go tokenreport.RunHermesWorkReporter(ctx, "/tmp/kyber-native-activity/hermes", os.Getenv("KYBER_POD_UID"), os.Getenv("KYBER_SIDECAR_URL"))
 	client := &http.Client{Timeout: 5 * time.Second}
 	logPath := filepath.Join(home, "logs", "agent.log")
 	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {

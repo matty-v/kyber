@@ -7,7 +7,7 @@
 
 ## Unreleased
 
-- Add the Agent activity current-work contract and independently collapsible dashboard groups, with lifecycle and observation freshness taking precedence over cached legacy state.
+- Add the Agent activity current-work contract and independently collapsible dashboard groups, with lifecycle and observation freshness taking precedence over cached legacy state. Stage dedicated sidecar admission and native Codex/Hermes reporters; three-harness runtime qualification remains a release gate.
 
 - Remove migration checklists and completed restore cards from Agent General; keep restore progress, cancellation and failure feedback.
 

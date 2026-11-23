@@ -718,6 +718,7 @@ func agentToResponse(a *kyberv1.Agent) AgentResponse {
 	if a.Status.Activity != nil {
 		act := &agentActivityStatusResponse{
 			State: a.Status.Activity.State,
+			Work:  admittedWorkView(a, time.Now().UTC()),
 		}
 		if a.Status.Activity.LastHeartbeatAt != nil {
 			act.LastHeartbeatAt = a.Status.Activity.LastHeartbeatAt.UTC().Format(time.RFC3339)

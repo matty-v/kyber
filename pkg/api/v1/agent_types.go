@@ -1263,7 +1263,31 @@ type AgentSchedulingStatus struct {
 // only — proves the sidecar is alive and connected. Phase B (kyber#249)
 // adds State + LastActivityAt from the runtime-specific Probe (e.g.
 // claudecode.Probe tails the JSONL transcript to detect mid-turn vs idle).
+// WorkObservation is admitted only from a dedicated platform observer credential.
+// Its epoch is tied to one current owned pod and native sidecar container life.
+type WorkObservation struct {
+	AgentUID     string           `json:"agentUID"`
+	PodUID       string           `json:"podUID"`
+	ContainerID  string           `json:"containerID"`
+	BootID       string           `json:"bootID"`
+	BootedAt     metav1.MicroTime `json:"bootedAt"`
+	Epoch        string           `json:"epoch"`
+	Sequence     int64            `json:"sequence"`
+	ObservedAt   metav1.MicroTime `json:"observedAt,omitempty,omitzero"`
+	ReceivedAt   metav1.MicroTime `json:"receivedAt,omitempty,omitzero"`
+	LastWorkedAt metav1.MicroTime `json:"lastWorkedAt,omitempty,omitzero"`
+	StateSince   metav1.MicroTime `json:"stateSince,omitempty,omitzero"`
+	Foreground   int32            `json:"foreground"`
+	Background   int32            `json:"background"`
+	Complete     bool             `json:"complete"`
+	NeedsInput   bool             `json:"needsInput"`
+}
+
 type ActivityStatus struct {
+	// Work is separate from legacy diagnostics and resource measurements.
+	// +optional
+	Work *WorkObservation `json:"work,omitempty"`
+
 	// InferenceAuthRejectedPodUID identifies the current Codex pod whose
 	// structured turn result reported HTTP 401 from a custom endpoint.
 	// The controller ignores the signal after that pod is replaced.

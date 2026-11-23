@@ -94,6 +94,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 
 	env := []corev1.EnvVar{
 		{Name: "AGENT_NAME", Value: cfg.AgentName},
+		{Name: "KYBER_POD_UID", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.uid"}}},
 		{Name: "KYBER_CONTROL_PLANE_INTERNAL_URL", Value: controlPlaneInternalURL()},
 		{Name: "KYBER_AGENT_DISK_BYTES", Value: strconv.FormatInt(cfg.DiskBytes, 10)},
 	}
@@ -161,6 +162,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 		// (cmd/status-sidecar/main.go). The volume itself is declared by
 		// BuildPodSpec; here we just mount it read-only into the sidecar.
 		VolumeMounts: []corev1.VolumeMount{
+			{Name: observerVolume, MountPath: observerMount, ReadOnly: true},
 			{Name: runtimeControlVolumeName, MountPath: runtimeControlMountPath},
 			{
 				Name:      "persist",
@@ -204,6 +206,7 @@ func AppendStatusSidecar(spec *corev1.PodSpec, cfg SidecarConfig) {
 	// look up this container by name must consult Spec.InitContainers /
 	// Status.InitContainerStatuses (see extractSidecarSpecImage / isSidecarReady).
 	spec.InitContainers = append([]corev1.Container{container}, spec.InitContainers...)
+	spec.Volumes = append(spec.Volumes, corev1.Volume{Name: observerVolume, VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: cfg.AgentName + "-activity-observer", Optional: ptrTo(true), Items: []corev1.KeyToPath{{Key: "token", Path: "token"}}}}})
 	spec.Volumes = append(spec.Volumes, corev1.Volume{
 		Name:         runtimeControlVolumeName,
 		VolumeSource: corev1.VolumeSource{EmptyDir: &corev1.EmptyDirVolumeSource{}},
