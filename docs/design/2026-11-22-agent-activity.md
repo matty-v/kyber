@@ -1,8 +1,9 @@
 # MAT-216: current work inventory and Agent activity
 
-Status: implementation in progress; not qualified for release. The operator
-approved the issue and collapsible mockup. The draft must not merge as a complete
-activity fix until native producers, ingestion and Datawire verification exist.
+Implementation and qualification: [PR 431](https://github.com/matty-v/kyber/pull/431).
+The operator approved all three runtimes and the independently collapsible UI.
+The PR records exact-head CI, review findings and final controlled test evidence.
+Production rollout and verification are separate from test-cluster qualification.
 
 Issue: https://linear.app/matty-v/issue/MAT-216/fix-dashboard-activity-reporting-and-redesign-recently-active
 
@@ -56,38 +57,28 @@ Sources:
 - https://github.com/NousResearch/hermes-agent/blob/29112bef099274229cadff79cdff7bf7b99c4b77/tools/process_registry.py
 - https://github.com/NousResearch/hermes-agent/blob/29112bef099274229cadff79cdff7bf7b99c4b77/agent/turn_finalizer.py
 
-## Remaining release gates
+## Qualification and rollout requirements
 
-1. Controlled native qualification now has authenticated GCP access to the
-   explicitly designated empty `datawire-dev/us-central1-a/kyber-dev` cluster.
-   PR431 head 3364e4e passed an empty-cluster embedded UI/API smoke check there:
-   exact serving SHA, independent collapse/reload persistence, desktop/mobile,
-   zero page errors and no horizontal overflow. This does not prove native job
-   lifecycle reporting. Original Datawire Mando/stopped/background captures
-   remain unavailable; do not confuse that production install with the test target.
-2. Qualified native inventory producers for every registered harness. Do not
-   silently narrow the accepted scope or infer completeness from old transcripts.
-3. The draft now includes platform envelope admission: a purpose-separated
-   credential in a separate Secret mounted only in the status sidecar (the
-   legacy pod token is also mounted in the runtime and is not sufficient).
-   Registration uses direct Kubernetes reads of the current Agent UID, owned
-   Pod UID and running native sidecar ContainerID/StartedAt, then issues an epoch.
-   Inventories carry a monotonic sequence and original native snapshot time;
-   stale, future, duplicated and out-of-order observations cannot renew a lease.
-   Optimistic status patches protect admission against concurrent updates.
-   Container replacement invalidates the epoch while retaining historical last
-   work time. Targeted unit tests and the real-API-server schema/lifetime test pass;
-   installed-runtime canaries and full CI remain qualification gates.
-4. Generated CRDs/deepcopy if persistent inventory fields are added; matching
-   OpenAPI/TS wire contract and fake-cluster/API ordering/replacement tests.
-5. Native defaults/reset/latest and provider/auth regression checks, shared UI
-   and embedded builds, contract tests, review and CI.
-6. Runtime/control-plane rollout as required, package publication, reviewed
-   Holocron dependency update and production deployment, then Datawire browser
-   verification on desktop/mobile. No production deployment is authorized by
-   this document, and none has been performed for this task.
+1. Use only the explicitly designated `datawire-dev/us-central1-a/kyber-dev`
+   test cluster for native canaries. It is distinct from Datawire production.
+   Verify the serving SHA, fresh/default/latest boots, current native work,
+   cancellation, job exit, observation loss/recovery and lifecycle exclusion.
+2. Qualify every registered harness; provider/model choice, metadata updates,
+   process CPU and legacy transcript state cannot stand in for native work.
+3. Preserve purpose-separated sidecar admission, direct Agent/Pod/container
+   lifetime checks, ordered original timestamps and optimistic status writes.
+   Unit and real-API-server checks cover schema, replay, conflict and replacement.
+4. Match CRD/deepcopy, public OpenAPI and TypeScript contracts. Validate shared
+   UI and embedded builds, independent collapse persistence, desktop/mobile,
+   error-free rendering and no horizontal overflow.
+5. Preserve explicit version pins, custom shells, authentication profiles,
+   native background handoff, MCP arguments, PVC data and individual disk usage.
+   Review findings must be fixed and exact-head CI green before merge.
+6. Production runtime/control-plane rollout, package publication, Holocron
+   dependency delivery and Datawire browser verification are later delivery
+   steps. No production rollout is authorized by this document.
 
-## Current native interface constraint
+## Native interface boundaries
 
 Claude Code's pinned 2.1.119 artifact was inspected alongside its official hook
 reference. Its task registry includes local Bash tasks, but the structured
@@ -134,6 +125,34 @@ standard `--remote` TUI, but the installed server rejects `thread/turns/list`;
 protocol declarations alone do not establish installed method support. This
 compatibility path is not qualified; the new baked default is 0.171.0.
 
-Matt explicitly reaffirmed the full Claude Code/Codex/Hermes scope. PR 431
-remains draft until all three are qualified; green checkpoint CI is insufficient
-for merge. GitGuardian's test-fixture incident is resolved.
+Matt explicitly reaffirmed the full Claude Code/Codex/Hermes scope. Green CI
+alone does not replace native qualification. Final qualification and merge status
+are recorded in PR 431; GitGuardian's test-fixture incident is resolved.
+
+
+## Codex history and current-work coverage
+
+Codex 0.171.0 explicitly rejects persisted history reads on a newly loaded,
+unmaterialized thread before its first user message. Only that exact native
+response on an idle thread permits empty initial history; unsupported methods,
+other invalid requests and a different thread identity remain coverage errors.
+
+Native ephemeral threads explicitly have no persisted turn history. Their live
+status and background-terminal inventory still contribute current work; absence
+of a history API does not make those native counts incomplete. Ephemeral work
+updates last-work time when observed running. Metadata `updatedAt` is never used
+as a replacement activity timestamp. Persistent native turn timing retains short
+completed turns between observer polls.
+
+## Controlled qualification evidence
+
+GCP canaries verified silent foreground and native background work, cancellation,
+independent native job exits, stale-publisher unavailability and recovery, and
+CLI/pod lifetime transitions. Fresh packaged Claude/Codex/Hermes reporters each
+produced complete zero-work inventories. Claude and Codex Latest/reset paths
+preserved PVC test data. A running background Hermes agent became excluded as
+soon as stop intent was accepted. The live dashboard passed independent collapse
+persistence, desktop/mobile, no page errors and no horizontal overflow. These
+checks used inert local model stubs and disposable agents, without operator model
+credentials. Auth profile regressions are additionally covered by boot fixtures.
+Detailed final-head evidence and any follow-up findings are in PR 431.

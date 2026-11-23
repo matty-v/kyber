@@ -24,9 +24,13 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 		fail                   bool
 		historyFailure         string
 		emptyHistory           bool
+		ephemeral              bool
 		foreground, background int32
 		input                  bool
 	}{
+		{name: "active ephemeral thread", state: "active", ephemeral: true, emptyHistory: true, foreground: 1},
+		{name: "idle ephemeral with background", state: "idle", ephemeral: true, emptyHistory: true, jobs: 1, background: 1},
+		{name: "idle ephemeral", state: "idle", ephemeral: true, emptyHistory: true},
 		{name: "foreground and silent jobs", state: "active", jobs: 2, foreground: 1, background: 2},
 		{name: "idle with silent job", state: "idle", jobs: 1, background: 1},
 		{name: "fast turn completed between polls", state: "idle"},
@@ -69,8 +73,11 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 					case "thread/loaded/list":
 						result = map[string]any{"data": []string{"main"}, "nextCursor": nil}
 					case "thread/read":
-						result = map[string]any{"thread": map[string]any{"status": map[string]any{"type": tc.state, "activeFlags": tc.flags}}}
+						result = map[string]any{"thread": map[string]any{"ephemeral": tc.ephemeral, "status": map[string]any{"type": tc.state, "activeFlags": tc.flags}}}
 					case "thread/turns/list":
+						if tc.ephemeral {
+							t.Error("ephemeral thread queried unsupported persisted history")
+						}
 						if tc.historyFailure != "" {
 							code, message := -32600, "different invalid request"
 							if tc.historyFailure == "unmaterialized" {

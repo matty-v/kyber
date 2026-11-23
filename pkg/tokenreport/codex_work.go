@@ -126,7 +126,8 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 	for _, threadID := range ids {
 		var thread struct {
 			Thread struct {
-				Status struct {
+				Ephemeral bool `json:"ephemeral"`
+				Status    struct {
 					Type  string   `json:"type"`
 					Flags []string `json:"activeFlags"`
 				} `json:"status"`
@@ -153,7 +154,7 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 		default:
 			return activity.Snapshot{}, errors.New("native thread status unavailable")
 		}
-		// A complete turn can begin and finish between polling ticks. Native
+		// Persistent turn timing catches work completed between polling ticks. Native
 		// turn timing preserves its actual activity without treating metadata
 		// edits, token samples or accepted goals as work.
 		var history struct {
@@ -162,19 +163,29 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 				StartedAt   *int64 `json:"startedAt"`
 			} `json:"data"`
 		}
-		if err := call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "itemsView": "notLoaded"}, &history); err != nil {
-			var failure *nativeActivityRPCError
-			if thread.Thread.Status.Type != "idle" || !errors.As(err, &failure) || failure.Code != -32600 ||
-				failure.Message != fmt.Sprintf("thread %s is not materialized yet; thread/turns/list is unavailable before first user message", threadID) {
-				return activity.Snapshot{}, err
-			}
-			// This exact native response explicitly says there has never been
-			// a user turn. Still require the current background inventory and
-			// stable loaded-thread set below; do not infer idle from an error.
+		// Native ephemeral threads explicitly do not support persisted turn
+		// history. Their current status and background inventory are still
+		// authoritative. Never substitute metadata updatedAt for work timing.
+		if thread.Thread.Ephemeral {
 			history.Data = make([]struct {
 				CompletedAt *int64 `json:"completedAt"`
 				StartedAt   *int64 `json:"startedAt"`
 			}, 0)
+		} else {
+			if err := call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "itemsView": "notLoaded"}, &history); err != nil {
+				var failure *nativeActivityRPCError
+				if thread.Thread.Status.Type != "idle" || !errors.As(err, &failure) || failure.Code != -32600 ||
+					failure.Message != fmt.Sprintf("thread %s is not materialized yet; thread/turns/list is unavailable before first user message", threadID) {
+					return activity.Snapshot{}, err
+				}
+				// This exact native response explicitly says there has never been
+				// a user turn. Still require the current background inventory and
+				// stable loaded-thread set below; do not infer idle from an error.
+				history.Data = make([]struct {
+					CompletedAt *int64 `json:"completedAt"`
+					StartedAt   *int64 `json:"startedAt"`
+				}, 0)
+			}
 		}
 		if history.Data == nil || len(history.Data) > 1 {
 			return activity.Snapshot{}, errors.New("native turn timing incomplete")
