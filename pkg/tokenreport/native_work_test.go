@@ -27,11 +27,13 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 	}{
 		{name: "foreground and silent jobs", state: "active", jobs: 2, foreground: 1, background: 2},
 		{name: "idle with silent job", state: "idle", jobs: 1, background: 1},
+		{name: "fast turn completed between polls", state: "idle"},
 		{name: "approval", state: "active", flags: []string{"waitingOnApproval"}, input: true},
 		{name: "unsupported job API", state: "idle", fail: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			socket := filepath.Join(t.TempDir(), "native.sock")
+			completedAt := time.Now().Add(-time.Second).Truncate(time.Second)
 			listener, err := net.Listen("unix", socket)
 			if err != nil {
 				t.Fatal(err)
@@ -61,6 +63,8 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 						result = map[string]any{"data": []string{"main"}, "nextCursor": nil}
 					case "thread/read":
 						result = map[string]any{"thread": map[string]any{"status": map[string]any{"type": tc.state, "activeFlags": tc.flags}}}
+					case "thread/turns/list":
+						result = map[string]any{"data": []map[string]any{{"completedAt": completedAt.Unix()}}}
 					case "thread/backgroundTerminals/list":
 						if tc.fail {
 							_ = c.WriteJSON(map[string]any{"id": req.ID, "error": map[string]any{"code": -32601, "message": "unsupported"}})
@@ -92,7 +96,7 @@ func TestCodexWorkInventoryNativeReadOnly(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if !got.Complete || got.Foreground != tc.foreground || got.Background != tc.background || got.NeedsInput != tc.input {
+			if !got.Complete || got.Foreground != tc.foreground || got.Background != tc.background || got.NeedsInput != tc.input || !got.LastWorkedAt.Equal(completedAt) {
 				t.Fatalf("snapshot=%+v", got)
 			}
 		})

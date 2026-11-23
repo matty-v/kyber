@@ -289,12 +289,16 @@ export function createApiClient(cluster: Cluster) {
     // ---- Agents ----
 
     listAgents: async (signal?: AbortSignal): Promise<Agent[]> => {
+      const startedAt = performance.now()
       const res = await request<AgentListResponse>('GET', '/api/v1/agents', undefined, signal)
-      return recordActivityReceipt(res.items)
+      return recordActivityReceipt(res.items, startedAt)
     },
 
-    getAgent: (name: string): Promise<Agent> =>
-      request<Agent>('GET', `/api/v1/agents/${name}`).then(agent => recordActivityReceipt([agent])[0]),
+    getAgent: async (name: string): Promise<Agent> => {
+      const startedAt = performance.now()
+      const agent = await request<Agent>('GET', `/api/v1/agents/${name}`)
+      return recordActivityReceipt([agent], startedAt)[0]
+    },
 
     createAgent: (req: CreateAgentRequest): Promise<Agent> =>
       request<Agent>('POST', '/api/v1/agents', req),

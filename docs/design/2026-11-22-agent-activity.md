@@ -22,9 +22,11 @@ expiresAt, observedAt, lastWorkedAt, stateSince, safe counts, needsInput and a
 reason. It omits process ids, native handles, commands, outputs and credentials.
 The wire type is populated only from admitted native snapshots; legacy
 reports cannot populate it. Legacy state is not treated as a live work lease. The frontend
-anchors the server baseline at response receipt with a monotonic clock, including
-React Query's structurally shared result, and expires cached views without
-waiting for another successful request.
+anchors the server baseline conservatively at request start with a monotonic
+clock and carries that anchor through React Query structural sharing. Charging
+the full round trip prevents a delayed response from extending the work lease.
+Cached views expire without another successful request; Waiting history sorts
+by native last-work time rather than observer restart/contact time.
 
 Agent General/list badges and dashboard use the same projection. The dashboard
 has four independently collapsible groups with persistent per-connection boolean
@@ -106,3 +108,23 @@ Primary interface evidence:
 - https://github.com/openai/codex/blob/rust-v0.169.0/codex-rs/app-server-transport/src/transport/unix_socket.rs
 - https://code.claude.com/docs/en/plugins/mods/create
 - https://github.com/anthropics/claude-code/blob/main/mods/types/claude-code.d.ts
+
+## Controlled test-cluster checkpoint (2026-11-23)
+
+The disposable `mat216-codex-canary` on `kyber-dev` uses an inert local model
+stub and no operator model credentials. Managed latest resolved to 0.171.0.
+Direct native reads verified idle, a silent 45-second foreground request,
+foreground completion while a native 75-second terminal remained running,
+and the terminal's eventual exit. Completed-turn timing also survives between
+polls. An unrelated model-stub process does not count as native work.
+
+Pinning the canary through the supported API to image-default 0.146.0 preserved
+its PVC sentinel. That release's default TUI did not expose a live control
+socket. A separate native app-server bound to a private Unix socket accepts its
+standard `--remote` TUI, but the installed server rejects `thread/turns/list`;
+protocol declarations alone do not establish installed method support. This
+compatibility path is still under test and is not a qualified default.
+
+Matt explicitly reaffirmed the full Claude Code/Codex/Hermes scope. PR 431
+remains draft until all three are qualified; green checkpoint CI is insufficient
+for merge. GitGuardian's test-fixture incident is resolved.

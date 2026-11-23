@@ -135,6 +135,36 @@ func CodexWorkInventory(ctx context.Context, socketPath string) (activity.Snapsh
 		default:
 			return activity.Snapshot{}, errors.New("native thread status unavailable")
 		}
+		// A complete turn can begin and finish between polling ticks. Native
+		// turn timing preserves its actual activity without treating metadata
+		// edits, token samples or accepted goals as work.
+		var history struct {
+			Data []struct {
+				CompletedAt *int64 `json:"completedAt"`
+				StartedAt   *int64 `json:"startedAt"`
+			} `json:"data"`
+		}
+		if err := call("thread/turns/list", map[string]any{"threadId": threadID, "limit": 1, "itemsView": "notLoaded"}, &history); err != nil {
+			return activity.Snapshot{}, err
+		}
+		if history.Data == nil || len(history.Data) > 1 {
+			return activity.Snapshot{}, errors.New("native turn timing incomplete")
+		}
+		for _, turn := range history.Data {
+			stamp := turn.CompletedAt
+			if stamp == nil {
+				stamp = turn.StartedAt
+			}
+			if stamp != nil && *stamp > 0 {
+				at := time.Unix(*stamp, 0).UTC()
+				if at.After(time.Now().UTC()) {
+					return activity.Snapshot{}, errors.New("native turn timing is in the future")
+				}
+				if !at.After(observedAt) && at.After(snapshot.LastWorkedAt) {
+					snapshot.LastWorkedAt = at
+				}
+			}
+		}
 		cursor := ""
 		seen := map[string]bool{}
 		for {
@@ -202,6 +232,9 @@ func RunCodexWorkReporter(ctx context.Context, socketPath, sidecarURL string) {
 		}
 		if snapshot.Foreground > 0 || snapshot.Background > 0 {
 			lastWorked = snapshot.ObservedAt
+		}
+		if snapshot.LastWorkedAt.After(lastWorked) {
+			lastWorked = snapshot.LastWorkedAt
 		}
 		snapshot.LastWorkedAt = lastWorked
 		_ = postWorkSnapshot(ctx, client, sidecarURL, snapshot)

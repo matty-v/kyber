@@ -1,7 +1,7 @@
 import { replaceEqualDeep } from '@tanstack/react-query'
 import { describe, it, expect } from 'vitest'
 import type { Agent, AgentWorkView } from './types'
-import { activityGroups, activityServerNow, projectWork, recordActivityReceipt } from './activity'
+import { activityGroups, activityServerNow, projectWork, recordActivityReceipt, shareActivityReceipts } from './activity'
 const server = Date.parse('2026-11-22T20:00:00Z')
 function agent(id: string, patch: Partial<AgentWorkView> = {}): Agent {
   const a = { id, phase: 'Running', activity: { work: { state: 'working', serverTime: new Date(server).toISOString(), expiresAt: new Date(server + 60000).toISOString(), observedAt: new Date(server).toISOString(), stateSince: new Date(server - 1000).toISOString(), foregroundCount: 1, backgroundCount: 0, ...patch } } } as Agent
@@ -44,11 +44,23 @@ describe('current-work projection', () => {
   it('anchors the structurally shared query result and never rearms an identical cached view', () => {
     const original = agent('a')
     const raw = { ...agent('a'), activity: { work: { ...original.activity!.work!, serverTime: new Date(server + 1000).toISOString() } } }
+    recordActivityReceipt([raw], 1100)
     const shared = replaceEqualDeep(original, raw)
-    recordActivityReceipt([shared], 1100)
+    shareActivityReceipts([shared], [raw])
     expect(projectWork(shared, 60099).state).toBe('working')
     recordActivityReceipt([shared], 50000)
     expect(projectWork(shared, 60100).state).toBe('unavailable')
+  })
+  it('orders waiting history by actual work instead of observer contact', () => {
+    const recent = agent('recent', { state: 'waiting', foregroundCount: 0, stateSince: new Date(server - 10000).toISOString(), lastWorkedAt: new Date(server - 100).toISOString() })
+    const older = agent('older', { state: 'waiting', foregroundCount: 0, stateSince: new Date(server).toISOString(), lastWorkedAt: new Date(server - 1000).toISOString() })
+    expect(activityGroups([older, recent], 100).waiting.map(a => a.id)).toEqual(['recent', 'older'])
+  })
+  it('does not renew a delayed response while React Query shares its fields', () => {
+    const raw = agent('delayed')
+    const shared = structuredClone(raw)
+    shareActivityReceipts([shared], [raw])
+    expect(projectWork(shared, 90100)).toMatchObject({ state: 'unavailable', reason: 'reporter_stale' })
   })
 
 })

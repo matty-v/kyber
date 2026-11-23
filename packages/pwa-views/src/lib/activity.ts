@@ -6,10 +6,23 @@ export type WorkState = ActivityGroup | 'excluded'
 export type WorkView = { state: WorkState; reason?: string; foregroundCount: number; backgroundCount: number; needsInput: boolean; lastWorkedAt?: string; observedAt?: string; stateSince?: string }
 const receipts = new WeakMap<AgentWorkView, number>()
 
-// Call when a response arrives, not on first render: a hidden tab must not
-// extend a cached lease. performance.now avoids wall-clock changes after receipt.
+// Anchor before the HTTP request starts, not on first render or arrival.
+// Charging the full round trip conservatively expires a delayed response;
+// network latency cannot extend the server lease. performance.now avoids skew.
 export function recordActivityReceipt(agents: Agent[], receivedAt = performance.now()): Agent[] {
   for (const a of agents) if (a.activity?.work && !receipts.has(a.activity.work)) receipts.set(a.activity.work, receivedAt)
+  return agents
+}
+
+// React Query can allocate new nested objects while sharing equal fields.
+// Carry the source request's anchor onto those objects, never a new receipt time.
+export function shareActivityReceipts(agents: Agent[], incoming: Agent[]): Agent[] {
+  const anchors = new Map(incoming.map(a => [a.id, a.activity?.work ? receipts.get(a.activity.work) : undefined]))
+  for (const a of agents) {
+    const work = a.activity?.work
+    const anchor = anchors.get(a.id)
+    if (work && anchor !== undefined && !receipts.has(work)) receipts.set(work, anchor)
+  }
   return agents
 }
 
@@ -44,7 +57,10 @@ export function activityGroups(agents: Agent[], monotonicNow = performance.now()
   }
   for (const group of ACTIVITY_GROUPS) groups[group].sort((a,b) => {
     // Lease renewals are deliberately not the sort key.
-    const key = (x: Agent) => Date.parse(x.activity?.work?.stateSince ?? x.activity?.work?.lastWorkedAt ?? '') || 0
+    const key = (x: Agent) => {
+      const work = x.activity?.work
+      return Date.parse((group === 'waiting' ? work?.lastWorkedAt ?? work?.stateSince : work?.stateSince ?? work?.lastWorkedAt) ?? '') || 0
+    }
     return key(b) - key(a) || a.id.localeCompare(b.id)
   })
   return groups
