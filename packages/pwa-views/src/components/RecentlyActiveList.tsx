@@ -83,7 +83,7 @@ export function RecentlyActiveList({ agents, limit = DEFAULT_LIST_LIMIT, now }: 
     if (row && !row.closest('[hidden]')) row.focus()
     else root.current?.querySelector<HTMLButtonElement>(`[data-group-button="${group}"]`)?.focus()
   }, [groups])
-  return <div ref={root} onFocusCapture={event => {
+  return <div className="min-w-0 max-w-full" ref={root} onFocusCapture={event => {
     const row = (event.target as HTMLElement).closest<HTMLAnchorElement>('a[data-activity-agent]')
     focused.current = row ? { id: row.dataset.activityAgent!, group: row.dataset.activityGroup as ActivityGroup } : null
   }} onBlurCapture={event => { if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget as Node)) focused.current = null }}><Card className="min-w-0 max-w-full">

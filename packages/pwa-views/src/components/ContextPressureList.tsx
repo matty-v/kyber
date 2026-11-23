@@ -35,7 +35,7 @@ export function ContextPressureList({
   }
 
   return (
-    <Card>
+    <Card className="min-w-0 max-w-full">
       <div className="mb-2 font-mono text-[10px] uppercase tracking-[0.2em] text-text-muted">
         Context pressure
       </div>
@@ -57,8 +57,9 @@ export function ContextPressureList({
                   className="-ml-1 block min-w-0 flex-1 rounded px-1 py-1 transition-colors hover:bg-surface-overlay/40"
                 >
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                    <span className="text-sm text-text-primary">{row.agent.id}</span>
-                    <span className="rounded bg-surface-overlay px-1.5 py-0.5 font-mono text-[10px] text-text-muted">
+                    <span className="min-w-0 max-w-full truncate text-sm text-text-primary" title={row.agent.id}>{row.agent.id}</span>
+                    <span className="min-w-0 max-w-full truncate rounded bg-surface-overlay px-1.5 py-0.5 font-mono text-[10px] text-text-muted"
+                      title={row.model}>
                       {row.model}
                     </span>
                     <span className="text-xs text-text-muted">

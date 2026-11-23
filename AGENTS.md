@@ -1298,3 +1298,9 @@ paths. Mocking PATH alone does not isolate sudo; see docs/contributing/reviewing
 Native-probe Go tests must read their Python source and test inputs before spawning
 them so Go tracks those dependencies. Use `-count=1` when directly verifying changed
 external scripts; child-process file reads alone do not invalidate Go’s test cache.
+
+Dashboard responsive layout: keep the mobile widget grid explicitly single-column
+(`grid-cols-1`) and put `min-w-0` on each actual grid item, including wrappers
+around Cards. Descendant text truncation alone cannot constrain a grid item
+with an intrinsic minimum width. Validate populated activity rows with long
+request text/URLs in a real browser, not just empty or short-label fixtures.
