@@ -20,6 +20,16 @@ import (
 // Hermes process. PID start ticks validate only these registered publishers;
 // this is not a scan that treats arbitrary OS processes as agent work.
 func HermesWorkInventory(root, podUID string) (activity.Snapshot, error) {
+	return nativePublisherInventory(root, podUID)
+}
+
+// ClaudeWorkInventory consumes the same bounded count-only publisher format.
+// Claude's native mod and observed Bash produce it inside the harness scope.
+func ClaudeWorkInventory(root, podUID string) (activity.Snapshot, error) {
+	return nativePublisherInventory(root, podUID)
+}
+
+func nativePublisherInventory(root, podUID string) (activity.Snapshot, error) {
 	result := activity.Snapshot{ObservedAt: time.Now().UTC(), Complete: true}
 	entries, err := os.ReadDir(root)
 	if err != nil || len(entries) > 4096 || podUID == "" {
@@ -123,12 +133,20 @@ func HermesWorkInventory(root, podUID string) (activity.Snapshot, error) {
 }
 
 func RunHermesWorkReporter(ctx context.Context, root, podUID, sidecarURL string) {
+	runNativeWorkReporter(ctx, root, podUID, sidecarURL)
+}
+
+func RunClaudeWorkReporter(ctx context.Context, root, podUID, sidecarURL string) {
+	runNativeWorkReporter(ctx, root, podUID, sidecarURL)
+}
+
+func runNativeWorkReporter(ctx context.Context, root, podUID, sidecarURL string) {
 	client := &http.Client{Timeout: 5 * time.Second}
 	ticker := time.NewTicker(activity.ObservationInterval)
 	defer ticker.Stop()
 	var lastWorked time.Time
 	for {
-		snapshot, err := HermesWorkInventory(root, podUID)
+		snapshot, err := nativePublisherInventory(root, podUID)
 		if err != nil {
 			snapshot = activity.Snapshot{ObservedAt: time.Now().UTC(), Complete: false}
 		}

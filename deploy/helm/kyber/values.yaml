@@ -1041,10 +1041,10 @@ runtime:
   claudeCode:
     # @anthropic-ai/claude-code npm version baked into the
     # kyber-claude-code image. Bump here → CI rebuild → ArgoCD rolls.
-    version: "2.1.119"
+    version: "2.1.330"
   codex:
     # @openai/codex npm version baked into the Kyber Codex image.
-    version: "0.146.0"
+    version: "0.171.0"
 
 agent:
   security:

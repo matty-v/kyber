@@ -43,9 +43,9 @@ these interfaces.
 
 | Harness | Evidence | Remaining qualification/integration |
 | --- | --- | --- |
-| Claude Code | Official hook reference documents UserPromptSubmit, Stop, PreToolUse, PostToolUse, failure and subagent hooks. TaskCompleted is an agent-team task event, not a shell-exit event. | Qualify the installed release's background Bash inventory/exit path, silent waits, interrupt/error handling and subagent coverage. Do not claim task hooks solve background shell exits. |
-| Codex 0.169.0 | Installed CLI advertises app-server daemon/proxy. Pinned native protocol has loaded-thread/read status and live command start/end events. Rollout policy explicitly drops ExecCommandBegin/End/OutputDelta. | Qualify a read-only live inventory/event connection, completeness on reconnect and native job exits. The raw stdio proxy probe was unsuitable because the native Unix transport is WebSocket. A read-only WebSocket probe and the new adapter successfully read the live managed 0.171.0 daemon: one active thread and three background terminals, with complete pagination. The 0.146.0 and 0.169.0 pinned protocol sources both declare loaded/read/backgroundTerminals/list. Controlled default/latest lifecycle qualification remains outstanding. Image default remains 0.146.0, so default/reset/latest compatibility and any required native upgrade must be explicitly tested. |
-| Hermes 0.21.0, 29112bef099274229cadff79cdff7bf7b99c4b77 | Native ProcessRegistry tracks background sessions with identity/exit state and detached ownership; hooks cover pre_llm_call and on_session_end, the latter includes completed/failed/interrupted outcomes. | An in-process plugin now records native turn boundaries and reads ProcessRegistry. Each process publishes a count-only atomic snapshot; the Go reporter aggregates live publishers using PID start ticks and pod scope. Unit checks cover concurrent turns, failed/interrupted completion, silent background jobs, exits, detached gaps and frozen publishers. Installed-runtime qualification remains outstanding. A shell hook seeing only one tool result cannot prove the whole registry is empty. |
+| Claude Code 2.1.330 | Read-only native mod observes turn boundaries, native agent scheduling and tool-result identities. A Bash-specific shell override registers the native child PID/start-time before exact exec; it does not intercept tool execution or alter MCP argv. Staged GCP native TUI reported Background work after its foreground turn ended. | Packaged boot/default/latest, native subagent scheduling and remaining lifecycle/failure cases remain release gates. |
+| Codex 0.171.0 | Live native WebSocket control socket provides loaded/read/backgroundTerminals/list and thread/turns/list. Controlled GCP idle, silent foreground, foreground-to-background, job exit and short-turn history checks passed. | Revalidate packaged default/reset/latest. The installed old 0.146.0 server rejects thread/turns/list; old pins fail closed rather than invent activity. |
+| Hermes 0.21.0, 29112bef099274229cadff79cdff7bf7b99c4b77 | In-process native turn boundaries plus ProcessRegistry publish count-only snapshots, validated by owner PID/start-time and pod scope. GCP silent foreground, cancellation, two background jobs exiting independently and blocked-publisher recovery passed. | Packaged revalidation, explicit background cancellation and remaining restart/auth regressions remain release gates. |
 
 Sources:
 
@@ -99,8 +99,17 @@ not Bash terminals. A `tool.call` observer is unsuitable as a transparent fix:
 the current declarations warn that matching a tool can disable its background
 handoff. Do not patch the native binary, switch the operator's TUI to print mode,
 or count every shell/MCP service as work to sidestep the missing qualification.
-The interactive Claude background inventory path remains open; this is not
-permission to silently narrow the accepted three-harness scope.
+The new 2.1.330 adapter uses native turn/agent scheduling and result identities,
+plus a Bash-only exec wrapper, without intercepting tool.call/tool.run. No command
+text, outputs or prompts are persisted or sent to the platform. Uncorrelated
+native work, unsupported operator shell overrides, stale native publishers or
+missing scheduling provenance produce unavailable coverage, never idle.
+
+Baked and chart default versions are now Claude Code 2.1.330 and Codex 0.171.0.
+Explicit operator pins remain unchanged. Older pinned interfaces are not claimed
+as qualified. Claude boot seeds the new renderer upsell acknowledgement while
+preserving the operator's actual renderer choice. The inline launcher carries
+observer environment through initial launch, resume and watchdog restart.
 
 Primary interface evidence:
 - https://github.com/openai/codex/blob/rust-v0.146.0/codex-rs/app-server-protocol/src/protocol/common.rs
@@ -123,7 +132,7 @@ its PVC sentinel. That release's default TUI did not expose a live control
 socket. A separate native app-server bound to a private Unix socket accepts its
 standard `--remote` TUI, but the installed server rejects `thread/turns/list`;
 protocol declarations alone do not establish installed method support. This
-compatibility path is still under test and is not a qualified default.
+compatibility path is not qualified; the new baked default is 0.171.0.
 
 Matt explicitly reaffirmed the full Claude Code/Codex/Hermes scope. PR 431
 remains draft until all three are qualified; green checkpoint CI is insufficient

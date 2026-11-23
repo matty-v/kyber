@@ -15,7 +15,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && rm -rf /var/lib/apt/lists/*
 
 # Pinned to the version verified by the Codex V1 spike.
-ARG CODEX_VERSION=0.146.0
+ARG CODEX_VERSION=0.171.0
 RUN npm install -g @openai/codex@${CODEX_VERSION}
 ENV KYBER_RUNTIME_DEFAULT_VERSION=${CODEX_VERSION}
 

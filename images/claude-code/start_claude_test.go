@@ -3041,7 +3041,7 @@ func TestStartClaude_StartupPromptIsQuotedForEveryLaunch(t *testing.T) {
 	if !strings.Contains(s, `CLAUDE_LAUNCH_ARGS="$CLAUDE_LAUNCH_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"`) {
 		t.Fatal("startup prompt is not shell-quoted as one positional argument")
 	}
-	if got := strings.Count(s, `"claude $CLAUDE_LAUNCH_ARGS"`); got != 3 {
+	if got := strings.Count(s, `"$CLAUDE_EXEC $CLAUDE_LAUNCH_ARGS"`); got != 3 {
 		t.Fatalf("startup-aware command used by %d launch paths, want 3", got)
 	}
 	if strings.Contains(s, `Starting Claude Code in tmux (cwd=$LAUNCH_DIR): claude $CLAUDE_LAUNCH_ARGS`) {
@@ -3065,10 +3065,10 @@ func TestStartClaudeSessionResumeSourceContract(t *testing.T) {
 	for what, want := range map[string]string{
 		"resume arg set":             `CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue $A2A_CLAUDE_ARGS"`,
 		"resume arg set prompt":      `CLAUDE_RESUME_ARGS="$CLAUDE_RESUME_ARGS -- $(printf '%q' "$KYBER_STARTUP_PROMPT")"`,
-		"boot resume selection":      `BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
+		"boot resume selection":      `BOOT_LAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_RESUME_ARGS"`,
 		"boot gate":                  `if claude_has_prior_session; then`,
 		"boot gate enable flag":      `if [ "$SESSION_RESUME_ENABLED" = "1" ]; then`,
-		"relaunch resume selection":  `RELAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"`,
+		"relaunch resume selection":  `RELAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_RESUME_ARGS"`,
 		"watchdog --fresh fallback":  `/persist/last-claude-launch.sh $RELAUNCH_FLAG || echo`,
 		"restart-session fresh flag": `[ "\${1:-}" = "--fresh" ] && KYBER_FRESH=1`,
 	} {
@@ -3143,6 +3143,7 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 		"HOME='" + work + "'", // keeps the baked bot.pid rm inside the sandbox
 		"LAUNCH_DIR='/home/kyber/dev/test-agent'",
 		`CLAUDE_ARGS="--dangerously-skip-permissions --model claude-test"`,
+		`CLAUDE_EXEC="${TEST_CLAUDE_EXEC:-claude}"`,
 		`CLAUDE_LAUNCH_ARGS="$CLAUDE_ARGS -- startup\ prompt"`,
 		`CLAUDE_RESUME_ARGS="$CLAUDE_ARGS --continue -- startup\ prompt"`,
 		"SESSION_RESUME_ENABLED=1",
@@ -3227,6 +3228,29 @@ func TestGeneratedClaudeRelaunchScript_SessionResume(t *testing.T) {
 	if got := run("--fresh"); !strings.Contains(got, "new-session") {
 		t.Errorf("--fresh with live session must still relaunch, got:\n%s", got)
 	}
+
+	t.Run("native observer scope survives fresh and resume relaunch", func(t *testing.T) {
+		prefix := "env CLAUDE_CODE_SHELL=/fixture/observed-bash KYBER_POD_UID=test-pod claude"
+		render := exec.Command("/bin/bash", wrapperPath)
+		render.Env = append(os.Environ(), "TEST_CLAUDE_EXEC="+prefix)
+		if out, err := render.CombinedOutput(); err != nil {
+			t.Fatalf("render: %v: %s", err, out)
+		}
+		raw, err := os.ReadFile(gen)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(gen, []byte(strings.ReplaceAll(string(raw), "/persist/var/lock", lockDir)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(aliveFlag)
+		if got := run(); !strings.Contains(got, prefix) || !strings.Contains(got, "--continue") {
+			t.Errorf("resume lost observer scope: %s", got)
+		}
+		if got := run("--fresh"); !strings.Contains(got, prefix) || strings.Contains(got, "--continue") {
+			t.Errorf("fresh lost observer scope: %s", got)
+		}
+	})
 
 	t.Run("background skill repair releases exec streams and lock", func(t *testing.T) {
 		finished := filepath.Join(work, "repair-finished")
@@ -3319,14 +3343,18 @@ func TestClaudeAPIKeyApprovalPreservesInteractiveProfile(t *testing.T) {
 				t.Fatal(err)
 			}
 			var state struct {
-				Other                 string
-				CustomApiKeyResponses struct{ Approved, Rejected []string }
+				Other                     string
+				FullscreenUpsellSeenCount int
+				CustomApiKeyResponses     struct{ Approved, Rejected []string }
 			}
 			if err := json.Unmarshal(raw, &state); err != nil {
 				t.Fatal(err)
 			}
 			if state.Other != "preserved" {
 				t.Fatal("unrelated state was lost")
+			}
+			if state.FullscreenUpsellSeenCount < 3 {
+				t.Fatal("unattended runtime can still block on native fullscreen onboarding")
 			}
 			contains := func(xs []string, x string) bool {
 				for _, v := range xs {
@@ -3388,4 +3416,92 @@ func TestStartClaudeEffortReachesBootArguments(t *testing.T) {
 	}
 	// The launch/resume argument builder uses this same qualified base set;
 	// live acceptance separately verifies the native resumed-session outcome.
+}
+
+func TestStartClaudeNativeActivityQualificationGate(t *testing.T) {
+	for _, tc := range []struct {
+		name, version, shell, prefix string
+		enabled                      bool
+	}{
+		{name: "qualified", version: "2.1.330", enabled: true},
+		{name: "older native API", version: "2.1.119"},
+		{name: "operator shell", version: "2.1.330", shell: "/operator/zsh"},
+		{name: "operator prefix", version: "2.1.330", prefix: "/operator/sandbox"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			stub := stubInstallEnvDir(t, filepath.Join(home, "npm.log"), 0, filepath.Join(home, "sudo.log"), tc.version)
+			// Never launch the host agent's installed reporters from a boot fixture.
+			for _, name := range []string{"kyber-skills", "kyber-runtime-effort"} {
+				if err := os.WriteFile(filepath.Join(stub, name), []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			helper := filepath.Join(home, "helper")
+			bash := filepath.Join(home, "observed-bash")
+			for _, path := range []string{helper, bash} {
+				if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mod := filepath.Join(home, "mod with spaces")
+			if err := os.MkdirAll(filepath.Join(mod, "hooks"), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(mod, "hooks", "register.js"), nil, 0644); err != nil {
+				t.Fatal(err)
+			}
+			for i := 0; i < 2; i++ {
+				cmd := exec.Command("/bin/bash", scriptPath(t))
+				cmd.Dir = home
+				cmd.Env = []string{"HOME=" + home, "PATH=" + stub + ":" + testPATH(),
+					"ANTHROPIC_API_KEY=test-key", "KYBER_SKIP_RUNTIME_PROBE=1", "KYBER_BOOTPREP_DRY_RUN=1",
+					"KYBER_HARNESS_INSTALLER=" + filepath.Join(stub, "kyber-harness-install"),
+					"KYBER_RUNTIME_DEFAULT_VERSION=2.0.99", "KYBER_REQUESTED_CC_VERSION=" + tc.version,
+					"KYBER_TEST_ACTIVITY_HELPER=" + helper, "KYBER_TEST_ACTIVITY_BASH=" + bash,
+					"KYBER_TEST_ACTIVITY_MOD_DIR=" + mod, "CLAUDE_CODE_SHELL=" + tc.shell,
+					"CLAUDE_CODE_SHELL_PREFIX=" + tc.prefix,
+					"KYBER_CRON_POSTRUN_SENTINEL=" + filepath.Join(home, "cron-enabled"),
+					"KYBER_SKILLS_LOG=" + filepath.Join(home, "skills.log"),
+					"KYBER_SESSION_STATE_FILE=" + filepath.Join(home, "no-session-state")}
+				out, err := cmd.CombinedOutput()
+				if err != nil {
+					t.Fatalf("boot qualification: %v\n%s", err, out)
+				}
+				if got := strings.Contains(string(out), "native activity observer configured"); got != tc.enabled {
+					t.Fatalf("observer enabled=%v, want %v: %s", got, tc.enabled, out)
+				}
+			}
+			data, err := os.ReadFile(filepath.Join(home, ".claude", "settings.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var settings struct {
+				Hooks map[string][]struct {
+					Matcher string
+					Hooks   []struct {
+						Command string
+						Timeout int
+					}
+				}
+			}
+			if err := json.Unmarshal(data, &settings); err != nil {
+				t.Fatal(err)
+			}
+			found := 0
+			for _, entry := range settings.Hooks["PreToolUse"] {
+				for _, hook := range entry.Hooks {
+					if hook.Command == helper+" hook" {
+						found++
+						if entry.Matcher != "Bash|Monitor" || hook.Timeout != 2 {
+							t.Fatal("observer hook is not bounded and limited to native shell tools")
+						}
+					}
+				}
+			}
+			if (found == 1) != tc.enabled || found > 1 {
+				t.Fatalf("observer hooks=%d, enabled=%v", found, tc.enabled)
+			}
+		})
+	}
 }

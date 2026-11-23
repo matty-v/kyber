@@ -7,7 +7,7 @@
 
 ## Unreleased
 
-- Add the Agent activity current-work contract and independently collapsible dashboard groups, with lifecycle and observation freshness taking precedence over cached legacy state. Stage dedicated sidecar admission and native Codex/Hermes reporters; Prevent delayed responses from extending activity leases, retain short native Codex turns in last-work history, and sort Waiting by actual work. Three-harness runtime qualification remains a release gate.
+- Add the Agent activity current-work contract and independently collapsible dashboard groups, with lifecycle and observation freshness taking precedence over cached legacy state. Add dedicated sidecar admission and native Claude Code/Codex/Hermes reporters with qualified-interface defaults (Claude Code 2.1.330 and Codex 0.171.0); Prevent delayed responses from extending activity leases, retain short native Codex turns in last-work history, and sort Waiting by actual work. Three-harness runtime qualification remains a release gate.
 
 - Remove migration checklists and completed restore cards from Agent General; keep restore progress, cancellation and failure feedback.
 
