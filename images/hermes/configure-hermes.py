@@ -62,6 +62,34 @@ def mapping(value: object) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def install_activity_plugin(home: Path, source: Path) -> bool:
+    """Install only the reserved platform plugin, without following user links."""
+    if not source.is_dir():
+        return False
+    plugins = home / "plugins"
+    destination = plugins / "kyber-platform-activity"
+    if plugins.is_symlink() or destination.is_symlink():
+        return False
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        for filename in ("__init__.py", "plugin.yaml"):
+            data = (source / filename).read_bytes()
+            fd, temporary = tempfile.mkstemp(prefix=".kyber-activity-", dir=destination)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                os.chmod(temporary, 0o644)
+                # Replace the managed directory entry; do not truncate through
+                # a symlink a previous session left at this filename.
+                os.replace(temporary, destination / filename)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+    except OSError:
+        return False
+    return True
+
+
 def main() -> None:
     home = Path(os.environ.get("HERMES_HOME", Path.home() / ".hermes"))
     path = home / "config.yaml"
@@ -146,6 +174,22 @@ def main() -> None:
         config["hooks"] = hooks
     else:
         config.pop("hooks", None)
+
+    # Platform-managed observer is an in-process plugin: importing the process
+    # registry in a shell hook would create a different, empty registry.
+    source = Path("/opt/kyber/hermes-activity")
+    plugin_name = "kyber-platform-activity"
+    plugins = mapping(config.get("plugins"))
+    enabled = plugins.get("enabled", [])
+    enabled = enabled if isinstance(enabled, list) else []
+    enabled = [name for name in enabled if name != plugin_name]
+    if install_activity_plugin(home, source):
+        enabled.append(plugin_name)
+        disabled = plugins.get("disabled", [])
+        if isinstance(disabled, list):
+            plugins["disabled"] = [name for name in disabled if name != plugin_name]
+    plugins["enabled"] = enabled
+    config["plugins"] = plugins
 
     # Kyber's identity repository is the durable source for agent-authored
     # memory and skills. Disable Hermes's automatic post-turn mutation fork

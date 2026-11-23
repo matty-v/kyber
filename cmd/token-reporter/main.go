@@ -66,6 +66,7 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	go tokenreport.RunClaudeWorkReporter(ctx, "/tmp/kyber-native-activity/claude", os.Getenv("KYBER_POD_UID"), sidecarURL)
 	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {
 		collector := &tokenreport.ClaudeUsageCollector{
 			ProjectsRoot: projectsRoot, CursorPath: "/persist/usage/claude-cursor.json", RouteFingerprint: routeFingerprint,

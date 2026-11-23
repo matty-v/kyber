@@ -41,6 +41,7 @@ func main() {
 	// permanently unauthenticated after the next boot — see the type doc.
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
+	go tokenreport.RunCodexWorkReporter(ctx, filepath.Join(codexHome, "app-server-control", "app-server-control.sock"), os.Getenv("KYBER_SIDECAR_URL"))
 	if agentUID, routeFingerprint := os.Getenv("KYBER_AGENT_UID"), os.Getenv("KYBER_USAGE_ROUTE_FINGERPRINT"); agentUID != "" && routeFingerprint != "" {
 		collector := &tokenreport.CodexUsageCollector{
 			SessionsRoot: root, CursorPath: "/persist/usage/codex-cursor.json", RouteFingerprint: routeFingerprint,

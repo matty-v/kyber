@@ -124,13 +124,14 @@ arm_kyber_cron_postrun() {
 # register_kyber_hook <event> <command> — idempotent jq merge into the user
 # settings. Returns non-zero if the hook is not present afterwards.
 register_kyber_hook() {
-    local event="$1" cmd="$2"
+    local event="$1" cmd="$2" matcher="${3:-}" timeout="${4:-20}"
     if grep -qF "$cmd" ~/.claude/settings.json 2>/dev/null; then
         return 0
     fi
-    if jq --arg ev "$event" --arg cmd "$cmd" \
+    if jq --arg ev "$event" --arg cmd "$cmd" --arg matcher "$matcher" --argjson timeout "$timeout" \
         '.hooks //= {} | .hooks[$ev] //= []
-         | .hooks[$ev] += [{"hooks":[{"type":"command","command":$cmd,"timeout":20}]}]' \
+         | .hooks[$ev] += [({"hooks":[{"type":"command","command":$cmd,"timeout":$timeout}]}
+             + (if $matcher == "" then {} else {matcher:$matcher} end))]' \
         ~/.claude/settings.json > ~/.claude/settings.json.tmp 2>/dev/null \
         && [ -s ~/.claude/settings.json.tmp ]; then
         mv ~/.claude/settings.json.tmp ~/.claude/settings.json
@@ -934,6 +935,42 @@ if [ -n "${KYBER_REASONING_EFFORT:-}" ]; then
     CLAUDE_ARGS="$CLAUDE_ARGS --effort $KYBER_REASONING_EFFORT"
 fi
 
+# Current native turn callbacks require the qualified mod API. The Bash-only
+# override preserves argv/stdin/cwd/signals and leaves stdio MCP launches alone.
+# Never replace an operator's custom shell or global shell-prefix policy.
+CLAUDE_EXEC="claude"
+_activity_helper=/usr/local/bin/kyber-claude-work
+_activity_bash=/usr/local/bin/kyber-observed-bash
+_activity_mod=/opt/kyber/claude-activity
+if [ "${KYBER_BOOTPREP_DRY_RUN:-}" = "1" ]; then
+    _activity_helper="${KYBER_TEST_ACTIVITY_HELPER:-$_activity_helper}"
+    _activity_bash="${KYBER_TEST_ACTIVITY_BASH:-$_activity_bash}"
+    _activity_mod="${KYBER_TEST_ACTIVITY_MOD_DIR:-$_activity_mod}"
+fi
+_activity_version="$(claude --version 2>/dev/null | awk '{print $1; exit}' || true)"
+if [ -x "$_activity_helper" ] && [ -x "$_activity_bash" ] \
+   && [ -r "$_activity_mod/hooks/register.js" ] \
+   && [ -z "${CLAUDE_CODE_SHELL_PREFIX:-}" ] \
+   && { [ -z "${CLAUDE_CODE_SHELL:-}" ] || [ "$CLAUDE_CODE_SHELL" = /bin/bash ] \
+        || [ "$CLAUDE_CODE_SHELL" = /usr/bin/bash ] || [ "$CLAUDE_CODE_SHELL" = "$_activity_bash" ]; } \
+   && python3 - "$_activity_version" <<'PY'
+import re, sys
+value = sys.argv[1]
+sys.exit(0 if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", value)
+         and tuple(map(int, value.split("."))) >= (2, 1, 330) else 1)
+PY
+then
+    if register_kyber_hook PreToolUse "$_activity_helper hook" 'Bash|Monitor' 2; then
+        CLAUDE_ARGS="$CLAUDE_ARGS --plugin-dir $(printf '%q' "$_activity_mod")"
+        # Bake non-secret pod scope and shell selection into both launch paths.
+        # API restarts enter from PID 1, whose environment predates boot exports.
+        CLAUDE_EXEC="env CLAUDE_CODE_SHELL=$(printf '%q' "$_activity_bash") KYBER_POD_UID=$(printf '%q' "${KYBER_POD_UID:-}") claude"
+        echo "[kyber] native activity observer configured"
+    else
+        echo "[kyber] WARNING: native activity observer hook could not be installed" >&2
+    fi
+fi
+
 if command -v kyber-runtime-effort >/dev/null 2>&1; then
     nohup kyber-runtime-effort claude-code /usr/local/bin/kyber-claude-effort >/dev/null 2>&1 &
 fi
@@ -1243,6 +1280,8 @@ if ! jq empty "$CLAUDE_STATE" >/dev/null 2>&1; then
 fi
 if ! jq --arg launch_dir "$LAUNCH_DIR" '
     .hasCompletedOnboarding = true
+    | .fullscreenUpsellSeenCount = (if (.fullscreenUpsellSeenCount | type) == "number"
+        then ([.fullscreenUpsellSeenCount, 3] | max) else 3 end)
     | if (env.ANTHROPIC_API_KEY // "") != "" and (env.CLAUDE_ACCESS_TOKEN // "") == "" then
         # Native Claude state records approval by the final 20 characters.
         # The operator already selected this key for this Agent in Kyber.
@@ -1402,10 +1441,10 @@ mkdir -p "\$(dirname "\$SESSION_LOCK")"
     # store may have gained its first transcript since boot, and --fresh
     # must always win. The enable flag, store path, and arg strings are
     # baked at boot (this heredoc is unquoted); only the decision runs here.
-    RELAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
+    RELAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_LAUNCH_ARGS"
     if [ "$SESSION_RESUME_ENABLED" = "1" ] && [ "\$KYBER_FRESH" = "0" ] \\
        && [ -n "\$(find "$CLAUDE_PROJECT_STORE" -maxdepth 1 -name '*.jsonl' -print -quit 2>/dev/null)" ]; then
-        RELAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"
+        RELAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_RESUME_ARGS"
         echo "[kyber] relaunch: resuming previous session (kyber#118)"
     fi
     sudo HOME=/home/kyber --preserve-env=CLAUDE_CODE_EFFORT_LEVEL,KYBER_REASONING_EFFORT,TELEGRAM_BOT_TOKEN,ANTHROPIC_API_KEY,CLAUDE_MODEL,CLAUDE_ACCESS_TOKEN,CLAUDE_REFRESH_TOKEN,CLAUDE_ACCESS_TOKEN_EXPIRES_AT,AGENT_NAME,KYBER_CONTROL_PLANE_INTERNAL_URL,KYBER_REFRESH_TOKEN_URL,KYBER_IDENTITY_REPO,KYBER_RUNTIME_DEFAULT_VERSION,TZ${USER_PRESERVE_SUFFIX} -u kyber tmux new-session -d -s agent -c "$LAUNCH_DIR" "\$RELAUNCH_CMD"
@@ -1439,12 +1478,12 @@ if [ -n "${TELEGRAM_BOT_TOKEN:-}" ]; then
     rm -f "${HOME:-/home/kyber}/.claude/channels/telegram/bot.pid"
 fi
 
-BOOT_LAUNCH_CMD="claude $CLAUDE_LAUNCH_ARGS"
+BOOT_LAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_LAUNCH_ARGS"
 if [ "$SESSION_RESUME_ENABLED" = "1" ]; then
     if claude_has_prior_session; then
         # kyber#118: pod boot after a recreate/preemption/crash — pick the
         # previous conversation back up instead of starting fresh.
-        BOOT_LAUNCH_CMD="claude $CLAUDE_RESUME_ARGS"
+        BOOT_LAUNCH_CMD="$CLAUDE_EXEC $CLAUDE_RESUME_ARGS"
         echo "[kyber] session resume: continuing previous session (kyber#118)"
     else
         # Deliberately loud: the store path replicates Claude Code's
@@ -1520,7 +1559,7 @@ while true; do
         fi
         /persist/last-claude-launch.sh $RELAUNCH_FLAG || echo "[kyber] relaunch script returned non-zero — retrying" >&2
     else
-        tmux new-session -d -s agent -c "$LAUNCH_DIR" "claude $CLAUDE_LAUNCH_ARGS" || true
+        tmux new-session -d -s agent -c "$LAUNCH_DIR" "$CLAUDE_EXEC $CLAUDE_LAUNCH_ARGS" || true
     fi
     sleep 3
 done

@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/getkin/kin-openapi/openapi3"
 	"github.com/getkin/kin-openapi/openapi3filter"
@@ -538,5 +539,24 @@ func TestContract_AgentAvatar(t *testing.T) {
 	}
 	if rr := validateContract(t, h, authedReq(t, http.MethodDelete, "/api/v1/agents/dave/profile/avatar", nil)); rr.Code != http.StatusNoContent {
 		t.Fatalf("DELETE = %d", rr.Code)
+	}
+}
+
+func TestContract_AdmittedNativeActivity(t *testing.T) {
+	now := time.Now().UTC()
+	agent := sampleAgentObj("native")
+	agent.UID = "native-life"
+	agent.Spec.Runtime = "codex"
+	agent.Status.Phase = kyberv1.AgentPhaseRunning
+	agent.Status.Activity = &kyberv1.ActivityStatus{Work: &kyberv1.WorkObservation{AgentUID: string(agent.UID), PodUID: "private-native-pod", ContainerID: "private-native-container", Epoch: "private-native-epoch", Sequence: 1, ObservedAt: metav1.NewMicroTime(now), ReceivedAt: metav1.NewMicroTime(now), StateSince: metav1.NewMicroTime(now), LastWorkedAt: metav1.NewMicroTime(now), Complete: true, Background: 1}}
+	h := newContractServer(t, agent)
+	for _, path := range []string{"/api/v1/agents", "/api/v1/agents/native"} {
+		rr := validateContract(t, h, authedReq(t, http.MethodGet, path, nil))
+		if rr.Code != 200 || !bytes.Contains(rr.Body.Bytes(), []byte(`"state":"background"`)) {
+			t.Fatalf("native view missing: %d %s", rr.Code, rr.Body.String())
+		}
+		if bytes.Contains(rr.Body.Bytes(), []byte("private-native-")) {
+			t.Fatal("observer metadata exposed in public API")
+		}
 	}
 }

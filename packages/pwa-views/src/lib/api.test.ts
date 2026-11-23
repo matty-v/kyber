@@ -1,5 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { createApiClient } from './api'
+import { projectWork } from './activity'
+import type { Agent } from './types'
 import type { Cluster } from './cluster-context'
 
 // Minimal localStorage polyfill for the node test environment.
@@ -533,5 +535,32 @@ describe('key management choices and pending changes', () => {
     const [url, options] = vi.mocked(fetch).mock.calls.at(-1)!
     expect(url).toBe('http://localhost:8080/api/v1/operator-credential-operations/pending?after=cursor+%2F%3F')
     expect(options?.method).toBe('GET'); expect(options?.body).toBeUndefined()
+  })
+})
+
+
+describe('activity request freshness', () => {
+  it('charges network delay against a server work lease', async () => {
+    let monotonic = 100
+    const clock = vi.spyOn(performance, 'now').mockImplementation(() => monotonic)
+    const server = Date.parse('2026-11-22T20:00:00Z')
+    const agent = { id: 'delayed', phase: 'Running', activity: { work: {
+      state: 'working', serverTime: new Date(server).toISOString(),
+      observedAt: new Date(server).toISOString(), expiresAt: new Date(server + 60000).toISOString(),
+      foregroundCount: 1, backgroundCount: 0,
+    } } } as Agent
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      monotonic = 90100
+      return new Response(JSON.stringify({ items: [agent] }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const result = await createApiClient(mockCluster).listAgents()
+      expect(projectWork(result[0], monotonic).state).toBe('unavailable')
+    } finally {
+      clock.mockRestore()
+      vi.unstubAllGlobals()
+      vi.stubGlobal('localStorage', localStorageMock)
+    }
   })
 })

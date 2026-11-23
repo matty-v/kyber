@@ -139,6 +139,27 @@ shrinking is unsupported; a blocked, unfulfilled PVC request may be reduced
 only while the new target exceeds already allocated capacity. See
 `docs/operator/agent-disk-expansion.md`.
 
+Agent activity qualification and the in-progress leased-work contract are in
+`docs/design/2026-11-22-agent-activity.md`. Legacy transcript state and sidecar
+contact are not proof of current work. Native inventories use the separate
+`/work-inventory` sidecar path and `/internal/activity-observers/` API. Its
+purpose-separated credential is mounted only in the status sidecar; never
+forward runtime-provided epoch, pod identity or sequence. Preserve the original
+native observation time across retries. Registration binds the current owned
+Pod and native sidecar container lifetime; optimistic status writes fence replay.
+Hermes publishers run inside each native process and the reporter aggregates
+fresh count-only snapshots after validating process start ticks and pod scope.
+Claude Code 2.1.330+ uses native mod turn/spawn events and a Bash-only exec
+wrapper, preserving native background handoff and stdio MCP argument handling.
+Never replace that wrapper with a global shell prefix or tool.call/tool.run
+interceptor. Unknown child scheduling or uncorrelated native jobs is incomplete
+coverage. Baked defaults are Claude Code 2.1.330 and Codex 0.171.0; explicit older
+pins remain unchanged and unsupported native methods fail closed.
+Runtime image path filters include `pkg/activity/**` alongside `pkg/tokenreport/**`
+so changes to their shared observation wire contract rebuild all three images. Do not activate or ship the new dashboard
+as a complete reporting fix until native inventory producers and trusted
+admission have been qualified for every registered harness.
+
 New-agent template sources use `identityRepo.defaultTemplate` →
 `KYBER_IDENTITY_REPO_TEMPLATE` → `GET /api/v1/config`'s
 `identity.defaultTemplate`. The wizard previews and submits this source separately

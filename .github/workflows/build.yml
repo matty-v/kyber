@@ -108,6 +108,7 @@ jobs:
               # pkg/tokenreport/ silently ship nothing to agents.
               - 'cmd/token-reporter/**'
               - 'pkg/tokenreport/**'
+              - 'pkg/activity/**'
               # Same builder stage also compiles kyber-skills, which the boot
               # path and the identity sync both invoke. Miss these and a
               # scanner fix ships to no agent.
@@ -142,6 +143,7 @@ jobs:
               # credential syncer lives in precisely those paths.
               - 'cmd/codex-reporter/**'
               - 'pkg/tokenreport/**'
+              - 'pkg/activity/**'
               - 'cmd/kyber-skills/**'
               - 'pkg/skillscan/**'
               - 'go.mod'
@@ -156,6 +158,7 @@ jobs:
               # a reporter-only fix cannot pass CI without shipping an image.
               - 'cmd/hermes-reporter/**'
               - 'pkg/tokenreport/**'
+              - 'pkg/activity/**'
               - 'cmd/kyber-skills/**'
               - 'pkg/skillscan/**'
               - 'go.mod'

@@ -1,66 +1,20 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import type { Agent } from '../lib/types'
 import { AgentActivityDot, formatRelativeTime } from './AgentActivityDot'
-import type { Agent, AgentActivityState } from '../lib/types'
-
-function agentWith(state?: AgentActivityState, lastActivityAt?: string): Agent {
-  return {
-    id: 'alice',
-    activity: state
-      ? { state, lastActivityAt, lastHeartbeatAt: '2026-05-03T22:00:00Z' }
-      : undefined,
-  } as unknown as Agent
-}
-
+import { recordActivityReceipt } from '../lib/activity'
 describe('AgentActivityDot', () => {
-  it('renders nothing when agent has no activity status', () => {
-    const { container } = render(<AgentActivityDot agent={agentWith()} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders nothing when state is unknown', () => {
-    const { container } = render(<AgentActivityDot agent={agentWith('unknown')} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders nothing when state is empty string', () => {
-    const { container } = render(<AgentActivityDot agent={agentWith('')} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders pulsing green dot when working', () => {
-    render(<AgentActivityDot agent={agentWith('working')} />)
-    const dot = screen.getByTestId('agent-activity-dot')
-    expect(dot).toHaveAttribute('data-state', 'working')
-    expect(dot.className).toContain('bg-success')
-    expect(dot.className).toContain('motion-safe:animate-pulse')
-  })
-
-  it('renders gray static dot when idle', () => {
-    render(<AgentActivityDot agent={agentWith('idle', '2026-05-03T22:00:00Z')} />)
-    const dot = screen.getByTestId('agent-activity-dot')
-    expect(dot).toHaveAttribute('data-state', 'idle')
-    expect(dot.className).toContain('bg-text-disabled')
-    expect(dot.className).not.toContain('animate-pulse')
-  })
-
-  it('tooltip says "Working" for working state', () => {
-    render(<AgentActivityDot agent={agentWith('working')} />)
-    expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('title', 'Working')
-  })
-
-  it('tooltip says "Idle <relative>" for idle state with timestamp', () => {
-    const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString()
-    render(<AgentActivityDot agent={agentWith('idle', tenMinAgo)} />)
-    expect(screen.getByTestId('agent-activity-dot').getAttribute('title')).toMatch(/^Idle 10m ago$/)
-  })
-
-  it('tooltip is just "Idle" when lastActivityAt is missing', () => {
-    render(<AgentActivityDot agent={agentWith('idle')} />)
-    expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('title', 'Idle')
-  })
+ it('does not show a stopped agent working', () => {
+  const {container}=render(<AgentActivityDot agent={{phase:'Stopped',activity:{state:'working'}} as Agent}/>);expect(container).toBeEmptyDOMElement()
+ })
+ it('shows legacy reporting as unavailable', () => {
+  render(<AgentActivityDot agent={{phase:'Running',activity:{state:'working'}} as Agent}/>);expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('data-state','unavailable')
+ })
+ it('shows a fresh current inventory as working', () => {
+  const now=Date.now();const a=recordActivityReceipt([{phase:'Running',activity:{work:{state:'working',serverTime:new Date(now).toISOString(),observedAt:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),foregroundCount:1,backgroundCount:0}}} as Agent])[0]
+  render(<AgentActivityDot agent={a}/>);expect(screen.getByTestId('agent-activity-dot')).toHaveAttribute('data-state','working')
+ })
 })
-
 describe('formatRelativeTime', () => {
   const NOW = new Date('2026-05-03T22:00:00Z')
 

@@ -181,6 +181,7 @@ func runForwarder(ctx context.Context, cfg config, logger *slog.Logger, metrics 
 	// the simpler success/error counters so dashboards can still split
 	// them by `type`.
 	mux.HandleFunc("/event", forwardHandler(client, cfg, metrics, logger, "status-event", true))
+	mux.Handle("/work-inventory", newWorkInventoryForwarder(client, cfg, os.Getenv("KYBER_POD_UID")))
 	mux.HandleFunc("/token-usage", forwardHandler(client, cfg, metrics, logger, "token-usage", false))
 	registerUsageForwarders(mux, client, cfg, metrics, logger)
 	mux.HandleFunc("/runtime-version", forwardHandler(client, cfg, metrics, logger, "runtime-version", false))

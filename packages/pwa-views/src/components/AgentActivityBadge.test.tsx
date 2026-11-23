@@ -1,43 +1,10 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { AgentActivityBadge } from './AgentActivityBadge'
-import type { Agent, AgentActivityState } from '../lib/types'
-
-function agentWith(state?: AgentActivityState, lastActivityAt?: string): Agent {
-  return {
-    id: 'alice',
-    activity: state ? { state, lastActivityAt } : undefined,
-  } as unknown as Agent
-}
-
+import { recordActivityReceipt } from '../lib/activity'
+import type { Agent } from '../lib/types'
 describe('AgentActivityBadge', () => {
-  it('renders nothing when no activity status', () => {
-    const { container } = render(<AgentActivityBadge agent={agentWith()} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders nothing when state is unknown', () => {
-    const { container } = render(<AgentActivityBadge agent={agentWith('unknown')} />)
-    expect(container.firstChild).toBeNull()
-  })
-
-  it('renders "Working" badge with success styling when working', () => {
-    render(<AgentActivityBadge agent={agentWith('working')} />)
-    const badge = screen.getByTestId('agent-activity-badge')
-    expect(badge).toHaveAttribute('data-state', 'working')
-    expect(badge).toHaveTextContent('Working')
-    expect(badge.className).toContain('text-success')
-  })
-
-  it('renders "Idle <relative>" when idle', () => {
-    const fourMinAgo = new Date(Date.now() - 4 * 60_000).toISOString()
-    render(<AgentActivityBadge agent={agentWith('idle', fourMinAgo)} />)
-    const badge = screen.getByTestId('agent-activity-badge')
-    expect(badge.textContent).toMatch(/^Idle 4m ago$/)
-  })
-
-  it('renders "Idle" alone when lastActivityAt missing', () => {
-    render(<AgentActivityBadge agent={agentWith('idle')} />)
-    expect(screen.getByTestId('agent-activity-badge')).toHaveTextContent('Idle')
-  })
+ it('hides stopped activity',()=>{const {container}=render(<AgentActivityBadge agent={{phase:'Stopped',activity:{state:'working'}} as Agent}/>);expect(container).toBeEmptyDOMElement()})
+ it('shows legacy working as unavailable',()=>{render(<AgentActivityBadge agent={{phase:'Running',activity:{state:'working'}} as Agent}/>);expect(screen.getByText('Activity unavailable')).toBeVisible()})
+ it('shows a native job count',()=>{const now=Date.now();const a=recordActivityReceipt([{phase:'Running',activity:{work:{state:'background',serverTime:new Date(now).toISOString(),observedAt:new Date(now).toISOString(),expiresAt:new Date(now+60000).toISOString(),foregroundCount:0,backgroundCount:2}}} as Agent])[0];render(<AgentActivityBadge agent={a}/>);expect(screen.getByText('2 background jobs running')).toBeVisible()})
 })

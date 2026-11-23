@@ -3,7 +3,8 @@ import type { Agent, AgentGoalStatus } from '../lib/types'
 import { Card } from './Card'
 import { EmptyState } from './EmptyState'
 import { ExecTerminal } from './ExecTerminal'
-import { rankByActivity } from '../lib/dashboard'
+import { activityEligible, activityGroups } from '../lib/activity'
+import { useActivityClock } from '../hooks/useActivityClock'
 import { usePageVisible } from '../hooks/usePageVisible'
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from './ui/select'
 import { AgentGoalLine } from './AgentGoalLine'
@@ -46,18 +47,20 @@ function PeekFrame({
 }
 
 export function TerminalPeek({ agents }: { agents: Agent[] }) {
-  const defaultName = useMemo(
-    () => rankByActivity(agents, 1)[0]?.id ?? agents[0]?.id ?? '',
-    [agents],
-  )
+  const now = useActivityClock()
+  const defaultName = useMemo(() => {
+    const eligible = agents.filter(a => activityEligible(a) && a.status?.podName)
+    const groups = activityGroups(eligible, now)
+    return groups.working[0]?.id ?? groups.background[0]?.id ?? eligible[0]?.id ?? ''
+  }, [agents, now])
   const [selected, setSelected] = useState('')
   const name = selected || defaultName
   const goal = agents.find((agent) => agent.id === name)?.goal
 
-  if (agents.length === 0) {
+  if (!name) {
     return (
       <Card>
-        <EmptyState title="No agents to watch" />
+        <EmptyState title="No running agents to preview" />
       </Card>
     )
   }
@@ -81,6 +84,8 @@ export function TerminalPeek({ agents }: { agents: Agent[] }) {
     </Select>
   )
 
+  const target = agents.find(agent => agent.id === name)
+  if (!target || !activityEligible(target) || !target.status?.podName) return <Card>{selector}<EmptyState title="Terminal unavailable" description="The selected agent has no running pod. Choose a running agent to preview." /></Card>
   return <PeekFrame name={name} selector={selector} heightClassName="h-64" goal={goal} />
 }
 

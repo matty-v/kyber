@@ -938,6 +938,61 @@ spec:
                     - idle
                     - unknown
                     type: string
+                  work:
+                    description: Work is separate from legacy diagnostics and resource
+                      measurements.
+                    properties:
+                      agentUID:
+                        type: string
+                      background:
+                        format: int32
+                        type: integer
+                      bootID:
+                        type: string
+                      bootedAt:
+                        format: date-time
+                        type: string
+                      complete:
+                        type: boolean
+                      containerID:
+                        type: string
+                      epoch:
+                        type: string
+                      foreground:
+                        format: int32
+                        type: integer
+                      lastWorkedAt:
+                        format: date-time
+                        type: string
+                      needsInput:
+                        type: boolean
+                      observedAt:
+                        format: date-time
+                        type: string
+                      podUID:
+                        type: string
+                      receivedAt:
+                        format: date-time
+                        type: string
+                      sequence:
+                        format: int64
+                        type: integer
+                      stateSince:
+                        format: date-time
+                        type: string
+                    required:
+                    - agentUID
+                    - background
+                    - bootID
+                    - bootedAt
+                    - complete
+                    - containerID
+                    - epoch
+                    - foreground
+                    - needsInput
+                    - podUID
+                    - sequence
+                    type: object
                 type: object
               conditions:
                 description: Conditions holds standard k8s conditions for this Agent.

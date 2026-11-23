@@ -31,7 +31,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && \
 # pkg/runtimes/claudecode/ enforces that this default and the chart value
 # stay in sync. The ENV is carried into the running container so
 # start-claude.sh can log and compare against the actually-installed version.
-ARG CLAUDE_CODE_VERSION=2.1.119
+ARG CLAUDE_CODE_VERSION=2.1.330
 RUN npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}
 ENV KYBER_RUNTIME_DEFAULT_VERSION=${CLAUDE_CODE_VERSION}
 
@@ -63,6 +63,9 @@ RUN curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/$(dpkg --
 
 # Claude Code start script
 COPY --chmod=0755 images/claude-code/start-claude.sh /usr/local/bin/start-claude.sh
+COPY --chmod=0755 images/claude-code/activity/helper.py /usr/local/bin/kyber-claude-work
+COPY images/claude-code/activity/mod /opt/kyber/claude-activity
+RUN ln -s /usr/local/bin/kyber-claude-work /usr/local/bin/kyber-observed-bash
 COPY --chmod=0755 images/agent-base/scripts/kyber-task-receipt /usr/local/bin/kyber-task-receipt
 COPY --chmod=0755 images/agent-base/scripts/kyber-prompt-unwrap /usr/local/bin/kyber-prompt-unwrap
 COPY --chmod=0755 images/agent-base/scripts/kyber-goal-start /usr/local/bin/kyber-goal-start

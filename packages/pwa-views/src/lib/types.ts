@@ -142,6 +142,7 @@ export interface ReasoningEffortOptions {
 }
 
 export interface Agent {
+  desiredPhase?: AgentPhase
   runtimeContract?: RuntimeDescriptor
   runtimeCapabilities?: Record<string, RuntimeFeatureAvailability>
   id: string
@@ -254,7 +255,23 @@ export interface AgentA2APeer {
 // in-pod activity detector (kyber#249).
 export type AgentActivityState = 'working' | 'idle' | 'unknown' | ''
 
+// Optional protocol-one server projection. Missing projections stay unavailable;
+// the legacy state field is diagnostic history, never a current-work lease.
+export interface AgentWorkView {
+  state: 'working' | 'background' | 'waiting' | 'unavailable' | 'excluded'
+  serverTime: string
+  expiresAt?: string
+  observedAt?: string
+  lastWorkedAt?: string
+  stateSince?: string
+  reason?: string
+  foregroundCount: number
+  backgroundCount: number
+  needsInput?: boolean
+}
+
 export interface AgentActivityStatus {
+  work?: AgentWorkView
   // RFC3339 timestamps.
   lastHeartbeatAt?: string
   state?: AgentActivityState

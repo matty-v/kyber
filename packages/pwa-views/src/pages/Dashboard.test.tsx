@@ -31,7 +31,7 @@ describe('Dashboard', () => {
     render(<MemoryRouter><Dashboard /></MemoryRouter>)
     expect(screen.getByRole('heading', { name: 'Dashboard' })).toBeInTheDocument()
     expect(screen.getByText('Agent status')).toBeInTheDocument()
-    expect(screen.getByText('Recently active')).toBeInTheDocument()
+    expect(screen.getByText('Agent activity')).toBeInTheDocument()
     expect(screen.getByText('Context pressure')).toBeInTheDocument()
     expect(screen.getByTestId('peek')).toBeInTheDocument()
   })
