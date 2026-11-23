@@ -1,5 +1,9 @@
 # @matty-v/kyber-pwa-views
 
+## 0.84.1
+
+- Keep populated dashboard activity cards inside mobile viewports and let operators expand the complete request text without navigating away.
+
 ## 0.84.0
 
 - Introduce Agent activity groups with independent collapse preferences, explicit unavailable telemetry and a leased current-work projection.

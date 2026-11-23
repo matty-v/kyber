@@ -60,3 +60,24 @@ describe('Agent activity groups',()=>{
  })
 
 })
+
+
+it('opens the complete request independently of agent navigation', async () => {
+ const user=userEvent.setup();const a=agent('mando');a.goal={summary:'Read every part of this request '+ 'longword'.repeat(60), source:'agent',acceptedAt:new Date().toISOString()}
+ render(view([a]))
+ const full=screen.getByTestId('full-request')
+ expect(full).not.toBeVisible()
+ await user.click(screen.getByText('Read full request'))
+ expect(full).toBeVisible()
+ expect(full).toHaveTextContent(a.goal.summary)
+ expect(full.closest('a')).toBeNull()
+ expect(screen.getByRole('link',{name:/mando/})).toHaveAttribute('href','/agents/mando')
+})
+
+it('recovers focus when a focused request moves into a collapsed group', () => {
+ const a=agent('mando');a.goal={summary:'Read the complete request',source:'agent',acceptedAt:new Date().toISOString()}
+ const r=render(view([a]));screen.getByText('Read full request').closest('summary')!.focus()
+ r.rerender(view([{...agent('mando',{state:'waiting',foregroundCount:0}),goal:a.goal}]))
+ expect(screen.getByRole('button',{name:/Waiting/})).toHaveFocus()
+ expect(screen.getByRole('button',{name:/Waiting/})).toHaveAttribute('aria-expanded','false')
+})

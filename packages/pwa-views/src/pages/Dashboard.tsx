@@ -16,7 +16,7 @@ export function Dashboard() {
       {isLoading && (
         <div className="space-y-6">
           <Skeleton className="h-24 rounded-xl border border-border-subtle" />
-          <div className="grid min-w-0 max-w-full gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 max-w-full grid-cols-1 gap-4 lg:grid-cols-2">
             <Skeleton className="h-56 rounded-xl border border-border-subtle" />
             <Skeleton className="h-56 rounded-xl border border-border-subtle" />
           </div>
@@ -33,7 +33,7 @@ export function Dashboard() {
       {data && (
         <>
           <AgentStatusBar agents={agents} />
-          <div className="grid min-w-0 max-w-full gap-4 lg:grid-cols-2">
+          <div className="grid min-w-0 max-w-full grid-cols-1 gap-4 lg:grid-cols-2">
             <RecentlyActiveList agents={agents} />
             <ContextPressureList agents={agents} />
           </div>
