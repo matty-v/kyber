@@ -47,7 +47,8 @@ func TestActivityObserverSchemaAndLifetime(t *testing.T) {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "activity-test"}}); err != nil {
 		t.Fatal(err)
 	}
-	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "fixture", Namespace: "activity-test"}, Spec: kyberv1.AgentSpec{Machine: "worker", Runtime: "codex", Resources: kyberv1.AgentResources{CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("5Gi")}, Secrets: kyberv1.AgentSecrets{AuthType: kyberv1.AgentAuthTypeAPIKey}}}
+	agent := &kyberv1.Agent{ObjectMeta: metav1.ObjectMeta{Name: "fixture", Namespace: "activity-test"}, Spec: kyberv1.AgentSpec{Machine: "worker", Runtime: "codex", Resources: kyberv1.AgentResources{CPU: resource.MustParse("1"), Memory: resource.MustParse("1Gi"), Disk: resource.MustParse("5Gi")}}}
+	agent.Spec.Secrets.AuthType = kyberv1.AgentAuthTypeAPIKey
 	if err := c.Create(ctx, agent); err != nil {
 		t.Fatal(err)
 	}
@@ -69,7 +70,7 @@ func TestActivityObserverSchemaAndLifetime(t *testing.T) {
 		}
 	}
 	createPod()
-	key := []byte("unit-test-activity-observer-signing-key")
+	key := []byte("test-key")
 	server := api.NewInternalServer(briefstore.NewMemoryStore(), api.WithKubeClient(c, agent.Namespace), api.WithUsageAgentReader(c), api.WithInternalAuth(api.NewHMACInternalAuthenticator(key), false))
 	credential := podtoken.Sign(activity.ObserverIdentity(agent.Name, string(agent.UID)), key)
 	post := func(path string, body any) *httptest.ResponseRecorder {
